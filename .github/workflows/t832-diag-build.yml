@@ -38,7 +38,7 @@ jobs:
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py -v
-          python3 -m pip install --quiet pyyaml
+          python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py -v
           gcc -std=c11 -Wall -Wextra \
             -I repo/firmware/t832 \
@@ -557,7 +557,7 @@ jobs:
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py -v
-          python3 -m pip install --quiet pyyaml
+          python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py -v
           gcc -std=c11 -Wall -Wextra \
             -I repo/firmware/t832 \
@@ -1008,7 +1008,7 @@ jobs:
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py
-          python3 -m pip install --quiet pyyaml
+          python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py
 
   negative-control:

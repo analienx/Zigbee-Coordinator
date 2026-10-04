@@ -17,7 +17,7 @@ t832_capture: >-
   capture --trigger "{{ trigger }}"
   --triggers /config/t832_capture_barrier.yaml
   --trigger-topic "{{ trigger_topic }}"
-  --trigger-payload '{{ trigger_payload_json }}'
+  --trigger-payload '{{ trigger_payload_json | tojson if trigger_payload_json is mapping else trigger_payload_json }}'
   --require-firmware-binding
 t832_authorize_reset: >-
   python3 /config/python_scripts/t832_incident.py

@@ -36,14 +36,43 @@ SPEC.loader.exec_module(incident)
 VAR_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
+COND_RE = re.compile(
+    r"\{\{\s*(\w+) \| tojson if \1 is mapping else \1\s*\}\}"
+)
+
+
+def htmlsafe_json_dumps(obj: object) -> str:
+    """Jinja2 tojson escaping (htmlsafe_json_dumps): < > & ' as \\uXXXX."""
+    return (
+        json.dumps(obj)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("'", "\\u0027")
+    )
+
+
 def render(template: str, values: dict) -> str:
+    def sub_cond(match: re.Match) -> str:
+        name = match.group(1)
+        if name not in values:
+            raise AssertionError(f"unbound template variable {name!r}")
+        value = values[name]
+        # Faithful staging of the HA shell render: mappings re-serialize
+        # via tojson, pre-serialized strings pass through untouched.
+        if isinstance(value, dict):
+            return htmlsafe_json_dumps(value)
+        return str(value)
+
     def sub(match: re.Match) -> str:
         name = match.group(1)
         if name not in values:
             raise AssertionError(f"unbound template variable {name!r}")
         return str(values[name])
 
-    return VAR_RE.sub(sub, " ".join(template.split()))
+    collapsed = " ".join(template.split())
+    collapsed = COND_RE.sub(sub_cond, collapsed)
+    return VAR_RE.sub(sub, collapsed)
 
 
 def load_shell_commands() -> dict:
@@ -164,6 +193,18 @@ class BarrierStructureTests(unittest.TestCase):
         capture = text.split("t832_authorize_reset")[0]
         for flag in ("--triggers", "--trigger-topic", "--trigger-payload"):
             self.assertIn(flag, capture)
+
+    def test_capture_payload_reserializes_mappings(self) -> None:
+        # B13: service.data truthfully holds an object (or, when the first
+        # render emits true/false/null, a JSON string). The shell argv must
+        # re-serialize mappings instead of str() mangling them.
+        text = SHELL_COMMANDS.read_text(encoding="utf-8")
+        capture = text.split("t832_authorize_reset")[0]
+        self.assertIn(
+            "{{ trigger_payload_json | tojson if "
+            "trigger_payload_json is mapping else trigger_payload_json }}",
+            capture,
+        )
 
 
 class BarrierChainTests(unittest.TestCase):
@@ -627,6 +668,133 @@ class R3M3TriggerYamlTests(unittest.TestCase):
         ]
         self.assertTrue(all(v["source"] == "candidate-yaml" for v in bad))
         self.assertFalse(any(v["qualifying"] for v in bad))
+
+
+class R3M3ShellBoundaryTests(unittest.TestCase):
+    """B13: stage automation render, service parse, shell render, shlex.
+
+    Faithful staging of the HA pipeline per the cited source lines:
+    service data templates render in a Jinja2 sandbox, parse_result
+    restores objects via ast.literal_eval, the shell template renders with
+    parse_result=False, and the command runs through shlex with no shell.
+    """
+
+    def setUp(self) -> None:
+        jinja2 = importlib.import_module("jinja2")
+        print(f"jinja2=={jinja2.__version__}")
+        from jinja2.sandbox import SandboxedEnvironment
+
+        self.env = SandboxedEnvironment()
+        automations = yaml.safe_load(BARRIER.read_text(encoding="utf-8"))
+        barrier = next(
+            a
+            for a in automations
+            if a["id"] == "zigbee2mqtt_t832_capture_barrier"
+        )
+        call = next(
+            s
+            for s in barrier["actions"]
+            if isinstance(s, dict)
+            and s.get("action") == "shell_command.t832_capture"
+        )
+        self.data_templates = dict(call["data"])
+        commands = load_shell_commands()
+        self.shell_template = commands["t832_capture"]
+
+    def stage(self, trigger: dict) -> list[str]:
+        """Render automation data, parse service data, render shell, split."""
+        import ast
+        import shlex
+
+        rendered: dict = {}
+        for key, template in self.data_templates.items():
+            out = self.env.from_string(str(template)).render(trigger=trigger)
+            if key == "trigger_payload_json":
+                try:
+                    # HA service.data parse_result=True (literal_eval): JSON
+                    # objects come back as dicts; true/false/null payloads
+                    # stay strings for the shell render to pass through.
+                    rendered[key] = ast.literal_eval(out)
+                except (ValueError, SyntaxError):
+                    rendered[key] = out
+            else:
+                rendered[key] = out
+        shell = self.env.from_string(self.shell_template).render(
+            trigger=rendered["trigger"],
+            trigger_topic=rendered["trigger_topic"],
+            trigger_payload_json=rendered["trigger_payload_json"],
+        )
+        return shlex.split(shell, posix=True)
+
+    def payload_argv(self, argv: list[str]) -> str:
+        self.assertIn("--trigger-payload", argv)
+        at = argv.index("--trigger-payload")
+        self.assertLess(at + 1, len(argv))
+        return argv[at + 1]
+
+    def test_mapping_payloads_round_trip_as_single_argv(self) -> None:
+        corpus = [
+            {"status": "error", "error": "O'Brien: SRSP - x after 6000ms"},
+            {"a": 'q"q', "n": "line1\nline2", "d": "$HOME `x` ; rm & |",
+             "u": "žluť <tag> & 'q'"},
+            {"nested": {"a": [1, {"b": "x"}]}, "list": [1, 2, 3]},
+            {"empty": {}, "deep": {"a": {"b": {"c": []}}}},
+        ]
+        for payload in corpus:
+            with self.subTest(payload=payload):
+                argv = self.stage(
+                    {"id": "radio_timeout",
+                     "topic": "zigbee2mqtt/bridge/response/permit_join",
+                     "payload_json": payload}
+                )
+                raw = self.payload_argv(argv)
+                # tojson escaping, never Python repr: no single quotes.
+                self.assertNotIn("'", raw)
+                self.assertEqual(json.loads(raw), payload)
+
+    def test_missing_payload_defaults_to_empty_object(self) -> None:
+        argv = self.stage({"id": "mesh_outage"})
+        self.assertEqual(json.loads(self.payload_argv(argv)), {})
+
+    def test_true_false_null_payloads_pass_through_as_json_text(self) -> None:
+        payload = {"flag": True, "nothing": None, "n": 3}
+        argv = self.stage(
+            {"id": "radio_timeout",
+             "topic": "zigbee2mqtt/bridge/response/permit_join",
+             "payload_json": payload}
+        )
+        raw = self.payload_argv(argv)
+        self.assertEqual(json.loads(raw), payload)
+        self.assertIn("true", raw)
+
+    def test_pre_serialized_string_passes_through(self) -> None:
+        argv = self.stage(
+            {"id": "radio_timeout",
+             "topic": "t",
+             "payload_json": '{"already": "json-string"}'}
+        )
+        self.assertEqual(
+            json.loads(self.payload_argv(argv)), {"already": "json-string"}
+        )
+
+    def test_old_template_mangles_objects(self) -> None:
+        # Negative control: the pre-B13 template fed str(dict) to shlex, so
+        # the boundary it produced never round-trips.
+        import shlex
+
+        payload = {"status": "error", "error": "O'Brien device"}
+        old = "--trigger-payload '{{ trigger_payload_json }}'"
+        rendered = self.env.from_string(old).render(
+            trigger_payload_json=payload
+        )
+        argv = shlex.split(rendered, posix=True)
+        at = argv.index("--trigger-payload")
+        rest = argv[at + 1 :]
+        try:
+            parsed = json.loads(" ".join(rest))
+        except ValueError:
+            parsed = None
+        self.assertNotEqual(parsed, payload)
 
 
 if __name__ == "__main__":
