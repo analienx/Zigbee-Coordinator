@@ -464,33 +464,7 @@ class BarrierChainTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    def test_healthy_removal_never_authorizes(self) -> None:
-        self.bind()
-        cap = self.run_capture(
-            "radio_timeout",
-            topic="zigbee2mqtt/bridge/response/device/remove",
-            payload='{"status": "ok"}',
-        )
-        self.assertEqual(cap.returncode, 0, cap.stderr)
-        auth = self.run_shell_template("t832_authorize_reset")
-        self.assertNotEqual(auth.returncode, 0)
-        self.assertEqual(self.latch_status(), "captured")
-        self.assertNotIn("rts-invoked", self.markers())
-
-    def test_malformed_remove_payload_never_authorizes(self) -> None:
-        self.bind()
-        cap = self.run_capture(
-            "radio_timeout",
-            topic="zigbee2mqtt/bridge/response/device/remove",
-            payload="{not json",
-        )
-        self.assertEqual(cap.returncode, 0, cap.stderr)
-        auth = self.run_shell_template("t832_authorize_reset")
-        self.assertNotEqual(auth.returncode, 0)
-        self.assertEqual(self.latch_status(), "captured")
-        self.assertNotIn("rts-invoked", self.markers())
-
-    def test_wrong_topic_never_authorizes(self) -> None:
+    def test_healthy_response_preserves_evidence_without_blocking(self) -> None:
         self.bind()
         cap = self.run_capture(
             "radio_timeout",
@@ -500,7 +474,42 @@ class BarrierChainTests(unittest.TestCase):
         self.assertEqual(cap.returncode, 0, cap.stderr)
         auth = self.run_shell_template("t832_authorize_reset")
         self.assertNotEqual(auth.returncode, 0)
-        self.assertEqual(self.latch_status(), "captured")
+        # B07: non-qualifying evidence is preserved as observed, and the
+        # preserved latch never blocks a later genuine outage: it captures
+        # and authorizes exactly once.
+        self.assertEqual(self.latch_status(), "observed")
+        self.assertNotIn("rts-invoked", self.markers())
+        cap2 = self.run_capture("mesh_outage")
+        self.assertEqual(cap2.returncode, 0, cap2.stderr)
+        auth2 = self.run_shell_template("t832_authorize_reset")
+        self.assertEqual(auth2.returncode, 0, auth2.stderr)
+        self.assertEqual(json.loads(auth2.stdout)["status"], "reset_authorized")
+        self.assertEqual(self.latch_status(), "reset_authorized")
+
+    def test_malformed_payload_never_authorizes(self) -> None:
+        self.bind()
+        cap = self.run_capture(
+            "radio_timeout",
+            topic="zigbee2mqtt/bridge/response/permit_join",
+            payload="{not json",
+        )
+        self.assertEqual(cap.returncode, 0, cap.stderr)
+        auth = self.run_shell_template("t832_authorize_reset")
+        self.assertNotEqual(auth.returncode, 0)
+        self.assertEqual(self.latch_status(), "observed")
+        self.assertNotIn("rts-invoked", self.markers())
+
+    def test_wrong_topic_never_authorizes(self) -> None:
+        self.bind()
+        cap = self.run_capture(
+            "radio_timeout",
+            topic="zigbee2mqtt/bridge/response/device/remove",
+            payload='{"status": "error", "error": "SRSP - x after 6000ms"}',
+        )
+        self.assertEqual(cap.returncode, 0, cap.stderr)
+        auth = self.run_shell_template("t832_authorize_reset")
+        self.assertNotEqual(auth.returncode, 0)
+        self.assertEqual(self.latch_status(), "observed")
 
     def test_unknown_trigger_refused_at_capture(self) -> None:
         self.bind()
@@ -512,8 +521,8 @@ class BarrierChainTests(unittest.TestCase):
         self.bind()
         cap = self.run_capture(
             "radio_timeout",
-            topic="zigbee2mqtt/bridge/response/device/remove",
-            payload='{"status": "error", "error": "Failed to remove device: SRSP timeout"}',
+            topic="zigbee2mqtt/bridge/response/permit_join",
+            payload='{"status": "error", "error": "Failed to set permit join: SRSP - AF_DataRequest after 6000ms"}',
         )
         self.assertEqual(cap.returncode, 0, cap.stderr)
         cap_doc = json.loads(cap.stdout)
@@ -564,6 +573,60 @@ class BarrierChainTests(unittest.TestCase):
             self.addon_state()
         self.assertEqual(self.latch_status(), "recovering")
         self.assertNotIn("rts-invoked", self.markers())
+
+
+class R3M3TriggerYamlTests(unittest.TestCase):
+    """B07: the actual candidate YAML carries the production contract."""
+
+    def setUp(self) -> None:
+        self.defs, self.sha = incident.load_trigger_defs(BARRIER)
+        file_sha = hashlib.sha256(BARRIER.read_bytes()).hexdigest()
+        self.assertEqual(self.sha, file_sha)
+
+    def test_yaml_mqtt_trigger_matches_tool(self) -> None:
+        automations = yaml.safe_load(BARRIER.read_text(encoding="utf-8"))
+        barrier = next(
+            a for a in automations if a["id"] == "zigbee2mqtt_t832_capture_barrier"
+        )
+        mqtt = [t for t in barrier["triggers"] if t.get("trigger") == "mqtt"]
+        self.assertEqual(len(mqtt), 1)
+        self.assertEqual(mqtt[0].get("id"), "radio_timeout")
+        self.assertEqual(
+            mqtt[0].get("topic"), incident.RADIO_TIMEOUT_TOPIC
+        )
+        self.assertEqual(
+            self.defs["radio_timeout"]["topic"], incident.RADIO_TIMEOUT_TOPIC
+        )
+        self.assertEqual(
+            self.defs["radio_timeout"]["source_sha256"], self.sha
+        )
+
+    def test_actual_yaml_defs_production_corpus(self) -> None:
+        def run(topic: str, payload: object) -> dict:
+            return incident.evaluate_trigger(
+                "radio_timeout", self.defs, topic=topic, payload=payload
+            )
+        good = run(
+            incident.RADIO_TIMEOUT_TOPIC,
+            {"status": "error",
+             "error": "permit join failed: SRSP - timeout after 6000ms"},
+        )
+        self.assertTrue(good["qualifying"])
+        self.assertEqual(good["source"], "candidate-yaml")
+        self.assertEqual(good["source_sha256"], self.sha)
+        bad = [
+            run(incident.RADIO_TIMEOUT_TOPIC, {"status": "ok"}),
+            run(incident.RADIO_TIMEOUT_TOPIC,
+                {"status": "error", "error": "device not found"}),
+            run(incident.RADIO_TIMEOUT_TOPIC,
+                {"status": "error", "error": "generic timeout, no markers"}),
+            run("zigbee2mqtt/bridge/response/device/remove",
+                {"status": "error",
+                 "error": "SRSP - x after 6000ms"}),
+            run(incident.RADIO_TIMEOUT_TOPIC, "{oops"),
+        ]
+        self.assertTrue(all(v["source"] == "candidate-yaml" for v in bad))
+        self.assertFalse(any(v["qualifying"] for v in bad))
 
 
 if __name__ == "__main__":

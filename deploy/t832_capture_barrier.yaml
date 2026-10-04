@@ -37,14 +37,15 @@
       for: "00:05:00"
       id: bridge_offline
     - trigger: mqtt
-      topic: zigbee2mqtt/bridge/response/device/remove
+      topic: zigbee2mqtt/bridge/response/permit_join
       id: radio_timeout
   conditions: []
   actions:
     # State triggers carry no payload to evaluate (HA enforced their
     # to-state plus the for-duration before firing); the mqtt trigger's
     # topic and response payload ride along for tool-side qualification.
-    # Only a timeout-family error on the remove-response topic qualifies.
+    # Only a production timeout-family error on the permit_join response
+    # topic qualifies (status error with SRSP - and after 6000ms).
     - service: shell_command.t832_capture
       data:
         trigger: "{{ trigger.id }}"

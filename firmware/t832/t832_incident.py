@@ -1415,8 +1415,20 @@ def recent_rows(
     return out, unknown_rows, unknown, truncated, notes
 
 
+#: Latch statuses that block a new capture. "observed" (non-qualifying
+#: evidence preserved without a reset permit), "closed" and "cleared"
+#: never block: a later genuine trigger must still capture.
+LATCH_BLOCKING_STATUSES = (
+    "captured",
+    "reset_authorized",
+    "recovering",
+    "stabilizing",
+    "failed",
+)
+
+
 def active_latch(value: object) -> bool:
-    return isinstance(value, dict) and value.get("status") not in (None, "closed", "cleared")
+    return isinstance(value, dict) and value.get("status") in LATCH_BLOCKING_STATUSES
 
 
 #: Latch statuses the tool itself ever writes. Anything else on disk is
@@ -1427,6 +1439,7 @@ LATCH_STATUSES = (
     "recovering",
     "stabilizing",
     "failed",
+    "observed",
     "closed",
     "cleared",
 )
@@ -1443,6 +1456,8 @@ def validate_latch(value: object) -> dict[str, object]:
     manual-repair path). Missing schema is corrupt — never defaulted.
     A consumed permit (reset_used True) with status rewound to captured
     is inconsistent: it would re-authorize an already-used reset.
+    B07: "observed" (non-qualifying evidence, no reset permit) validates
+    like the other id-bearing statuses but never blocks a later capture.
     Raises RuntimeError; returns the latch unchanged when valid.
     """
     if not isinstance(value, dict):
@@ -1457,7 +1472,14 @@ def validate_latch(value: object) -> dict[str, object]:
         raise RuntimeError("incident-latch-corrupt:reset-used-not-bool")
     if reset_used and status == "captured":
         raise RuntimeError("incident-latch-inconsistent:permit-consumed-but-captured")
-    if status in ("captured", "reset_authorized", "recovering", "stabilizing", "failed"):
+    if status in (
+        "captured",
+        "reset_authorized",
+        "recovering",
+        "stabilizing",
+        "failed",
+        "observed",
+    ):
         incident_id = value.get("incident_id")
         if not isinstance(incident_id, str) or not incident_id:
             raise RuntimeError("incident-latch-corrupt:missing-incident-id")
@@ -1470,12 +1492,16 @@ BARRIER_AUTOMATION_ID = "zigbee2mqtt_t832_capture_barrier"
 #: anything else: reset authorization must only ever follow a production
 #: trigger firing, never a free-form string.
 CANDIDATE_TRIGGER_IDS = ("mesh_outage", "bridge_offline", "radio_timeout")
-#: mqtt topic whose payloads the radio_timeout trigger evaluates.
-RADIO_TIMEOUT_TOPIC = "zigbee2mqtt/bridge/response/device/remove"
-#: Substrings (case-insensitive) marking a device/remove error as a radio
-#: timeout of the qualifying family. Anything else on the topic (healthy
-#: removals, unrelated errors) is explicitly non-qualifying.
-TIMEOUT_MARKERS = ("timeout", "timed out", "srsp")
+#: mqtt topic whose payloads the radio_timeout trigger evaluates. B07:
+#: the candidate listens on the same permit_join response topic as the
+#: production outage automation — never device/remove.
+RADIO_TIMEOUT_TOPIC = "zigbee2mqtt/bridge/response/permit_join"
+#: Production radio-timeout predicate (B07): a status-error response
+#: qualifies only when its text carries BOTH the 'SRSP -' signature and
+#: the 'after 6000ms' timeout marker (compared case-insensitively).
+#: Anything else on the topic (healthy responses, unrelated errors) is
+#: explicitly non-qualifying.
+TIMEOUT_ERROR_MARKERS = ("srsp -", "after 6000ms")
 #: A recorded ZDO proof is only fresh for this long (mono seconds). The
 #: monotonic anchor also fails closed across a host reboot (mono resets).
 ZDO_PROOF_MAX_AGE_S = 300.0
@@ -1551,12 +1577,14 @@ def load_trigger_defs(path: Path) -> tuple[dict[str, dict[str, object]], str]:
 
 
 def evaluate_radio_timeout(*, topic: str | None, payload: object) -> tuple[bool, str]:
-    """Qualify a device/remove response as a radio-timeout event.
+    """Qualify a permit_join response as a production radio-timeout event.
 
-    Only a timeout-family error on exactly the remove-response topic
-    qualifies. Healthy removals, unrelated errors, wrong topics and
-    malformed payloads are non-qualifying, each with its own reason, so a
-    healthy mesh can never arm reset authorization through this trigger.
+    B07: only a status-error response on exactly the permit_join response
+    topic whose text carries BOTH the 'SRSP -' signature and the
+    'after 6000ms' timeout marker qualifies. Healthy responses, unrelated
+    errors, wrong topics and malformed payloads are non-qualifying, each
+    with its own reason, so a healthy mesh can never arm reset
+    authorization through this trigger.
     """
     if topic != RADIO_TIMEOUT_TOPIC:
         return False, f"topic-mismatch:{topic}"
@@ -1564,11 +1592,11 @@ def evaluate_radio_timeout(*, topic: str | None, payload: object) -> tuple[bool,
         return False, "malformed-payload"
     status = payload.get("status")
     if status == "ok":
-        return False, "healthy-removal"
+        return False, "healthy-response"
     if status != "error":
         return False, f"unexpected-status:{status}"
     error = str(payload.get("error", "")).lower()
-    if any(marker in error for marker in TIMEOUT_MARKERS):
+    if all(marker in error for marker in TIMEOUT_ERROR_MARKERS):
         return True, "timeout-error"
     return False, "non-timeout-error"
 
@@ -1838,11 +1866,18 @@ def capture(
             os.replace(tmp, final)
             Store.fsync_dir(store.incidents)
 
+            # B07: non-qualifying evidence is preserved (bundle and
+            # manifest are committed) without consuming the incident
+            # latch: "observed" never blocks a later genuine trigger.
             latch_value = {
                 "schema": 1,
                 "incident_id": incident_id,
                 "bundle": str(final),
-                "status": "captured",
+                "status": (
+                    "captured"
+                    if verdict.get("qualifying") is True
+                    else "observed"
+                ),
                 "captured_utc": iso(),
                 "reset_used": False,
                 "trigger_reason": trigger,

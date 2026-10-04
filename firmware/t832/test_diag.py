@@ -1430,30 +1430,43 @@ class TriggerEvaluatorTests(unittest.TestCase):
         self.assertTrue(str(verdict["reason"]).startswith("unknown-trigger:"))
 
     def test_radio_timeout_family(self) -> None:
+        # B07: the production permit_join contract — both markers required.
         topic = incident.RADIO_TIMEOUT_TOPIC
+        self.assertEqual(topic, "zigbee2mqtt/bridge/response/permit_join")
         ok, reason = incident.evaluate_radio_timeout(
             topic=topic, payload={"status": "ok"})
         self.assertFalse(ok)
-        self.assertEqual(reason, "healthy-removal")
+        self.assertEqual(reason, "healthy-response")
         for error in (
-            "Failed to remove device: SRSP timeout",
-            "request timed out after 10000ms",
-            "TIMEOUT waiting for response",
+            "Failed to set permit join: SRSP - AF_DataRequest after 6000ms",
+            "srsp - zbPermitJoiningRequest failed; after 6000ms no response",
+            "ERROR SRSP - TIMEOUT after 6000ms waiting for response",
         ):
             ok, reason = incident.evaluate_radio_timeout(
                 topic=topic, payload={"status": "error", "error": error})
             self.assertTrue(ok, error)
             self.assertEqual(reason, "timeout-error")
-        ok, reason = incident.evaluate_radio_timeout(
-            topic=topic, payload={"status": "error", "error": "device not found"})
-        self.assertFalse(ok)
-        self.assertEqual(reason, "non-timeout-error")
+        for error in (
+            "Failed to remove device: SRSP timeout",
+            "request timed out after 10000ms",
+            "device not found",
+            "SRSP - acknowledged but no timeout marker",
+            "after 6000ms with no signature",
+        ):
+            ok, reason = incident.evaluate_radio_timeout(
+                topic=topic, payload={"status": "error", "error": error})
+            self.assertFalse(ok, error)
+            self.assertEqual(reason, "non-timeout-error")
         ok, reason = incident.evaluate_radio_timeout(topic=topic, payload="{oops")
         self.assertFalse(ok)
         self.assertEqual(reason, "malformed-payload")
         ok, reason = incident.evaluate_radio_timeout(
-            topic="zigbee2mqtt/bridge/response/permit_join",
-            payload={"status": "ok", "transaction": "x"},
+            topic=topic, payload={"status": "weird"})
+        self.assertFalse(ok)
+        self.assertTrue(reason.startswith("unexpected-status:"))
+        ok, reason = incident.evaluate_radio_timeout(
+            topic="zigbee2mqtt/bridge/response/device/remove",
+            payload={"status": "error", "error": "SRSP - x after 6000ms"},
         )
         self.assertFalse(ok)
         self.assertTrue(reason.startswith("topic-mismatch:"))
@@ -1482,11 +1495,13 @@ class TriggerEvaluatorTests(unittest.TestCase):
             )
             self.assertFalse(manifest["trigger_qualification"]["qualifying"])
             self.assertEqual(
-                manifest["trigger_qualification"]["reason"], "healthy-removal")
+                manifest["trigger_qualification"]["reason"], "healthy-response")
             with self.assertRaises(RuntimeError):
                 incident.authorize_reset(store)
+            # B07: preserved as observed evidence, never as a blocking latch.
             latch = store.load(store.latch, {})
-            self.assertEqual(latch["status"], "captured")
+            self.assertEqual(latch["status"], "observed")
+            self.assertFalse(latch["trigger_qualifying"])
 
     def test_load_trigger_defs_pins_source_sha(self) -> None:
         here = Path(__file__).resolve().parent
@@ -2068,6 +2083,166 @@ class R3M2ContinuityTests(unittest.TestCase):
         self.assertEqual(amb["continuity_kind"], "ambiguous")
         self.assertFalse(amb["session_reset_detected"])
         self.assertEqual(amb["host_session"], first["host_session"])
+
+
+class R3M3TriggerTests(unittest.TestCase):
+    """B07: production trigger contract; non-qualifying input never blocks."""
+
+    def test_tool_uses_production_permit_join_topic(self) -> None:
+        self.assertEqual(
+            incident.RADIO_TIMEOUT_TOPIC,
+            "zigbee2mqtt/bridge/response/permit_join",
+        )
+
+    def test_production_corpus(self) -> None:
+        topic = incident.RADIO_TIMEOUT_TOPIC
+        for error in (
+            "Failed to set permit join: SRSP - AF_DataRequest after 6000ms",
+            "srsp - zbPermitJoiningRequest failed; after 6000ms no response",
+        ):
+            ok, reason = incident.evaluate_radio_timeout(
+                topic=topic, payload={"status": "error", "error": error})
+            self.assertTrue(ok, error)
+            self.assertEqual(reason, "timeout-error")
+        cases = [
+            ({"status": "ok"}, "healthy-response"),
+            ({"status": "ok", "transaction": "x"}, "healthy-response"),
+            ({"status": "error", "error": "device not found"},
+             "non-timeout-error"),
+            ({"status": "error", "error": "request timed out after 10000ms"},
+             "non-timeout-error"),
+            ({"status": "error", "error": "SRSP - ok, no timeout marker"},
+             "non-timeout-error"),
+            ({"status": "error", "error": "after 6000ms, no signature"},
+             "non-timeout-error"),
+            ("{oops", "malformed-payload"),
+            (None, "malformed-payload"),
+        ]
+        for payload, reason in cases:
+            ok, got = incident.evaluate_radio_timeout(
+                topic=topic, payload=payload)
+            self.assertFalse(ok, repr(payload))
+            self.assertEqual(got, reason, repr(payload))
+        # The retired device/remove markers qualify on no topic anymore.
+        for probe in (
+            "zigbee2mqtt/bridge/response/device/remove",
+            "zigbee2mqtt/bridge/response/other",
+        ):
+            ok, got = incident.evaluate_radio_timeout(
+                topic=probe,
+                payload={"status": "error",
+                         "error": "Failed to remove device: SRSP timeout"},
+            )
+            self.assertFalse(ok, probe)
+            self.assertTrue(got.startswith("topic-mismatch:"), probe)
+
+    def test_evaluate_trigger_uses_yaml_kind(self) -> None:
+        defs = {
+            "radio_timeout": {
+                "kind": "mqtt",
+                "topic": incident.RADIO_TIMEOUT_TOPIC,
+                "source_sha256": "x",
+            }
+        }
+        verdict = incident.evaluate_trigger(
+            "radio_timeout", defs, topic=incident.RADIO_TIMEOUT_TOPIC,
+            payload={"status": "error", "error": "SRSP - boom after 6000ms"},
+        )
+        self.assertTrue(verdict["qualifying"])
+        self.assertEqual(verdict["reason"], "timeout-error")
+        self.assertEqual(verdict["source"], "candidate-yaml")
+        self.assertEqual(
+            verdict["required_topic"], incident.RADIO_TIMEOUT_TOPIC
+        )
+        cold = incident.evaluate_trigger(
+            "radio_timeout", defs, topic="elsewhere",
+            payload={"status": "error", "error": "SRSP - boom after 6000ms"},
+        )
+        self.assertFalse(cold["qualifying"])
+
+    def test_nonqualifying_capture_leaves_observed_latch(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            captured = incident.capture(
+                store, "radio_timeout", sources=[str(log)],
+                config_fingerprint=None, initial_tail_bytes=1024,
+                retain_days=7, max_bytes=1 << 20, window_seconds=900,
+                deadline_seconds=30,
+                trigger_topic=incident.RADIO_TIMEOUT_TOPIC,
+                trigger_payload={"status": "ok"},
+            )
+            self.assertEqual(captured["status"], "observed")
+            bundle = Path(str(captured["bundle"]))
+            for name in ("manifest.json", "SHA256.json", "diag-15m.jsonl",
+                         "host-events-15m.jsonl",
+                         "unknown-time-supplement.jsonl"):
+                self.assertTrue((bundle / name).is_file(), name)
+            manifest = json.loads(
+                (bundle / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertFalse(manifest["trigger_qualification"]["qualifying"])
+            latch = store.load(store.latch, {})
+            self.assertEqual(latch["status"], "observed")
+            self.assertFalse(latch["trigger_qualifying"])
+
+    def test_genuine_outage_after_observed_captures_and_authorizes_once(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            params = dict(
+                sources=[str(log)], config_fingerprint=None,
+                initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
+                window_seconds=900, deadline_seconds=30,
+            )
+            first = incident.capture(
+                store, "radio_timeout", trigger_topic="elsewhere",
+                trigger_payload={"status": "ok"}, **params
+            )
+            self.assertEqual(first["status"], "observed")
+            second = incident.capture(store, "mesh_outage", **params)
+            self.assertEqual(second["status"], "captured")
+            self.assertNotEqual(
+                second["incident_id"], first["incident_id"]
+            )
+            authorized = incident.authorize_reset(store)
+            self.assertEqual(authorized["status"], "reset_authorized")
+            self.assertTrue(authorized["reset_used"])
+            with self.assertRaises(RuntimeError):
+                incident.authorize_reset(store)
+
+    def test_observed_bundle_preserves_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            captured = incident.capture(
+                store, "radio_timeout", sources=[str(log)],
+                config_fingerprint=None, initial_tail_bytes=1024,
+                retain_days=7, max_bytes=1 << 20, window_seconds=900,
+                deadline_seconds=30,
+                trigger_topic=incident.RADIO_TIMEOUT_TOPIC,
+                trigger_payload="{oops",
+            )
+            bundle = Path(str(captured["bundle"]))
+            recorded = json.loads(
+                (bundle / "SHA256.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                set(recorded), set(incident.COMMITTED_BUNDLE_FILES)
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn(
+                "reset-requires-captured-incident", str(ctx.exception)
+            )
 
 
 class R3M2RetentionTests(unittest.TestCase):
