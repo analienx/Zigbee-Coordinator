@@ -2,6 +2,9 @@
 bounded interpreter over the real YAML, shell fragments, and CLI.
 
 Contract (pinned against HA core master, read-only):
+- automation service data renders with parse_result=True (a template
+  that renders to a JSON container comes back native for the shell
+  fragment's is-mapping test; helpers/service.py render_complex);
 - shell_command with templates renders args with parse_result=False and
   runs shlex-split with shell=False; template-free fragments run in a
   shell (homeassistant/components/shell_command/__init__.py,
@@ -20,6 +23,7 @@ functions, and unparseable durations fail loudly. No live HA, no radio.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -34,6 +38,7 @@ from pathlib import Path
 import yaml
 from jinja2 import ChainableUndefined
 from jinja2.sandbox import SandboxedEnvironment
+from jinja2.utils import htmlsafe_json_dumps
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -51,6 +56,26 @@ class Halt(Exception):
 
 class HaViolation(AssertionError):
     """The automation used a construct the interpreter does not implement."""
+
+
+def parse_service_value(value: object) -> object:
+    """Mirror HA service-data parse_result for the shell_command handoff.
+
+    Automation service data renders through render_complex with
+    parse_result=True, so a template that renders to a JSON container
+    comes back native and the shell fragment's `is mapping` branch
+    re-serializes it with tojson; anything else passes through as
+    rendered. Scoped to the shell_command staging path: the
+    mqtt.publish path below must keep its JSON-string payload (the ZDO
+    hook and Z2M both json.loads it), matching observed production
+    behavior.
+    """
+    if isinstance(value, str):
+        try:
+            return ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return value
+    return value
 
 
 def parse_duration(value: object) -> float:
@@ -88,7 +113,10 @@ class Ha:
         # instead of raising, while unknown functions, unknown filters,
         # and failed parses still raise loudly via render()'s guard.
         self.env = SandboxedEnvironment(undefined=ChainableUndefined)
-        self.env.filters["tojson"] = lambda value: json.dumps(value)
+        # Pinned: the Jinja2 builtin tojson is htmlsafe_json_dumps (no HA
+        # override); plain json.dumps would pass ' through raw and break
+        # the single-quoted shell argv below on adversarial payloads.
+        self.env.filters["tojson"] = lambda value: htmlsafe_json_dumps(value)
         self.env.filters["from_json"] = lambda value: json.loads(value)
         raw = BARRIER.read_text(encoding="utf-8")
         automations = yaml.safe_load(raw.split("```")[0])
@@ -286,7 +314,7 @@ class Ha:
         raw_args = self.commands[name]
         staged = {}
         for key, value in data.items():
-            staged[key] = self.render(value)
+            staged[key] = parse_service_value(self.render(value))
         if "{{" not in raw_args:
             proc = self.run_template_free(raw_args)
         else:
@@ -793,6 +821,32 @@ class BarrierAutomationTests(unittest.TestCase):
         self.assertNotIn("failure_reason", latch)
         self.assertNotIn("failure_phase", latch)
 
+    def test_adversarial_payload_round_trips_shell_boundary(self) -> None:
+        # S10b/B13 (M4 review): a quote-carrying production error must
+        # cross the real service boundary intact. Service-data
+        # parse_result restores the mapping so the shell fragment's
+        # `is mapping` branch re-serializes it, and htmlsafe tojson keeps
+        # the apostrophe out of the raw argv: without both, shlex splits
+        # at the quote and capture fails before any RTS.
+        payload = json.dumps(
+            {
+                "status": "error",
+                "error": "O'Brien: SRSP - AF - dataRequest after 6000ms",
+                "transaction": "prod-2",
+            }
+        )
+        latch = self.run_to_recovery(
+            lambda: self.ha.fire_mqtt("radio_timeout", ZDO_RESP, payload)
+        )
+        self.assertEqual(self.rts_invocations(), 1)
+        capture = self.require_capture()
+        self.assertTrue(
+            capture.get("trigger_qualifying"),
+            capture.get("trigger_qualification_reason"),
+        )
+        self.assertNotIn("failure_reason", latch)
+        self.assertNotIn("failure_phase", latch)
+
     # -- entry qualification -------------------------------------------------------
     def test_wrong_topic_never_runs(self) -> None:
         # S7: a timeout-shaped payload on another response topic is no-match;
@@ -958,7 +1012,14 @@ class StabilitySchedulerTests(BarrierAutomationTests):
 
     def test_idle_tick_without_incident_is_noop(self) -> None:
         # No latch exists: the status gate halts the tick before any write.
+        # The response pin is structural: t832_status (read-only) is the
+        # only command that may run, so deleting the gate fails here when
+        # observe records its response before halting on rc.
         self.assertEqual(self.stab.fire_time_pattern(), "ran")
+        self.assertEqual(
+            sorted(k for k in self.stab.vars if k.startswith("t832_")),
+            ["t832_status"],
+        )
         self.assertFalse((self.ha.state / "state" / "incident-latch.json").exists())
 
     def test_boot_comparator_rejects_foreign_boot(self) -> None:
