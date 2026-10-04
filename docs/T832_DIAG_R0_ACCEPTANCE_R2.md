@@ -111,14 +111,24 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   once; huge lines/backlogs/lock contention within explicit memory/time
   allowance; delayed/blocked capture exits within positive deadline + tolerance,
   never authorizes reset, leaves resumable state. Hosted subprocess tests.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (budget rewind in _collect_locked, bounded
+  LockFile with LockError timeout, MAX_TEXT_MATCHES_PER_LINE)
+- Fixtures: budget-rewind-recovers, lock-timeout-fails-loudly,
+  collect-budget-marks-partial, barrier chain tests (real CLI subprocesses)
+- Final SHA / run / jobs / results: pending (M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A09 / S09 — exact partial-line bytes across polls
 
 - Required: three polls before newline, multiple partials, split UTF-8, rotation
   with partial; byte-for-byte raw line, correct offsets, one host event/record,
   no spurious decode errors through both decoder representations.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (byte-exact read_increment re-read, bounded
+  oversized-line drain with notes, no cursor prepend)
+- Fixtures: split-utf8-byte-exact, oversized-skipped-with-note,
+  partial-line-buffered-durably, rotation-and-truncation-reset
+- Final SHA / run / jobs / results: pending (M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A10 / S10 — production-faithful triggers, no healthy reset
 
@@ -126,7 +136,13 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   ordinary permit_join success, unrelated error, malformed payload, qualifying
   SRSP timeout; only qualifying outage/timeout events reach reset authorization;
   pinned production source SHA recorded.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (load_trigger_defs/evaluate_trigger/
+  evaluate_radio_timeout, capture verdict, authorize_reset gate),
+  `deploy/t832_capture_barrier.yaml` + `t832_shell_commands.yaml` (evidence flags)
+- Fixtures: TriggerEvaluatorTests, chain healthy/malformed/wrong-topic/
+  unknown-trigger refuses, qualifying-timeout authorizes with source SHA pin
+- Final SHA / run / jobs / results: pending (M4+M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A11 / S11 — stabilization can close, honestly
 
@@ -134,7 +150,13 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   >=600 s window closes exactly once; gaps, stale sensors, absent real ZDO/
   traffic evidence, transient outages and host reboot cannot close;
   outage-derived Boolean alone never becomes ZDO proof.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (record_zdo_proof/zdo_proof_state, proof-gated
+  recovery_result, mono-anchored freshness), barrier YAML proof step +
+  transaction binding, StabilityTests/close-once
+- Fixtures: ZdoProofTests (missing/stale/mismatch/empty), chain
+  zdo-claim-without-proof fails, StabilityCloseOnceTests
+- Final SHA / run / jobs / results: pending (M4+M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A12 / S12 — correlated waits, persisted failures
 
@@ -142,7 +164,13 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   response, unrelated/stale response first, no response, failed stop/reset/start,
   tool/API failures; one RTS maximum; failure persisted; serial ownership
   prerequisite; only matching fresh success reaches stabilization.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (record_rts_used singleton), barrier YAML
+  RTS-gate + proof-gated recovery, chain shims (supervisor/RTS)
+- Fixtures: success chain (slow-stop order, single rts-invoked, RTS retry
+  refused), RtsSingletonTests, supervisor-failure halts, transaction-gate
+  structure tests
+- Final SHA / run / jobs / results: pending (M4+M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A13 / S13 — frame-level continuity, honest replay/BOOT handling
 
@@ -150,7 +178,12 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   not first record; delayed BOOT; sequence wrap; copied rotated logs; replay
   with lower uptime; actual reboot. Same-frame records share association;
   replay/delay never selects a false current boot.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (frame-aware Continuity.annotate, boot_in_frame),
+  `t832_diag_decode.py` (same per-frame rule)
+- Fixtures: CollectorExactnessTests (multirecord BOOT one-boot, clean-continuation
+  no-double-boot, clean-wrap gap-zero), ContinuityTests (wrap/replay/duplicate/boot)
+- Final SHA / run / jobs / results: pending (M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A14 / S14 — invalid latch/hash schemas fail closed
 
@@ -158,7 +191,12 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   inconsistent reset-used/state, empty/incomplete hash inventory and missing
   required payloads cannot grant reset or fresh incident; normal closed/cleared
   lifecycle still works; concurrent invocations serialized.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (LATCH_SCHEMA gate in update_latch,
+  verify_bundle empty/manifest-inventory gates)
+- Fixtures: empty-hash-inventory / uninventoried-manifest / unknown-schema
+  blocks, plus existing corrupt-latch/tampered-bundle/missing-bundle/concurrent
+- Final SHA / run / jobs / results: pending (M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A15 / S15 — bounded private store, unknown-time supplement
 
@@ -166,7 +204,12 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   bounded; active bundle intact; failures cannot silently delete the only active
   evidence; unknown/naive timestamps preserve bounded raw rows separately with
   honest time provenance.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (rotate returns audited retention notes,
+  latched-bundle exemption, host-events cap)
+- Fixtures: repeated-collects-bounded-and-audited, latched-bundle-survives,
+  retention-deletions-audited, existing rotation/unknown-time tests
+- Final SHA / run / jobs / results: pending (M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A16 / S16 — observed vs declared build identity
 
@@ -174,7 +217,12 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   file hash, candidate-only role and observed different build fail binding or
   yield explicit mismatch/unavailable; boot/incident identity truthful across
   firmware changes.
-- Sources / fixtures / evidence: pending.
+- Sources: `t832_incident.py` (bound_firmware re-hash, deployed-only roles,
+  firmware-build-mismatch notes, bind --build-id)
+- Fixtures: bind-gates-capture, candidate-role-never-gates, swapped-artifact,
+  observed-build-mismatch-noted, matching-build-silent
+- Final SHA / run / jobs / results: pending (M4b push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## Sealed final evidence (pending)
 
