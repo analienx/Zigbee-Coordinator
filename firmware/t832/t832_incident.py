@@ -939,6 +939,11 @@ def _collect_locked(
         notes.extend(file_notes)
         if any(n.startswith("read-budget-exhausted:") for n in file_notes):
             partial = True
+            # The scan stopped because this file's share of the collect
+            # budget ran out: keep the collector-level note alongside the
+            # read-level one so budget exhaustion stays visible at both
+            # layers.
+            notes.append(f"collect-budget-exceeded:{path}")
         cursors[key] = {
             **new_cursor,
             "size": stat.st_size,
@@ -2010,10 +2015,10 @@ def verify_bundle(store: Store, latch: dict[str, object]) -> Path:
         or latch.get("trigger_qualifying") is not True
     ):
         raise RuntimeError("reset-permit-qualification-mismatch")
-    if (
-        manifest.get("trigger_definitions_sha256") is None
-        or manifest.get("trigger_definitions_sha256")
-        != latch.get("trigger_definitions_sha256")
+    # Definitions identity must agree between the committed manifest and
+    # the latch. Both None (builtin rules, no definitions file) agrees.
+    if manifest.get("trigger_definitions_sha256") != latch.get(
+        "trigger_definitions_sha256"
     ):
         raise RuntimeError("reset-permit-defs-mismatch")
     return bundle

@@ -968,12 +968,11 @@ class IncidentTests(unittest.TestCase):
                 window_seconds=900, deadline_seconds=30,
                 require_firmware_binding=True,
             )
-            self.assertEqual(captured["firmware_sha256"], bound["sha256"])
-            self.assertEqual(captured["firmware_binding_role"], "deployed")
             manifest = json.loads(
                 (Path(captured["bundle"]) / "manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["firmware_sha256"], bound["sha256"])
+            self.assertEqual(manifest["firmware_binding_role"], "deployed")
 
     def test_candidate_role_never_gates_capture(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1708,11 +1707,35 @@ class R3M2ReadBoundsTests(unittest.TestCase):
             rows, _, notes = incident.read_increment(
                 log, {}, initial_tail_bytes=1 << 20
             )
+            # The whole flood is the partial first line inside the tail
+            # window: it is skipped boundedly (one capped chunk) and the
+            # trailing valid line is recovered exactly once.
             self.assertTrue(any(n.startswith("initial-tail:") for n in notes))
-            self.assertTrue(any(n.startswith("line-too-large:") for n in notes))
             self.assertEqual(
                 [r[1] for r in rows], [self.diag_line(9).rstrip("\n")]
             )
+
+    def test_oversized_line_in_window_is_drained_boundedly(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "z2m.log"
+            log.write_bytes(
+                self.diag_line(8).encode()
+                + b"X" * (3 * 1024 * 1024)
+                + b"\n"
+                + self.diag_line(9).encode()
+            )
+            rows, cursor, notes = incident.read_increment(
+                log, {}, initial_tail_bytes=8 * 1024 * 1024
+            )
+            self.assertTrue(any(n.startswith("line-too-large:") for n in notes))
+            self.assertEqual(
+                [r[1] for r in rows],
+                [self.diag_line(8).rstrip("\n"), self.diag_line(9).rstrip("\n")],
+            )
+            rows2, _, _ = incident.read_increment(
+                log, cursor, initial_tail_bytes=8 * 1024 * 1024
+            )
+            self.assertEqual(rows2, [])
 
     def test_exact_cap_line_consumes_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2198,10 +2221,14 @@ class R3M2BindingTests(unittest.TestCase):
         params: dict = {
             "role": "deployed",
             "variant": "T832-DIAG-R0",
-            "manifest": stage_binding(root, artifact),
             "build_id": 8320001,
         }
         params.update(kw)
+        # Stage the default manifest only when the caller did not supply
+        # one: staging writes root/build-manifest.json, so pre-staging
+        # would clobber a caller-staged manifest at the same path.
+        if "manifest" not in params:
+            params["manifest"] = stage_binding(root, artifact)
         return incident.bind_firmware(store, artifact, **params)
 
     def diag_log(self, root: Path) -> Path:
