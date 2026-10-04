@@ -86,11 +86,11 @@ class Ha:
             a for a in automations if a.get("id") == "zigbee2mqtt_t832_capture_barrier"
         )
         self.commands = {
-            name: frag["command"]
+            name: frag if isinstance(frag, str) else frag["command"]
             for name, frag in yaml.safe_load(
                 SHELL_COMMANDS.read_text(encoding="utf-8")
             ).items()
-            if isinstance(frag, dict) and "command" in frag
+            if isinstance(frag, str) or (isinstance(frag, dict) and "command" in frag)
         }
         self.clock = 0.0
         self.bus_mark = 0

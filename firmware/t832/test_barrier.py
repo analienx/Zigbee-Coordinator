@@ -41,6 +41,11 @@ COND_RE = re.compile(
 )
 
 
+DEFAULT_RE = re.compile(
+    r"\{\{\s*(\w+)\s*\|\s*default\('([^']*)'\)\s*\}\}"
+)
+
+
 def htmlsafe_json_dumps(obj: object) -> str:
     """Jinja2 tojson escaping (htmlsafe_json_dumps): < > & ' as \\uXXXX."""
     return (
@@ -70,8 +75,17 @@ def render(template: str, values: dict) -> str:
             raise AssertionError(f"unbound template variable {name!r}")
         return str(values[name])
 
+    def sub_default(match: re.Match) -> str:
+        # Faithful staging of HA's default('') filter: a missing variable
+        # renders the default, a provided one renders as-is.
+        name = match.group(1)
+        if name not in values:
+            return match.group(2)
+        return str(values[name])
+
     collapsed = " ".join(template.split())
     collapsed = COND_RE.sub(sub_cond, collapsed)
+    collapsed = DEFAULT_RE.sub(sub_default, collapsed)
     return VAR_RE.sub(sub, collapsed)
 
 
@@ -765,7 +779,7 @@ class R3M3ShellBoundaryTests(unittest.TestCase):
             s
             for s in barrier["actions"]
             if isinstance(s, dict)
-            and s.get("action") == "shell_command.t832_capture"
+            and s.get("action", s.get("service")) == "shell_command.t832_capture"
         )
         self.data_templates = dict(call["data"])
         commands = load_shell_commands()

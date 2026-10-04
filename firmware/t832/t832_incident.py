@@ -2192,8 +2192,10 @@ def recovery_result(
         effective_zdo = bool(zdo_ok and proof_ok)
         if not success or not normal_traffic or not effective_zdo:
             # B08: automation gates report the failing phase explicitly;
-            # direct CLI use keeps the derived reason and no phase.
-            if failure_reason is not None:
+            # direct CLI use keeps the derived reason and no phase. An
+            # empty string means absent, matching the shell template's
+            # default('') for unreported failures.
+            if failure_reason:
                 reason = failure_reason
             elif not success:
                 reason = "verification-failed"
