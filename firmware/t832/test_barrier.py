@@ -80,6 +80,8 @@ def load_shell_commands() -> dict:
 
 
 def flatten_actions(actions: list) -> list:
+    """Flatten nested action lists so design rules stay enforced inside
+    repeat/choose/if/parallel blocks, not just at the top level."""
     flat: list = []
     for step in actions:
         if not isinstance(step, dict):
@@ -90,7 +92,38 @@ def flatten_actions(actions: list) -> list:
             seq = repeat.get("sequence")
             if isinstance(seq, list):
                 flat.extend(flatten_actions(seq))
+        choose = step.get("choose")
+        if isinstance(choose, list):
+            for branch in choose:
+                if isinstance(branch, dict):
+                    seq = branch.get("sequence")
+                    if isinstance(seq, list):
+                        flat.extend(flatten_actions(seq))
+        default = step.get("default")
+        if isinstance(default, list):
+            flat.extend(flatten_actions(default))
+        for key in ("then", "else", "parallel"):
+            sub = step.get(key)
+            if isinstance(sub, list):
+                flat.extend(flatten_actions(sub))
     return flat
+
+
+def all_condition_texts(node: object) -> list[str]:
+    """Collect every template condition expression in an action tree."""
+    texts: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "conditions":
+                texts.append(json.dumps(value))
+            else:
+                texts.extend(all_condition_texts(value))
+        if node.get("condition") == "template" and "value_template" in node:
+            texts.append(str(node["value_template"]))
+    elif isinstance(node, list):
+        for item in node:
+            texts.extend(all_condition_texts(item))
+    return texts
 
 
 class BarrierStructureTests(unittest.TestCase):
@@ -126,9 +159,8 @@ class BarrierStructureTests(unittest.TestCase):
             responses = [s["response_variable"] for s in prior if "response_variable" in s]
             self.assertTrue(responses, f"no response_variable before {step.get('service')}")
             gate_ok = False
-            for cond in prior:
-                template = cond.get("condition") == "template" and cond.get("value_template", "")
-                if template and any(var in template for var in responses):
+            for cond_text in all_condition_texts(prior):
+                if any(var in cond_text for var in responses):
                     gate_ok = True
             self.assertTrue(gate_ok, f"no response condition before {step.get('service')}")
 
@@ -138,12 +170,22 @@ class BarrierStructureTests(unittest.TestCase):
         for banned in ("usbreset", "reboot", "echo ", "gpioset", "uhubctl"):
             self.assertNotIn(banned, text)
 
-    def test_waits_bounded(self) -> None:
+    def test_waits_bounded_and_timeouts_handled(self) -> None:
         for automation in self.automations:
-            for step in flatten_actions(automation["actions"]):
-                if "wait_for_trigger" in step:
+            flat = flatten_actions(automation["actions"])
+            cond_texts = all_condition_texts(automation["actions"])
+            for step in flat:
+                if "wait_for_trigger" in step or "wait_template" in step:
                     self.assertIn("timeout", step)
-                    self.assertFalse(step.get("continue_on_timeout", True))
+                    if step.get("continue_on_timeout", True):
+                        # A wait that survives its timeout must be consumed
+                        # by a choose on its completion flag: silent
+                        # timeouts that fall through are forbidden.
+                        var = step.get("response_variable", "wait")
+                        self.assertTrue(
+                            any(f"{var}.completed" in text for text in cond_texts),
+                            f"unhandled timeout: {var}",
+                        )
                 if "delay" in step:
                     delay = step["delay"]
                     total = delay.get("seconds", 0) + 60 * delay.get("minutes", 0)
@@ -154,7 +196,15 @@ class BarrierStructureTests(unittest.TestCase):
         self.assertLess(services.index("shell_command.t832_status"), services.index("shell_command.t832_observe"))
         self.assertLess(services.index("shell_command.t832_observe"), services.index("shell_command.t832_close_if_stable"))
 
-    def test_zdo_proof_recorded_after_permit_join_match(self) -> None:
+    def test_zdo_proof_uses_incident_transaction(self) -> None:
+        text = BARRIER.read_text(encoding="utf-8")
+        # B08: the permit_join request carries time 0 and a transaction
+        # unique to the captured incident; the response wait only completes
+        # on that exact transaction; proof and recovery consume the observed
+        # transaction, never a constant. No fixed transaction id remains.
+        self.assertIn('"time": 0', text)
+        self.assertIn("ha-t832-{{ (t832_capture", text)
+        self.assertNotIn("ha-t832-barrier", text)
         steps = flatten_actions(self.barrier["actions"])
         services = [s.get("service") for s in steps if isinstance(s, dict)]
         wait_at = next(
@@ -162,31 +212,51 @@ class BarrierStructureTests(unittest.TestCase):
             if isinstance(s, dict) and "wait_for_trigger" in s
             and any("permit_join" in str(t.get("topic", "")) for t in s["wait_for_trigger"])
         )
-        proof_at = services.index("shell_command.t832_zdo_proof", wait_at)
-        recover_at = services.index("shell_command.t832_recovery_result", proof_at)
-        # The permit_join transaction condition must demand the exact
-        # barrier id: a stale or foreign response can never mint proof.
-        txn_gates = [
-            s for s in steps
-            if isinstance(s, dict) and s.get("condition") == "template"
-            and "ha-t832-barrier" in s.get("value_template", "")
-        ]
-        self.assertTrue(txn_gates, "permit_join transaction gate missing")
+        wait = steps[wait_at]["wait_for_trigger"][0]
+        self.assertIn("value_template", wait)
+        self.assertIn("transaction", wait["value_template"])
+        proof_at = next(
+            i for i, s in enumerate(steps)
+            if s.get("service") == "shell_command.t832_zdo_proof" and i > wait_at
+        )
+        recover_at = next(
+            i for i, s in enumerate(steps)
+            if s.get("service") == "shell_command.t832_recovery_result"
+            and i > proof_at
+            and s.get("data", {}).get("success") is True
+        )
         proof_data = steps[proof_at].get("data", {})
         self.assertIn("wait.trigger.payload_json.transaction", str(proof_data.get("transaction", "")))
         recover_data = steps[recover_at].get("data", {})
         self.assertIn("wait.trigger.payload_json.transaction", str(recover_data.get("zdo_transaction", "")))
 
+    def test_mqtt_trigger_filters_at_fire_time(self) -> None:
+        # B08: unrelated responses never fire the automation: the mqtt
+        # trigger carries the production value_template/payload filter.
+        mqtt = [
+            t for t in self.barrier["triggers"] if t.get("trigger") == "mqtt"
+        ]
+        self.assertEqual(len(mqtt), 1)
+        self.assertIn("value_template", mqtt[0])
+        self.assertIn("SRSP -", mqtt[0]["value_template"])
+        self.assertIn("payload", mqtt[0])
+
     def test_rts_singleton_recorded_after_reset(self) -> None:
         steps = flatten_actions(self.barrier["actions"])
         services = [s.get("service") for s in steps if isinstance(s, dict)]
-        rts_at = services.index("shell_command.mr4u_p10_rts_reset")
-        marked_at = services.index("shell_command.t832_rts_used", rts_at + 1)
         # Exactly one RTS step exists: retries have nothing else to call.
         self.assertEqual(services.count("shell_command.mr4u_p10_rts_reset"), 1)
-        gate = steps[marked_at + 1]
-        self.assertEqual(gate.get("condition"), "template")
-        self.assertIn("t832_rts_marked", gate.get("value_template", ""))
+        marked = next(
+            i for i, s in enumerate(steps)
+            if s.get("service") == "shell_command.t832_rts_used"
+        )
+        # The recording gate is a reported halt: success continues on the
+        # marked variable, failure records phase rts and stops the run.
+        gate = steps[marked + 1]
+        self.assertIn("choose", gate)
+        dump = json.dumps(gate)
+        self.assertIn("t832_rts_marked", dump)
+        self.assertIn('"failure_phase": "rts"', dump)
 
     def test_capture_fragment_passes_trigger_evidence(self) -> None:
         text = SHELL_COMMANDS.read_text(encoding="utf-8")

@@ -1439,7 +1439,6 @@ class TriggerEvaluatorTests(unittest.TestCase):
         self.assertEqual(reason, "healthy-response")
         for error in (
             "Failed to set permit join: SRSP - AF_DataRequest after 6000ms",
-            "srsp - zbPermitJoiningRequest failed; after 6000ms no response",
             "ERROR SRSP - TIMEOUT after 6000ms waiting for response",
         ):
             ok, reason = incident.evaluate_radio_timeout(
@@ -1452,6 +1451,8 @@ class TriggerEvaluatorTests(unittest.TestCase):
             "device not found",
             "SRSP - acknowledged but no timeout marker",
             "after 6000ms with no signature",
+            # Production parity: the match is case-sensitive.
+            "srsp - zbPermitJoiningRequest failed; after 6000ms no response",
         ):
             ok, reason = incident.evaluate_radio_timeout(
                 topic=topic, payload={"status": "error", "error": error})
@@ -2099,7 +2100,6 @@ class R3M3TriggerTests(unittest.TestCase):
         topic = incident.RADIO_TIMEOUT_TOPIC
         for error in (
             "Failed to set permit join: SRSP - AF_DataRequest after 6000ms",
-            "srsp - zbPermitJoiningRequest failed; after 6000ms no response",
         ):
             ok, reason = incident.evaluate_radio_timeout(
                 topic=topic, payload={"status": "error", "error": error})
@@ -2115,6 +2115,10 @@ class R3M3TriggerTests(unittest.TestCase):
             ({"status": "error", "error": "SRSP - ok, no timeout marker"},
              "non-timeout-error"),
             ({"status": "error", "error": "after 6000ms, no signature"},
+             "non-timeout-error"),
+            # Production parity: case-sensitive match.
+            ({"status": "error",
+              "error": "srsp - lowercase never qualifies after 6000ms"},
              "non-timeout-error"),
             ("{oops", "malformed-payload"),
             (None, "malformed-payload"),

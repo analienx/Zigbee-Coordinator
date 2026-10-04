@@ -1498,10 +1498,11 @@ CANDIDATE_TRIGGER_IDS = ("mesh_outage", "bridge_offline", "radio_timeout")
 RADIO_TIMEOUT_TOPIC = "zigbee2mqtt/bridge/response/permit_join"
 #: Production radio-timeout predicate (B07): a status-error response
 #: qualifies only when its text carries BOTH the 'SRSP -' signature and
-#: the 'after 6000ms' timeout marker (compared case-insensitively).
-#: Anything else on the topic (healthy responses, unrelated errors) is
-#: explicitly non-qualifying.
-TIMEOUT_ERROR_MARKERS = ("srsp -", "after 6000ms")
+#: the 'after 6000ms' timeout marker. Compared case-SENSITIVELY to mirror
+#: the production value_template verbatim ('SRSP -' in error). Anything
+#: else on the topic (healthy responses, unrelated errors) is explicitly
+#: non-qualifying.
+TIMEOUT_ERROR_MARKERS = ("SRSP -", "after 6000ms")
 #: A recorded ZDO proof is only fresh for this long (mono seconds). The
 #: monotonic anchor also fails closed across a host reboot (mono resets).
 ZDO_PROOF_MAX_AGE_S = 300.0
@@ -1595,7 +1596,7 @@ def evaluate_radio_timeout(*, topic: str | None, payload: object) -> tuple[bool,
         return False, "healthy-response"
     if status != "error":
         return False, f"unexpected-status:{status}"
-    error = str(payload.get("error", "")).lower()
+    error = str(payload.get("error", ""))
     if all(marker in error for marker in TIMEOUT_ERROR_MARKERS):
         return True, "timeout-error"
     return False, "non-timeout-error"
@@ -2179,6 +2180,8 @@ def zdo_proof_state(latch: object, zdo_transaction: str | None) -> tuple[bool, s
 def recovery_result(
     store: Store, *, success: bool, normal_traffic: bool, zdo_ok: bool,
     zdo_transaction: str | None = None,
+    failure_reason: str | None = None,
+    failure_phase: str | None = None,
 ) -> dict[str, object]:
     with store.locked():
         latch = store.load_strict(store.latch)
@@ -2188,23 +2191,32 @@ def recovery_result(
         proof_ok, proof_detail = zdo_proof_state(latch, zdo_transaction)
         effective_zdo = bool(zdo_ok and proof_ok)
         if not success or not normal_traffic or not effective_zdo:
-            if not success:
+            # B08: automation gates report the failing phase explicitly;
+            # direct CLI use keeps the derived reason and no phase.
+            if failure_reason is not None:
+                reason = failure_reason
+            elif not success:
                 reason = "verification-failed"
             elif not normal_traffic:
                 reason = "no-normal-traffic"
             else:
                 reason = "no-zdo-verification"
+            failed: dict[str, object] = {
+                "status": "failed",
+                "recovery_failed_utc": iso(),
+                "normal_traffic_observed": bool(normal_traffic),
+                "zdo_verified": effective_zdo,
+                "zdo_proof": proof_detail,
+                "failure_reason": reason,
+            }
+            # Empty CLI defaults ("") mean absent, matching the shell
+# template's default('') for unreported failures.
+            if failure_phase:
+                failed["failure_phase"] = failure_phase
             value = update_latch(
                 store,
                 {"reset_authorized", "recovering", "stabilizing"},
-                {
-                    "status": "failed",
-                    "recovery_failed_utc": iso(),
-                    "normal_traffic_observed": bool(normal_traffic),
-                    "zdo_verified": effective_zdo,
-                    "zdo_proof": proof_detail,
-                    "failure_reason": reason,
-                },
+                failed,
             )
             store.append_host_event("recovery_failed", incident_id=value.get("incident_id"))
             return value
@@ -2557,6 +2569,8 @@ def main() -> int:
     rr.add_argument("--normal-traffic", type=bool_arg, required=True)
     rr.add_argument("--zdo-ok", type=bool_arg, default=False)
     rr.add_argument("--zdo-transaction", default=None)
+    rr.add_argument("--failure-reason", default=None)
+    rr.add_argument("--failure-phase", default=None)
     obs = sub.add_parser("stability-observation")
     obs.add_argument("--bridge-up", type=bool_arg, required=True)
     obs.add_argument("--normal-traffic", type=bool_arg, required=True)
@@ -2637,6 +2651,8 @@ def main() -> int:
                 normal_traffic=args.normal_traffic,
                 zdo_ok=args.zdo_ok,
                 zdo_transaction=args.zdo_transaction,
+                failure_reason=args.failure_reason,
+                failure_phase=args.failure_phase,
             )
         elif args.command == "stability-observation":
             result = stability_observation(

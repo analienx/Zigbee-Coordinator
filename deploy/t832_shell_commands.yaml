@@ -44,6 +44,8 @@ t832_recovery_result: >-
   --normal-traffic "{{ normal_traffic }}"
   --zdo-ok "{{ zdo_ok }}"
   --zdo-transaction "{{ zdo_transaction }}"
+  --failure-reason "{{ failure_reason | default('') }}"
+  --failure-phase "{{ failure_phase | default('') }}"
 t832_observe: >-
   python3 /config/python_scripts/t832_incident.py
   --root /config/.private/t832-diag
