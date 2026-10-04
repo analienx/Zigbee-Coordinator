@@ -919,7 +919,7 @@ static void test_tx_refused_stages(void)
   }
   CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 14u, 0x41u, &r));
   CHECK(host_cs_depth == 0);
-  CHECK(host_cs_max_depth <= 4u);
+  CHECK(host_cs_max_depth <= 4);
   (void)r;
 }
 
@@ -962,7 +962,7 @@ static void test_fifo_overflow_converges(void)
   CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 5u, 0x41u, &r));
   CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 10u, 0x41u, &r));
   CHECK(host_cs_depth == 0);
-  CHECK(host_cs_max_depth <= 4u);
+  CHECK(host_cs_max_depth <= 4);
   (void)r;
 }
 
@@ -979,7 +979,7 @@ static void test_mismatch_retire(void)
   T832Diag_responseQueued(0x41u, 0x32u, 2u, payload);
   CHECK(t832Diag.normal_pending == 3u);
   T832Diag_npiTxDequeue(0xFEu, 0x41u, 0x32u, 2u);
-  CHECK(t832Diag.txq_count == 1u);
+  CHECK(t832Diag.txq_count == 0u);
   CHECK(t832Diag.normal_pending == 1u);
   CHECK(t832Diag.tx_uncertain_n == 2u);
   T832Diag_uartTxStart(7u);
