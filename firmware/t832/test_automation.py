@@ -701,6 +701,7 @@ class BarrierAutomationTests(unittest.TestCase):
         self.assertTrue(capture.get("ok"))
         self.assertTrue(capture.get("incident_id"))
         latch = self.latch()
+        zdo_resp = self.ha.vars.get("t832_zdo") or {}
         self.assertEqual(
             latch.get("status"),
             "stabilizing",
@@ -709,6 +710,9 @@ class BarrierAutomationTests(unittest.TestCase):
                 "failure_phase": latch.get("failure_phase"),
                 "zdo_proof": latch.get("zdo_proof"),
                 "recovered": self.ha.vars.get("t832_recovered"),
+                "wait_timed_out": self.ha.vars.get("wait") == {},
+                "zdo_rc": zdo_resp.get("returncode"),
+                "zdo_stderr": str(zdo_resp.get("stderr"))[:300],
             },
         )
         return latch
