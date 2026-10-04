@@ -1175,7 +1175,12 @@ static void test_fair_schedule_15min(void)
       CHECK(host_frame_len[scanned] <= 234u);
       exports++;
       gap = t - last_export_t;
-      if (scanned > 0u) CHECK(gap >= 5u);
+      /* The pre-loop baseline export has no poll timestamp: it is decoded
+       * at t=1 but exported at now~=0, so the first loop export's poll gap
+       * (5-1=4) is decode skew, not a schedule violation (the 5000 ms
+       * throttle itself guarantees the true 5 s delta). Measure from the
+       * second loop export on, where decode poll == export poll. */
+      if (scanned > 1u) CHECK(gap >= 5u);
       last_export_t = t;
       for (k = 0; k < (int)f.nrec; k++) {
         if (f.rec[k].kind == T832_DIAG_EV_HEALTH) {
@@ -1320,13 +1325,16 @@ static void test_af_correlation(void)
   T832Diag_afConfirm(0u, 9u, 0x44u);
   CHECK(t832Diag.af_unconfirmed_n == 0u);
   CHECK(t832Diag.af_confirmed_n == 1u);
-  /* Oldest recompute: remove A, age must track surviving B (30, not 80). */
+  /* Oldest recompute: remove A, age must track surviving B (30, not 80).
+   * The AF key is (SrcEp, TransID) = payload bytes 3 and 6, i.e. req[6]
+   * and req[9] (AF_DATA_REQUEST: DstAddr(2), DstEp, SrcEp, Cluster(2),
+   * TransID, ...); req[5] is DstEp and plays no part in correlation. */
   advance_ms(100u);
-  req[5] = 6u; req[9] = 0x34u;
+  req[6] = 6u; req[9] = 0x34u;
   T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
   queue_srps_ok_finish();
   advance_ms(50u);
-  req[5] = 7u; req[9] = 0x35u;
+  req[6] = 7u; req[9] = 0x35u;
   T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
   queue_srps_ok_finish();
   advance_ms(30u);
@@ -1358,7 +1366,8 @@ static void test_af_correlation(void)
    * is now an orphan, while the post-wrap entries still correlate. */
   T832Diag_afConfirm(0u, 7u, 0x35u);
   CHECK(t832Diag.af_outstanding == 8u);
-  T832Diag_afConfirm(0u, 0x50u, 0x60u);
+  /* Correlate by the true key (SrcEp 7, TransID 0x60): req[5] is DstEp. */
+  T832Diag_afConfirm(0u, 7u, 0x60u);
   CHECK(t832Diag.af_outstanding == 7u);
   drain_all();
   CHECK(find_kind_ab(T832_DIAG_EV_AF_REJECT, 5u, 0x33u, &r));
