@@ -103,6 +103,10 @@ typedef struct {
   uint32_t tx_sync_n;
   uint32_t tx_normal_n;
   uint32_t tx_unsol_n;
+  uint32_t tx_orphan_n;
+  uint32_t tx_uncertain_n;
+  uint32_t tx_overflow_n;
+  uint32_t tx_untracked_n;
   uint32_t af_confirmed_n;
   uint32_t af_rejected_n;
   uint32_t export_lost;
@@ -126,6 +130,8 @@ typedef struct {
   uint16_t af_outstanding_max;
   uint16_t af_gen;
   uint16_t queue_gen;
+  uint16_t sync_gen;
+  uint16_t sync_seq;
   uint16_t txq_head;
   uint16_t txq_count;
   uint16_t mt_last_events;
@@ -135,6 +141,7 @@ typedef struct {
   uint8_t last_startup_stage;
   uint8_t sync_outstanding;
   uint8_t response_queued;
+  uint8_t diag_untracked;
   uint8_t diag_pending;
   uint8_t staged_count;
   uint8_t build_failed;
@@ -305,6 +312,13 @@ void T832Diag_commandRx(uint8_t cmd0, uint8_t cmd1)
     if (t832Diag.sync_outstanding) {
       T832Diag_record(T832_DIAG_EV_SYNC_ABANDON, 1u, cmd0, cmd1);
     }
+    /* A newer SREQ takes over suppression with a fresh generation. Only the
+     * SRSP stamped with this generation may clear it (see responseQueued /
+     * uartTxFinished); an older SRSP that finishes late is reported stale
+     * and leaves suppression set. */
+    if (t832Diag.sync_seq != 0xFFFFu) t832Diag.sync_seq++;
+    else t832Diag.sync_seq = 1u;
+    t832Diag.sync_gen = t832Diag.sync_seq;
     t832Diag.sync_outstanding = 1u;
     t832Diag.response_queued = 0u;
   }
@@ -347,6 +361,7 @@ static uint8_t T832Diag_afParse(const uint8_t *pl, uint8_t len, uint8_t cmd1,
 
 static void T832Diag_afInsert(uint8_t srcEp, uint8_t transId, uint8_t origin)
 {
+  uint32_t key = OsalPort_enterCS();
   uint8_t i;
   uint8_t free = T832_DIAG_AF_DEPTH;
   uint8_t oldest = 0u;
@@ -381,10 +396,12 @@ static void T832Diag_afInsert(uint8_t srcEp, uint8_t transId, uint8_t origin)
   if (t832Diag.af_outstanding > t832Diag.af_outstanding_max) {
     t832Diag.af_outstanding_max = t832Diag.af_outstanding;
   }
+  OsalPort_leaveCS(key);
 }
 
 static void T832Diag_afRemove(uint8_t idx)
 {
+  uint32_t key = OsalPort_enterCS();
   t832Diag.af[idx].used = 0u;
   if (t832Diag.af_outstanding) {
     t832Diag.af_outstanding--;
@@ -392,6 +409,7 @@ static void T832Diag_afRemove(uint8_t idx)
   if (!t832Diag.af_outstanding) {
     t832Diag.af_oldest_ms = 0u;
   }
+  OsalPort_leaveCS(key);
 }
 
 void T832Diag_afDispatch(uint8_t cmd0, uint8_t cmd1, const uint8_t *frame, uint8_t frameLen)
@@ -471,26 +489,38 @@ static uint8_t T832Diag_isDiagFrame(uint8_t cmdType, uint8_t cmdId)
                    (cmdId == MT_DEBUG_MSG));
 }
 
-static void T832Diag_txPush(uint8_t cls, uint8_t cmd0, uint8_t cmd1, uint8_t len)
+/* Ownership push. Returns 1 when the descriptor was stored, 0 when the
+ * 8-slot shadow FIFO is full. A refused frame stays in the real NPI queue
+ * (which this recorder never alters); its later wire completion arrives
+ * without a descriptor and is counted explicitly untracked. The oldest
+ * tracked descriptor is never evicted, so pending always equals the number
+ * of stored descriptors and no ghost count can accumulate. */
+static uint8_t T832Diag_txPush(uint8_t cls, uint8_t cmd0, uint8_t cmd1, uint8_t len)
 {
+  uint32_t key = OsalPort_enterCS();
   uint16_t slot;
+  uint8_t stored;
   if (t832Diag.txq_count >= T832_DIAG_TXQ_DEPTH) {
+    OsalPort_leaveCS(key);
+    if (t832Diag.tx_overflow_n != 0xFFFFFFFFu) t832Diag.tx_overflow_n++;
     T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 5u, cmd0, cmd1);
-    slot = t832Diag.txq_head;
-    t832Diag.txq_head = (uint16_t)((t832Diag.txq_head + 1u) % T832_DIAG_TXQ_DEPTH);
-  } else {
-    slot = (uint16_t)((t832Diag.txq_head + t832Diag.txq_count) % T832_DIAG_TXQ_DEPTH);
-    t832Diag.txq_count++;
+    return 0u;
   }
+  slot = (uint16_t)((t832Diag.txq_head + t832Diag.txq_count) % T832_DIAG_TXQ_DEPTH);
+  t832Diag.txq_count++;
   t832Diag.txq[slot].cls = cls;
   t832Diag.txq[slot].cmd0 = cmd0;
   t832Diag.txq[slot].cmd1 = cmd1;
   t832Diag.txq[slot].len = len;
   t832Diag.txq[slot].gen = ++t832Diag.queue_gen;
+  stored = 1u;
+  OsalPort_leaveCS(key);
+  return stored;
 }
 
 static void T832Diag_pendingInc(void)
 {
+  uint32_t key = OsalPort_enterCS();
   if (t832Diag.normal_pending == 0u) {
     t832Diag.oldest_pending_ms = (uint32_t)T832Diag_nowMs();
   }
@@ -498,6 +528,50 @@ static void T832Diag_pendingInc(void)
   if (t832Diag.normal_pending > t832Diag.normal_pending_max) {
     t832Diag.normal_pending_max = t832Diag.normal_pending;
   }
+  OsalPort_leaveCS(key);
+}
+
+/* Release one owned descriptor without inventing delivery. Returns 1 when a
+ * matching descriptor was removed (pending decremented, loss counted), 0
+ * when the frame was never tracked. */
+static uint8_t T832Diag_txRelease(uint8_t cmd0, uint8_t cmd1, uint8_t len,
+                                  uint8_t reason)
+{
+  uint32_t key = OsalPort_enterCS();
+  uint16_t i;
+  for (i = 0u; i < t832Diag.txq_count; i++) {
+    uint16_t slot = (uint16_t)((t832Diag.txq_head + i) % T832_DIAG_TXQ_DEPTH);
+    if (t832Diag.txq[slot].cmd0 == cmd0 &&
+        t832Diag.txq[slot].cmd1 == cmd1 &&
+        t832Diag.txq[slot].len == len) {
+      uint16_t j;
+      uint8_t cls = t832Diag.txq[slot].cls;
+      for (j = i; j + 1u < t832Diag.txq_count; j++) {
+        uint16_t dst = (uint16_t)((t832Diag.txq_head + j) % T832_DIAG_TXQ_DEPTH);
+        uint16_t src = (uint16_t)((t832Diag.txq_head + j + 1u) % T832_DIAG_TXQ_DEPTH);
+        t832Diag.txq[dst] = t832Diag.txq[src];
+      }
+      t832Diag.txq_count--;
+      if (cls == T832_DIAG_TXCLS_SYNC_SRSP ||
+          cls == T832_DIAG_TXCLS_NORMAL) {
+        if (t832Diag.normal_pending) {
+          t832Diag.normal_pending--;
+          if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
+        }
+      }
+      OsalPort_leaveCS(key);
+      if (reason == 1u) {
+        if (t832Diag.tx_orphan_n != 0xFFFFFFFFu) t832Diag.tx_orphan_n++;
+      } else {
+        if (t832Diag.tx_uncertain_n != 0xFFFFFFFFu) t832Diag.tx_uncertain_n++;
+      }
+      T832Diag_record(T832_DIAG_EV_TX_MISMATCH,
+                      reason == 1u ? 12u : 13u, cmd0, cmd1);
+      return 1u;
+    }
+  }
+  OsalPort_leaveCS(key);
+  return 0u;
 }
 
 void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
@@ -509,19 +583,31 @@ void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
       T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 6u, cmdType, cmdId);
     }
     t832Diag.diag_pending = 1u;
-    T832Diag_txPush(T832_DIAG_TXCLS_DIAG, cmdType, cmdId, dataLen);
+    if (!T832Diag_txPush(T832_DIAG_TXCLS_DIAG, cmdType, cmdId, dataLen)) {
+      /* Shadow full: the real frame still flies untracked. Flag it so its
+       * untracked wire completion can release diag_pending exactly once. */
+      t832Diag.diag_untracked = 1u;
+    }
     return;
   }
   if (isSrsp) {
     t832Diag.response_queued = 1u;
-    T832Diag_txPush(T832_DIAG_TXCLS_SYNC_SRSP, cmdType, cmdId, dataLen);
+    if (T832Diag_txPush(T832_DIAG_TXCLS_SYNC_SRSP, cmdType, cmdId, dataLen)) {
+      /* Stamp the current SREQ generation on this SRSP: only the completion
+       * carrying it may clear suppression (see uartTxFinished). */
+      uint32_t key = OsalPort_enterCS();
+      uint16_t slot = (uint16_t)((t832Diag.txq_head + t832Diag.txq_count - 1u) %
+                                 T832_DIAG_TXQ_DEPTH);
+      t832Diag.txq[slot].gen = t832Diag.sync_gen;
+      OsalPort_leaveCS(key);
+      T832Diag_pendingInc();
+    }
     if (((cmdType & MT_RPC_SUBSYSTEM_MASK) == MT_RPC_SYS_AF) &&
         (cmdId == MT_AF_DATA_REQUEST || cmdId == MT_AF_DATA_REQUEST_EXT ||
          cmdId == MT_AF_DATA_REQUEST_SRCRTG) &&
         dataLen >= 1u && payload != 0) {
       T832Diag_afSrspResult(payload[0]);
     }
-    T832Diag_pendingInc();
     T832Diag_record(T832_DIAG_EV_RESPONSE_QUEUED, cmdType, cmdId, dataLen);
     return;
   }
@@ -530,8 +616,9 @@ void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
       cmdId == MT_AF_DATA_CONFIRM && dataLen >= 3u && payload != 0) {
     T832Diag_afConfirm(payload[0], payload[1], payload[2]);
   }
-  T832Diag_txPush(T832_DIAG_TXCLS_NORMAL, cmdType, cmdId, dataLen);
-  T832Diag_pendingInc();
+  if (T832Diag_txPush(T832_DIAG_TXCLS_NORMAL, cmdType, cmdId, dataLen)) {
+    T832Diag_pendingInc();
+  }
 }
 
 void T832Diag_responseAllocFailed(uint8_t cmdType, uint8_t cmdId, uint16_t requested)
@@ -546,47 +633,107 @@ void T832Diag_responseAllocFailed(uint8_t cmdType, uint8_t cmdId, uint16_t reque
 
 void T832Diag_npiTxQueuedOther(uint8_t cmd0, uint8_t cmd1, uint8_t dataLen)
 {
-  T832Diag_txPush(T832_DIAG_TXCLS_NORMAL, cmd0, cmd1, dataLen);
-  T832Diag_pendingInc();
+  if (T832Diag_txPush(T832_DIAG_TXCLS_NORMAL, cmd0, cmd1, dataLen)) {
+    T832Diag_pendingInc();
+  }
+}
+
+/* Release a displaced in-flight descriptor without inventing delivery.
+ * Caller holds the diagnostic critical section. */
+static void T832Diag_inflightDisplacedLocked(void)
+{
+  uint8_t cls = t832Diag.inflight.cls;
+  if (cls == T832_DIAG_TXCLS_SYNC_SRSP || cls == T832_DIAG_TXCLS_NORMAL) {
+    if (t832Diag.normal_pending) {
+      t832Diag.normal_pending--;
+      if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
+    }
+    if (t832Diag.tx_uncertain_n != 0xFFFFFFFFu) t832Diag.tx_uncertain_n++;
+  } else if (cls == T832_DIAG_TXCLS_DIAG) {
+    t832Diag.diag_pending = 0u;
+    t832Diag.diag_untracked = 1u;
+    if (t832Diag.export_lost != 0xFFFFFFFFu) t832Diag.export_lost++;
+  }
+  t832Diag.inflight_valid = 0u;
 }
 
 /* Dequeue ownership: the framed UART buffer is [SOF,LEN,CMD0,CMD1,...].
- * The SOF check keeps the framed-layout assumption falsifiable at runtime. */
+ * The SOF check keeps the framed-layout assumption falsifiable at runtime.
+ * Matching rule: the head descriptor normally owns the wire frame. When it
+ * does not, older descriptors are retired one by one as unknown-outcome
+ * (their frames presumably completed unseen) until the matching descriptor
+ * becomes head; a frame with no descriptor anywhere is an untracked wire
+ * completion that touches no owned state. Counts always converge when the
+ * real queue drains: no ghost pending can survive. */
 void T832Diag_npiTxDequeue(uint8_t sof, uint8_t cmd0, uint8_t cmd1, uint8_t dataLen)
 {
+  uint32_t key = OsalPort_enterCS();
+  uint16_t i;
+  uint16_t match = T832_DIAG_TXQ_DEPTH;
   if (t832Diag.inflight_valid) {
     T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 9u,
                     t832Diag.inflight.cmd0, t832Diag.inflight.cmd1);
+    T832Diag_inflightDisplacedLocked();
   }
   if (sof != T832_DIAG_NPI_SOF) {
+    OsalPort_leaveCS(key);
     T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 1u, sof, cmd0);
+    key = OsalPort_enterCS();
     t832Diag.inflight.cls = T832_DIAG_TXCLS_UNSOLICITED;
     t832Diag.inflight.cmd0 = cmd0;
     t832Diag.inflight.cmd1 = cmd1;
     t832Diag.inflight.len = dataLen;
     t832Diag.inflight_valid = 1u;
-    if (t832Diag.tx_unsol_n != 0xFFFFFFFFu) t832Diag.tx_unsol_n++;
+    /* Counted once at physical completion, not here: a bad-SOF dequeue may
+     * never reach TX_FINISHED, and an untracked frame finishes exactly once. */
+    OsalPort_leaveCS(key);
     return;
   }
-  if (t832Diag.txq_count &&
-      t832Diag.txq[t832Diag.txq_head].cmd0 == cmd0 &&
-      t832Diag.txq[t832Diag.txq_head].cmd1 == cmd1 &&
-      t832Diag.txq[t832Diag.txq_head].len == dataLen) {
-    t832Diag.inflight = t832Diag.txq[t832Diag.txq_head];
+  for (i = 0u; i < t832Diag.txq_count; i++) {
+    uint16_t slot = (uint16_t)((t832Diag.txq_head + i) % T832_DIAG_TXQ_DEPTH);
+    if (t832Diag.txq[slot].cmd0 == cmd0 &&
+        t832Diag.txq[slot].cmd1 == cmd1 &&
+        t832Diag.txq[slot].len == dataLen) {
+      match = slot;
+      break;
+    }
+  }
+  if (match == T832_DIAG_TXQ_DEPTH) {
+    OsalPort_leaveCS(key);
+    if (t832Diag.tx_untracked_n != 0xFFFFFFFFu) t832Diag.tx_untracked_n++;
+    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 10u, cmd0, cmd1);
+    key = OsalPort_enterCS();
+    if (t832Diag.diag_untracked) {
+      t832Diag.diag_pending = 0u;
+      t832Diag.diag_untracked = 0u;
+    }
+    t832Diag.inflight.cls = T832_DIAG_TXCLS_UNSOLICITED;
+    t832Diag.inflight.cmd0 = cmd0;
+    t832Diag.inflight.cmd1 = cmd1;
+    t832Diag.inflight.len = dataLen;
+    t832Diag.inflight_valid = 1u;
+    OsalPort_leaveCS(key);
+    return;
+  }
+  while (t832Diag.txq_head != match) {
+    /* An older owned frame completed without its own dequeue observation:
+     * release it as unknown-outcome, never as delivered. */
     t832Diag.txq_head = (uint16_t)((t832Diag.txq_head + 1u) % T832_DIAG_TXQ_DEPTH);
     t832Diag.txq_count--;
-    t832Diag.inflight_valid = 1u;
-    return;
-  }
-  if (t832Diag.txq_count) {
+    if (t832Diag.normal_pending) {
+      t832Diag.normal_pending--;
+      if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
+    }
+    if (t832Diag.tx_uncertain_n != 0xFFFFFFFFu) t832Diag.tx_uncertain_n++;
+    OsalPort_leaveCS(key);
     T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 2u, cmd0, cmd1);
+    key = OsalPort_enterCS();
   }
-  t832Diag.inflight.cls = T832_DIAG_TXCLS_UNSOLICITED;
-  t832Diag.inflight.cmd0 = cmd0;
-  t832Diag.inflight.cmd1 = cmd1;
-  t832Diag.inflight.len = dataLen;
+  t832Diag.inflight = t832Diag.txq[t832Diag.txq_head];
+  t832Diag.txq_head = (uint16_t)((t832Diag.txq_head + 1u) % T832_DIAG_TXQ_DEPTH);
+  t832Diag.txq_count--;
   t832Diag.inflight_valid = 1u;
-  if (t832Diag.tx_unsol_n != 0xFFFFFFFFu) t832Diag.tx_unsol_n++;
+  OsalPort_leaveCS(key);
 }
 
 void T832Diag_npiTrap(uint16_t attempted, uint16_t available)
@@ -594,52 +741,54 @@ void T832Diag_npiTrap(uint16_t attempted, uint16_t available)
   T832Diag_record(T832_DIAG_EV_NPI_TRAP, attempted, available, t832Diag.rx_high_water);
 }
 
-/* Reconcile an NPI-side drop of a previously queued frame. Site 1 is the
- * NPI TX path (a queued frame never reaches the wire); site 2 is the NPI RX
- * path (the MT command never fired, so no pending state is involved). */
-static void T832Diag_npiDrop(uint8_t cmd0, uint8_t cmd1, uint8_t len)
-{
-  uint16_t i;
-  for (i = 0u; i < t832Diag.txq_count; i++) {
-    uint16_t slot = (uint16_t)((t832Diag.txq_head + i) % T832_DIAG_TXQ_DEPTH);
-    if (t832Diag.txq[slot].cmd0 == cmd0 &&
-        t832Diag.txq[slot].cmd1 == cmd1 &&
-        t832Diag.txq[slot].len == len) {
-      uint16_t j;
-      for (j = i; j + 1u < t832Diag.txq_count; j++) {
-        uint16_t dst = (uint16_t)((t832Diag.txq_head + j) % T832_DIAG_TXQ_DEPTH);
-        uint16_t src = (uint16_t)((t832Diag.txq_head + j + 1u) % T832_DIAG_TXQ_DEPTH);
-        t832Diag.txq[dst] = t832Diag.txq[src];
-      }
-      t832Diag.txq_count--;
-      return;
-    }
-  }
-}
-
+/* Allocation refusal at a patched SDK site. Site 1 is the NPI TX path
+ * (NPITask_sendToHost / NPITask_processStackMsg): a previously queued owned
+ * frame never reaches the wire, so exactly that entry is released. Site 2 is
+ * the NPI RX path (NPITask_sendBufToStack inbound allocation, ZStack RX
+ * allocation): the MT command never fired, so no TX ownership is involved
+ * and pending state is never touched. */
 void T832Diag_npiAllocFailed(uint8_t site, uint16_t requested,
                              uint8_t cmd0, uint8_t cmd1, uint8_t len)
 {
+  uint8_t owned;
   T832Diag_record(T832_DIAG_EV_NPI_ALLOC_FAIL, site, requested, 0u);
   if (site != 1u) return;
-  T832Diag_npiDrop(cmd0, cmd1, len);
   if (T832Diag_isDiagFrame(cmd0, cmd1)) {
     t832Diag.diag_pending = 0u;
-    t832Diag.export_lost++;
+    if (t832Diag.export_lost != 0xFFFFFFFFu) t832Diag.export_lost++;
     T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 1u, 2u, requested);
+    T832Diag_txRelease(cmd0, cmd1, len, 1u);
     return;
   }
   if (((cmd0 & MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SRSP)) {
     t832Diag.response_queued = 0u;
-    if (t832Diag.normal_pending) {
-      t832Diag.normal_pending--;
-      if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
-    }
+  }
+  owned = T832Diag_txRelease(cmd0, cmd1, len, 1u);
+  if (!owned) {
+    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 14u, cmd0, cmd1);
+  }
+}
+
+/* TX-path refusal with an explicit stage (see t832_diag.h). Behaves as a
+ * site-1 allocation failure: only the owned queued entry is reconciled. */
+void T832Diag_npiTxRefused(uint8_t stage, uint8_t cmd0, uint8_t cmd1,
+                           uint8_t len)
+{
+  uint8_t owned;
+  T832Diag_record(T832_DIAG_EV_NPI_ALLOC_FAIL, 1u, stage, len);
+  if (T832Diag_isDiagFrame(cmd0, cmd1)) {
+    t832Diag.diag_pending = 0u;
+    if (t832Diag.export_lost != 0xFFFFFFFFu) t832Diag.export_lost++;
+    T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 1u, 3u, stage);
+    T832Diag_txRelease(cmd0, cmd1, len, 1u);
     return;
   }
-  if (t832Diag.normal_pending) {
-    t832Diag.normal_pending--;
-    if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
+  if (((cmd0 & MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SRSP)) {
+    t832Diag.response_queued = 0u;
+  }
+  owned = T832Diag_txRelease(cmd0, cmd1, len, 1u);
+  if (!owned) {
+    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 14u, cmd0, cmd1);
   }
 }
 
@@ -671,12 +820,37 @@ void T832Diag_uartTxStart(uint16_t len)
 
 void T832Diag_uartWriteRejected(uint16_t len, int16_t status)
 {
+  uint32_t key = OsalPort_enterCS();
   t832Diag.transport_active = 0u;
+  if (t832Diag.inflight_valid) {
+    /* A rejected write transmits nothing: the in-flight ownership is
+     * released as refused, never completed, and the slot is closed so a
+     * later TX_FINISHED cannot double-count it. */
+    uint8_t cls = t832Diag.inflight.cls;
+    uint8_t c0 = t832Diag.inflight.cmd0;
+    uint8_t c1 = t832Diag.inflight.cmd1;
+    if (cls == T832_DIAG_TXCLS_SYNC_SRSP || cls == T832_DIAG_TXCLS_NORMAL) {
+      if (t832Diag.normal_pending) {
+        t832Diag.normal_pending--;
+        if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
+      }
+      if (t832Diag.tx_orphan_n != 0xFFFFFFFFu) t832Diag.tx_orphan_n++;
+    } else if (cls == T832_DIAG_TXCLS_DIAG) {
+      t832Diag.diag_pending = 0u;
+      if (t832Diag.export_lost != 0xFFFFFFFFu) t832Diag.export_lost++;
+    }
+    t832Diag.inflight_valid = 0u;
+    OsalPort_leaveCS(key);
+    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 11u, c0, c1);
+  } else {
+    OsalPort_leaveCS(key);
+  }
   T832Diag_record(T832_DIAG_EV_NPI_WRITE_REJECT, len, (uint16_t)status, 0u);
 }
 
 void T832Diag_uartTxFinished(uint16_t len)
 {
+  uint32_t key = OsalPort_enterCS();
   uint16_t age = (uint16_t)((uint32_t)T832Diag_nowMs() - t832Diag.tx_start_ms);
   t832Diag.transport_active = 0u;
   t832Diag.npi_work_ms = (uint32_t)T832Diag_nowMs();
@@ -684,6 +858,8 @@ void T832Diag_uartTxFinished(uint16_t len)
   if (t832Diag.tx_frames != 0xFFFFFFFFu) t832Diag.tx_frames++;
   if (age > t832Diag.tx_age_max) t832Diag.tx_age_max = age;
   if (!t832Diag.inflight_valid) {
+    OsalPort_leaveCS(key);
+    if (t832Diag.tx_untracked_n != 0xFFFFFFFFu) t832Diag.tx_untracked_n++;
     T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 7u, len, age);
     return;
   }
@@ -691,8 +867,18 @@ void T832Diag_uartTxFinished(uint16_t len)
     t832Diag.diag_pending = 0u;
     if (t832Diag.tx_diag_n != 0xFFFFFFFFu) t832Diag.tx_diag_n++;
   } else if (t832Diag.inflight.cls == T832_DIAG_TXCLS_SYNC_SRSP) {
-    t832Diag.sync_outstanding = 0u;
-    t832Diag.response_queued = 0u;
+    /* Only the SRSP stamped with the current SREQ generation clears
+     * suppression. A late older SRSP is reported stale and leaves a newer
+     * round-trip suppressed; its pending accounting still resolves. */
+    if (t832Diag.inflight.gen == t832Diag.sync_gen) {
+      t832Diag.sync_outstanding = 0u;
+      t832Diag.response_queued = 0u;
+    } else {
+      OsalPort_leaveCS(key);
+      T832Diag_record(T832_DIAG_EV_SYNC_ABANDON, 2u,
+                      t832Diag.inflight.cmd0, t832Diag.inflight.cmd1);
+      key = OsalPort_enterCS();
+    }
     if (t832Diag.tx_sync_n != 0xFFFFFFFFu) t832Diag.tx_sync_n++;
     if (t832Diag.normal_pending) {
       t832Diag.normal_pending--;
@@ -705,12 +891,15 @@ void T832Diag_uartTxFinished(uint16_t len)
       t832Diag.normal_pending--;
       if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
     } else {
+      OsalPort_leaveCS(key);
       T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 4u, len, age);
+      key = OsalPort_enterCS();
     }
   } else {
     if (t832Diag.tx_unsol_n != 0xFFFFFFFFu) t832Diag.tx_unsol_n++;
   }
   t832Diag.inflight_valid = 0u;
+  OsalPort_leaveCS(key);
   (void)len;
 }
 
@@ -801,15 +990,44 @@ static uint8_t T832Diag_peekAt(uint8_t skip_crit, uint8_t skip_rout,
   return sel;
 }
 
-static void T832Diag_popPeeked(uint8_t sel)
+/* Retire exactly the staged record by identity. If the ring has moved on
+ * (a producer overwrote or coalesced the staged entry while MT allocated),
+ * the staged copy is already stale: report the loss explicitly and retire
+ * nothing, so unexported newer occurrences are never discarded. */
+static void T832Diag_popPeeked(uint8_t sel, uint16_t seq)
 {
   uint32_t key = OsalPort_enterCS();
   if (sel == 1u) {
-    if (t832Diag.critical_count) t832Diag.critical_count--;
+    if (t832Diag.critical_count) {
+      uint16_t tail = (uint16_t)((t832Diag.critical_head +
+                                  T832_DIAG_CRITICAL_RECORDS -
+                                  t832Diag.critical_count) %
+                                 T832_DIAG_CRITICAL_RECORDS);
+      if (t832Diag.critical[tail].sequence == seq) {
+        t832Diag.critical_count--;
+        OsalPort_leaveCS(key);
+        return;
+      }
+    }
+    OsalPort_leaveCS(key);
+    T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 2u, sel, seq);
   } else if (sel == 2u) {
-    if (t832Diag.routine_count) t832Diag.routine_count--;
+    if (t832Diag.routine_count) {
+      uint16_t tail = (uint16_t)((t832Diag.routine_head +
+                                  T832_DIAG_ROUTINE_RECORDS -
+                                  t832Diag.routine_count) %
+                                 T832_DIAG_ROUTINE_RECORDS);
+      if (t832Diag.routine[tail].sequence == seq) {
+        t832Diag.routine_count--;
+        OsalPort_leaveCS(key);
+        return;
+      }
+    }
+    OsalPort_leaveCS(key);
+    T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 2u, sel, seq);
+  } else {
+    OsalPort_leaveCS(key);
   }
-  OsalPort_leaveCS(key);
 }
 
 static void T832Diag_put16(uint8_t **p, uint16_t v)
@@ -990,6 +1208,7 @@ void T832Diag_exportPoll(void)
   uint32_t now = (uint32_t)now64;
   T832DiagRecord batch[T832_DIAG_BATCH_MAX];
   uint8_t staged[T832_DIAG_BATCH_MAX];
+  uint16_t staged_seq[T832_DIAG_BATCH_MAX];
   uint8_t nbatch = 0u;
   uint8_t i;
   uint8_t healthDue = 0u;
@@ -1010,6 +1229,13 @@ void T832Diag_exportPoll(void)
 
   if (t832Diag.sync_outstanding || t832Diag.transport_active ||
       t832Diag.diag_pending || t832Diag.normal_pending) {
+    if (t832Diag.export_skipped != 0xFFFFu) t832Diag.export_skipped++;
+    return;
+  }
+
+  /* Keep one shadow slot free for our own frame: building while the
+   * ownership FIFO is full would force our frame to fly untracked. */
+  if (t832Diag.txq_count >= T832_DIAG_TXQ_DEPTH) {
     if (t832Diag.export_skipped != 0xFFFFu) t832Diag.export_skipped++;
     return;
   }
@@ -1064,6 +1290,7 @@ void T832Diag_exportPoll(void)
     sel = T832Diag_peekAt(skip_crit, skip_rout, &batch[nbatch]);
     if (!sel) break;
     staged[nbatch] = sel;
+    staged_seq[nbatch] = batch[nbatch].sequence;
     nbatch++;
   }
   if (!nbatch) return;
@@ -1111,7 +1338,7 @@ void T832Diag_exportPoll(void)
         T832Diag_record(T832_DIAG_EV_DIAG_LOSS, nbatch, 1u, outLen);
       } else {
         for (i = 0u; i < nbatch; i++) {
-          if (staged[i]) T832Diag_popPeeked(staged[i]);
+          if (staged[i]) T832Diag_popPeeked(staged[i], staged_seq[i]);
         }
       }
       t832Diag.staged_count = 0u;

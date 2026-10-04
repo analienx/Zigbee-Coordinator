@@ -327,10 +327,13 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     )
 
     # NPI task: the central RX-overflow trap, TX-queue dequeue ownership,
-    # per-wakeup task progress, and the TX-path allocation failure. The trap
-    # itself is preserved; only a fixed-write record precedes it. NPI_SREQRSP
-    # is not defined in the ZNP build, so no sync-queue/watchdog sites exist
-    # to patch (proven by linked-image audit; CI asserts their absence).
+    # per-wakeup task progress, RX-path allocation refusals, and the TX-path
+    # allocation/framing refusals in NPITask_sendToHost/NPITask_processStackMsg
+    # (S01: the old site-1 hook sat in NPITask_sendBufToStack, which allocates
+    # an inbound MT message and is RX, not TX). The trap itself is preserved;
+    # only fixed-write records precede it. NPI_SREQRSP is not defined in the
+    # ZNP build, so no sync-queue/watchdog sites exist to patch (proven by
+    # linked-image audit; CI asserts their absence).
     ntask = npi / "npi_task.c"
     include_after(ex, ntask, '#include "npi_client.h"\n', "t832_diag.h", "diag.npi_task.include")
     ex.replace(
@@ -387,12 +390,29 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );\n"
         "        }\n"
         "        else {\n"
-        "          T832Diag_npiAllocFailed(1u,\n"
+        "          T832Diag_npiAllocFailed(2u,\n"
         "              (uint16_t)(MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN]),\n"
         "              pReq[MT_RPC_POS_CMD0], pReq[MT_RPC_POS_CMD1],\n"
         "              pReq[MT_RPC_POS_LEN]);\n"
         "        }\n",
-        "diag.npi_task.tx_alloc_fail",
+        "diag.npi_task.rx_alloc_fail",
+    )
+    ex.replace(
+        ntask,
+        "    pOsalMsg = (mtOSALSerialData_t *)OsalPort_msgAllocate( sizeof ( mtOSALSerialData_t ) );\n"
+        "\n"
+        "    if (pOsalMsg)\n",
+        "    pOsalMsg = (mtOSALSerialData_t *)OsalPort_msgAllocate( sizeof ( mtOSALSerialData_t ) );\n"
+        "\n"
+        "    if (pOsalMsg == NULL) {\n"
+        "        T832Diag_npiAllocFailed(2u,\n"
+        "            (uint16_t)sizeof(mtOSALSerialData_t),\n"
+        "            pReq[MT_RPC_POS_CMD0], pReq[MT_RPC_POS_CMD1],\n"
+        "            pReq[MT_RPC_POS_LEN]);\n"
+        "    }\n"
+        "\n"
+        "    if (pOsalMsg)\n",
+        "diag.npi_task.rx_msg_alloc_fail",
     )
     ex.replace(
         ntask,
@@ -408,6 +428,9 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # handed up from the application and queues it for the UART. The anchor
     # is unique to that function (the other recPtr->npiMsg store uses
     # `if(pNPIMsg != NULL)` without spaces and without the recPtr check).
+    # S01: the real outgoing failures (framing refusal, queue-record refusal,
+    # unsupported type) are hooked with an else/default that only records;
+    # SDK allocation/free behavior is unchanged.
     ex.replace(
         ntask,
         "    if ( pNPIMsg != NULL && recPtr != NULL )\n"
@@ -420,6 +443,82 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "                                  pMsg[MT_RPC_POS_CMD1],\n"
         "                                  pMsg[MT_RPC_POS_LEN]);\n",
         "diag.npi_task.send_to_host",
+    )
+    ex.replace(
+        ntask,
+        "            default:\n"
+        "            {\n"
+        "                //error\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_leaveCS(key);\n",
+        "            default:\n"
+        "            {\n"
+        "                //error\n"
+        "                T832Diag_npiTxRefused(3u, pMsg[MT_RPC_POS_CMD0],\n"
+        "                                      pMsg[MT_RPC_POS_CMD1],\n"
+        "                                      pMsg[MT_RPC_POS_LEN]);\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        T832Diag_npiTxRefused((uint8_t)(pNPIMsg == NULL ? 1u : 2u),\n"
+        "                              pMsg[MT_RPC_POS_CMD0],\n"
+        "                              pMsg[MT_RPC_POS_CMD1],\n"
+        "                              pMsg[MT_RPC_POS_LEN]);\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_leaveCS(key);\n",
+        "diag.npi_task.send_to_host_refuse",
+    )
+    ex.replace(
+        ntask,
+        "                default:\n"
+        "                {\n"
+        "                    /* Fail - unsupported message type */\n"
+        "                    OsalPort_free(recPtr);\n",
+        "                default:\n"
+        "                {\n"
+        "                    /* Fail - unsupported message type */\n"
+        "                    T832Diag_npiTxRefused(6u, pMsg[MT_RPC_POS_CMD0],\n"
+        "                                          pMsg[MT_RPC_POS_CMD1],\n"
+        "                                          pMsg[MT_RPC_POS_LEN]);\n"
+        "                    OsalPort_free(recPtr);\n",
+        "diag.npi_task.stack_msg_unsupported",
+    )
+    ex.replace(
+        ntask,
+        "        else\n"
+        "        {\n"
+        "            /* Fail - couldn't get queue record */\n"
+        "          OsalPort_msgDeallocate(pNPIMsg->pBuf);\n"
+        "          OsalPort_free(pNPIMsg);\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+        "        else\n"
+        "        {\n"
+        "            /* Fail - couldn't get queue record */\n"
+        "          T832Diag_npiTxRefused(5u, pMsg[MT_RPC_POS_CMD0],\n"
+        "                                pMsg[MT_RPC_POS_CMD1],\n"
+        "                                pMsg[MT_RPC_POS_LEN]);\n"
+        "          OsalPort_msgDeallocate(pNPIMsg->pBuf);\n"
+        "          OsalPort_free(pNPIMsg);\n"
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        T832Diag_npiTxRefused(4u, pMsg[MT_RPC_POS_CMD0],\n"
+        "                              pMsg[MT_RPC_POS_CMD1],\n"
+        "                              pMsg[MT_RPC_POS_LEN]);\n"
+        "    }\n"
+        "}\n",
+        "diag.npi_task.stack_msg_refuse",
     )
 
     # UART: effective config, RX progress/overflow, write start/rejection and

@@ -977,3 +977,36 @@ jobs:
           assert all(r.get("type") != "t832_diag" for r in negrows), negrows
           print(f"INTEROP PASS: {len(diag)} records round-tripped, negatives rejected")
           PY
+  host-regressions:
+    name: Host regressions for ACCEPTANCE-R2 (fast lane)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+
+      - name: Run C recorder regressions on the real implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_diag_host_test.c \
+            -o /tmp/t832harness \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          /tmp/t832harness
+
+      - name: Run Python collector/decoder/barrier regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
+          python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
+          python3 -m unittest repo/firmware/t832/test_diag.py
+          python3 -m pip install --quiet pyyaml
+          python3 -m unittest repo/firmware/t832/test_barrier.py

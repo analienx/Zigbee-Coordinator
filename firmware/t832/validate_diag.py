@@ -75,6 +75,8 @@ def main() -> int:
     require("T832Diag_npiTrap" in patcher, "NPI trap hook missing")
     require("NPITL_writeTL" in patcher, "TX dequeue hook missing")
     require("NPITask_sendToHost" in patcher, "app-originated TX hook missing")
+    require("T832Diag_npiTxRefused" in patcher, "TX-path refusal hooks missing")
+    require("T832Diag_npiTxRefused" in runtime, "TX-path refusal instrumentation missing")
     require("T832Diag_afDispatch" in patcher, "AF dispatch hook missing")
     require("ZStackTaskProcessEvent" in patcher, "ZStack progress hook missing")
     require("T832Diag_networkState" in patcher, "existing-network resume-state hook missing")
@@ -112,7 +114,7 @@ def main() -> int:
         "T832Diag_commandDispatch", "T832Diag_afDispatch", "T832Diag_commandComplete",
         "T832Diag_responseQueued", "T832Diag_responseAllocFailed",
         "T832Diag_npiTxQueuedOther", "T832Diag_npiTxDequeue",
-        "T832Diag_npiTrap", "T832Diag_npiAllocFailed",
+        "T832Diag_npiTrap", "T832Diag_npiAllocFailed", "T832Diag_npiTxRefused",
         "T832Diag_uartConfigured", "T832Diag_uartRx", "T832Diag_uartRxOverflow",
         "T832Diag_uartTxStart", "T832Diag_uartWriteRejected",
         "T832Diag_uartTxFinished", "T832Diag_startup",

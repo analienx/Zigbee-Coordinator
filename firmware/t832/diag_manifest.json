@@ -44,7 +44,7 @@
     "transport_resource_maxima": true,
     "mt_event_mask_observations": true,
     "heap_free_largest": true,
-    "global_allocation_failure_sites": true,
+    "npi_path_refusal_hooks": true,
     "stack_watermarks": false,
     "task_ready_blocked_states": false,
     "af_accept_confirm_table": true,
@@ -70,7 +70,7 @@
     "aggregated_progress_counters",
     "mt_event_mask_observations",
     "heap_free_largest",
-    "global_allocation_failure_sites",
+    "npi_path_refusal_hooks",
     "af_accept_confirm_table",
     "af_outstanding_age",
     "nv_compaction_phase"

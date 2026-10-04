@@ -110,6 +110,14 @@ void T832Diag_npiTxDequeue(uint8_t sof, uint8_t cmd0, uint8_t cmd1, uint8_t data
 void T832Diag_npiTrap(uint16_t attempted, uint16_t available);
 void T832Diag_npiAllocFailed(uint8_t site, uint16_t requested,
                              uint8_t cmd0, uint8_t cmd1, uint8_t len);
+/* TX-path refusal inside NPITask_sendToHost / NPITask_processStackMsg.
+ * stage: 1 frame NULL (sendToHost), 2 queue-record NULL (sendToHost),
+ * 3 unsupported type (sendToHost), 4 frame NULL (processStackMsg),
+ * 5 queue-record NULL (processStackMsg), 6 unsupported type (processStackMsg).
+ * Site 1 of T832Diag_npiAllocFailed is the same TX path; site 2 is the
+ * RX path (NPITask_sendBufToStack, ZStack RX) and never touches TX state. */
+void T832Diag_npiTxRefused(uint8_t stage, uint8_t cmd0, uint8_t cmd1,
+                           uint8_t len);
 void T832Diag_uartConfigured(uint32_t baud, uint8_t flow);
 void T832Diag_uartRx(uint16_t size, uint16_t occupancy);
 void T832Diag_uartRxOverflow(uint16_t attempted, uint16_t occupancy);

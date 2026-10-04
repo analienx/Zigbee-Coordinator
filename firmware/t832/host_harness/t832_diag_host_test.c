@@ -266,6 +266,25 @@ static int find_kind(uint8_t kind, DecRec *out)
   return 0;
 }
 
+/* Find any record with the given kind and a/b fields across all frames. */
+static int find_kind_ab(uint8_t kind, uint16_t a, uint16_t b, DecRec *out)
+{
+  uint32_t i = host_frame_count;
+  DecFrame f;
+  int k;
+  while (i > 0u) {
+    i--;
+    if (decode_frame(i, &f) < 0) continue;
+    for (k = 0; k < (int)f.nrec; k++) {
+      if (f.rec[k].kind == kind && f.rec[k].a == a && f.rec[k].b == b) {
+        *out = f.rec[k];
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 /* Complete a captured diagnostic frame on the wire: the NPI dequeue sees
  * the framed identity (SOF + MT data length) matching the queued entry. */
 static void wire_complete_diag(uint32_t frame_idx)
@@ -686,9 +705,13 @@ static void test_npi_paths(void)
   /* NPI TX-side drop reconciles the matching queue entry and pending flag. */
   T832Diag_responseQueued(0x41u, 0x04u, 2u, payload);
   CHECK(t832Diag.normal_pending == 1u);
-  T832Diag_npiAllocFailed(1u, 12u, 0x41u, 0x04u, 2u);
-  CHECK(t832Diag.normal_pending == 0u);
-  CHECK(t832Diag.txq_count == 0u);
+  {
+    uint32_t orphan_before = t832Diag.tx_orphan_n;
+    T832Diag_npiAllocFailed(1u, 12u, 0x41u, 0x04u, 2u);
+    CHECK(t832Diag.normal_pending == 0u);
+    CHECK(t832Diag.txq_count == 0u);
+    CHECK(t832Diag.tx_orphan_n == orphan_before + 1u);
+  }
   /* A dropped diagnostic frame is counted loss, never a radio fault. */
   advance_ms(5000u);
   T832Diag_exportPoll();
@@ -704,9 +727,15 @@ static void test_npi_paths(void)
   CHECK(find_kind(T832_DIAG_EV_NPI_ALLOC_FAIL, &r));
   CHECK(find_kind(T832_DIAG_EV_DIAG_LOSS, &r));
   CHECK(r.b == 2u);
-  /* RX-side drops carry no pending state. */
-  T832Diag_npiAllocFailed(2u, 12u, 0x21u, 0x01u, 9u);
-  CHECK(t832Diag.normal_pending == 0u);
+  /* RX-side drops carry no pending state and release no ownership. */
+  {
+    uint32_t orphan_before = t832Diag.tx_orphan_n;
+    uint32_t uncertain_before = t832Diag.tx_uncertain_n;
+    T832Diag_npiAllocFailed(2u, 12u, 0x21u, 0x01u, 9u);
+    CHECK(t832Diag.normal_pending == 0u);
+    CHECK(t832Diag.tx_orphan_n == orphan_before);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before);
+  }
   /* A repeated SREQ abandons the previous sync round-trip explicitly. */
   T832Diag_commandRx(0x21u, 0x01u);
   T832Diag_commandRx(0x21u, 0x02u);
@@ -855,6 +884,242 @@ static void dump_scenario(const char *path)
   printf("DUMP-OK %u frames -> %s\n", (unsigned)host_frame_count, path);
 }
 
+/* A01/S01: every real TX refusal stage reconciles only its owned entry;
+ * RX refusals never touch ownership. Same call order as the patched SDK
+ * (queue observes first, refusal reconciles after). */
+static void test_tx_refused_stages(void)
+{
+  uint8_t payload[2] = {1, 2};
+  uint8_t stage;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  for (stage = 1u; stage <= 6u; stage++) {
+    uint8_t cmd0 = (stage <= 3u) ? 0x41u : 0x61u;
+    uint8_t cmd1 = (uint8_t)(0x10u + stage);
+    uint32_t orphan_before = t832Diag.tx_orphan_n;
+    T832Diag_responseQueued(cmd0, cmd1, 2u, payload);
+    CHECK(t832Diag.normal_pending == 1u);
+    CHECK(t832Diag.txq_count == 1u);
+    T832Diag_npiTxRefused(stage, cmd0, cmd1, 2u);
+    CHECK(t832Diag.normal_pending == 0u);
+    CHECK(t832Diag.txq_count == 0u);
+    CHECK(t832Diag.tx_orphan_n == orphan_before + 1u);
+    CHECK(t832Diag.response_queued == 0u);
+  }
+  /* Refusal with no owned entry: reported, nothing released. */
+  {
+    uint32_t pending_before = t832Diag.normal_pending;
+    T832Diag_npiTxRefused(3u, 0x41u, 0x77u, 2u);
+    CHECK(t832Diag.normal_pending == pending_before);
+  }
+  drain_all();
+  for (stage = 1u; stage <= 6u; stage++) {
+    CHECK(find_kind_ab(T832_DIAG_EV_NPI_ALLOC_FAIL, 1u, stage, &r));
+  }
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 14u, 0x41u, &r));
+  CHECK(host_cs_depth == 0);
+  CHECK(host_cs_max_depth <= 4u);
+  (void)r;
+}
+
+/* A02/S02: nine frames into an eight-slot shadow; the ninth is refused
+ * without corrupting the eight owned descriptors, and every completion
+ * converges back to zero pending with telemetry resumed. */
+static void test_fifo_overflow_converges(void)
+{
+  uint8_t payload[2] = {1, 2};
+  uint8_t k;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  for (k = 0u; k < 8u; k++) {
+    T832Diag_responseQueued(0x41u, (uint8_t)(0x20u + (k % 4u)), 2u, payload);
+  }
+  CHECK(t832Diag.txq_count == 8u);
+  CHECK(t832Diag.normal_pending == 8u);
+  T832Diag_responseQueued(0x41u, 0x20u, 2u, payload);
+  CHECK(t832Diag.txq_count == 8u);
+  CHECK(t832Diag.normal_pending == 8u);
+  CHECK(t832Diag.tx_overflow_n == 1u);
+  for (k = 0u; k < 8u; k++) {
+    wire_dequeue_finish(0xFEu, 0x41u, (uint8_t)(0x20u + (k % 4u)), 2u);
+  }
+  CHECK(t832Diag.txq_count == 0u);
+  CHECK(t832Diag.normal_pending == 0u);
+  CHECK(t832Diag.tx_uncertain_n == 0u);
+  emit_one();
+  /* The refused ninth frame still reaches wire untracked: no ghost. */
+  T832Diag_npiTxDequeue(0xFEu, 0x41u, 0x20u, 2u);
+  CHECK(t832Diag.normal_pending == 0u);
+  T832Diag_uartTxStart(7u);
+  advance_ms(2u);
+  T832Diag_uartTxFinished(7u);
+  CHECK(t832Diag.normal_pending == 0u);
+  CHECK(t832Diag.tx_untracked_n == 1u);
+  CHECK(t832Diag.tx_unsol_n == 1u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 5u, 0x41u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 10u, 0x41u, &r));
+  CHECK(host_cs_depth == 0);
+  CHECK(host_cs_max_depth <= 4u);
+  (void)r;
+}
+
+/* A02/S02: a completion matching a deeper descriptor retires only the
+ * older ones as unknown-outcome; an unknown frame is untracked. */
+static void test_mismatch_retire(void)
+{
+  uint8_t payload[2] = {1, 2};
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_responseQueued(0x41u, 0x30u, 2u, payload);
+  T832Diag_responseQueued(0x41u, 0x31u, 2u, payload);
+  T832Diag_responseQueued(0x41u, 0x32u, 2u, payload);
+  CHECK(t832Diag.normal_pending == 3u);
+  T832Diag_npiTxDequeue(0xFEu, 0x41u, 0x32u, 2u);
+  CHECK(t832Diag.txq_count == 1u);
+  CHECK(t832Diag.normal_pending == 1u);
+  CHECK(t832Diag.tx_uncertain_n == 2u);
+  T832Diag_uartTxStart(7u);
+  advance_ms(2u);
+  T832Diag_uartTxFinished(7u);
+  CHECK(t832Diag.normal_pending == 0u);
+  CHECK(t832Diag.txq_count == 0u);
+  T832Diag_npiTxDequeue(0xFEu, 0x41u, 0x77u, 2u);
+  T832Diag_uartTxStart(7u);
+  advance_ms(2u);
+  T832Diag_uartTxFinished(7u);
+  CHECK(t832Diag.normal_pending == 0u);
+  CHECK(t832Diag.tx_untracked_n == 1u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 2u, 0x41u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 10u, 0x41u, &r));
+  CHECK(host_cs_depth == 0);
+  (void)r;
+}
+
+/* A02/S02: a callback-less UART write rejection releases the in-flight
+ * ownership as refused, never as delivered; a stray finish cannot recount. */
+static void test_write_reject(void)
+{
+  uint8_t payload[2] = {1, 2};
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_responseQueued(0x41u, 0x40u, 2u, payload);
+  T832Diag_npiTxDequeue(0xFEu, 0x41u, 0x40u, 2u);
+  T832Diag_uartTxStart(7u);
+  {
+    uint32_t orphan_before = t832Diag.tx_orphan_n;
+    T832Diag_uartWriteRejected(7u, (int16_t)-1);
+    CHECK(t832Diag.tx_orphan_n == orphan_before + 1u);
+  }
+  CHECK(t832Diag.normal_pending == 0u);
+  CHECK(t832Diag.inflight_valid == 0u);
+  CHECK(t832Diag.transport_active == 0u);
+  T832Diag_uartTxFinished(7u);
+  CHECK(t832Diag.normal_pending == 0u);
+  CHECK(t832Diag.tx_untracked_n == 1u);
+  emit_one();
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 11u, 0x41u, &r));
+  CHECK(find_kind(T832_DIAG_EV_NPI_WRITE_REJECT, &r));
+  (void)r;
+}
+
+/* A03/S03: staged records retire by identity. Overwriting the staged entry
+ * before retirement reports the loss and retires nothing newer. */
+static void test_staged_retire_identity(void)
+{
+  T832DiagRecord staged_copy;
+  uint8_t sel;
+  uint16_t k;
+  DecRec r;
+  DecFrame f;
+  uint32_t i;
+  int k2;
+  int seen_newest = 0;
+  fresh(9u);
+  emit_one();
+  for (k = 0u; k < 64u; k++) {
+    T832Diag_commandRx(0x41u, (uint8_t)k);
+  }
+  CHECK(t832Diag.routine_count == 64u);
+  sel = T832Diag_peekAt(0u, 0u, &staged_copy);
+  CHECK(sel == 2u);
+  for (k = 64u; k < 128u; k++) {
+    T832Diag_commandRx(0x41u, (uint8_t)k);
+  }
+  CHECK(t832Diag.routine_count == 64u);
+  CHECK(t832Diag.routine_overwrite == 64u);
+  {
+    uint16_t before = t832Diag.routine_count;
+    T832Diag_popPeeked(sel, staged_copy.sequence);
+    CHECK(t832Diag.routine_count == before);
+  }
+  sel = T832Diag_peekAt(0u, 0u, &staged_copy);
+  CHECK(sel == 2u);
+  T832Diag_popPeeked(sel, staged_copy.sequence);
+  CHECK(t832Diag.routine_count == 63u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_DIAG_LOSS, 2u, 2u, &r));
+  for (i = 0u; i < host_frame_count; i++) {
+    if (decode_frame(i, &f) <= 0) continue;
+    for (k2 = 0; k2 < (int)f.nrec; k2++) {
+      if (f.rec[k2].kind == T832_DIAG_EV_MT_COMMAND_RX &&
+          f.rec[k2].a == 0x41u && f.rec[k2].b == 127u) {
+        seen_newest = 1;
+      }
+    }
+  }
+  CHECK(seen_newest == 1);
+  CHECK(host_cs_depth == 0);
+  (void)r;
+}
+
+/* A04/S04: only the SRSP stamped with the current SREQ generation clears
+ * suppression; late older SRSPs stay suppressed explicitly. */
+static void test_sreq_generations(void)
+{
+  uint8_t srsp[1] = {0};
+  uint8_t srsp_err[1] = {5};
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_commandRx(0x21u, 0x01u);
+  T832Diag_commandDispatch(0x21u, 0x01u);
+  T832Diag_commandComplete(0x21u, 0x01u, 0u);
+  T832Diag_responseQueued(0x61u, 0x01u, 1u, srsp);
+  T832Diag_commandRx(0x21u, 0x02u);
+  wire_dequeue_finish(0xFEu, 0x61u, 0x01u, 1u);
+  CHECK(t832Diag.sync_outstanding == 1u);
+  CHECK(t832Diag.normal_pending == 0u);
+  T832Diag_commandDispatch(0x21u, 0x02u);
+  T832Diag_commandComplete(0x21u, 0x02u, 0u);
+  T832Diag_responseQueued(0x61u, 0x02u, 1u, srsp);
+  wire_dequeue_finish(0xFEu, 0x61u, 0x02u, 1u);
+  CHECK(t832Diag.sync_outstanding == 0u);
+  T832Diag_commandRx(0x21u, 0x03u);
+  T832Diag_responseQueued(0x61u, 0x03u, 1u, srsp);
+  T832Diag_commandRx(0x21u, 0x03u);
+  wire_dequeue_finish(0xFEu, 0x61u, 0x03u, 1u);
+  CHECK(t832Diag.sync_outstanding == 1u);
+  T832Diag_responseQueued(0x61u, 0x03u, 1u, srsp);
+  wire_dequeue_finish(0xFEu, 0x61u, 0x03u, 1u);
+  CHECK(t832Diag.sync_outstanding == 0u);
+  T832Diag_commandRx(0x21u, 0x04u);
+  T832Diag_responseQueued(0x61u, 0x04u, 1u, srsp_err);
+  wire_dequeue_finish(0xFEu, 0x61u, 0x04u, 1u);
+  CHECK(t832Diag.sync_outstanding == 0u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_SYNC_ABANDON, 1u, 0x21u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_SYNC_ABANDON, 2u, 0x61u, &r));
+  CHECK(host_cs_depth == 0);
+  (void)r;
+}
+
 int main(int argc, char **argv)
 {
   if (argc == 3 && strcmp(argv[1], "dump") == 0) {
@@ -878,6 +1143,12 @@ int main(int argc, char **argv)
   test_af_variants_overflow();
   test_nv_events();
   test_npi_paths();
+  test_tx_refused_stages();
+  test_fifo_overflow_converges();
+  test_mismatch_retire();
+  test_write_reject();
+  test_staged_retire_identity();
+  test_sreq_generations();
   test_tick_wrap();
   test_heap_resource();
   test_frame_budget();
