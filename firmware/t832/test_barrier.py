@@ -308,9 +308,7 @@ class BarrierChainTests(unittest.TestCase):
         return str(json.loads(proc.stdout).get("state"))
 
     def test_success_chain_reaches_stabilizing(self) -> None:
-        artifact = self.root / "fw.hex"
-        artifact.write_text(":020000040000FA\n", encoding="utf-8")
-        self.assertEqual(self.run_tool("bind-firmware", "--artifact", str(artifact)).returncode, 0)
+        self.bind()
 
         cap = self.run_capture("mesh_outage")
         self.assertEqual(cap.returncode, 0, cap.stderr)
@@ -381,9 +379,7 @@ class BarrierChainTests(unittest.TestCase):
         self.assertNotIn("rts-invoked", self.markers())
 
     def test_tampered_bundle_halts_chain(self) -> None:
-        artifact = self.root / "fw.hex"
-        artifact.write_text(":020000040000FA\n", encoding="utf-8")
-        self.run_tool("bind-firmware", "--artifact", str(artifact))
+        self.bind()
         cap_doc = json.loads(self.run_capture("mesh_outage").stdout)
         bundle = Path(cap_doc["bundle"])
         (bundle / "manifest.json").write_text('{"tampered": true}\n', encoding="utf-8")
@@ -393,9 +389,7 @@ class BarrierChainTests(unittest.TestCase):
         self.assertNotIn("rts-invoked", self.markers())
 
     def test_stop_never_confirms_halts_before_rts(self) -> None:
-        artifact = self.root / "fw.hex"
-        artifact.write_text(":020000040000FA\n", encoding="utf-8")
-        self.run_tool("bind-firmware", "--artifact", str(artifact))
+        self.bind()
         self.run_capture("mesh_outage")
         self.run_shell_template("t832_authorize_reset")
         self.run_shell_template("t832_mark_recovering")
@@ -410,9 +404,7 @@ class BarrierChainTests(unittest.TestCase):
         self.assertNotIn("rts-invoked", self.markers())
 
     def test_rts_failure_halts_before_start(self) -> None:
-        artifact = self.root / "fw.hex"
-        artifact.write_text(":020000040000FA\n", encoding="utf-8")
-        self.run_tool("bind-firmware", "--artifact", str(artifact))
+        self.bind()
         self.run_capture("mesh_outage")
         self.run_shell_template("t832_authorize_reset")
         self.run_shell_template("t832_mark_recovering")
@@ -425,9 +417,7 @@ class BarrierChainTests(unittest.TestCase):
         self.assertNotIn("addon-start", self.markers())
 
     def test_zdo_failure_marks_failed(self) -> None:
-        artifact = self.root / "fw.hex"
-        artifact.write_text(":020000040000FA\n", encoding="utf-8")
-        self.run_tool("bind-firmware", "--artifact", str(artifact))
+        self.bind()
         self.run_capture("mesh_outage")
         self.run_shell_template("t832_authorize_reset")
         self.run_shell_template("t832_mark_recovering")
@@ -446,9 +436,33 @@ class BarrierChainTests(unittest.TestCase):
         self.assertEqual(failed["failure_reason"], "no-zdo-verification")
 
     def bind(self) -> None:
+        # B12: the operator flow declares the image (variant, build
+        # manifest, build id) — a bare artifact hash never binds.
         artifact = self.root / "fw.hex"
         artifact.write_text(":020000040000FA\n", encoding="utf-8")
-        self.assertEqual(self.run_tool("bind-firmware", "--artifact", str(artifact)).returncode, 0)
+        manifest = self.root / "build-manifest.json"
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        manifest.write_text(
+            json.dumps(
+                {
+                    "variant": "T832-DIAG-R0",
+                    "repository_commit": "a" * 40,
+                    "artifacts": {"T832-DIAG-R0.hex": {"sha256": digest}},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        proc = self.run_tool(
+            "bind-firmware",
+            "--artifact", str(artifact),
+            "--role", "deployed",
+            "--variant", "T832-DIAG-R0",
+            "--manifest", str(manifest),
+            "--build-id", "8320001",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_healthy_removal_never_authorizes(self) -> None:
         self.bind()
