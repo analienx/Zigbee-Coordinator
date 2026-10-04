@@ -998,11 +998,15 @@ static void test_b01_identical_headers_refusal(void)
   uint8_t payload[2] = {1, 2};
   uint8_t stage;
   DecRec r;
+  /* Single fresh for the whole oracle: host_frame history must accumulate
+   * across phases for the final exported-evidence checks. Every phase ends
+   * with clean ownership (count 0, pending 0), so phases stay isolated by
+   * state, not by reset. */
+  fresh(9u);
+  emit_one();
   for (stage = 1u; stage <= 6u; stage++) {
     uint32_t uncertain_before;
     uint32_t orphan_before;
-    fresh(9u);
-    emit_one();
     uncertain_before = t832Diag.tx_uncertain_n;
     orphan_before = t832Diag.tx_orphan_n;
     sdk_client_queue_mirror(0x41u, 0x50u, 2u, payload, 0);
@@ -1021,8 +1025,6 @@ static void test_b01_identical_headers_refusal(void)
    * retires neither. Both complete in FIFO order. */
   {
     uint32_t uncertain_before;
-    fresh(9u);
-    emit_one();
     uncertain_before = t832Diag.tx_uncertain_n;
     sdk_client_queue_mirror(0x41u, 0x51u, 2u, payload, 0);
     sdk_client_queue_mirror(0x41u, 0x51u, 2u, payload, 0);
@@ -1042,14 +1044,13 @@ static void test_b01_identical_headers_refusal(void)
   {
     uint8_t k;
     uint32_t uncertain_before;
-    fresh(9u);
-    emit_one();
+    uint32_t overflow_before = t832Diag.tx_overflow_n;
     for (k = 0u; k < 8u; k++) {
       sdk_client_queue_mirror(0x41u, (uint8_t)(0x60u + k), 2u, payload, 0);
     }
     CHECK(t832Diag.txq_count == 8u);
     sdk_client_queue_mirror(0x41u, 0x68u, 2u, payload, 0);
-    CHECK(t832Diag.tx_overflow_n == 1u);
+    CHECK(t832Diag.tx_overflow_n == overflow_before + 1u);
     uncertain_before = t832Diag.tx_uncertain_n;
     sdk_sendToHost_mirror(0x41u, 0x68u, 2u, 5u);
     CHECK(t832Diag.txq_count == 8u);
@@ -1065,8 +1066,6 @@ static void test_b01_identical_headers_refusal(void)
   {
     uint8_t srsp[1] = {0};
     uint16_t stamped;
-    fresh(9u);
-    emit_one();
     T832Diag_commandRx(0x21u, 0x09u);
     T832Diag_commandDispatch(0x21u, 0x09u);
     T832Diag_commandComplete(0x21u, 0x09u, 0u);
@@ -1173,20 +1172,23 @@ static void test_b02_sequence_reuse_identity(void)
   T832Diag_npiTrap(300u, 100u);
   sel = T832Diag_peekAt(0u, 0u, &staged_a);
   CHECK(sel == 1u);
-  /* Force a sequence reuse: the next record takes A's sequence with a
-   * different creation time (the 16-bit wrap-collision shape). */
+  /* Force a sequence reuse: the next record takes A's 16-bit sequence
+   * with a different creation time (the wrap-collision shape). The
+   * recorder pre-increments a 32-bit counter and truncates, so seeding
+   * S-1 (mod 2^32) reuses S exactly, including across the S==0 wrap. */
   advance_ms(5u);
-  t832Diag.record_sequence = staged_a.sequence;
+  t832Diag.record_sequence = (uint32_t)(staged_a.sequence - 1u);
   T832Diag_npiTrap(301u, 101u);
-  sel = T832Diag_peekAt(0u, 0u, &staged_b);
-  CHECK(sel == 1u);
-  CHECK(staged_b.sequence == staged_a.sequence);
-  CHECK(staged_b.first_ms != staged_a.first_ms);
   /* Tail is still A: A's identity retires exactly A. */
   T832Diag_popPeeked(sel, staged_a.sequence, staged_a.first_ms,
                      staged_a.repeat_count);
   CHECK(t832Diag.critical_count == 1u);
-  /* Tail is now B: A's stale identity must not retire it. */
+  /* Tail is now B: same reused sequence, different creation time. */
+  sel = T832Diag_peekAt(0u, 0u, &staged_b);
+  CHECK(sel == 1u);
+  CHECK(staged_b.sequence == staged_a.sequence);
+  CHECK(staged_b.first_ms != staged_a.first_ms);
+  /* A's stale identity must not retire B. */
   T832Diag_popPeeked(sel, staged_a.sequence, staged_a.first_ms,
                      staged_a.repeat_count);
   CHECK(t832Diag.critical_count == 1u);

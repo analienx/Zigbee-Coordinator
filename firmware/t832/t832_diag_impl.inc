@@ -1199,9 +1199,13 @@ static uint8_t T832Diag_peekAt(uint8_t skip_crit, uint8_t skip_rout,
  * staged repeat_count=1, an ISR-identical fault bumped the ring entry to
  * 2, and the pop retired both while exporting one. Now the staged copy's
  * full identity must match the live tail; on mismatch the staged copy is
- * stale, the loss is reported explicitly (DIAG_LOSS 3u with the staged vs
- * live repeat counts), and nothing is retired — the coalesced entry is
- * re-staged whole on the next poll, so every occurrence is preserved.
+ * stale and nothing is retired — the coalesced entry is re-staged whole
+ * on the next poll, so every occurrence is preserved. The staleness
+ * report keeps the established taxonomy: a moved-on tail (sequence
+ * differs — overwrite/retirement race) reports DIAG_LOSS 2u exactly as
+ * before; a same-sequence tail whose creation time or repeat count
+ * differs (coalesced-while-staged, or a sequence-reuse collision)
+ * reports DIAG_LOSS 3u with staged vs live repeat counts.
  * Saturated repeats (0xFFFF, no further increment) still match and retire
  * with documented bounded count; first_ms disambiguates across 16-bit
  * sequence wrap (a wrap-collision entry would need identical sequence,
@@ -1221,6 +1225,11 @@ static void T832Diag_popPeeked(uint8_t sel, uint16_t seq, uint32_t first_ms,
           t832Diag.critical[tail].repeat_count == staged_repeat) {
         t832Diag.critical_count--;
         OsalPort_leaveCS(key);
+        return;
+      }
+      if (t832Diag.critical[tail].sequence != seq) {
+        OsalPort_leaveCS(key);
+        T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 2u, sel, seq);
         return;
       }
       {
@@ -1244,6 +1253,11 @@ static void T832Diag_popPeeked(uint8_t sel, uint16_t seq, uint32_t first_ms,
           t832Diag.routine[tail].repeat_count == staged_repeat) {
         t832Diag.routine_count--;
         OsalPort_leaveCS(key);
+        return;
+      }
+      if (t832Diag.routine[tail].sequence != seq) {
+        OsalPort_leaveCS(key);
+        T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 2u, sel, seq);
         return;
       }
       {
