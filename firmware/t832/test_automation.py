@@ -31,6 +31,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+from jinja2 import ChainableUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 HERE = Path(__file__).resolve().parent
@@ -75,7 +76,11 @@ class Ha:
         self.state = root / "state"
         self.bin.mkdir(parents=True, exist_ok=True)
         self.state.mkdir(parents=True, exist_ok=True)
-        self.env = SandboxedEnvironment()
+        # ChainableUndefined mirrors HA runtime leniency: missing trigger
+        # fields and wait attributes degrade to empty/False in conditions
+        # instead of raising, while unknown functions, unknown filters,
+        # and failed parses still raise loudly via render()'s guard.
+        self.env = SandboxedEnvironment(undefined=ChainableUndefined)
         self.env.filters["tojson"] = lambda value: json.dumps(value)
         self.env.filters["from_json"] = lambda value: json.loads(value)
         raw = BARRIER.read_text(encoding="utf-8")
@@ -304,7 +309,10 @@ class Ha:
         if service == "shell_command.mr4u_p10_rts_reset":
             # Pre-existing production helper (not part of the candidate
             # file): the fixture RTS shim stands in for the validated R2
-            # script behind the production shell_command binding.
+            # script behind the production shell_command binding. Pinned:
+            # HA records the response (including a nonzero returncode)
+            # and CONTINUES; the YAML's choose on returncode routes the
+            # halt explicitly instead of the service aborting the run.
             proc = subprocess.run(
                 [sys.executable, str(self.bin / "mr4u_p10_rts_reset.py")],
                 capture_output=True,
@@ -317,8 +325,6 @@ class Ha:
                     "stderr": proc.stderr.strip(),
                     "returncode": proc.returncode,
                 }
-            if proc.returncode != 0:
-                raise Halt(f"rts rc={proc.returncode}")
         elif service.startswith("shell_command."):
             response = self.call_shell_command(service.split(".", 1)[1], data)
             if response_key:
