@@ -847,13 +847,23 @@ class BarrierAutomationTests(unittest.TestCase):
         self.assertEqual(self.publishes(ZDO_REQ), [])
 
     def test_zz_temp_dump_wait_renders(self) -> None:
-        # TEMPORARY diagnostic: drive the success flow and dump both sides
-        # of every wait mismatch. Removed before seal.
+        # TEMPORARY diagnostic: drive the success flow and dump bus state.
+        # Removed before seal.
         self.hold_outage()
         self.ha.on_publish = zdo_hook("match")
         self.ha.schedule(5.0, lambda: self.ha.set_state(OUTAGE, "off"))
         self.ha.fire_state("mesh_outage")
-        self.fail(str(self.ha.match_probes))
+        self.fail(
+            str(
+                {
+                    "bus": [(t, p[:100]) for _, t, p in self.ha.bus],
+                    "events_left": len(self.ha.events),
+                    "wait": self.ha.vars.get("wait"),
+                    "zdo_req": self.publishes(ZDO_REQ),
+                    "probes": self.ha.match_probes,
+                }
+            )
+        )
 
     def test_stale_zdo_halts_in_zdo_phase(self) -> None:
         # S2/S12: only stale and foreign-transaction responses arrive. The
