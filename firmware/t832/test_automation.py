@@ -99,8 +99,6 @@ class Ha:
         }
         self.clock = 0.0
         self.bus_mark = 0
-        self.last_match_detail: object = None
-        self.wait_probes: list = []
         self.vars: dict = {}
         self.states: dict[str, tuple[str, float]] = {}
         self.state_history: dict[str, list[tuple[float, str]]] = {}
@@ -371,20 +369,14 @@ class Ha:
         want = str(self.render(str(filt), scope))
         template = spec.get("value_template")
         if template is None:
-            rendered = None
             if payload != want:
-                self.last_match_detail = (rendered, want)
                 return None
         # Pinned: Template.async_render_with_possible_json_value strips the
         # rendered value (helpers/template/__init__.py) before the exact
         # mqtt_automation_listener comparison, so folded multi-line
         # templates match their payload filter.
-        else:
-            rendered = str(self.render(str(template), scope)).strip()
-            if rendered != want:
-                self.last_match_detail = (rendered, want)
-                return None
-        self.last_match_detail = (rendered, want)
+        elif str(self.render(str(template), scope)).strip() != want:
+            return None
         return {"topic": topic, "payload": payload, "payload_json": payload_json}
 
     def wait_for_trigger(self, spec: dict, var: str) -> bool:
@@ -402,9 +394,6 @@ class Ha:
                         self.clock = max(self.clock, moment)
                         self.vars[var] = {"trigger": matched}
                         return True
-                    self.wait_probes.append(
-                        (topic, str(payload)[:120], self.last_match_detail)
-                    )
             mark = len(self.bus)
             upcoming = [moment for moment, _ in self.events if moment <= deadline]
             if upcoming:
@@ -580,7 +569,13 @@ PRODUCTION_ERROR = "SRSP - AF - dataRequest after 6000ms"
 
 def zdo_hook(mode: str):
     """Scenario Z2M: answer the permit_join request per mode, and always
-    emit one entry-shaped timeout error mid-run (must be suppressed)."""
+    emit one entry-shaped timeout error mid-run (must be suppressed).
+
+    Answers are deferred to the next virtual-clock step, not delivered
+    synchronously inside the publish: on real HA the response round trip
+    always lands after the wait subscribes, and a synchronous fixture
+    would hide the wait from its own answers.
+    """
 
     def hook(ha: Ha, topic: str, payload: str) -> None:
         if topic != ZDO_REQ:
@@ -588,22 +583,25 @@ def zdo_hook(mode: str):
         request = json.loads(payload)
         assert request.get("time") == 0, request
         assert str(request.get("transaction", "")).startswith("ha-t832-"), request
-        ha.mqtt_deliver(
-            ZDO_RESP,
-            json.dumps({"status": "error", "error": PRODUCTION_ERROR, "transaction": "stale"}),
-        )
+        answers = [
+            json.dumps(
+                {"status": "error", "error": PRODUCTION_ERROR, "transaction": "stale"}
+            )
+        ]
         if mode == "match":
-            ha.mqtt_deliver(
-                ZDO_RESP, json.dumps({"status": "ok", "transaction": request["transaction"]})
+            answers.append(
+                json.dumps({"status": "ok", "transaction": request["transaction"]})
             )
         elif mode == "mismatch":
-            ha.mqtt_deliver(
-                ZDO_RESP, json.dumps({"status": "ok", "transaction": "ha-t832-someone-else"})
+            answers.append(
+                json.dumps({"status": "ok", "transaction": "ha-t832-someone-else"})
             )
         elif mode == "silent":
             pass
         else:
             raise AssertionError(f"unknown zdo mode: {mode}")
+        for answer in answers:
+            ha.schedule(0.0, lambda answer=answer: ha.mqtt_deliver(ZDO_RESP, answer))
 
     return hook
 
@@ -711,7 +709,6 @@ class BarrierAutomationTests(unittest.TestCase):
                 "failure_phase": latch.get("failure_phase"),
                 "zdo_proof": latch.get("zdo_proof"),
                 "recovered": self.ha.vars.get("t832_recovered"),
-                "wait_probes": self.ha.wait_probes[-6:],
             },
         )
         return latch
