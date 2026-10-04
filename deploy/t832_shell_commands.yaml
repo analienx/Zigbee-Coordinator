@@ -15,6 +15,9 @@ t832_capture: >-
   --source /config/zigbee2mqtt/log
   --source /config/home-assistant.log
   capture --trigger "{{ trigger }}"
+  --triggers /config/t832_capture_barrier.yaml
+  --trigger-topic "{{ trigger_topic }}"
+  --trigger-payload '{{ trigger_payload_json }}'
   --require-firmware-binding
 t832_authorize_reset: >-
   python3 /config/python_scripts/t832_incident.py
@@ -24,6 +27,15 @@ t832_mark_recovering: >-
   python3 /config/python_scripts/t832_incident.py
   --root /config/.private/t832-diag
   mark-recovering
+t832_zdo_proof: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  record-zdo-proof
+  --transaction "{{ transaction }}"
+t832_rts_used: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  record-rts-used
 t832_recovery_result: >-
   python3 /config/python_scripts/t832_incident.py
   --root /config/.private/t832-diag
@@ -31,6 +43,7 @@ t832_recovery_result: >-
   --success "{{ success }}"
   --normal-traffic "{{ normal_traffic }}"
   --zdo-ok "{{ zdo_ok }}"
+  --zdo-transaction "{{ zdo_transaction }}"
 t832_observe: >-
   python3 /config/python_scripts/t832_incident.py
   --root /config/.private/t832-diag

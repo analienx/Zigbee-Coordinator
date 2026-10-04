@@ -1030,10 +1030,186 @@ def active_latch(value: object) -> bool:
     return isinstance(value, dict) and value.get("status") not in (None, "closed", "cleared")
 
 
+#: Candidate barrier automation id in the trigger-definitions file.
+BARRIER_AUTOMATION_ID = "zigbee2mqtt_t832_capture_barrier"
+#: Trigger ids the candidate barrier automation defines. capture() refuses
+#: anything else: reset authorization must only ever follow a production
+#: trigger firing, never a free-form string.
+CANDIDATE_TRIGGER_IDS = ("mesh_outage", "bridge_offline", "radio_timeout")
+#: mqtt topic whose payloads the radio_timeout trigger evaluates.
+RADIO_TIMEOUT_TOPIC = "zigbee2mqtt/bridge/response/device/remove"
+#: Substrings (case-insensitive) marking a device/remove error as a radio
+#: timeout of the qualifying family. Anything else on the topic (healthy
+#: removals, unrelated errors) is explicitly non-qualifying.
+TIMEOUT_MARKERS = ("timeout", "timed out", "srsp")
+#: A recorded ZDO proof is only fresh for this long (mono seconds). The
+#: monotonic anchor also fails closed across a host reboot (mono resets).
+ZDO_PROOF_MAX_AGE_S = 300.0
+
+
+def parse_for_seconds(value: object) -> int | None:
+    """Parse an HA `for:` duration ("HH:MM:SS") to seconds."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        parts = value.strip().split(":")
+        try:
+            nums = [int(p) for p in parts]
+        except ValueError:
+            return None
+        if len(nums) == 3:
+            return nums[0] * 3600 + nums[1] * 60 + nums[2]
+        if len(nums) == 2:
+            return nums[0] * 60 + nums[1]
+    return None
+
+
+def load_trigger_defs(path: Path) -> tuple[dict[str, dict[str, object]], str]:
+    """Load candidate trigger definitions from the barrier automation file.
+
+    Returns ({trigger_id: {kind, entity_id/topic, to, for_seconds}}, sha256
+    of the exact file evaluated), so every qualification verdict is pinned
+    to the reviewed source it was evaluated against.
+    """
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError(f"trigger-defs-require-pyyaml:{exc}")
+    try:
+        text = path.read_text(encoding="utf-8")
+        automations = yaml.safe_load(text)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"trigger-defs-unreadable:{path}:{exc}")
+    if not isinstance(automations, list):
+        raise RuntimeError(f"trigger-defs-malformed:{path}")
+    automation = next(
+        (a for a in automations
+         if isinstance(a, dict) and a.get("id") == BARRIER_AUTOMATION_ID),
+        None,
+    )
+    if automation is None:
+        raise RuntimeError(f"trigger-defs-no-barrier:{path}")
+    triggers = automation.get("triggers")
+    if not isinstance(triggers, list):
+        raise RuntimeError(f"trigger-defs-no-triggers:{path}")
+    defs: dict[str, dict[str, object]] = {}
+    for entry in triggers:
+        if not isinstance(entry, dict):
+            continue
+        tid = entry.get("id")
+        kind = entry.get("trigger")
+        if not isinstance(tid, str) or not isinstance(kind, str):
+            continue
+        spec: dict[str, object] = {"kind": kind}
+        if kind == "state":
+            spec["entity_id"] = entry.get("entity_id")
+            spec["to"] = entry.get("to")
+            spec["for_seconds"] = parse_for_seconds(entry.get("for"))
+        elif kind == "mqtt":
+            spec["topic"] = entry.get("topic")
+        defs[tid] = spec
+    sha = sha256_file(path)
+    for spec in defs.values():
+        spec["source_sha256"] = sha
+    return defs, sha
+
+
+def evaluate_radio_timeout(*, topic: str | None, payload: object) -> tuple[bool, str]:
+    """Qualify a device/remove response as a radio-timeout event.
+
+    Only a timeout-family error on exactly the remove-response topic
+    qualifies. Healthy removals, unrelated errors, wrong topics and
+    malformed payloads are non-qualifying, each with its own reason, so a
+    healthy mesh can never arm reset authorization through this trigger.
+    """
+    if topic != RADIO_TIMEOUT_TOPIC:
+        return False, f"topic-mismatch:{topic}"
+    if not isinstance(payload, dict):
+        return False, "malformed-payload"
+    status = payload.get("status")
+    if status == "ok":
+        return False, "healthy-removal"
+    if status != "error":
+        return False, f"unexpected-status:{status}"
+    error = str(payload.get("error", "")).lower()
+    if any(marker in error for marker in TIMEOUT_MARKERS):
+        return True, "timeout-error"
+    return False, "non-timeout-error"
+
+
+def evaluate_trigger(
+    trigger_id: str,
+    defs: dict[str, dict[str, object]] | None,
+    *,
+    topic: str | None,
+    payload: object,
+    malformed_payload: bool = False,
+) -> dict[str, object]:
+    """Evaluate one trigger firing against the candidate definitions.
+
+    State triggers (mesh_outage/bridge_offline) are trusted firings: Home
+    Assistant enforces their `to` state plus the `for` duration before the
+    tool ever runs, and the tool cannot re-observe that wait. The mqtt
+    trigger (radio_timeout) carries no such enforcement in the automation,
+    so its payload is evaluated here and only a timeout-family error
+    qualifies. The verdict always records the definitions source and its
+    SHA so evidence links the decision to the reviewed file.
+    """
+    base: dict[str, object] = {"trigger_id": trigger_id, "topic": topic}
+    if trigger_id not in CANDIDATE_TRIGGER_IDS:
+        return {**base, "qualifying": False, "reason": f"unknown-trigger:{trigger_id}"}
+    spec = (defs or {}).get(trigger_id, {})
+    kind = spec.get("kind")
+    if trigger_id == "radio_timeout" or kind == "mqtt":
+        if malformed_payload:
+            verdict: dict[str, object] = {"qualifying": False, "reason": "malformed-payload"}
+        else:
+            qualifying, reason = evaluate_radio_timeout(topic=topic, payload=payload)
+            verdict = {"qualifying": qualifying, "reason": reason}
+        return {
+            **base,
+            **verdict,
+            "source": "candidate-yaml" if defs else "builtin-rule",
+            "source_sha256": spec.get("source_sha256"),
+            "required_topic": RADIO_TIMEOUT_TOPIC,
+        }
+    return {
+        **base,
+        "qualifying": True,
+        "reason": "state-trigger-fired",
+        "source": "candidate-yaml" if defs else "builtin-ids",
+        "source_sha256": spec.get("source_sha256"),
+        "entity_id": spec.get("entity_id"),
+        "to": spec.get("to"),
+        "for_seconds": spec.get("for_seconds"),
+    }
+
+
 def check_deadline(started_monotonic: float, deadline_seconds: int, phase: str) -> None:
     elapsed = time.monotonic() - started_monotonic
     if elapsed > deadline_seconds:
         raise TimeoutError(f"capture-deadline:{phase}:{elapsed:.3f}s")
+
+
+def coerce_trigger_payload(raw: str | dict[str, object] | None) -> tuple[object, bool]:
+    """Coerce a --trigger-payload argument to (payload, malformed).
+
+    A malformed JSON string is not an error here: it is itself a verdict
+    input (malformed payloads never qualify), so capture keeps the
+    evidence instead of crashing on a sick automation variable.
+    """
+    if raw is None or isinstance(raw, dict):
+        return raw, False
+    if isinstance(raw, str):
+        if not raw.strip():
+            return None, False
+        try:
+            return json.loads(raw), False
+        except json.JSONDecodeError:
+            return raw, True
+    return raw, True
 
 
 def capture(
@@ -1051,6 +1227,9 @@ def capture(
     max_window_rows: int = 20000,
     max_host_events_bytes: int = 64 * 1024 * 1024,
     require_firmware_binding: bool = False,
+    triggers_path: Path | None = None,
+    trigger_topic: str | None = None,
+    trigger_payload: str | dict[str, object] | None = None,
 ) -> dict[str, object]:
     started_monotonic = time.monotonic()
     started_utc = utcnow()
@@ -1066,6 +1245,17 @@ def capture(
             raise RuntimeError(f"incident-latch-active:{latch.get('status')}")
         if require_firmware_binding and firmware_hash(store) is None:
             raise RuntimeError("capture-requires-firmware-binding")
+        if trigger not in CANDIDATE_TRIGGER_IDS:
+            raise RuntimeError(f"unknown-trigger:{trigger}")
+        defs: dict[str, dict[str, object]] | None = None
+        defs_sha: str | None = None
+        if triggers_path is not None:
+            defs, defs_sha = load_trigger_defs(Path(triggers_path))
+        payload, malformed = coerce_trigger_payload(trigger_payload)
+        verdict = evaluate_trigger(
+            trigger, defs, topic=trigger_topic, payload=payload,
+            malformed_payload=malformed,
+        )
 
         collection = _collect_locked(
             store,
@@ -1157,6 +1347,8 @@ def capture(
                 "missing_sources": missing,
                 "firmware_sha256": firmware_hash(store),
                 "config_fingerprint": config_fingerprint,
+                "trigger_qualification": verdict,
+                "trigger_definitions_sha256": defs_sha,
                 "observability_note": (
                     "Missing telemetry is loss of observability, not proof of CPU failure."
                 ),
@@ -1181,6 +1373,9 @@ def capture(
                 "captured_utc": iso(),
                 "reset_used": False,
                 "trigger_reason": trigger,
+                "trigger_qualifying": bool(verdict.get("qualifying")),
+                "trigger_qualification_reason": str(verdict.get("reason")),
+                "trigger_definitions_sha256": defs_sha,
             }
             store.atomic_json(store.latch, latch_value)
             store.append_host_event("incident_captured", incident_id=incident_id, trigger=trigger)
@@ -1243,6 +1438,14 @@ def authorize_reset(store: Store) -> dict[str, object]:
         if latch.get("reset_used"):
             raise RuntimeError("automatic-reset-already-consumed")
         verify_bundle(store, latch)
+        # Only a qualifying trigger firing reaches reset authorization. The
+        # verdict was recorded at capture; a missing verdict (pre-qualifier
+        # latch) fails closed rather than inheriting trust.
+        if latch.get("trigger_qualifying") is not True:
+            raise RuntimeError(
+                "reset-trigger-not-qualifying:"
+                f"{latch.get('trigger_qualification_reason')}"
+            )
         value = update_latch(
             store,
             {"captured"},
@@ -1267,9 +1470,85 @@ def mark_recovering(store: Store) -> dict[str, object]:
         return value
 
 
-def recovery_result(store: Store, *, success: bool, normal_traffic: bool, zdo_ok: bool) -> dict[str, object]:
+def record_zdo_proof(store: Store, transaction: str) -> dict[str, object]:
+    """Record real ZDO evidence: a permit_join response whose transaction
+    matched the barrier's unique id with status ok.
+
+    An outage-derived Boolean alone is never ZDO proof: only this recorded
+    proof (fresh, mono-anchored, transaction-bound) lets recovery_result
+    accept a zdo_ok claim. The mono anchor also fails closed across a host
+    reboot, since the monotonic clock resets.
+    """
+    cleaned = str(transaction or "").strip()
+    if not cleaned:
+        raise RuntimeError("zdo-proof-transaction-required")
     with store.locked():
-        if not success or not normal_traffic or not zdo_ok:
+        value = update_latch(
+            store,
+            {"reset_authorized", "recovering"},
+            {
+                "zdo_proof": {
+                    "transaction": cleaned,
+                    "utc": iso(),
+                    "mono": time.monotonic(),
+                },
+            },
+        )
+        store.append_host_event("zdo_proved", incident_id=value.get("incident_id"))
+        return value
+
+
+def record_rts_used(store: Store) -> dict[str, object]:
+    """Mark the single RTS reset consumed. A second call raises: the latch
+    permits at most one RTS invocation per incident, so retries and
+    duplicate automation runs cannot reset the coordinator twice."""
+    with store.locked():
+        latch = store.load_strict(store.latch)
+        if not isinstance(latch, dict):
+            raise RuntimeError("incident-latch-corrupt")
+        if latch.get("rts_used"):
+            raise RuntimeError("rts-already-used")
+        value = update_latch(
+            store,
+            {"recovering"},
+            {"rts_used": True, "rts_used_utc": iso()},
+        )
+        store.append_host_event("rts_used", incident_id=value.get("incident_id"))
+        return value
+
+
+def zdo_proof_state(latch: object, zdo_transaction: str | None) -> tuple[bool, str]:
+    """Check the recorded ZDO proof: fresh, and transaction-bound when asked.
+
+    Returns (proof_ok, proof_detail) where detail is one of ok / missing /
+    stale / mismatch / rebooted. A negative mono age means the host
+    rebooted after the proof was recorded: never accepted.
+    """
+    proof = latch.get("zdo_proof") if isinstance(latch, dict) else None
+    if not isinstance(proof, dict):
+        return False, "missing"
+    try:
+        age = time.monotonic() - float(proof.get("mono", float("nan")))
+    except (TypeError, ValueError):
+        return False, "missing"
+    if not (age >= 0.0):
+        return False, "rebooted"
+    if age > ZDO_PROOF_MAX_AGE_S:
+        return False, "stale"
+    if zdo_transaction is not None and str(proof.get("transaction")) != str(zdo_transaction):
+        return False, "mismatch"
+    return True, "ok"
+
+
+def recovery_result(
+    store: Store, *, success: bool, normal_traffic: bool, zdo_ok: bool,
+    zdo_transaction: str | None = None,
+) -> dict[str, object]:
+    with store.locked():
+        latch = store.load_strict(store.latch)
+        proof_ok, proof_detail = zdo_proof_state(latch, zdo_transaction)
+        effective_zdo = bool(zdo_ok and proof_ok)
+        if not success or not normal_traffic or not effective_zdo:
             if not success:
                 reason = "verification-failed"
             elif not normal_traffic:
@@ -1283,7 +1562,8 @@ def recovery_result(store: Store, *, success: bool, normal_traffic: bool, zdo_ok
                     "status": "failed",
                     "recovery_failed_utc": iso(),
                     "normal_traffic_observed": bool(normal_traffic),
-                    "zdo_verified": bool(zdo_ok),
+                    "zdo_verified": effective_zdo,
+                    "zdo_proof": proof_detail,
                     "failure_reason": reason,
                 },
             )
@@ -1300,6 +1580,8 @@ def recovery_result(store: Store, *, success: bool, normal_traffic: bool, zdo_ok
                 "recovery_succeeded_mono": time.monotonic(),
                 "normal_traffic_observed": True,
                 "zdo_verified": True,
+                "zdo_proof": proof_detail,
+                "zdo_transaction": zdo_transaction,
                 "stable_after_utc": iso(stable_after),
                 "stable_after_mono": time.monotonic() + STABILITY_WINDOW_SECONDS,
                 "observations": [],
@@ -1504,15 +1786,22 @@ def main() -> int:
     sub.add_parser("collect")
     cap = sub.add_parser("capture")
     cap.add_argument("--trigger", required=True)
+    cap.add_argument("--triggers", type=Path, default=None)
+    cap.add_argument("--trigger-topic", default=None)
+    cap.add_argument("--trigger-payload", default=None)
     cap.add_argument("--window-seconds", type=int, default=15 * 60)
     cap.add_argument("--deadline-seconds", type=int, default=30)
     cap.add_argument("--require-firmware-binding", action="store_true")
     sub.add_parser("authorize-reset")
     sub.add_parser("mark-recovering")
+    proof = sub.add_parser("record-zdo-proof")
+    proof.add_argument("--transaction", required=True)
+    sub.add_parser("record-rts-used")
     rr = sub.add_parser("recovery-result")
     rr.add_argument("--success", type=bool_arg, required=True)
     rr.add_argument("--normal-traffic", type=bool_arg, required=True)
     rr.add_argument("--zdo-ok", type=bool_arg, default=False)
+    rr.add_argument("--zdo-transaction", default=None)
     obs = sub.add_parser("stability-observation")
     obs.add_argument("--bridge-up", type=bool_arg, required=True)
     obs.add_argument("--normal-traffic", type=bool_arg, required=True)
@@ -1561,17 +1850,25 @@ def main() -> int:
                 max_window_rows=args.max_window_rows,
                 max_host_events_bytes=args.max_host_events_bytes,
                 require_firmware_binding=args.require_firmware_binding,
+                triggers_path=args.triggers,
+                trigger_topic=args.trigger_topic,
+                trigger_payload=args.trigger_payload,
             )
         elif args.command == "authorize-reset":
             result = authorize_reset(store)
         elif args.command == "mark-recovering":
             result = mark_recovering(store)
+        elif args.command == "record-zdo-proof":
+            result = record_zdo_proof(store, args.transaction)
+        elif args.command == "record-rts-used":
+            result = record_rts_used(store)
         elif args.command == "recovery-result":
             result = recovery_result(
                 store,
                 success=args.success,
                 normal_traffic=args.normal_traffic,
                 zdo_ok=args.zdo_ok,
+                zdo_transaction=args.zdo_transaction,
             )
         elif args.command == "stability-observation":
             result = stability_observation(

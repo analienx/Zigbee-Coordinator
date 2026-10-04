@@ -11,6 +11,7 @@ with the RTS helper invoked exactly once after stop confirmation.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -124,6 +125,46 @@ class BarrierStructureTests(unittest.TestCase):
         self.assertLess(services.index("shell_command.t832_status"), services.index("shell_command.t832_observe"))
         self.assertLess(services.index("shell_command.t832_observe"), services.index("shell_command.t832_close_if_stable"))
 
+    def test_zdo_proof_recorded_after_permit_join_match(self) -> None:
+        steps = flatten_actions(self.barrier["actions"])
+        services = [s.get("service") for s in steps if isinstance(s, dict)]
+        wait_at = next(
+            i for i, s in enumerate(steps)
+            if isinstance(s, dict) and "wait_for_trigger" in s
+            and any("permit_join" in str(t.get("topic", "")) for t in s["wait_for_trigger"])
+        )
+        proof_at = services.index("shell_command.t832_zdo_proof", wait_at)
+        recover_at = services.index("shell_command.t832_recovery_result", proof_at)
+        # The permit_join transaction condition must demand the exact
+        # barrier id: a stale or foreign response can never mint proof.
+        txn_gates = [
+            s for s in steps
+            if isinstance(s, dict) and s.get("condition") == "template"
+            and "ha-t832-barrier" in s.get("value_template", "")
+        ]
+        self.assertTrue(txn_gates, "permit_join transaction gate missing")
+        proof_data = steps[proof_at].get("data", {})
+        self.assertIn("wait.trigger.payload_json.transaction", str(proof_data.get("transaction", "")))
+        recover_data = steps[recover_at].get("data", {})
+        self.assertIn("wait.trigger.payload_json.transaction", str(recover_data.get("zdo_transaction", "")))
+
+    def test_rts_singleton_recorded_after_reset(self) -> None:
+        steps = flatten_actions(self.barrier["actions"])
+        services = [s.get("service") for s in steps if isinstance(s, dict)]
+        rts_at = services.index("shell_command.mr4u_p10_rts_reset")
+        marked_at = services.index("shell_command.t832_rts_used", rts_at + 1)
+        # Exactly one RTS step exists: retries have nothing else to call.
+        self.assertEqual(services.count("shell_command.mr4u_p10_rts_reset"), 1)
+        gate = steps[marked_at + 1]
+        self.assertEqual(gate.get("condition"), "template")
+        self.assertIn("t832_rts_marked", gate.get("value_template", ""))
+
+    def test_capture_fragment_passes_trigger_evidence(self) -> None:
+        text = SHELL_COMMANDS.read_text(encoding="utf-8")
+        capture = text.split("t832_authorize_reset")[0]
+        for flag in ("--triggers", "--trigger-topic", "--trigger-payload"):
+            self.assertIn(flag, capture)
+
 
 class BarrierChainTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -213,6 +254,9 @@ class BarrierChainTests(unittest.TestCase):
     def rewrite_deploy_paths(self, rendered: str) -> str:
         """Map deploy-time paths to this test's sandbox (no shell needed)."""
         rendered = rendered.replace(
+            "/config/t832_capture_barrier.yaml", str(REPO / "deploy" / "t832_capture_barrier.yaml")
+        )
+        rendered = rendered.replace(
             "/config/python_scripts/t832_incident.py", str(HERE / "t832_incident.py")
         )
         rendered = rendered.replace("--root /config/.private/t832-diag", "--root " + str(self.state))
@@ -233,6 +277,16 @@ class BarrierChainTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.env,
+        )
+
+    def run_capture(self, trigger: str, topic: str = "", payload: str = "{}"):
+        return self.run_shell_template(
+            "t832_capture",
+            {
+                "trigger": trigger,
+                "trigger_topic": topic,
+                "trigger_payload_json": payload,
+            },
         )
 
     def latch_status(self) -> str:
@@ -258,7 +312,7 @@ class BarrierChainTests(unittest.TestCase):
         artifact.write_text(":020000040000FA\n", encoding="utf-8")
         self.assertEqual(self.run_tool("bind-firmware", "--artifact", str(artifact)).returncode, 0)
 
-        cap = self.run_shell_template("t832_capture", {"trigger": "mesh_outage"})
+        cap = self.run_capture("mesh_outage")
         self.assertEqual(cap.returncode, 0, cap.stderr)
         cap_doc = json.loads(cap.stdout)
         self.assertTrue(cap_doc["ok"])
@@ -272,9 +326,10 @@ class BarrierChainTests(unittest.TestCase):
         mark = self.run_shell_template("t832_mark_recovering")
         self.assertEqual(mark.returncode, 0, mark.stderr)
 
-        # Supervisor state persists across polls; the queue models the
-        # transition, then the settled value.
-        self.write_supervisor_shim(["starting", "stopped", "stopped"])
+        # Supervisor state persists across polls; the queue models a slow
+        # stop (serial-ownership prerequisite: RTS only runs after stopped
+        # is actually observed, never on the first guess).
+        self.write_supervisor_shim(["starting"] * 4 + ["stopped", "stopped"])
         self.mark("addon-stop")
         for _ in range(6):
             if self.addon_state() == "stopped":
@@ -283,11 +338,26 @@ class BarrierChainTests(unittest.TestCase):
 
         rts = self.run_rts_shim()
         self.assertEqual(rts.returncode, 0)
+        rts_used = self.run_shell_template("t832_rts_used", {})
+        self.assertEqual(rts_used.returncode, 0, rts_used.stderr)
+        # One RTS maximum: recording again refuses, so a retry or a
+        # duplicate automation run cannot reset the coordinator twice.
+        rts_again = self.run_shell_template("t832_rts_used", {})
+        self.assertNotEqual(rts_again.returncode, 0)
         self.mark("addon-start")
 
+        # Real ZDO evidence first: the bare zdo_ok claim below is only
+        # accepted against this recorded, transaction-bound proof.
+        proof = self.run_shell_template("t832_zdo_proof", {"transaction": "ha-t832-barrier"})
+        self.assertEqual(proof.returncode, 0, proof.stderr)
         rec = self.run_shell_template(
             "t832_recovery_result",
-            {"success": "true", "normal_traffic": "true", "zdo_ok": "true"},
+            {
+                "success": "true",
+                "normal_traffic": "true",
+                "zdo_ok": "true",
+                "zdo_transaction": "ha-t832-barrier",
+            },
         )
         self.assertEqual(rec.returncode, 0, rec.stderr)
         self.assertEqual(json.loads(rec.stdout)["status"], "stabilizing")
@@ -302,9 +372,10 @@ class BarrierChainTests(unittest.TestCase):
         order = self.markers()
         self.assertLess(order.index("addon-stop"), order.index("rts-invoked"))
         self.assertLess(order.index("rts-invoked"), order.index("addon-start"))
+        self.assertEqual(order.count("rts-invoked"), 1)
 
     def test_capture_refused_without_binding(self) -> None:
-        cap = self.run_shell_template("t832_capture", {"trigger": "mesh_outage"})
+        cap = self.run_capture("mesh_outage")
         self.assertNotEqual(cap.returncode, 0)
         self.assertFalse((self.state / "state" / "incident-latch.json").exists())
         self.assertNotIn("rts-invoked", self.markers())
@@ -313,7 +384,7 @@ class BarrierChainTests(unittest.TestCase):
         artifact = self.root / "fw.hex"
         artifact.write_text(":020000040000FA\n", encoding="utf-8")
         self.run_tool("bind-firmware", "--artifact", str(artifact))
-        cap_doc = json.loads(self.run_shell_template("t832_capture", {"trigger": "mesh_outage"}).stdout)
+        cap_doc = json.loads(self.run_capture("mesh_outage").stdout)
         bundle = Path(cap_doc["bundle"])
         (bundle / "manifest.json").write_text('{"tampered": true}\n', encoding="utf-8")
         auth = self.run_shell_template("t832_authorize_reset")
@@ -325,7 +396,7 @@ class BarrierChainTests(unittest.TestCase):
         artifact = self.root / "fw.hex"
         artifact.write_text(":020000040000FA\n", encoding="utf-8")
         self.run_tool("bind-firmware", "--artifact", str(artifact))
-        self.run_shell_template("t832_capture", {"trigger": "mesh_outage"})
+        self.run_capture("mesh_outage")
         self.run_shell_template("t832_authorize_reset")
         self.run_shell_template("t832_mark_recovering")
         self.write_supervisor_shim(["started"] * 8)
@@ -342,7 +413,7 @@ class BarrierChainTests(unittest.TestCase):
         artifact = self.root / "fw.hex"
         artifact.write_text(":020000040000FA\n", encoding="utf-8")
         self.run_tool("bind-firmware", "--artifact", str(artifact))
-        self.run_shell_template("t832_capture", {"trigger": "mesh_outage"})
+        self.run_capture("mesh_outage")
         self.run_shell_template("t832_authorize_reset")
         self.run_shell_template("t832_mark_recovering")
         self.write_supervisor_shim(["stopped"])
@@ -357,17 +428,128 @@ class BarrierChainTests(unittest.TestCase):
         artifact = self.root / "fw.hex"
         artifact.write_text(":020000040000FA\n", encoding="utf-8")
         self.run_tool("bind-firmware", "--artifact", str(artifact))
-        self.run_shell_template("t832_capture", {"trigger": "mesh_outage"})
+        self.run_capture("mesh_outage")
         self.run_shell_template("t832_authorize_reset")
         self.run_shell_template("t832_mark_recovering")
         rec = self.run_shell_template(
             "t832_recovery_result",
-            {"success": "true", "normal_traffic": "true", "zdo_ok": "false"},
+            {
+                "success": "true",
+                "normal_traffic": "true",
+                "zdo_ok": "false",
+                "zdo_transaction": "",
+            },
         )
         self.assertEqual(rec.returncode, 0, rec.stderr)
         failed = json.loads(rec.stdout)
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["failure_reason"], "no-zdo-verification")
+
+    def bind(self) -> None:
+        artifact = self.root / "fw.hex"
+        artifact.write_text(":020000040000FA\n", encoding="utf-8")
+        self.assertEqual(self.run_tool("bind-firmware", "--artifact", str(artifact)).returncode, 0)
+
+    def test_healthy_removal_never_authorizes(self) -> None:
+        self.bind()
+        cap = self.run_capture(
+            "radio_timeout",
+            topic="zigbee2mqtt/bridge/response/device/remove",
+            payload='{"status": "ok"}',
+        )
+        self.assertEqual(cap.returncode, 0, cap.stderr)
+        auth = self.run_shell_template("t832_authorize_reset")
+        self.assertNotEqual(auth.returncode, 0)
+        self.assertEqual(self.latch_status(), "captured")
+        self.assertNotIn("rts-invoked", self.markers())
+
+    def test_malformed_remove_payload_never_authorizes(self) -> None:
+        self.bind()
+        cap = self.run_capture(
+            "radio_timeout",
+            topic="zigbee2mqtt/bridge/response/device/remove",
+            payload="{not json",
+        )
+        self.assertEqual(cap.returncode, 0, cap.stderr)
+        auth = self.run_shell_template("t832_authorize_reset")
+        self.assertNotEqual(auth.returncode, 0)
+        self.assertEqual(self.latch_status(), "captured")
+        self.assertNotIn("rts-invoked", self.markers())
+
+    def test_wrong_topic_never_authorizes(self) -> None:
+        self.bind()
+        cap = self.run_capture(
+            "radio_timeout",
+            topic="zigbee2mqtt/bridge/response/permit_join",
+            payload='{"status": "ok", "transaction": "other"}',
+        )
+        self.assertEqual(cap.returncode, 0, cap.stderr)
+        auth = self.run_shell_template("t832_authorize_reset")
+        self.assertNotEqual(auth.returncode, 0)
+        self.assertEqual(self.latch_status(), "captured")
+
+    def test_unknown_trigger_refused_at_capture(self) -> None:
+        self.bind()
+        cap = self.run_capture("bogus_trigger")
+        self.assertNotEqual(cap.returncode, 0)
+        self.assertFalse((self.state / "state" / "incident-latch.json").exists())
+
+    def test_qualifying_timeout_reaches_authorize(self) -> None:
+        self.bind()
+        cap = self.run_capture(
+            "radio_timeout",
+            topic="zigbee2mqtt/bridge/response/device/remove",
+            payload='{"status": "error", "error": "Failed to remove device: SRSP timeout"}',
+        )
+        self.assertEqual(cap.returncode, 0, cap.stderr)
+        cap_doc = json.loads(cap.stdout)
+        manifest = json.loads(
+            (Path(cap_doc["bundle"]) / "manifest.json").read_text(encoding="utf-8")
+        )
+        qualification = manifest["trigger_qualification"]
+        self.assertTrue(qualification["qualifying"])
+        self.assertEqual(qualification["reason"], "timeout-error")
+        # The verdict is pinned to the exact reviewed candidate file.
+        barrier = REPO / "deploy" / "t832_capture_barrier.yaml"
+        expected_sha = hashlib.sha256(barrier.read_bytes()).hexdigest()
+        self.assertEqual(qualification["source_sha256"], expected_sha)
+        self.assertEqual(manifest["trigger_definitions_sha256"], expected_sha)
+        auth = self.run_shell_template("t832_authorize_reset")
+        self.assertEqual(auth.returncode, 0, auth.stderr)
+        self.assertEqual(json.loads(auth.stdout)["status"], "reset_authorized")
+
+    def test_zdo_claim_without_proof_stays_failed(self) -> None:
+        self.bind()
+        self.run_capture("mesh_outage")
+        self.run_shell_template("t832_authorize_reset")
+        self.run_shell_template("t832_mark_recovering")
+        # An outage-derived Boolean alone is never ZDO proof: no recorded
+        # permit_join transaction means the claim cannot stabilize.
+        rec = self.run_shell_template(
+            "t832_recovery_result",
+            {
+                "success": "true",
+                "normal_traffic": "true",
+                "zdo_ok": "true",
+                "zdo_transaction": "ha-t832-barrier",
+            },
+        )
+        self.assertEqual(rec.returncode, 0, rec.stderr)
+        failed = json.loads(rec.stdout)
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["failure_reason"], "no-zdo-verification")
+        self.assertFalse(failed["zdo_verified"])
+
+    def test_supervisor_api_failure_halts_before_rts(self) -> None:
+        self.bind()
+        self.run_capture("mesh_outage")
+        self.run_shell_template("t832_authorize_reset")
+        self.run_shell_template("t832_mark_recovering")
+        self.addon_states.unlink()
+        with self.assertRaises(AssertionError):
+            self.addon_state()
+        self.assertEqual(self.latch_status(), "recovering")
+        self.assertNotIn("rts-invoked", self.markers())
 
 
 if __name__ == "__main__":

@@ -41,9 +41,15 @@
       id: radio_timeout
   conditions: []
   actions:
+    # State triggers carry no payload to evaluate (HA enforced their
+    # to-state plus the for-duration before firing); the mqtt trigger's
+    # topic and response payload ride along for tool-side qualification.
+    # Only a timeout-family error on the remove-response topic qualifies.
     - service: shell_command.t832_capture
       data:
         trigger: "{{ trigger.id }}"
+        trigger_topic: "{{ trigger.topic | default('') }}"
+        trigger_payload_json: "{{ trigger.payload_json | default({}) | tojson }}"
       response_variable: t832_capture
     - condition: template
       value_template: >-
@@ -86,11 +92,18 @@
       value_template: >-
         {{ (t832_addon_state['stdout'] | from_json).state == 'stopped' }}
     # The ONLY reset implementation: the existing validated R2 helper.
-    # Zigbee2MQTT is confirmed stopped above before this runs.
+    # Zigbee2MQTT is confirmed stopped above before this runs (serial
+    # ownership prerequisite: the RTS line is only toggled with the
+    # coordinator serial free). The latch permits exactly one RTS per
+    # incident; t832_rts_used records it, and any retry halts here.
     - service: shell_command.mr4u_p10_rts_reset
       response_variable: t832_rts
     - condition: template
       value_template: "{{ t832_rts['returncode'] == 0 }}"
+    - service: shell_command.t832_rts_used
+      response_variable: t832_rts_marked
+    - condition: template
+      value_template: "{{ t832_rts_marked['returncode'] == 0 }}"
     - service: hassio.addon_start
       data:
         addon: 45df7312_zigbee2mqtt
@@ -118,11 +131,21 @@
         {{ (wait.trigger.payload_json.transaction | default(''))
             == 'ha-t832-barrier'
             and (wait.trigger.payload_json.status | default('')) == 'ok' }}
+    # Real ZDO evidence is recorded here, bound to the observed transaction:
+    # an outage-derived Boolean alone is never ZDO proof. recovery_result
+    # below only accepts zdo_ok against this fresh recorded proof.
+    - service: shell_command.t832_zdo_proof
+      data:
+        transaction: "{{ wait.trigger.payload_json.transaction }}"
+      response_variable: t832_zdo
+    - condition: template
+      value_template: "{{ t832_zdo['returncode'] == 0 }}"
     - service: shell_command.t832_recovery_result
       data:
         success: true
         normal_traffic: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') }}"
         zdo_ok: true
+        zdo_transaction: "{{ wait.trigger.payload_json.transaction }}"
       response_variable: t832_recovered
     - condition: template
       value_template: >-

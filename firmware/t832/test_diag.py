@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -612,7 +613,7 @@ class IncidentTests(unittest.TestCase):
             )
             captured = incident.capture(
                 store,
-                "unit-test",
+                "mesh_outage",
                 sources=[str(log)],
                 config_fingerprint="cfg",
                 initial_tail_bytes=1024 * 1024,
@@ -695,7 +696,7 @@ class IncidentTests(unittest.TestCase):
                 encoding="utf-8",
             )
             captured = incident.capture(
-                store, "t", sources=[str(log)], config_fingerprint=None,
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
                 window_seconds=900, deadline_seconds=30,
             )
@@ -713,7 +714,7 @@ class IncidentTests(unittest.TestCase):
             log = root / "z2m.log"
             log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
             captured = incident.capture(
-                store, "t", sources=[str(log)], config_fingerprint=None,
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
                 window_seconds=900, deadline_seconds=30,
             )
@@ -734,7 +735,7 @@ class IncidentTests(unittest.TestCase):
                 store = incident.Store(root / "private")
                 try:
                     incident.capture(
-                        store, "race", sources=[str(log)], config_fingerprint=None,
+                        store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                         initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                         window_seconds=900, deadline_seconds=30,
                     )
@@ -758,14 +759,14 @@ class IncidentTests(unittest.TestCase):
             log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
             with self.assertRaises(TimeoutError):
                 incident.capture(
-                    store, "t", sources=[str(log)], config_fingerprint=None,
+                    store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                     initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                     window_seconds=900, deadline_seconds=-1,
                 )
             status = store.load(store.latch, {})
             self.assertEqual(status, {})
             captured = incident.capture(
-                store, "t", sources=[str(log)], config_fingerprint=None,
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                 window_seconds=900, deadline_seconds=30, max_window_rows=0,
             )
@@ -784,7 +785,7 @@ class IncidentTests(unittest.TestCase):
                 encoding="utf-8",
             )
             captured = incident.capture(
-                store, "t", sources=[str(log)], config_fingerprint=None,
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
                 window_seconds=900, deadline_seconds=30,
             )
@@ -804,7 +805,7 @@ class IncidentTests(unittest.TestCase):
             artifact.write_text(":020000040000FA\n", encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 incident.capture(
-                    store, "t", sources=[str(log)], config_fingerprint=None,
+                    store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                     initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                     window_seconds=900, deadline_seconds=30,
                     require_firmware_binding=True,
@@ -812,7 +813,7 @@ class IncidentTests(unittest.TestCase):
             bound = incident.bind_firmware(store, artifact, role="test")
             self.assertTrue(bound["ok"])
             captured = incident.capture(
-                store, "t", sources=[str(log)], config_fingerprint=None,
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                 window_seconds=900, deadline_seconds=30,
                 require_firmware_binding=True,
@@ -1068,13 +1069,13 @@ class RecoveryEdgeTests(unittest.TestCase):
             log = Path(td) / "z2m.log"
             log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
             incident.capture(
-                store, "first", sources=[str(log)], config_fingerprint=None,
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                 window_seconds=900, deadline_seconds=30,
             )
             with self.assertRaises(RuntimeError):
                 incident.capture(
-                    store, "second", sources=[str(log)], config_fingerprint=None,
+                    store, "bridge_offline", sources=[str(log)], config_fingerprint=None,
                     initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
                     window_seconds=900, deadline_seconds=30,
                 )
@@ -1106,6 +1107,218 @@ class RecoveryEdgeTests(unittest.TestCase):
                 initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
             )
             self.assertEqual(result["host_events"], 1)
+
+
+class TriggerEvaluatorTests(unittest.TestCase):
+    def test_state_triggers_are_trusted_firings(self) -> None:
+        for trigger_id in ("mesh_outage", "bridge_offline"):
+            verdict = incident.evaluate_trigger(trigger_id, None, topic=None, payload=None)
+            self.assertTrue(verdict["qualifying"])
+            self.assertEqual(verdict["reason"], "state-trigger-fired")
+
+    def test_unknown_trigger_never_qualifies(self) -> None:
+        verdict = incident.evaluate_trigger("bogus", None, topic=None, payload=None)
+        self.assertFalse(verdict["qualifying"])
+        self.assertTrue(str(verdict["reason"]).startswith("unknown-trigger:"))
+
+    def test_radio_timeout_family(self) -> None:
+        topic = incident.RADIO_TIMEOUT_TOPIC
+        ok, reason = incident.evaluate_radio_timeout(
+            topic=topic, payload={"status": "ok"})
+        self.assertFalse(ok)
+        self.assertEqual(reason, "healthy-removal")
+        for error in (
+            "Failed to remove device: SRSP timeout",
+            "request timed out after 10000ms",
+            "TIMEOUT waiting for response",
+        ):
+            ok, reason = incident.evaluate_radio_timeout(
+                topic=topic, payload={"status": "error", "error": error})
+            self.assertTrue(ok, error)
+            self.assertEqual(reason, "timeout-error")
+        ok, reason = incident.evaluate_radio_timeout(
+            topic=topic, payload={"status": "error", "error": "device not found"})
+        self.assertFalse(ok)
+        self.assertEqual(reason, "non-timeout-error")
+        ok, reason = incident.evaluate_radio_timeout(topic=topic, payload="{oops")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "malformed-payload")
+        ok, reason = incident.evaluate_radio_timeout(
+            topic="zigbee2mqtt/bridge/response/permit_join",
+            payload={"status": "ok", "transaction": "x"},
+        )
+        self.assertFalse(ok)
+        self.assertTrue(reason.startswith("topic-mismatch:"))
+
+    def test_capture_stores_verdict_and_authorize_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                incident.capture(
+                    store, "bogus", sources=[str(log)], config_fingerprint=None,
+                    initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
+                    window_seconds=900, deadline_seconds=30,
+                )
+            captured = incident.capture(
+                store, "radio_timeout", sources=[str(log)], config_fingerprint=None,
+                initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
+                window_seconds=900, deadline_seconds=30,
+                trigger_topic=incident.RADIO_TIMEOUT_TOPIC,
+                trigger_payload={"status": "ok"},
+            )
+            manifest = json.loads(
+                (Path(str(captured["bundle"])) / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertFalse(manifest["trigger_qualification"]["qualifying"])
+            self.assertEqual(
+                manifest["trigger_qualification"]["reason"], "healthy-removal")
+            with self.assertRaises(RuntimeError):
+                incident.authorize_reset(store)
+            latch = store.load(store.latch, {})
+            self.assertEqual(latch["status"], "captured")
+
+    def test_load_trigger_defs_pins_source_sha(self) -> None:
+        here = Path(__file__).resolve().parent
+        repo = here.parent.parent
+        barrier = repo / "deploy" / "t832_capture_barrier.yaml"
+        defs, sha = incident.load_trigger_defs(barrier)
+        self.assertEqual(sha, hashlib.sha256(barrier.read_bytes()).hexdigest())
+        self.assertEqual(defs["mesh_outage"]["kind"], "state")
+        self.assertEqual(defs["mesh_outage"]["for_seconds"], 300)
+        self.assertEqual(defs["radio_timeout"]["kind"], "mqtt")
+        verdict = incident.evaluate_trigger(
+            "radio_timeout", defs,
+            topic=incident.RADIO_TIMEOUT_TOPIC,
+            payload={"status": "error", "error": "srsp timeout"},
+        )
+        self.assertTrue(verdict["qualifying"])
+        self.assertEqual(verdict["source"], "candidate-yaml")
+        self.assertEqual(verdict["source_sha256"], sha)
+
+
+class ZdoProofTests(unittest.TestCase):
+    def recovering_store(self, root: Path) -> object:
+        store = incident.Store(root / "private")
+        store.atomic_json(
+            store.latch, {"status": "recovering", "incident_id": "x", "reset_used": True}
+        )
+        return store
+
+    def test_claim_without_proof_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = self.recovering_store(Path(td))
+            failed = incident.recovery_result(
+                store, success=True, normal_traffic=True, zdo_ok=True,
+                zdo_transaction="ha-t832-barrier",
+            )
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["failure_reason"], "no-zdo-verification")
+            self.assertFalse(failed["zdo_verified"])
+            self.assertEqual(failed["zdo_proof"], "missing")
+
+    def test_proof_then_matching_claim_stabilizes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = self.recovering_store(Path(td))
+            proof = incident.record_zdo_proof(store, "ha-t832-barrier")
+            self.assertEqual(proof["zdo_proof"]["transaction"], "ha-t832-barrier")
+            value = incident.recovery_result(
+                store, success=True, normal_traffic=True, zdo_ok=True,
+                zdo_transaction="ha-t832-barrier",
+            )
+            self.assertEqual(value["status"], "stabilizing")
+            self.assertTrue(value["zdo_verified"])
+
+    def test_stale_proof_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = self.recovering_store(Path(td))
+            incident.record_zdo_proof(store, "ha-t832-barrier")
+            latch = store.load(store.latch, {})
+            latch["zdo_proof"]["mono"] = (
+                time.monotonic() - incident.ZDO_PROOF_MAX_AGE_S - 1.0
+            )
+            store.atomic_json(store.latch, latch)
+            failed = incident.recovery_result(
+                store, success=True, normal_traffic=True, zdo_ok=True,
+                zdo_transaction="ha-t832-barrier",
+            )
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["zdo_proof"], "stale")
+
+    def test_transaction_mismatch_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = self.recovering_store(Path(td))
+            incident.record_zdo_proof(store, "ha-t832-barrier")
+            failed = incident.recovery_result(
+                store, success=True, normal_traffic=True, zdo_ok=True,
+                zdo_transaction="stale-or-foreign",
+            )
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["zdo_proof"], "mismatch")
+
+    def test_empty_transaction_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = self.recovering_store(Path(td))
+            with self.assertRaises(RuntimeError):
+                incident.record_zdo_proof(store, "  ")
+
+
+class RtsSingletonTests(unittest.TestCase):
+    def test_second_rts_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            store.atomic_json(
+                store.latch, {"status": "recovering", "incident_id": "x", "reset_used": True}
+            )
+            first = incident.record_rts_used(store)
+            self.assertTrue(first["rts_used"])
+            with self.assertRaises(RuntimeError):
+                incident.record_rts_used(store)
+
+    def test_rts_outside_recovering_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            store.atomic_json(store.latch, {"status": "captured", "incident_id": "x"})
+            with self.assertRaises(RuntimeError):
+                incident.record_rts_used(store)
+
+
+class StabilityCloseOnceTests(unittest.TestCase):
+    def test_close_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            base = time.monotonic() - 700.0
+            store.atomic_json(
+                store.latch,
+                {
+                    "status": "stabilizing",
+                    "incident_id": "x",
+                    "reset_used": True,
+                    "normal_traffic_observed": True,
+                    "zdo_verified": True,
+                    "recovery_succeeded_mono": base,
+                    "stable_after_mono": base + 600.0,
+                    "stable_after_utc": "2000-01-01T00:00:00Z",
+                    "observations": [
+                        {
+                            "utc": "2000-01-01T00:00:00Z",
+                            "mono": base + offset,
+                            "bridge_up": True,
+                            "normal_traffic": True,
+                            "zdo_ok": True,
+                        }
+                        for offset in (30, 120, 210, 300, 390, 480, 570)
+                    ],
+                },
+            )
+            closed = incident.close_if_stable(store, bridge_up=True, normal_traffic=True)
+            self.assertEqual(closed["status"], "closed")
+            with self.assertRaises(RuntimeError):
+                incident.close_if_stable(store, bridge_up=True, normal_traffic=True)
+            latch = store.load(store.latch, {})
+            self.assertEqual(latch["status"], "closed")
 
 
 if __name__ == "__main__":
