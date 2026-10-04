@@ -328,6 +328,37 @@ class CollectorTests(unittest.TestCase):
             )
 
 
+def stage_binding(
+    root: Path,
+    artifact: Path,
+    *,
+    variant: str = "T832-DIAG-R0",
+    build_id: int = 8320001,
+    commit: str = "a" * 40,
+) -> Path:
+    """Stage a build manifest that actually lists the artifact digest.
+
+    B12 oracle support: bind_firmware() verifies the manifest contents
+    (variant match, 40-hex commit, artifact digest listed), so tests
+    stage a real manifest file instead of asserting on hash strings.
+    """
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    manifest = root / "build-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "variant": variant,
+                "repository_commit": commit,
+                "artifacts": {"T832-DIAG-R0.hex": {"sha256": digest}},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def stream_rows(store: Store) -> list[dict]:
     day = incident.utcnow().strftime("%Y-%m-%d")
     path = store.stream / f"diag-{day}.jsonl"
@@ -345,7 +376,7 @@ class ContinuityTests(unittest.TestCase):
         self.assertGreater(result["diag_records"], 0)
         return stream_rows(store)
 
-    def test_wrap_replay_duplicate_boot(self) -> None:
+    def test_wrap_replay_duplicate_ambiguous_reboot(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             store = incident.Store(root / "private")
@@ -371,13 +402,20 @@ class ContinuityTests(unittest.TestCase):
             self.assertEqual(rows[-1]["continuity_kind"], "replay")
             self.assertEqual(rows[-1]["host_session"], session)
             self.assertFalse(rows[-1]["session_reset_detected"])
+            # B10: a clock step-back with no BOOT marker proves nothing —
+            # the frontier holds and both frames are explicitly ambiguous.
             rows = self.collect_lines(store, log, [line(6, 500), line(7, 600)])
-            self.assertEqual(rows[-2]["continuity_kind"], "reboot")
-            self.assertTrue(rows[-2]["session_reset_detected"])
-            boot_session = rows[-2]["host_session"]
+            self.assertEqual(rows[-2]["continuity_kind"], "ambiguous")
+            self.assertFalse(rows[-2]["session_reset_detected"])
+            self.assertEqual(rows[-2]["host_session"], session)
+            self.assertEqual(rows[-1]["continuity_kind"], "ambiguous")
+            self.assertEqual(rows[-1]["host_session"], session)
+            # B10: regressed counter and clock plus a fresh BOOT marker is
+            # the only proved reboot signature.
             rows = self.collect_lines(store, log, [line(1, 700, kind=1)])
-            self.assertEqual(rows[-1]["continuity_kind"], "boot")
-            self.assertNotEqual(rows[-1]["host_session"], boot_session)
+            self.assertEqual(rows[-1]["continuity_kind"], "reboot")
+            self.assertTrue(rows[-1]["session_reset_detected"])
+            self.assertNotEqual(rows[-1]["host_session"], session)
             self.assertEqual(rows[-1]["boot_index"], rows[-2]["boot_index"] + 1)
 
     def test_seven_day_stream_with_rotation(self) -> None:
@@ -694,6 +732,7 @@ class IncidentTests(unittest.TestCase):
             store.atomic_json(
                 store.latch,
                 {
+                    "schema": 1,
                     "status": "reset_authorized",
                     "incident_id": "x",
                     "reset_used": True,
@@ -710,7 +749,7 @@ class IncidentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = incident.Store(Path(td) / "private")
             store.atomic_json(
-                store.latch, {"status": "recovering", "incident_id": "x", "reset_used": True}
+                store.latch, {"schema": 1, "status": "recovering", "incident_id": "x", "reset_used": True}
             )
             failed = incident.recovery_result(store, success=True, normal_traffic=True, zdo_ok=False)
             self.assertEqual(failed["status"], "failed")
@@ -914,7 +953,14 @@ class IncidentTests(unittest.TestCase):
                     window_seconds=900, deadline_seconds=30,
                     require_firmware_binding=True,
                 )
-            bound = incident.bind_firmware(store, artifact, role="deployed")
+            bound = incident.bind_firmware(
+                store,
+                artifact,
+                role="deployed",
+                variant="T832-DIAG-R0",
+                manifest=stage_binding(root, artifact),
+                build_id=8320001,
+            )
             self.assertTrue(bound["ok"])
             captured = incident.capture(
                 store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
@@ -922,7 +968,8 @@ class IncidentTests(unittest.TestCase):
                 window_seconds=900, deadline_seconds=30,
                 require_firmware_binding=True,
             )
-            self.assertNotIn("firmware_sha256", captured)
+            self.assertEqual(captured["firmware_sha256"], bound["sha256"])
+            self.assertEqual(captured["firmware_binding_role"], "deployed")
             manifest = json.loads(
                 (Path(captured["bundle"]) / "manifest.json").read_text(encoding="utf-8")
             )
@@ -936,7 +983,14 @@ class IncidentTests(unittest.TestCase):
             log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
             artifact = root / "fw.hex"
             artifact.write_text(":020000040000FA\n", encoding="utf-8")
-            bound = incident.bind_firmware(store, artifact, role="candidate")
+            bound = incident.bind_firmware(
+                store,
+                artifact,
+                role="candidate",
+                variant="T832-DIAG-R0",
+                manifest=stage_binding(root, artifact),
+                build_id=8320001,
+            )
             self.assertTrue(bound["ok"])
             with self.assertRaises(RuntimeError):
                 incident.capture(
@@ -954,7 +1008,14 @@ class IncidentTests(unittest.TestCase):
             log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
             artifact = root / "fw.hex"
             artifact.write_text(":020000040000FA\n", encoding="utf-8")
-            incident.bind_firmware(store, artifact, role="deployed")
+            incident.bind_firmware(
+                store,
+                artifact,
+                role="deployed",
+                variant="T832-DIAG-R0",
+                manifest=stage_binding(root, artifact),
+                build_id=8320001,
+            )
             artifact.write_text(":020000040001F9\n", encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 incident.capture(
@@ -976,7 +1037,14 @@ class IncidentTests(unittest.TestCase):
             )
             artifact = root / "fw.hex"
             artifact.write_text(":020000040000FA\n", encoding="utf-8")
-            incident.bind_firmware(store, artifact, role="deployed", build_id=1)
+            incident.bind_firmware(
+                store,
+                artifact,
+                role="deployed",
+                variant="T832-DIAG-R0",
+                manifest=stage_binding(root, artifact),
+                build_id=1,
+            )
             result = incident.collect(
                 store, [str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
@@ -999,7 +1067,14 @@ class IncidentTests(unittest.TestCase):
             )
             artifact = root / "fw.hex"
             artifact.write_text(":020000040000FA\n", encoding="utf-8")
-            incident.bind_firmware(store, artifact, role="deployed", build_id=8320001)
+            incident.bind_firmware(
+                store,
+                artifact,
+                role="deployed",
+                variant="T832-DIAG-R0",
+                manifest=stage_binding(root, artifact),
+                build_id=8320001,
+            )
             result = incident.collect(
                 store, [str(log)], config_fingerprint=None,
                 initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
@@ -1015,6 +1090,7 @@ class StabilityTests(unittest.TestCase):
         store.atomic_json(
             store.latch,
             {
+                "schema": 1,
                 "status": "stabilizing",
                 "incident_id": "x",
                 "reset_used": True,
@@ -1121,7 +1197,7 @@ class ProtocolEdgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             incident.decode_packet(bytes(bad_schema).hex().upper())
 
-    def test_sequence_rollover_and_restart_detected(self) -> None:
+    def test_sequence_rollover_with_clock_back_is_ambiguous(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             store = incident.Store(root / "private")
@@ -1147,8 +1223,12 @@ class ProtocolEdgeTests(unittest.TestCase):
                 json.loads(line)
                 for line in (store.stream / f"diag-{day}.jsonl").read_text(encoding="utf-8").splitlines()
             ]
-            self.assertTrue(rows[1]["session_reset_detected"])
+            # B10: a wrap-window crossing with a stepped-back clock and no
+            # BOOT marker proves nothing — the frontier holds explicitly.
+            self.assertEqual(rows[1]["continuity_kind"], "ambiguous")
+            self.assertFalse(rows[1]["session_reset_detected"])
             self.assertEqual(rows[1]["sequence_gap_before"], 0)
+            self.assertEqual(rows[1]["host_session"], rows[0]["host_session"])
 
     def test_dropped_sequence_reports_gap(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1279,7 +1359,7 @@ class ProtocolEdgeTests(unittest.TestCase):
                 (store.incidents / f"bundle-{i:03d}").mkdir(parents=True, exist_ok=True)
             oldest = store.incidents / "bundle-000"
             store.atomic_json(
-                store.latch, {"status": "captured", "bundle": str(oldest)}
+                store.latch, {"schema": 1, "status": "captured", "bundle": str(oldest)}
             )
             pruned = incident.rotate(store, retain_days=7, max_bytes=1 << 30)
             remaining = sorted(
@@ -1312,7 +1392,7 @@ class RecoveryEdgeTests(unittest.TestCase):
     def test_partial_sys_only_recovery_stays_failed(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = incident.Store(Path(td) / "private")
-            store.atomic_json(store.latch, {"status": "recovering", "incident_id": "x", "reset_used": True})
+            store.atomic_json(store.latch, {"schema": 1, "status": "recovering", "incident_id": "x", "reset_used": True})
             result = store.load(store.latch, {})
             self.assertEqual(result["status"], "recovering")
             failed = incident.recovery_result(
@@ -1432,7 +1512,7 @@ class ZdoProofTests(unittest.TestCase):
     def recovering_store(self, root: Path) -> object:
         store = incident.Store(root / "private")
         store.atomic_json(
-            store.latch, {"status": "recovering", "incident_id": "x", "reset_used": True}
+            store.latch, {"schema": 1, "status": "recovering", "incident_id": "x", "reset_used": True}
         )
         return store
 
@@ -1513,7 +1593,7 @@ class RtsSingletonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = incident.Store(Path(td) / "private")
             store.atomic_json(
-                store.latch, {"status": "recovering", "incident_id": "x", "reset_used": True}
+                store.latch, {"schema": 1, "status": "recovering", "incident_id": "x", "reset_used": True}
             )
             first = incident.record_rts_used(store)
             self.assertTrue(first["rts_used"])
@@ -1523,7 +1603,7 @@ class RtsSingletonTests(unittest.TestCase):
     def test_rts_outside_recovering_refused(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = incident.Store(Path(td) / "private")
-            store.atomic_json(store.latch, {"status": "captured", "incident_id": "x"})
+            store.atomic_json(store.latch, {"schema": 1, "status": "captured", "incident_id": "x"})
             with self.assertRaises(RuntimeError):
                 incident.record_rts_used(store)
 
@@ -1536,6 +1616,7 @@ class StabilityCloseOnceTests(unittest.TestCase):
             store.atomic_json(
                 store.latch,
                 {
+                    "schema": 1,
                     "status": "stabilizing",
                     "incident_id": "x",
                     "reset_used": True,
@@ -1562,6 +1643,674 @@ class StabilityCloseOnceTests(unittest.TestCase):
                 incident.close_if_stable(store, bridge_up=True, normal_traffic=True)
             latch = store.load(store.latch, {})
             self.assertEqual(latch["status"], "closed")
+
+
+class R3M2ReadBoundsTests(unittest.TestCase):
+    """B04: bounded scans, resumable budgets, enforced deadlines."""
+
+    def diag_line(self, seq: int, up: int = 1000) -> str:
+        return (
+            "2026-10-03T09:00:00Z zh:zstack:znp "
+            f"T832D1:{packet_hex(export_sequence=seq, uptime_ms=up)}\n"
+        )
+
+    def test_budget_exhaustion_resumes_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "z2m.log"
+            lines = [self.diag_line(1), self.diag_line(2), self.diag_line(3)]
+            log.write_text("".join(lines), encoding="utf-8")
+            budget = len(lines[0].encode("utf-8"))
+            rows1, cursor1, notes1 = incident.read_increment(
+                log, {}, initial_tail_bytes=1 << 20, max_new_bytes=budget
+            )
+            self.assertEqual([r[1] for r in rows1], [lines[0].rstrip("\n")])
+            self.assertTrue(
+                any(n.startswith("read-budget-exhausted:") for n in notes1)
+            )
+            rows2, cursor2, _ = incident.read_increment(
+                log, cursor1, initial_tail_bytes=1 << 20, max_new_bytes=budget
+            )
+            self.assertEqual([r[1] for r in rows2], [lines[1].rstrip("\n")])
+            self.assertEqual(cursor1["offset"], len(lines[0].encode("utf-8")))
+            self.assertEqual(
+                cursor2["offset"], 2 * len(lines[0].encode("utf-8"))
+            )
+            rows3, _, notes3 = incident.read_increment(
+                log, cursor2, initial_tail_bytes=1 << 20
+            )
+            self.assertEqual([r[1] for r in rows3], [lines[2].rstrip("\n")])
+            self.assertFalse(
+                any(n.startswith("read-budget-exhausted:") for n in notes3)
+            )
+
+    def test_deadline_raises_timeout_and_leaves_no_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "z2m.log"
+            log.write_text(
+                "".join(self.diag_line(i) for i in range(300)), encoding="utf-8"
+            )
+            with self.assertRaises(TimeoutError):
+                incident.read_increment(
+                    log, {}, initial_tail_bytes=1 << 20,
+                    deadline_s=time.monotonic() - 1.0,
+                )
+            rows, _, _ = incident.read_increment(
+                log, {}, initial_tail_bytes=1 << 20
+            )
+            self.assertEqual(len(rows), 300)
+
+    def test_newline_free_flood_tail_skip_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "z2m.log"
+            log.write_bytes(
+                b"X" * (3 * 1024 * 1024) + b"\n" + self.diag_line(9).encode()
+            )
+            rows, _, notes = incident.read_increment(
+                log, {}, initial_tail_bytes=1 << 20
+            )
+            self.assertTrue(any(n.startswith("initial-tail:") for n in notes))
+            self.assertTrue(any(n.startswith("line-too-large:") for n in notes))
+            self.assertEqual(
+                [r[1] for r in rows], [self.diag_line(9).rstrip("\n")]
+            )
+
+    def test_exact_cap_line_consumes_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "z2m.log"
+            log.write_bytes(b"Y" * 11 + b"\n" + b"short\n")
+            rows, cursor, notes = incident.read_increment(
+                log, {}, initial_tail_bytes=1 << 20, max_line_bytes=10
+            )
+            self.assertTrue(any(n.startswith("line-too-large:") for n in notes))
+            self.assertEqual([r[1] for r in rows], ["short"])
+            self.assertEqual(cursor["offset"], 18)
+            rows2, _, _ = incident.read_increment(
+                log, cursor, initial_tail_bytes=1 << 20, max_line_bytes=10
+            )
+            self.assertEqual(rows2, [])
+
+    def test_locked_timeout_bounds_contention(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            with store.locked():
+                rival = incident.Store(Path(td) / "private")
+                with self.assertRaises(incident.LockError):
+                    with rival.locked(timeout_s=0.05):
+                        pass
+
+    def test_window_newest_first_sheds_oldest(self) -> None:
+        import datetime
+
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            day = incident.utcnow().strftime("%Y-%m-%d")
+            old = store.stream / "diag-2000-01-01.jsonl"
+            old.write_text(
+                '{"source_utc": "2026-10-03T09:00:00Z", "marker": "old"}\n',
+                encoding="utf-8",
+            )
+            new = store.stream / f"diag-{day}.jsonl"
+            new.write_text(
+                '{"source_utc": "2026-10-03T09:00:00Z", "marker": "new"}\n',
+                encoding="utf-8",
+            )
+            os.utime(old, (1_000_000, 1_000_000))
+            cutoff = datetime.datetime(
+                2000, 1, 2, tzinfo=datetime.timezone.utc
+            )
+            rows, _, _, truncated, _ = incident.recent_rows(
+                store, "diag", cutoff, max_rows=1
+            )
+            self.assertEqual([r["marker"] for r in rows], ["new"])
+            self.assertTrue(truncated)
+
+
+class R3M2LatchTests(unittest.TestCase):
+    """B05: every latch entry validates before any read-modify-write."""
+
+    def good(self, **kw: object) -> dict:
+        latch: dict = {
+            "schema": 1,
+            "status": "captured",
+            "incident_id": "i",
+            "reset_used": False,
+        }
+        latch.update(kw)
+        return latch
+
+    def test_validate_matrix(self) -> None:
+        self.assertEqual(incident.validate_latch(self.good()), self.good())
+        self.assertEqual(
+            incident.validate_latch(
+                {"schema": 1, "status": "reset_authorized",
+                 "incident_id": "x", "reset_used": True}
+            )["status"],
+            "reset_authorized",
+        )
+        cases = [
+            ("string", "not-an-object"),
+            ({"status": "captured", "incident_id": "x"}, "unknown-schema"),
+            ({"schema": 99, "status": "captured", "incident_id": "x"},
+             "unknown-schema"),
+            ({"schema": 1, "status": "bogus", "incident_id": "x"},
+             "unknown-status"),
+            ({"schema": 1, "status": "captured", "incident_id": "x",
+              "reset_used": "yes"}, "reset-used-not-bool"),
+            ({"schema": 1, "status": "captured", "incident_id": "x",
+              "reset_used": True}, "permit-consumed-but-captured"),
+            ({"schema": 1, "status": "recovering", "reset_used": False},
+             "missing-incident-id"),
+            ({"schema": 1, "status": "captured", "incident_id": "",
+              "reset_used": False}, "missing-incident-id"),
+        ]
+        for value, fragment in cases:
+            with self.assertRaises(RuntimeError, msg=repr(value)) as ctx:
+                incident.validate_latch(value)
+            self.assertIn(fragment, str(ctx.exception))
+        cleared = {"schema": 1, "status": "cleared"}
+        self.assertEqual(incident.validate_latch(cleared), cleared)
+
+    def test_capture_refuses_invalid_latch_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            store.atomic_json(store.latch, {"schema": 1, "status": "bogus"})
+            before = {p.name for p in store.incidents.iterdir()}
+            with self.assertRaises(RuntimeError):
+                incident.capture(
+                    store, "mesh_outage", sources=[str(log)],
+                    config_fingerprint=None, initial_tail_bytes=1024,
+                    retain_days=7, max_bytes=1 << 20, window_seconds=900,
+                    deadline_seconds=30,
+                )
+            self.assertEqual({p.name for p in store.incidents.iterdir()}, before)
+
+    def test_force_clear_audits_and_unbricks(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            (root / "private" / "state" / "incident-latch.json").write_text(
+                "{corrupt", encoding="utf-8"
+            )
+            cleared = incident.manual_clear(store, "operator", force=True)
+            self.assertEqual(cleared["status"], "cleared")
+            self.assertEqual(cleared["schema"], 1)
+            kinds = [
+                json.loads(line)["kind"]
+                for line in store.host_events.read_text(
+                    encoding="utf-8").splitlines()
+            ]
+            self.assertIn("incident_manual_clear_forced", kinds)
+            captured = incident.capture(
+                store, "mesh_outage", sources=[str(log)],
+                config_fingerprint=None, initial_tail_bytes=1024,
+                retain_days=7, max_bytes=1 << 20, window_seconds=900,
+                deadline_seconds=30,
+            )
+            self.assertEqual(captured["status"], "captured")
+
+
+class R3M2BundleTests(unittest.TestCase):
+    """B06: exact bundle inventory, digest format, counts, provenance."""
+
+    def fresh(self, td: str) -> tuple:
+        root = Path(td)
+        store = incident.Store(root / "private")
+        log = root / "z2m.log"
+        log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+        captured = incident.capture(
+            store, "mesh_outage", sources=[str(log)],
+            config_fingerprint=None, initial_tail_bytes=1024 * 1024,
+            retain_days=7, max_bytes=1 << 30, window_seconds=900,
+            deadline_seconds=30,
+        )
+        return store, Path(str(captured["bundle"]))
+
+    def recorded(self, bundle: Path) -> dict:
+        return json.loads(
+            (bundle / "SHA256.json").read_text(encoding="utf-8")
+        )
+
+    def rewrite_recorded(self, bundle: Path, recorded: dict) -> None:
+        (bundle / "SHA256.json").write_text(
+            json.dumps(recorded) + "\n", encoding="utf-8"
+        )
+
+    def test_swizzled_digest_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store, bundle = self.fresh(td)
+            recorded = self.recorded(bundle)
+            recorded["diag-15m.jsonl"] = "f" * 64
+            self.rewrite_recorded(bundle, recorded)
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-hash-mismatch", str(ctx.exception))
+
+    def test_padded_inventory_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store, bundle = self.fresh(td)
+            recorded = self.recorded(bundle)
+            recorded["extra.json"] = "a" * 64
+            self.rewrite_recorded(bundle, recorded)
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-inventory-inexact", str(ctx.exception))
+
+    def test_thinned_inventory_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store, bundle = self.fresh(td)
+            recorded = self.recorded(bundle)
+            del recorded["host-events-15m.jsonl"]
+            self.rewrite_recorded(bundle, recorded)
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-inventory-inexact", str(ctx.exception))
+
+    def test_bad_digest_format_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store, bundle = self.fresh(td)
+            recorded = self.recorded(bundle)
+            recorded["diag-15m.jsonl"] = "xyz"
+            self.rewrite_recorded(bundle, recorded)
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-digest-format", str(ctx.exception))
+
+    def test_count_mismatch_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store, bundle = self.fresh(td)
+            with (bundle / "diag-15m.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write('{"smuggled": true}\n')
+            # Re-seal the hashes so only the manifest counts disagree.
+            recorded = self.recorded(bundle)
+            recorded["diag-15m.jsonl"] = incident.sha256_file(
+                bundle / "diag-15m.jsonl"
+            )
+            self.rewrite_recorded(bundle, recorded)
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-count-mismatch", str(ctx.exception))
+
+    def test_supplement_truncation_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "no timestamp here "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+                encoding="utf-8",
+            )
+            captured = incident.capture(
+                store, "mesh_outage", sources=[str(log)],
+                config_fingerprint=None, initial_tail_bytes=1024 * 1024,
+                retain_days=7, max_bytes=1 << 30, window_seconds=900,
+                deadline_seconds=30,
+            )
+            bundle = Path(str(captured["bundle"]))
+            manifest = json.loads(
+                (bundle / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertGreater(manifest["unknown_supplement_count"], 0)
+            (bundle / "unknown-time-supplement.jsonl").write_text(
+                "", encoding="utf-8"
+            )
+            # Re-seal the hashes so only the supplement counts disagree.
+            recorded = self.recorded(bundle)
+            recorded["unknown-time-supplement.jsonl"] = incident.sha256_file(
+                bundle / "unknown-time-supplement.jsonl"
+            )
+            self.rewrite_recorded(bundle, recorded)
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-count-mismatch", str(ctx.exception))
+
+    def test_foreign_bundle_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            evil = root / "evil-id"
+            evil.mkdir(parents=True, exist_ok=True)
+            store.atomic_json(
+                store.latch,
+                {"schema": 1, "status": "captured", "incident_id": "evil-id",
+                 "bundle": str(evil), "reset_used": False},
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                incident.authorize_reset(store)
+            self.assertIn("reset-permit-bundle-foreign", str(ctx.exception))
+
+
+class R3M2ContinuityTests(unittest.TestCase):
+    """B10: the frontier moves only on proved same-boot evidence."""
+
+    def test_ambiguous_pair_holds_frontier(self) -> None:
+        cont = incident.Continuity("t")
+        first = cont.annotate(5, 3000, False)
+        self.assertEqual(first["continuity_kind"], "boot")
+        session = first["host_session"]
+        boot_index = first["boot_index"]
+        amb = cont.annotate(4, 2000, False)
+        self.assertEqual(amb["continuity_kind"], "ambiguous")
+        self.assertFalse(amb["session_reset_detected"])
+        self.assertEqual(amb["host_session"], session)
+        self.assertEqual(amb["boot_index"], boot_index)
+        proved = cont.annotate(1, 700, True)
+        self.assertEqual(proved["continuity_kind"], "reboot")
+        self.assertTrue(proved["session_reset_detected"])
+        self.assertNotEqual(proved["host_session"], session)
+        self.assertEqual(proved["boot_index"], boot_index + 1)
+        clean = cont.annotate(2, 800, False)
+        self.assertEqual(clean["continuity_kind"], "normal")
+        self.assertEqual(clean["host_session"], proved["host_session"])
+
+    def test_delayed_boot_keeps_session(self) -> None:
+        cont = incident.Continuity("t")
+        first = cont.annotate(10, 1000, False)
+        late = cont.annotate(14, 6000, True)
+        self.assertEqual(late["continuity_kind"], "delayed_boot")
+        self.assertFalse(late["session_reset_detected"])
+        self.assertEqual(late["sequence_gap_before"], 3)
+        self.assertEqual(late["host_session"], first["host_session"])
+        self.assertEqual(late["boot_index"], first["boot_index"])
+
+    def test_uptime_wrap_keeps_boot(self) -> None:
+        cont = incident.Continuity("t")
+        first = cont.annotate(5, 0xFFFFFF00, False)
+        wrapped = cont.annotate(6, 200, False)
+        self.assertEqual(wrapped["continuity_kind"], "uptime_wrap")
+        self.assertFalse(wrapped["session_reset_detected"])
+        clean = cont.annotate(7, 300, False)
+        self.assertEqual(clean["continuity_kind"], "normal")
+        self.assertEqual(clean["host_session"], first["host_session"])
+
+    def test_replay_keeps_session(self) -> None:
+        cont = incident.Continuity("t")
+        first = cont.annotate(5, 3000, False)
+        dup = cont.annotate(5, 3000, False)
+        self.assertEqual(dup["continuity_kind"], "duplicate")
+        stale = cont.annotate(4, 4000, False)
+        self.assertEqual(stale["continuity_kind"], "replay")
+        self.assertFalse(stale["session_reset_detected"])
+        self.assertEqual(stale["host_session"], first["host_session"])
+
+    def test_expected_seq_clock_back_is_ambiguous(self) -> None:
+        cont = incident.Continuity("t")
+        first = cont.annotate(5, 3000, False)
+        amb = cont.annotate(6, 500, False)
+        self.assertEqual(amb["continuity_kind"], "ambiguous")
+        self.assertFalse(amb["session_reset_detected"])
+        self.assertEqual(amb["host_session"], first["host_session"])
+
+
+class R3M2RetentionTests(unittest.TestCase):
+    """B11: supplement always committed, aggregate cap with exemptions."""
+
+    def cap(self, store: Path, log: Path, trigger: str = "mesh_outage") -> dict:
+        return incident.capture(
+            store, trigger, sources=[str(log)],
+            config_fingerprint=None, initial_tail_bytes=1024 * 1024,
+            retain_days=7, max_bytes=1 << 30, window_seconds=900,
+            deadline_seconds=30,
+        )
+
+    def test_supplement_committed_when_unknown_present(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "no timestamp here "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+                encoding="utf-8",
+            )
+            captured = self.cap(store, log)
+            bundle = Path(str(captured["bundle"]))
+            supp = bundle / "unknown-time-supplement.jsonl"
+            self.assertTrue(supp.is_file())
+            rows = [
+                json.loads(line)
+                for line in supp.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertGreater(len(rows), 0)
+            self.assertTrue(
+                all(r["time_provenance"] == "unknown" for r in rows)
+            )
+            self.assertTrue(all("supplement_stream_file" in r for r in rows))
+            manifest = json.loads(
+                (bundle / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                manifest["unknown_supplement_count"], len(rows)
+            )
+            authorized = incident.authorize_reset(store)
+            self.assertTrue(authorized["reset_used"])
+
+    def test_supplement_committed_when_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            captured = self.cap(store, log)
+            bundle = Path(str(captured["bundle"]))
+            supp = bundle / "unknown-time-supplement.jsonl"
+            self.assertTrue(supp.is_file())
+            self.assertEqual(supp.stat().st_size, 0)
+            authorized = incident.authorize_reset(store)
+            self.assertTrue(authorized["reset_used"])
+
+    def test_aggregate_cap_prunes_oldest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            day = incident.utcnow().strftime("%Y-%m-%d")
+            first = store.stream / "diag-2000-01-01.jsonl"
+            first.write_bytes(b"1" * 100 + b"\n")
+            second = store.stream / "diag-2000-01-02.jsonl"
+            second.write_bytes(b"2" * 100 + b"\n")
+            today = store.stream / f"diag-{day}.jsonl"
+            today.write_bytes(b"3" * 100 + b"\n")
+            now = time.time()
+            os.utime(first, (now - 300, now - 300))
+            os.utime(second, (now - 200, now - 200))
+            os.utime(today, (now - 100, now - 100))
+            notes = incident.rotate(
+                store, retain_days=7, max_bytes=1 << 30, max_store_bytes=150
+            )
+            self.assertFalse(first.exists())
+            self.assertFalse(second.exists())
+            self.assertTrue(today.exists())
+            self.assertTrue(
+                any(
+                    n.startswith("retention-store:stream:diag-2000-01-01")
+                    for n in notes
+                )
+            )
+
+    def test_latched_bundle_exempt_reports_over_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            captured = self.cap(store, log)
+            bundle = Path(str(captured["bundle"]))
+            notes = incident.rotate(
+                store, retain_days=7, max_bytes=1 << 30, max_store_bytes=1
+            )
+            self.assertTrue(bundle.is_dir())
+            self.assertTrue(
+                any(n.startswith("retention-store-over-budget:") for n in notes)
+            )
+
+    def test_abandoned_tmp_reclaimed_but_fresh_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            stale = store.incidents / ".20200101T000000.1.2.3.tmp"
+            stale.mkdir(parents=True, exist_ok=True)
+            (stale / "part.json").write_bytes(b"0" * 50)
+            old = time.time() - 90000.0
+            os.utime(stale / "part.json", (old, old))
+            os.utime(stale, (old, old))
+            fresh = store.incidents / ".fresh.1.2.3.tmp"
+            fresh.mkdir(parents=True, exist_ok=True)
+            (fresh / "part.json").write_bytes(b"0" * 50)
+            notes = incident.rotate(
+                store, retain_days=7, max_bytes=1 << 30, max_store_bytes=1
+            )
+            self.assertFalse(stale.exists())
+            self.assertTrue(fresh.is_dir())
+            self.assertTrue(
+                any("abandoned-tmp" in n for n in notes)
+            )
+
+    def test_rotated_log_count_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            for i in range(3):
+                (store.root / f"host-events-2020010{i}T000000Z.log").write_bytes(
+                    b"0" * 10
+                )
+            notes = incident.rotate(
+                store, retain_days=7, max_bytes=1 << 30, max_rotated_logs=1
+            )
+            remaining = sorted(
+                p.name for p in store.root.glob("host-events-*.log")
+            )
+            self.assertEqual(remaining, ["host-events-20200102T000000Z.log"])
+            pruned = [n for n in notes if n.startswith("retention-rotated-log:")]
+            self.assertEqual(len(pruned), 2)
+
+
+class R3M2BindingTests(unittest.TestCase):
+    """B12: binding is an explicit declaration, verified, hashed once."""
+
+    def artifact(self, root: Path, body: str = ":020000040000FA\n") -> Path:
+        path = root / "fw.hex"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def bind(self, store: object, root: Path, artifact: Path, **kw: object) -> dict:
+        params: dict = {
+            "role": "deployed",
+            "variant": "T832-DIAG-R0",
+            "manifest": stage_binding(root, artifact),
+            "build_id": 8320001,
+        }
+        params.update(kw)
+        return incident.bind_firmware(store, artifact, **params)
+
+    def diag_log(self, root: Path) -> Path:
+        log = root / "z2m.log"
+        log.write_text(
+            "2026-10-03T09:00:00Z zh:zstack:znp "
+            f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+            encoding="utf-8",
+        )
+        return log
+
+    def collect(self, store: object, log: Path) -> dict:
+        return incident.collect(
+            store, [str(log)], config_fingerprint=None,
+            initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
+        )
+
+    def test_declaration_required(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            artifact = self.artifact(root)
+            manifest = stage_binding(root, artifact)
+            bad_manifest = root / "missing.json"
+            garbage = root / "garbage.json"
+            garbage.write_text("not json\n", encoding="utf-8")
+            array = root / "array.json"
+            array.write_text("[1]\n", encoding="utf-8")
+            cases = [
+                {"variant": "", "manifest": manifest, "build_id": 1},
+                {"variant": None, "manifest": manifest, "build_id": 1},
+                {"variant": "T832-DIAG-R0", "manifest": manifest,
+                 "build_id": None},
+                {"variant": "T832-DIAG-R0", "manifest": manifest,
+                 "build_id": True},
+                {"variant": "T832-DIAG-R0", "manifest": manifest,
+                 "build_id": "1"},
+                {"variant": "T832-DIAG-R0", "manifest": None, "build_id": 1},
+                {"variant": "T832-DIAG-R0", "manifest": bad_manifest,
+                 "build_id": 1},
+                {"variant": "T832-DIAG-R0", "manifest": garbage, "build_id": 1},
+                {"variant": "T832-DIAG-R0", "manifest": array, "build_id": 1},
+            ]
+            for kw in cases:
+                with self.assertRaises(RuntimeError, msg=repr(kw)):
+                    incident.bind_firmware(
+                        store, artifact, role="deployed", **kw
+                    )
+
+    def test_manifest_contents_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            artifact = self.artifact(root)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.bind(store, root, artifact,
+                          manifest=stage_binding(root, artifact, variant="OTHER"))
+            self.assertIn("variant-mismatch", str(ctx.exception))
+            with self.assertRaises(RuntimeError) as ctx:
+                self.bind(store, root, artifact,
+                          manifest=stage_binding(root, artifact, commit="zzz"))
+            self.assertIn("commit-invalid", str(ctx.exception))
+            with self.assertRaises(RuntimeError) as ctx:
+                self.bind(store, root, artifact,
+                          manifest=stage_binding(root, artifact, commit="b" * 39))
+            self.assertIn("commit-invalid", str(ctx.exception))
+            foreign = root / "foreign-manifest.json"
+            foreign.write_text(
+                json.dumps({
+                    "variant": "T832-DIAG-R0",
+                    "repository_commit": "c" * 40,
+                    "artifacts": {"other.hex": {"sha256": "d" * 64}},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                self.bind(store, root, artifact, manifest=foreign)
+            self.assertIn("artifact-not-in-manifest", str(ctx.exception))
+
+    def test_records_carry_declared_and_observed_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = self.diag_log(root)
+            bound = self.bind(store, root, self.artifact(root))
+            result = self.collect(store, log)
+            rows = stream_rows(store)
+            self.assertEqual(result["diag_records"], 1)
+            self.assertEqual(result["firmware_sha256"], bound["sha256"])
+            self.assertEqual(result["firmware_binding_role"], "deployed")
+            self.assertIsInstance(result["firmware_binding_mtime_ns"], int)
+            self.assertEqual(rows[0]["firmware_sha256"], bound["sha256"])
+            self.assertEqual(rows[0]["firmware_binding_role"], "deployed")
+            self.assertEqual(rows[0]["observed_build_id"], 8320001)
+
+    def test_mismatch_never_relabels_observed_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = self.diag_log(root)
+            bound = self.bind(store, root, self.artifact(root), build_id=1)
+            result = self.collect(store, log)
+            self.assertTrue(
+                any(n.startswith("firmware-build-mismatch:")
+                    for n in result["notes"])
+            )
+            rows = stream_rows(store)
+            self.assertEqual(rows[0]["observed_build_id"], 8320001)
+            self.assertEqual(rows[0]["firmware_sha256"], bound["sha256"])
 
 
 if __name__ == "__main__":

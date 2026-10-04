@@ -96,7 +96,7 @@ import re
 import struct
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 PREFIX_V1_RE = re.compile(r"T832D1:([0-9A-Fa-f]{104})(?![0-9A-Fa-f])")
@@ -234,8 +234,13 @@ class Store:
         self._lock_fd: int | None = None
 
     @contextlib.contextmanager
-    def locked(self):
-        """OS-owned exclusive lock, re-entrant within this process."""
+    def locked(self, timeout_s: float = LOCK_TIMEOUT_S):
+        """OS-owned exclusive lock, re-entrant within this process.
+
+        B04: the wait is bounded by timeout_s so a positive end-to-end
+        deadline is enforceable under real contention — callers with a
+        deadline pass the remaining budget instead of the fixed 30 s.
+        """
         if self._lock_depth == 0:
             self.lock_path.touch(exist_ok=True)
             try:
@@ -244,7 +249,7 @@ class Store:
                 pass
             fd = os.open(self.lock_path, os.O_RDWR)
             try:
-                _acquire_lock_bounded(fd)
+                _acquire_lock_bounded(fd, max(0.0, timeout_s))
             except Exception:
                 os.close(fd)
                 raise
@@ -469,16 +474,28 @@ class Continuity:
     record in the frame; annotating per record mislabels same-frame
     siblings (the frame that carries BOOT is one boot, not N boots).
 
-    Two independent boot signals are evaluated in order:
-    1. firmware uptime went backwards (the uptime clock is monotonic
-       within a boot, so a regression means the firmware rebooted);
-    2. the frame carries a BOOT record without being a clean
-       continuation (the firmware declares a boot even when the new
-       boot's uptime sample overlaps the previous boot's tail).
+    The frontier moves only on proved same-boot evidence. A lower
+    uptime alone never proves a reboot (replayed stale data also runs
+    the clock backwards), and a delayed BOOT marker on a forward gap
+    never proves one either (uptime monotonicity already proves the
+    same boot). The only proved reboot signature is a fresh BOOT
+    marker together with a regressed counter and a regressed clock.
+    Kinds:
+    - boot: first frame observed (opens host session 1);
+    - reboot: proved signature above (new session, frontier moves);
+    - duplicate/replay: exact redelivery or stale counter step — the
+      frontier holds, the session is kept;
+    - ambiguous: regressed counter and clock without a marker, a
+      wrap-window crossing on a stepped-back clock, an expected
+      counter with a stepped-back clock, or a forward jump on a
+      regressed clock — undecidable, so the frontier holds explicitly;
+    - delayed_boot: late BOOT marker on a forward gap with a monotonic
+      clock — same boot, frontier moves;
+    - uptime_wrap: expected counter with a >2**31 clock step-back (the
+      32-bit firmware clock wrapped) — same boot, frontier moves;
+    - wrap: counter crossing inside the wrap window on a live clock.
     A frame carrying BOOT as a clean continuation (exact redelivery or
-    the already-counted next frame) never opens a second boot. A
-    backwards step outside the counter-wrap window is a replay: stale
-    evidence that keeps its session and never advances the frontier.
+    the already-counted next frame) never opens a second boot.
     """
 
     #: 16-bit export-sequence space; the firmware counter wraps mod 2**16.
@@ -499,6 +516,17 @@ class Continuity:
     def annotate(
         self, export_sequence: int, uptime_ms: int, boot_in_frame: bool
     ) -> dict[str, object]:
+        """Classify one frame against the stream frontier.
+
+        B10 policy: the frontier only moves on proved-same-boot evidence.
+        A lower uptime no longer proves a reboot (replayed stale data also
+        runs the clock backwards), and a delayed BOOT marker on a forward
+        gap no longer proves one either (uptime monotonicity already proves
+        the same boot). Only a fresh BOOT marker together with regressed
+        sequence and clock proves a reboot. Anything genuinely undecidable
+        is marked ambiguous with the frontier held stable, never silently
+        absorbed into a boot.
+        """
         reset = False
         kind = "normal"
         gap = 0
@@ -507,12 +535,17 @@ class Continuity:
         expected: int | None = None
         if last_seq is not None:
             expected = (last_seq + 1) % self.SEQ_MOD
-        clean = (
-            expected is not None
-            and export_sequence == expected
-            and last_uptime is not None
-            and uptime_ms >= last_uptime
+        in_wrap_window = (
+            last_seq is not None
+            and last_seq >= self.WRAP_HIGH
+            and export_sequence <= self.WRAP_LOW
         )
+        seq_regressed = (
+            last_seq is not None
+            and export_sequence < last_seq
+            and not in_wrap_window
+        )
+        clock_regressed = last_uptime is not None and uptime_ms < last_uptime
         if last_seq is None or last_uptime is None:
             # First frame this stream ever saw: it opens host session 1.
             # Starting to observe mid-stream is itself a session boundary;
@@ -520,22 +553,28 @@ class Continuity:
             self.host_session += 1
             self.boot_index += 1
             kind = "boot"
-        elif uptime_ms < last_uptime:
+        elif export_sequence == last_seq and uptime_ms == last_uptime:
+            kind = "duplicate"
+        elif seq_regressed and clock_regressed and boot_in_frame:
+            # Fresh BOOT marker plus regressed counter and clock: the only
+            # proved reboot signature.
             self.host_session += 1
             self.boot_index += 1
             reset = True
             kind = "reboot"
-        elif export_sequence == last_seq and uptime_ms == last_uptime:
-            kind = "duplicate"
-        elif boot_in_frame and not clean:
-            self.host_session += 1
-            self.boot_index += 1
-            reset = True
-            kind = "boot"
+        elif seq_regressed and clock_regressed:
+            # Both regressed but no BOOT marker: replayed stale data and
+            # a reboot with a lost marker are indistinguishable. Hold the
+            # frontier stable and say so explicitly.
+            kind = "ambiguous"
+        elif seq_regressed:
+            # Old counter on a live-or-ahead clock: stale duplicate-stream
+            # or rotation copy, never a reboot.
+            kind = "replay"
         elif (
             expected is not None
             and export_sequence == expected
-            and uptime_ms >= last_uptime
+            and not clock_regressed
         ):
             # Exact next counter value with a non-regressed clock. A
             # 0xFFFF -> 0x0000 step is still a wrap event (gap 0), so wrap
@@ -545,19 +584,41 @@ class Continuity:
                 kind = "wrap"
             else:
                 kind = "normal"
-        elif (
-            export_sequence < last_seq
-            and uptime_ms >= last_uptime
-            and last_seq >= self.WRAP_HIGH
-            and export_sequence <= self.WRAP_LOW
-        ):
-            kind = "wrap"
-            gap = (0xFFFF - last_seq) + export_sequence
-        elif export_sequence > last_seq:
-            gap = export_sequence - last_seq - 1
+        elif expected is not None and export_sequence == expected:
+            # Expected counter but the clock stepped back (short of a
+            # 32-bit wrap): clock anomaly, not a reboot — the counter
+            # proves continuity of the stream. Hold stable, mark explicit.
+            if last_uptime is not None and (last_uptime - uptime_ms) > 0x7FFFFFFF:
+                kind = "uptime_wrap"
+            else:
+                kind = "ambiguous"
+        elif in_wrap_window:
+            if clock_regressed:
+                # Counter crossed inside the wrap window but the clock
+                # stepped back with no BOOT marker: a reboot with a lost
+                # marker and replayed stale data are indistinguishable.
+                # Hold the frontier stable and say so explicitly.
+                kind = "ambiguous"
+            else:
+                kind = "wrap"
+                gap = (0xFFFF - last_seq) + export_sequence
+        elif last_seq is not None and export_sequence > last_seq:
+            if clock_regressed:
+                # Forward jump with a regressed clock: neither clean
+                # continuation nor provable reboot. Hold stable.
+                kind = "ambiguous"
+            else:
+                gap = export_sequence - last_seq - 1
+                if boot_in_frame:
+                    # Delayed BOOT marker on a forward gap with a
+                    # monotonic clock: uptime already proves the same
+                    # boot, so this is a late marker, not a new boot.
+                    kind = "delayed_boot"
         else:
             kind = "replay"
-        if kind != "duplicate" and kind != "replay":
+        if kind in ("duplicate", "replay", "ambiguous"):
+            pass
+        else:
             self.last_export_sequence = export_sequence
             self.last_uptime_ms = uptime_ms
         return {
@@ -602,6 +663,8 @@ def read_increment(
     cursor: dict[str, object],
     initial_tail_bytes: int,
     max_line_bytes: int = 1 << 20,
+    max_new_bytes: int | None = None,
+    deadline_s: float | None = None,
 ) -> tuple[list[tuple[int, str]], dict[str, object], list[str]]:
     """Read newly committed lines from path.
 
@@ -616,6 +679,17 @@ def read_increment(
     cursor state, so split lines (including split UTF-8) decode exactly once.
     Logical lines beyond max_line_bytes are consumed but skipped with an
     explicit note, bounding memory regardless of writer behavior.
+
+    B04 bounds: max_new_bytes caps total scanned bytes (returned rows plus
+    drained oversized spans); when it trips, the cursor stops at the last
+    complete-line boundary with an explicit read-budget-exhausted note, so
+    the next poll resumes exactly once with no line split or skipped.
+    deadline_s is a monotonic end time: the scan raises TimeoutError past
+    it, keeping the previous cursor for resume. The initial-tail skip is
+    chunk-bounded (an unbounded readline would swallow newline-free
+    floods), and a peeked byte equal to the line's own newline ends an
+    exactly-cap-sized line there instead of draining into the next valid
+    line.
     """
     notes: list[str] = []
     try:
@@ -646,47 +720,97 @@ def read_increment(
     with path.open("rb") as fh:
         if offset == 0 and stat.st_size > initial_tail_bytes:
             fh.seek(stat.st_size - initial_tail_bytes)
-            fh.readline()
+            # Bounded skip of the partial first line: at most the tail
+            # window is scanned, one capped chunk at a time.
+            remaining = initial_tail_bytes
+            while remaining > 0:
+                piece = fh.readline(min(max_line_bytes + 1, remaining))
+                if not piece:
+                    break
+                remaining -= len(piece)
+                if piece.endswith(b"\n"):
+                    break
             offset = fh.tell()
             notes.append(f"initial-tail:{path}:{offset}")
         else:
             fh.seek(offset)
         chunk_start = fh.tell()
+        boundary = chunk_start
+        scanned = 0
+        checks = 0
+        broke_budget = False
         while True:
             pos = fh.tell()
+            if max_new_bytes is not None and scanned >= max_new_bytes and rows:
+                notes.append(f"read-budget-exhausted:{path}:{boundary}")
+                broke_budget = True
+                break
+            checks += 1
+            if deadline_s is not None and checks % 64 == 0 and time.monotonic() >= deadline_s:
+                raise TimeoutError(f"collect-deadline-exceeded:{path}")
             # Bounded first read: no single read ever holds more than
             # max_line_bytes + 1, regardless of writer behavior.
             raw = fh.readline(max_line_bytes + 1)
             if not raw:
                 break
+            scanned += len(raw)
             if raw.endswith(b"\n"):
                 rows.append((pos, raw.decode("utf-8", errors="replace").rstrip("\r\n")))
+                boundary = fh.tell()
                 continue
             # No newline inside the bounded window: either the file's
             # incomplete tail or an oversized logical line. Peek one byte:
-            # EOF means a partial tail to buffer; more data means the line
-            # is oversized and must be drained boundedly.
-            if not fh.read(1):
+            # EOF means a partial tail to buffer; the line's own newline
+            # means it ended exactly at the cap boundary; more data means
+            # the line is oversized and must be drained boundedly.
+            peeked = fh.read(1)
+            if not peeked:
                 pending = raw.decode("utf-8", errors="replace")
                 chunk_start = pos
                 break
+            if peeked == b"\n":
+                scanned += 1
+                notes.append(f"line-too-large:{path}:{pos}:{len(raw) + 1}")
+                boundary = fh.tell()
+                continue
             size = len(raw) + 1
             piece = b""
             while True:
+                if deadline_s is not None and time.monotonic() >= deadline_s:
+                    raise TimeoutError(f"collect-deadline-exceeded:{path}")
                 piece = fh.readline(max_line_bytes + 1)
                 if not piece:
                     break
                 size += len(piece)
+                scanned += len(piece)
                 if piece.endswith(b"\n"):
+                    break
+                if max_new_bytes is not None and scanned >= max_new_bytes:
                     break
             if piece.endswith(b"\n"):
                 notes.append(f"line-too-large:{path}:{pos}:{size}")
+                boundary = fh.tell()
                 continue
+            if piece:
+                # Budget tripped mid-drain with more data still unread:
+                # stop at the last complete boundary; the oversized span
+                # is re-drained (boundedly) on the next poll. At EOF
+                # (empty piece) the unterminated oversized tail is
+                # discarded with an explicit note, as before.
+                notes.append(f"read-budget-exhausted:{path}:{boundary}")
+                broke_budget = True
+                pending = ""
+                break
             notes.append(f"partial-too-large:{path}:{pos}:{size}")
             pending = ""
             chunk_start = fh.tell()
+            boundary = chunk_start
             break
-        committed = chunk_start if pending else fh.tell()
+        if broke_budget:
+            committed = boundary
+            pending = ""
+        else:
+            committed = chunk_start if pending else fh.tell()
     new_cursor: dict[str, object] = {
         "offset": committed,
         "dev": stat.st_dev,
@@ -708,8 +832,14 @@ def collect(
     max_bytes: int,
     max_collect_bytes: int = 256 * 1024 * 1024,
     max_host_events_bytes: int = 64 * 1024 * 1024,
+    deadline_seconds: float | None = None,
+    max_store_bytes: int = 2 * 1024 * 1024 * 1024,
+    max_rotated_logs: int = 32,
 ) -> dict[str, object]:
     with store.locked():
+        deadline_s = (
+            time.monotonic() + deadline_seconds if deadline_seconds is not None else None
+        )
         return _collect_locked(
             store,
             sources,
@@ -719,6 +849,9 @@ def collect(
             max_bytes=max_bytes,
             max_collect_bytes=max_collect_bytes,
             max_host_events_bytes=max_host_events_bytes,
+            deadline_s=deadline_s,
+            max_store_bytes=max_store_bytes,
+            max_rotated_logs=max_rotated_logs,
         )
 
 
@@ -732,6 +865,9 @@ def _collect_locked(
     max_bytes: int,
     max_collect_bytes: int,
     max_host_events_bytes: int,
+    deadline_s: float | None = None,
+    max_store_bytes: int = 2 * 1024 * 1024 * 1024,
+    max_rotated_logs: int = 32,
 ) -> dict[str, object]:
     try:
         state = json.loads(store.cursor.read_text(encoding="utf-8"))
@@ -773,18 +909,36 @@ def _collect_locked(
     if isinstance(bound, dict) and isinstance(bound.get("build_id"), int):
         bound_build_id = int(bound["build_id"])
     build_mismatch_noted: set[int] = set()
+    # B04/B12: the bound artifact is hashed once per collection, not once
+    # per record. The lock is held for the whole transaction, so no other
+    # tool writer can rebind mid-collection; the binding mtime is recorded
+    # so any out-of-band change is detectable afterwards. Recomputing on
+    # every collect() call is the explicit invalidation boundary.
+    fw_hash = firmware_hash(store)
+    try:
+        binding_mtime_ns: int | None = store.firmware.stat().st_mtime_ns
+    except OSError:
+        binding_mtime_ns = None
 
     for path in files:
         key = str(path)
         prior = cursors.get(key, {}) if isinstance(cursors, dict) else {}
         file_cursor = prior if isinstance(prior, dict) else {}
         try:
-            rows, new_cursor, file_notes = read_increment(path, file_cursor, initial_tail_bytes)
+            rows, new_cursor, file_notes = read_increment(
+                path,
+                file_cursor,
+                initial_tail_bytes,
+                max_new_bytes=max(0, budget),
+                deadline_s=deadline_s,
+            )
             stat = path.stat()
         except OSError as exc:
             missing.append(f"{path}:{exc}")
             continue
         notes.extend(file_notes)
+        if any(n.startswith("read-budget-exhausted:") for n in file_notes):
+            partial = True
         cursors[key] = {
             **new_cursor,
             "size": stat.st_size,
@@ -832,27 +986,31 @@ def _collect_locked(
                         }
                     )
                     continue
-                if bound_build_id is not None:
-                    # Schema 1 frames name the same wire field
-                    # firmware_revision; schema 2 calls it firmware_build_id.
-                    try:
-                        observed_build = int(
-                            frame.get(
-                                "firmware_build_id",
-                                frame.get("firmware_revision", -1),
-                            )
+                # B12: every frame carries both the declared binding (if
+                # any) and its own observed build id, separately: an
+                # observed frame is never silently labeled with another
+                # image's hash. Schema 1 frames name the same wire field
+                # firmware_revision; schema 2 calls it firmware_build_id.
+                try:
+                    observed_build: int | None = int(
+                        frame.get(
+                            "firmware_build_id",
+                            frame.get("firmware_revision", -1),
                         )
-                    except (TypeError, ValueError):
-                        observed_build = -1
-                    if (
-                        observed_build != bound_build_id
-                        and observed_build not in build_mismatch_noted
-                    ):
-                        build_mismatch_noted.add(observed_build)
-                        notes.append(
-                            "firmware-build-mismatch:"
-                            f"{observed_build}:{bound_build_id}"
-                        )
+                    )
+                except (TypeError, ValueError):
+                    observed_build = None
+                if (
+                    bound_build_id is not None
+                    and observed_build is not None
+                    and observed_build != bound_build_id
+                    and observed_build not in build_mismatch_noted
+                ):
+                    build_mismatch_noted.add(observed_build)
+                    notes.append(
+                        "firmware-build-mismatch:"
+                        f"{observed_build}:{bound_build_id}"
+                    )
                 # One continuity annotation per frame: records sharing a
                 # frame share boot association (boot membership is a frame
                 # property, and per-record annotation mislabels same-frame
@@ -884,7 +1042,13 @@ def _collect_locked(
                             "source_byte_offset": byte_offset,
                             "raw_line": line,
                             "raw_payload": payload,
-                            "firmware_sha256": firmware_hash(store),
+                            "firmware_sha256": fw_hash,
+                            "firmware_binding_role": (
+                                str(bound.get("role"))
+                                if isinstance(bound, dict)
+                                else None
+                            ),
+                            "observed_build_id": observed_build,
                             "config_fingerprint": config_fingerprint,
                         }
                     )
@@ -919,6 +1083,8 @@ def _collect_locked(
         retain_days=retain_days,
         max_bytes=max_bytes,
         max_host_events_bytes=max_host_events_bytes,
+        max_store_bytes=max_store_bytes,
+        max_rotated_logs=max_rotated_logs,
     )
     notes.extend(retention_notes)
     state["collector_notes"] = sorted(set(notes))
@@ -932,13 +1098,19 @@ def _collect_locked(
         "partial": partial,
         "notes": sorted(set(notes)),
         "collector_utc": iso(),
+        "firmware_sha256": fw_hash,
+        "firmware_binding_mtime_ns": binding_mtime_ns,
+        "firmware_binding_role": (
+            str(bound.get("role")) if isinstance(bound, dict) else None
+        ),
     }
 
 
 def rotate(
-    store: Store, *, retain_days: int, max_bytes: int, max_host_events_bytes: int = 64 * 1024 * 1024
+    store: Store, *, retain_days: int, max_bytes: int, max_host_events_bytes: int = 64 * 1024 * 1024,
+    max_store_bytes: int = 2 * 1024 * 1024 * 1024, max_rotated_logs: int = 32
 ) -> list[str]:
-    """Enforce stream retention, returning one audit note per deletion.
+    """Enforce store-wide retention, returning one audit note per deletion.
 
     Deletions are evidence loss: every removed file (and its byte size)
     is reported so the collector persists it in collector_notes instead
@@ -1010,44 +1182,281 @@ def rotate(
             notes.append(f"retention-host-events:{rotated.name}")
     except OSError:
         pass
+    # B11 aggregate store cap: stream files, incident bundles, rotated
+    # host logs and abandoned crash tmp dirs share one budget. Oldest
+    # first, abandoned tmp first; active evidence is never deleted — if
+    # only exempt evidence remains above the cap, the over-budget state
+    # is noted explicitly instead of deleting blindly.
+    try:
+        latched = store.load(store.latch, {})
+        latched_bundle = str(latched.get("bundle", "")) if isinstance(latched, dict) else ""
+    except Exception:
+        latched_bundle = ""
+    today_prefix = utcnow().strftime("%Y-%m-%d")
+    candidates: list[tuple[float, int, str, Path]] = []
+    store_total = 0
+    for path in store.stream.glob("*.jsonl"):
+        if not path.is_file():
+            continue
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        store_total += st.st_size
+        if not path.name.startswith(today_prefix):
+            candidates.append((float(st.st_mtime), st.st_size, "stream", path))
+    if store.incidents.is_dir():
+        for path in store.incidents.iterdir():
+            if not path.is_dir():
+                continue
+            if path.name.startswith("."):
+                # Hidden staging dirs come from tmp_unique (capture staging
+                # residue). Only .tmp-suffixed dirs older than a day are
+                # abandoned; anything else is active or foreign and is
+                # left alone.
+                if not path.name.endswith(".tmp"):
+                    continue
+                try:
+                    mtime = path.stat().st_mtime
+                except OSError:
+                    continue
+                if time.time() - mtime < 86400:
+                    continue
+                try:
+                    size = sum(c.stat().st_size for c in path.rglob("*") if c.is_file())
+                except OSError:
+                    continue
+                store_total += size
+                candidates.append((mtime - 1e10, size, "abandoned-tmp", path))
+                continue
+            if ".tmp" in path.name:
+                try:
+                    mtime = path.stat().st_mtime
+                except OSError:
+                    continue
+                if time.time() - mtime < 86400:
+                    continue
+                try:
+                    size = sum(c.stat().st_size for c in path.rglob("*") if c.is_file())
+                except OSError:
+                    continue
+                store_total += size
+                candidates.append((mtime - 1e10, size, "abandoned-tmp", path))
+                continue
+            try:
+                children = [c for c in path.iterdir() if c.is_file()]
+                size = sum(c.stat().st_size for c in children)
+            except OSError:
+                continue
+            store_total += size
+            if str(path) == latched_bundle:
+                continue
+            try:
+                oldest = min(c.stat().st_mtime for c in children)
+            except (OSError, ValueError):
+                continue
+            candidates.append((float(oldest), size, "bundle", path))
+    for path in store.root.glob("host-events-*.log"):
+        if not path.is_file():
+            continue
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        store_total += st.st_size
+        candidates.append((float(st.st_mtime), st.st_size, "rotated-log", path))
+    rotated = sorted(
+        (p for p in store.root.glob("host-events-*.log") if p.is_file()),
+        key=lambda p: p.name,
+    )
+    excess = len(rotated) - max(0, max_rotated_logs)
+    for path in rotated[:excess] if excess > 0 else []:
+        try:
+            size = path.stat().st_size
+            path.unlink()
+            store_total -= size
+            notes.append(f"retention-rotated-log:{path.name}:{size}")
+        except OSError:
+            pass
+    for path in list(rotated):
+        try:
+            if not path.exists() or path.stat().st_mtime >= cutoff:
+                continue
+            size = path.stat().st_size
+            path.unlink()
+            store_total -= size
+            notes.append(f"retention-rotated-age:{path.name}:{size}")
+        except OSError:
+            pass
+    for _, size, kind, path in sorted(candidates):
+        if store_total <= max_store_bytes:
+            break
+        try:
+            if kind in ("bundle", "abandoned-tmp"):
+                for child in sorted(path.rglob("*"), reverse=True):
+                    try:
+                        if child.is_file() or child.is_symlink():
+                            child.unlink()
+                        elif child.is_dir():
+                            child.rmdir()
+                    except OSError:
+                        pass
+                path.rmdir()
+            else:
+                path.unlink()
+            store_total -= size
+            notes.append(f"retention-store:{kind}:{path.name}:{size}")
+        except OSError:
+            pass
+    if store_total > max_store_bytes:
+        notes.append(f"retention-store-over-budget:{store_total}:{max_store_bytes}")
     return notes
 
 
 def recent_rows(
-    store: Store, prefix: str, cutoff: dt.datetime, *, max_rows: int = 20000
-) -> tuple[list[dict[str, object]], int, bool]:
-    """Stream the incident window. Only rows with a parseable SOURCE timestamp
-    participate; rows with unknown event time are counted separately and never
-    backfilled with ingestion time."""
+    store: Store,
+    prefix: str,
+    cutoff: dt.datetime,
+    *,
+    max_rows: int = 20000,
+    max_unknown_rows: int = 2000,
+    max_scan_lines: int | None = None,
+    deadline_s: float | None = None,
+) -> tuple[
+    list[dict[str, object]], list[dict[str, object]], int, bool, list[str]
+]:
+    """Stream the incident window with bounded cost and no silent drops.
+
+    Only rows with a parseable SOURCE timestamp participate in the timed
+    window; rows with unknown event time are preserved separately as
+    bounded raw supplement rows (with stream provenance, never backdated
+    with ingestion time) instead of being counted-and-dropped.
+
+    B04/B11 bounds: files stream newest-first so truncation sheds the
+    oldest evidence first; max_scan_lines caps total scanned lines and
+    deadline_s (monotonic end) aborts the scan — either sets truncated
+    with an explicit note naming the file. Unknown rows are capped
+    separately; beyond the cap they are counted only, noted explicitly.
+    Returns (in-window rows, unknown-time supplement rows, unknown total,
+    truncated, notes).
+    """
     out: list[dict[str, object]] = []
+    unknown_rows: list[dict[str, object]] = []
     unknown = 0
+    unknown_capped = False
     truncated = False
-    for path in sorted(store.stream.glob(f"{prefix}-*.jsonl")):
+    notes: list[str] = []
+    if max_scan_lines is None:
+        max_scan_lines = 8 * (max_rows + max_unknown_rows)
+    scanned = 0
+    files = sorted(
+        store.stream.glob(f"{prefix}-*.jsonl"),
+        key=lambda p: (p.stat().st_mtime_ns if p.exists() else 0),
+        reverse=True,
+    )
+    for path in files:
         try:
             fh = path.open("r", encoding="utf-8", errors="replace")
         except OSError:
             continue
         with fh:
+            lineno = 0
             for line in fh:
+                lineno += 1
+                scanned += 1
+                if scanned > max_scan_lines:
+                    truncated = True
+                    notes.append(f"window-scan-capped:{path.name}:{lineno}")
+                    break
+                if deadline_s is not None and lineno % 4096 == 0:
+                    if time.monotonic() >= deadline_s:
+                        truncated = True
+                        notes.append(f"window-deadline:{path.name}:{lineno}")
+                        break
                 try:
                     item = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(item, dict):
                     continue
                 stamp = item.get("source_utc")
                 when = parse_timestamp(str(stamp)) if stamp else None
                 if when is None:
                     unknown += 1
+                    if len(unknown_rows) < max_unknown_rows:
+                        unknown_rows.append(
+                            {
+                                **item,
+                                "time_provenance": "unknown",
+                                "supplement_stream_file": path.name,
+                                "supplement_stream_line": lineno,
+                            }
+                        )
+                    elif not unknown_capped:
+                        unknown_capped = True
+                        notes.append(
+                            f"unknown-supplement-capped:{path.name}:{lineno}"
+                        )
                     continue
                 if when >= cutoff:
                     if len(out) >= max_rows:
                         truncated = True
                         continue
                     out.append(item)
-    return out, unknown, truncated
+        if truncated:
+            break
+    if unknown_capped:
+        truncated = True
+    return out, unknown_rows, unknown, truncated, notes
 
 
 def active_latch(value: object) -> bool:
     return isinstance(value, dict) and value.get("status") not in (None, "closed", "cleared")
+
+
+#: Latch statuses the tool itself ever writes. Anything else on disk is
+#: foreign or corrupt and must never be trusted or silently overwritten.
+LATCH_STATUSES = (
+    "captured",
+    "reset_authorized",
+    "recovering",
+    "stabilizing",
+    "failed",
+    "closed",
+    "cleared",
+)
+
+
+def validate_latch(value: object) -> dict[str, object]:
+    """Refuse an invalid existing latch without touching it.
+
+    B05: every latch entry point calls this before any read-modify-write.
+    A present latch must be an object with the known schema, a known
+    status, a boolean permit flag, and a non-empty incident id for every
+    status that represents a live incident flow (a forced clear of
+    missing state is the only id-less latch, written by the explicit
+    manual-repair path). Missing schema is corrupt — never defaulted.
+    A consumed permit (reset_used True) with status rewound to captured
+    is inconsistent: it would re-authorize an already-used reset.
+    Raises RuntimeError; returns the latch unchanged when valid.
+    """
+    if not isinstance(value, dict):
+        raise RuntimeError("incident-latch-corrupt:not-an-object")
+    if value.get("schema") != LATCH_SCHEMA:
+        raise RuntimeError("incident-latch-corrupt:unknown-schema")
+    status = value.get("status")
+    if status not in LATCH_STATUSES:
+        raise RuntimeError(f"incident-latch-corrupt:unknown-status:{status!r}")
+    reset_used = value.get("reset_used", False)
+    if not isinstance(reset_used, bool):
+        raise RuntimeError("incident-latch-corrupt:reset-used-not-bool")
+    if reset_used and status == "captured":
+        raise RuntimeError("incident-latch-inconsistent:permit-consumed-but-captured")
+    if status in ("captured", "reset_authorized", "recovering", "stabilizing", "failed"):
+        incident_id = value.get("incident_id")
+        if not isinstance(incident_id, str) or not incident_id:
+            raise RuntimeError("incident-latch-corrupt:missing-incident-id")
+    return value
 
 
 #: Candidate barrier automation id in the trigger-definitions file.
@@ -1246,6 +1655,8 @@ def capture(
     max_collect_bytes: int = 256 * 1024 * 1024,
     max_window_rows: int = 20000,
     max_host_events_bytes: int = 64 * 1024 * 1024,
+    max_store_bytes: int = 2 * 1024 * 1024 * 1024,
+    max_rotated_logs: int = 32,
     require_firmware_binding: bool = False,
     triggers_path: Path | None = None,
     trigger_topic: str | None = None,
@@ -1253,7 +1664,10 @@ def capture(
 ) -> dict[str, object]:
     started_monotonic = time.monotonic()
     started_utc = utcnow()
-    with store.locked():
+    # B04: the lock wait itself is deadline-bounded — a contended lock
+    # must fail fast instead of consuming the whole capture deadline.
+    with store.locked(timeout_s=min(LOCK_TIMEOUT_S, float(deadline_seconds))):
+        collection_deadline_s = started_monotonic + deadline_seconds
         try:
             latch = store.load_strict(store.latch)
         except RuntimeError as exc:
@@ -1261,6 +1675,11 @@ def capture(
                 latch = {}
             else:
                 raise
+        if latch:
+            # B05: an existing latch is validated before anything else.
+            # Invalid content raises here, before any work is done and
+            # before the final atomic_json could overwrite it.
+            validate_latch(latch)
         if active_latch(latch):
             raise RuntimeError(f"incident-latch-active:{latch.get('status')}")
         bound = bound_firmware(store) if require_firmware_binding else None
@@ -1292,15 +1711,23 @@ def capture(
             max_bytes=max_bytes,
             max_collect_bytes=max_collect_bytes,
             max_host_events_bytes=max_host_events_bytes,
+            deadline_s=collection_deadline_s,
+            max_store_bytes=max_store_bytes,
+            max_rotated_logs=max_rotated_logs,
         )
         check_deadline(started_monotonic, deadline_seconds, "collect")
         cutoff = utcnow() - dt.timedelta(seconds=window_seconds)
-        diag, diag_unknown, diag_truncated = recent_rows(
-            store, "diag", cutoff, max_rows=max_window_rows
+        window_deadline_s = started_monotonic + deadline_seconds
+        diag, diag_supp, diag_unknown, diag_truncated, diag_notes = recent_rows(
+            store, "diag", cutoff, max_rows=max_window_rows,
+            deadline_s=window_deadline_s,
         )
-        host, host_unknown, host_truncated = recent_rows(
-            store, "host", cutoff, max_rows=max_window_rows
+        host, host_supp, host_unknown, host_truncated, host_notes = recent_rows(
+            store, "host", cutoff, max_rows=max_window_rows,
+            deadline_s=window_deadline_s,
         )
+        # B04: scan-budget notes join the window evidence explicitly.
+        window_notes = sorted(set(diag_notes + host_notes))
         check_deadline(started_monotonic, deadline_seconds, "window")
         cursor = store.load(store.cursor, {})
         missing = cursor.get("missing_sources", []) if isinstance(cursor, dict) else []
@@ -1312,6 +1739,13 @@ def capture(
         try:
             store.append_jsonl(tmp / "diag-15m.jsonl", diag)
             store.append_jsonl(tmp / "host-events-15m.jsonl", host)
+            # B11: unknown-time rows are preserved as bounded raw
+            # supplement with stream provenance, never backdated. The
+            # file always exists (possibly empty) so the committed set
+            # is stable and verifiable.
+            store.append_jsonl(
+                tmp / "unknown-time-supplement.jsonl", diag_supp + host_supp
+            )
 
             # Last stages are selected within the latest boot group using
             # record chronology, not file arrival order.
@@ -1364,14 +1798,22 @@ def capture(
                 "host_event_count": len(host),
                 "diag_unknown_time_count": diag_unknown,
                 "host_unknown_time_count": host_unknown,
+                "unknown_supplement_count": len(diag_supp) + len(host_supp),
                 "window_truncated": bool(diag_truncated or host_truncated),
+                "window_notes": window_notes,
                 "collect_partial": bool(collection.get("partial")),
                 "latest_boot_index": latest_boot,
                 "latest_diagnostic_state": diag[-1] if diag else None,
                 "last_successful_command_stages": last_stages,
                 "collector_result": collection,
                 "missing_sources": missing,
-                "firmware_sha256": firmware_hash(store),
+                # B12: the collection-cached binding hash, not a fresh
+                # re-hash — same transaction, same value, one hash.
+                "firmware_sha256": collection.get("firmware_sha256"),
+                "firmware_binding_role": collection.get("firmware_binding_role"),
+                "firmware_binding_mtime_ns": collection.get(
+                    "firmware_binding_mtime_ns"
+                ),
                 "config_fingerprint": config_fingerprint,
                 "trigger_qualification": verdict,
                 "trigger_definitions_sha256": defs_sha,
@@ -1427,11 +1869,10 @@ LATCH_SCHEMA = 1
 
 def update_latch(store: Store, expected: set[str], update: dict[str, object]) -> dict[str, object]:
     latch = store.load_strict(store.latch)
-    if not isinstance(latch, dict):
-        raise RuntimeError("incident-latch-corrupt")
-    schema = latch.get("schema", LATCH_SCHEMA)
-    if schema != LATCH_SCHEMA:
-        raise RuntimeError(f"incident-latch-schema:{schema}")
+    # B05: full validation first — missing schema is corrupt, never
+    # defaulted; unknown status or inconsistent permit/state refuses
+    # before any field is touched.
+    validate_latch(latch)
     status = str(latch.get("status"))
     if status not in expected:
         raise RuntimeError(f"incident-latch-state:{status}")
@@ -1441,13 +1882,49 @@ def update_latch(store: Store, expected: set[str], update: dict[str, object]) ->
     return latch
 
 
+#: Files every incident bundle must commit. The inventory must name
+#: exactly this set (plus nothing else): a thinned, padded, or renamed
+#: bundle refuses. Empty evidence files are valid only when inventoried
+#: here and their absence is declared in the manifest counts.
+COMMITTED_BUNDLE_FILES = frozenset(
+    {
+        "manifest.json",
+        "diag-15m.jsonl",
+        "host-events-15m.jsonl",
+        "unknown-time-supplement.jsonl",
+    }
+)
+
+
+def _count_jsonl_lines(path: Path) -> int:
+    count = 0
+    with path.open("rb") as fh:
+        for _ in fh:
+            count += 1
+    return count
+
+
 def verify_bundle(store: Store, latch: dict[str, object]) -> Path:
-    """Validate that the latched incident's committed bundle exists and that
-    every committed file still matches its manifest hash."""
+    """Validate that the latched incident's committed bundle exists, names
+    exactly the committed file set with well-formed digests, still matches
+    every hash, resolves beneath the incidents root (no traversal), and is
+    semantically consistent with the manifest and the latch.
+
+    B06: swizzled digests (right length, wrong value), thinned or padded
+    inventories, non-file entries, missing/wrong-typed digest formats,
+    foreign bundle paths, and count/digest inconsistencies all refuse.
+    """
     bundle = Path(str(latch.get("bundle", "")))
     incident_id = str(latch.get("incident_id", ""))
     if not incident_id or bundle.name != incident_id or not bundle.is_dir():
         raise RuntimeError("reset-permit-bundle-missing")
+    try:
+        resolved = bundle.resolve()
+        root = store.incidents.resolve()
+    except OSError as exc:
+        raise RuntimeError(f"reset-permit-bundle-unresolvable:{exc}")
+    if resolved != root / incident_id or not str(resolved).startswith(str(root)):
+        raise RuntimeError("reset-permit-bundle-foreign")
     try:
         manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
         recorded = json.loads((bundle / "SHA256.json").read_text(encoding="utf-8"))
@@ -1457,24 +1934,98 @@ def verify_bundle(store: Store, latch: dict[str, object]) -> Path:
         raise RuntimeError("reset-permit-bundle-mismatch")
     if not isinstance(recorded, dict):
         raise RuntimeError("reset-permit-hashes-missing")
-    # An empty hash inventory verifies nothing: it must name every
-    # committed file, starting with the manifest itself. A tampered
-    # SHA256.json (emptied or thinned) therefore refuses, never passes.
-    if not recorded:
-        raise RuntimeError("reset-permit-hashes-empty")
+    # Exact inventory membership: thinned inventories verify nothing, and
+    # padded ones smuggle unverified files — both refuse.
+    if set(recorded) != set(COMMITTED_BUNDLE_FILES):
+        raise RuntimeError(
+            "reset-permit-inventory-inexact:"
+            f"{sorted(set(COMMITTED_BUNDLE_FILES) - set(recorded))}:"
+            f"{sorted(set(recorded) - set(COMMITTED_BUNDLE_FILES))}"
+        )
     for name, expected in recorded.items():
+        # Names are plain committed filenames: no separators, no absolute
+        # paths, no traversal — the entry must resolve to the bundle dir.
+        if (
+            not isinstance(name, str)
+            or not isinstance(expected, str)
+            or PurePosixPath(name).name != name
+            or name in ("", ".", "..")
+        ):
+            raise RuntimeError(f"reset-permit-inventory-name:{name!r}")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+            raise RuntimeError(f"reset-permit-digest-format:{name}")
         item = bundle / name
-        if not item.is_file() or sha256_file(item) != expected:
-            raise RuntimeError(f"reset-permit-hash-mismatch:{name}")
-    if "manifest.json" not in recorded:
-        raise RuntimeError("reset-permit-manifest-uninventoried")
+        try:
+            if not item.is_file() or sha256_file(item) != expected.lower():
+                raise RuntimeError(f"reset-permit-hash-mismatch:{name}")
+        except OSError as exc:
+            raise RuntimeError(f"reset-permit-hash-unreadable:{name}:{exc}")
+    # Semantic consistency: the evidence files' actual row counts must
+    # match the manifest's declared counts (an empty evidence file is
+    # valid only when the manifest declares zero rows for it), the
+    # supplement must hold exactly the declared unknown rows, and the
+    # latch's own copies must agree with the manifest. Non-integer
+    # declared counts are corruption, not zero.
+    try:
+        diag_lines = _count_jsonl_lines(bundle / "diag-15m.jsonl")
+        host_lines = _count_jsonl_lines(bundle / "host-events-15m.jsonl")
+        supp_lines = _count_jsonl_lines(bundle / "unknown-time-supplement.jsonl")
+    except OSError as exc:
+        raise RuntimeError(f"reset-permit-evidence-unreadable:{exc}")
+    raw_counts = [
+        manifest.get("diag_record_count", -1),
+        manifest.get("host_event_count", -1),
+        manifest.get("diag_unknown_time_count", -1),
+        manifest.get("host_unknown_time_count", -1),
+        manifest.get("unknown_supplement_count", -2),
+    ]
+    # Counts must be plain integers: bools, floats and strings are
+    # corruption even when int() would coerce them.
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in raw_counts):
+        raise RuntimeError("reset-permit-count-unparseable")
+    (
+        declared_diag,
+        declared_host,
+        declared_diag_unknown,
+        declared_host_unknown,
+        declared_supp,
+    ) = raw_counts
+    declared_unknown = declared_diag_unknown + declared_host_unknown
+    if diag_lines != declared_diag:
+        raise RuntimeError(
+            f"reset-permit-count-mismatch:diag:{diag_lines}:{declared_diag}"
+        )
+    if host_lines != declared_host:
+        raise RuntimeError(
+            f"reset-permit-count-mismatch:host:{host_lines}:{declared_host}"
+        )
+    if supp_lines != declared_unknown or supp_lines != declared_supp:
+        raise RuntimeError(
+            f"reset-permit-count-mismatch:supplement:{supp_lines}:{declared_unknown}"
+        )
+    verdict = manifest.get("trigger_qualification")
+    if (
+        not isinstance(verdict, dict)
+        or verdict.get("qualifying") is not True
+        or latch.get("trigger_qualifying") is not True
+    ):
+        raise RuntimeError("reset-permit-qualification-mismatch")
+    if (
+        manifest.get("trigger_definitions_sha256") is None
+        or manifest.get("trigger_definitions_sha256")
+        != latch.get("trigger_definitions_sha256")
+    ):
+        raise RuntimeError("reset-permit-defs-mismatch")
     return bundle
 
 
 def authorize_reset(store: Store) -> dict[str, object]:
     with store.locked():
         latch = store.load_strict(store.latch)
-        if not isinstance(latch, dict) or latch.get("status") != "captured":
+        # B05: validate before trusting status — an unknown schema or
+        # status, or an already-consumed permit, never authorizes.
+        validate_latch(latch)
+        if latch.get("status") != "captured":
             raise RuntimeError("reset-requires-captured-incident")
         if latch.get("reset_used"):
             raise RuntimeError("automatic-reset-already-consumed")
@@ -1545,8 +2096,9 @@ def record_rts_used(store: Store) -> dict[str, object]:
     duplicate automation runs cannot reset the coordinator twice."""
     with store.locked():
         latch = store.load_strict(store.latch)
-        if not isinstance(latch, dict):
-            raise RuntimeError("incident-latch-corrupt")
+        # B05: validate before consuming the single RTS permit — an
+        # unknown schema or status never passes, even once.
+        validate_latch(latch)
         if latch.get("rts_used"):
             raise RuntimeError("rts-already-used")
         value = update_latch(
@@ -1590,6 +2142,9 @@ def recovery_result(
 ) -> dict[str, object]:
     with store.locked():
         latch = store.load_strict(store.latch)
+        # B05: validate before reasoning about the latch — terminal
+        # failures persist reason/phase only for valid incidents.
+        validate_latch(latch)
         proof_ok, proof_detail = zdo_proof_state(latch, zdo_transaction)
         effective_zdo = bool(zdo_ok and proof_ok)
         if not success or not normal_traffic or not effective_zdo:
@@ -1644,7 +2199,9 @@ def stability_observation(
 ) -> dict[str, object]:
     with store.locked():
         latch = store.load_strict(store.latch)
-        if not isinstance(latch, dict) or latch.get("status") != "stabilizing":
+        # B05: validate before touching observations.
+        validate_latch(latch)
+        if latch.get("status") != "stabilizing":
             raise RuntimeError("incident-not-stabilizing")
         observations = latch.get("observations")
         if not isinstance(observations, list):
@@ -1686,7 +2243,9 @@ def stability_observation(
 def close_if_stable(store: Store, *, bridge_up: bool, normal_traffic: bool) -> dict[str, object]:
     with store.locked():
         latch = store.load_strict(store.latch)
-        if not isinstance(latch, dict) or latch.get("status") != "stabilizing":
+        # B05: validate before closing over the latch.
+        validate_latch(latch)
+        if latch.get("status") != "stabilizing":
             raise RuntimeError("incident-not-stabilizing")
         stable_after = parse_timestamp(str(latch.get("stable_after_utc", "")))
         if stable_after is None or utcnow() < stable_after:
@@ -1765,13 +2324,32 @@ def manual_clear(store: Store, reason: str, *, force: bool = False) -> dict[str,
             else:
                 value = {}
                 store.append_host_event("incident_manual_clear_forced", reason=reason)
-        if not isinstance(value, dict):
+        if isinstance(value, dict) and value:
+            if not force:
+                # B05: without --force, an existing latch must validate —
+                # unknown schema/status or inconsistent permit refuses,
+                # never gets repaired over. --force stays the explicit
+                # manual-repair path and records itself.
+                validate_latch(value)
+            else:
+                try:
+                    validate_latch(value)
+                except RuntimeError:
+                    store.append_host_event(
+                        "incident_manual_clear_forced", reason=reason
+                    )
+                    value = {}
+        elif not isinstance(value, dict):
             if not force:
                 raise RuntimeError("incident-latch-corrupt")
             value = {}
             store.append_host_event("incident_manual_clear_forced", reason=reason)
+        # The cleared latch keeps the schema so the tool's own gate
+        # accepts the state its repair path wrote: a schema-less latch
+        # would brick the next capture with incident-latch-corrupt.
         value.update(
             {
+                "schema": LATCH_SCHEMA,
                 "status": "cleared",
                 "manual_clear_reason": reason,
                 "manual_clear_utc": iso(),
@@ -1817,22 +2395,72 @@ def firmware_hash(store: Store) -> str | None:
 
 
 def bind_firmware(
-    store: Store, artifact: Path, *, role: str = "deployed",
-    build_id: int | None = None,
+    store: Store,
+    artifact: Path,
+    *,
+    role: str,
+    variant: str,
+    manifest: Path,
+    build_id: int,
 ) -> dict[str, object]:
+    """Bind an image as an explicit operator declaration.
+
+    B12: binding is not a file hash alone — the operator declares the
+    image variant, the expected wire build ID, and the build manifest
+    the image was verified against (variant match, 40-hex repository
+    commit, and the artifact's own digest listed in the manifest). The
+    recorded binding therefore distinguishes the declared image from
+    the observed runtime identity and from any flashing proof; a
+    candidate/test/default role never authorizes operational capture.
+    """
     with store.locked():
         if not artifact.is_file():
             raise RuntimeError(f"firmware-artifact-missing:{artifact}")
         size = artifact.stat().st_size
         if size == 0:
             raise RuntimeError(f"firmware-artifact-empty:{artifact}")
+        if not variant or not variant.strip():
+            raise RuntimeError("firmware-bind-variant-required")
+        if isinstance(build_id, bool) or not isinstance(build_id, int):
+            raise RuntimeError("firmware-bind-build-id-required")
+        if manifest is None:
+            raise RuntimeError("firmware-bind-manifest-required")
+        try:
+            manifest_text = manifest.read_bytes()
+            manifest_doc = json.loads(manifest_text.decode("utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"firmware-bind-manifest-unreadable:{exc}")
+        if not isinstance(manifest_doc, dict):
+            raise RuntimeError("firmware-bind-manifest-not-an-object")
+        if manifest_doc.get("variant") != variant:
+            raise RuntimeError(
+                f"firmware-bind-variant-mismatch:{manifest_doc.get('variant')}:{variant}"
+            )
+        commit = manifest_doc.get("repository_commit")
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            raise RuntimeError("firmware-bind-manifest-commit-invalid")
+        artifacts = manifest_doc.get("artifacts")
+        if not isinstance(artifacts, dict):
+            raise RuntimeError("firmware-bind-manifest-artifacts-invalid")
+        image_sha = sha256_file(artifact)
+        listed = {
+            str(entry.get("sha256", "")).lower()
+            for entry in artifacts.values()
+            if isinstance(entry, dict)
+        }
+        if image_sha.lower() not in listed:
+            raise RuntimeError("firmware-bind-artifact-not-in-manifest")
         value = {
             "schema": 1,
-            "sha256": sha256_file(artifact),
+            "sha256": image_sha,
             "bytes": size,
             "path": str(artifact),
             "role": role,
+            "variant": variant,
             "build_id": build_id,
+            "manifest_sha256": hashlib.sha256(manifest_text).hexdigest(),
+            "manifest_path": str(manifest),
+            "repository_commit": commit.lower(),
             "bound_utc": iso(),
         }
         store.atomic_json(store.firmware, value)
@@ -1862,6 +2490,8 @@ def common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-collect-bytes", type=int, default=256 * 1024 * 1024)
     parser.add_argument("--max-window-rows", type=int, default=20000)
     parser.add_argument("--max-host-events-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument("--max-store-bytes", type=int, default=2 * 1024 * 1024 * 1024)
+    parser.add_argument("--max-rotated-logs", type=int, default=32)
 
 
 def main() -> int:
@@ -1899,7 +2529,15 @@ def main() -> int:
     clear.add_argument("--force", action="store_true")
     bind = sub.add_parser("bind-firmware")
     bind.add_argument("--artifact", type=Path, required=True)
-    bind.add_argument("--role", default="deployed")
+    bind.add_argument(
+        "--role",
+        default="candidate",
+        help="Binding role. Only an explicit --role deployed (with variant, manifest"
+        " and build-id) can authorize operational capture; the default binds for"
+        " bookkeeping only.",
+    )
+    bind.add_argument("--variant", default=None)
+    bind.add_argument("--manifest", type=Path, default=None)
     bind.add_argument("--build-id", type=lambda v: int(v, 0), default=None)
     evt = sub.add_parser("host-event")
     evt.add_argument("--kind", required=True)
@@ -1920,6 +2558,8 @@ def main() -> int:
                 max_bytes=args.max_bytes,
                 max_collect_bytes=args.max_collect_bytes,
                 max_host_events_bytes=args.max_host_events_bytes,
+                max_store_bytes=args.max_store_bytes,
+                max_rotated_logs=args.max_rotated_logs,
             )
         elif args.command == "capture":
             result = capture(
@@ -1935,6 +2575,8 @@ def main() -> int:
                 max_collect_bytes=args.max_collect_bytes,
                 max_window_rows=args.max_window_rows,
                 max_host_events_bytes=args.max_host_events_bytes,
+                max_store_bytes=args.max_store_bytes,
+                max_rotated_logs=args.max_rotated_logs,
                 require_firmware_binding=args.require_firmware_binding,
                 triggers_path=args.triggers,
                 trigger_topic=args.trigger_topic,
@@ -1973,7 +2615,12 @@ def main() -> int:
             result = manual_clear(store, args.reason, force=args.force)
         elif args.command == "bind-firmware":
             result = bind_firmware(
-                store, args.artifact, role=args.role, build_id=args.build_id
+                store,
+                args.artifact,
+                role=args.role,
+                variant=args.variant,
+                manifest=args.manifest,
+                build_id=args.build_id,
             )
         elif args.command == "host-event":
             with store.locked():
