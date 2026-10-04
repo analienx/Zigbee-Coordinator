@@ -692,7 +692,16 @@ class BarrierAutomationTests(unittest.TestCase):
         self.assertTrue(capture.get("ok"))
         self.assertTrue(capture.get("incident_id"))
         latch = self.latch()
-        self.assertEqual(latch.get("status"), "stabilizing")
+        self.assertEqual(
+            latch.get("status"),
+            "stabilizing",
+            {
+                "failure_reason": latch.get("failure_reason"),
+                "failure_phase": latch.get("failure_phase"),
+                "zdo_proof": latch.get("zdo_proof"),
+                "recovered": self.ha.vars.get("t832_recovered"),
+            },
+        )
         return latch
 
     # -- success paths -----------------------------------------------------------
