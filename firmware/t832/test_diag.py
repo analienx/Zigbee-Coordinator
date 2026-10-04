@@ -1086,6 +1086,13 @@ class IncidentTests(unittest.TestCase):
 
 class StabilityTests(unittest.TestCase):
     def stabilizing_latch(self, store: Store, base_mono: float) -> None:
+        # B09: fixtures carry the tightened contract — live boot binding,
+        # proof-bound observations, and a stable_after_utc consistent with
+        # the mono window (zero wall skew) so each test exercises its
+        # intended leg instead of tripping an earlier gate.
+        live_boot = incident.current_boot_id()
+        proof_tx = "ha-t832-fixture"
+        overshoot = max(time.monotonic() - (base_mono + 600.0), 0.0)
         store.atomic_json(
             store.latch,
             {
@@ -1097,14 +1104,27 @@ class StabilityTests(unittest.TestCase):
                 "zdo_verified": True,
                 "recovery_succeeded_mono": base_mono,
                 "stable_after_mono": base_mono + 600.0,
-                "stable_after_utc": "2000-01-01T00:00:00Z",
+                "stable_after_utc": incident.iso(
+                    incident.utcnow()
+                    - incident.dt.timedelta(seconds=overshoot)
+                ),
+                "boot_id": live_boot,
+                "zdo_proof": {
+                    "transaction": proof_tx,
+                    "utc": incident.iso(),
+                    "mono": base_mono - 5.0,
+                    "boot_id": live_boot,
+                },
+                "zdo_transaction": proof_tx,
                 "observations": [
                     {
-                        "utc": "2000-01-01T00:00:00Z",
+                        "utc": incident.iso(),
                         "mono": base_mono + offset,
                         "bridge_up": True,
                         "normal_traffic": True,
                         "zdo_ok": True,
+                        "zdo_transaction": proof_tx,
+                        "boot_id": live_boot,
                     }
                     for offset in (30, 120, 210, 300, 390, 480, 570)
                 ],
@@ -1149,11 +1169,13 @@ class StabilityTests(unittest.TestCase):
             latch = store.load(store.latch, {})
             latch["observations"].append(
                 {
-                    "utc": "2000-01-01T00:00:00Z",
+                    "utc": incident.iso(),
                     "mono": base - 50.0,
                     "bridge_up": True,
                     "normal_traffic": True,
                     "zdo_ok": True,
+                    "zdo_transaction": "ha-t832-fixture",
+                    "boot_id": incident.current_boot_id(),
                 }
             )
             store.atomic_json(store.latch, latch)
@@ -1629,6 +1651,7 @@ class StabilityCloseOnceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = incident.Store(Path(td) / "private")
             base = time.monotonic() - 700.0
+            live_boot = incident.current_boot_id()
             store.atomic_json(
                 store.latch,
                 {
@@ -1640,14 +1663,26 @@ class StabilityCloseOnceTests(unittest.TestCase):
                     "zdo_verified": True,
                     "recovery_succeeded_mono": base,
                     "stable_after_mono": base + 600.0,
-                    "stable_after_utc": "2000-01-01T00:00:00Z",
+                    "stable_after_utc": incident.iso(
+                        incident.utcnow() - incident.dt.timedelta(seconds=100.0)
+                    ),
+                    "boot_id": live_boot,
+                    "zdo_proof": {
+                        "transaction": "ha-t832-fixture",
+                        "utc": incident.iso(),
+                        "mono": base - 5.0,
+                        "boot_id": live_boot,
+                    },
+                    "zdo_transaction": "ha-t832-fixture",
                     "observations": [
                         {
-                            "utc": "2000-01-01T00:00:00Z",
+                            "utc": incident.iso(),
                             "mono": base + offset,
                             "bridge_up": True,
                             "normal_traffic": True,
                             "zdo_ok": True,
+                            "zdo_transaction": "ha-t832-fixture",
+                            "boot_id": live_boot,
                         }
                         for offset in (30, 120, 210, 300, 390, 480, 570)
                     ],

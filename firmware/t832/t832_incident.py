@@ -122,8 +122,18 @@ SEQ_MOD = 0x10000
 WRAP_HIGH = 0xF000
 WRAP_LOW = 0x0FFF
 STABILITY_WINDOW_SECONDS = 600
-STABILITY_MAX_GAP_SECONDS = 180
+# B09: the /5 scheduler samples every 300 seconds, so the gap budget must
+# cover one healthy cadence interval plus scheduling jitter while still
+# catching a single missed tick (600s). 180 made every healthy window fail.
+STABILITY_MAX_GAP_SECONDS = 360
 STABILITY_MAX_OBSERVATIONS = 512
+# B09: observations at or just past the window end are admissible (the
+# closing tick itself observes seconds after end_mono); anything a full
+# cadence late is out-of-window evidence and fails closed.
+STABILITY_OBS_GRACE_S = 120.0
+# B09: wall-clock/mono cross-check tolerance for close decisions.
+# Scheduling jitter is seconds; a real wall jump or suspend skews minutes.
+STABILITY_WALL_SKEW_S = 120.0
 
 EVENT_NAMES = {
     1: "BOOT",
@@ -182,6 +192,46 @@ def utcnow() -> dt.datetime:
 def iso(value: dt.datetime | None = None) -> str:
     value = value or utcnow()
     return value.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def current_boot_id() -> str | None:
+    """Host boot identity for B09 boot-bound evidence.
+
+    The kernel boot id changes on every host reboot (container restarts
+    keep it: the monotonic clock they share keeps running too, so that is
+    correctly accepted as continuous). Unavailable off Linux: fail closed
+    downstream, never silently accepted.
+    """
+    try:
+        ident = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return ident.strip() or None
+
+
+def check_boot_continuity(stored: object, current: str | None) -> tuple[bool, str]:
+    """Pure B09 comparator: stored boot ids must all equal the live one.
+
+    A rebooted host with greater uptime keeps monotonic continuity, so the
+    mono checks alone would accept prior-boot proof: the boot id is what
+    fails closed. Missing identity on either side never passes.
+    """
+    ids = stored if isinstance(stored, list) else [stored]
+    if not current:
+        return False, "boot-unknown"
+    for ident in ids:
+        if not ident or ident != current:
+            return False, "boot-mismatch"
+    return True, "ok"
+
+
+def check_wall_skew(utc_overshoot_s: float, mono_overshoot_s: float) -> tuple[bool, str]:
+    """Pure B09 comparator: wall and monotonic overshoot past the window
+    end must agree within tolerance. A wall jump or suspend/resume skews
+    the wall side while monotonic stays put: fail closed."""
+    if abs(utc_overshoot_s - mono_overshoot_s) > STABILITY_WALL_SKEW_S:
+        return False, "wall-skew"
+    return True, "ok"
 
 
 def parse_timestamp(text: str) -> dt.datetime | None:
@@ -2124,6 +2174,8 @@ def record_zdo_proof(store: Store, transaction: str) -> dict[str, object]:
                     "transaction": cleaned,
                     "utc": iso(),
                     "mono": time.monotonic(),
+                    # B09: proof is bound to the boot that observed it.
+                    "boot_id": current_boot_id(),
                 },
             },
         )
@@ -2224,19 +2276,26 @@ def recovery_result(
             return value
 
         stable_after = utcnow() + dt.timedelta(seconds=STABILITY_WINDOW_SECONDS)
+        now_mono = time.monotonic()
+        proof = latch.get("zdo_proof") if isinstance(latch, dict) else None
         value = update_latch(
             store,
             {"reset_authorized", "recovering"},
             {
                 "status": "stabilizing",
                 "recovery_succeeded_utc": iso(),
-                "recovery_succeeded_mono": time.monotonic(),
-                "normal_traffic_observed": True,
-                "zdo_verified": True,
-                "zdo_proof": proof_detail,
+                "recovery_succeeded_mono": now_mono,
+                # B09: the structured transaction-bound proof recorded by
+                # record_zdo_proof is preserved as-is; the check verdict
+                # rides alongside instead of replacing it with "ok".
+                "zdo_proof": proof if isinstance(proof, dict) else {},
+                "zdo_proof_check": proof_detail,
                 "zdo_transaction": zdo_transaction,
                 "stable_after_utc": iso(stable_after),
-                "stable_after_mono": time.monotonic() + STABILITY_WINDOW_SECONDS,
+                "stable_after_mono": now_mono + STABILITY_WINDOW_SECONDS,
+                # B09: the window is bound to this host boot; a rebooted
+                # host must fail closed even with greater uptime.
+                "boot_id": current_boot_id(),
                 "observations": [],
             },
         )
@@ -2277,6 +2336,7 @@ def stability_observation(
             base_mono = 0.0
         if now_mono < base_mono:
             anomaly = True
+        proof = latch.get("zdo_proof") if isinstance(latch, dict) else None
         observations.append(
             {
                 "utc": iso(),
@@ -2284,6 +2344,13 @@ def stability_observation(
                 "bridge_up": bool(bridge_up),
                 "normal_traffic": bool(normal_traffic),
                 "zdo_ok": bool(zdo_ok),
+                # B09: each observation is bound to the incident's real
+                # proof transaction and the boot that recorded it. The
+                # per-tick zdo_ok is continuity evidence (no
+                # counter-evidence since proof), never proof itself:
+                # close still requires the recorded transaction proof.
+                "zdo_transaction": proof.get("transaction") if isinstance(proof, dict) else None,
+                "boot_id": current_boot_id(),
             }
         )
         update: dict[str, object] = {"observations": observations}
@@ -2292,6 +2359,21 @@ def stability_observation(
         value = update_latch(store, {"stabilizing"}, update)
         return {"ok": True, "observations": len(observations), "clock_anomaly": anomaly,
                 "incident_id": value.get("incident_id")}
+
+
+def _fail_close(store: Store, reason: str) -> dict[str, object]:
+    """Terminal close verdict: the window did not hold, persist why."""
+    value = update_latch(
+        store,
+        {"stabilizing"},
+        {
+            "status": "failed",
+            "recovery_failed_utc": iso(),
+            "failure_reason": reason,
+        },
+    )
+    store.append_host_event("stability_failed", incident_id=value.get("incident_id"))
+    return value
 
 
 def close_if_stable(store: Store, *, bridge_up: bool, normal_traffic: bool) -> dict[str, object]:
@@ -2309,31 +2391,53 @@ def close_if_stable(store: Store, *, bridge_up: bool, normal_traffic: bool) -> d
             raise RuntimeError("stability-observations-corrupt")
 
         def fail(reason: str) -> dict[str, object]:
-            value = update_latch(
-                store,
-                {"stabilizing"},
-                {
-                    "status": "failed",
-                    "recovery_failed_utc": iso(),
-                    "failure_reason": reason,
-                },
-            )
-            store.append_host_event("stability_failed", incident_id=value.get("incident_id"))
-            return value
+            return _fail_close(store, reason)
 
-        if latch.get("clock_anomaly"):
-            return fail("stability-clock-anomaly")
+        # B09: the monotonic window must also be complete — a wall-clock
+        # jump forward must not open the close gate early.
         try:
             base_mono = float(latch.get("recovery_succeeded_mono", 0.0))
             end_mono = float(latch.get("stable_after_mono", 0.0))
         except (TypeError, ValueError):
             return fail("stability-window-failed")
+        now_mono = time.monotonic()
+        if now_mono < end_mono:
+            raise RuntimeError("stability-window-not-complete")
+        # B09: wall and monotonic overshoot past the window end must agree;
+        # a wall jump or suspend/resume skews the wall side only.
+        now_utc = utcnow()
+        skew_ok, _skew_detail = check_wall_skew(
+            (now_utc - stable_after).total_seconds(), now_mono - end_mono
+        )
+        if not skew_ok:
+            return fail("stability-clock-anomaly")
+        # B09: the window, its proof, and every observation are bound to
+        # one host boot. A rebooted host with greater uptime keeps
+        # monotonic continuity, so only the boot id fails it closed.
+        live_boot = current_boot_id()
+        boot_ids: list[object] = [latch.get("boot_id")]
+        proof = latch.get("zdo_proof") if isinstance(latch, dict) else None
+        boot_ids.append(proof.get("boot_id") if isinstance(proof, dict) else None)
+        for obs in observations:
+            boot_ids.append(obs.get("boot_id") if isinstance(obs, dict) else None)
+        boot_ok, _boot_detail = check_boot_continuity(boot_ids, live_boot)
+        if not boot_ok:
+            return fail("stability-boot-mismatch")
+
+        if latch.get("clock_anomaly"):
+            return fail("stability-clock-anomaly")
         if not bridge_up or not normal_traffic or not latch.get("normal_traffic_observed"):
             return fail("stability-window-failed")
         if not latch.get("zdo_verified"):
             return fail("stability-window-failed")
         points: list[tuple[float, bool, bool, bool]] = []
         for obs in observations:
+            if not isinstance(obs, dict):
+                return fail("stability-window-failed")
+            # B09: every observation stays bound to the incident's proof
+            # transaction; evidence from another incident never counts.
+            if obs.get("zdo_transaction") != (proof.get("transaction") if isinstance(proof, dict) else None):
+                return fail("stability-window-failed")
             try:
                 points.append(
                     (
@@ -2348,6 +2452,11 @@ def close_if_stable(store: Store, *, bridge_up: bool, normal_traffic: bool) -> d
         points.sort()
         if any(m < base_mono for m, _, _, _ in points):
             return fail("stability-clock-anomaly")
+        # B09: observations past the window (beyond the closing tick's
+        # grace) are out-of-window evidence: fail closed, never silently
+        # dropped or counted toward coverage.
+        if any(m > end_mono + STABILITY_OBS_GRACE_S for m, _, _, _ in points):
+            return fail("stability-out-of-window")
         if any(not up for _, up, _, _ in points):
             return fail("stability-window-failed")
         edges = [base_mono] + [m for m, _, _, _ in points] + [end_mono]

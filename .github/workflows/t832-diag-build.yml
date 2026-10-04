@@ -39,7 +39,7 @@ jobs:
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py -v
           python3 -m pip install --quiet pyyaml jinja2
-          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py -v
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_stability.py -v
           gcc -std=c11 -Wall -Wextra \
             -I repo/firmware/t832 \
             -I repo/firmware/t832/host_harness \
@@ -558,7 +558,7 @@ jobs:
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py -v
           python3 -m pip install --quiet pyyaml jinja2
-          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py -v
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_stability.py -v
           gcc -std=c11 -Wall -Wextra \
             -I repo/firmware/t832 \
             -I repo/firmware/t832/host_harness \

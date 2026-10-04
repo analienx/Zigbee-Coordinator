@@ -21,6 +21,7 @@ functions, and unparseable durations fail loudly. No live HA, no radio.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shlex
@@ -38,6 +39,10 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 BARRIER = REPO / "deploy" / "t832_capture_barrier.yaml"
 SHELL_COMMANDS = REPO / "deploy" / "t832_shell_commands.yaml"
+SPEC = importlib.util.spec_from_file_location("t832_incident", HERE / "t832_incident.py")
+assert SPEC and SPEC.loader
+incident = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(incident)
 
 
 class Halt(Exception):
@@ -68,9 +73,11 @@ def parse_duration(value: object) -> float:
 
 
 class Ha:
-    """Bounded executor for one barrier-automation run over real YAML."""
+    """Bounded executor for one automation run over real YAML."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, automation_id: str = "zigbee2mqtt_t832_capture_barrier"
+    ) -> None:
         self.root = root
         self.bin = root / "bin"
         self.state = root / "state"
@@ -88,7 +95,7 @@ class Ha:
         if not isinstance(automations, list) or len(automations) != 2:
             raise HaViolation("barrier file must hold exactly the 2 pinned automations")
         self.automation = next(
-            a for a in automations if a.get("id") == "zigbee2mqtt_t832_capture_barrier"
+            a for a in automations if a.get("id") == automation_id
         )
         self.commands = {
             name: frag if isinstance(frag, str) else frag["command"]
@@ -507,6 +514,8 @@ class Ha:
 
     # -- entry ---------------------------------------------------------------------
     def run_body(self, trigger_obj: dict) -> None:
+        # HA runs do not share script variables: each firing starts clean.
+        self.vars = {}
         self.running = True
         self.bus_mark = len(self.bus)
         try:
@@ -557,6 +566,28 @@ class Ha:
             return "suppressed"
         matched["id"] = trigger_id
         self.run_body(matched)
+        return "ran"
+
+    def fire_time_pattern(self) -> str:
+        """Fire the stability scheduler tick.
+
+        HA enforces the minutes:/5 cadence; the scenarios space ticks to
+        match it. Returns ran|suppressed.
+        """
+        spec = next(
+            (
+                t
+                for t in self.automation.get("triggers", []) or []
+                if (t.get("trigger") or t.get("platform")) == "time_pattern"
+            ),
+            None,
+        )
+        if spec is None:
+            return "no-match"
+        if self.running:
+            self.suppressions.append(str(spec.get("id", "tick")))
+            return "suppressed"
+        self.run_body({"platform": "time_pattern", "id": spec.get("id", "tick")})
         return "ran"
 
 
@@ -860,6 +891,102 @@ class BarrierAutomationTests(unittest.TestCase):
         self.assertEqual(latch.get("failure_reason"), "zdo-unconfirmed")
         self.assertEqual(latch.get("failure_phase"), "zdo")
         self.assertEqual(self.rts_invocations(), 1)
+
+
+class StabilitySchedulerTests(BarrierAutomationTests):
+    """B09 fast leg: the actual stability automation runs per tick over the
+    real CLI. Window-close decisions need real elapsed time and live in
+    test_stability.py; these pin the timer contract and per-tick honesty."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.stab = Ha(self.root, automation_id="zigbee2mqtt_t832_stability_close")
+        for entity, value in ((OUTAGE, "off"), (BRIDGE, "on")):
+            self.stab.states[entity] = (value, 0.0)
+            self.stab.state_history.setdefault(entity, []).append((0.0, value))
+
+    def test_timer_contract_pins_five_minute_cadence(self) -> None:
+        # The /5 timer the oracles mirror is a static contract of the YAML.
+        auto = self.stab.automation
+        triggers = auto.get("triggers", []) or []
+        self.assertEqual(len(triggers), 1)
+        self.assertEqual(
+            (triggers[0].get("trigger") or triggers[0].get("platform")), "time_pattern"
+        )
+        self.assertEqual(str(triggers[0].get("minutes")), "/5")
+        self.assertEqual(auto.get("mode"), "single")
+        services = [
+            step.get("action", step.get("service"))
+            for step in auto.get("actions", [])
+            if isinstance(step, dict) and ("action" in step or "service" in step)
+        ]
+        self.assertEqual(
+            services,
+            [
+                "shell_command.t832_status",
+                "shell_command.t832_observe",
+                "shell_command.t832_close_if_stable",
+                "system_log.write",
+            ],
+        )
+        self.assertFalse(any(str(s).startswith("notify") for s in services))
+        observe = next(s for s in auto["actions"] if s.get("data", {}).get("zdo_ok"))
+        # B09: per-tick zdo_ok needs both a quiet mesh and an online
+        # bridge; outage quiet alone never attests radio health.
+        self.assertIn("zigbee2mqtt_bridge_online", observe["data"]["zdo_ok"])
+
+    def test_outage_tick_records_counterevidence_without_closing(self) -> None:
+        # A tick mid-outage records false flags bound to the live boot and
+        # the incident proof, and the latch stays stabilizing: close raises
+        # window-not-complete this early, so the tick halts on its gate.
+        self.hold_outage()
+        self.run_to_recovery(lambda: self.ha.fire_state("mesh_outage"))
+        latch = self.latch()
+        self.stab.set_state(OUTAGE, "on")
+        self.stab.set_state(BRIDGE, "off")
+        self.assertEqual(self.stab.fire_time_pattern(), "ran")
+        self.assertEqual(self.latch().get("status"), "stabilizing")
+        obs = self.latch().get("observations", [])
+        self.assertTrue(obs)
+        last = obs[-1]
+        self.assertFalse(last.get("bridge_up"))
+        self.assertFalse(last.get("normal_traffic"))
+        self.assertFalse(last.get("zdo_ok"))
+        self.assertEqual(last.get("zdo_transaction"), latch.get("zdo_transaction"))
+        self.assertEqual(last.get("boot_id"), incident.current_boot_id())
+        self.assertTrue(last.get("boot_id"))
+
+    def test_idle_tick_without_incident_is_noop(self) -> None:
+        # No latch exists: the status gate halts the tick before any write.
+        self.assertEqual(self.stab.fire_time_pattern(), "ran")
+        self.assertFalse((self.ha.state / "state" / "incident-latch.json").exists())
+
+    def test_boot_comparator_rejects_foreign_boot(self) -> None:
+        # B09: a rebooted host with greater uptime keeps monotonic
+        # continuity, so only the boot id fails it closed. Pure-function
+        # leg: different boot rejects, missing identity fails closed, the
+        # live boot accepts.
+        live = incident.current_boot_id()
+        self.assertTrue(live)
+        self.assertEqual(incident.check_boot_continuity([live, live], live), (True, "ok"))
+        self.assertEqual(
+            incident.check_boot_continuity([live, "other-boot"], live),
+            (False, "boot-mismatch"),
+        )
+        self.assertEqual(
+            incident.check_boot_continuity([live], None), (False, "boot-unknown")
+        )
+        self.assertEqual(
+            incident.check_boot_continuity([live], ""), (False, "boot-unknown")
+        )
+
+    def test_wall_skew_comparator_rejects_jumps(self) -> None:
+        # Wall and monotonic overshoot past the window end agree on a
+        # healthy close and diverge on a wall jump or suspend/resume.
+        self.assertEqual(incident.check_wall_skew(12.0, 9.0), (True, "ok"))
+        self.assertEqual(
+            incident.check_wall_skew(3700.0, 9.0), (False, "wall-skew")
+        )
 
 
 if __name__ == "__main__":

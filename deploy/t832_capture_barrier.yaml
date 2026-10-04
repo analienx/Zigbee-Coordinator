@@ -313,7 +313,11 @@
       data:
         bridge_up: "{{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
         normal_traffic: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') }}"
-        zdo_ok: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') }}"
+        # B09: per-tick continuity evidence, not proof — radio health is
+        # only ever proven by the recorded permit_join transaction (bound
+        # per observation, gated at close). Both quiet mesh and an online
+        # bridge must hold; either one failing is counter-evidence.
+        zdo_ok: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') and is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
       response_variable: t832_observed
     - condition: template
       value_template: "{{ t832_observed['returncode'] == 0 }}"
