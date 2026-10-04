@@ -55,7 +55,7 @@ def incident_closed_events(case) -> list:
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("event") == "incident_closed" and row.get("incident_id") == latch.get(
+        if row.get("kind") == "incident_closed" and row.get("incident_id") == latch.get(
             "incident_id"
         ):
             events.append(row)
@@ -76,14 +76,16 @@ def leg_happy_close(case) -> str:
     tick(case)
     latch = case.latch()
     assert latch.get("status") == "closed", latch
-    assert latch.get("zdo_proof", {}).get("transaction") == latch.get("zdo_transaction")
+    assert latch.get("zdo_proof", {}).get("transaction") == latch.get(
+        "zdo_transaction"
+    ), latch.get("zdo_proof")
     # Exactly once: a further tick observes, finds non-stabilizing status,
     # and halts without a second close event.
     tick(case)
-    assert case.latch().get("status") == "closed"
-    assert len(incident_closed_events(case)) == 1
+    assert case.latch().get("status") == "closed", case.latch()
+    assert len(incident_closed_events(case)) == 1, incident_closed_events(case)
     # No recurring radio probes: the only ZDO request is the barrier's.
-    assert len(case.publishes(automod.ZDO_REQ)) == 1
+    assert len(case.publishes(automod.ZDO_REQ)) == 1, case.publishes(automod.ZDO_REQ)
     return "ok"
 
 
