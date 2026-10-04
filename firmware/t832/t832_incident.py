@@ -1569,10 +1569,13 @@ def zdo_proof_state(latch: object, zdo_transaction: str | None) -> tuple[bool, s
     if not isinstance(proof, dict):
         return False, "missing"
     try:
-        age = time.monotonic() - float(proof.get("mono", float("nan")))
-    except (TypeError, ValueError):
+        mono = float(proof["mono"])
+    except (KeyError, TypeError, ValueError):
         return False, "missing"
-    if not (age >= 0.0):
+    age = time.monotonic() - mono
+    if age != age:
+        return False, "missing"
+    if age < 0.0:
         return False, "rebooted"
     if age > ZDO_PROOF_MAX_AGE_S:
         return False, "stale"

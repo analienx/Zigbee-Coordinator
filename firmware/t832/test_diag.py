@@ -1476,6 +1476,20 @@ class ZdoProofTests(unittest.TestCase):
             self.assertEqual(failed["status"], "failed")
             self.assertEqual(failed["zdo_proof"], "stale")
 
+    def test_corrupt_proof_clock_is_missing_not_rebooted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = self.recovering_store(Path(td))
+            incident.record_zdo_proof(store, "ha-t832-barrier")
+            latch = store.load(store.latch, {})
+            latch["zdo_proof"]["mono"] = float("nan")
+            store.atomic_json(store.latch, latch)
+            failed = incident.recovery_result(
+                store, success=True, normal_traffic=True, zdo_ok=True,
+                zdo_transaction="ha-t832-barrier",
+            )
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["zdo_proof"], "missing")
+
     def test_transaction_mismatch_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = self.recovering_store(Path(td))
