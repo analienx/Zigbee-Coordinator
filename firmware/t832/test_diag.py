@@ -1515,7 +1515,8 @@ class TriggerEvaluatorTests(unittest.TestCase):
         verdict = incident.evaluate_trigger(
             "radio_timeout", defs,
             topic=incident.RADIO_TIMEOUT_TOPIC,
-            payload={"status": "error", "error": "srsp timeout"},
+            payload={"status": "error",
+                     "error": "permit join failed: SRSP - timeout after 6000ms"},
         )
         self.assertTrue(verdict["qualifying"])
         self.assertEqual(verdict["source"], "candidate-yaml")
