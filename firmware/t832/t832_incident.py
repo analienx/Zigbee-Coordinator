@@ -698,15 +698,6 @@ def read_increment(
     return rows, new_cursor, notes
 
 
-def firmware_hash(store: Store) -> str | None:
-    value = store.load(store.firmware, {})
-    if isinstance(value, dict):
-        sha = value.get("sha256")
-        if isinstance(sha, str) and re.fullmatch(r"[0-9a-fA-F]{64}", sha):
-            return sha.lower()
-    return None
-
-
 def collect(
     store: Store,
     sources: list[str],
@@ -774,6 +765,14 @@ def _collect_locked(
     notes: list[str] = []
     budget = max_collect_bytes
     partial = False
+    # Observed-vs-bound build identity: frames carry the firmware's own
+    # build id; when an image is bound, any differing observed id is
+    # explicit evidence of a swap, never silently absorbed.
+    bound_build_id: int | None = None
+    bound = bound_firmware(store)
+    if isinstance(bound, dict) and isinstance(bound.get("build_id"), int):
+        bound_build_id = int(bound["build_id"])
+    build_mismatch_noted: set[int] = set()
 
     for path in files:
         key = str(path)
@@ -833,6 +832,20 @@ def _collect_locked(
                         }
                     )
                     continue
+                if bound_build_id is not None:
+                    try:
+                        observed_build = int(frame.get("firmware_build_id", -1))
+                    except (TypeError, ValueError):
+                        observed_build = -1
+                    if (
+                        observed_build != bound_build_id
+                        and observed_build not in build_mismatch_noted
+                    ):
+                        build_mismatch_noted.add(observed_build)
+                        notes.append(
+                            "firmware-build-mismatch:"
+                            f"{observed_build}:{bound_build_id}"
+                        )
                 # One continuity annotation per frame: records sharing a
                 # frame share boot association (boot membership is a frame
                 # property, and per-record annotation mislabels same-frame
@@ -1243,7 +1256,13 @@ def capture(
                 raise
         if active_latch(latch):
             raise RuntimeError(f"incident-latch-active:{latch.get('status')}")
-        if require_firmware_binding and firmware_hash(store) is None:
+        bound = bound_firmware(store) if require_firmware_binding else None
+        if require_firmware_binding and (
+            bound is None or bound.get("role") not in BINDING_AUTHORIZED_ROLES
+        ):
+            # Missing, swapped, or non-deployed bindings never gate: the
+            # artifact is re-hashed on every use, and candidate/test roles
+            # bind for bookkeeping only.
             raise RuntimeError("capture-requires-firmware-binding")
         if trigger not in CANDIDATE_TRIGGER_IDS:
             raise RuntimeError(f"unknown-trigger:{trigger}")
@@ -1394,10 +1413,18 @@ def capture(
             raise
 
 
+#: Latch schema version the tool reads and writes. Unknown schemas fail
+#: closed: a latch from a newer or foreign writer is never acted on.
+LATCH_SCHEMA = 1
+
+
 def update_latch(store: Store, expected: set[str], update: dict[str, object]) -> dict[str, object]:
     latch = store.load_strict(store.latch)
     if not isinstance(latch, dict):
         raise RuntimeError("incident-latch-corrupt")
+    schema = latch.get("schema", LATCH_SCHEMA)
+    if schema != LATCH_SCHEMA:
+        raise RuntimeError(f"incident-latch-schema:{schema}")
     status = str(latch.get("status"))
     if status not in expected:
         raise RuntimeError(f"incident-latch-state:{status}")
@@ -1423,10 +1450,17 @@ def verify_bundle(store: Store, latch: dict[str, object]) -> Path:
         raise RuntimeError("reset-permit-bundle-mismatch")
     if not isinstance(recorded, dict):
         raise RuntimeError("reset-permit-hashes-missing")
+    # An empty hash inventory verifies nothing: it must name every
+    # committed file, starting with the manifest itself. A tampered
+    # SHA256.json (emptied or thinned) therefore refuses, never passes.
+    if not recorded:
+        raise RuntimeError("reset-permit-hashes-empty")
     for name, expected in recorded.items():
         item = bundle / name
         if not item.is_file() or sha256_file(item) != expected:
             raise RuntimeError(f"reset-permit-hash-mismatch:{name}")
+    if "manifest.json" not in recorded:
+        raise RuntimeError("reset-permit-manifest-uninventoried")
     return bundle
 
 
@@ -1738,16 +1772,57 @@ def manual_clear(store: Store, reason: str, *, force: bool = False) -> dict[str,
         return value
 
 
-def bind_firmware(store: Store, artifact: Path, *, role: str = "deployed") -> dict[str, object]:
+#: Roles allowed to satisfy --require-firmware-binding. Anything else
+#: (candidate builds, test fixtures) binds for bookkeeping but never
+#: authorizes capture: only the deployed image gates the barrier.
+BINDING_AUTHORIZED_ROLES = ("deployed",)
+
+
+def bound_firmware(store: Store) -> dict[str, object] | None:
+    """Return the bound firmware record, or None when unusable.
+
+    The recorded SHA is re-hashed against the artifact on disk: an image
+    swapped or modified after binding fails closed here, never silently.
+    """
+    value = store.load(store.firmware, {})
+    if not isinstance(value, dict):
+        return None
+    sha = value.get("sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
+        return None
+    path = Path(str(value.get("path", "")))
+    try:
+        if not path.is_file() or sha256_file(path) != sha.lower():
+            return None
+    except OSError:
+        return None
+    return value
+
+
+def firmware_hash(store: Store) -> str | None:
+    bound = bound_firmware(store)
+    if bound is None:
+        return None
+    return str(bound["sha256"]).lower()
+
+
+def bind_firmware(
+    store: Store, artifact: Path, *, role: str = "deployed",
+    build_id: int | None = None,
+) -> dict[str, object]:
     with store.locked():
         if not artifact.is_file():
             raise RuntimeError(f"firmware-artifact-missing:{artifact}")
+        size = artifact.stat().st_size
+        if size == 0:
+            raise RuntimeError(f"firmware-artifact-empty:{artifact}")
         value = {
             "schema": 1,
             "sha256": sha256_file(artifact),
-            "bytes": artifact.stat().st_size,
+            "bytes": size,
             "path": str(artifact),
             "role": role,
+            "build_id": build_id,
             "bound_utc": iso(),
         }
         store.atomic_json(store.firmware, value)
@@ -1815,6 +1890,7 @@ def main() -> int:
     bind = sub.add_parser("bind-firmware")
     bind.add_argument("--artifact", type=Path, required=True)
     bind.add_argument("--role", default="deployed")
+    bind.add_argument("--build-id", type=lambda v: int(v, 0), default=None)
     evt = sub.add_parser("host-event")
     evt.add_argument("--kind", required=True)
     evt.add_argument("--detail", default="")
@@ -1886,7 +1962,9 @@ def main() -> int:
         elif args.command == "manual-clear":
             result = manual_clear(store, args.reason, force=args.force)
         elif args.command == "bind-firmware":
-            result = bind_firmware(store, args.artifact, role=args.role)
+            result = bind_firmware(
+                store, args.artifact, role=args.role, build_id=args.build_id
+            )
         elif args.command == "host-event":
             with store.locked():
                 store.append_host_event(args.kind, detail=args.detail)

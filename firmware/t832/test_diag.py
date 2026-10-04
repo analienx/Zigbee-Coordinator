@@ -795,6 +795,59 @@ class IncidentTests(unittest.TestCase):
             self.assertEqual(manifest["diag_record_count"], 0)
             self.assertGreaterEqual(manifest["diag_unknown_time_count"], 1)
 
+    def test_empty_hash_inventory_blocks_authorize(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            captured = incident.capture(
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
+                initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
+                window_seconds=900, deadline_seconds=30,
+            )
+            bundle = Path(captured["bundle"])
+            (bundle / "SHA256.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                incident.authorize_reset(store)
+            self.assertEqual(store.load(store.latch, {})["status"], "captured")
+
+    def test_uninventoried_manifest_blocks_authorize(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+                encoding="utf-8",
+            )
+            captured = incident.capture(
+                store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
+                initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
+                window_seconds=900, deadline_seconds=30,
+            )
+            bundle = Path(captured["bundle"])
+            recorded = json.loads((bundle / "SHA256.json").read_text(encoding="utf-8"))
+            del recorded["manifest.json"]
+            (bundle / "SHA256.json").write_text(json.dumps(recorded) + "\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                incident.authorize_reset(store)
+
+    def test_unknown_latch_schema_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            store.atomic_json(
+                store.latch,
+                {"schema": 99, "status": "reset_authorized", "incident_id": "x"},
+            )
+            with self.assertRaises(RuntimeError):
+                incident.mark_recovering(store)
+            with self.assertRaises(RuntimeError):
+                incident.recovery_result(
+                    store, success=True, normal_traffic=True, zdo_ok=False
+                )
+
     def test_bind_firmware_gates_capture(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -810,7 +863,7 @@ class IncidentTests(unittest.TestCase):
                     window_seconds=900, deadline_seconds=30,
                     require_firmware_binding=True,
                 )
-            bound = incident.bind_firmware(store, artifact, role="test")
+            bound = incident.bind_firmware(store, artifact, role="deployed")
             self.assertTrue(bound["ok"])
             captured = incident.capture(
                 store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
@@ -823,6 +876,87 @@ class IncidentTests(unittest.TestCase):
                 (Path(captured["bundle"]) / "manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["firmware_sha256"], bound["sha256"])
+
+    def test_candidate_role_never_gates_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            artifact = root / "fw.hex"
+            artifact.write_text(":020000040000FA\n", encoding="utf-8")
+            bound = incident.bind_firmware(store, artifact, role="candidate")
+            self.assertTrue(bound["ok"])
+            with self.assertRaises(RuntimeError):
+                incident.capture(
+                    store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
+                    initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
+                    window_seconds=900, deadline_seconds=30,
+                    require_firmware_binding=True,
+                )
+
+    def test_swapped_artifact_fails_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("2026-10-03T09:00:00Z boot\n", encoding="utf-8")
+            artifact = root / "fw.hex"
+            artifact.write_text(":020000040000FA\n", encoding="utf-8")
+            incident.bind_firmware(store, artifact, role="deployed")
+            artifact.write_text(":020000040001F9\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                incident.capture(
+                    store, "mesh_outage", sources=[str(log)], config_fingerprint=None,
+                    initial_tail_bytes=1024, retain_days=7, max_bytes=1 << 20,
+                    window_seconds=900, deadline_seconds=30,
+                    require_firmware_binding=True,
+                )
+
+    def test_observed_build_mismatch_noted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+                encoding="utf-8",
+            )
+            artifact = root / "fw.hex"
+            artifact.write_text(":020000040000FA\n", encoding="utf-8")
+            incident.bind_firmware(store, artifact, role="deployed", build_id=1)
+            result = incident.collect(
+                store, [str(log)], config_fingerprint=None,
+                initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
+            )
+            self.assertEqual(result["diag_records"], 1)
+            self.assertTrue(
+                any(n.startswith("firmware-build-mismatch:") for n in result["notes"]),
+                result["notes"],
+            )
+
+    def test_matching_build_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+                encoding="utf-8",
+            )
+            artifact = root / "fw.hex"
+            artifact.write_text(":020000040000FA\n", encoding="utf-8")
+            incident.bind_firmware(store, artifact, role="deployed", build_id=8320001)
+            result = incident.collect(
+                store, [str(log)], config_fingerprint=None,
+                initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1 << 30,
+            )
+            self.assertFalse(
+                any(n.startswith("firmware-build-mismatch:") for n in result["notes"]),
+                result["notes"],
+            )
 
 
 class StabilityTests(unittest.TestCase):
@@ -1060,6 +1194,50 @@ class ProtocolEdgeTests(unittest.TestCase):
             incident.rotate(store, retain_days=7, max_bytes=1)
             remaining = list(store.stream.glob("*.jsonl"))
             self.assertEqual(remaining, [])
+
+    def test_repeated_collects_stay_bounded_and_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text("", encoding="utf-8")
+            saw_retention = False
+            for seq in range(1, 7):
+                with log.open("a", encoding="utf-8") as fh:
+                    fh.write(
+                        "2026-10-03T09:00:00Z zh:zstack:znp "
+                        f"T832D1:{packet_hex(export_sequence=seq, uptime_ms=seq * 1000)}\n"
+                    )
+                result = incident.collect(
+                    store, [str(log)], config_fingerprint=None,
+                    initial_tail_bytes=1024 * 1024, retain_days=7, max_bytes=1500,
+                )
+                saw_retention = saw_retention or any(
+                    n.startswith("retention-size:") for n in result["notes"]
+                )
+            total = sum(
+                p.stat().st_size for p in store.stream.glob("*.jsonl") if p.is_file()
+            )
+            self.assertLessEqual(total, 1500)
+            self.assertTrue(saw_retention)
+
+    def test_latched_bundle_survives_pruning(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            for i in range(35):
+                (store.incidents / f"bundle-{i:03d}").mkdir(parents=True, exist_ok=True)
+            oldest = store.incidents / "bundle-000"
+            store.atomic_json(
+                store.latch, {"status": "captured", "bundle": str(oldest)}
+            )
+            pruned = incident.rotate(store, retain_days=7, max_bytes=1 << 30)
+            remaining = sorted(
+                p.name for p in store.incidents.iterdir()
+                if p.is_dir() and not p.name.startswith(".")
+            )
+            self.assertIn("bundle-000", remaining)
+            self.assertEqual(len(remaining), 33)
+            self.assertTrue(any(n.startswith("retention-bundle:") for n in pruned))
 
 
 class RecoveryEdgeTests(unittest.TestCase):
