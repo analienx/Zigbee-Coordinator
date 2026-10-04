@@ -457,55 +457,56 @@ static void T832Diag_afInsert(uint8_t srcEp, uint8_t transId, uint8_t origin)
       victim = i;
     }
   }
-  if (free == T832_DIAG_AF_DEPTH) {
-    if (t832Diag.af[victim].origin == 2u && t832Diag.af_unconfirmed_n) {
-      t832Diag.af_unconfirmed_n--;
+  /* B03: victim selection and slot reuse are one atomic transaction.
+   * The old split (select, leave, record, re-enter, reuse) let a
+   * concurrent insert claim or replace the victim between selection and
+   * reuse: the eviction then destroyed a live entry and the outstanding
+   * count skewed. Identity is captured for the post-section record; the
+   * section holds only table and counter work. */
+  {
+    uint8_t evict_ep = 0u;
+    uint8_t evict_tid = 0u;
+    uint8_t evicted = 0u;
+    if (free == T832_DIAG_AF_DEPTH) {
+      evict_ep = t832Diag.af[victim].src_ep;
+      evict_tid = t832Diag.af[victim].trans_id;
+      if (t832Diag.af[victim].origin == 2u && t832Diag.af_unconfirmed_n) {
+        t832Diag.af_unconfirmed_n--;
+      }
+      free = victim;
+      if (t832Diag.af_outstanding) t832Diag.af_outstanding--;
+      evicted = 1u;
+    }
+    t832Diag.af[free].used = 1u;
+    t832Diag.af[free].src_ep = srcEp;
+    t832Diag.af[free].trans_id = transId;
+    t832Diag.af[free].origin = origin;
+    t832Diag.af[free].ms = now;
+    t832Diag.af[free].gen = ++t832Diag.af_gen;
+    if (origin == 1u) {
+      if (t832Diag.af_accepted_n != 0xFFFFFFFFu) t832Diag.af_accepted_n++;
+    } else {
+      if (t832Diag.af_areq_n != 0xFFFFFFFFu) t832Diag.af_areq_n++;
+      if (t832Diag.af_unconfirmed_n != 0xFFFFu) t832Diag.af_unconfirmed_n++;
+    }
+    if (!t832Diag.af_outstanding) {
+      t832Diag.af_oldest_ms = t832Diag.af[free].ms;
+    }
+    if (t832Diag.af_outstanding != 0xFFFFu) t832Diag.af_outstanding++;
+    if (t832Diag.af_outstanding > t832Diag.af_outstanding_max) {
+      t832Diag.af_outstanding_max = t832Diag.af_outstanding;
     }
     OsalPort_leaveCS(key);
-    T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 4u,
-                    t832Diag.af[victim].src_ep, t832Diag.af[victim].trans_id);
-    key = OsalPort_enterCS();
-    free = victim;
-    if (t832Diag.af_outstanding) t832Diag.af_outstanding--;
+    if (evicted) {
+      T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 4u, evict_ep, evict_tid);
+    }
+    return;
   }
-  t832Diag.af[free].used = 1u;
-  t832Diag.af[free].src_ep = srcEp;
-  t832Diag.af[free].trans_id = transId;
-  t832Diag.af[free].origin = origin;
-  t832Diag.af[free].ms = now;
-  t832Diag.af[free].gen = ++t832Diag.af_gen;
-  if (origin == 1u) {
-    if (t832Diag.af_accepted_n != 0xFFFFFFFFu) t832Diag.af_accepted_n++;
-  } else {
-    if (t832Diag.af_areq_n != 0xFFFFFFFFu) t832Diag.af_areq_n++;
-    if (t832Diag.af_unconfirmed_n != 0xFFFFu) t832Diag.af_unconfirmed_n++;
-  }
-  if (!t832Diag.af_outstanding) {
-    t832Diag.af_oldest_ms = t832Diag.af[free].ms;
-  }
-  if (t832Diag.af_outstanding != 0xFFFFu) t832Diag.af_outstanding++;
-  if (t832Diag.af_outstanding > t832Diag.af_outstanding_max) {
-    t832Diag.af_outstanding_max = t832Diag.af_outstanding;
-  }
-  OsalPort_leaveCS(key);
 }
 
-static void T832Diag_afRemove(uint8_t idx)
-{
-  uint32_t key = OsalPort_enterCS();
-  uint32_t now = (uint32_t)T832Diag_nowMs();
-  if (t832Diag.af[idx].origin == 2u && t832Diag.af_unconfirmed_n) {
-    t832Diag.af_unconfirmed_n--;
-  }
-  t832Diag.af[idx].used = 0u;
-  if (t832Diag.af_outstanding) {
-    t832Diag.af_outstanding--;
-  }
-  /* Recompute from the survivors: the age must track the oldest remaining
-   * request, never a completed one. */
-  t832Diag.af_oldest_ms = T832Diag_afOldestLocked(now);
-  OsalPort_leaveCS(key);
-}
+/* B03: removal lives inside T832Diag_afConfirm's single section (see
+ * below); a standalone index-based remover cannot re-validate identity
+ * across preemption, so it is deleted. */
 
 void T832Diag_afDispatch(uint8_t cmd0, uint8_t cmd1, const uint8_t *frame, uint8_t frameLen)
 {
@@ -547,25 +548,64 @@ static void T832Diag_afSrspResult(uint8_t status)
   }
 }
 
+/* B03: search and removal are one atomic transaction. The old split
+ * (unlocked search, then removal in its own section) let a concurrent
+ * producer remove the found entry and insert a same-key replacement
+ * between the two: the removal then deleted the replacement. Identity is
+ * re-validated under the section via the per-entry generation stamp, so a
+ * replacement can never be removed by a confirm that found its
+ * predecessor. The section holds only table scan and counter work — no
+ * UART, heap or formatting calls. */
 static void T832Diag_afConfirm(uint8_t status, uint8_t ep, uint8_t transId)
 {
+  uint32_t key = OsalPort_enterCS();
   uint8_t i;
+  uint8_t outcome = 0u;
   for (i = 0; i < T832_DIAG_AF_DEPTH; i++) {
     if (t832Diag.af[i].used &&
         t832Diag.af[i].src_ep == ep &&
         t832Diag.af[i].trans_id == transId) {
-      T832Diag_afRemove(i);
-      if (status == 0u) {
-        if (t832Diag.af_confirmed_n != 0xFFFFFFFFu) t832Diag.af_confirmed_n++;
+      uint16_t gen = t832Diag.af[i].gen;
+      /* Re-validate under the same section: same slot, still used, same
+       * key, same generation — otherwise a replacement arrived and this
+       * confirm no longer owns the entry. */
+      if (t832Diag.af[i].used &&
+          t832Diag.af[i].src_ep == ep &&
+          t832Diag.af[i].trans_id == transId &&
+          t832Diag.af[i].gen == gen) {
+        if (t832Diag.af[i].origin == 2u && t832Diag.af_unconfirmed_n) {
+          t832Diag.af_unconfirmed_n--;
+        }
+        t832Diag.af[i].used = 0u;
+        if (t832Diag.af_outstanding) {
+          t832Diag.af_outstanding--;
+        }
+        /* Recompute from the survivors: the age must track the oldest
+         * remaining request, never a completed one. */
+        t832Diag.af_oldest_ms = T832Diag_afOldestLocked(
+            (uint32_t)T832Diag_nowMs());
+        outcome = (uint8_t)(status == 0u ? 1u : 2u);
+        if (status == 0u) {
+          if (t832Diag.af_confirmed_n != 0xFFFFFFFFu) t832Diag.af_confirmed_n++;
+        } else {
+          /* Failed delivery keeps its raw status: a reject, not a
+           * confirm. */
+          if (t832Diag.af_rejected_n != 0xFFFFFFFFu) t832Diag.af_rejected_n++;
+        }
       } else {
-        /* Failed delivery keeps its raw status: a reject, not a confirm. */
-        if (t832Diag.af_rejected_n != 0xFFFFFFFFu) t832Diag.af_rejected_n++;
-        T832Diag_record(T832_DIAG_EV_AF_REJECT, ep, transId, status);
+        outcome = 3u;
       }
-      return;
+      break;
     }
   }
-  T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 1u, ep, transId);
+  OsalPort_leaveCS(key);
+  if (outcome == 2u) {
+    T832Diag_record(T832_DIAG_EV_AF_REJECT, ep, transId, status);
+  } else if (outcome == 0u) {
+    T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 1u, ep, transId);
+  } else if (outcome == 3u) {
+    T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 8u, ep, transId);
+  }
 }
 
 void T832Diag_commandDispatch(uint8_t cmd0, uint8_t cmd1)
@@ -591,18 +631,21 @@ static uint8_t T832Diag_isDiagFrame(uint8_t cmdType, uint8_t cmdId)
  * 8-slot shadow FIFO is full. A refused frame stays in the real NPI queue
  * (which this recorder never alters); its later wire completion arrives
  * without a descriptor and is counted explicitly untracked. The oldest
- * tracked descriptor is never evicted, so pending always equals the number
- * of stored descriptors and no ghost count can accumulate. */
-static uint8_t T832Diag_txPush(uint8_t cls, uint8_t cmd0, uint8_t cmd1, uint8_t len)
+ * tracked descriptor is never evicted. B01: pending counts live-wire
+ * expectations and may lag the stored-descriptor count by refused-uncertain
+ * attributions (see T832Diag_txRefusedUncertain); every retirement path
+ * decrements pending guarded, so no ghost count can accumulate and no
+ * underflow is possible. */
+/* Locked core: caller holds the diagnostic critical section. Stores the
+ * descriptor and returns its slot, or T832_DIAG_TXQ_DEPTH when the shadow
+ * FIFO is full (overflow is counted by the caller after leaving the
+ * section, so no record call nests inside here). */
+static uint16_t T832Diag_txPushLocked(uint8_t cls, uint8_t cmd0, uint8_t cmd1,
+                                       uint8_t len)
 {
-  uint32_t key = OsalPort_enterCS();
   uint16_t slot;
-  uint8_t stored;
   if (t832Diag.txq_count >= T832_DIAG_TXQ_DEPTH) {
-    OsalPort_leaveCS(key);
-    if (t832Diag.tx_overflow_n != 0xFFFFFFFFu) t832Diag.tx_overflow_n++;
-    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 5u, cmd0, cmd1);
-    return 0u;
+    return T832_DIAG_TXQ_DEPTH;
   }
   slot = (uint16_t)((t832Diag.txq_head + t832Diag.txq_count) % T832_DIAG_TXQ_DEPTH);
   t832Diag.txq_count++;
@@ -611,14 +654,25 @@ static uint8_t T832Diag_txPush(uint8_t cls, uint8_t cmd0, uint8_t cmd1, uint8_t 
   t832Diag.txq[slot].cmd1 = cmd1;
   t832Diag.txq[slot].len = len;
   t832Diag.txq[slot].gen = ++t832Diag.queue_gen;
-  stored = 1u;
-  OsalPort_leaveCS(key);
-  return stored;
+  return slot;
 }
 
-static void T832Diag_pendingInc(void)
+static uint8_t T832Diag_txPush(uint8_t cls, uint8_t cmd0, uint8_t cmd1, uint8_t len)
 {
   uint32_t key = OsalPort_enterCS();
+  uint16_t slot = T832Diag_txPushLocked(cls, cmd0, cmd1, len);
+  OsalPort_leaveCS(key);
+  if (slot == T832_DIAG_TXQ_DEPTH) {
+    if (t832Diag.tx_overflow_n != 0xFFFFFFFFu) t832Diag.tx_overflow_n++;
+    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 5u, cmd0, cmd1);
+    return 0u;
+  }
+  return 1u;
+}
+
+/* Locked core: caller holds the diagnostic critical section. */
+static void T832Diag_pendingIncLocked(void)
+{
   if (t832Diag.normal_pending == 0u) {
     t832Diag.oldest_pending_ms = (uint32_t)T832Diag_nowMs();
   }
@@ -626,51 +680,19 @@ static void T832Diag_pendingInc(void)
   if (t832Diag.normal_pending > t832Diag.normal_pending_max) {
     t832Diag.normal_pending_max = t832Diag.normal_pending;
   }
-  OsalPort_leaveCS(key);
 }
 
-/* Release one owned descriptor without inventing delivery. Returns 1 when a
- * matching descriptor was removed (pending decremented, loss counted), 0
- * when the frame was never tracked. */
-static uint8_t T832Diag_txRelease(uint8_t cmd0, uint8_t cmd1, uint8_t len,
-                                  uint8_t reason)
-{
-  uint32_t key = OsalPort_enterCS();
-  uint16_t i;
-  for (i = 0u; i < t832Diag.txq_count; i++) {
-    uint16_t slot = (uint16_t)((t832Diag.txq_head + i) % T832_DIAG_TXQ_DEPTH);
-    if (t832Diag.txq[slot].cmd0 == cmd0 &&
-        t832Diag.txq[slot].cmd1 == cmd1 &&
-        t832Diag.txq[slot].len == len) {
-      uint16_t j;
-      uint8_t cls = t832Diag.txq[slot].cls;
-      for (j = i; j + 1u < t832Diag.txq_count; j++) {
-        uint16_t dst = (uint16_t)((t832Diag.txq_head + j) % T832_DIAG_TXQ_DEPTH);
-        uint16_t src = (uint16_t)((t832Diag.txq_head + j + 1u) % T832_DIAG_TXQ_DEPTH);
-        t832Diag.txq[dst] = t832Diag.txq[src];
-      }
-      t832Diag.txq_count--;
-      if (cls == T832_DIAG_TXCLS_SYNC_SRSP ||
-          cls == T832_DIAG_TXCLS_NORMAL) {
-        if (t832Diag.normal_pending) {
-          t832Diag.normal_pending--;
-          if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
-        }
-      }
-      OsalPort_leaveCS(key);
-      if (reason == 1u) {
-        if (t832Diag.tx_orphan_n != 0xFFFFFFFFu) t832Diag.tx_orphan_n++;
-      } else {
-        if (t832Diag.tx_uncertain_n != 0xFFFFFFFFu) t832Diag.tx_uncertain_n++;
-      }
-      T832Diag_record(T832_DIAG_EV_TX_MISMATCH,
-                      reason == 1u ? 12u : 13u, cmd0, cmd1);
-      return 1u;
-    }
-  }
-  OsalPort_leaveCS(key);
-  return 0u;
-}
+/* B03: the split push-then-increment wrapper is deleted; every push site
+ * now pairs T832Diag_txPushLocked with T832Diag_pendingIncLocked inside a
+ * single section, so txq_count and normal_pending never skew. */
+
+/* B01: header-match release is deleted, not merely unused. A refused frame
+ * carries no ownership identity, so releasing the first header-matching
+ * descriptor could retire a different owned frame; refusals now retire
+ * nothing and count explicitly uncertain (see T832Diag_txRefusedUncertain).
+ * Owned descriptors retire only via exact-identity paths: UART dequeue of
+ * the matched entry, unknown-outcome retirement of provably older entries,
+ * or in-flight write-reject/finish of the exact in-flight descriptor. */
 
 void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
                              const uint8_t *payload)
@@ -689,16 +711,28 @@ void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
     return;
   }
   if (isSrsp) {
+    /* B03: push, SREQ-generation stamp and pending increment are one
+     * atomic transaction. A producer pushing between them could otherwise
+     * steal this SRSP's slot (stamping an unrelated frame with the SREQ
+     * generation) while the real SRSP keeps queue_gen and its completion
+     * leaves sync suppression set. Only the completion carrying the stamped
+     * generation may clear suppression (see uartTxFinished). */
+    uint32_t key = OsalPort_enterCS();
+    uint16_t slot = T832Diag_txPushLocked(T832_DIAG_TXCLS_SYNC_SRSP,
+                                          cmdType, cmdId, dataLen);
+    uint8_t pushed;
     t832Diag.response_queued = 1u;
-    if (T832Diag_txPush(T832_DIAG_TXCLS_SYNC_SRSP, cmdType, cmdId, dataLen)) {
-      /* Stamp the current SREQ generation on this SRSP: only the completion
-       * carrying it may clear suppression (see uartTxFinished). */
-      uint32_t key = OsalPort_enterCS();
-      uint16_t slot = (uint16_t)((t832Diag.txq_head + t832Diag.txq_count - 1u) %
-                                 T832_DIAG_TXQ_DEPTH);
+    if (slot != T832_DIAG_TXQ_DEPTH) {
       t832Diag.txq[slot].gen = t832Diag.sync_gen;
-      OsalPort_leaveCS(key);
-      T832Diag_pendingInc();
+      T832Diag_pendingIncLocked();
+      pushed = 1u;
+    } else {
+      pushed = 0u;
+    }
+    OsalPort_leaveCS(key);
+    if (!pushed) {
+      if (t832Diag.tx_overflow_n != 0xFFFFFFFFu) t832Diag.tx_overflow_n++;
+      T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 5u, cmdType, cmdId);
     }
     if (((cmdType & MT_RPC_SUBSYSTEM_MASK) == MT_RPC_SYS_AF) &&
         (cmdId == MT_AF_DATA_REQUEST || cmdId == MT_AF_DATA_REQUEST_EXT ||
@@ -714,8 +748,21 @@ void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
       cmdId == MT_AF_DATA_CONFIRM && dataLen >= 3u && payload != 0) {
     T832Diag_afConfirm(payload[0], payload[1], payload[2]);
   }
-  if (T832Diag_txPush(T832_DIAG_TXCLS_NORMAL, cmdType, cmdId, dataLen)) {
-    T832Diag_pendingInc();
+  {
+    /* B03: descriptor store and pending increment are one transaction so
+     * txq_count and normal_pending never skew observably. */
+    uint32_t key = OsalPort_enterCS();
+    uint16_t slot = T832Diag_txPushLocked(T832_DIAG_TXCLS_NORMAL,
+                                          cmdType, cmdId, dataLen);
+    uint8_t pushed = (uint8_t)(slot != T832_DIAG_TXQ_DEPTH);
+    if (pushed) {
+      T832Diag_pendingIncLocked();
+    }
+    OsalPort_leaveCS(key);
+    if (!pushed) {
+      if (t832Diag.tx_overflow_n != 0xFFFFFFFFu) t832Diag.tx_overflow_n++;
+      T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 5u, cmdType, cmdId);
+    }
   }
 }
 
@@ -731,8 +778,18 @@ void T832Diag_responseAllocFailed(uint8_t cmdType, uint8_t cmdId, uint16_t reque
 
 void T832Diag_npiTxQueuedOther(uint8_t cmd0, uint8_t cmd1, uint8_t dataLen)
 {
-  if (T832Diag_txPush(T832_DIAG_TXCLS_NORMAL, cmd0, cmd1, dataLen)) {
-    T832Diag_pendingInc();
+  /* B03: one transaction, same invariant as the responseQueued path. */
+  uint32_t key = OsalPort_enterCS();
+  uint16_t slot = T832Diag_txPushLocked(T832_DIAG_TXCLS_NORMAL,
+                                        cmd0, cmd1, dataLen);
+  uint8_t pushed = (uint8_t)(slot != T832_DIAG_TXQ_DEPTH);
+  if (pushed) {
+    T832Diag_pendingIncLocked();
+  }
+  OsalPort_leaveCS(key);
+  if (!pushed) {
+    if (t832Diag.tx_overflow_n != 0xFFFFFFFFu) t832Diag.tx_overflow_n++;
+    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 5u, cmd0, cmd1);
   }
 }
 
@@ -840,54 +897,96 @@ void T832Diag_npiTrap(uint16_t attempted, uint16_t available)
 }
 
 /* Allocation refusal at a patched SDK site. Site 1 is the NPI TX path
- * (NPITask_sendToHost / NPITask_processStackMsg): a previously queued owned
- * frame never reaches the wire, so exactly that entry is released. Site 2 is
- * the NPI RX path (NPITask_sendBufToStack inbound allocation, ZStack RX
- * allocation): the MT command never fired, so no TX ownership is involved
- * and pending state is never touched. */
+ * (NPITask_sendToHost / NPITask_processStackMsg); site 2 is the NPI RX
+ * path (NPITask_sendBufToStack inbound allocation, ZStack RX allocation).
+ *
+ * B01: a refused frame carries no ownership identity — only its header —
+ * so it must NEVER retire a header-matching descriptor: when an earlier
+ * owned frame shares the header/length, releasing by match would remove
+ * the wrong frame, and a shadow-overflow untracked frame has no descriptor
+ * at all. Refusals therefore retire nothing; the refused outcome is
+ * counted explicitly uncertain (TX_MISMATCH 15u). A refused owned frame's
+ * descriptor, if present, retires later as unknown-outcome through the
+ * normal dequeue path.
+ *
+ * Gate attribution: the refused message is known-dead in the real NPI
+ * queue, so when at least one descriptor matches, exactly one pending
+ * unit is released with it (the export gate must not stall forever on a
+ * quiet bus behind a frame that will never complete). Which entry died is
+ * unknowable — that ambiguity is what tx_uncertain_n records — so a
+ * surviving identical entry keeps its descriptor until its own exact
+ * completion; its later retirement paths all decrement pending guarded,
+ * so no underflow is possible. With no match, pending is untouched: a
+ * purely unowned refusal attributes nothing. Site 2 never touches TX
+ * ownership. */
+static void T832Diag_txRefusedUncertain(uint8_t cmd0, uint8_t cmd1,
+                                        uint8_t len)
+{
+  uint32_t key = OsalPort_enterCS();
+  uint16_t i;
+  uint8_t matched = 0u;
+  for (i = 0u; i < t832Diag.txq_count; i++) {
+    uint16_t slot = (uint16_t)((t832Diag.txq_head + i) % T832_DIAG_TXQ_DEPTH);
+    if (t832Diag.txq[slot].cmd0 == cmd0 &&
+        t832Diag.txq[slot].cmd1 == cmd1 &&
+        t832Diag.txq[slot].len == len &&
+        (t832Diag.txq[slot].cls == T832_DIAG_TXCLS_SYNC_SRSP ||
+         t832Diag.txq[slot].cls == T832_DIAG_TXCLS_NORMAL)) {
+      matched = 1u;
+      break;
+    }
+  }
+  if (matched) {
+    /* Exactly one live-wire expectation is released with the known-dead
+     * refused message; see above. Only SYNC_SRSP/NORMAL entries qualify:
+     * normal_pending counts exactly those classes (diag-class ownership
+     * is tracked by diag_pending, cleared by the caller). */
+    if (t832Diag.normal_pending) {
+      t832Diag.normal_pending--;
+      if (!t832Diag.normal_pending) t832Diag.oldest_pending_ms = 0u;
+    }
+  }
+  if (t832Diag.tx_uncertain_n != 0xFFFFFFFFu) t832Diag.tx_uncertain_n++;
+  OsalPort_leaveCS(key);
+  T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 15u, cmd0, cmd1);
+}
+
 void T832Diag_npiAllocFailed(uint8_t site, uint16_t requested,
                              uint8_t cmd0, uint8_t cmd1, uint8_t len)
 {
-  uint8_t owned;
   T832Diag_record(T832_DIAG_EV_NPI_ALLOC_FAIL, site, requested, 0u);
   if (site != 1u) return;
   if (T832Diag_isDiagFrame(cmd0, cmd1)) {
     t832Diag.diag_pending = 0u;
     if (t832Diag.export_lost != 0xFFFFFFFFu) t832Diag.export_lost++;
     T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 1u, 2u, requested);
-    T832Diag_txRelease(cmd0, cmd1, len, 1u);
+    T832Diag_txRefusedUncertain(cmd0, cmd1, len);
     return;
   }
   if (((cmd0 & MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SRSP)) {
     t832Diag.response_queued = 0u;
   }
-  owned = T832Diag_txRelease(cmd0, cmd1, len, 1u);
-  if (!owned) {
-    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 14u, cmd0, cmd1);
-  }
+  T832Diag_txRefusedUncertain(cmd0, cmd1, len);
 }
 
 /* TX-path refusal with an explicit stage (see t832_diag.h). Behaves as a
- * site-1 allocation failure: only the owned queued entry is reconciled. */
+ * site-1 allocation failure: B01 — the refused frame's ownership is
+ * unprovable, so no descriptor is retired (see above). */
 void T832Diag_npiTxRefused(uint8_t stage, uint8_t cmd0, uint8_t cmd1,
                            uint8_t len)
 {
-  uint8_t owned;
   T832Diag_record(T832_DIAG_EV_NPI_ALLOC_FAIL, 1u, stage, len);
   if (T832Diag_isDiagFrame(cmd0, cmd1)) {
     t832Diag.diag_pending = 0u;
     if (t832Diag.export_lost != 0xFFFFFFFFu) t832Diag.export_lost++;
     T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 1u, 3u, stage);
-    T832Diag_txRelease(cmd0, cmd1, len, 1u);
+    T832Diag_txRefusedUncertain(cmd0, cmd1, len);
     return;
   }
   if (((cmd0 & MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SRSP)) {
     t832Diag.response_queued = 0u;
   }
-  owned = T832Diag_txRelease(cmd0, cmd1, len, 1u);
-  if (!owned) {
-    T832Diag_record(T832_DIAG_EV_TX_MISMATCH, 14u, cmd0, cmd1);
-  }
+  T832Diag_txRefusedUncertain(cmd0, cmd1, len);
 }
 
 void T832Diag_uartConfigured(uint32_t baud, uint8_t flow)
@@ -1092,11 +1191,23 @@ static uint8_t T832Diag_peekAt(uint8_t skip_crit, uint8_t skip_rout,
   return sel;
 }
 
-/* Retire exactly the staged record by identity. If the ring has moved on
- * (a producer overwrote or coalesced the staged entry while MT allocated),
- * the staged copy is already stale: report the loss explicitly and retire
- * nothing, so unexported newer occurrences are never discarded. */
-static void T832Diag_popPeeked(uint8_t sel, uint16_t seq)
+/* Retire exactly the staged record by identity (sequence, first_ms,
+ * repeat_count).
+ *
+ * B02: matching on sequence alone silently retired a newer occurrence
+ * coalesced into the staged entry while MT allocated/sent: the exporter
+ * staged repeat_count=1, an ISR-identical fault bumped the ring entry to
+ * 2, and the pop retired both while exporting one. Now the staged copy's
+ * full identity must match the live tail; on mismatch the staged copy is
+ * stale, the loss is reported explicitly (DIAG_LOSS 3u with the staged vs
+ * live repeat counts), and nothing is retired — the coalesced entry is
+ * re-staged whole on the next poll, so every occurrence is preserved.
+ * Saturated repeats (0xFFFF, no further increment) still match and retire
+ * with documented bounded count; first_ms disambiguates across 16-bit
+ * sequence wrap (a wrap-collision entry would need identical sequence,
+ * creation time and repeat count). */
+static void T832Diag_popPeeked(uint8_t sel, uint16_t seq, uint32_t first_ms,
+                               uint16_t staged_repeat)
 {
   uint32_t key = OsalPort_enterCS();
   if (sel == 1u) {
@@ -1105,9 +1216,18 @@ static void T832Diag_popPeeked(uint8_t sel, uint16_t seq)
                                   T832_DIAG_CRITICAL_RECORDS -
                                   t832Diag.critical_count) %
                                  T832_DIAG_CRITICAL_RECORDS);
-      if (t832Diag.critical[tail].sequence == seq) {
+      if (t832Diag.critical[tail].sequence == seq &&
+          t832Diag.critical[tail].first_ms == first_ms &&
+          t832Diag.critical[tail].repeat_count == staged_repeat) {
         t832Diag.critical_count--;
         OsalPort_leaveCS(key);
+        return;
+      }
+      {
+        uint16_t live_repeat = t832Diag.critical[tail].repeat_count;
+        OsalPort_leaveCS(key);
+        T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 3u, staged_repeat,
+                        live_repeat);
         return;
       }
     }
@@ -1119,9 +1239,18 @@ static void T832Diag_popPeeked(uint8_t sel, uint16_t seq)
                                   T832_DIAG_ROUTINE_RECORDS -
                                   t832Diag.routine_count) %
                                  T832_DIAG_ROUTINE_RECORDS);
-      if (t832Diag.routine[tail].sequence == seq) {
+      if (t832Diag.routine[tail].sequence == seq &&
+          t832Diag.routine[tail].first_ms == first_ms &&
+          t832Diag.routine[tail].repeat_count == staged_repeat) {
         t832Diag.routine_count--;
         OsalPort_leaveCS(key);
+        return;
+      }
+      {
+        uint16_t live_repeat = t832Diag.routine[tail].repeat_count;
+        OsalPort_leaveCS(key);
+        T832Diag_record(T832_DIAG_EV_DIAG_LOSS, 3u, staged_repeat,
+                        live_repeat);
         return;
       }
     }
@@ -1312,6 +1441,8 @@ void T832Diag_exportPoll(void)
   T832DiagRecord batch[T832_DIAG_BATCH_MAX];
   uint8_t staged[T832_DIAG_BATCH_MAX];
   uint16_t staged_seq[T832_DIAG_BATCH_MAX];
+  uint32_t staged_first[T832_DIAG_BATCH_MAX];
+  uint16_t staged_rep[T832_DIAG_BATCH_MAX];
   uint8_t nbatch = 0u;
   uint8_t i;
   uint8_t healthDue = 0u;
@@ -1416,6 +1547,8 @@ void T832Diag_exportPoll(void)
     if (!sel) break;
     staged[nbatch] = sel;
     staged_seq[nbatch] = batch[nbatch].sequence;
+    staged_first[nbatch] = batch[nbatch].first_ms;
+    staged_rep[nbatch] = batch[nbatch].repeat_count;
     nbatch++;
   }
   if (!nbatch) return;
@@ -1467,7 +1600,13 @@ void T832Diag_exportPoll(void)
         T832Diag_record(T832_DIAG_EV_DIAG_LOSS, nbatch, 1u, outLen);
       } else {
         for (i = 0u; i < nbatch; i++) {
-          if (staged[i]) T832Diag_popPeeked(staged[i], staged_seq[i]);
+          /* B02: retire by full staged identity (sequence, first_ms,
+           * repeat_count); a coalesced-while-staged entry reports loss
+           * and is re-staged whole next poll. */
+          if (staged[i]) {
+            T832Diag_popPeeked(staged[i], staged_seq[i], staged_first[i],
+                               staged_rep[i]);
+          }
         }
         /* Baselines advance only for accepted work. */
         if (resAccepted) {

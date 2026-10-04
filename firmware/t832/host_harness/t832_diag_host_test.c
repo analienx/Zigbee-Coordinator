@@ -709,16 +709,23 @@ static void test_npi_paths(void)
   CHECK(t832Diag.normal_pending == 1u);
   wire_dequeue_finish(0xFEu, 0x42u, 0x03u, 4u);
   CHECK(t832Diag.normal_pending == 0u);
-  /* NPI TX-side drop reconciles the matching queue entry and pending flag. */
+  /* B01: an NPI TX-side drop retires nothing by header match. The owned
+   * entry survives (one pending unit released with the known-dead message),
+   * the outcome counts uncertain, and the survivor completes exactly. */
   T832Diag_responseQueued(0x41u, 0x04u, 2u, payload);
   CHECK(t832Diag.normal_pending == 1u);
   {
+    uint32_t uncertain_before = t832Diag.tx_uncertain_n;
     uint32_t orphan_before = t832Diag.tx_orphan_n;
     T832Diag_npiAllocFailed(1u, 12u, 0x41u, 0x04u, 2u);
     CHECK(t832Diag.normal_pending == 0u);
-    CHECK(t832Diag.txq_count == 0u);
-    CHECK(t832Diag.tx_orphan_n == orphan_before + 1u);
+    CHECK(t832Diag.txq_count == 1u);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
+    CHECK(t832Diag.tx_orphan_n == orphan_before);
   }
+  wire_dequeue_finish(0xFEu, 0x41u, 0x04u, 2u);
+  CHECK(t832Diag.txq_count == 0u);
+  CHECK(t832Diag.normal_pending == 0u);
   /* A dropped diagnostic frame is counted loss, never a radio fault. */
   advance_ms(5000u);
   T832Diag_exportPoll();
@@ -891,8 +898,11 @@ static void dump_scenario(const char *path)
   printf("DUMP-OK %u frames -> %s\n", (unsigned)host_frame_count, path);
 }
 
-/* A01/S01: every real TX refusal stage reconciles only its owned entry;
- * RX refusals never touch ownership. Same call order as the patched SDK
+/* B01: no TX refusal stage retires by header match. Each refusal leaves
+ * the owned descriptor queued (one pending unit is released with the
+ * known-dead message when a same-class entry matches), counts explicitly
+ * uncertain (TX_MISMATCH 15u), and the survivor still completes exactly
+ * through its own dequeue/finish. Same call order as the patched SDK
  * (queue observes first, refusal reconciles after). */
 static void test_tx_refused_stages(void)
 {
@@ -904,27 +914,406 @@ static void test_tx_refused_stages(void)
   for (stage = 1u; stage <= 6u; stage++) {
     uint8_t cmd0 = (stage <= 3u) ? 0x41u : 0x61u;
     uint8_t cmd1 = (uint8_t)(0x10u + stage);
+    uint32_t uncertain_before = t832Diag.tx_uncertain_n;
     uint32_t orphan_before = t832Diag.tx_orphan_n;
     T832Diag_responseQueued(cmd0, cmd1, 2u, payload);
     CHECK(t832Diag.normal_pending == 1u);
     CHECK(t832Diag.txq_count == 1u);
     T832Diag_npiTxRefused(stage, cmd0, cmd1, 2u);
+    CHECK(t832Diag.txq_count == 1u);
     CHECK(t832Diag.normal_pending == 0u);
-    CHECK(t832Diag.txq_count == 0u);
-    CHECK(t832Diag.tx_orphan_n == orphan_before + 1u);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
+    CHECK(t832Diag.tx_orphan_n == orphan_before);
     CHECK(t832Diag.response_queued == 0u);
+    /* The survivor is untouched: its own completion converges cleanly. */
+    wire_dequeue_finish(0xFEu, cmd0, cmd1, 2u);
+    CHECK(t832Diag.txq_count == 0u);
+    CHECK(t832Diag.normal_pending == 0u);
   }
-  /* Refusal with no owned entry: reported, nothing released. */
+  /* Refusal with no owned entry: reported uncertain, nothing attributed. */
   {
     uint32_t pending_before = t832Diag.normal_pending;
+    uint32_t uncertain_before = t832Diag.tx_uncertain_n;
     T832Diag_npiTxRefused(3u, 0x41u, 0x77u, 2u);
     CHECK(t832Diag.normal_pending == pending_before);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
   }
   drain_all();
   for (stage = 1u; stage <= 6u; stage++) {
     CHECK(find_kind_ab(T832_DIAG_EV_NPI_ALLOC_FAIL, 1u, stage, &r));
   }
-  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 14u, 0x41u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 15u, 0x41u, &r));
+  CHECK(host_cs_depth == 0);
+  CHECK(host_cs_max_depth <= 4);
+  (void)r;
+}
+
+/* Forward: defined with the AF tests below; used by the B03 AF fixture. */
+static void queue_srps_ok_finish(void);
+
+/* B01 patched-site control-flow mirrors. The real patched SDK bodies
+ * execute only in the CI firmware build (npi_client_mt.c response queue,
+ * npi_task.c sendToHost/processStackMsg refuse branches); their presence
+ * there is proven by exact-match patch evidence plus the linked-image
+ * symbol gate. These mirrors reproduce each site's exact hook call order
+ * (anchors: apply_diag.py diag.response.queue/alloc_fail,
+ * diag.npi_task.send_to_host/send_to_host_refuse) with injectable
+ * allocation failure, so fixtures drive production sequences through the
+ * real recorder logic instead of hand-ordered hook calls. */
+static void sdk_client_queue_mirror(uint8_t cmdType, uint8_t cmdId,
+                                    uint8_t dataLen, const uint8_t *payload,
+                                    int fail_alloc)
+{
+  if (fail_alloc) {
+    /* Patched npi_client_mt.c else-branch: hook fires, nothing queues. */
+    T832Diag_responseAllocFailed(cmdType, cmdId,
+                                 (uint16_t)(dataLen + 3u));
+    return;
+  }
+  T832Diag_responseQueued(cmdType, cmdId, dataLen, payload);
+}
+
+static void sdk_sendToHost_mirror(uint8_t cmd0, uint8_t cmd1, uint8_t len,
+                                  uint8_t fail_stage)
+{
+  if (fail_stage == 0u) {
+    /* Patched NPITask_sendToHost success branch: queue record stored. */
+    T832Diag_npiTxQueuedOther(cmd0, cmd1, len);
+    return;
+  }
+  /* Patched refuse branches (stages 1-3 sendToHost, 4-6 processStackMsg):
+   * the message never entered the ownership FIFO here. */
+  T832Diag_npiTxRefused(fail_stage, cmd0, cmd1, len);
+}
+
+/* B01 oracle: two identical headers/lengths. A queues through the
+ * MT-response entry point; B fails at each NPI refusal stage. A's
+ * descriptor survives every refusal and resolves only through its own
+ * completion; counters stay truthful (uncertain per refusal, no invented
+ * orphans, pending converges). Then the owned-refusal shape: B queues too
+ * (identical header, newer descriptor) and is refused — ambiguity again
+ * retires nothing; both complete in order. */
+static void test_b01_identical_headers_refusal(void)
+{
+  uint8_t payload[2] = {1, 2};
+  uint8_t stage;
+  DecRec r;
+  for (stage = 1u; stage <= 6u; stage++) {
+    uint32_t uncertain_before;
+    uint32_t orphan_before;
+    fresh(9u);
+    emit_one();
+    uncertain_before = t832Diag.tx_uncertain_n;
+    orphan_before = t832Diag.tx_orphan_n;
+    sdk_client_queue_mirror(0x41u, 0x50u, 2u, payload, 0);
+    CHECK(t832Diag.normal_pending == 1u);
+    CHECK(t832Diag.txq_count == 1u);
+    sdk_sendToHost_mirror(0x41u, 0x50u, 2u, stage);
+    CHECK(t832Diag.txq_count == 1u);
+    CHECK(t832Diag.normal_pending == 0u);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
+    CHECK(t832Diag.tx_orphan_n == orphan_before);
+    wire_dequeue_finish(0xFEu, 0x41u, 0x50u, 2u);
+    CHECK(t832Diag.txq_count == 0u);
+    CHECK(t832Diag.normal_pending == 0u);
+  }
+  /* Owned-refusal ambiguity: A and B share header and class; B's refusal
+   * retires neither. Both complete in FIFO order. */
+  {
+    uint32_t uncertain_before;
+    fresh(9u);
+    emit_one();
+    uncertain_before = t832Diag.tx_uncertain_n;
+    sdk_client_queue_mirror(0x41u, 0x51u, 2u, payload, 0);
+    sdk_client_queue_mirror(0x41u, 0x51u, 2u, payload, 0);
+    CHECK(t832Diag.txq_count == 2u);
+    CHECK(t832Diag.normal_pending == 2u);
+    sdk_sendToHost_mirror(0x41u, 0x51u, 2u, 2u);
+    CHECK(t832Diag.txq_count == 2u);
+    CHECK(t832Diag.normal_pending == 1u);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
+    wire_dequeue_finish(0xFEu, 0x41u, 0x51u, 2u);
+    CHECK(t832Diag.txq_count == 1u);
+    wire_dequeue_finish(0xFEu, 0x41u, 0x51u, 2u);
+    CHECK(t832Diag.txq_count == 0u);
+    CHECK(t832Diag.normal_pending == 0u);
+  }
+  /* Shadow-overflow shape: 8 owned intact, untracked 9th refused. */
+  {
+    uint8_t k;
+    uint32_t uncertain_before;
+    fresh(9u);
+    emit_one();
+    for (k = 0u; k < 8u; k++) {
+      sdk_client_queue_mirror(0x41u, (uint8_t)(0x60u + k), 2u, payload, 0);
+    }
+    CHECK(t832Diag.txq_count == 8u);
+    sdk_client_queue_mirror(0x41u, 0x68u, 2u, payload, 0);
+    CHECK(t832Diag.tx_overflow_n == 1u);
+    uncertain_before = t832Diag.tx_uncertain_n;
+    sdk_sendToHost_mirror(0x41u, 0x68u, 2u, 5u);
+    CHECK(t832Diag.txq_count == 8u);
+    CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
+    for (k = 0u; k < 8u; k++) {
+      wire_dequeue_finish(0xFEu, 0x41u, (uint8_t)(0x60u + k), 2u);
+    }
+    CHECK(t832Diag.txq_count == 0u);
+    CHECK(t832Diag.normal_pending == 0u);
+  }
+  /* SRSP shape: the stamped descriptor survives refusal with its SREQ
+   * generation intact and still clears suppression on completion. */
+  {
+    uint8_t srsp[1] = {0};
+    uint16_t stamped;
+    fresh(9u);
+    emit_one();
+    T832Diag_commandRx(0x21u, 0x09u);
+    T832Diag_commandDispatch(0x21u, 0x09u);
+    T832Diag_commandComplete(0x21u, 0x09u, 0u);
+    sdk_client_queue_mirror(0x61u, 0x09u, 1u, srsp, 0);
+    stamped = t832Diag.txq[t832Diag.txq_head].gen;
+    CHECK(stamped == t832Diag.sync_gen);
+    sdk_sendToHost_mirror(0x61u, 0x09u, 1u, 3u);
+    CHECK(t832Diag.txq_count == 1u);
+    CHECK(t832Diag.txq[t832Diag.txq_head].gen == stamped);
+    CHECK(t832Diag.response_queued == 0u);
+    wire_dequeue_finish(0xFEu, 0x61u, 0x09u, 1u);
+    CHECK(t832Diag.sync_outstanding == 0u);
+    CHECK(t832Diag.txq_count == 0u);
+  }
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 15u, 0x41u, &r));
+  CHECK(host_cs_depth == 0);
+  CHECK(host_cs_max_depth <= 4);
+  (void)r;
+}
+
+/* B02 oracle: a critical record staged for export, then an identical fault
+ * while MT allocates/sends (the ISR window), must not lose the newer
+ * occurrence. Retirement by full staged identity reports the staleness
+ * (DIAG_LOSS 3u, staged vs live repeats), retires nothing, and the next
+ * poll re-stages the coalesced entry whole. */
+static void test_b02_staged_coalesce_preserved(void)
+{
+  T832DiagRecord staged_copy;
+  uint8_t sel;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  CHECK(t832Diag.critical_count == 0u);
+  T832Diag_npiTrap(300u, 100u);
+  CHECK(t832Diag.critical_count == 1u);
+  sel = T832Diag_peekAt(0u, 0u, &staged_copy);
+  CHECK(sel == 1u);
+  CHECK(staged_copy.repeat_count == 1u);
+  /* The ISR-identical fault lands between staging and retirement. */
+  T832Diag_npiTrap(300u, 100u);
+  T832Diag_popPeeked(sel, staged_copy.sequence, staged_copy.first_ms, 1u);
+  CHECK(t832Diag.critical_count == 1u);
+  /* Re-stage before any drain: the coalesced entry (repeat 2) exports
+   * whole and retires. */
+  sel = T832Diag_peekAt(0u, 0u, &staged_copy);
+  CHECK(sel == 1u);
+  CHECK(staged_copy.repeat_count == 2u);
+  T832Diag_popPeeked(sel, staged_copy.sequence, staged_copy.first_ms,
+                     staged_copy.repeat_count);
+  CHECK(t832Diag.critical_count == 0u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_DIAG_LOSS, 3u, 1u, &r));
+  CHECK(r.c == 2u);
+  CHECK(host_cs_depth == 0);
+  (void)r;
+}
+
+/* B02 saturated repeats: the count pins at 0xFFFF (documented bound) while
+ * timing extends; a pre-saturation staged copy is stale (loss reported),
+ * the saturated entry retires by its saturated identity. */
+static void test_b02_saturated_repeat_identity(void)
+{
+  T832DiagRecord staged_copy;
+  T832DiagRecord *tail;
+  uint8_t sel;
+  uint16_t cap = T832_DIAG_CRITICAL_RECORDS;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_npiTrap(300u, 100u);
+  sel = T832Diag_peekAt(0u, 0u, &staged_copy);
+  CHECK(sel == 1u);
+  tail = &t832Diag.critical[(uint16_t)((t832Diag.critical_head + cap - 1u) % cap)];
+  tail->repeat_count = 0xFFFFu;
+  advance_ms(10u);
+  T832Diag_npiTrap(300u, 100u);
+  CHECK(tail->repeat_count == 0xFFFFu);
+  T832Diag_popPeeked(sel, staged_copy.sequence, staged_copy.first_ms, 1u);
+  CHECK(t832Diag.critical_count == 1u);
+  sel = T832Diag_peekAt(0u, 0u, &staged_copy);
+  CHECK(staged_copy.repeat_count == 0xFFFFu);
+  T832Diag_popPeeked(sel, staged_copy.sequence, staged_copy.first_ms,
+                     staged_copy.repeat_count);
+  CHECK(t832Diag.critical_count == 0u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_DIAG_LOSS, 3u, 1u, &r));
+  CHECK(r.c == 0xFFFFu);
+  CHECK(host_cs_depth == 0);
+  (void)r;
+}
+
+/* B02 wrap/collision: first_ms disambiguates same-sequence entries. A
+ * staged identity from before a sequence reuse must not retire the newer
+ * same-sequence entry. */
+static void test_b02_sequence_reuse_identity(void)
+{
+  T832DiagRecord staged_a;
+  T832DiagRecord staged_b;
+  uint8_t sel;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_npiTrap(300u, 100u);
+  sel = T832Diag_peekAt(0u, 0u, &staged_a);
+  CHECK(sel == 1u);
+  /* Force a sequence reuse: the next record takes A's sequence with a
+   * different creation time (the 16-bit wrap-collision shape). */
+  advance_ms(5u);
+  t832Diag.record_sequence = staged_a.sequence;
+  T832Diag_npiTrap(301u, 101u);
+  sel = T832Diag_peekAt(0u, 0u, &staged_b);
+  CHECK(sel == 1u);
+  CHECK(staged_b.sequence == staged_a.sequence);
+  CHECK(staged_b.first_ms != staged_a.first_ms);
+  /* Tail is still A: A's identity retires exactly A. */
+  T832Diag_popPeeked(sel, staged_a.sequence, staged_a.first_ms,
+                     staged_a.repeat_count);
+  CHECK(t832Diag.critical_count == 1u);
+  /* Tail is now B: A's stale identity must not retire it. */
+  T832Diag_popPeeked(sel, staged_a.sequence, staged_a.first_ms,
+                     staged_a.repeat_count);
+  CHECK(t832Diag.critical_count == 1u);
+  /* B retires by its own identity. */
+  sel = T832Diag_peekAt(0u, 0u, &staged_b);
+  T832Diag_popPeeked(sel, staged_b.sequence, staged_b.first_ms,
+                     staged_b.repeat_count);
+  CHECK(t832Diag.critical_count == 0u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_DIAG_LOSS, 3u, 1u, &r));
+  CHECK(host_cs_depth == 0);
+  (void)r;
+}
+
+/* B03 oracle: producer traffic interleaved at every remaining section
+ * boundary cannot steal an SRSP's SREQ stamp or skew pending pairing.
+ * Each SRSP keeps its own generation; only the current-generation
+ * completion clears suppression; pending converges exactly. */
+static void test_b03_srsp_generation_atomic(void)
+{
+  uint8_t srsp[1] = {0};
+  uint8_t payload[2] = {1, 2};
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_commandRx(0x21u, 0x01u);
+  T832Diag_commandDispatch(0x21u, 0x01u);
+  T832Diag_commandComplete(0x21u, 0x01u, 0u);
+  sdk_client_queue_mirror(0x61u, 0x01u, 1u, srsp, 0);
+  /* Producer burst at the former split boundary: pushes between the SRSP
+   * queue and its completion must not move or copy its stamp. */
+  sdk_client_queue_mirror(0x41u, 0x70u, 2u, payload, 0);
+  sdk_sendToHost_mirror(0x41u, 0x71u, 2u, 0u);
+  CHECK(t832Diag.txq_count == 3u);
+  CHECK(t832Diag.normal_pending == 3u);
+  CHECK(t832Diag.txq[t832Diag.txq_head].gen == t832Diag.sync_gen);
+  T832Diag_commandRx(0x21u, 0x02u);
+  sdk_client_queue_mirror(0x61u, 0x02u, 1u, srsp, 0);
+  CHECK(t832Diag.txq_count == 4u);
+  CHECK(t832Diag.normal_pending == 4u);
+  /* Stale SRSP1 completes first: abandon, suppression held for SREQ2. */
+  wire_dequeue_finish(0xFEu, 0x61u, 0x01u, 1u);
+  CHECK(t832Diag.sync_outstanding == 1u);
+  /* SRSP2's dequeue retires both caught-between NORMAL frames as
+   * unknown-outcome: explicitly uncertain, never delivered. */
+  wire_dequeue_finish(0xFEu, 0x61u, 0x02u, 1u);
+  CHECK(t832Diag.sync_outstanding == 0u);
+  CHECK(t832Diag.tx_uncertain_n == 2u);
+  CHECK(t832Diag.txq_count == 0u);
+  CHECK(t832Diag.normal_pending == 0u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_SYNC_ABANDON, 2u, 0x61u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_TX_MISMATCH, 2u, 0x61u, &r));
+  CHECK(host_cs_depth == 0);
+  CHECK(host_cs_max_depth <= 4);
+  (void)r;
+}
+
+/* B03 oracle: AF confirm/remove is atomic with generation re-validation.
+ * Same-key replacement survives; churn preserves outstanding == used;
+ * nonzero confirms stay rejects; the 8u replacement race never fires. */
+static void test_b03_af_confirm_replacement(void)
+{
+  uint8_t req[13] = {10, 0x24, 0x01, 0x34, 0x12, 3, 5, 6, 7, 0x33, 0x30, 0x1E, 0};
+  uint8_t k;
+  uint8_t used;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  CHECK(t832Diag.af_outstanding == 1u);
+  /* Same-key replacement supersedes (generation bumps); the confirm for
+   * the key removes exactly one live entry, not a phantom. */
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  CHECK(t832Diag.af_outstanding == 1u);
+  T832Diag_afConfirm(0u, 5u, 0x33u);
+  CHECK(t832Diag.af_outstanding == 0u);
+  CHECK(t832Diag.af_confirmed_n == 1u);
+  /* Churn: interleaved inserts, confirms (ok + nonzero) and evictions
+   * keep outstanding == used slots at every step. */
+  for (k = 0u; k < 24u; k++) {
+    req[6] = (uint8_t)(0x40u + (k % 10u));
+    req[9] = (uint8_t)(0x50u + k);
+    T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+    queue_srps_ok_finish();
+    if ((k % 3u) == 2u) {
+      T832Diag_afConfirm((uint8_t)(k % 2u), (uint8_t)(0x40u + (k % 10u)),
+                         (uint8_t)(0x50u + k));
+    }
+    {
+      uint8_t i;
+      uint8_t n = 0u;
+      for (i = 0u; i < T832_DIAG_AF_DEPTH; i++) {
+        if (t832Diag.af[i].used) n++;
+      }
+      CHECK(t832Diag.af_outstanding == n);
+    }
+  }
+  used = 0u;
+  {
+    uint8_t i;
+    for (i = 0u; i < T832_DIAG_AF_DEPTH; i++) {
+      if (t832Diag.af[i].used) used++;
+    }
+  }
+  CHECK(t832Diag.af_outstanding == used);
+  CHECK(t832Diag.af_outstanding <= T832_DIAG_AF_DEPTH);
+  drain_all();
+  /* The 8u replacement race never fires under churn. */
+  {
+    uint32_t i = host_frame_count;
+    int saw_race = 0;
+    while (i > 0u) {
+      DecFrame f;
+      int k;
+      i--;
+      if (decode_frame(i, &f) <= 0) continue;
+      for (k = 0; k < (int)f.nrec; k++) {
+        if (f.rec[k].kind == T832_DIAG_EV_AF_ANOMALY && f.rec[k].a == 8u) {
+          saw_race = 1;
+        }
+      }
+    }
+    CHECK(saw_race == 0);
+  }
   CHECK(host_cs_depth == 0);
   CHECK(host_cs_max_depth <= 4);
   (void)r;
@@ -1063,12 +1452,14 @@ static void test_staged_retire_identity(void)
   CHECK(t832Diag.routine_overwrite == 64u);
   {
     uint16_t before = t832Diag.routine_count;
-    T832Diag_popPeeked(sel, staged_copy.sequence);
+    T832Diag_popPeeked(sel, staged_copy.sequence, staged_copy.first_ms,
+                       staged_copy.repeat_count);
     CHECK(t832Diag.routine_count == before);
   }
   sel = T832Diag_peekAt(0u, 0u, &staged_copy);
   CHECK(sel == 2u);
-  T832Diag_popPeeked(sel, staged_copy.sequence);
+  T832Diag_popPeeked(sel, staged_copy.sequence, staged_copy.first_ms,
+                     staged_copy.repeat_count);
   CHECK(t832Diag.routine_count == 63u);
   drain_all();
   CHECK(find_kind_ab(T832_DIAG_EV_DIAG_LOSS, 2u, 2u, &r));
@@ -1404,6 +1795,12 @@ int main(int argc, char **argv)
   test_nv_events();
   test_npi_paths();
   test_tx_refused_stages();
+  test_b01_identical_headers_refusal();
+  test_b02_staged_coalesce_preserved();
+  test_b02_saturated_repeat_identity();
+  test_b02_sequence_reuse_identity();
+  test_b03_srsp_generation_atomic();
+  test_b03_af_confirm_replacement();
   test_fifo_overflow_converges();
   test_mismatch_retire();
   test_write_reject();

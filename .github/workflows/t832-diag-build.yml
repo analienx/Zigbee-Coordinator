@@ -1010,3 +1010,43 @@ jobs:
           python3 -m unittest repo/firmware/t832/test_diag.py
           python3 -m pip install --quiet pyyaml
           python3 -m unittest repo/firmware/t832/test_barrier.py
+
+  negative-control:
+    name: Negative control on reviewed pre-fix tree (R3 B01/B02)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+
+      - name: Prove B01/B02 fixtures fail before the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pinned pre-fix tree: reviewed R2 seal SHA. The probe asserts
+          # post-fix semantics, so it must FAIL here (defect reproduced).
+          # Stubs and headers are unchanged since that SHA; only the
+          # implementation overlays, keeping the pre-fix API surface.
+          mkdir -p /tmp/neg-overlay
+          git -C repo show 8dd181bdf0dcf9a6d275d03705902b8c78459556:firmware/t832/t832_diag_impl.inc \
+            > /tmp/neg-overlay/t832_diag_impl.inc
+          gcc -std=c11 -Wall -Wextra \
+            -I /tmp/neg-overlay \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_neg_r3.c \
+            -o /tmp/t832neg \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          set +e
+          /tmp/t832neg
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::negative control unexpectedly passed on the pre-fix tree"
+            exit 1
+          fi
+          echo "NEGATIVE CONTROL PASS: probe failed as expected on 8dd181b (rc=$rc)"
