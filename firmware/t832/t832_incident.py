@@ -833,8 +833,15 @@ def _collect_locked(
                     )
                     continue
                 if bound_build_id is not None:
+                    # Schema 1 frames name the same wire field
+                    # firmware_revision; schema 2 calls it firmware_build_id.
                     try:
-                        observed_build = int(frame.get("firmware_build_id", -1))
+                        observed_build = int(
+                            frame.get(
+                                "firmware_build_id",
+                                frame.get("firmware_revision", -1),
+                            )
+                        )
                     except (TypeError, ValueError):
                         observed_build = -1
                     if (
