@@ -461,7 +461,8 @@ class CollectorExactnessTests(unittest.TestCase):
             self.assertEqual(rows[0]["raw_line"], full.rstrip("\n"))
             day_file = store.stream / f"diag-{incident.utcnow().strftime('%Y-%m-%d')}.jsonl"
             day_lines = day_file.read_text(encoding="utf-8").splitlines()
-            self.assertTrue(all('"type": "t832_diag"' in line for line in day_lines))
+            self.assertTrue(day_lines)
+            self.assertTrue(all(json.loads(line)["type"] == "t832_diag" for line in day_lines))
 
     def test_oversized_line_skipped_with_note(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -471,16 +472,18 @@ class CollectorExactnessTests(unittest.TestCase):
                 "2026-10-03T09:00:00Z zh:zstack:znp "
                 f"T832D1:{packet_hex(export_sequence=2, uptime_ms=2000)}\n"
             )
-            log.write_bytes(b"A" * 200 + b"\n" + short.encode("utf-8"))
+            # A real diag line is ~148 bytes: the cap must clear it while
+            # still catching the 400-byte monster.
+            log.write_bytes(b"A" * 400 + b"\n" + short.encode("utf-8"))
             rows, cursor, notes = incident.read_increment(
-                log, {}, initial_tail_bytes=1 << 20, max_line_bytes=64
+                log, {}, initial_tail_bytes=1 << 20, max_line_bytes=160
             )
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0][0], 201)
+            self.assertEqual(rows[0][0], 401)
             self.assertTrue(any(n.startswith("line-too-large:") for n in notes))
             # Cursor commits past the drained line: no re-read, no hang.
             rows2, _, _ = incident.read_increment(
-                log, cursor, initial_tail_bytes=1 << 20, max_line_bytes=64
+                log, cursor, initial_tail_bytes=1 << 20, max_line_bytes=160
             )
             self.assertEqual(rows2, [])
 

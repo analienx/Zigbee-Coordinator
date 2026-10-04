@@ -1342,7 +1342,11 @@ static void test_af_correlation(void)
   CHECK(t832Diag.af_outstanding == 1u);
   {
     T832DiagRecord st = T832Diag_liveAfState((uint32_t)T832Diag_nowMs());
-    CHECK(st.b == 30u);
+    /* Survivor age: 30 ms of advances between B's insert and this read,
+     * plus the 2 ms UART TX model inside B's own wire finish (the insert
+     * lands before the +2). Without oldest-recompute the removed A's time
+     * would linger and report 84. */
+    CHECK(st.b == 32u);
   }
   T832Diag_afConfirm(0u, 7u, 0x35u);
   CHECK(t832Diag.af_outstanding == 0u);
