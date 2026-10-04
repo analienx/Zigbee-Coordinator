@@ -238,6 +238,15 @@ class Ha:
         )
         return rendered
 
+    def rewrite_arg(self, arg: str) -> str:
+        """Rewrite one post-shlex argv element. The --root value travels as
+        its own element after splitting, so it needs an exact match: the
+        combined '--root <path>' pattern never spans elements."""
+        arg = self.rewrite_paths(arg)
+        if arg == "/config/.private/t832-diag":
+            return str(self.state)
+        return arg
+
     def run_template_free(self, rendered: str) -> subprocess.CompletedProcess:
         """Run a template-free fragment in a shell (HA create_subprocess_shell).
 
@@ -274,7 +283,7 @@ class Ha:
                 proc = self.run_template_free(shell_rendered)
             else:
                 argv = shlex.split(shell_rendered)
-                argv = [self.rewrite_paths(arg) for arg in argv]
+                argv = [self.rewrite_arg(arg) for arg in argv]
                 argv = [sys.executable if arg == "python3" else arg for arg in argv]
                 proc = subprocess.run(
                     argv, shell=False, capture_output=True, text=True, env=self.env_dict
@@ -356,7 +365,11 @@ class Ha:
         if template is None:
             if payload != want:
                 return None
-        elif str(self.render(str(template), scope)) != want:
+        # Pinned: Template.async_render_with_possible_json_value strips the
+        # rendered value (helpers/template/__init__.py) before the exact
+        # mqtt_automation_listener comparison, so folded multi-line
+        # templates match their payload filter.
+        elif str(self.render(str(template), scope)).strip() != want:
             return None
         return {"topic": topic, "payload": payload, "payload_json": payload_json}
 
@@ -656,12 +669,20 @@ class BarrierAutomationTests(unittest.TestCase):
         self.ha.set_state(OUTAGE, "on")
         self.ha.advance_to(self.ha.clock + seconds)
 
+    def require_capture(self) -> dict:
+        """The run must have captured (rc 0, JSON verdict) to reach any phase."""
+        cap = self.ha.vars["t832_capture"]
+        self.assertEqual(cap["returncode"], 0, cap["stderr"])
+        return json.loads(cap["stdout"])
+
     def run_to_recovery(self, entry: str) -> dict:
         """Drive one run through RTS/start/bridge/ZDO; return the latch."""
         self.ha.on_publish = zdo_hook("match")
         self.ha.schedule(5.0, lambda: self.ha.set_state(OUTAGE, "off"))
         self.assertEqual(entry, "ran")
-        capture = json.loads(self.ha.vars["t832_capture"]["stdout"])
+        cap = self.ha.vars["t832_capture"]
+        self.assertEqual(cap["returncode"], 0, cap["stderr"])
+        capture = json.loads(cap["stdout"])
         self.assertTrue(capture.get("ok"))
         self.assertTrue(capture.get("incident_id"))
         latch = self.latch()
@@ -747,6 +768,7 @@ class BarrierAutomationTests(unittest.TestCase):
         self.ha.on_publish = zdo_hook("match")
         self.ha.stop_plan = [{"rc": 0, "state": "started"}] * 6
         self.assertEqual(self.ha.fire_state("mesh_outage"), "ran")
+        self.require_capture()
         latch = self.latch()
         self.assertEqual(latch.get("failure_reason"), "addon-stop-unconfirmed")
         self.assertEqual(latch.get("failure_phase"), "stop")
@@ -759,6 +781,7 @@ class BarrierAutomationTests(unittest.TestCase):
         self.ha.rts_rc = 1
         self.ha.write_shims()
         self.assertEqual(self.ha.fire_state("mesh_outage"), "ran")
+        self.require_capture()
         latch = self.latch()
         self.assertEqual(latch.get("failure_reason"), "rts-unconfirmed")
         self.assertEqual(latch.get("failure_phase"), "rts")
@@ -770,6 +793,7 @@ class BarrierAutomationTests(unittest.TestCase):
         self.ha.on_publish = zdo_hook("match")
         self.ha.start_plan = [{"rc": 0, "state": "stopped"}] * 6
         self.assertEqual(self.ha.fire_state("mesh_outage"), "ran")
+        self.require_capture()
         latch = self.latch()
         self.assertEqual(latch.get("failure_reason"), "addon-start-unconfirmed")
         self.assertEqual(latch.get("failure_phase"), "start")
@@ -782,6 +806,7 @@ class BarrierAutomationTests(unittest.TestCase):
         self.ha.on_publish = zdo_hook("match")
         self.ha.set_state(BRIDGE, "off")
         self.assertEqual(self.ha.fire_state("mesh_outage"), "ran")
+        self.require_capture()
         latch = self.latch()
         self.assertEqual(latch.get("failure_reason"), "bridge-offline")
         self.assertEqual(latch.get("failure_phase"), "bridge")
@@ -794,6 +819,7 @@ class BarrierAutomationTests(unittest.TestCase):
         self.ha.on_publish = zdo_hook("mismatch")
         self.ha.schedule(5.0, lambda: self.ha.set_state(OUTAGE, "off"))
         self.assertEqual(self.ha.fire_state("mesh_outage"), "ran")
+        self.require_capture()
         self.assertEqual(self.ha.vars.get("wait"), {})
         latch = self.latch()
         self.assertEqual(latch.get("failure_reason"), "zdo-unconfirmed")

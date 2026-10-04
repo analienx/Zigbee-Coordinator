@@ -863,7 +863,9 @@ class R3M3ShellBoundaryTests(unittest.TestCase):
 
     def test_old_template_mangles_objects(self) -> None:
         # Negative control: the pre-B13 template fed str(dict) to shlex, so
-        # the boundary it produced never round-trips.
+        # the boundary it produced never round-trips: either shlex cannot
+        # even split the argv (unbalanced quote from the repr), or the
+        # joined remainder is not the payload.
         import shlex
 
         payload = {"status": "error", "error": "O'Brien device"}
@@ -871,7 +873,10 @@ class R3M3ShellBoundaryTests(unittest.TestCase):
         rendered = self.env.from_string(old).render(
             trigger_payload_json=payload
         )
-        argv = shlex.split(rendered, posix=True)
+        try:
+            argv = shlex.split(rendered, posix=True)
+        except ValueError:
+            return
         at = argv.index("--trigger-payload")
         rest = argv[at + 1 :]
         try:
