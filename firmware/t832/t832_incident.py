@@ -2285,6 +2285,8 @@ def recovery_result(
                 "status": "stabilizing",
                 "recovery_succeeded_utc": iso(),
                 "recovery_succeeded_mono": now_mono,
+                "normal_traffic_observed": True,
+                "zdo_verified": True,
                 # B09: the structured transaction-bound proof recorded by
                 # record_zdo_proof is preserved as-is; the check verdict
                 # rides alongside instead of replacing it with "ok".
