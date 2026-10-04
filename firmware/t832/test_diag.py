@@ -465,6 +465,57 @@ class CollectorExactnessTests(unittest.TestCase):
             self.assertTrue(day_lines)
             self.assertTrue(all(json.loads(line)["type"] == "t832_diag" for line in day_lines))
 
+    def test_three_poll_partial_decodes_once(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            full = (
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n"
+            )
+            blob = full.encode("utf-8")
+            first_cut, second_cut = 20, len(blob) - 30
+            log.write_bytes(blob[:first_cut])
+            self.assertEqual(self.do_collect(store, log)["diag_records"], 0)
+            with log.open("ab") as fh:
+                fh.write(blob[first_cut:second_cut])
+            self.assertEqual(self.do_collect(store, log)["diag_records"], 0)
+            with log.open("ab") as fh:
+                fh.write(blob[second_cut:])
+            self.assertEqual(self.do_collect(store, log)["diag_records"], 1)
+            rows = stream_rows(store)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["raw_line"], full.rstrip("\n"))
+            self.assertEqual(rows[0]["source_byte_offset"], 0)
+
+    def test_rotation_discards_stale_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            line1 = (
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n"
+            )
+            log.write_text(line1 + "STALE-PARTIAL-NO-NEWLINE", encoding="utf-8")
+            self.assertEqual(self.do_collect(store, log)["diag_records"], 1)
+            # In-place rewrite with a same-size line: packet lines are fixed
+            # width, so only the mtime guard can tell. Bump mtime explicitly.
+            line2 = (
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=9, uptime_ms=9000)}\n"
+            )
+            self.assertEqual(len(line2), len(line1))
+            log.write_text(line2, encoding="utf-8")
+            anchor = log.stat()
+            os.utime(log, (anchor.st_atime + 2, anchor.st_mtime + 2))
+            result = self.do_collect(store, log)
+            self.assertEqual(result["diag_records"], 1)
+            self.assertTrue(any(n.startswith("rotated:") for n in result["notes"]))
+            rows = stream_rows(store)
+            self.assertEqual([r["export_sequence"] for r in rows], [1, 9])
+
     def test_oversized_line_skipped_with_note(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
