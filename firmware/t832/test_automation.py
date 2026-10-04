@@ -99,6 +99,7 @@ class Ha:
         }
         self.clock = 0.0
         self.bus_mark = 0
+        self.match_probes: list = []
         self.vars: dict = {}
         self.states: dict[str, tuple[str, float]] = {}
         self.state_history: dict[str, list[tuple[float, str]]] = {}
@@ -376,6 +377,11 @@ class Ha:
         # mqtt_automation_listener comparison, so folded multi-line
         # templates match their payload filter.
         elif str(self.render(str(template), scope)).strip() != want:
+            if len(self.match_probes) < 30:
+                self.match_probes.append(
+                    (topic, str(payload)[:160],
+                     str(self.render(str(template), scope))[:160], want[:160])
+                )
             return None
         return {"topic": topic, "payload": payload, "payload_json": payload_json}
 
@@ -839,6 +845,15 @@ class BarrierAutomationTests(unittest.TestCase):
         self.assertEqual(latch.get("failure_reason"), "bridge-offline")
         self.assertEqual(latch.get("failure_phase"), "bridge")
         self.assertEqual(self.publishes(ZDO_REQ), [])
+
+    def test_zz_temp_dump_wait_renders(self) -> None:
+        # TEMPORARY diagnostic: drive the success flow and dump both sides
+        # of every wait mismatch. Removed before seal.
+        self.hold_outage()
+        self.ha.on_publish = zdo_hook("match")
+        self.ha.schedule(5.0, lambda: self.ha.set_state(OUTAGE, "off"))
+        self.ha.fire_state("mesh_outage")
+        self.fail(str(self.ha.match_probes))
 
     def test_stale_zdo_halts_in_zdo_phase(self) -> None:
         # S2/S12: only stale and foreign-transaction responses arrive. The
