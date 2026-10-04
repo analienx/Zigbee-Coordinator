@@ -21,11 +21,26 @@ import argparse
 import contextlib
 import datetime as dt
 
+class LockError(OSError):
+    """Raised when the collector lock cannot be acquired in time."""
+
+
+#: Seconds to wait for a contended collector lock before failing loudly.
+#: A stuck or crashed holder must never wedge the collector forever.
+LOCK_TIMEOUT_S = 30.0
+
 try:
     import fcntl
 
     def _lock_exclusive(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _try_lock_exclusive(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
 
     def _lock_release(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -47,8 +62,33 @@ except ImportError:  # Windows: no fcntl; msvcrt locking is the OS primitive.
         os.lseek(fd, 0, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
 
+    def _try_lock_exclusive(fd: int) -> bool:
+        if os.fstat(fd).st_size == 0:
+            try:
+                os.write(fd, b"\x00")
+            except OSError:
+                pass
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
     def _lock_release(fd: int) -> None:
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
+def _acquire_lock_bounded(fd: int, timeout_s: float = LOCK_TIMEOUT_S) -> None:
+    """Acquire the exclusive lock, failing loudly on a stuck holder."""
+    deadline = time.monotonic() + timeout_s
+    while not _try_lock_exclusive(fd):
+        if time.monotonic() >= deadline:
+            raise LockError(
+                f"collector lock busy after {timeout_s:.0f}s; "
+                "refusing to overlap another writer"
+            )
+        time.sleep(0.05)
 import hashlib
 import json
 import os
@@ -204,7 +244,7 @@ class Store:
                 pass
             fd = os.open(self.lock_path, os.O_RDWR)
             try:
-                _lock_exclusive(fd)
+                _acquire_lock_bounded(fd)
             except Exception:
                 os.close(fd)
                 raise
@@ -378,15 +418,25 @@ def decode_packet(hex_payload: str) -> dict[str, object]:
     return {**frame, "record": records[0]}
 
 
+#: Belt-and-suspenders cap: one hostile log line can otherwise force
+#: unbounded regex scanning and row emission out of a single read.
+MAX_TEXT_MATCHES_PER_LINE = 64
+
+
 def iter_text_payloads(line: str) -> Iterable[tuple[str, str]]:
     """Yield (repr, payload_text) for every diagnostic payload in a log line.
 
     The stock herdsman shape is the DEBUG command's length-prefixed string
     parameter serialized as {"length":N,"string":{"type":"Buffer","data":[...]}};
     only lines carrying a DEBUG marker are considered, and only payloads with
-    the T832 text prefix decode further."""
+    the T832 text prefix decode further. At most MAX_TEXT_MATCHES_PER_LINE
+    payloads are yielded per line; the excess is dropped (a single log line
+    is one write, never a batch carrier)."""
+    yielded = 0
     if DEBUG_MARK_RE.search(line):
         for match in BUFFER_RE.finditer(line):
+            if yielded >= MAX_TEXT_MATCHES_PER_LINE:
+                return
             try:
                 data = bytes(int(v) for v in match.group(2).split(",") if v.strip())
             except ValueError:
@@ -397,14 +447,47 @@ def iter_text_payloads(line: str) -> Iterable[tuple[str, str]]:
                 continue
             if text.startswith("T832D1:") or text.startswith("T832D2:"):
                 yield ("herdsman-buffer-v1", text)
+                yielded += 1
     for match in PREFIX_V1_RE.finditer(line):
+        if yielded >= MAX_TEXT_MATCHES_PER_LINE:
+            return
         yield ("text-fallback-v1", "T832D1:" + match.group(1))
+        yielded += 1
     for match in PREFIX_V2_RE.finditer(line):
+        if yielded >= MAX_TEXT_MATCHES_PER_LINE:
+            return
         yield ("text-fallback-v1", "T832D2:" + match.group(1))
+        yielded += 1
 
 
 class Continuity:
-    """Wrap/duplicate/replay-aware boot association across one stream."""
+    """Wrap/duplicate/replay-aware boot association across one stream.
+
+    Annotation is per FRAME: the caller passes one frame's export
+    sequence, firmware uptime, and whether any record in the frame is a
+    BOOT record. Boot membership is a frame property shared by every
+    record in the frame; annotating per record mislabels same-frame
+    siblings (the frame that carries BOOT is one boot, not N boots).
+
+    Two independent boot signals are evaluated in order:
+    1. firmware uptime went backwards (the uptime clock is monotonic
+       within a boot, so a regression means the firmware rebooted);
+    2. the frame carries a BOOT record without being a clean
+       continuation (the firmware declares a boot even when the new
+       boot's uptime sample overlaps the previous boot's tail).
+    A frame carrying BOOT as a clean continuation (exact redelivery or
+    the already-counted next frame) never opens a second boot. A
+    backwards step outside the counter-wrap window is a replay: stale
+    evidence that keeps its session and never advances the frontier.
+    """
+
+    #: 16-bit export-sequence space; the firmware counter wraps mod 2**16.
+    #: Aliases of the module constants so the window cannot drift.
+    SEQ_MOD = SEQ_MOD
+    #: A backwards step is only a wrap when the old value sits in the top
+    #: 1/16th of the space and the new value in the bottom 1/16th.
+    WRAP_HIGH = WRAP_HIGH
+    WRAP_LOW = WRAP_LOW
 
     def __init__(self, collector_id: str) -> None:
         self.collector_id = collector_id
@@ -414,39 +497,64 @@ class Continuity:
         self.last_uptime_ms: int | None = None
 
     def annotate(
-        self, export_sequence: int, uptime_ms: int, kind_name: str
+        self, export_sequence: int, uptime_ms: int, boot_in_frame: bool
     ) -> dict[str, object]:
         reset = False
         kind = "normal"
         gap = 0
         last_seq = self.last_export_sequence
         last_uptime = self.last_uptime_ms
-        if last_seq is None:
+        expected: int | None = None
+        if last_seq is not None:
+            expected = (last_seq + 1) % self.SEQ_MOD
+        clean = (
+            expected is not None
+            and export_sequence == expected
+            and last_uptime is not None
+            and uptime_ms >= last_uptime
+        )
+        if last_seq is None or last_uptime is None:
+            # First frame this stream ever saw: it opens host session 1.
+            # Starting to observe mid-stream is itself a session boundary;
+            # the BOOT marker is not required.
             self.host_session += 1
             self.boot_index += 1
             kind = "boot"
-        elif export_sequence == last_seq and uptime_ms == last_uptime:
-            kind = "duplicate"
         elif uptime_ms < last_uptime:
             self.host_session += 1
             self.boot_index += 1
             reset = True
             kind = "reboot"
-        elif kind_name == "BOOT":
+        elif export_sequence == last_seq and uptime_ms == last_uptime:
+            kind = "duplicate"
+        elif boot_in_frame and not clean:
             self.host_session += 1
             self.boot_index += 1
             reset = True
             kind = "boot"
         elif (
+            expected is not None
+            and export_sequence == expected
+            and uptime_ms >= last_uptime
+        ):
+            # Exact next counter value with a non-regressed clock. A
+            # 0xFFFF -> 0x0000 step is still a wrap event (gap 0), so wrap
+            # crossings stay explicit in evidence instead of vanishing
+            # into "normal".
+            if export_sequence < last_seq:
+                kind = "wrap"
+            else:
+                kind = "normal"
+        elif (
             export_sequence < last_seq
             and uptime_ms >= last_uptime
-            and last_seq >= WRAP_HIGH
-            and export_sequence <= WRAP_LOW
+            and last_seq >= self.WRAP_HIGH
+            and export_sequence <= self.WRAP_LOW
         ):
             kind = "wrap"
             gap = (0xFFFF - last_seq) + export_sequence
         elif export_sequence > last_seq:
-            gap = max(0, export_sequence - last_seq - 1)
+            gap = export_sequence - last_seq - 1
         else:
             kind = "replay"
         if kind != "duplicate" and kind != "replay":
@@ -490,16 +598,24 @@ def source_files(values: list[str]) -> tuple[list[Path], list[str]]:
 
 
 def read_increment(
-    path: Path, cursor: dict[str, object], initial_tail_bytes: int
+    path: Path,
+    cursor: dict[str, object],
+    initial_tail_bytes: int,
+    max_line_bytes: int = 1 << 20,
 ) -> tuple[list[tuple[int, str]], dict[str, object], list[str]]:
     """Read newly committed lines from path.
 
     The cursor carries file identity (dev/ino) plus the last committed
-    complete-line boundary and any durable partial tail. A saved boundary is
-    resumed exactly (no first-line discard); only a fresh mid-file tail skips
-    forward to the next newline. An incomplete trailing chunk is buffered in
-    the cursor, never committed past. Replacement/truncation resets to zero
-    with an explicit rotation note.
+    complete-line boundary. A saved boundary is resumed exactly (no first-line
+    discard); only a fresh mid-file tail skips forward to the next newline.
+    An incomplete trailing chunk is buffered in the cursor, never committed
+    past. Replacement/truncation/rewrite resets to zero, discards any prior
+    partial (it belongs to the old file) with an explicit rotation note.
+    Every returned row is byte-exact file content at its offset: a former
+    partial is re-read from the file on the next poll, never prepended from
+    cursor state, so split lines (including split UTF-8) decode exactly once.
+    Logical lines beyond max_line_bytes are consumed but skipped with an
+    explicit note, bounding memory regardless of writer behavior.
     """
     notes: list[str] = []
     try:
@@ -525,7 +641,7 @@ def read_increment(
         # on quick recreate): the committed prefix is stale, reread it.
         notes.append(f"rotated:{path}")
         offset = 0
-    pending = str(cursor.get("partial") or "")
+    pending = ""
     rows: list[tuple[int, str]] = []
     with path.open("rb") as fh:
         if offset == 0 and stat.st_size > initial_tail_bytes:
@@ -535,26 +651,41 @@ def read_increment(
             notes.append(f"initial-tail:{path}:{offset}")
         else:
             fh.seek(offset)
-        first = True
         chunk_start = fh.tell()
         while True:
             pos = fh.tell()
-            raw = fh.readline()
+            # Bounded first read: no single read ever holds more than
+            # max_line_bytes + 1, regardless of writer behavior.
+            raw = fh.readline(max_line_bytes + 1)
             if not raw:
                 break
-            text = raw.decode("utf-8", errors="replace")
-            if not text.endswith("\n"):
-                if first:
-                    pending = pending + text
-                else:
-                    pending = text
+            if raw.endswith(b"\n"):
+                rows.append((pos, raw.decode("utf-8", errors="replace").rstrip("\r\n")))
+                continue
+            # No newline inside the bounded window: either the file's
+            # incomplete tail or an oversized logical line. Peek one byte:
+            # EOF means a partial tail to buffer; more data means the line
+            # is oversized and must be drained boundedly.
+            if not fh.read(1):
+                pending = raw.decode("utf-8", errors="replace")
                 chunk_start = pos
                 break
-            if first and pending:
-                text = pending + text
-                pending = ""
-            first = False
-            rows.append((pos, text.rstrip("\r\n")))
+            size = len(raw) + 1
+            piece = b""
+            while True:
+                piece = fh.readline(max_line_bytes + 1)
+                if not piece:
+                    break
+                size += len(piece)
+                if piece.endswith(b"\n"):
+                    break
+            if piece.endswith(b"\n"):
+                notes.append(f"line-too-large:{path}:{pos}:{size}")
+                continue
+            notes.append(f"partial-too-large:{path}:{pos}:{size}")
+            pending = ""
+            chunk_start = fh.tell()
+            break
         committed = chunk_start if pending else fh.tell()
     new_cursor: dict[str, object] = {
         "offset": committed,
@@ -660,6 +791,7 @@ def _collect_locked(
             "size": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
         }
+        processed = 0
         for byte_offset, line in rows:
             if budget <= 0:
                 partial = True
@@ -701,12 +833,19 @@ def _collect_locked(
                         }
                     )
                     continue
+                # One continuity annotation per frame: records sharing a
+                # frame share boot association (boot membership is a frame
+                # property, and per-record annotation mislabels same-frame
+                # records as duplicates).
+                boot_marker = any(
+                    str(item.get("kind_name")) == "BOOT" for item in records
+                )
+                annotation = continuity.annotate(
+                    int(frame["export_sequence"]),
+                    int(frame["firmware_uptime_ms"]),
+                    boot_marker,
+                )
                 for record in records:
-                    annotation = continuity.annotate(
-                        int(frame["export_sequence"]),
-                        int(frame["firmware_uptime_ms"]),
-                        str(record["kind_name"]),
-                    )
                     diag_rows.append(
                         {
                             **frame,
@@ -729,6 +868,18 @@ def _collect_locked(
                             "config_fingerprint": config_fingerprint,
                         }
                     )
+            processed += 1
+        if processed < len(rows):
+            # The budget stopped mid-file: rewind the cursor past only the
+            # processed rows. Unread data is recovered by the next poll,
+            # never marked consumed.
+            first_unprocessed = rows[processed][0]
+            cursors[key] = {
+                **cursors[key],
+                "offset": first_unprocessed,
+                "partial": "",
+            }
+            notes.append(f"collect-budget-rewind:{path}:{first_unprocessed}")
     continuity_state["host_session"] = continuity.host_session
     continuity_state["boot_index"] = continuity.boot_index
     continuity_state["last_export_sequence"] = continuity.last_export_sequence
@@ -743,13 +894,15 @@ def _collect_locked(
     state["missing_sources"] = sorted(set(missing))
     state["collector_notes"] = sorted(set(notes))
     state["collect_partial"] = partial
-    store.atomic_json(store.cursor, state)
-    rotate(
+    retention_notes = rotate(
         store,
         retain_days=retain_days,
         max_bytes=max_bytes,
         max_host_events_bytes=max_host_events_bytes,
     )
+    notes.extend(retention_notes)
+    state["collector_notes"] = sorted(set(notes))
+    store.atomic_json(store.cursor, state)
     return {
         "ok": True,
         "diag_records": diag_count,
@@ -764,27 +917,44 @@ def _collect_locked(
 
 def rotate(
     store: Store, *, retain_days: int, max_bytes: int, max_host_events_bytes: int = 64 * 1024 * 1024
-) -> None:
+) -> list[str]:
+    """Enforce stream retention, returning one audit note per deletion.
+
+    Deletions are evidence loss: every removed file (and its byte size)
+    is reported so the collector persists it in collector_notes instead
+    of dropping rows silently. Oldest mtime first; today's active file
+    is newest, so it is always deleted last.
+    """
+    notes: list[str] = []
     cutoff = time.time() - retain_days * 86400
     files = [p for p in store.stream.glob("*.jsonl") if p.is_file()]
     for path in files:
         try:
             if path.stat().st_mtime < cutoff:
+                size = path.stat().st_size
                 path.unlink()
+                notes.append(f"retention-age:{path.name}:{size}")
         except OSError:
             pass
     files = sorted(
         (p for p in store.stream.glob("*.jsonl") if p.is_file()),
         key=lambda p: p.stat().st_mtime,
     )
-    total = sum(p.stat().st_size for p in files)
+    try:
+        total = sum(p.stat().st_size for p in files)
+    except OSError:
+        total = 0
     for path in files:
         if total <= max_bytes:
             break
-        size = path.stat().st_size
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
         try:
             path.unlink()
             total -= size
+            notes.append(f"retention-size:{path.name}:{size}")
         except OSError:
             pass
     # Incident bundles: keep the newest 32, never delete the latched one.
@@ -805,6 +975,7 @@ def rotate(
                 if child.is_file():
                     child.unlink()
             path.rmdir()
+            notes.append(f"retention-bundle:{path.name}")
         except OSError:
             pass
     # host-events.log rotation: protect the active tail, retain rotated parts.
@@ -816,8 +987,10 @@ def rotate(
                 rotated.chmod(0o600)
             except OSError:
                 pass
+            notes.append(f"retention-host-events:{rotated.name}")
     except OSError:
         pass
+    return notes
 
 
 def recent_rows(

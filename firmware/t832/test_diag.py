@@ -423,6 +423,179 @@ class ContinuityTests(unittest.TestCase):
             self.assertFalse(any(r["session_reset_detected"] for r in rows))
 
 
+class CollectorExactnessTests(unittest.TestCase):
+    """S08/S09/S13/S16: byte-exact replay, bounded reads, honest continuity."""
+
+    def do_collect(self, store: Store, log: Path, **kw) -> dict:
+        params = dict(
+            config_fingerprint=None,
+            initial_tail_bytes=1024 * 1024,
+            retain_days=7,
+            max_bytes=1 << 30,
+        )
+        params.update(kw)
+        return incident.collect(store, [str(log)], **params)
+
+    def test_split_utf8_line_decodes_once_byte_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            full = (
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)} caf\u00e9\n"
+            )
+            blob = full.encode("utf-8")
+            # Split inside the two-byte \u00e9 so poll 1 ends mid-character.
+            cut = len(blob) - 3
+            assert blob[cut:cut + 1] == "\u00e9".encode("utf-8")[:1]
+            log.write_bytes(blob[:cut])
+            first = self.do_collect(store, log)
+            self.assertEqual(first["diag_records"], 0)
+            with log.open("ab") as fh:
+                fh.write(blob[cut:])
+            second = self.do_collect(store, log)
+            self.assertEqual(second["diag_records"], 1)
+            rows = stream_rows(store)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["raw_line"], full.rstrip("\n"))
+            day_file = store.stream / f"diag-{incident.utcnow().strftime('%Y-%m-%d')}.jsonl"
+            day_lines = day_file.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(all('"type": "t832_diag"' in line for line in day_lines))
+
+    def test_oversized_line_skipped_with_note(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            log = root / "z2m.log"
+            short = (
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=2, uptime_ms=2000)}\n"
+            )
+            log.write_bytes(b"A" * 200 + b"\n" + short.encode("utf-8"))
+            rows, cursor, notes = incident.read_increment(
+                log, {}, initial_tail_bytes=1 << 20, max_line_bytes=64
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][0], 201)
+            self.assertTrue(any(n.startswith("line-too-large:") for n in notes))
+            # Cursor commits past the drained line: no re-read, no hang.
+            rows2, _, _ = incident.read_increment(
+                log, cursor, initial_tail_bytes=1 << 20, max_line_bytes=64
+            )
+            self.assertEqual(rows2, [])
+
+    def test_budget_rewind_recovers_unread_without_duplication(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n"
+                "2026-10-03T09:00:01Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=2, uptime_ms=2000)}\n",
+                encoding="utf-8",
+            )
+            first = self.do_collect(store, log, max_collect_bytes=10)
+            self.assertEqual(first["diag_records"], 1)
+            self.assertTrue(first["partial"])
+            second = self.do_collect(store, log)
+            self.assertEqual(second["diag_records"], 1)
+            rows = stream_rows(store)
+            self.assertEqual([r["export_sequence"] for r in rows], [1, 2])
+
+    def test_multirecord_boot_frame_counts_one_boot(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                "T832D2:" + packet_v2_hex(export_sequence=1, uptime_ms=100,
+                                         records=[(1, 0, 0, 0), (19, 1, 2, 3)]) + "\n"
+                "2026-10-03T09:00:01Z zh:zstack:znp "
+                "T832D2:" + packet_v2_hex(export_sequence=2, uptime_ms=200,
+                                         records=[(19, 4, 5, 6)]) + "\n",
+                encoding="utf-8",
+            )
+            result = self.do_collect(store, log)
+            self.assertEqual(result["diag_records"], 3)
+            rows = stream_rows(store)
+            boot_rows = rows[:2]
+            self.assertTrue(all(r["continuity_kind"] == "boot" for r in boot_rows))
+            self.assertEqual(boot_rows[0]["host_session"], boot_rows[1]["host_session"])
+            self.assertEqual(boot_rows[0]["boot_index"], boot_rows[1]["boot_index"])
+            self.assertEqual(rows[2]["continuity_kind"], "normal")
+            self.assertEqual(rows[2]["host_session"], boot_rows[0]["host_session"])
+
+    def test_boot_clean_continuation_no_double_boot(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                "T832D2:" + packet_v2_hex(export_sequence=1, uptime_ms=700,
+                                         records=[(1, 0, 0, 0)]) + "\n"
+                "2026-10-03T09:00:01Z zh:zstack:znp "
+                "T832D2:" + packet_v2_hex(export_sequence=2, uptime_ms=800,
+                                         records=[(1, 0, 0, 0)]) + "\n",
+                encoding="utf-8",
+            )
+            self.do_collect(store, log)
+            rows = stream_rows(store)
+            self.assertEqual(rows[0]["continuity_kind"], "boot")
+            self.assertEqual(rows[1]["continuity_kind"], "normal")
+            self.assertEqual(rows[1]["host_session"], rows[0]["host_session"])
+
+    def test_clean_counter_wrap_is_wrap_gap_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=65535, uptime_ms=1000)}\n"
+                "2026-10-03T09:00:01Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=0, uptime_ms=2000)}\n",
+                encoding="utf-8",
+            )
+            self.do_collect(store, log)
+            rows = stream_rows(store)
+            self.assertEqual(rows[-1]["continuity_kind"], "wrap")
+            self.assertEqual(rows[-1]["sequence_gap_before"], 0)
+            self.assertFalse(rows[-1]["session_reset_detected"])
+            self.assertEqual(rows[-1]["host_session"], rows[0]["host_session"])
+
+    def test_retention_deletions_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            log = root / "z2m.log"
+            log.write_text(
+                "2026-10-03T09:00:00Z zh:zstack:znp "
+                f"T832D1:{packet_hex(export_sequence=1, uptime_ms=1000)}\n",
+                encoding="utf-8",
+            )
+            self.do_collect(store, log)
+            squeezed = self.do_collect(store, log, max_bytes=1)
+            self.assertTrue(any(n.startswith("retention-size:") for n in squeezed["notes"]))
+            cursor = json.loads((root / "private" / "state" / "collector.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(n.startswith("retention-size:") for n in cursor["collector_notes"]))
+
+    def test_lock_timeout_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = incident.Store(root / "private")
+            with store.locked():
+                fd2 = os.open(store.lock_path, os.O_RDWR)
+                try:
+                    with self.assertRaises(incident.LockError):
+                        incident._acquire_lock_bounded(fd2, timeout_s=0.05)
+                finally:
+                    os.close(fd2)
+
+
 class IncidentTests(unittest.TestCase):
     def test_capture_and_one_reset_latch(self) -> None:
         with tempfile.TemporaryDirectory() as td:

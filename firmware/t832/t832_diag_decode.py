@@ -59,12 +59,15 @@ def iter_records(
                             "error": str(exc),
                         }
                         continue
+                    boot_marker = any(
+                        str(item.get("kind_name")) == "BOOT" for item in records
+                    )
+                    annotation = continuity.annotate(
+                        int(frame["export_sequence"]),
+                        int(frame["firmware_uptime_ms"]),
+                        boot_marker,
+                    )
                     for record in records:
-                        annotation = continuity.annotate(
-                            int(frame["export_sequence"]),
-                            int(frame["firmware_uptime_ms"]),
-                            str(record["kind_name"]),
-                        )
                         yield {
                             **frame,
                             "record": record,
