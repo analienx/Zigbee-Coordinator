@@ -15,9 +15,9 @@ All pending. Ledger: docs/T832_DIAG_R0_ACCEPTANCE_R2.md.
 
 ## Outstanding effects / jobs
 
-M1 push (S01–S04): .inc ownership/generation/atomicity rework, patcher TX/RX
-refusal hooks + RX reclassification, validator + manifest capability rename,
-6 new harness regressions, fast host-regressions CI job. Awaiting hosted run.
+M1 push: verified hosted green (run 37190162983 at 374d011, all 4 jobs).
+M2 push (S05–S07): fair export scheduler, NV early preservation, AF accuracy,
+decoder/schema kind 38 + orig-kind flags; 3 new harness fixtures. Awaited.
 
 ## Open questions (from brief)
 

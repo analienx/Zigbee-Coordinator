@@ -29,7 +29,7 @@
     ["last_ms", "u32", "last occurrence low 32 bits"],
     ["sequence", "u16", "record sequence; 0 for live-built system records"],
     ["kind", "u8", "event kind"],
-    ["flags", "u8", "bit0=critical, bit1=snapshot re-emit"],
+    ["flags", "u8", "bit0=critical, bit1=snapshot re-emit, bits7..2=original kind on FIRST_FAULT snapshots"],
     ["a", "u16", "event-specific"],
     ["b", "u16", "event-specific"],
     ["c", "u16", "event-specific"],
@@ -72,11 +72,12 @@
     "34": "DIAG_LOSS",
     "35": "NPI_TRAP",
     "36": "NPI_ALLOC_FAIL",
-    "37": "BOOT_CAPTURE_INVALID"
+    "37": "BOOT_CAPTURE_INVALID",
+    "38": "TIMING_APPROX"
   },
   "event_semantics": {
     "BOOT": "a=early reset cause (0xFFFF when capture invalid), b=MT task id, c=capture validity 1/0",
-    "HEALTH": "live-built, sequence 0; a=MT scheduling count in prior 10 s (saturated), b=MT actual-work age ms, c=NPI transport-work age ms",
+    "HEALTH": "live-built, sequence 0; a=MT schedules since last accepted health baseline (saturated, nonzero under scheduling), b=MT actual-work age ms, c=NPI transport-work age ms",
     "RESOURCE:a=1": "b=RX high-water bytes, c=max approximate normal NPI queue depth",
     "RESOURCE:a=2": "b=max observed TX-active age ms, c=Zigbee-stack work age ms",
     "RESOURCE:a=3": "b/c=rx byte counter low/high 16 bits",
@@ -88,7 +89,7 @@
     "RESOURCE:a=9": "b=AF confirmed count, c=AF rejected count (saturated 16 bit)",
     "RESOURCE:a=10": "b=last MT command cmd0<<8|cmd1, c=its age ms (saturated)",
     "RESOURCE:a=11": "b=last startup stage, c=its age ms (saturated)",
-    "RESOURCE:a=12": "b=ZStack-task work age ms, c=NPI-task wake age ms (saturated)",
+    "RESOURCE:a=12": "b=ZStack-task work age ms (0xFFFF until first genuine ZStack-task observation; MT-side startup never refreshes it), c=NPI-task wake age ms (saturated)",
     "RESOURCE:a=13": "b=normal TX completions, c=unsolicited TX completions (saturated 16 bit)",
     "NETWORK_STATE": "a=bdbNodeIsOnANetwork, b=_NIB.nwkState",
     "TRANSPORT_CONFIG": "a=baud/100, b=NPI flow-control setting",
@@ -96,13 +97,14 @@
     "NV_EVENT": "a=1 compact begin (b=min bytes), a=2 compact end ok (b=status, c=duration ms), a=5 NV init normal (b=init action)",
     "AF_STATE": "live-built; a=AF requests accepted and awaiting confirm, b=oldest age ms, c=max outstanding",
     "NV_FAULT": "a=3 compact failure (b=status, c=duration ms), a=4 recovery reformat entry (b=NV page count), or a=0 abnormal NV init (b=init action)",
-    "TX_MISMATCH": "queue/dequeue/wire ownership anomaly; a=1 bad SOF, 2 head mismatch, 4 pending underflow, 5 TX FIFO overflow, 6 double diag queue, 7 finish without dequeue, 9 dequeue over in-flight",
-    "SYNC_ABANDON": "a=1 new SREQ superseded an outstanding sync round-trip",
-    "AF_REJECT": "SREQ AF request refused with AF status c; a=src endpoint, b=transID",
-    "AF_ANOMALY": "a=1 orphan/duplicate confirm, 3 failed-status confirm, 4 accept-table overflow (oldest evicted), 5 transaction reuse supersede, 6 unexpected AF SRSP, 7 truncated request payload; b=endpoint, c=transID",
-    "DIAG_LOSS": "telemetry's own bounded loss; a=lost records, b=1 MT build refusal, 2 NPI-side drop",
+    "TX_MISMATCH": "queue/dequeue/wire ownership anomaly; a=1 bad SOF, 2 older retired unknown-outcome on deeper match, 4 pending underflow, 5 TX FIFO full (newest refused, never evicted), 6 double diag queue, 7 finish without dequeue, 9 dequeue over in-flight, 10 untracked wire completion, 11 write-rejected in-flight released, 12 orphan owned entry released, 13 uncertain release, 14 refusal of untracked frame",
+    "SYNC_ABANDON": "a=1 new SREQ superseded an outstanding sync round-trip (fresh generation), 2 stale SRSP completion left suppression set",
+    "AF_REJECT": "AF request refused (SREQ status) or confirm failed (nonzero confirm status) with raw status c; a=src endpoint, b=transID",
+    "AF_ANOMALY": "a=1 orphan/duplicate confirm, 4 accept-table overflow (largest-age entry evicted), 5 transaction reuse superseded in place, 6 unexpected AF SRSP, 7 truncated request payload; b=endpoint, c=transID",
+    "DIAG_LOSS": "telemetry's own bounded loss; a=lost records (or 2=staged-retire identity mismatch, nothing retired), b=1 MT build refusal, 2 NPI-side drop",
     "NPI_TRAP": "central NPI RX overflow trap site; a=attempted size, b=available space; trap preserved after recording",
-    "NPI_ALLOC_FAIL": "MT-path allocation failure; a=1 NPI TX path, 2 NPI RX path; NPI-side drops reconcile pending flags",
-    "FIRST_FAULT": "sticky first critical record re-emitted verbatim with the snapshot flag; never overwritten by ring pressure"
+    "NPI_ALLOC_FAIL": "allocation refusal; a=1 NPI TX path (b=stage 1 frame/2 queue-record/3 unsupported in sendToHost, 4/5/6 in processStackMsg; only the owned entry is reconciled), 2 NPI RX path (no TX state touched)",
+    "FIRST_FAULT": "sticky first critical record re-emitted with the snapshot flag; a/b/c/repeat keep the original payload, flags bits7..2 carry the original event kind; never overwritten by ring pressure",
+    "TIMING_APPROX": "pre-scheduler records exist with assumed 1 ms tick; a=count of pre-scheduler records, b=MT task id; their timing is approximate"
   }
 }

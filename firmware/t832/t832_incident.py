@@ -123,6 +123,7 @@ EVENT_NAMES = {
     35: "NPI_TRAP",
     36: "NPI_ALLOC_FAIL",
     37: "BOOT_CAPTURE_INVALID",
+    38: "TIMING_APPROX",
 }
 
 DEFAULT_SOURCES = [
@@ -302,6 +303,7 @@ def decode_record(raw: bytes, offset: int) -> dict[str, object]:
         "flags": rec[4],
         "critical": bool(rec[4] & 1),
         "snapshot": bool(rec[4] & 2),
+        "original_kind": (rec[4] >> 2) if rec[3] == 22 else None,
         "a": rec[5],
         "b": rec[6],
         "c": rec[7],

@@ -132,6 +132,9 @@ typedef struct {
   uint16_t queue_gen;
   uint16_t sync_gen;
   uint16_t sync_seq;
+  uint16_t af_unconfirmed_n;
+  uint32_t af_accepted_n;
+  uint32_t af_areq_n;
   uint16_t txq_head;
   uint16_t txq_count;
   uint16_t mt_last_events;
@@ -142,6 +145,10 @@ typedef struct {
   uint8_t sync_outstanding;
   uint8_t response_queued;
   uint8_t diag_untracked;
+  uint8_t zstack_work_valid;
+  uint8_t early;
+  uint8_t health_rr;
+  uint8_t health_done;
   uint8_t diag_pending;
   uint8_t staged_count;
   uint8_t build_failed;
@@ -173,10 +180,25 @@ void T832Diag_captureResetCauseEarly(uint32_t cause)
   t832DiagResetCauseMagic = (uint32_t)T832_DIAG_BOOT_MAGIC;
 }
 
+/* Lazily arm the recorder before the scheduler runs. NV init and recovery
+ * hooks execute in main() before MT_TaskInit, so the first record request
+ * initializes rings with an assumed 1 ms tick; MT init later absorbs (never
+ * wipes) these early observations and marks their timing approximate. */
+static void T832Diag_ensureEarly(void)
+{
+  if (t832Diag.initialized || t832Diag.early) return;
+  memset(&t832Diag, 0, sizeof(t832Diag));
+  t832Diag.tick_period_us = 1000u;
+  t832Diag.early = 1u;
+}
+
 static uint64_t T832Diag_nowMs(void)
 {
-  uint32_t key = OsalPort_enterCS();
-  uint32_t tick = ClockP_getSystemTicks();
+  uint32_t key;
+  uint32_t tick;
+  T832Diag_ensureEarly();
+  key = OsalPort_enterCS();
+  tick = ClockP_getSystemTicks();
   if (t832Diag.initialized && tick < t832Diag.last_tick) {
     t832Diag.tick_wraps++;
   }
@@ -251,7 +273,14 @@ void T832Diag_init(uint8_t mtTaskId)
 {
   uint8_t boot_valid = (t832DiagResetCauseMagic == (uint32_t)T832_DIAG_BOOT_MAGIC);
   uint32_t cause = boot_valid ? t832DiagResetCauseEarly : 0xFFFFFFFFu;
-  memset(&t832Diag, 0, sizeof(t832Diag));
+  /* Absorb, never wipe: NV init/recovery hooks in main() run before MT init
+   * and their records (rings, first fault, sequence) survive here. Only a
+   * cold recorder with no early observations is zeroed. */
+  uint8_t had_early = (uint8_t)(t832Diag.early && !t832Diag.initialized);
+  uint32_t pre_sched = t832Diag.record_sequence;
+  if (!had_early) {
+    memset(&t832Diag, 0, sizeof(t832Diag));
+  }
   t832Diag.tick_period_us = ClockP_getSystemTickPeriod();
   if (!t832Diag.tick_period_us) t832Diag.tick_period_us = 1000u;
   t832Diag.mt_task_id = mtTaskId;
@@ -269,11 +298,18 @@ void T832Diag_init(uint8_t mtTaskId)
       T832_DIAG_CAP_AF_ACCEPT | T832_DIAG_CAP_BATCHED_V2;
   t832Diag.reset_cause = cause;
   t832Diag.initialized = 1u;
+  t832Diag.early = 0u;
   /* The memset above runs at MT init, after main() captured the cause. */
   T832Diag_record(T832_DIAG_EV_BOOT, (uint16_t)cause,
                   mtTaskId, boot_valid ? 1u : 0u);
   if (!boot_valid) {
     T832Diag_record(T832_DIAG_EV_BOOT_CAPTURE_INVALID, 0u, mtTaskId, 0u);
+  }
+  if (had_early && pre_sched) {
+    /* Early records used the assumed 1 ms tick before the scheduler ran:
+     * keep them, but mark their timing approximate with an honest count. */
+    T832Diag_record(T832_DIAG_EV_TIMING_APPROX,
+                    T832Diag_sat16(pre_sched), mtTaskId, 0u);
   }
 }
 
@@ -295,7 +331,10 @@ void T832Diag_taskWork(uint8_t area, uint16_t detail)
   } else if (area == T832_DIAG_WORK_NPI) {
     t832Diag.npi_work_ms = now;
   } else if (area == T832_DIAG_WORK_ZSTACK) {
+    /* Genuine ZStack-task context (ZStackTaskProcessEvent): the only MT-side
+     * caller was removed, so this timestamp is real stack-task progress. */
     t832Diag.zstack_work_ms = now;
+    t832Diag.zstack_work_valid = 1u;
   }
   (void)detail;
 }
@@ -359,36 +398,88 @@ static uint8_t T832Diag_afParse(const uint8_t *pl, uint8_t len, uint8_t cmd1,
   return 0u;
 }
 
+/* Oldest request time over the used entries, by largest unsigned age from
+ * now so tick wrap cannot invert it; caller holds the section. */
+static uint32_t T832Diag_afOldestLocked(uint32_t now)
+{
+  uint8_t i;
+  uint32_t oldest = 0u;
+  uint32_t oldest_age = 0u;
+  uint8_t found = 0u;
+  for (i = 0; i < T832_DIAG_AF_DEPTH; i++) {
+    if (t832Diag.af[i].used) {
+      uint32_t age = now - t832Diag.af[i].ms;
+      if (!found || age > oldest_age) {
+        oldest = t832Diag.af[i].ms;
+        oldest_age = age;
+        found = 1u;
+      }
+    }
+  }
+  return found ? oldest : 0u;
+}
+
 static void T832Diag_afInsert(uint8_t srcEp, uint8_t transId, uint8_t origin)
 {
   uint32_t key = OsalPort_enterCS();
+  uint32_t now = (uint32_t)T832Diag_nowMs();
   uint8_t i;
   uint8_t free = T832_DIAG_AF_DEPTH;
-  uint8_t oldest = 0u;
+  uint8_t victim = 0u;
+  uint32_t victim_age = 0u;
   for (i = 0; i < T832_DIAG_AF_DEPTH; i++) {
     if (t832Diag.af[i].used &&
         t832Diag.af[i].src_ep == srcEp &&
         t832Diag.af[i].trans_id == transId) {
+      /* Reuse supersedes in place: refresh time/generation, keep one entry.
+       * No phantom is left behind for the confirm to miss. */
+      if (t832Diag.af[i].origin != origin) {
+        if (origin == 2u) {
+          if (t832Diag.af_unconfirmed_n != 0xFFFFu) t832Diag.af_unconfirmed_n++;
+        } else if (t832Diag.af_unconfirmed_n) {
+          t832Diag.af_unconfirmed_n--;
+        }
+        t832Diag.af[i].origin = origin;
+      }
+      t832Diag.af[i].ms = now;
+      t832Diag.af[i].gen = ++t832Diag.af_gen;
+      t832Diag.af_oldest_ms = T832Diag_afOldestLocked(now);
+      OsalPort_leaveCS(key);
       T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 5u, srcEp, transId);
-      break;
+      return;
     }
   }
   for (i = 0; i < T832_DIAG_AF_DEPTH; i++) {
     if (!t832Diag.af[i].used) { free = i; break; }
-    if (t832Diag.af[i].ms <= t832Diag.af[oldest].ms) oldest = i;
+    /* Wrap-safe age: unsigned subtraction, largest age is evicted. */
+    if ((uint32_t)(now - t832Diag.af[i].ms) >= victim_age) {
+      victim_age = (uint32_t)(now - t832Diag.af[i].ms);
+      victim = i;
+    }
   }
   if (free == T832_DIAG_AF_DEPTH) {
+    if (t832Diag.af[victim].origin == 2u && t832Diag.af_unconfirmed_n) {
+      t832Diag.af_unconfirmed_n--;
+    }
+    OsalPort_leaveCS(key);
     T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 4u,
-                    t832Diag.af[oldest].src_ep, t832Diag.af[oldest].trans_id);
-    free = oldest;
+                    t832Diag.af[victim].src_ep, t832Diag.af[victim].trans_id);
+    key = OsalPort_enterCS();
+    free = victim;
     if (t832Diag.af_outstanding) t832Diag.af_outstanding--;
   }
   t832Diag.af[free].used = 1u;
   t832Diag.af[free].src_ep = srcEp;
   t832Diag.af[free].trans_id = transId;
   t832Diag.af[free].origin = origin;
-  t832Diag.af[free].ms = (uint32_t)T832Diag_nowMs();
+  t832Diag.af[free].ms = now;
   t832Diag.af[free].gen = ++t832Diag.af_gen;
+  if (origin == 1u) {
+    if (t832Diag.af_accepted_n != 0xFFFFFFFFu) t832Diag.af_accepted_n++;
+  } else {
+    if (t832Diag.af_areq_n != 0xFFFFFFFFu) t832Diag.af_areq_n++;
+    if (t832Diag.af_unconfirmed_n != 0xFFFFu) t832Diag.af_unconfirmed_n++;
+  }
   if (!t832Diag.af_outstanding) {
     t832Diag.af_oldest_ms = t832Diag.af[free].ms;
   }
@@ -402,13 +493,17 @@ static void T832Diag_afInsert(uint8_t srcEp, uint8_t transId, uint8_t origin)
 static void T832Diag_afRemove(uint8_t idx)
 {
   uint32_t key = OsalPort_enterCS();
+  uint32_t now = (uint32_t)T832Diag_nowMs();
+  if (t832Diag.af[idx].origin == 2u && t832Diag.af_unconfirmed_n) {
+    t832Diag.af_unconfirmed_n--;
+  }
   t832Diag.af[idx].used = 0u;
   if (t832Diag.af_outstanding) {
     t832Diag.af_outstanding--;
   }
-  if (!t832Diag.af_outstanding) {
-    t832Diag.af_oldest_ms = 0u;
-  }
+  /* Recompute from the survivors: the age must track the oldest remaining
+   * request, never a completed one. */
+  t832Diag.af_oldest_ms = T832Diag_afOldestLocked(now);
   OsalPort_leaveCS(key);
 }
 
@@ -460,9 +555,12 @@ static void T832Diag_afConfirm(uint8_t status, uint8_t ep, uint8_t transId)
         t832Diag.af[i].src_ep == ep &&
         t832Diag.af[i].trans_id == transId) {
       T832Diag_afRemove(i);
-      if (t832Diag.af_confirmed_n != 0xFFFFFFFFu) t832Diag.af_confirmed_n++;
-      if (status != 0u) {
-        T832Diag_record(T832_DIAG_EV_AF_ANOMALY, 3u, ep, transId);
+      if (status == 0u) {
+        if (t832Diag.af_confirmed_n != 0xFFFFFFFFu) t832Diag.af_confirmed_n++;
+      } else {
+        /* Failed delivery keeps its raw status: a reject, not a confirm. */
+        if (t832Diag.af_rejected_n != 0xFFFFFFFFu) t832Diag.af_rejected_n++;
+        T832Diag_record(T832_DIAG_EV_AF_REJECT, ep, transId, status);
       }
       return;
     }
@@ -909,7 +1007,9 @@ void T832Diag_startup(uint8_t stage, uint8_t cmd0, uint8_t cmd1)
   if (stage == 2u) kind = T832_DIAG_EV_STARTUP_BDB_REQUEST;
   else if (stage == 3u) kind = T832_DIAG_EV_STARTUP_BDB_RETURN;
   else if (stage == 4u) kind = T832_DIAG_EV_STARTUP_SRSP_QUEUE;
-  t832Diag.zstack_work_ms = (uint32_t)T832Diag_nowMs();
+  /* MT-task context (mt_zdo.c): observes startup stages only. It must not
+   * refresh zstack_work_ms; genuine ZStack progress comes from the ZStack
+   * task hooks (taskWork/bdb), and its age renders unknown until observed. */
   t832Diag.last_startup_stage = stage;
   t832Diag.last_startup_ms = (uint32_t)T832Diag_nowMs();
   t832Diag.last_startup_cmd0 = cmd0;
@@ -924,7 +1024,9 @@ void T832Diag_networkState(uint8_t onNetwork, uint8_t nwkState)
 
 void T832Diag_bdb(uint8_t stage, uint16_t detail)
 {
+  /* ZStack-task context (zstacktask.c): genuine stack progress. */
   t832Diag.zstack_work_ms = (uint32_t)T832Diag_nowMs();
+  t832Diag.zstack_work_valid = 1u;
   T832Diag_record(stage == 1u ? T832_DIAG_EV_BDB_DISPATCH : T832_DIAG_EV_BDB_RETURN,
                   stage, detail, 0u);
 }
@@ -1072,10 +1174,9 @@ static void T832Diag_putRecord(uint8_t **p, const T832DiagRecord *r)
 }
 
 /* Live system records are built at export time; they never sit in the rings. */
-static T832DiagRecord T832Diag_liveHealth(uint32_t now)
+static T832DiagRecord T832Diag_liveHealth(uint32_t now, uint32_t scheduled)
 {
   T832DiagRecord r;
-  uint32_t scheduled = t832Diag.mt_schedule_count - t832Diag.last_health_schedule_count;
   r.first_ms = now;
   r.last_ms = now;
   r.sequence = 0u;
@@ -1139,7 +1240,8 @@ static T832DiagRecord T832Diag_liveResource(uint8_t which, uint32_t now)
     break;
   case 2u:
     r.b = t832Diag.tx_age_max;
-    r.c = T832Diag_sat16(now - t832Diag.zstack_work_ms);
+    r.c = t832Diag.zstack_work_valid ?
+        T832Diag_sat16(now - t832Diag.zstack_work_ms) : 0xFFFFu;
     break;
   case 3u:
     r.b = (uint16_t)(t832Diag.rx_bytes & 0xFFFFu);
@@ -1189,7 +1291,8 @@ static T832DiagRecord T832Diag_liveResource(uint8_t which, uint32_t now)
     r.c = T832Diag_sat16(now - t832Diag.last_startup_ms);
     break;
   case 12u:
-    r.b = T832Diag_sat16(now - t832Diag.zstack_work_ms);
+    r.b = t832Diag.zstack_work_valid ?
+        T832Diag_sat16(now - t832Diag.zstack_work_ms) : 0xFFFFu;
     r.c = T832Diag_sat16(now - t832Diag.npi_task_ms);
     break;
   case 13u:
@@ -1213,16 +1316,26 @@ void T832Diag_exportPoll(void)
   uint8_t i;
   uint8_t healthDue = 0u;
   uint8_t resourceDue = 0u;
+  uint8_t faultDue = 0u;
+  uint8_t resAccepted = 0u;
+  uint8_t healthComplete = 0u;
+  uint8_t faultStaged = 0u;
+  uint8_t res_idx_saved = t832Diag.res_ext_idx;
 
+  /* Due detection never advances baselines: overdue work stays pending until
+   * its records are staged into an accepted frame (see below). */
   if ((uint32_t)(now - t832Diag.last_health_ms) >= T832_DIAG_HEALTH_MS) {
     healthDue = 1u;
-    t832Diag.last_health_schedule_count = t832Diag.mt_schedule_count;
-    t832Diag.last_health_ms = now;
   }
 
   if ((uint32_t)(now - t832Diag.last_resource_ms) >= T832_DIAG_RESOURCE_MS) {
     resourceDue = 1u;
-    t832Diag.last_resource_ms = now;
+  }
+
+  if (t832Diag.first_fault_valid &&
+      (t832Diag.first_fault_export_ms == 0u ||
+       (uint32_t)(now - t832Diag.first_fault_export_ms) >= T832_DIAG_RESOURCE_MS)) {
+    faultDue = 1u;
   }
 
   if ((uint32_t)(now - t832Diag.last_export_ms) < T832_DIAG_EXPORT_MIN_MS) return;
@@ -1240,34 +1353,8 @@ void T832Diag_exportPoll(void)
     return;
   }
 
-  /* Slot 0: sticky first-fault snapshot, independent of ring overwrites. */
-  if (t832Diag.first_fault_valid &&
-      (t832Diag.first_fault_export_ms == 0u ||
-       (uint32_t)(now - t832Diag.first_fault_export_ms) >= T832_DIAG_RESOURCE_MS)) {
-    batch[0] = t832Diag.first_fault;
-    batch[0].kind = T832_DIAG_EV_FIRST_FAULT;
-    batch[0].flags |= T832_DIAG_FLAG_SNAPSHOT;
-    staged[0] = 0u;
-    nbatch = 1u;
-    t832Diag.first_fault_export_ms = now;
-  }
-
-  if (healthDue && nbatch < T832_DIAG_BATCH_MAX) {
-    batch[nbatch] = T832Diag_liveHealth(now);
-    staged[nbatch] = 0u;
-    nbatch++;
-    if (nbatch < T832_DIAG_BATCH_MAX) {
-      batch[nbatch] = T832Diag_liveAfState(now);
-      staged[nbatch] = 0u;
-      nbatch++;
-    }
-    if (nbatch < T832_DIAG_BATCH_MAX) {
-      batch[nbatch] = T832Diag_liveTaskEvents(now);
-      staged[nbatch] = 0u;
-      nbatch++;
-    }
-  }
-
+  /* Resources first: rarest cadence (60 s) always fits here (nbatch == 0),
+   * so the 13 selectors rotate without starvation behind faults/health. */
   if (resourceDue) {
     uint8_t e;
     for (e = 0u; e < 2u && nbatch < T832_DIAG_BATCH_MAX; e++) {
@@ -1276,6 +1363,44 @@ void T832Diag_exportPoll(void)
       nbatch++;
       t832Diag.res_ext_idx = (uint8_t)((t832Diag.res_ext_idx + 1u) % 13u);
     }
+    resAccepted = 1u;
+  }
+
+  /* Sticky first-fault snapshot, independent of ring overwrites. The
+   * original event kind is preserved in flags bits 7..2 (compatible
+   * versioning: bit0 stays critical, bit1 stays snapshot). */
+  if (faultDue && nbatch < T832_DIAG_BATCH_MAX) {
+    uint8_t orig;
+    batch[nbatch] = t832Diag.first_fault;
+    orig = batch[nbatch].kind;
+    batch[nbatch].kind = T832_DIAG_EV_FIRST_FAULT;
+    batch[nbatch].flags |= (uint8_t)(T832_DIAG_FLAG_SNAPSHOT |
+                                     (uint8_t)(orig << 2));
+    staged[nbatch] = 0u;
+    nbatch++;
+    faultStaged = 1u;
+  }
+
+  /* Health triple in rotating order. A partial triple (no slots left) keeps
+   * its baseline: the remainder stages on the next poll instead of waiting
+   * a full interval. */
+  if (healthDue) {
+    while (nbatch < T832_DIAG_BATCH_MAX &&
+           t832Diag.health_done != 0x07u) {
+      if (t832Diag.health_rr == 0u) {
+        batch[nbatch] = T832Diag_liveHealth(
+            now, t832Diag.mt_schedule_count - t832Diag.last_health_schedule_count);
+      } else if (t832Diag.health_rr == 1u) {
+        batch[nbatch] = T832Diag_liveAfState(now);
+      } else {
+        batch[nbatch] = T832Diag_liveTaskEvents(now);
+      }
+      staged[nbatch] = 0u;
+      nbatch++;
+      t832Diag.health_done |= (uint8_t)(1u << t832Diag.health_rr);
+      t832Diag.health_rr = (uint8_t)((t832Diag.health_rr + 1u) % 3u);
+    }
+    if (t832Diag.health_done == 0x07u) healthComplete = 1u;
   }
 
   while (nbatch < T832_DIAG_BATCH_MAX) {
@@ -1332,13 +1457,29 @@ void T832Diag_exportPoll(void)
           ((uint8_t)MT_RPC_CMD_AREQ | (uint8_t)MT_RPC_SYS_DBG),
           MT_DEBUG_MSG, outLen, out);
       if (t832Diag.build_failed) {
-        /* MT refused the frame: nothing was queued; count the staged loss. */
+        /* MT refused the frame: nothing was queued; count the staged loss.
+         * Baselines stay put so every due record is rebuilt next poll; only
+         * the triple rotation restarts (live records duplicate, never lost). */
         t832Diag.diag_pending = 0u;
         t832Diag.export_lost += nbatch;
+        t832Diag.health_done = 0u;
+        t832Diag.res_ext_idx = res_idx_saved;
         T832Diag_record(T832_DIAG_EV_DIAG_LOSS, nbatch, 1u, outLen);
       } else {
         for (i = 0u; i < nbatch; i++) {
           if (staged[i]) T832Diag_popPeeked(staged[i], staged_seq[i]);
+        }
+        /* Baselines advance only for accepted work. */
+        if (resAccepted) {
+          t832Diag.last_resource_ms = now;
+        }
+        if (healthComplete) {
+          t832Diag.last_health_ms = now;
+          t832Diag.last_health_schedule_count = t832Diag.mt_schedule_count;
+          t832Diag.health_done = 0u;
+        }
+        if (faultStaged) {
+          t832Diag.first_fault_export_ms = now;
         }
       }
       t832Diag.staged_count = 0u;

@@ -852,6 +852,7 @@ class ProtocolEdgeTests(unittest.TestCase):
             (30, "TX_MISMATCH"), (31, "SYNC_ABANDON"), (32, "AF_REJECT"),
             (33, "AF_ANOMALY"), (34, "DIAG_LOSS"), (35, "NPI_TRAP"),
             (36, "NPI_ALLOC_FAIL"), (37, "BOOT_CAPTURE_INVALID"),
+            (38, "TIMING_APPROX"),
         ):
             frame, records = incident.decode_frame_payload(
                 "T832D2:" + packet_v2_hex(records=[(kind, 1, 2, 3)])

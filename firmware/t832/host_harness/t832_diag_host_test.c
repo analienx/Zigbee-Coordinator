@@ -529,9 +529,16 @@ static void test_task_events(void)
   T832Diag_taskScheduled(9u, 0x0008u);
   T832Diag_taskScheduled(9u, 0x0010u);
   T832Diag_taskWork(T832_DIAG_WORK_MT, SYS_EVENT_MSG);
+  {
+    /* No genuine ZStack-task observation yet: age renders unknown, not zero. */
+    T832DiagRecord res12 = T832Diag_liveResource(12u, (uint32_t)T832Diag_nowMs());
+    CHECK(res12.b == 0xFFFFu);
+    CHECK(t832Diag.zstack_work_valid == 0u);
+  }
   T832Diag_taskWork(T832_DIAG_WORK_ZSTACK, SYS_EVENT_MSG);
   T832Diag_npiTaskWake();
   CHECK(t832Diag.zstack_work_ms != 0u);
+  CHECK(t832Diag.zstack_work_valid == 1u);
   CHECK(t832Diag.npi_task_ms != 0u);
   advance_ms(10000u);
   T832Diag_exportPoll();
@@ -769,8 +776,8 @@ static void test_heap_resource(void)
   int ticks;
   fresh(9u);
   emit_one();
-  /* One resource slot per export while the 10 s health triple is due, so a
-   * full 13-slot rotation needs 13 exports; run 14 for margin. */
+  /* Two resource slots per export (resources go first); a full 13-slot
+   * rotation needs 7 resource-due exports; run 14 for margin. */
   for (ticks = 0; ticks < 14; ticks++) {
     advance_ms(60000u);
     T832Diag_exportPoll();
@@ -1120,6 +1127,246 @@ static void test_sreq_generations(void)
   (void)r;
 }
 
+/* A05/S05: fifteen simulated minutes of one-second polls with a sticky
+ * fault, scheduling pressure, busy transports, a sync stall and MT build
+ * refusals. Asserts true schedule deltas, all 13 resource selectors within a
+ * bounded export gap, retained overdue work, first-fault repeats with
+ * original identity, bounded ring draining and exact wire budgets. */
+static void test_fair_schedule_15min(void)
+{
+  uint32_t t;
+  uint32_t scanned = 0u;
+  uint32_t exports = 0u;
+  uint32_t last_export_t = 0u;
+  uint32_t health_nonzero = 0u;
+  uint32_t fault_repeats = 0u;
+  uint32_t fault_orig_ok = 0u;
+  uint32_t sel_seen[13] = {0};
+  uint32_t sel_last[13];
+  uint32_t sel_maxgap[13] = {0};
+  uint32_t s;
+  uint8_t srsp[1] = {0};
+  DecFrame f;
+  int k;
+  for (s = 0u; s < 13u; s++) sel_last[s] = 0xFFFFFFFFu;
+  fresh(9u);
+  emit_one();
+  exports = host_frame_count;
+  last_export_t = 0u;
+  /* Sticky fault: response-alloc failure is critical, no transport involved. */
+  T832Diag_responseAllocFailed(0x21u, 0x01u, 9u);
+  for (t = 1u; t <= 900u; t++) {
+    advance_ms(1000u);
+    if (t % 3u == 0u) T832Diag_taskScheduled(9u, 0x0040u);
+    if (t >= 200u && t < 260u) t832Diag.transport_active = 1u;
+    else if (t == 260u) t832Diag.transport_active = 0u;
+    if (t == 500u) T832Diag_commandRx(0x21u, 0x09u);
+    if (t == 560u) {
+      T832Diag_responseQueued(0x61u, 0x09u, 1u, srsp);
+      wire_dequeue_finish(0xFEu, 0x61u, 0x09u, 1u);
+    }
+    if (t == 420u || t == 840u) host_fail_alloc = 1u;
+    T832Diag_exportPoll();
+    if (t832Diag.diag_pending) wire_complete_diag(host_frame_count - 1u);
+    while (scanned < host_frame_count) {
+      uint32_t gap;
+      CHECK(decode_frame(scanned, &f) > 0);
+      CHECK(f.nrec <= 4u);
+      CHECK(host_frame_len[scanned] <= 234u);
+      exports++;
+      gap = t - last_export_t;
+      if (scanned > 0u) CHECK(gap >= 5u);
+      last_export_t = t;
+      for (k = 0; k < (int)f.nrec; k++) {
+        if (f.rec[k].kind == T832_DIAG_EV_HEALTH) {
+          if (f.rec[k].a != 0u) health_nonzero++;
+        } else if (f.rec[k].kind == T832_DIAG_EV_RESOURCE) {
+          uint8_t sel = (uint8_t)f.rec[k].a;
+          CHECK(sel >= 1u && sel <= 13u);
+          sel_seen[sel - 1u]++;
+          if (sel_last[sel - 1u] != 0xFFFFFFFFu) {
+            uint32_t g = exports - sel_last[sel - 1u];
+            if (g > sel_maxgap[sel - 1u]) sel_maxgap[sel - 1u] = g;
+          }
+          sel_last[sel - 1u] = exports;
+        } else if (f.rec[k].kind == T832_DIAG_EV_FIRST_FAULT) {
+          fault_repeats++;
+          if ((f.rec[k].flags & 2u) &&
+              (uint8_t)(f.rec[k].flags >> 2) == T832_DIAG_EV_RESPONSE_ALLOC_FAIL &&
+              f.rec[k].a == 0x21u) {
+            fault_orig_ok = 1u;
+          }
+        }
+      }
+      scanned++;
+    }
+  }
+  CHECK(health_nonzero > 0u);
+  CHECK(fault_repeats >= 5u);
+  CHECK(fault_orig_ok == 1u);
+  CHECK(t832Diag.export_skipped > 0u);
+  for (s = 0u; s < 13u; s++) {
+    CHECK(sel_seen[s] >= 2u);
+    /* Bounded revisit: a full 13-selector rotation is 7 resource-due
+     * cycles (~7 min) plus stall windows; 100 exports (~8.3 min) bounds it. */
+    CHECK(sel_maxgap[s] <= 100u);
+  }
+  drain_all();
+  CHECK(t832Diag.critical_count <= 64u);
+  CHECK(t832Diag.routine_count <= 64u);
+  CHECK(host_cs_depth == 0);
+}
+
+/* A06/S06: main() order — NV init, fault and recovery hooks run before MT
+ * init; every early event and the first-fault identity survive with an
+ * honest approximate-timing marker. */
+static void test_early_nv_preserved(void)
+{
+  DecRec r;
+  DecFrame f;
+  uint32_t i;
+  int k;
+  int seen_nv_init = 0;
+  int seen_nv_start = 0;
+  int seen_nv_fault = 0;
+  int seen_approx = 0;
+  int seen_orig = 0;
+  host_tick = 0u;
+  host_cs_depth = 0;
+  host_cs_max_depth = 0;
+  host_fail_alloc = 0;
+  host_frame_count = 0u;
+  host_heap_total = 6144u;
+  host_heap_free = 4096u;
+  host_heap_largest = 2048u;
+  t832DiagResetCauseMagic = (uint32_t)T832_DIAG_BOOT_MAGIC;
+  t832DiagResetCauseEarly = 0x61u;
+  memset(&t832Diag, 0, sizeof(t832Diag));
+  T832Diag_nvInit(0u);
+  T832Diag_nvEvent(1u, 7u, 0u);
+  T832Diag_nvEvent(3u, 7u, 0u);
+  CHECK(t832Diag.initialized == 0u);
+  T832Diag_init(9u);
+  CHECK(t832Diag.initialized == 1u);
+  advance_ms(6000u);
+  T832Diag_exportPoll();
+  wire_complete_diag(host_frame_count - 1u);
+  drain_all();
+  for (i = 0u; i < host_frame_count; i++) {
+    if (decode_frame(i, &f) <= 0) continue;
+    for (k = 0; k < (int)f.nrec; k++) {
+      if (f.rec[k].kind == T832_DIAG_EV_NV_EVENT && f.rec[k].a == 5u) {
+        seen_nv_init = 1;
+      }
+      if (f.rec[k].kind == T832_DIAG_EV_NV_EVENT && f.rec[k].a == 1u &&
+          f.rec[k].b == 7u) {
+        seen_nv_start = 1;
+      }
+      if (f.rec[k].kind == T832_DIAG_EV_NV_FAULT) {
+        seen_nv_fault = 1;
+      }
+      if (f.rec[k].kind == T832_DIAG_EV_TIMING_APPROX && f.rec[k].a == 3u) {
+        seen_approx = 1;
+      }
+      if (f.rec[k].kind == T832_DIAG_EV_FIRST_FAULT &&
+          (uint8_t)(f.rec[k].flags >> 2) == T832_DIAG_EV_NV_FAULT) {
+        seen_orig = 1;
+      }
+    }
+  }
+  CHECK(seen_nv_init == 1);
+  CHECK(seen_nv_start == 1);
+  CHECK(seen_nv_fault == 1);
+  CHECK(seen_approx == 1);
+  CHECK(seen_orig == 1);
+  CHECK(find_kind(T832_DIAG_EV_BOOT, &r));
+  (void)r;
+}
+
+/* Queue one accepted AF SRSP and run it through the real wire path so TX
+ * ownership never accumulates inside AF-table tests. */
+static void queue_srps_ok_finish(void)
+{
+  uint8_t srsp_ok[1] = {0};
+  T832Diag_responseQueued(0x64u, 0x01u, 1u, srsp_ok);
+  wire_dequeue_finish(0xFEu, 0x64u, 0x01u, 1u);
+}
+
+/* A07/S07: duplicate keys supersede in place (no phantom), failed confirms
+ * keep raw status as rejects, oldest age recomputes from survivors,
+ * wrap-safe eviction drops the largest age, AREQ work tracks unconfirmed. */
+static void test_af_correlation(void)
+{
+  uint8_t req[13] = {10, 0x24, 0x01, 0x34, 0x12, 3, 5, 6, 7, 0x33, 0x30, 0x1E, 0};
+  uint8_t areq[10] = {7, 0x44, 0x01, 0x34, 0x12, 3, 9, 6, 7, 0x44};
+  uint8_t k;
+  DecRec r;
+  fresh(9u);
+  emit_one();
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  CHECK(t832Diag.af_outstanding == 1u);
+  CHECK(t832Diag.af_unconfirmed_n == 0u);
+  CHECK(t832Diag.af_accepted_n == 1u);
+  T832Diag_afConfirm(5u, 5u, 0x33u);
+  CHECK(t832Diag.af_outstanding == 0u);
+  CHECK(t832Diag.af_confirmed_n == 0u);
+  CHECK(t832Diag.af_rejected_n == 1u);
+  T832Diag_afDispatch(0x44u, 0x01u, areq, 10u);
+  CHECK(t832Diag.af_unconfirmed_n == 1u);
+  CHECK(t832Diag.af_areq_n == 1u);
+  T832Diag_afConfirm(0u, 9u, 0x44u);
+  CHECK(t832Diag.af_unconfirmed_n == 0u);
+  CHECK(t832Diag.af_confirmed_n == 1u);
+  /* Oldest recompute: remove A, age must track surviving B (30, not 80). */
+  advance_ms(100u);
+  req[5] = 6u; req[9] = 0x34u;
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  advance_ms(50u);
+  req[5] = 7u; req[9] = 0x35u;
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  advance_ms(30u);
+  T832Diag_afConfirm(0u, 6u, 0x34u);
+  CHECK(t832Diag.af_outstanding == 1u);
+  {
+    T832DiagRecord st = T832Diag_liveAfState((uint32_t)T832Diag_nowMs());
+    CHECK(st.b == 30u);
+  }
+  T832Diag_afConfirm(0u, 7u, 0x35u);
+  CHECK(t832Diag.af_outstanding == 0u);
+  /* Wrap-safe eviction across a tick wrap: drop largest age, keep newest. */
+  host_tick = 0xFFFFFF00u;
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  advance_ms(2000u);
+  for (k = 0u; k < 7u; k++) {
+    req[5] = (uint8_t)(0x50u + k);
+    req[9] = (uint8_t)(0x60u + k);
+    T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+    queue_srps_ok_finish();
+  }
+  CHECK(t832Diag.af_outstanding == 8u);
+  req[5] = 0x58u; req[9] = 0x68u;
+  T832Diag_afDispatch(0x24u, 0x01u, req, 13u);
+  queue_srps_ok_finish();
+  CHECK(t832Diag.af_outstanding == 8u);
+  /* Victim was the pre-wrap oldest by age (ep 7/trans 0x35): confirming it
+   * is now an orphan, while the post-wrap entries still correlate. */
+  T832Diag_afConfirm(0u, 7u, 0x35u);
+  CHECK(t832Diag.af_outstanding == 8u);
+  T832Diag_afConfirm(0u, 0x50u, 0x60u);
+  CHECK(t832Diag.af_outstanding == 7u);
+  drain_all();
+  CHECK(find_kind_ab(T832_DIAG_EV_AF_REJECT, 5u, 0x33u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_AF_ANOMALY, 1u, 7u, &r));
+  CHECK(find_kind_ab(T832_DIAG_EV_AF_ANOMALY, 4u, 7u, &r));
+  (void)r;
+}
+
 int main(int argc, char **argv)
 {
   if (argc == 3 && strcmp(argv[1], "dump") == 0) {
@@ -1149,6 +1396,9 @@ int main(int argc, char **argv)
   test_write_reject();
   test_staged_retire_identity();
   test_sreq_generations();
+  test_fair_schedule_15min();
+  test_early_nv_preserved();
+  test_af_correlation();
   test_tick_wrap();
   test_heap_resource();
   test_frame_budget();

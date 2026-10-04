@@ -23,9 +23,9 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
 - Fixtures: `test_tx_refused_stages` (all 6 TX stages + unowned),
   `test_npi_paths` (RX site-2 neutrality, TX site-1 orphan) — host harness on
   the real `.inc` with controlled allocator/transport stubs
-- Final SHA / run / jobs / results: pending (M1 push awaited)
-- Raw evidence: pending
-- Implemented / tested / independently verified: yes / pending-hosted / no
+- Final SHA / run / jobs / results: run 37190162983 at 374d011 (all 4 jobs success)
+- Raw evidence: hosted run logs + artifacts at run 37190162983
+- Implemented / tested / independently verified: yes / yes-hosted / no
 - Hardware-only: real allocator exhaustion on target (harness injects refusals
   through identical hook call order).
 
@@ -40,8 +40,8 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
 - Fixtures: `test_fifo_overflow_converges` (9 frames, duplicates, resume),
   `test_mismatch_retire` (deeper match + unknown), `test_write_reject`
   (rejection vs completion, stray finish)
-- Final SHA / run / jobs / results: pending (M1 push awaited)
-- Implemented / tested / independently verified: yes / pending-hosted / no.
+- Final SHA / run / jobs / results: run 37190162983 at 374d011 (all 4 jobs success)
+- Implemented / tested / independently verified: yes / yes-hosted / no.
 
 ## A03 / S03 — atomic ownership/staging, identity-aware retirement
 
@@ -53,8 +53,8 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   reject/AF table; identity-aware `popPeeked(sel, seq)`)
 - Fixtures: `test_staged_retire_identity` (overwrite-then-retire reports loss,
   newest intact, positive control retires); CS depth bound (<=4) in M1 tests
-- Final SHA / run / jobs / results: pending (M1 push awaited)
-- Implemented / tested / independently verified: yes / pending-hosted / no.
+- Final SHA / run / jobs / results: run 37190162983 at 374d011 (all 4 jobs success)
+- Implemented / tested / independently verified: yes / yes-hosted / no.
 
 ## A04 / S04 — SREQ generations, no stale SRSP clear
 
@@ -64,8 +64,8 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
 - Sources: same `.inc` (`sync_gen`/`sync_seq`, SRSP gen stamping, gen-gated
   clear, stale-completion event, error-SRSP terminal)
 - Fixtures: `test_sreq_generations` (overtake, repetition, error SRSP)
-- Final SHA / run / jobs / results: pending (M1 push awaited)
-- Implemented / tested / independently verified: yes / pending-hosted / no.
+- Final SHA / run / jobs / results: run 37190162983 at 374d011 (all 4 jobs success)
+- Implemented / tested / independently verified: yes / yes-hosted / no.
 
 ## A05 / S05 — fair exports, true deltas, genuine progress ages
 
@@ -74,21 +74,36 @@ R04/R05/R08/R09/R12/R14/R15/R16; S01–S16 below are the binding defects.
   selectors within documented bounded max age; retained overdue work;
   first-fault repeat availability; bounded ring draining; exact wire budgets
   (1 frame / >=5 s, <=240 B payload, <=4 records); observed emitted bytes.
-- Sources / fixtures / evidence: pending.
+- Sources: `.inc` exportPoll (accept-gated baselines, resources-first, health
+  rotation, TXQ backpressure), orig-kind flags, zstack-valid unknown ages
+- Fixtures: `test_fair_schedule_15min` (900 one-second polls; selector revisit
+  bound 100 exports; min frame gap 5 s; payload <=234 B; <=4 records/frame)
+- Final SHA / run / jobs / results: pending (M2 push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A06 / S06 — early NV records survive MT init
 
 - Required: main-order fixture runs actual NV init/failure/recovery hooks before
   actual MT init, then exports; each early event and first-fault identity
   survives with truthful timing; linked main reset-capture proof retained.
-- Sources / fixtures / evidence: pending.
+- Sources: `.inc` ensureEarly/init-absorb/TIMING_APPROX; linked main reset
+  capture unchanged (prior CI gate)
+- Fixtures: `test_early_nv_preserved` (pre-init NV init/start/fault, then
+  init, export; TIMING_APPROX count; FIRST_FAULT orig kind)
+- Final SHA / run / jobs / results: pending (M2 push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A07 / S07 — accurate bounded AF correlation
 
 - Required: actual AF request/SRSP/confirm paths for duplicate keys,
   oldest-first removal, nonzero confirm status, rejected/dropped SRSP, AREQ and
   timestamp wrap; exported state and raw statuses inspected.
-- Sources / fixtures / evidence: pending.
+- Sources: `.inc` afInsert (supersede, wrap-safe evict, origin counters),
+  afRemove (oldest recompute), afConfirm (failed confirm is a reject)
+- Fixtures: `test_af_correlation` (dup, nonzero confirm, AREQ, recompute age,
+  tick-wrap eviction of largest age)
+- Final SHA / run / jobs / results: pending (M2 push awaited)
+- Implemented / tested / independently verified: yes / pending-hosted / no.
 
 ## A08 / S08 — bounded collection, no lost unread data
 

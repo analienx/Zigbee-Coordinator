@@ -71,8 +71,12 @@ enum {
   T832_DIAG_EV_DIAG_LOSS,
   T832_DIAG_EV_NPI_TRAP,
   T832_DIAG_EV_NPI_ALLOC_FAIL,
-  T832_DIAG_EV_BOOT_CAPTURE_INVALID
+  T832_DIAG_EV_BOOT_CAPTURE_INVALID,
+  T832_DIAG_EV_TIMING_APPROX
 };
+
+_Static_assert(T832_DIAG_EV_TIMING_APPROX <= 63u,
+               "first-fault original-kind tag needs 6 flag bits");
 
 /* Snapshot re-emit marker in record flags (bit 1); bit 0 stays critical. */
 #define T832_DIAG_FLAG_SNAPSHOT 0x02u
