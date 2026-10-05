@@ -32,7 +32,7 @@ a missing USB device is a different failure class. Ethernet is not required.
 - Preflight the official [smlight-cc-flasher command implementation](https://github.com/smlight-tech/smlight-cc-flasher/blob/main/smlight_cc_flasher/command.py), pinned to the reviewed version/source. The incident used **0.1.7**, installed into an isolated executable `/config/.smlight-recovery` target, without changing HA Core global dependencies. `/tmp` failed its native `gpiod` import. Validate native imports before any reset, and again after a Core image upgrade; never install packages on the outage path.
 - Hold one recovery lock throughout both tiers. Stop/verify the application owner; close the normal-ZNP descriptor before opening the same verified **P10 if02** at **500000 baud**, with exclusive serial access. Recheck USB device/chipset label and preserved backup hash at the transition. Do not target if00 or silently switch interfaces.
 - Persist and fsync the failed RTS result and `bsl_pending` before bootloader entry. Call `Bootloader(port, ci.transport).invoke_bootloader()` in default **generic** mode (DTR bootloader, RTS reset), once. Do not use generic2, the flashing CLI or full `Flasher.connect/flash` paths.
-- Call only `cmdPing()`, `cmdGetChipId()`, `cmdReset()`. Require successful ping and reset ACK, and a valid chip-ID response. The vendor library implicitly issues **GET_STATUS** for ping/chip-ID verification: include that read-only command in the writer allowlist. Permit only PING `0x20`, GET_STATUS `0x23`, GET_CHIP_ID `0x28`, RESET `0x25` with no arguments. Reject erase, download, memory/CCFG writes before transport output. A ROM chip ID alone does not establish P10: retain the independently verified USB/chipset identity, and do not confuse an ICEPICK wafer ID with ROM GET_CHIP_ID.
+- Require ROM autobaud SYNCH (`55 55`) ACK before `cmdPing()`, `cmdGetChipId()`, `cmdReset()`. Require successful ping and reset ACK, and a valid chip-ID response. The vendor library implicitly issues **GET_STATUS** for ping/chip-ID verification: include that read-only command in the writer allowlist. Permit only SYNCH `0x55`, PING `0x20`, GET_STATUS `0x23`, GET_CHIP_ID `0x28`, RESET `0x25` with no arguments. Reject erase, download, memory/CCFG writes before transport output. A ROM chip ID alone does not establish P10: retain the independently verified USB/chipset identity, and do not confuse an ICEPICK wafer ID with ROM GET_CHIP_ID.
 - Bound the BSL operation and cleanup, deassert DTR/RTS and close on errors. Reopen at normal **115200 baud**, independently require three valid SYS pings/version and the full read-only NV gate before starting Z2M. A wrapper exit code or ROM reset ACK alone is insufficient.
 - Persist phase/result JSON and use nonzero process exit on failure. Keep within the host shell-command budget (the HA implementation uses 12 seconds for BSL, 55 seconds for the episode). Any interrupted/failed tier blocks automatic retries across reboot. Do not reinterpret an already latched older episode as permission to rerun; separate manual recovery needs explicit review and preserved evidence.
 - Release the active latch only after normal SYS/NV plus the fresh correlated ZDO closed-join test all pass. Archive previous failed evidence rather than deleting it. Preserve the configured TX setting.
@@ -52,3 +52,31 @@ it does not identify or fix the firmware hang's root cause. Do not reset a healt
 network solely to demonstrate the new automated escalation branch.
 
 The HA implementation and deployment evidence live in the private Home Assistant stack's `docs/P10_USB_RECOVERY_AUTOMATION.md`. Keep household paths and identifiers in that private implementation; this reference defines the portable gate contract.
+
+## Later failure limits — 2026-10-05
+
+A later runtime hang occurred without HA shutdown. The automation did trigger,
+but ROM PING received no ACK and the durable latch blocked subsequent polls.
+Reviewed changes added explicit autobaud **SYNCH `0x55` (`55 55`) before PING**
+and a settled generic DTR/RTS sequence (initial lines inactive, 100 ms reset hold).
+Neither obtained a ROM SYNC ACK in that incident. One exact-device USB bridge
+reset also failed normal SYS acceptance. Preserve these negative results:
+yesterday's manual success does not prove reliable bootloader entry for every
+hang, and sending USB control changes is not proof of a physical P10 reset.
+
+Include SYNCH alongside PING/GET_STATUS/GET_CHIP_ID/RESET in the narrow allowlist.
+The vendor `sendSynch` implementation calls `transport.flush`, absent on ordinary
+pyserial-asyncio 0.6: use its existing SYNCH encoder/ACK path with awaited writes,
+not an unreviewed replacement flasher. Python's asserted initial serial lines
+differ from WebSerial's inactive initial state; normalize/pace the same reviewed
+generic mapping rather than trying unrelated polarities or another radio.
+
+Require an ACK at every stage and record the precise failed phase. Unit tests
+cannot establish electrical reset efficacy. If SYS and ROM SYNC both fail,
+stop USB retries and obtain current management access for one separately reviewed
+vendor P10 reset/BSL command after model/radio-index verification. A management
+mode change may itself reset the device; record the confounder. Keep existing
+network state and never flash/replay NV to fix this unproven transport fault.
+Operator review of a failed attempt must be exact, one-use and archived; it must
+not turn failed/pending latches into automatic retry permission. HA notifications
+should persist the failed protocol phase even if a mobile alert is missed.
