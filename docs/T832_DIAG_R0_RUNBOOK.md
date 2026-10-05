@@ -2,7 +2,11 @@
 
 For current firmware capability, fatal SWD capture, independent bridge/startup
 evidence, identity and hardware gates, read [R5 closure](T832_DIAG_R0_R5.md)
-first. The existing incident/recovery ordering below remains applicable.
+first, then the [P10 deployment gates](T832_P10_DEPLOYMENT_GATES.md) for
+FLASH-READY, POST-FLASH SMOKE and PRODUCTION-SOAK-READY. Only CC2674P10 is
+uploaded; ESP32/SLZB-OS and EFR32MG26/Ember remain unchanged. The exact validated
+R5 image is pinned in that addendum. The existing incident/recovery ordering
+below remains applicable after separately reviewed installation.
 
 This repository authors the integration but never executes it on hardware and never edits live Home Assistant. All commands below run on the HA host/operator side against already-written logs. The collector never opens the coordinator serial device.
 
