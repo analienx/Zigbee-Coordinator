@@ -19,6 +19,10 @@ def row(kind,address,data):
     return ':'+(raw+bytes([-sum(raw)&255])).hex()+'\n'
 
 class Tests(unittest.TestCase):
+    def test_capture_service_gate_accepts_terminated_error_but_never_active_or_watchdog(self):
+        for state in ('stopped','error'): c.quiescent({'state':state,'watchdog':False})
+        for info in ({'state':'started','watchdog':False},{'state':'error','watchdog':True},{'state':'unknown','watchdog':False}):
+            with self.assertRaises(ValueError):c.quiescent(info)
     def frame(self,payload,command=b'\x4f\x80'):
         raw=bytes([len(payload)])+command+payload
         check=0

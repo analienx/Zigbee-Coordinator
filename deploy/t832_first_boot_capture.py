@@ -68,6 +68,14 @@ def private_file(root,name):
     return os.fdopen(os.open(root/name,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'wb')
 
 
+def quiescent(info):
+    # Supervisor reports error after Docker's bounded SIGTERM/SIGKILL stop.
+    # This is only a service gate; the mandatory owner scan and TIOCEXCL
+    # below still independently prevent capture while anyone owns the UART.
+    if info['state'] not in ('stopped','error') or info.get('watchdog'):
+        raise ValueError('Z2M must be inactive without watchdog')
+
+
 def capture(args):
     if not args.after_management_release:
         raise ValueError('explicit management release confirmation required')
@@ -91,7 +99,7 @@ def capture(args):
     gate=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
     info = gate.supervisor_info()
-    if info['state'] != 'stopped' or info.get('watchdog'): raise ValueError('Z2M must be stopped without watchdog')
+    quiescent(info)
     gate.configuration_gate(info)
     identity = gate.endpoint_identity()
     device = Path(PORT).resolve(strict=True)
