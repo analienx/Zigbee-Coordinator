@@ -200,6 +200,18 @@ from infra failures, through actual external paths.
   `bus_mark` save/restore in `deliver_catchers`, rts==0 fail-closed
   assertions, phase-shifted late leg (150/450/750, gaps 300, close 750
   inside grace — consistent with the R4F03 phase matrix).
+- CI#2 run 37280268910 on a584006: negative-control SUCCESS again;
+  firmware/interop/host/control FAILED with 6 harness CHECKs, all one
+  chain: (i) stale R3 B01 assertion (`pending==0` after unowned
+  alloc-failure; R4 keeps the unit); (ii) REAL bug: descriptor
+  generation 8 collides with the `T832_DIAG_TXQ_DEPTH` stash sentinel,
+  so every 8th push after a reset (and each queue_gen wrap onto 8)
+  made the owned refusal skip — txq/pending stuck, export's
+  nonzero-pending early-return stalled, downstream emit/drain/mismatch
+  checks cascaded. Repair round 3: generation 8 is never assigned
+  (skip in txPushLocked); B01 test updated to R4 semantics. The k=7
+  loop iteration in `test_f01_owned_refusals_drain_and_export` is the
+  pinned regression for the collision.
 
 ## Next action
 

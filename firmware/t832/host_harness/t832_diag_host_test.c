@@ -715,8 +715,9 @@ static void test_npi_paths(void)
   CHECK(t832Diag.normal_pending == 1u);
   wire_dequeue_finish(0xFEu, 0x42u, 0x03u, 4u);
   CHECK(t832Diag.normal_pending == 0u);
-  /* B01: an NPI TX-side drop retires nothing by header match. The owned
-   * entry survives (one pending unit released with the known-dead message),
+  /* B01 as refined by R4-F01: an NPI TX-side drop retires nothing by
+   * header match — the owned entry survives with descriptor AND pending
+   * unit intact (the frame was never queue-hooked, so nothing is spent),
    * the outcome counts uncertain, and the survivor completes exactly. */
   T832Diag_responseQueued(0x41u, 0x04u, 2u, payload);
   CHECK(t832Diag.normal_pending == 1u);
@@ -724,7 +725,7 @@ static void test_npi_paths(void)
     uint32_t uncertain_before = t832Diag.tx_uncertain_n;
     uint32_t orphan_before = t832Diag.tx_orphan_n;
     T832Diag_npiAllocFailed(1u, 12u, 0x41u, 0x04u, 2u);
-    CHECK(t832Diag.normal_pending == 0u);
+    CHECK(t832Diag.normal_pending == 1u);
     CHECK(t832Diag.txq_count == 1u);
     CHECK(t832Diag.tx_uncertain_n == uncertain_before + 1u);
     CHECK(t832Diag.tx_orphan_n == orphan_before);

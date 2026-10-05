@@ -663,6 +663,14 @@ static uint16_t T832Diag_txPushLocked(uint8_t cls, uint8_t cmd0, uint8_t cmd1,
   t832Diag.txq[slot].cmd1 = cmd1;
   t832Diag.txq[slot].len = len;
   t832Diag.txq[slot].gen = ++t832Diag.queue_gen;
+  /* R4-F01: the owned-refusal stash uses T832_DIAG_TXQ_DEPTH as its empty
+   * sentinel, so no live descriptor may ever carry that generation —
+   * otherwise the matching owned refusal would mistake it for "no push"
+   * and retire nothing (this bit every 8th push after a reset, and again
+   * each time queue_gen wraps onto it). */
+  if (t832Diag.txq[slot].gen == T832_DIAG_TXQ_DEPTH) {
+    t832Diag.txq[slot].gen = ++t832Diag.queue_gen;
+  }
   return slot;
 }
 
