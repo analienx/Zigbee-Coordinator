@@ -152,6 +152,7 @@ void T832Diag_uartTxStart(uint16_t len);
 void T832Diag_uartWriteRejected(uint16_t len, int16_t status);
 void T832Diag_uartTxFinished(uint16_t len);
 void T832Diag_uartEvent(uint8_t event, uint16_t size, int16_t status);
+void T832Diag_uartError(uint32_t events);
 void T832Diag_registerTask(uint8_t which, uintptr_t handle);
 void T832Diag_sampleNwk(void);
 void T832Diag_nwkPressure(uint8_t selector, uint16_t current, uint16_t limit);

@@ -35,6 +35,17 @@ int main(void)
     T832Diag_uartTxFinished(5u);
     CHECK(t832R5.stage == 10u);
     CHECK(t832R5.stage_seen == 0x3FFu);
+    /* Completion before UART2_write returns must retain accepted identity. */
+    T832Diag_commandRx(0x21u, 2u);
+    T832Diag_commandDispatch(0x21u, 2u);
+    T832Diag_responseQueued(0x61u, 2u, 0u, NULL);
+    T832Diag_commandEnd();
+    T832Diag_npiTxDequeue(0xFEu, 0x61u, 2u, 0u);
+    T832Diag_uartTxStart(5u);
+    T832Diag_uartTxFinished(5u);
+    T832Diag_uartEvent(1u, 5u, 0);
+    CHECK((t832R5.stage_seen & (1u << 6)) != 0u);
+    CHECK(t832R5.uart_accepted == 0u);
     /* Repeated command, late old completion cannot advance the new one. */
     T832Diag_commandRx(0x21u, 2u);
     T832Diag_commandDispatch(0x21u, 2u);

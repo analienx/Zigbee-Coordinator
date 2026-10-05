@@ -3,17 +3,18 @@
  * 65535 ms. SWD retains full ages. No history accumulates during a stall. */
 #define T832_R5_VALUES 13u
 #define T832_R5_NWK 17u
-#define T832_R5_EXPORTS (T832_R5_VALUES + 12u + 8u + T832_R5_NWK + 4u)
+#define T832_R5_EXPORTS (T832_R5_VALUES + 12u + 11u + T832_R5_NWK + 4u)
 typedef struct {
     uint32_t sampled_ms, blocked_since, blocked_mask, blocked_sticky;
     uint32_t current[T832_R5_VALUES], maximum[T832_R5_VALUES];
     uint32_t rx_ms, stage_ms, stage_max[10], stage_seen;
     uint32_t uart_count[6], uart_last[6], accepted_ms, accepted_age_max;
+    uint32_t rx_callback_bytes, uart_error_count, uart_error_ms, uart_error_mask;
     uint32_t nwk_ms, task_ms;
     uintptr_t task_handle[2];
     uint16_t nwk[T832_R5_NWK], nwk_max[T832_R5_NWK], nwk_limit[T832_R5_NWK];
     uint16_t task_used[2], task_size[2], task_mode[2];
-    uint16_t generation, command, dispatch_gen;
+    uint16_t generation, command, dispatch_gen, uart_generation;
     int16_t rx_status, write_status;
     uint8_t stage, uart_accepted, resource_cursor, boot_seen, rpc_ok;
 } T832R5State;
@@ -154,12 +155,16 @@ static void T832Diag_pipelineReturn(uint8_t cmd0, uint8_t cmd1, uint8_t status)
     }
 }
 
-static uint16_t T832Diag_pipelineResponse(uint8_t cmd0, uint8_t cmd1)
+static uint16_t T832Diag_pipelineResponse(uint8_t cmd0, uint8_t cmd1,
+                                         uint8_t len, const uint8_t *payload)
 {
     uint16_t gen = 0u;
     /* Normalize SRSP type to SREQ while retaining subsystem and command. */
     if ((((uint16_t)((cmd0 & MT_RPC_SUBSYSTEM_MASK) | MT_RPC_CMD_SREQ) << 8) | cmd1)
         == t832R5.command) gen = t832R5.dispatch_gen;
+    if ((cmd0 & MT_RPC_SUBSYSTEM_MASK) == 0u && cmd1 == 0u && len >= 3u && payload &&
+        (((uint16_t)payload[1] << 8) | payload[2]) == t832R5.command)
+        gen = t832R5.dispatch_gen;
     T832Diag_pipelineStage(4u, gen);
     return gen;
 }
@@ -207,7 +212,9 @@ void T832Diag_uartEvent(uint8_t event, uint16_t size, int16_t status)
         t832R5.uart_accepted = t832Diag.transport_active;
         t832R5.accepted_ms = t832Diag.tx_start_ms;
         t832R5.write_status = status;
-        T832Diag_pipelineInflight(7u);
+        /* The in-flight slot may already have been retired by a synchronous
+         * TX_FINISHED callback. Use the identity captured before write. */
+        T832Diag_pipelineStage(7u, t832R5.uart_generation);
     } else if (event == 2u) {
         t832R5.write_status = status;
         T832Diag_pipelineInflight(8u);
@@ -221,8 +228,16 @@ void T832Diag_uartEvent(uint8_t event, uint16_t size, int16_t status)
         else t832R5.write_status = status;
     } else {
         t832R5.rx_status = status;
+        if (t832R5.rx_callback_bytes <= 0xFFFFFFFFu - size) t832R5.rx_callback_bytes += size;
+        else t832R5.rx_callback_bytes = 0xFFFFFFFFu;
     }
-    (void)size; /* accepted bytes are counted ONLY after readIsrBuf copy */
+}
+
+void T832Diag_uartError(uint32_t events)
+{
+    t832R5.uart_error_mask |= events & 0x0Fu;
+    if (t832R5.uart_error_count != 0xFFFFFFFFu) t832R5.uart_error_count++;
+    t832R5.uart_error_ms = (uint32_t)T832Diag_nowMs();
 }
 
 void T832Diag_registerTask(uint8_t which, uintptr_t handle)
@@ -282,6 +297,8 @@ static void T832Diag_sampleR5(uint32_t now)
         if (t832R5.current[i] != 0xFFFFFFFFu && t832R5.current[i] > t832R5.maximum[i])
             t832R5.maximum[i] = t832R5.current[i];
     }
+    if (t832Diag.normal_pending_max > t832R5.maximum[2]) t832R5.maximum[2] = t832Diag.normal_pending_max;
+    if (t832Diag.af_outstanding_max > t832R5.maximum[9]) t832R5.maximum[9] = t832Diag.af_outstanding_max;
     if (t832R5.uart_accepted && now - t832R5.accepted_ms > t832R5.accepted_age_max)
         t832R5.accepted_age_max = now - t832R5.accepted_ms;
     t832R5.sampled_ms = now;
@@ -323,7 +340,7 @@ static T832DiagRecord T832Diag_liveR5(uint8_t index, uint32_t now)
         if (!index) { r.b = t832R5.generation; r.c = t832R5.command; }
         else if (index == 1u) { r.b = t832R5.stage; r.c = (uint16_t)t832R5.stage_seen; }
         else { r.b = T832R5_sat(t832R5.stage_max[index - 2u]); r.c = t832R5.generation; }
-    } else if ((index -= 12u) < 8u) {
+    } else if ((index -= 12u) < 11u) {
         r.kind = T832_DIAG_EV_UART_EVENT;
         r.a = index;
         if (index < 6u) {
@@ -331,11 +348,20 @@ static T832DiagRecord T832Diag_liveR5(uint8_t index, uint32_t now)
             r.c = t832R5.uart_count[index] ? T832R5_sat(now - t832R5.uart_last[index]) : 0xFFFFu;
         } else if (index == 6u) {
             r.b = (uint16_t)t832R5.rx_status; r.c = (uint16_t)t832R5.write_status;
-        } else {
+        } else if (index == 7u) {
             r.b = t832R5.uart_accepted ? T832R5_sat(now - t832R5.accepted_ms) : 0u;
             r.c = T832R5_sat(t832R5.accepted_age_max);
+        } else if (index == 8u) {
+            r.b = (uint16_t)t832R5.rx_callback_bytes;
+            r.c = (uint16_t)(t832R5.rx_callback_bytes >> 16);
+        } else if (index == 9u) {
+            r.b = (uint16_t)t832R5.uart_error_mask;
+            r.c = T832R5_sat(t832R5.uart_error_count);
+        } else {
+            r.b = t832R5.uart_error_count ? T832R5_sat(now - t832R5.uart_error_ms) : 0xFFFFu;
+            r.c = 0u;
         }
-    } else if ((index -= 8u) < T832_R5_NWK) {
+    } else if ((index -= 11u) < T832_R5_NWK) {
         r.kind = T832_DIAG_EV_NWK_PRESSURE;
         r.a = index;
         r.b = t832R5.nwk_ms ? t832R5.nwk[index] : 0xFFFFu;

@@ -755,7 +755,7 @@ void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
     if (slot != T832_DIAG_TXQ_DEPTH) {
       /* Bind to the executing handler, never a newer RX generation. A
        * response outside that handler is explicitly uncorrelated (gen 0). */
-      t832Diag.txq[slot].gen = T832Diag_pipelineResponse(cmdType, cmdId);
+      t832Diag.txq[slot].gen = T832Diag_pipelineResponse(cmdType, cmdId, dataLen, payload);
       T832Diag_pendingIncLocked();
       pushed = 1u;
     } else {
@@ -1100,6 +1100,8 @@ void T832Diag_uartRxOverflow(uint16_t attempted, uint16_t occupancy)
 
 void T832Diag_uartTxStart(uint16_t len)
 {
+  t832R5.uart_generation = t832Diag.inflight_valid &&
+    t832Diag.inflight.cls == T832_DIAG_TXCLS_SYNC_SRSP ? t832Diag.inflight.gen : 0u;
   t832Diag.transport_active = 1u;
   t832Diag.tx_start_ms = (uint32_t)T832Diag_nowMs();
   (void)len;
@@ -1611,7 +1613,7 @@ void T832Diag_exportPoll(void)
   }
 
   /* One R5 snapshot per accepted opportunity. A whole rotation is bounded
-   * by 270 s at the 5 s limiter; rings keep at least a slot on most polls.
+   * by 285 s at the 5 s limiter; rings keep at least a slot on most polls.
    * Export unblocking emits the block summary first, including sticky mask
    * and maximum block age even though current blockage is now zero. */
   if (nbatch < T832_DIAG_BATCH_MAX) {

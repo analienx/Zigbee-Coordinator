@@ -212,7 +212,10 @@ class BarrierStructureTests(unittest.TestCase):
 
     def test_production_triggers_reused(self) -> None:
         ids = {t.get("id") for t in self.barrier["triggers"]}
-        self.assertEqual(ids, {"mesh_outage", "bridge_offline", "radio_timeout"})
+        self.assertEqual(ids, {"mesh_outage", "bridge_offline", "radio_timeout", "startup_health"})
+        startup = next(t for t in self.barrier["triggers"] if t.get("id") == "startup_health")
+        self.assertEqual(startup["trigger"], "event")
+        self.assertEqual(startup["event_type"], "t832_startup_health")
 
     def test_destructive_steps_gated(self) -> None:
         steps = flatten_actions(self.barrier["actions"])

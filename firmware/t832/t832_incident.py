@@ -187,6 +187,7 @@ EVENT_NAMES = {
     42: "NWK_PRESSURE",
     43: "TASK_STAT",
     44: "BOOT_TIMING",
+    45: "NWK_LIMIT",
 }
 
 DEFAULT_SOURCES = [
@@ -395,6 +396,10 @@ class Store:
     def append_host_event(self, kind: str, **fields: object) -> None:
         row = {"utc": iso(), "kind": kind, **fields}
         with self.host_events.open("a", encoding="utf-8") as fh:
+            try:
+                self.host_events.chmod(0o600)
+            except OSError:
+                pass
             fh.write(json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n")
             fh.flush()
             os.fsync(fh.fileno())

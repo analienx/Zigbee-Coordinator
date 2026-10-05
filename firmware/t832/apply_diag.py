@@ -545,7 +545,8 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     uart = npi / "npi_tl_uart.c"
     include_after(ex, uart, '#include "npi_tl_uart.h"\n', "t832_diag.h", "diag.uart.include")
     ex.replace(uart, "    params.eventMask |= UART2_EVENT_TX_FINISHED;\n",
-               "    params.eventMask |= UART2_EVENT_TX_FINISHED | UART2_EVENT_TX_BEGIN;\n",
+               "    params.eventMask |= UART2_EVENT_TX_FINISHED | UART2_EVENT_TX_BEGIN |\n"
+               "        UART2_EVENT_OVERRUN | UART2_EVENT_BREAK | UART2_EVENT_PARITY | UART2_EVENT_FRAMING;\n",
                "diag.uart.public_event_mask")
     ex.replace(
         uart,
@@ -613,6 +614,8 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     )
     # TX_BEGIN is a public UART2 event; preserve KCTRL's event path.
     ex.replace(uart, "    if (event == UART2_EVENT_TX_FINISHED)\n",
+               "    if (event & (UART2_EVENT_OVERRUN | UART2_EVENT_BREAK | UART2_EVENT_PARITY | UART2_EVENT_FRAMING))\n"
+               "        T832Diag_uartError(event);\n"
                "    if (event == UART2_EVENT_TX_BEGIN) { T832Diag_uartEvent(3u, TransportTxLen, 0); }\n"
                "    if (event == UART2_EVENT_TX_FINISHED)\n", "diag.uart.tx_begin")
 
@@ -626,8 +629,9 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     ex.replace(error, "#include <ti/sysbios/runtime/Error.h>\n",
                '#include <ti/sysbios/runtime/Error.h>\n#include "t832_fatal.h"\n',
                "diag.fatal.error_include")
-    ex.replace(error, "    if (Error_policy_D == Error_SPIN) {\n",
-               "    if (Error_policy_D == Error_SPIN) {\n"
+    ex.replace(error, "    eb->a1 = a1;\n",
+               "    eb->a1 = a1;\n"
+               "    if (Error_policy_D == Error_SPIN)\n"
                "        T832Diag_fatalError((uintptr_t)id, (uintptr_t)a0, (uintptr_t)a1);\n",
                "diag.fatal.before_error_spin")
     hwi = kernel / "family/arm/v8m/Hwi.c"

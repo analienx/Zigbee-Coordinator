@@ -39,7 +39,7 @@ jobs:
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py -v
           python3 -m pip install --quiet pyyaml jinja2
-          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_stability.py -v
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
           gcc -std=c11 -Wall -Wextra \
             -I repo/firmware/t832 \
             -I repo/firmware/t832/host_harness \
@@ -403,6 +403,7 @@ jobs:
           TIARMOBJDUMP="$(dirname "$TIARMCLANG")/tiarmobjdump"
           test -x "$TIARMOBJDUMP"
           "$TIARMOBJDUMP" --disassemble "$OUT" > build-evidence/disasm.txt
+          python3 repo/firmware/t832/audit_r5_image.py --disassembly build-evidence/disasm.txt --output build-evidence/r5-image-gates.json
           python3 - <<'PY'
           import pathlib, re, sys
           evidence = {}
@@ -480,6 +481,8 @@ jobs:
           cp repo/firmware/t832/DIAG_README.md bundle/README.md
           cp repo/firmware/t832/t832_sideband.py bundle/provenance/
           cp repo/firmware/t832/t832_fatal.h bundle/provenance/
+          cp repo/firmware/t832/owner_probe.cjs bundle/provenance/
+          cp repo/docs/T832_DIAG_R0_R5.md bundle/provenance/
           cp build-evidence/* bundle/provenance/
 
           {
@@ -518,6 +521,11 @@ jobs:
           out = {
               "variant": "T832-DIAG-R0",
               "repository_commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "sys_version_revision": int(os.environ["GITHUB_SHA"][:8], 16),
+              "debug_build_id": int(os.environ["GITHUB_SHA"][:8], 16),
+              "capability_bitmap": "0x0ffbffff",
+              "toolchain": {"ccs": "12.8.0.00012", "ti_clang": "3.2.2.LTS", "sysconfig": "1.21.1.3772", "xdc": "3.62.01.16"},
               "sdk_commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
               "sdk_833_compat_commit": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
               "examples_commit": "87ff5b638b632050228a7504f35cf3b95581c278",
@@ -568,7 +576,7 @@ jobs:
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
           python3 -m unittest repo/firmware/t832/test_diag.py -v
           python3 -m pip install --quiet pyyaml jinja2
-          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_stability.py -v
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
           gcc -std=c11 -Wall -Wextra \
             -I repo/firmware/t832 \
             -I repo/firmware/t832/host_harness \
@@ -903,7 +911,24 @@ jobs:
           cp repo/firmware/t832/manifest.json bundle/provenance/manifest.json
           cp build-evidence/* bundle/provenance/
           cp repo/firmware/t832/README.md bundle/README.md
-          jq -n --arg sha "$GITHUB_SHA" '{variant: "T832-CONTROL-R0", repository_commit: $sha, flash_authorized: false}' > bundle/T832-BUILD-MANIFEST.json
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          artifacts = {}
+          for name in ("T832-CONTROL-R0.hex", "T832-CONTROL-R0.out"):
+              p = Path("bundle") / name
+              artifacts[name] = {"bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+          out = {
+              "variant": "T832-CONTROL-R0", "repository_commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"], "artifacts": artifacts,
+              "sdk_commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+              "sdk_833_compat_commit": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+              "examples_commit": "87ff5b638b632050228a7504f35cf3b95581c278",
+              "toolchain": {"ccs": "12.8.0.00012", "ti_clang": "3.2.2.LTS", "sysconfig": "1.21.1.3772", "xdc": "3.62.01.16"},
+              "flash_authorized": False,
+          }
+          Path("bundle/T832-BUILD-MANIFEST.json").write_text(json.dumps(out, indent=2) + "\n")
+          PY
           (cd bundle && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS)
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -951,6 +976,7 @@ jobs:
           npm ls zigbee-herdsman
           node herdsman_interop.cjs /tmp/t832-payloads.hex /tmp/z2m-roundtrip.log
           node herdsman_interop.cjs --negatives /tmp/z2m-negative.log
+          node owner_probe_test.cjs
 
       - name: Prove records survive through both decoders
         shell: bash
@@ -1026,6 +1052,7 @@ jobs:
           python3 -m unittest repo/firmware/t832/test_diag.py
           python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py
+          python3 -m unittest repo/firmware/t832/test_r5_host.py
 
   negative-control:
     name: Negative control on reviewed pre-fix tree (R3 B01/B02 + R4 F01/F06-F09)
@@ -1159,3 +1186,58 @@ jobs:
                       "F07 probe unexpectedly committed on the pre-R4 module")
           PYEOF
           echo "F07 NEGATIVE CONTROL PASS: TimeoutError loss reproduced on 8d59a798 module"
+      - name: Prove R5 blocked-history regression against the reviewed R4 SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r5-overlay
+          git -C repo show d6c475e6b04a25d4a3c2993dbc9a07dbc9386651:firmware/t832/t832_diag_impl.inc > /tmp/r5-overlay/t832_diag_impl.inc
+          for lane in fixed old; do
+            extra=()
+            if [ "$lane" = old ]; then extra=(-I /tmp/r5-overlay); fi
+            gcc -std=c11 "${extra[@]}" -I repo/firmware/t832 -I repo/firmware/t832/host_harness \
+              -I repo/firmware/t832/host_harness/stubs repo/firmware/t832/host_harness/t832_r5_compat_probe.c -o /tmp/r5-compat-$lane
+          done
+          /tmp/r5-compat-fixed
+          set +e
+          /tmp/r5-compat-old > /tmp/r5-negative.txt
+          rc=$?
+          set -e
+          cat /tmp/r5-negative.txt
+          test "$rc" -eq 23
+          grep -q '^R5-BLOCKED-HISTORY-LOST$' /tmp/r5-negative.txt
+
+  stability:
+    name: Real-time stability windows (R4 preserved)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+      - run: python3 -m pip install --quiet pyyaml jinja2
+      - run: python3 -m unittest repo/firmware/t832/test_stability.py -v
+
+  paired-provenance:
+    name: Same-run control/DIAG hashes and diagnostic-only delta
+    needs: [firmware, control]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: mr4u-p10-t832-diag-r0
+          path: diag
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: mr4u-p10-t832-control-r0
+          path: control
+      - run: python3 repo/firmware/t832/audit_paired.py --diag diag --control control --sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID" --output T832-PAIRED-PROVENANCE.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-r5-paired-provenance
+          path: T832-PAIRED-PROVENANCE.json
+          if-no-files-found: error

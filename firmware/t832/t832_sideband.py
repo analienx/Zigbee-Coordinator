@@ -54,6 +54,18 @@ def validate(event):
     for key in ("radio_index", "rx", "tx", "reinit", "reset_source", "boot_epoch", "deadline_ms", "uptime_ms"):
         if key in event and (type(event[key]) is not int or not 0 <= event[key] <= 0xFFFFFFFF):
             raise ValueError(f"bounded unsigned integer required: {key}")
+    if "radio_index" in event and event["radio_index"] > 31:
+        raise ValueError("radio index must be 0..31")
+    for key in ("startup_id", "attempt_id", "owner"):
+        if key in event and (not isinstance(event[key], str) or not event[key]):
+            raise ValueError(f"nonempty string required: {key}")
+    if event["kind"] in {"addon_health", "znp_health", "p10_boot"}:
+        if type(event.get("radio_index")) is not int:
+            raise ValueError("radio binding required")
+    if event["kind"] == "addon_health":
+        if event.get("state") not in {"started", "stopped", "unknown"} or not event.get("startup_id"):
+            raise ValueError("bounded addon state/startup identity required")
+        timestamp(event.get("startup_utc"))
     if event["kind"] in {"reset_request", "control_line", "slzb"}:
         if not event.get("attempt_id") or type(event.get("radio_index")) is not int:
             raise ValueError("control evidence needs attempt_id and radio_index")
@@ -83,20 +95,24 @@ def ingest(store, path, max_bytes=1 << 20):
         raise ValueError("sideband input exceeds event limit")
     rows = [validate(json.loads(line)) for line in lines if line.strip()]
     with store.locked():
-        for event in rows:
-            store.append_host_event("t832_sideband", domain="bridge", sideband=event)
         # Persist boot epochs independently of collector restarts, without
         # claiming every source discontinuity proves a hardware reboot.
         state_path = store.state / "sideband.json"
-        state = store.load(state_path, {"boot_epoch": 0, "last_boot_key": None})
-        if not isinstance(state, dict) or type(state.get("boot_epoch")) is not int:
+        state = store.load_strict(state_path) if state_path.exists() else {"boot_epoch": 0, "boots": {}}
+        if (not isinstance(state, dict) or type(state.get("boot_epoch")) is not int or
+                state["boot_epoch"] < 0 or not isinstance(state.get("boots"), dict)):
             raise RuntimeError("sideband-state-corrupt")
         for event in rows:
             if event["kind"] == "p10_boot":
-                key = [event["observer"], event["utc"], event.get("firmware_build_id"), event.get("radio_index")]
-                if key != state.get("last_boot_key"):
+                radio = str(event["radio_index"])
+                previous = state["boots"].get(radio)
+                if previous is not None and (not isinstance(previous, dict) or "utc" not in previous):
+                    raise RuntimeError("sideband-boot-frontier-corrupt")
+                if previous is None or timestamp(event["utc"]) > timestamp(previous["utc"]):
                     state["boot_epoch"] += 1
-                    state["last_boot_key"] = key
+                    state["boots"][radio] = {"utc": event["utc"], "observer": event["observer"]}
+        for event in rows:
+            store.append_host_event("t832_sideband", domain="bridge", sideband=event)
         store.atomic_json(state_path, state)
     return {"ok": True, "events": len(rows), "boot_epoch": state["boot_epoch"]}
 
@@ -146,6 +162,8 @@ def startup_verdict(events, startup_id, now):
     if not addon or not probes:
         return {"qualifies": False, "reason": "missing-addon-or-owner-znp-evidence"}
     addon, probe = addon[-1], probes[-1]
+    if addon.get("radio_index") != probe.get("radio_index"):
+        return {"qualifies": False, "reason": "addon-probe-radio-mismatch"}
     for event in (addon, probe):
         age = (now - timestamp(event["utc"])).total_seconds()
         if not 0 <= age <= 60:
@@ -164,9 +182,34 @@ def startup_verdict(events, startup_id, now):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-root", required=True, type=Path)
-    parser.add_argument("--input", required=True, type=Path)
+    parser.add_argument("--input", type=Path)
+    parser.add_argument("--startup-id", help="Evaluate persisted startup evidence without MQTT or any live I/O")
     args = parser.parse_args()
-    print(json.dumps(ingest(incident.Store(args.state_root), args.input), sort_keys=True))
+    if bool(args.input) == bool(args.startup_id):
+        parser.error("choose exactly one of --input or --startup-id")
+    store = incident.Store(args.state_root)
+    if args.input:
+        result = ingest(store, args.input)
+    else:
+        # Bounded tail; absence or truncation fails closed. The capture barrier
+        # validates again from its private incident, not this caller verdict.
+        rows = []
+        if store.host_events.exists():
+            with store.host_events.open("rb") as stream:
+                size = stream.seek(0, 2)
+                stream.seek(max(0, size - (1 << 20)))
+                raw = stream.read(1 << 20)
+            if size > (1 << 20):
+                raw = raw.split(b"\n", 1)[-1]
+            for line in raw.decode("utf-8", errors="replace").splitlines():
+                try:
+                    rows.append({"raw_line": line})
+                except ValueError:
+                    continue
+        result = startup_verdict(extract(rows), args.startup_id, incident.utcnow())
+        result["event_type"] = "t832_startup_health"
+        result["event_data"] = {"startup_id": args.startup_id}
+    print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":

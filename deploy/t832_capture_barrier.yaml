@@ -29,6 +29,12 @@
     responses still reach a terminal persisted recovery-result (R4-F05). The
     ZDO response is caught by a pre-armed incident-scoped catcher (R4-F02).
   triggers:
+    # A file-backed startup observer emits this after a fresh existing-owner
+    # request. capture() independently checks persisted evidence; event data
+    # alone cannot authorize recovery. No MQTT transition is required.
+    - trigger: event
+      event_type: t832_startup_health
+      id: startup_health
     - trigger: state
       entity_id: binary_sensor.zigbee2mqtt_mesh_communication_outage
       to: "on"
@@ -58,7 +64,9 @@
       data:
         trigger: "{{ trigger.id }}"
         trigger_topic: "{{ trigger.topic | default('') }}"
-        trigger_payload_json: "{{ trigger.payload_json | default({}) | tojson }}"
+        trigger_payload_json: >-
+          {{ (trigger.event.data if trigger.id == 'startup_health'
+              else trigger.payload_json | default({})) | tojson }}
       response_variable: t832_capture
       # R4-F05: a service exception leaves the response unset; the
       # returncode-first gates below route that to a halt, never onward.
