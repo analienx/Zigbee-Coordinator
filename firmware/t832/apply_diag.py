@@ -82,6 +82,8 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
 
     shutil.copy2(HERE / "t832_diag.h", mt / "t832_diag.h")
     shutil.copy2(HERE / "t832_diag_impl.inc", mt / "t832_diag_impl.inc")
+    for name in ("t832_diag_r5.inc", "t832_fatal.h", "t832_diag_nwk.inc"):
+        shutil.copy2(HERE / name, mt / name)
 
     # R06: capture the reset source at the top of main(), the first proven
     # executed application path. Boot.c/Boot.o is not linked into the ZNP
@@ -206,6 +208,11 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "      T832Diag_commandComplete(pBuf[MT_RPC_POS_CMD0], pBuf[MT_RPC_POS_CMD1], rsp[0]);\n",
         "diag.command.dispatch_complete",
     )
+    ex.replace(mtc,
+        "                                                                  MT_RPC_FRAME_HDR_SZ, rsp);\n"
+        "  }\n}\n",
+        "                                                                  MT_RPC_FRAME_HDR_SZ, rsp);\n"
+        "  }\n  T832Diag_commandEnd();\n}\n", "diag.command.end_scope")
 
     # startupFromApp stages bracket the exact BDB call and SRSP queue attempt.
     zdo = mt / "mt_zdo.c"
@@ -527,6 +534,9 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # true end-of-wire completion. KCTRL's TX_FINISHED behavior is preserved.
     uart = npi / "npi_tl_uart.c"
     include_after(ex, uart, '#include "npi_tl_uart.h"\n', "t832_diag.h", "diag.uart.include")
+    ex.replace(uart, "    params.eventMask |= UART2_EVENT_TX_FINISHED;\n",
+               "    params.eventMask |= UART2_EVENT_TX_FINISHED | UART2_EVENT_TX_BEGIN;\n",
+               "diag.uart.public_event_mask")
     ex.replace(
         uart,
         "    uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);\n",
@@ -555,22 +565,32 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "        T832Diag_uartWriteRejected(TransportTxLen, (int16_t)writeStatus);\n"
         "        TransportTxLen = 0;\n"
         "      }\n"
+        "      else { T832Diag_uartEvent(1u, TransportTxLen, (int16_t)writeStatus); }\n"
         "    }\n",
         "diag.uart.write_reject",
     )
     ex.replace(
         uart,
-        "    if (size)\n    {\n",
-        "    if (size)\n    {\n"
-        "        T832Diag_uartRx((uint16_t)size, TransportRxLen);\n",
+        "static void NPITLUART_readCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n{\n",
+        "static void NPITLUART_readCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n{\n"
+        "    T832Diag_uartEvent(5u, (uint16_t)size, (int16_t)status);\n",
         "diag.uart.rx_progress",
     )
     ex.replace(
         uart,
         "        if (size != NPITLUART_readIsrBuf(size))\n        {\n",
-        "        if (size != NPITLUART_readIsrBuf(size))\n        {\n"
+        "        uint16_t copied = NPITLUART_readIsrBuf(size);\n"
+        "        T832Diag_uartRx(copied, TransportRxLen);\n"
+        "        if (size != copied)\n        {\n"
         "            T832Diag_uartRxOverflow((uint16_t)size, TransportRxLen);\n",
         "diag.uart.rx_overflow",
+    )
+    ex.replace(
+        uart,
+        "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n{\n",
+        "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n{\n"
+        "    T832Diag_uartEvent(2u, (uint16_t)size, (int16_t)status);\n",
+        "diag.uart.write_callback",
     )
     ex.replace(
         uart,
@@ -581,6 +601,51 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "        uint32_t key = OsalPort_enterCS();\n",
         "diag.uart.tx_finished",
     )
+    # TX_BEGIN is a public UART2 event; preserve KCTRL's event path.
+    ex.replace(uart, "    if (event == UART2_EVENT_TX_FINISHED)\n",
+               "    if (event == UART2_EVENT_TX_BEGIN) { T832Diag_uartEvent(3u, TransportTxLen, 0); }\n"
+               "    if (event == UART2_EVENT_TX_FINISHED)\n", "diag.uart.tx_begin")
+
+    # Fatal RAM-only hooks run before the unchanged original spin paths.
+    # Standalone header resolves from the kernel source directory while the
+    # SDK archive is built, without importing ZStack into the kernel.
+    kernel = sdk / "kernel/tirtos7/packages/ti/sysbios"
+    for directory in (kernel / "runtime", kernel / "family/arm/v8m"):
+        shutil.copy2(HERE / "t832_fatal.h", directory / "t832_fatal.h")
+    error = kernel / "runtime/Error.c"
+    ex.replace(error, "#include <ti/sysbios/runtime/Error.h>\n",
+               '#include <ti/sysbios/runtime/Error.h>\n#include "t832_fatal.h"\n',
+               "diag.fatal.error_include")
+    ex.replace(error, "    if (Error_policy_D == Error_SPIN) {\n",
+               "    if (Error_policy_D == Error_SPIN) {\n"
+               "        T832Diag_fatalError((uintptr_t)id, (uintptr_t)a0, (uintptr_t)a1);\n",
+               "diag.fatal.before_error_spin")
+    hwi = kernel / "family/arm/v8m/Hwi.c"
+    ex.replace(hwi, "void Hwi_excHandler(unsigned int *excStack, unsigned int lr)\n{\n",
+               '#include "t832_fatal.h"\n'
+               "void Hwi_excHandler(unsigned int *excStack, unsigned int lr)\n{\n"
+               "    T832Diag_fatalException(excStack, lr, (uint32_t)BIOS_module->threadType,\n"
+               "        Hwi_nvic.ICSR, Hwi_nvic.MMFSR, Hwi_nvic.BFSR, Hwi_nvic.UFSR,\n"
+               "        Hwi_nvic.HFSR, Hwi_nvic.DFSR, Hwi_nvic.MMAR, Hwi_nvic.BFAR, Hwi_nvic.AFSR);\n",
+               "diag.fatal.before_exception_spin")
+
+    ex.replace(ntask,
+               "    Task_construct(&npiTaskStruct, NPITask_Fxn, &npiTaskParams, NULL);\n",
+               "    Task_construct(&npiTaskStruct, NPITask_Fxn, &npiTaskParams, NULL);\n"
+               "    T832Diag_registerTask(1u, (uintptr_t)Task_handle(&npiTaskStruct));\n",
+               "diag.tasks.npi_handle")
+    ex.append(ztask, '#include "t832_diag_nwk.inc"', "diag.nwk.sampler")
+    ex.replace(ztask,
+               "  T832Diag_taskWork(T832_DIAG_WORK_ZSTACK, (uint16_t)events);\n",
+               "  T832Diag_taskWork(T832_DIAG_WORK_ZSTACK, (uint16_t)events);\n"
+               "  T832Diag_registerTask(2u, (uintptr_t)Task_self());\n"
+               "  T832Diag_sampleNwk();\n", "diag.nwk.task_context")
+    include_after(ex, ztask, '#include "t832_diag.h"\n', "ti/sysbios/knl/Task.h",
+                  "diag.tasks.zstack_include")
+    ex.replace(ntask, "Queue_enqueue(npiTxQueue, &recPtr->_elem);\n",
+               "Queue_enqueue(npiTxQueue, &recPtr->_elem);\n"
+               "                T832Diag_npiQueueAccepted(pNPIMsg->pBuf[2], pNPIMsg->pBuf[3], pNPIMsg->pBuf[1]);\n",
+               "diag.pipeline.npi_queue_accepted", count=2)
 
     # NV compaction begin/end/failure/duration, recovery reformat entry, and
     # init/recovery action breadcrumbs. Hooks only record; erase/reformat

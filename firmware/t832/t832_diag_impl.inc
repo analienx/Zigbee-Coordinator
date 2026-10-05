@@ -2,7 +2,7 @@
  * T832-DIAG-R0 recorder/exporter, schema 2.
  * Included once at the end of mt_debug.c so no project source-list change is needed.
  * Hot-path hooks: fixed writes only; no allocation, logging, flash, UART, or waits.
- * Heap sampling runs only in the 60 s RESOURCE tick (MT task context).
+ * Heap traversal is disabled pending hardware timing evidence.
  * NPI_SREQRSP is not defined in the ZNP build (proven by linked-image audit),
  * so there is no NPI sync watchdog or sync queue in this image; the sync
  * lifecycle below is purely MT-side (SREQ rx -> SRSP dequeue -> SRSP TX finish).
@@ -10,13 +10,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <ti/drivers/dpl/ClockP.h>
-/* SysBIOS heap stats: ti/sysbios/runtime/Memory.h declares IHeap_Handle,
- * Memory_Stats and Memory_defaultHeapInstance. The same angle-bracket
- * kernel path style is already used by npi_task.c in this build, so this
- * resolves in mt_debug.c too (verified: the XDC variant of this header
- * resolves, and the sysbios package dir is the same include root). */
-#include <ti/sysbios/runtime/Memory.h>
+#ifndef T832_DIAG_HOST
+#include <ti/sysbios/knl/Task.h>
+#endif
 #include "t832_diag.h"
+#include "t832_fatal.h"
 #include "mt_af.h"
 
 #ifndef CODE_REVISION_NUMBER
@@ -56,6 +54,7 @@ typedef struct {
   uint8_t cmd1;
   uint8_t len;
   uint16_t gen;
+  uint8_t queue_accepted;
 } T832DiagTxSlot;
 
 typedef struct {
@@ -178,6 +177,8 @@ _Static_assert(T832_DIAG_AF_DEPTH <= 16u, "AF accept table must stay bounded");
 uint32_t t832DiagResetCauseEarly;
 uint32_t t832DiagResetCauseMagic;
 static T832DiagState t832Diag;
+static uint64_t T832Diag_nowMs(void);
+#include "t832_diag_r5.inc"
 
 void T832Diag_captureResetCauseEarly(uint32_t cause)
 {
@@ -299,8 +300,10 @@ void T832Diag_init(uint8_t mtTaskId)
       T832_DIAG_CAP_AGG_COUNTERS | T832_DIAG_CAP_MT_EVENTS |
       T832_DIAG_CAP_NV_COMPACT | T832_DIAG_CAP_AF_AGE |
       T832_DIAG_CAP_ZSTACK_TASK | T832_DIAG_CAP_NPI_TASK |
-      T832_DIAG_CAP_HEAP_STATS | T832_DIAG_CAP_TX_OWNERSHIP |
-      T832_DIAG_CAP_AF_ACCEPT | T832_DIAG_CAP_BATCHED_V2;
+      T832_DIAG_CAP_TX_OWNERSHIP | T832_DIAG_CAP_AF_ACCEPT | T832_DIAG_CAP_BATCHED_V2 |
+      T832_DIAG_CAP_BLOCK_SNAPSHOT | T832_DIAG_CAP_FATAL_RAM |
+      T832_DIAG_CAP_SREQ_STAGES | T832_DIAG_CAP_UART_EVENTS |
+      T832_DIAG_CAP_NWK_PRESSURE | T832_DIAG_CAP_TASK_STATS;
   t832Diag.reset_cause = cause;
   t832Diag.initialized = 1u;
   t832Diag.early = 0u;
@@ -311,6 +314,7 @@ void T832Diag_init(uint8_t mtTaskId)
   /* The memset above runs at MT init, after main() captured the cause. */
   T832Diag_record(T832_DIAG_EV_BOOT, (uint16_t)cause,
                   mtTaskId, boot_valid ? 1u : 0u);
+  T832Diag_bootTiming(1u);
   if (!boot_valid) {
     T832Diag_record(T832_DIAG_EV_BOOT_CAPTURE_INVALID, 0u, mtTaskId, 0u);
   }
@@ -344,6 +348,7 @@ void T832Diag_taskWork(uint8_t area, uint16_t detail)
      * caller was removed, so this timestamp is real stack-task progress. */
     t832Diag.zstack_work_ms = now;
     t832Diag.zstack_work_valid = 1u;
+    T832Diag_bootTiming(3u);
   }
   (void)detail;
 }
@@ -356,6 +361,7 @@ void T832Diag_npiTaskWake(void)
 
 void T832Diag_commandRx(uint8_t cmd0, uint8_t cmd1)
 {
+  t832R5.dispatch_gen = 0u;
   if ((cmd0 & MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SREQ) {
     if (t832Diag.sync_outstanding) {
       T832Diag_record(T832_DIAG_EV_SYNC_ABANDON, 1u, cmd0, cmd1);
@@ -369,6 +375,7 @@ void T832Diag_commandRx(uint8_t cmd0, uint8_t cmd1)
     t832Diag.sync_gen = t832Diag.sync_seq;
     t832Diag.sync_outstanding = 1u;
     t832Diag.response_queued = 0u;
+    T832Diag_pipelineNew(cmd0, cmd1);
   }
   t832Diag.last_cmd = (uint16_t)(((uint16_t)cmd0 << 8) | cmd1);
   t832Diag.last_cmd_ms = (uint32_t)T832Diag_nowMs();
@@ -621,11 +628,13 @@ static void T832Diag_afConfirm(uint8_t status, uint8_t ep, uint8_t transId)
 
 void T832Diag_commandDispatch(uint8_t cmd0, uint8_t cmd1)
 {
+  T832Diag_pipelineDispatch(cmd0, cmd1);
   T832Diag_record(T832_DIAG_EV_MT_COMMAND_DISPATCH, cmd0, cmd1, 0u);
 }
 
 void T832Diag_commandComplete(uint8_t cmd0, uint8_t cmd1, uint8_t status)
 {
+  T832Diag_pipelineReturn(cmd0, cmd1, status);
   /* AF acceptance comes only from the SRSP payload / confirm path, never
    * from the RPC handler return, so completion only records the stage. */
   T832Diag_record(T832_DIAG_EV_MT_COMMAND_COMPLETE, cmd0, cmd1, status);
@@ -662,6 +671,7 @@ static uint16_t T832Diag_txPushLocked(uint8_t cls, uint8_t cmd0, uint8_t cmd1,
   t832Diag.txq[slot].cmd0 = cmd0;
   t832Diag.txq[slot].cmd1 = cmd1;
   t832Diag.txq[slot].len = len;
+  t832Diag.txq[slot].queue_accepted = 0u;
   t832Diag.txq[slot].gen = ++t832Diag.queue_gen;
   /* R4-F01: the owned-refusal stash uses T832_DIAG_TXQ_DEPTH as its empty
    * sentinel, so no live descriptor may ever carry that generation —
@@ -743,7 +753,9 @@ void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
     uint8_t pushed;
     t832Diag.response_queued = 1u;
     if (slot != T832_DIAG_TXQ_DEPTH) {
-      t832Diag.txq[slot].gen = t832Diag.sync_gen;
+      /* Bind to the executing handler, never a newer RX generation. A
+       * response outside that handler is explicitly uncorrelated (gen 0). */
+      t832Diag.txq[slot].gen = T832Diag_pipelineResponse(cmdType, cmdId);
       T832Diag_pendingIncLocked();
       pushed = 1u;
     } else {
@@ -914,6 +926,7 @@ void T832Diag_npiTxDequeue(uint8_t sof, uint8_t cmd0, uint8_t cmd1, uint8_t data
   t832Diag.txq_head = (uint16_t)((t832Diag.txq_head + 1u) % T832_DIAG_TXQ_DEPTH);
   t832Diag.txq_count--;
   t832Diag.inflight_valid = 1u;
+  T832Diag_pipelineInflight(6u);
   OsalPort_leaveCS(key);
 }
 
@@ -1067,6 +1080,7 @@ void T832Diag_npiTxRefusedOwned(uint8_t stage, uint8_t cmd0, uint8_t cmd1,
 
 void T832Diag_uartConfigured(uint32_t baud, uint8_t flow)
 {
+  T832Diag_bootTiming(2u);
   T832Diag_record(T832_DIAG_EV_TRANSPORT_CONFIG, (uint16_t)(baud / 100u), flow, 0u);
 }
 
@@ -1093,6 +1107,7 @@ void T832Diag_uartTxStart(uint16_t len)
 
 void T832Diag_uartWriteRejected(uint16_t len, int16_t status)
 {
+  T832Diag_uartEvent(6u, len, status);
   uint32_t key = OsalPort_enterCS();
   t832Diag.transport_active = 0u;
   if (t832Diag.inflight_valid) {
@@ -1123,6 +1138,7 @@ void T832Diag_uartWriteRejected(uint16_t len, int16_t status)
 
 void T832Diag_uartTxFinished(uint16_t len)
 {
+  T832Diag_uartEvent(4u, len, 0);
   uint32_t key = OsalPort_enterCS();
   uint16_t age = (uint16_t)((uint32_t)T832Diag_nowMs() - t832Diag.tx_start_ms);
   t832Diag.transport_active = 0u;
@@ -1144,6 +1160,11 @@ void T832Diag_uartTxFinished(uint16_t len)
      * suppression. A late older SRSP is reported stale and leaves a newer
      * round-trip suppressed; its pending accounting still resolves. */
     if (t832Diag.inflight.gen == t832Diag.sync_gen) {
+      if (t832R5.rpc_ok) {
+        uint8_t subsystem = t832Diag.inflight.cmd0 & MT_RPC_SUBSYSTEM_MASK;
+        if (subsystem == 1u) T832Diag_bootTiming(4u);
+        if (subsystem == 5u) T832Diag_bootTiming(5u);
+      }
       t832Diag.sync_outstanding = 0u;
       t832Diag.response_queued = 0u;
     } else {
@@ -1448,7 +1469,6 @@ static T832DiagRecord T832Diag_liveTaskEvents(uint32_t now)
 static T832DiagRecord T832Diag_liveResource(uint8_t which, uint32_t now)
 {
   T832DiagRecord r;
-  Memory_Stats memStats;
   r.first_ms = now;
   r.last_ms = now;
   r.sequence = 0u;
@@ -1487,17 +1507,9 @@ static T832DiagRecord T832Diag_liveResource(uint8_t which, uint32_t now)
     r.c = (uint16_t)((t832Diag.export_lost >> 16) & 0xFFFFu);
     break;
   case 7u:
-    memStats.totalSize = 0u;
-    memStats.totalFreeSize = 0u;
-    memStats.largestFreeSize = 0u;
-    Memory_getStats(Memory_defaultHeapInstance, &memStats);
-    if (memStats.totalSize == 0u) {
-      r.b = 0xFFFFu;
-      r.c = 0xFFFFu;
-    } else {
-      r.b = T832Diag_sat16(memStats.totalFreeSize >> 4);
-      r.c = T832Diag_sat16(memStats.largestFreeSize >> 4);
-    }
+    /* Unmeasured HeapMem traversal under a gate is excluded from R5. */
+    r.b = 0xFFFFu;
+    r.c = 0xFFFFu;
     break;
   case 8u:
     r.b = T832Diag_sat16(t832Diag.tx_diag_n);
@@ -1549,6 +1561,10 @@ void T832Diag_exportPoll(void)
   uint8_t healthComplete = 0u;
   uint8_t faultStaged = 0u;
   uint8_t res_idx_saved = t832Diag.res_ext_idx;
+  uint8_t r5_idx_saved = t832R5.resource_cursor;
+
+  /* Sampling MUST happen before rate limiting and every export gate. */
+  T832Diag_sampleR5(now);
 
   /* Due detection never advances baselines: overdue work stays pending until
    * its records are staged into an accepted frame (see below). */
@@ -1592,6 +1608,16 @@ void T832Diag_exportPoll(void)
       t832Diag.res_ext_idx = (uint8_t)((t832Diag.res_ext_idx + 1u) % 13u);
     }
     resAccepted = 1u;
+  }
+
+  /* One R5 snapshot per accepted opportunity. A whole rotation is bounded
+   * by 245 s at the 5 s limiter; rings keep at least a slot on most polls.
+   * Export unblocking emits the block summary first, including sticky mask
+   * and maximum block age even though current blockage is now zero. */
+  if (nbatch < T832_DIAG_BATCH_MAX) {
+    batch[nbatch] = T832Diag_liveR5(t832R5.resource_cursor, now);
+    staged[nbatch++] = 0u;
+    t832R5.resource_cursor = (uint8_t)((t832R5.resource_cursor + 1u) % T832_R5_EXPORTS);
   }
 
   /* Sticky first-fault snapshot, independent of ring overwrites. The
@@ -1695,6 +1721,7 @@ void T832Diag_exportPoll(void)
         t832Diag.export_lost += nbatch;
         t832Diag.health_done = 0u;
         t832Diag.res_ext_idx = res_idx_saved;
+        t832R5.resource_cursor = r5_idx_saved;
         T832Diag_record(T832_DIAG_EV_DIAG_LOSS, nbatch, 1u, outLen);
       } else {
         for (i = 0u; i < nbatch; i++) {

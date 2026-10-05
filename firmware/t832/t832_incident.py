@@ -181,6 +181,12 @@ EVENT_NAMES = {
     36: "NPI_ALLOC_FAIL",
     37: "BOOT_CAPTURE_INVALID",
     38: "TIMING_APPROX",
+    39: "BLOCK_SNAPSHOT",
+    40: "PIPELINE",
+    41: "UART_EVENT",
+    42: "NWK_PRESSURE",
+    43: "TASK_STAT",
+    44: "BOOT_TIMING",
 }
 
 DEFAULT_SOURCES = [
@@ -396,7 +402,7 @@ class Store:
 
 def decode_record(raw: bytes, offset: int) -> dict[str, object]:
     rec = RECORD.unpack_from(raw, offset)
-    return {
+    result = {
         "first_ms": rec[0],
         "last_ms": rec[1],
         "sequence": rec[2],
@@ -411,6 +417,17 @@ def decode_record(raw: bytes, offset: int) -> dict[str, object]:
         "c": rec[7],
         "repeat_count": rec[8],
     }
+    if rec[3] == 1:
+        # Pinned cc13x4_cc26x4 AON_PMCTL reset-source enumerations.
+        classes = {0: "PWR_ON", 1: "PIN_RESET", 2: "VDDS_LOSS", 4: "VDDR_LOSS",
+                   5: "CLK_LOSS", 6: "SYSRESET", 7: "WARMRESET",
+                   8: "WAKEUP_FROM_SHUTDOWN", 9: "WAKEUP_FROM_TCK_NOISE"}
+        result["reset_class"] = classes.get(rec[5], "UNKNOWN") if rec[7] else "UNAVAILABLE"
+    elif rec[3] == 44:
+        result["elapsed_boot_ms"] = rec[6] | (rec[7] << 16)
+    elif rec[3] in (39, 40, 41):
+        result["saturation_note"] = "0xFFFF is saturated/unavailable; consult schema and RAM snapshot"
+    return result
 
 
 def decode_frame_payload(text: str) -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -1615,7 +1632,7 @@ BARRIER_AUTOMATION_ID = "zigbee2mqtt_t832_capture_barrier"
 #: Trigger ids the candidate barrier automation defines. capture() refuses
 #: anything else: reset authorization must only ever follow a production
 #: trigger firing, never a free-form string.
-CANDIDATE_TRIGGER_IDS = ("mesh_outage", "bridge_offline", "radio_timeout")
+CANDIDATE_TRIGGER_IDS = ("mesh_outage", "bridge_offline", "radio_timeout", "startup_health")
 #: mqtt topic whose payloads the radio_timeout trigger evaluates. B07:
 #: the candidate listens on the same permit_join response topic as the
 #: production outage automation — never device/remove.
@@ -1745,6 +1762,10 @@ def evaluate_trigger(
     SHA so evidence links the decision to the reviewed file.
     """
     base: dict[str, object] = {"trigger_id": trigger_id, "topic": topic}
+    if trigger_id == "startup_health":
+        # Startup is qualified inside capture, using persisted independent
+        # owner/add-on evidence. Caller-supplied success/failure is not trusted.
+        return {**base, "qualifying": False, "reason": "startup-evidence-required"}
     if trigger_id not in CANDIDATE_TRIGGER_IDS:
         return {**base, "qualifying": False, "reason": f"unknown-trigger:{trigger_id}"}
     spec = (defs or {}).get(trigger_id, {})
@@ -1914,6 +1935,15 @@ def capture(
             # Last stages are selected within the latest boot group using
             # record chronology, not file arrival order.
             last_stages: dict[str, object] = {}
+            import t832_sideband
+            bridge_events = t832_sideband.extract(host)
+            bridge_summary = t832_sideband.correlate(bridge_events)
+            if trigger == "startup_health":
+                startup_id = payload.get("startup_id") if isinstance(payload, dict) else None
+                startup = t832_sideband.startup_verdict(bridge_events, startup_id, utcnow())
+                verdict = {"trigger_id": trigger, "qualifying": startup["qualifies"],
+                           "reason": startup["reason"], "evidence": startup,
+                           "source": "persisted-owner-and-addon-evidence"}
             latest_boot = -1
             for item in diag:
                 boot = item.get("boot_index")
@@ -1967,6 +1997,8 @@ def capture(
                 "window_notes": window_notes,
                 "collect_partial": bool(collection.get("partial")),
                 "latest_boot_index": latest_boot,
+                "bridge_reset_evidence": bridge_summary,
+                "sideband_event_count": len(bridge_events),
                 # R4-F08: diag is ascending SOURCE-time order, so [-1]
                 # selects the actual latest diagnostic state rather than
                 # whatever the traversal visited last.

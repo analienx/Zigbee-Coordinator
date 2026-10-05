@@ -202,6 +202,13 @@ jobs:
               "source/ti/zstack/mt/mt_zdo.c",
               "source/ti/zstack/mt/t832_diag.h",
               "source/ti/zstack/mt/t832_diag_impl.inc",
+              "source/ti/zstack/mt/t832_diag_r5.inc",
+              "source/ti/zstack/mt/t832_diag_nwk.inc",
+              "source/ti/zstack/mt/t832_fatal.h",
+              "kernel/tirtos7/packages/ti/sysbios/runtime/Error.c",
+              "kernel/tirtos7/packages/ti/sysbios/runtime/t832_fatal.h",
+              "kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/Hwi.c",
+              "kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/t832_fatal.h",
               "source/ti/zstack/npi/npi_client_mt.c",
               "source/ti/zstack/stack/api/zstacktask.c",
           }
@@ -227,6 +234,7 @@ jobs:
               raise SystemExit(f"unclassified project-seed delta: {sorted(changed('examples'))}")
           print("T832-DIAG-R0 source allowlists: PASS")
           PY
+          python3 repo/firmware/t832/test_r5_pinned.py --sdk sdk
 
       - name: Prove 8.33 project seed is compatible with pinned 8.32 SDK
         shell: bash
@@ -469,7 +477,9 @@ jobs:
           cp repo/firmware/t832/diag_schema.json bundle/provenance/diag_schema.json
           cp repo/firmware/t832/t832_incident.py bundle/provenance/t832_incident.py
           cp repo/firmware/t832/t832_diag_decode.py bundle/provenance/t832_diag_decode.py
-          cp repo/firmware/t832/README.md bundle/README.md
+          cp repo/firmware/t832/DIAG_README.md bundle/README.md
+          cp repo/firmware/t832/t832_sideband.py bundle/provenance/
+          cp repo/firmware/t832/t832_fatal.h bundle/provenance/
           cp build-evidence/* bundle/provenance/
 
           {
@@ -892,6 +902,7 @@ jobs:
           test -s bundle/T832-CONTROL-R0.out
           cp repo/firmware/t832/manifest.json bundle/provenance/manifest.json
           cp build-evidence/* bundle/provenance/
+          cp repo/firmware/t832/README.md bundle/README.md
           jq -n --arg sha "$GITHUB_SHA" '{variant: "T832-CONTROL-R0", repository_commit: $sha, flash_authorized: false}' > bundle/T832-BUILD-MANIFEST.json
           (cd bundle && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS)
 
@@ -1000,6 +1011,11 @@ jobs:
             -Wl,--wrap=malloc -Wl,--wrap=calloc \
             -Wl,--wrap=realloc -Wl,--wrap=free
           /tmp/t832harness
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_r5_test.c -o /tmp/t832r5
+          /tmp/t832r5
 
       - name: Run Python collector/decoder/barrier regressions
         shell: bash

@@ -6,6 +6,7 @@
  */
 #ifndef T832_HOST_SDK_H
 #define T832_HOST_SDK_H
+#define T832_DIAG_HOST 1
 
 #include <stdint.h>
 

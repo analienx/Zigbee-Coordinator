@@ -121,6 +121,8 @@ static void advance_ms(uint32_t ms) { host_tick += ms; }
 
 static void fresh_full(uint8_t task_id, uint32_t cause, uint8_t captured)
 {
+  memset(&t832R5, 0, sizeof(t832R5));
+  memset((void *)&t832DiagFatal, 0, sizeof(t832DiagFatal));
   host_tick = 0u;
   host_cs_depth = 0;
   host_cs_max_depth = 0;
@@ -347,12 +349,12 @@ static void test_boot_and_caps(void)
 {
   DecFrame f;
   fresh(9u);
-  CHECK(t832Diag.capabilities == 0x3FFFFFu);
+  CHECK(t832Diag.capabilities == 0x0FFBFFFFu);
   emit_one();
   CHECK(decode_frame(0u, &f) > 0);
   CHECK(f.schema == 2u);
   CHECK(f.build_id == 0xA5A50001u);
-  CHECK(f.caps == 0x3FFFFFu);
+  CHECK(f.caps == 0x0FFBFFFFu);
   CHECK(f.nrec >= 1u);
   CHECK(f.rec[0].kind == 1u);
   CHECK(f.rec[0].a == 0x12u);
@@ -812,8 +814,8 @@ static void test_heap_resource(void)
       for (k = 0; k < f.nrec; k++) {
         q = &f.rec[k];
         if (q->kind == 20u && q->a == 7u) {
-          CHECK(q->b == 256u);
-          CHECK(q->c == 128u);
+          CHECK(q->b == 0xFFFFu);
+          CHECK(q->c == 0xFFFFu);
           seen = 1;
         }
       }

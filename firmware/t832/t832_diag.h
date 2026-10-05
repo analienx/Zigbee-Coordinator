@@ -33,6 +33,12 @@
 #define T832_DIAG_CAP_TX_OWNERSHIP  (1u << 19)
 #define T832_DIAG_CAP_AF_ACCEPT     (1u << 20)
 #define T832_DIAG_CAP_BATCHED_V2    (1u << 21)
+#define T832_DIAG_CAP_BLOCK_SNAPSHOT (1u << 22)
+#define T832_DIAG_CAP_FATAL_RAM      (1u << 23)
+#define T832_DIAG_CAP_SREQ_STAGES    (1u << 24)
+#define T832_DIAG_CAP_UART_EVENTS    (1u << 25)
+#define T832_DIAG_CAP_NWK_PRESSURE   (1u << 26)
+#define T832_DIAG_CAP_TASK_STATS     (1u << 27)
 
 enum {
   T832_DIAG_EV_BOOT = 1,
@@ -72,10 +78,16 @@ enum {
   T832_DIAG_EV_NPI_TRAP,
   T832_DIAG_EV_NPI_ALLOC_FAIL,
   T832_DIAG_EV_BOOT_CAPTURE_INVALID,
-  T832_DIAG_EV_TIMING_APPROX
+  T832_DIAG_EV_TIMING_APPROX,
+  T832_DIAG_EV_BLOCK_SNAPSHOT,
+  T832_DIAG_EV_PIPELINE,
+  T832_DIAG_EV_UART_EVENT,
+  T832_DIAG_EV_NWK_PRESSURE,
+  T832_DIAG_EV_TASK_STAT,
+  T832_DIAG_EV_BOOT_TIMING
 };
 
-_Static_assert(T832_DIAG_EV_TIMING_APPROX <= 63u,
+_Static_assert(T832_DIAG_EV_BOOT_TIMING <= 63u,
                "first-fault original-kind tag needs 6 flag bits");
 
 /* Snapshot re-emit marker in record flags (bit 1); bit 0 stays critical. */
@@ -106,11 +118,13 @@ void T832Diag_commandRx(uint8_t cmd0, uint8_t cmd1);
 void T832Diag_commandDispatch(uint8_t cmd0, uint8_t cmd1);
 void T832Diag_afDispatch(uint8_t cmd0, uint8_t cmd1, const uint8_t *frame, uint8_t frameLen);
 void T832Diag_commandComplete(uint8_t cmd0, uint8_t cmd1, uint8_t status);
+void T832Diag_commandEnd(void);
 void T832Diag_responseQueued(uint8_t cmdType, uint8_t cmdId, uint8_t dataLen,
                              const uint8_t *payload);
 void T832Diag_responseAllocFailed(uint8_t cmdType, uint8_t cmdId, uint16_t requested);
 void T832Diag_npiTxQueuedOther(uint8_t cmd0, uint8_t cmd1, uint8_t dataLen);
 void T832Diag_npiTxDequeue(uint8_t sof, uint8_t cmd0, uint8_t cmd1, uint8_t dataLen);
+void T832Diag_npiQueueAccepted(uint8_t cmd0, uint8_t cmd1, uint8_t len);
 void T832Diag_npiTrap(uint16_t attempted, uint16_t available);
 void T832Diag_npiAllocFailed(uint8_t site, uint16_t requested,
                              uint8_t cmd0, uint8_t cmd1, uint8_t len);
@@ -136,6 +150,11 @@ void T832Diag_uartRxOverflow(uint16_t attempted, uint16_t occupancy);
 void T832Diag_uartTxStart(uint16_t len);
 void T832Diag_uartWriteRejected(uint16_t len, int16_t status);
 void T832Diag_uartTxFinished(uint16_t len);
+void T832Diag_uartEvent(uint8_t event, uint16_t size, int16_t status);
+void T832Diag_registerTask(uint8_t which, uintptr_t handle);
+void T832Diag_sampleNwk(void);
+void T832Diag_nwkPressure(uint8_t selector, uint16_t current, uint16_t limit);
+uint8_t T832Diag_nwkDue(void);
 void T832Diag_startup(uint8_t stage, uint8_t cmd0, uint8_t cmd1);
 void T832Diag_networkState(uint8_t onNetwork, uint8_t nwkState);
 void T832Diag_bdb(uint8_t stage, uint16_t detail);
