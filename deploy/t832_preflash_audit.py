@@ -15,6 +15,7 @@ ROLLBACK_HASH = '633f79058c39e2fc9335bb11f816ad6a045438515da11c36b30a46b7c8d1b7d
 ROLLBACK_URL = 'https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p10/znp-SLZB-06P10-20240716.bin'
 SDK = '6499c3f53fc5fb5806213be695450a7b43fbaf3d'
 HEADER_URL = f'https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/{SDK}/source/ti/devices/cc13x4_cc26x4/inc/hw_ccfg.h'
+STARTUP_URL = f'https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/{SDK}/source/ti/devices/cc13x4_cc26x4/startup_files/ccfg.c'
 
 
 def ihex(raw):
@@ -98,6 +99,14 @@ def download(url):
     return data
 
 
+def reviewed_power_difference(differences):
+    # The exact two differing words select TI's supported VDDR-HH boost mode.
+    # They do not change LF/HF clock, DCDC enable, BSL pin, vectors or protection.
+    # RF performance/supply-mode equivalence remains a post-flash measurement.
+    return differences == {'MODE_CONF':['0xf3b9d5ff','0xf1b9d5ff'],
+                           'MODE_CONF_1':['0xff800010','0xffc00010']}
+
+
 def main():
     root = Path(sys.argv[1])
     with zipfile.ZipFile(root/'candidate.zip') as archive:
@@ -111,6 +120,10 @@ def main():
     (root/'rollback-20240716.bin').write_bytes(rollback)
     header = download(HEADER_URL)
     (root/'hw_ccfg.h').write_bytes(header)
+    startup = download(STARTUP_URL)
+    (root/'ccfg.c').write_bytes(startup)
+    for text in (b'SET_CCFG_MODE_CONF_1_ALT_DCDC_VMIN',b'SET_CCFG_MODE_CONF_VDDR_EXT_LOAD',b'CCFG_FORCE_VDDR_HH'):
+        if text not in startup: raise ValueError('pinned boost-mode source mismatch')
     offsets = {name: int(value,16) for name,value in re.findall(
         r'^#define CCFG_O_(\w+)\s+(0x[0-9A-Fa-f]+)', header.decode(), re.M)
         if not name.startswith('CKEY')}
@@ -135,7 +148,16 @@ def main():
             for key in offsets if a['fields'].get(key) != b['fields'].get(key) and key not in critical}
         compatible = all(x['bootloader_enabled'] and x['backdoor_enabled'] and x['vector_valid']
                          for x in (a,b)) and a['nv_hex_records'] == 0 and not result['critical_differences']
-        result['verdict'] = 'compatible' if compatible and not result['other_differences'] else 'unresolved'
+        reviewed = not result['other_differences'] or reviewed_power_difference(result['other_differences'])
+        result['verdict'] = 'compatible' if compatible and reviewed else 'unresolved'
+        result['verdict_scope'] = 'static image boot/ROM-BSL recovery compatibility; not live RF/board validation'
+        result['rf_supply_equivalent'] = not bool(result['other_differences'])
+        result['power_difference_review'] = {
+            'candidate_force_vddr_hh':False,'reference_force_vddr_hh':True,
+            'candidate_alt_dcdc_vmin':8,'reference_alt_dcdc_vmin':12,
+            'source':STARTUP_URL,'source_sha256':hashlib.sha256(startup).hexdigest(),
+            'reason':'Pinned TI ccfg.c defines exactly these differences for boost mode; clock/DCDC-enable/reset/BSL/protection fields match.',
+            'remaining':'Measure TX-power behavior and supply/observer stability during post-flash smoke; power mode is an experimental confounder.'}
     else:
         result['reference_format'] = 'binary; address mapping not established'
         result['reference_prefix_hex'] = rollback[:32].hex()
