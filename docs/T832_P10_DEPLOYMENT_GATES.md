@@ -1,8 +1,9 @@
 # T832 R5 P10 deployment gates
 
-This addendum applies issue #73's [scope/readiness clarification](https://github.com/analienx/home-assistant-stack/issues/73#issuecomment-5998837901).
+This addendum applies issue #73's [scope/readiness clarification](https://github.com/analienx/home-assistant-stack/issues/73#issuecomment-5998837901)
+and [finalization handoff](https://github.com/analienx/home-assistant-stack/issues/73#issuecomment-6001120630).
 It supersedes the combined hardware-release sequence in the original R5
-closure. It changes deployment documentation only; the validated firmware
+closure. Its hosted audit, packaging and passive-reader tools do not change the validated firmware
 candidate remains pinned below. **Current status: candidate validated,
 FLASH-READY not established, flash_authorized=false.** No live deployment is
 claimed or authorized by this document.
@@ -19,6 +20,8 @@ claimed or authorized by this document.
 | DIAG image | `T832-DIAG-R0.hex`, 558808 bytes |
 | Image SHA256 | `773dcbb100353005ea8f86faf261d4e25c350ffac715c3dcb08aeeca8b69e15c` |
 | Matching OUT SHA256 | `6f06cfab0c131afaac2390abd2cbb75da62bcc01deedf7006881700757251bca` |
+| Management container candidate | `T832-DIAG-R0.slzb.bin`, 198664 bytes |
+| Container SHA256 | `c170f069d71155b548e4f65fc6b6c203cd9619fc9e9e9b1c4269456818499911` |
 | Expected live identity | SYS_VERSION revision `8320002`; DEBUG build `0x1f08f3c1`, capabilities `0x0ffbffff` |
 
 R5-11 is host-side observation/correlation around existing interfaces. It
@@ -26,6 +29,44 @@ does not require a new SLZB-OS build. R5-12's producer/scheduler remains an
 undeployed integration seam. Neither requirement expands the flash target.
 Installing the recovery automation is a separate live change; it is not
 implicitly authorized by a P10 upload permit.
+
+## Prepared evidence and the upload-format correction
+
+Hosted [run 37364605796](https://github.com/analienx/Zigbee-Coordinator/actions/runs/37364605796)
+at tooling SHA `a328b2bb8541880a6cee9024692bf7ab2ff04ffe` passed nine tests and
+audited the unchanged candidate. `ccfg-bsl.json` reports compatible static
+boot/ROM-BSL recovery: candidate and vendor 20240716 have `BL_CONFIG=0xc5fe0fc5`,
+backdoor DIO15 active-low, `IMAGE_VALID_CONF=0`, valid vectors and matching
+clock/reset/erase/protection settings. The two supply-mode word differences
+are the exact TI `CCFG_FORCE_VDDR_HH` pair; keep them as an experimental RF/power
+confounder and measure TX/supply stability during smoke. This is not live board
+or RF proof. Reference rollback SHA256 is
+`633f79058c39e2fc9335bb11f816ad6a045438515da11c36b30a46b7c8d1b7d9`,
+from SMLIGHT's `znp-SLZB-06P10-20240716.bin`.
+
+Read-only HTTP inspection of installed SLZB-OS `v3.4.1.dev1`, asset version
+`muh7296h`, found the positively identified P10 form `customZBotaForm2`
+accepts `.bin`; its JavaScript uploads to `/fileUpload?customName=/fw.bin` and
+selects `{local:1,ch:2,mr1Second:1}` for radio flashing. Numeric labels alone
+remain insufficient: match live `/ha_info` chip identity and USB endpoint.
+No upload or flashing API was invoked to obtain this evidence.
+
+The official rollback has `SLZB` magic, two big-endian address/length/CRC32
+descriptors, and application plus CCFG payloads. The hosted packager emits
+the same structure for R5, verifies every source HEX byte at its original
+address, allows only erased padding inside the application span (two bytes
+for this candidate), checks both segment CRCs and adds no NV data. It does
+not rebuild firmware or alter the original manifest. `management-upload.json`
+binds the original HEX and the separate container hash.
+
+The handoff's instruction to upload the HEX directly is therefore unresolved
+for this UI. **Do not rename HEX to BIN or override its filter as proof of
+compatibility.** The container is a reviewable alternative, not silent
+substitution under a HEX-only permit. Bind the actual BIN hash in the
+one-shot operator record if this route is chosen. Closed-source management
+backend acceptance and erase behavior have not been tested; vendor-format
+equivalence is the scope of the static evidence. Unexpected upload behavior
+consumes the attempt: preserve evidence and stop, without retry.
 
 ## Image extent does not establish erase semantics
 
@@ -84,10 +125,12 @@ with the potentially NV-destructive upload/restore plan acknowledged.
   previous state for restoration after smoke.
 - [ ] Stage the bound collector/decoder and private destination before first
   boot. With Z2M stopped, specify the **single** initial ZNP/log owner and how
-  records reach the file-only collector. The collector does not open serial.
+  records reach the file-only collector. The existing incident collector does
+  not open serial; `t832_first_boot_capture.py` is a separate bounded sole reader.
   Account for automatic boot at the end of a UI upload: either establish a
-  recording/buffering path before that boot, or keep this gate unresolved.
-  Starting a reader afterward cannot be claimed to capture the first boot.
+  recording/buffering path before that boot, or document the uploader's UART
+  ownership gap and capture at its earliest release, as permitted by the latest
+  handoff. Starting a reader afterward cannot guarantee the earliest BOOT.
 - [ ] Record explicit operator authorization for **one** upload of this exact
   device/target/file/hash tuple. An attempt consumes the permit even if upload
   fails; no automatic retry, second flash or rollback flash is covered.
@@ -129,6 +172,32 @@ Keep production startup and automatic recovery inhibited while checking:
 
 Failure keeps production startup inhibited. Preserve evidence and use the
 prepared recovery plan under its own scoped authorization; no blind flash loop.
+
+Keep evidence outside Zigbee2MQTT's DATA tree. Its supported backup exports
+all files below DATA except `log`/`ota`; placing archives there recursively
+includes them in later exports. Private preparation uses a separate evidence
+root, exclusive 0600 files and 0700 directories. Raw serial and decoded files
+remain private. Capture is staged, not automatically armed; it never transmits,
+flushes incoming bytes, resets, restores or reopens after disconnect. Opening
+CDC can still affect kernel-controlled line state. Preserve partial files if
+capture exits unsuccessfully; absence of BOOT is not evidence of boot failure.
+Release the capture process before the next sole owner issues SYS/NV reads.
+
+The currently deployed management recovery controller accepts historical
+firmware revisions, not R5 `8320002`. Do not relax its allowlist or enable it
+without the separate observer/capture-barrier/latch review. A manual R5 smoke
+helper may verify exact SYS/DEBUG identity and read-only NV state after capture;
+that alone does not verify counters, controlled reset, traffic or soak readiness.
+
+The supported [zigbee-herdsman 10.9.1 restore path](https://github.com/Koenkk/zigbee-herdsman/blob/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/adapter/manager.ts)
+internally commissions a temporary random provisioning network, restores the
+backup into NV, updates commissioning items and resets before resuming the
+restored network. It is not a zero-write/zero-reset operation. Configuration
+and a matching backup must remain present; otherwise strategy selection can
+commission a new network. A literal prohibition on *any* commissioning conflicts
+with this supported restore path. Resolve that scope before an upload that may
+erase NV; do not invent a direct-NV workaround or silently start Z2M. This turn
+validated backup integrity, not a live restore or security-counter continuity.
 
 ## C. PRODUCTION-SOAK-READY
 

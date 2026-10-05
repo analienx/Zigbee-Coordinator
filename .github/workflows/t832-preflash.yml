@@ -2,7 +2,7 @@ name: T832 exact-image preflash evidence
 on:
   push:
     branches: [codex/t832-r5-deployment-gates]
-    paths: [deploy/t832_preflash_audit.py, deploy/test_t832_preflash.py, deploy/t832_first_boot_capture.py, .github/workflows/t832-preflash.yml]
+    paths: [deploy/t832_preflash_audit.py, deploy/test_t832_preflash.py, deploy/t832_first_boot_capture.py, docs/T832_P10_DEPLOYMENT_GATES.md, .github/workflows/t832-preflash.yml]
   workflow_dispatch:
 permissions:
   contents: read
