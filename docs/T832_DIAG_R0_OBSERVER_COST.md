@@ -29,7 +29,12 @@ CPU/hook cost (worst-case bounds, MT task or ISR context as noted):
 - Command RX/dispatch/complete: `record()` only.
 - AF dispatch parse: bounded offset reads (7 or 16 byte minimum lengths),
   one 8-slot table scan on insert/confirm.
-- Queue hook: one 8-slot FIFO push (overwrite-oldest on overflow, counted).
+- Queue hook: one 8-slot shadow-FIFO push; a full FIFO refuses the push
+  (the oldest tracked descriptor is never evicted) and counts
+  `tx_overflow_n` plus a TX_MISMATCH record. Refusal ownership is
+  correlated at the patched call site (R4-F01): unowned refusals retire
+  nothing; the stage-3 owned refusal retires exactly the stashed
+  generation, or nothing when the stash is the overflow sentinel.
 - Dequeue hook: SOF check + head compare, O(1).
 - TX finish: in-flight class resolution, O(1), one conditional record.
 - NPI task wake / ZStack progress: single timestamp write, no record.
@@ -38,8 +43,9 @@ CPU/hook cost (worst-case bounds, MT task or ISR context as noted):
   records; hex conversion only on the export path, never in hooks.
 - Heap sampling: `Memory_getStats` only in the 60 s RESOURCE tick (MT task
   context), one call per tick; unavailable reported as `0xFFFF/0xFFFF`.
-  One resource slot rides each export while the 10 s health triple is due,
-  so the heap slot recurs about every 13 min, not every 60 s.
+  Each resourceDue export stages up to 2 of the 13 rotating selectors
+  (`res_ext_idx % 13`), so a full rotation — heap slot included — recurs
+  about every 7 exports (~7 min unimpeded), not every 60 s.
 - No allocation, formatting, UART, flash, or waits exist in any hook or
   fault path; the validator greps every hot hook body for them.
 

@@ -30,10 +30,20 @@ This repository authors the integration but never executes it on hardware and ne
 python3 firmware/t832/t832_incident.py \
   --root /config/.private/t832-diag \
   --config-fingerprint "$T832_CONFIG_FINGERPRINT" \
-  capture --trigger "$TRIGGER_REASON" \
+  capture --trigger "$TRIGGER_ID" \
+  --triggers deploy/t832_capture_barrier.yaml \
   --window-seconds 900 --deadline-seconds 30 \
   --require-firmware-binding
 ```
+
+`--trigger` accepts exactly one of `mesh_outage`, `bridge_offline`,
+`radio_timeout` — any other string fails `unknown-trigger` and captures
+nothing. `--triggers` pins the barrier automation whose definitions
+(and SHA256) are recorded in the manifest; `radio_timeout` additionally
+evaluates `--trigger-topic`/`--trigger-payload` against those
+definitions. `--require-firmware-binding` refuses capture unless a
+deployed-role binding for the re-hashed artifact exists (candidate/test
+roles bind for bookkeeping only and never gate).
 
 Expected: `status:captured` with `bundle` path containing `manifest.json`,
 `SHA256.json`, `diag-15m.jsonl`, `host-events-15m.jsonl`. `manifest.json`
@@ -41,7 +51,12 @@ records trigger, 15-minute source-time window, latest diagnostic state, last
 successful command stages within the latest boot group (record chronology,
 not file arrival order), unknown-time counts, window truncation, collect
 partiality, missing sources, firmware SHA, and the observability note. The
-bundle directory is committed atomically; the latch moves to `captured` with
+window is the newest chronological tail in SOURCE-time order: above-cap
+windows shed the oldest rows first (never the newest fault within
+same-day rotation skew) and record an explicit
+`window-rows-capped` note; `latest_diagnostic_state` is the newest row by
+source time, not whatever the traversal visited last. The bundle directory
+is committed atomically; the latch moves to `captured` with
 `reset_used:false`.
 
 If capture exceeds the deadline, fails, or evidence cannot be saved: inhibit
@@ -91,12 +106,35 @@ python3 firmware/t832/t832_incident.py --root /config/.private/t832-diag \
   close-if-stable --bridge-up true --normal-traffic true
 ```
 
-Close requires: window elapsed, full observation coverage (no gap over 180 s),
-every observation bridge-up, traffic+ZDO evidence in both halves, no clock
-anomaly or restart. Mid-window outage, coverage gaps, restarts, stale traffic,
-or missing ZDO move the latch to `failed`, never `closed`. Early close fails
+Close requires: 600 s window elapsed; full observation coverage (no gap
+over 360 s — one full missed /5 scheduler tick is tolerated, two are not);
+EVERY observation bridge-up AND normal-traffic AND ZDO-ok (a single false
+point anywhere fails, even beside good points); traffic+ZDO evidence in both
+halves (the midpoint observation belongs to both); observations past
+window-end + 300 s grace fail closed as out-of-window; no clock anomaly or
+restart. Mid-window outage, coverage gaps, restarts, stale traffic, or
+missing ZDO move the latch to `failed`, never `closed`. Early close fails
 `stability-window-not-complete`. `manual-clear --reason` is operator-only,
-audited in `host-events.log`, and refuses corrupt state without `--force`.
+audited in `host-events.log`; without `--force` it validates (never repairs
+over) every present latch value — falsy JSON included — and refuses corrupt
+state. `--force` is the explicit audited repair path. A cleared latch
+carries an explicit unused boolean permit so the next capture accepts the
+state the repair wrote. Migration: latches cleared before this candidate
+lack the explicit permit and now read as corrupt — run
+`manual-clear --reason <why> --force` once (audited) to rewrite them.
+
+Check recorded ZDO proof without mutating anything:
+
+```sh
+python3 firmware/t832/t832_incident.py --root /config/.private/t832-diag \
+  zdo-proof-state --transaction <zdo-transaction-id>
+```
+
+The probe shares the verdict's proof check (same transaction, age ≤300 s):
+it reports what `recovery-result --zdo-ok` will accept, so a missed
+automation wait can still reach the proof-gated verdict honestly. Boot
+continuity is enforced separately at close (`stability-boot-mismatch`),
+not inside the probe.
 
 ## 5. HA automation wiring
 

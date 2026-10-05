@@ -1,13 +1,14 @@
-"""B09 slow leg: real ten-minute stability windows through the actual
-YAML scheduler and CLI.
+"""B09/R4-F03 slow leg: real ten-minute stability windows through the
+actual YAML scheduler and CLI.
 
-Four independent incidents run concurrently (separate state roots, one
+Five independent incidents run concurrently (separate state roots, one
 worker each) because each close decision needs ~600 real seconds of
 tool-visible window: a healthy close, an outage mid-window, missed ticks,
-and a late close tick. Tick spacing mirrors the YAML minutes:/5 timer
+a close tick a full cadence late (within the one-period grace), and a
+close tick past the grace. Tick spacing mirrors the YAML minutes:/5 timer
 (300 real seconds); the interpreter fires the real stability automation
 per tick with no invented radio traffic (no ZDO publishes ever leave the
-stability phase). Wired into the firmware/control jobs only: ~14 minutes
+stability phase). Wired into the firmware/control jobs only: ~17 minutes
 wall time, past the fast-lane budget by design.
 """
 from __future__ import annotations
@@ -117,15 +118,30 @@ def leg_gap_fails(case) -> str:
     return "ok"
 
 
-def leg_late_tick_fails(case) -> str:
-    # The first close attempt comes a full cadence late: its own
-    # observation falls outside the window grace and fails closed even
-    # though every flag is healthy.
+def leg_late_tick_closes(case) -> str:
+    # R4-F03: the first close attempt comes a full cadence late (phase
+    # offset), inside the one-period grace: a healthy window still closes
+    # exactly once instead of failing on phase alone.
     recover(case)
     tick(case)
     time.sleep(300)
     tick(case)
-    time.sleep(425)
+    time.sleep(450)
+    tick(case)
+    latch = case.latch()
+    assert latch.get("status") == "closed", latch
+    assert len(incident_closed_events(case)) == 1, incident_closed_events(case)
+    return "ok"
+
+
+def leg_beyond_grace_fails(case) -> str:
+    # Past one full grace period the closing observation is out-of-window
+    # evidence and fails closed even though every flag is healthy.
+    recover(case)
+    tick(case)
+    time.sleep(300)
+    tick(case)
+    time.sleep(650)
     tick(case)
     latch = case.latch()
     assert latch.get("status") == "failed", latch
@@ -137,7 +153,8 @@ LEGS = {
     "happy-close": leg_happy_close,
     "outage-fails": leg_outage_fails,
     "gap-fails": leg_gap_fails,
-    "late-tick-fails": leg_late_tick_fails,
+    "late-tick-closes": leg_late_tick_closes,
+    "beyond-grace-fails": leg_beyond_grace_fails,
 }
 
 

@@ -32,6 +32,11 @@ t832_zdo_proof: >-
   --root /config/.private/t832-diag
   record-zdo-proof
   --transaction "{{ transaction }}"
+t832_zdo_proof_state: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  zdo-proof-state
+  --transaction "{{ transaction }}"
 t832_rts_used: >-
   python3 /config/python_scripts/t832_incident.py
   --root /config/.private/t832-diag

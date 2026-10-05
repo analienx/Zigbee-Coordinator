@@ -1012,7 +1012,7 @@ jobs:
           python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py
 
   negative-control:
-    name: Negative control on reviewed pre-fix tree (R3 B01/B02)
+    name: Negative control on reviewed pre-fix tree (R3 B01/B02 + R4 F01/F06-F09)
     runs-on: ubuntu-22.04
     timeout-minutes: 20
 
@@ -1022,14 +1022,14 @@ jobs:
           path: repo
           fetch-depth: 0
 
-      - name: Prove B01/B02 fixtures fail before the fix
+      - name: Prove B01/B02/R4-F01/R4-F09 fixtures fail before the fix
         shell: bash
         run: |
           set -euo pipefail
           # Pinned pre-fix tree: reviewed R2 seal SHA. The probe asserts
           # post-fix semantics, so it must FAIL here (defect reproduced).
-          # Stubs and headers are unchanged since that SHA; only the
-          # implementation overlays, keeping the pre-fix API surface.
+          # Stubs are unchanged since that SHA; only the implementation
+          # overlays, keeping the pre-fix API surface. Headers are NOT pinned: the probe never calls post-SHA header additions.
           mkdir -p /tmp/neg-overlay
           git -C repo show 8dd181bdf0dcf9a6d275d03705902b8c78459556:firmware/t832/t832_diag_impl.inc \
             > /tmp/neg-overlay/t832_diag_impl.inc
@@ -1043,11 +1043,103 @@ jobs:
             -Wl,--wrap=malloc -Wl,--wrap=calloc \
             -Wl,--wrap=realloc -Wl,--wrap=free
           set +e
-          /tmp/t832neg
+          /tmp/t832neg > /tmp/neg-out.txt 2>&1
           rc=$?
           set -e
+          cat /tmp/neg-out.txt
           if [ "$rc" -eq 0 ]; then
             echo "::error::negative control unexpectedly passed on the pre-fix tree"
             exit 1
           fi
-          echo "NEGATIVE CONTROL PASS: probe failed as expected on 8dd181b (rc=$rc)"
+          # R4-F12: a nonzero exit alone is not evidence — a crash exits
+          # nonzero too. Every probe must have run, and every R4 probe
+          # must show at least one INTENDED assertion failure naming it.
+          for probe in b01 b02 r4-f01 r4-f09; do
+            if ! grep -q "^NEG-PROBE $probe$" /tmp/neg-out.txt; then
+              echo "::error::negative control probe $probe never ran"
+              exit 1
+            fi
+          done
+          if ! grep -q "^NEG-RESULT: " /tmp/neg-out.txt; then
+            echo "::error::negative control produced no NEG-RESULT summary (likely crash, not assertion failures)"
+            exit 1
+          fi
+          for probe in r4-f01 r4-f09; do
+            if ! grep -q "^NEG-FAIL $probe " /tmp/neg-out.txt; then
+              echo "::error::negative control probe $probe shows no intended assertion failure"
+              exit 1
+            fi
+          done
+          echo "NEGATIVE CONTROL PASS: intended assertion failures reproduced on 8dd181b (rc=$rc)"
+
+      - name: Prove R4 host regressions fail on the pre-R4 module
+        shell: bash
+        run: |
+          set -euo pipefail
+          # R4-F12 host negative control: the reviewed R4-base module
+          # (pinned R3-M5 seal 8d59a798, pre-R4 fixes) overlaid under the
+          # CURRENT R4 regression tests. Each named test must FAIL with
+          # its intended assertion — passes, errors, and collection
+          # failures are all job failures. Automation/YAML tests are
+          # excluded: their defect and fixture are both uncommitted, so
+          # no pre-R4 pairing exists (see ledger).
+          mkdir -p /tmp/negpy
+          git -C repo show 8d59a79891be0a4c18454c854dadc3d4855f21ca:firmware/t832/t832_incident.py > /tmp/negpy/t832_incident.py
+          cp repo/firmware/t832/test_diag.py /tmp/negpy/test_diag.py
+          cd /tmp/negpy
+          set +e
+          python3 -m unittest -v \
+            test_diag.R4F06LatchTests.test_falsy_latches_rejected_before_work \
+            test_diag.R4F06LatchTests.test_incomplete_permit_rejected \
+            test_diag.R4F06LatchTests.test_manual_clear_nonforce_rejects_falsy \
+            test_diag.R3M2ReadBoundsTests.test_window_above_cap_preserves_newest_fault \
+            test_diag.R3M2ReadBoundsTests.test_window_midnight_files_order_by_source_time \
+            > /tmp/negpy-out.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/negpy-out.txt
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::R4 host regressions unexpectedly passed on the pre-R4 module"
+            exit 1
+          fi
+          for t in test_falsy_latches_rejected_before_work test_incomplete_permit_rejected test_manual_clear_nonforce_rejects_falsy \
+                   test_window_above_cap_preserves_newest_fault test_window_midnight_files_order_by_source_time; do
+            if ! grep -q "^FAIL: $t " /tmp/negpy-out.txt; then
+              echo "::error::expected intended FAIL for $t on the pre-R4 module"
+              exit 1
+            fi
+          done
+          echo "HOST NEGATIVE CONTROL PASS: intended R4 assertion failures reproduced on 8d59a798 module"
+
+      - name: Prove F07 deadline loss on the pre-R4 module
+        shell: bash
+        run: |
+          set -euo pipefail
+          # R4-F07 defect shape: a blown scan deadline raises TimeoutError
+          # and loses the chunk instead of committing the scanned prefix
+          # with an explicit note. Assert exactly that on the pinned pre-R4 module.
+          cd /tmp/negpy
+          python3 - <<'PYEOF'
+          import importlib.util
+          import pathlib
+          import tempfile
+          import time
+          spec = importlib.util.spec_from_file_location(
+              "t832_incident_old", pathlib.Path("/tmp/negpy/t832_incident.py"))
+          assert spec and spec.loader
+          old = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(old)
+          with tempfile.TemporaryDirectory() as td:
+              log = pathlib.Path(td) / "z2m.log"
+              log.write_text("2026-10-03T09:00:00Z boot\n" * 300)
+              try:
+                  old.read_increment(
+                      log, {}, initial_tail_bytes=1 << 20,
+                      deadline_s=time.monotonic() - 1.0)
+              except TimeoutError as exc:
+                  print(f"F07-DEFECT-REPRODUCED: TimeoutError (no commit): {exc}")
+              else:
+                  raise SystemExit(
+                      "F07 probe unexpectedly committed on the pre-R4 module")
+          PYEOF
+          echo "F07 NEGATIVE CONTROL PASS: TimeoutError loss reproduced on 8d59a798 module"

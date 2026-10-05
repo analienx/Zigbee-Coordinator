@@ -119,9 +119,17 @@ void T832Diag_npiAllocFailed(uint8_t site, uint16_t requested,
  * 3 unsupported type (sendToHost), 4 frame NULL (processStackMsg),
  * 5 queue-record NULL (processStackMsg), 6 unsupported type (processStackMsg).
  * Site 1 of T832Diag_npiAllocFailed is the same TX path; site 2 is the
- * RX path (NPITask_sendBufToStack, ZStack RX) and never touches TX state. */
+ * RX path (NPITask_sendBufToStack, ZStack RX) and never touches TX state.
+ * R4-F01 ownership: stages 1, 2, 4, 5, 6 and the allocation failure are
+ * unowned (the queue hook never ran for the refused frame) and retire
+ * nothing. Only stage 3 is owned: patched sendToHost queues the frame via
+ * T832Diag_npiTxQueuedOther immediately before the switch/default, so the
+ * refused frame is exactly the stashed generation — use
+ * T832Diag_npiTxRefusedOwned there. */
 void T832Diag_npiTxRefused(uint8_t stage, uint8_t cmd0, uint8_t cmd1,
                            uint8_t len);
+void T832Diag_npiTxRefusedOwned(uint8_t stage, uint8_t cmd0, uint8_t cmd1,
+                                uint8_t len);
 void T832Diag_uartConfigured(uint32_t baud, uint8_t flow);
 void T832Diag_uartRx(uint16_t size, uint16_t occupancy);
 void T832Diag_uartRxOverflow(uint16_t attempted, uint16_t occupancy);

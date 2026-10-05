@@ -77,6 +77,13 @@ def main() -> int:
     require("NPITask_sendToHost" in patcher, "app-originated TX hook missing")
     require("T832Diag_npiTxRefused" in patcher, "TX-path refusal hooks missing")
     require("T832Diag_npiTxRefused" in runtime, "TX-path refusal instrumentation missing")
+    require("T832Diag_npiTxRefusedOwned" in patcher, "R4-F01 owned stage-3 refusal hook missing")
+    require("T832Diag_npiTxRefusedOwned" in runtime, "R4-F01 owned refusal instrumentation missing")
+    require(patcher.index("T832Diag_npiTxQueuedOther") < patcher.index("T832Diag_npiTxRefusedOwned"),
+            "R4-F01 push-before-refusal order broken: QueuedOther must precede RefusedOwned")
+    require("T832Diag_popPeeked(uint8_t sel, uint16_t seq, uint32_t first_ms," in runtime,
+            "R4-F10 staged retirement must carry first/last_ms identity")
+    require("T832Diag_afOldestLocked" in runtime, "R4-F09 oldest-survivor rescan missing")
     require("T832Diag_afDispatch" in patcher, "AF dispatch hook missing")
     require("ZStackTaskProcessEvent" in patcher, "ZStack progress hook missing")
     require("T832Diag_networkState" in patcher, "existing-network resume-state hook missing")
@@ -115,6 +122,7 @@ def main() -> int:
         "T832Diag_responseQueued", "T832Diag_responseAllocFailed",
         "T832Diag_npiTxQueuedOther", "T832Diag_npiTxDequeue",
         "T832Diag_npiTrap", "T832Diag_npiAllocFailed", "T832Diag_npiTxRefused",
+        "T832Diag_npiTxRefusedOwned",
         "T832Diag_uartConfigured", "T832Diag_uartRx", "T832Diag_uartRxOverflow",
         "T832Diag_uartTxStart", "T832Diag_uartWriteRejected",
         "T832Diag_uartTxFinished", "T832Diag_startup",

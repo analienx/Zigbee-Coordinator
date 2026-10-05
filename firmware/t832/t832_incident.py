@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+from collections import deque
 
 class LockError(OSError):
     """Raised when the collector lock cannot be acquired in time."""
@@ -130,7 +131,13 @@ STABILITY_MAX_OBSERVATIONS = 512
 # B09: observations at or just past the window end are admissible (the
 # closing tick itself observes seconds after end_mono); anything a full
 # cadence late is out-of-window evidence and fails closed.
-STABILITY_OBS_GRACE_S = 120.0
+# R4-F03: the grace is one full /5 scheduler period (300s), not a fitted
+# constant. HA fires minutes:/5 on fixed wall-clock boundaries independent
+# of the recovery anchor, so the first tick at or past the 600s window end
+# lands up to one period late; a shorter grace fails healthy windows based
+# purely on recovery phase. The gap budget below still catches a missed
+# tick, and post-close ticks never observe (status leaves stabilizing).
+STABILITY_OBS_GRACE_S = 300.0
 # B09: wall-clock/mono cross-check tolerance for close decisions.
 # Scheduling jitter is seconds; a real wall jump or suspend skews minutes.
 STABILITY_WALL_SKEW_S = 120.0
@@ -708,6 +715,13 @@ def source_files(values: list[str]) -> tuple[list[Path], list[str]]:
     return files[-64:], sorted(set(missing))
 
 
+def _deadline_exceeded(deadline_s: float | None) -> bool:
+    """One shared time source for every scan budget: a single monotonic
+    read. R4-F07: all scan loops observe the same deadline value through
+    this helper instead of spreading ad-hoc clock reads."""
+    return deadline_s is not None and time.monotonic() >= deadline_s
+
+
 def read_increment(
     path: Path,
     cursor: dict[str, object],
@@ -734,8 +748,10 @@ def read_increment(
     drained oversized spans); when it trips, the cursor stops at the last
     complete-line boundary with an explicit read-budget-exhausted note, so
     the next poll resumes exactly once with no line split or skipped.
-    deadline_s is a monotonic end time: the scan raises TimeoutError past
-    it, keeping the previous cursor for resume. The initial-tail skip is
+    deadline_s is a monotonic end time observed through _deadline_exceeded
+    (one shared time source): passing it aborts only the current chunk —
+    already-scanned rows commit at their boundary with an explicit note
+    instead of being lost to an exception. The initial-tail skip is
     chunk-bounded (an unbounded readline would swallow newline-free
     floods), and a peeked byte equal to the line's own newline ends an
     exactly-cap-sized line there instead of draining into the next valid
@@ -767,7 +783,21 @@ def read_increment(
         offset = 0
     pending = ""
     rows: list[tuple[int, str]] = []
-    with path.open("rb") as fh:
+    try:
+        fh = path.open("rb")
+    except OSError as exc:
+        return [], cursor, [f"unreadable:{path}:{exc}"]
+    with fh:
+        # R4-F07: opened-by-identity — the scan below runs on this opened
+        # file only. If the path was replaced between the stat above and
+        # this open, rescan from zero under the opened file's own identity
+        # instead of applying a stale offset to foreign bytes.
+        live = os.fstat(fh.fileno())
+        if (live.st_dev, live.st_ino) != tuple(identity):
+            notes.append(f"rotated:{path}")
+            offset = 0
+            stat = live
+            identity = (live.st_dev, live.st_ino)
         if offset == 0 and stat.st_size > initial_tail_bytes:
             fh.seek(stat.st_size - initial_tail_bytes)
             # Bounded skip of the partial first line: at most the tail
@@ -796,8 +826,12 @@ def read_increment(
                 broke_budget = True
                 break
             checks += 1
-            if deadline_s is not None and checks % 64 == 0 and time.monotonic() >= deadline_s:
-                raise TimeoutError(f"collect-deadline-exceeded:{path}")
+            if checks % 64 == 0 and _deadline_exceeded(deadline_s):
+                # R4-F07: abort only this chunk — rows scanned so far
+                # commit at their boundary with an explicit note.
+                notes.append(f"collect-deadline-exceeded:{path}:{boundary}")
+                broke_budget = True
+                break
             # Bounded first read: no single read ever holds more than
             # max_line_bytes + 1, regardless of writer behavior.
             raw = fh.readline(max_line_bytes + 1)
@@ -826,8 +860,11 @@ def read_increment(
             size = len(raw) + 1
             piece = b""
             while True:
-                if deadline_s is not None and time.monotonic() >= deadline_s:
-                    raise TimeoutError(f"collect-deadline-exceeded:{path}")
+                if _deadline_exceeded(deadline_s):
+                    notes.append(f"collect-deadline-exceeded:{path}:{boundary}")
+                    broke_budget = True
+                    piece = b"deadline"
+                    break
                 piece = fh.readline(max_line_bytes + 1)
                 if not piece:
                     break
@@ -841,6 +878,12 @@ def read_increment(
                 notes.append(f"line-too-large:{path}:{pos}:{size}")
                 boundary = fh.tell()
                 continue
+            if piece == b"deadline":
+                # Deadline tripped mid-drain: stop at the last complete
+                # boundary with the deadline note above; the oversized
+                # span is re-drained (boundedly) on the next poll.
+                pending = ""
+                break
             if piece:
                 # Budget tripped mid-drain with more data still unread:
                 # stop at the last complete boundary; the oversized span
@@ -1062,9 +1105,14 @@ def _collect_locked(
                     and observed_build not in build_mismatch_noted
                 ):
                     build_mismatch_noted.add(observed_build)
+                    # R4-F11: the mismatch note carries the observed
+                    # capability bitmap so the phase explains the
+                    # capabilities difference, not just the id.
+                    caps = frame.get("capability_bitmap")
                     notes.append(
                         "firmware-build-mismatch:"
-                        f"{observed_build}:{bound_build_id}"
+                        f"{observed_build}:{bound_build_id}:"
+                        f"caps={caps if isinstance(caps, str) else 'unknown'}"
                     )
                 # One continuity annotation per frame: records sharing a
                 # frame share boot association (boot membership is a frame
@@ -1387,18 +1435,31 @@ def recent_rows(
     bounded raw supplement rows (with stream provenance, never backdated
     with ingestion time) instead of being counted-and-dropped.
 
-    B04/B11 bounds: files stream newest-first so truncation sheds the
-    oldest evidence first; max_scan_lines caps total scanned lines and
-    deadline_s (monotonic end) aborts the scan — either sets truncated
-    with an explicit note naming the file. Unknown rows are capped
+    R4-F08: files stream oldest-first and qualifying rows keep a bounded
+    newest-tail (a maxlen ring sheds the oldest above max_rows), then the
+    retained tail is stable-sorted ascending by SOURCE time. Above-cap and
+    midnight/multiple-file windows therefore preserve the uniquely marked
+    newest fault/command, and diag[-1] selects the actual latest
+    diagnostic state. (The ring sheds in file-mtime traversal order, so a
+    file whose mtime skews older than its rows' source times can shed
+    newer-timestamped rows before the sort; rotation is daily, which
+    bounds the skew to same-day clock adjustments.)
+
+    B04/B11 bounds: max_scan_lines caps total scanned lines and deadline_s
+    (monotonic end, observed through _deadline_exceeded) aborts the scan —
+    either sets truncated with an explicit note naming the file. Unknown
+    rows are capped
     separately; beyond the cap they are counted only, noted explicitly.
     Returns (in-window rows, unknown-time supplement rows, unknown total,
     truncated, notes).
     """
-    out: list[dict[str, object]] = []
+    tail: deque[tuple[dt.datetime, dict[str, object]]] = deque(
+        maxlen=max(max_rows, 0)
+    )
     unknown_rows: list[dict[str, object]] = []
     unknown = 0
     unknown_capped = False
+    rows_capped = False
     truncated = False
     notes: list[str] = []
     if max_scan_lines is None:
@@ -1407,7 +1468,6 @@ def recent_rows(
     files = sorted(
         store.stream.glob(f"{prefix}-*.jsonl"),
         key=lambda p: (p.stat().st_mtime_ns if p.exists() else 0),
-        reverse=True,
     )
     for path in files:
         try:
@@ -1423,11 +1483,10 @@ def recent_rows(
                     truncated = True
                     notes.append(f"window-scan-capped:{path.name}:{lineno}")
                     break
-                if deadline_s is not None and lineno % 4096 == 0:
-                    if time.monotonic() >= deadline_s:
-                        truncated = True
-                        notes.append(f"window-deadline:{path.name}:{lineno}")
-                        break
+                if lineno % 4096 == 0 and _deadline_exceeded(deadline_s):
+                    truncated = True
+                    notes.append(f"window-deadline:{path.name}:{lineno}")
+                    break
                 try:
                     item = json.loads(line)
                 except json.JSONDecodeError:
@@ -1454,14 +1513,23 @@ def recent_rows(
                         )
                     continue
                 if when >= cutoff:
-                    if len(out) >= max_rows:
-                        truncated = True
-                        continue
-                    out.append(item)
+                    if len(tail) >= max_rows:
+                        if not rows_capped:
+                            rows_capped = True
+                            notes.append(
+                                f"window-rows-capped:{path.name}:{lineno}"
+                            )
+                    tail.append((when, item))
         if truncated:
             break
     if unknown_capped:
         truncated = True
+    if rows_capped:
+        truncated = True
+    # Stable ascending sort by SOURCE time: the tail already streams
+    # chronologically, so ties keep stream order and the result no longer
+    # depends on which file was traversed first.
+    out = [item for _, item in sorted(tail, key=lambda t: t[0])]
     return out, unknown_rows, unknown, truncated, notes
 
 
@@ -1500,10 +1568,11 @@ def validate_latch(value: object) -> dict[str, object]:
 
     B05: every latch entry point calls this before any read-modify-write.
     A present latch must be an object with the known schema, a known
-    status, a boolean permit flag, and a non-empty incident id for every
-    status that represents a live incident flow (a forced clear of
-    missing state is the only id-less latch, written by the explicit
-    manual-repair path). Missing schema is corrupt — never defaulted.
+    status, an explicit boolean permit flag (R4-F06: never defaulted), and
+    a non-empty incident id for every status that represents a live
+    incident flow (a forced clear of missing state is the only id-less
+    latch, written by the explicit manual-repair path). Missing schema is
+    corrupt — never defaulted.
     A consumed permit (reset_used True) with status rewound to captured
     is inconsistent: it would re-authorize an already-used reset.
     B07: "observed" (non-qualifying evidence, no reset permit) validates
@@ -1517,7 +1586,12 @@ def validate_latch(value: object) -> dict[str, object]:
     status = value.get("status")
     if status not in LATCH_STATUSES:
         raise RuntimeError(f"incident-latch-corrupt:unknown-status:{status!r}")
-    reset_used = value.get("reset_used", False)
+    # R4-F06: the permit flag is never defaulted — every present latch
+    # must carry an explicit boolean, so an incomplete incident state can
+    # never stand in for an explicitly unused permit.
+    if "reset_used" not in value:
+        raise RuntimeError("incident-latch-corrupt:reset-used-missing")
+    reset_used = value.get("reset_used")
     if not isinstance(reset_used, bool):
         raise RuntimeError("incident-latch-corrupt:reset-used-not-bool")
     if reset_used and status == "captured":
@@ -1754,15 +1828,21 @@ def capture(
         collection_deadline_s = started_monotonic + deadline_seconds
         try:
             latch = store.load_strict(store.latch)
+            latch_present = True
         except RuntimeError as exc:
             if str(exc).startswith("state-missing:"):
                 latch = {}
+                latch_present = False
             else:
                 raise
-        if latch:
+        if latch_present:
             # B05: an existing latch is validated before anything else.
             # Invalid content raises here, before any work is done and
             # before the final atomic_json could overwrite it.
+            # R4-F06: file absence (latch_present False) is the ONLY path
+            # that permits initial state — every present value, including
+            # falsy JSON ({}, [], null, false, 0), is validated, so corrupt
+            # bytes can never be silently overwritten with a new latch.
             validate_latch(latch)
         if active_latch(latch):
             raise RuntimeError(f"incident-latch-active:{latch.get('status')}")
@@ -1887,6 +1967,9 @@ def capture(
                 "window_notes": window_notes,
                 "collect_partial": bool(collection.get("partial")),
                 "latest_boot_index": latest_boot,
+                # R4-F08: diag is ascending SOURCE-time order, so [-1]
+                # selects the actual latest diagnostic state rather than
+                # whatever the traversal visited last.
                 "latest_diagnostic_state": diag[-1] if diag else None,
                 "last_successful_command_stages": last_stages,
                 "collector_result": collection,
@@ -2107,6 +2190,45 @@ def verify_bundle(store: Store, latch: dict[str, object]) -> Path:
         "trigger_definitions_sha256"
     ):
         raise RuntimeError("reset-permit-defs-mismatch")
+    # R4-F11 firmware identity: only after the bundle proves intact
+    # (hashes and inventory above) are incident fields decoded for the
+    # observed-vs-bound verdict. Hashes prove integrity, not identity: a
+    # swapped image with a self-consistent bundle still refuses here.
+    bound_state = bound_firmware(store)
+    bound_id = bound_state.get("build_id") if isinstance(bound_state, dict) else None
+    if isinstance(bound_id, bool):
+        bound_id = None
+    if isinstance(bound_id, int):
+        try:
+            with (bundle / "diag-15m.jsonl").open(
+                "r", encoding="utf-8", errors="replace"
+            ) as fh:
+                foreign: dict[int, object] = {}
+                for line in fh:
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    observed = item.get("observed_build_id")
+                    if (
+                        isinstance(observed, bool)
+                        or not isinstance(observed, int)
+                        or observed == bound_id
+                    ):
+                        continue
+                    caps = item.get("capability_bitmap")
+                    foreign[observed] = caps if isinstance(caps, str) else "unknown"
+        except OSError as exc:
+            raise RuntimeError(f"reset-permit-evidence-unreadable:{exc}")
+        for observed_id, observed_caps in sorted(
+            foreign.items(), key=lambda kv: kv[0]
+        ):
+            raise RuntimeError(
+                "reset-permit-build-mismatch:"
+                f"{observed_id}:{bound_id}:caps={observed_caps}"
+            )
     return bundle
 
 
@@ -2181,6 +2303,34 @@ def record_zdo_proof(store: Store, transaction: str) -> dict[str, object]:
         )
         store.append_host_event("zdo_proved", incident_id=value.get("incident_id"))
         return value
+
+
+def query_zdo_proof(store: Store, transaction: str | None) -> dict[str, object]:
+    """Read-only ZDO proof probe (R4-F02): report whether the latch's
+    recorded proof verifies for the transaction, using the same
+    zdo_proof_state check the recovery verdict applies — probe and verdict
+    agree by construction. Never mutates: no latch write, no host event.
+    An absent or unusable latch fails closed (proof_ok False) instead of
+    raising, so the barrier's wait-timeout path can still reach its
+    proof-gated terminal verdict."""
+    cleaned = str(transaction or "").strip()
+    with store.locked():
+        try:
+            latch = store.load_strict(store.latch)
+        except RuntimeError as exc:
+            return {
+                "ok": True,
+                "proof_ok": False,
+                "transaction": cleaned,
+                "detail": f"no-latch:{exc}",
+            }
+    proof_ok, detail = zdo_proof_state(latch, cleaned)
+    return {
+        "ok": True,
+        "proof_ok": proof_ok,
+        "transaction": cleaned,
+        "detail": detail,
+    }
 
 
 def record_rts_used(store: Store) -> dict[str, object]:
@@ -2267,45 +2417,67 @@ def recovery_result(
 # template's default('') for unreported failures.
             if failure_phase:
                 failed["failure_phase"] = failure_phase
-            value = update_latch(
-                store,
-                {"reset_authorized", "recovering", "stabilizing"},
-                failed,
-            )
-            store.append_host_event("recovery_failed", incident_id=value.get("incident_id"))
+            try:
+                value = update_latch(
+                    store,
+                    {"reset_authorized", "recovering", "stabilizing"},
+                    failed,
+                )
+            except OSError as exc:
+                # R4-F05: the terminal verdict was determined but is not
+                # durable — report that honestly instead of a bare I/O
+                # error so the barrier log names the missing terminal
+                # state (reason and phase included).
+                raise RuntimeError(
+                    f"recovery-result-unpersisted:{reason}:"
+                    f"{failure_phase or ''}:{exc}"
+                )
+            try:
+                store.append_host_event("recovery_failed", incident_id=value.get("incident_id"))
+            except OSError:
+                value = dict(value)
+                value["recovery_event_unpersisted"] = True
             return value
 
         stable_after = utcnow() + dt.timedelta(seconds=STABILITY_WINDOW_SECONDS)
         now_mono = time.monotonic()
         proof = latch.get("zdo_proof") if isinstance(latch, dict) else None
-        value = update_latch(
-            store,
-            {"reset_authorized", "recovering"},
-            {
-                "status": "stabilizing",
-                "recovery_succeeded_utc": iso(),
-                "recovery_succeeded_mono": now_mono,
-                "normal_traffic_observed": True,
-                "zdo_verified": True,
-                # B09: the structured transaction-bound proof recorded by
-                # record_zdo_proof is preserved as-is; the check verdict
-                # rides alongside instead of replacing it with "ok".
-                "zdo_proof": proof if isinstance(proof, dict) else {},
-                "zdo_proof_check": proof_detail,
-                "zdo_transaction": zdo_transaction,
-                "stable_after_utc": iso(stable_after),
-                "stable_after_mono": now_mono + STABILITY_WINDOW_SECONDS,
-                # B09: the window is bound to this host boot; a rebooted
-                # host must fail closed even with greater uptime.
-                "boot_id": current_boot_id(),
-                "observations": [],
-            },
-        )
-        store.append_host_event(
-            "recovery_stabilizing",
-            incident_id=value.get("incident_id"),
-            stable_after_utc=value.get("stable_after_utc"),
-        )
+        try:
+            value = update_latch(
+                store,
+                {"reset_authorized", "recovering"},
+                {
+                    "status": "stabilizing",
+                    "recovery_succeeded_utc": iso(),
+                    "recovery_succeeded_mono": now_mono,
+                    "normal_traffic_observed": True,
+                    "zdo_verified": True,
+                    # B09: the structured transaction-bound proof recorded by
+                    # record_zdo_proof is preserved as-is; the check verdict
+                    # rides alongside instead of replacing it with "ok".
+                    "zdo_proof": proof if isinstance(proof, dict) else {},
+                    "zdo_proof_check": proof_detail,
+                    "zdo_transaction": zdo_transaction,
+                    "stable_after_utc": iso(stable_after),
+                    "stable_after_mono": now_mono + STABILITY_WINDOW_SECONDS,
+                    # B09: the window is bound to this host boot; a rebooted
+                    # host must fail closed even with greater uptime.
+                    "boot_id": current_boot_id(),
+                    "observations": [],
+                },
+            )
+        except OSError as exc:
+            # R4-F05: same honest-unpersisted contract as the failed path.
+            raise RuntimeError(f"recovery-result-unpersisted:stabilizing:recovery:{exc}")
+        try:
+            store.append_host_event(
+                "recovery_stabilizing",
+                incident_id=value.get("incident_id"),
+                stable_after_utc=value.get("stable_after_utc"),
+            )
+        except OSError:
+            value = dict(value)
+            value["recovery_event_unpersisted"] = True
         return value
 
 
@@ -2365,16 +2537,24 @@ def stability_observation(
 
 def _fail_close(store: Store, reason: str) -> dict[str, object]:
     """Terminal close verdict: the window did not hold, persist why."""
-    value = update_latch(
-        store,
-        {"stabilizing"},
-        {
-            "status": "failed",
-            "recovery_failed_utc": iso(),
-            "failure_reason": reason,
-        },
-    )
-    store.append_host_event("stability_failed", incident_id=value.get("incident_id"))
+    try:
+        value = update_latch(
+            store,
+            {"stabilizing"},
+            {
+                "status": "failed",
+                "recovery_failed_utc": iso(),
+                "failure_reason": reason,
+            },
+        )
+    except OSError as exc:
+        # R4-F05: same honest-unpersisted contract as recovery_result.
+        raise RuntimeError(f"recovery-result-unpersisted:{reason}:close:{exc}")
+    try:
+        store.append_host_event("stability_failed", incident_id=value.get("incident_id"))
+    except OSError:
+        value = dict(value)
+        value["recovery_event_unpersisted"] = True
     return value
 
 
@@ -2459,13 +2639,23 @@ def close_if_stable(store: Store, *, bridge_up: bool, normal_traffic: bool) -> d
         # dropped or counted toward coverage.
         if any(m > end_mono + STABILITY_OBS_GRACE_S for m, _, _, _ in points):
             return fail("stability-out-of-window")
-        if any(not up for _, up, _, _ in points):
+        # R4-F04: every recorded observation must hold bridge, traffic
+        # AND continuity — a single false point in any half is
+        # counterevidence, even when other points in that half are good.
+        # (The per-half existence checks below remain as coverage rules.)
+        if any(not (up and t and z) for _, up, t, z in points):
             return fail("stability-window-failed")
         edges = [base_mono] + [m for m, _, _, _ in points] + [end_mono]
         if any(b - a > STABILITY_MAX_GAP_SECONDS for a, b in zip(edges, edges[1:])):
             return fail("stability-coverage-gap")
         mid = (base_mono + end_mono) / 2.0
-        first_half = [p for p in points if p[0] < mid]
+        # R4-F03: the midpoint observation belongs to both halves. A strict
+        # split fails a healthy window whose recovery lands just after a
+        # scheduler tick (first observation at ~mid, none strictly before)
+        # based purely on phase; a midpoint point genuinely evidences both
+        # sides' continuity. (Counterevidence still rejects via the
+        # all-must-hold rule above, not via coverage.)
+        first_half = [p for p in points if p[0] <= mid]
         second_half = [p for p in points if p[0] >= mid]
         if not any(t and z for _, _, t, z in first_half):
             return fail("stability-no-traffic-first-half")
@@ -2480,20 +2670,30 @@ def manual_clear(store: Store, reason: str, *, force: bool = False) -> dict[str,
     with store.locked():
         try:
             value = store.load_strict(store.latch)
+            latch_present = True
         except RuntimeError as exc:
-            if not force or str(exc).startswith("state-missing:"):
-                if str(exc).startswith("state-missing:"):
-                    value = {}
-                else:
-                    raise
-            else:
+            if str(exc).startswith("state-missing:"):
                 value = {}
-                store.append_host_event("incident_manual_clear_forced", reason=reason)
-        if isinstance(value, dict) and value:
+                latch_present = False
+            elif not force:
+                raise
+            else:
+                # --force is the explicit audited repair path for corrupt
+                # bytes too (not only missing state): discard the
+                # unparseable value, record the forced repair, and write a
+                # fresh cleared latch below.
+                store.append_host_event(
+                    "incident_manual_clear_forced", reason=reason
+                )
+                value = {}
+                latch_present = False
+        if latch_present:
             if not force:
                 # B05: without --force, an existing latch must validate —
                 # unknown schema/status or inconsistent permit refuses,
-                # never gets repaired over. --force stays the explicit
+                # never gets repaired over. R4-F06: every present value is
+                # validated, falsy JSON included — corrupt bytes are never
+                # silently repaired over. --force stays the explicit
                 # manual-repair path and records itself.
                 validate_latch(value)
             else:
@@ -2504,18 +2704,21 @@ def manual_clear(store: Store, reason: str, *, force: bool = False) -> dict[str,
                         "incident_manual_clear_forced", reason=reason
                     )
                     value = {}
-        elif not isinstance(value, dict):
-            if not force:
-                raise RuntimeError("incident-latch-corrupt")
+        else:
             value = {}
-            store.append_host_event("incident_manual_clear_forced", reason=reason)
+        if not isinstance(value, dict):
+            raise RuntimeError("incident-latch-corrupt:not-an-object")
         # The cleared latch keeps the schema so the tool's own gate
         # accepts the state its repair path wrote: a schema-less latch
         # would brick the next capture with incident-latch-corrupt.
+        # R4-F06: the cleared state carries an explicit boolean permit
+        # (unused), so the validator's explicit-permit rule accepts the
+        # state the repair path wrote.
         value.update(
             {
                 "schema": LATCH_SCHEMA,
                 "status": "cleared",
+                "reset_used": False,
                 "manual_clear_reason": reason,
                 "manual_clear_utc": iso(),
             }
@@ -2588,6 +2791,11 @@ def bind_firmware(
             raise RuntimeError("firmware-bind-variant-required")
         if isinstance(build_id, bool) or not isinstance(build_id, int):
             raise RuntimeError("firmware-bind-build-id-required")
+        # R4-F11: the wire build id is an unsigned 32-bit field. An
+        # out-of-range declaration can never match observed identity, so
+        # binding it would manufacture a permanently-mismatched binding.
+        if not 0 <= build_id <= 0xFFFFFFFF:
+            raise RuntimeError(f"firmware-bind-build-id-range:{build_id}")
         if manifest is None:
             raise RuntimeError("firmware-bind-manifest-required")
         try:
@@ -2676,6 +2884,11 @@ def main() -> int:
     sub.add_parser("mark-recovering")
     proof = sub.add_parser("record-zdo-proof")
     proof.add_argument("--transaction", required=True)
+    # R4-F02: read-only late-proof probe for the wait-timeout path: reports
+    # whether recorded proof verifies for the transaction without mutating
+    # anything, so a missed wait can still reach the proof-gated verdict.
+    probe = sub.add_parser("zdo-proof-state")
+    probe.add_argument("--transaction", default="")
     sub.add_parser("record-rts-used")
     rr = sub.add_parser("recovery-result")
     rr.add_argument("--success", type=bool_arg, required=True)
@@ -2755,6 +2968,8 @@ def main() -> int:
             result = mark_recovering(store)
         elif args.command == "record-zdo-proof":
             result = record_zdo_proof(store, args.transaction)
+        elif args.command == "zdo-proof-state":
+            result = query_zdo_proof(store, args.transaction)
         elif args.command == "record-rts-used":
             result = record_rts_used(store)
         elif args.command == "recovery-result":

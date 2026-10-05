@@ -24,7 +24,10 @@
   description: >-
     Capture a 15-minute evidence incident and require a one-shot reset permit
     before the existing RTS recovery path runs. Reuses the production outage
-    triggers; replaces continue_on_error with fail-closed response gates.
+    triggers; every fallible service carries continue_on_error with
+    fail-closed response gates, so service exceptions, malformed or absent
+    responses still reach a terminal persisted recovery-result (R4-F05). The
+    ZDO response is caught by a pre-armed incident-scoped catcher (R4-F02).
   triggers:
     - trigger: state
       entity_id: binary_sensor.zigbee2mqtt_mesh_communication_outage
@@ -57,12 +60,16 @@
         trigger_topic: "{{ trigger.topic | default('') }}"
         trigger_payload_json: "{{ trigger.payload_json | default({}) | tojson }}"
       response_variable: t832_capture
+      # R4-F05: a service exception leaves the response unset; the
+      # returncode-first gates below route that to a halt, never onward.
+      continue_on_error: true
     - condition: template
       value_template: >-
         {{ t832_capture['returncode'] == 0
            and (t832_capture['stdout'] | from_json).ok }}
     - service: shell_command.t832_authorize_reset
       response_variable: t832_authorize
+      continue_on_error: true
     - condition: template
       value_template: >-
         {{ t832_authorize['returncode'] == 0
@@ -71,6 +78,7 @@
                == (t832_capture['stdout'] | from_json).incident_id }}
     - service: shell_command.t832_mark_recovering
       response_variable: t832_marking
+      continue_on_error: true
     - condition: template
       value_template: >-
         {{ t832_marking['returncode'] == 0
@@ -82,16 +90,23 @@
           Incident {{ (t832_capture['stdout'] | from_json).incident_id }}
           captured and reset-authorized; stopping Zigbee2MQTT.
         entity_id: binary_sensor.zigbee2mqtt_bridge_online
+    # R4-F05: API timeout/401 or a transport exception must not strand
+    # the incident: the bounded poll below confirms the real state and the
+    # stop-confirmed gate routes any unconfirmed outcome to the terminal
+    # failed branch with reason and phase.
     - service: hassio.addon_stop
       data:
         addon: 45df7312_zigbee2mqtt
+      continue_on_error: true
     - repeat:
         until: >-
-          {{ (t832_addon_state['stdout'] | from_json).state == 'stopped'
+          {{ (t832_addon_state is defined and t832_addon_state['returncode'] == 0
+              and (t832_addon_state['stdout'] | from_json).state == 'stopped')
              or repeat.index >= 6 }}
         sequence:
           - service: shell_command.t832_addon_state
             response_variable: t832_addon_state
+            continue_on_error: true
           - delay:
               seconds: 10
     # B08: a halted stop check reports the terminal failure (reason and
@@ -101,7 +116,8 @@
         - conditions:
             - condition: template
               value_template: >-
-                {{ (t832_addon_state['stdout'] | from_json).state == 'stopped' }}
+                {{ t832_addon_state is defined and t832_addon_state['returncode'] == 0
+                   and (t832_addon_state['stdout'] | from_json).state == 'stopped' }}
           sequence: []
       default:
         - service: shell_command.t832_recovery_result
@@ -113,6 +129,7 @@
             failure_reason: "addon-stop-unconfirmed"
             failure_phase: "stop"
           response_variable: t832_stop_failed
+          continue_on_error: true
         - condition: template
           value_template: "{{ false }}"
     # The ONLY reset implementation: the existing validated R2 helper.
@@ -122,6 +139,7 @@
     # incident; t832_rts_used records it, and any retry halts here.
     - service: shell_command.mr4u_p10_rts_reset
       response_variable: t832_rts
+      continue_on_error: true
     - choose:
         - conditions:
             - condition: template
@@ -141,6 +159,7 @@
           value_template: "{{ false }}"
     - service: shell_command.t832_rts_used
       response_variable: t832_rts_marked
+      continue_on_error: true
     - choose:
         - conditions:
             - condition: template
@@ -161,24 +180,30 @@
     - service: hassio.addon_start
       data:
         addon: 45df7312_zigbee2mqtt
+      continue_on_error: true
     # B08: confirm the start like the stop (bounded poll, reported halt),
     # then wait on the bridge state itself: wait_template re-evaluates the
     # CURRENT state, so an already-online bridge completes immediately
     # instead of missing a transition that already happened.
+    # R4-F05: as with the stop poll, an absent or malformed poll response
+    # routes to the terminal failed branch, never past it.
     - repeat:
         until: >-
-          {{ (t832_addon_start_state['stdout'] | from_json).state == 'started'
+          {{ (t832_addon_start_state is defined and t832_addon_start_state['returncode'] == 0
+              and (t832_addon_start_state['stdout'] | from_json).state == 'started')
              or repeat.index >= 6 }}
         sequence:
           - service: shell_command.t832_addon_state
             response_variable: t832_addon_start_state
+            continue_on_error: true
           - delay:
               seconds: 5
     - choose:
         - conditions:
             - condition: template
               value_template: >-
-                {{ (t832_addon_start_state['stdout'] | from_json).state == 'started' }}
+                {{ t832_addon_start_state is defined and t832_addon_start_state['returncode'] == 0
+                   and (t832_addon_start_state['stdout'] | from_json).state == 'started' }}
           sequence: []
       default:
         - service: shell_command.t832_recovery_result
@@ -190,6 +215,7 @@
             failure_reason: "addon-start-unconfirmed"
             failure_phase: "start"
           response_variable: t832_start_failed
+          continue_on_error: true
         - condition: template
           value_template: "{{ false }}"
     - wait_template: "{{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
@@ -209,16 +235,27 @@
             failure_reason: "bridge-offline"
             failure_phase: "bridge"
           response_variable: t832_bridge_failed
+          continue_on_error: true
         - condition: template
           value_template: "{{ false }}"
-    # Bounded ZDO verification, production shape: a permit_join request with
-    # time 0 and a transaction unique to this incident, then a response wait
-    # that only the matching transaction completes. Unrelated or stale
-    # responses never wake the wait; a miss times out into a reported halt.
+    # Bounded ZDO verification, production shape: a single permit_join
+    # request with time 0 and a transaction unique to this incident.
+    # R4-F02: the incident-scoped catcher automation below is subscribed
+    # from HA start — strictly before this publish — so a matching
+    # response is captured (proof recorded in the latch) even if it
+    # arrives while the publish yields or before the wait below arms.
+    # The expectation is armed here, first, then published once, then
+    # waited on. Unrelated, stale, retained, duplicate, or malformed
+    # replies never match the armed transaction and cannot create proof.
+    - service: input_text.set_value
+      data:
+        entity_id: input_text.t832_zdo_expect
+        value: "ha-t832-{{ (t832_capture['stdout'] | from_json).incident_id }}"
     - service: mqtt.publish
       data:
         topic: zigbee2mqtt/bridge/request/permit_join
         payload: '{"time": 0, "transaction": "ha-t832-{{ (t832_capture["stdout"] | from_json).incident_id }}"}'
+      continue_on_error: true
     - wait_for_trigger:
         - trigger: mqtt
           topic: zigbee2mqtt/bridge/response/permit_join
@@ -239,27 +276,89 @@
             # Real ZDO evidence is recorded here, bound to the observed
             # transaction: an outage-derived Boolean alone is never proof.
             # recovery_result below only accepts zdo_ok against this fresh
-            # recorded proof.
+            # recorded proof. (The pre-armed catcher records the same proof
+            # when the response beat this wait; recording twice is
+            # idempotent — freshness and transaction binding still hold.)
             - service: shell_command.t832_zdo_proof
               data:
                 transaction: "{{ wait.trigger.payload_json.transaction }}"
               response_variable: t832_zdo
+              continue_on_error: true
       default:
-        - service: shell_command.t832_recovery_result
+        # R4-F02: the wait may have missed a response that arrived before
+        # it armed; the pre-armed catcher recorded such proof in the latch.
+        # Probe proof read-only: only real recorded proof takes the late
+        # success path, otherwise the legacy terminal zdo-unconfirmed
+        # failure below. The probe shares the verdict's proof check, so
+        # both agree by construction.
+        - service: shell_command.t832_zdo_proof_state
           data:
-            success: false
-            normal_traffic: false
-            zdo_ok: false
-            zdo_transaction: ""
-            failure_reason: "zdo-unconfirmed"
-            failure_phase: "zdo"
-          response_variable: t832_zdo_failed
+            transaction: "ha-t832-{{ (t832_capture['stdout'] | from_json).incident_id }}"
+          response_variable: t832_zdo_late
+          continue_on_error: true
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: >-
+                    {{ t832_zdo_late is defined and t832_zdo_late['returncode'] == 0
+                       and (t832_zdo_late['stdout'] | from_json).proof_ok == true }}
+              sequence:
+                - service: shell_command.t832_recovery_result
+                  data:
+                    success: true
+                    normal_traffic: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') }}"
+                    zdo_ok: true
+                    zdo_transaction: "ha-t832-{{ (t832_capture['stdout'] | from_json).incident_id }}"
+                    failure_phase: "zdo"
+                  response_variable: t832_zdo_late_verdict
+                  continue_on_error: true
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: >-
+                            {{ t832_zdo_late_verdict is defined
+                               and t832_zdo_late_verdict['returncode'] == 0
+                               and (t832_zdo_late_verdict['stdout'] | from_json).status == 'stabilizing' }}
+                      sequence:
+                        - service: logbook.log
+                          data:
+                            name: Zigbee2MQTT T832 barrier
+                            message: >-
+                              Incident {{ (t832_capture['stdout'] | from_json).incident_id }}
+                              recovering (late ZDO proof); 10-minute stability observation started.
+                            entity_id: binary_sensor.zigbee2mqtt_bridge_online
+                  default:
+                    # The late verdict already persisted its terminal
+                    # failure (its reason names the traffic or proof); only
+                    # consume the expectation.
+                    - service: input_text.set_value
+                      data:
+                        entity_id: input_text.t832_zdo_expect
+                        value: ""
+          default:
+            - service: shell_command.t832_recovery_result
+              data:
+                success: false
+                normal_traffic: false
+                zdo_ok: false
+                zdo_transaction: ""
+                failure_reason: "zdo-unconfirmed"
+                failure_phase: "zdo"
+              response_variable: t832_zdo_failed
+              continue_on_error: true
+            - service: input_text.set_value
+              data:
+                entity_id: input_text.t832_zdo_expect
+                value: ""
+        # The wait timed out: every sub-case above ends the run here. A
+        # late stabilizing verdict already logged its tail; failed verdicts
+        # are persisted with reason and phase.
         - condition: template
           value_template: "{{ false }}"
     - choose:
         - conditions:
             - condition: template
-              value_template: "{{ t832_zdo['returncode'] == 0 }}"
+              value_template: "{{ t832_zdo is defined and t832_zdo['returncode'] == 0 }}"
           sequence: []
       default:
         - service: shell_command.t832_recovery_result
@@ -271,6 +370,11 @@
             failure_reason: "zdo-unconfirmed"
             failure_phase: "zdo"
           response_variable: t832_proof_failed
+          continue_on_error: true
+        - service: input_text.set_value
+          data:
+            entity_id: input_text.t832_zdo_expect
+            value: ""
         - condition: template
           value_template: "{{ false }}"
     - service: shell_command.t832_recovery_result
@@ -281,9 +385,14 @@
         zdo_transaction: "{{ wait.trigger.payload_json.transaction }}"
         failure_phase: "recovery"
       response_variable: t832_recovered
+      continue_on_error: true
+    - service: input_text.set_value
+      data:
+        entity_id: input_text.t832_zdo_expect
+        value: ""
     - condition: template
       value_template: >-
-        {{ t832_recovered['returncode'] == 0
+        {{ t832_recovered is defined and t832_recovered['returncode'] == 0
            and (t832_recovered['stdout'] | from_json).status == 'stabilizing' }}
     - service: logbook.log
       data:
@@ -294,21 +403,91 @@
         entity_id: binary_sensor.zigbee2mqtt_bridge_online
   mode: single
 
+# R4-F02: incident-scoped ZDO response catcher. Subscribed from HA start —
+# strictly before any recovery publishes its request — so a matching
+# response is captured even when it arrives while the barrier's publish
+# yields or before its wait arms. The trigger filter equals the armed
+# expectation (one incident transaction); the condition additionally
+# requires a non-empty expectation and an ok status, so unrelated, stale,
+# retained, duplicate (consumed), or malformed replies can never record
+# proof. Proof itself is recorded only by the candidate tool with
+# freshness, transaction-binding, and boot guards; the expectation is
+# consumed only after proof records, so a duplicate cannot extend proof
+# freshness, while a tool error leaves it armed for a duplicate to prove.
+# Requires an input_text.t832_zdo_expect helper (initial "").
+- id: zigbee2mqtt_t832_zdo_catcher
+  alias: Zigbee2MQTT - T832 ZDO response catcher
+  description: >-
+    Pre-armed incident-scoped receiver for the single post-reset ZDO
+    permit_join response. Event-driven only: no polling, no probes.
+  triggers:
+    - trigger: mqtt
+      topic: zigbee2mqtt/bridge/response/permit_join
+      value_template: "{{ value_json.transaction | default('') }}"
+      payload: "{{ states('input_text.t832_zdo_expect') }}"
+  conditions:
+    - condition: template
+      value_template: >-
+        {{ states('input_text.t832_zdo_expect') != ''
+           and (trigger.payload_json.status | default('')) == 'ok'
+           and (trigger.payload_json.transaction | default('')) ==
+               states('input_text.t832_zdo_expect') }}
+  actions:
+    - service: shell_command.t832_zdo_proof
+      data:
+        transaction: "{{ trigger.payload_json.transaction }}"
+      response_variable: t832_catch_proof
+      continue_on_error: true
+    # The tolerated proof call is gated: the expectation is consumed only
+    # after proof actually recorded. A tool error leaves it armed so a
+    # duplicate reply can still prove; every barrier terminal branch
+    # clears it, so nothing stays armed past the run.
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >-
+                {{ t832_catch_proof is defined and t832_catch_proof['returncode'] == 0 }}
+          sequence:
+            - service: input_text.set_value
+              data:
+                entity_id: input_text.t832_zdo_expect
+                value: ""
+      default: []
+  mode: single
+
 - id: zigbee2mqtt_t832_stability_close
   alias: Zigbee2MQTT - T832 stability close
   description: >-
     Every 5 minutes, record one stability observation for a stabilizing
     incident and close it only when the full 10-minute window is covered
     without gaps, outages, clock anomalies, or missing traffic/ZDO evidence.
+    R4-F04: bridge/mesh state transitions are also observed passively
+    between ticks — a short outage that recovers before the next tick is
+    still recorded as counterevidence and rejects the close. Event-driven
+    listeners only: no probes.
   triggers:
     - trigger: time_pattern
       minutes: /5
+    - trigger: state
+      entity_id: binary_sensor.zigbee2mqtt_bridge_online
+      from: "on"
+      to: "off"
+    - trigger: state
+      entity_id: binary_sensor.zigbee2mqtt_mesh_communication_outage
+      from: "off"
+      to: "on"
   conditions: []
   actions:
+    # R4-F05: a tool exception or absent response halts the tick loudly
+    # here (no observation recorded, no close attempted) instead of
+    # aborting mid-body after a partial write.
     - service: shell_command.t832_status
       response_variable: t832_status
+      continue_on_error: true
     - condition: template
-      value_template: "{{ (t832_status['stdout'] | from_json).status == 'stabilizing' }}"
+      value_template: >-
+        {{ t832_status is defined and t832_status['returncode'] == 0
+           and (t832_status['stdout'] | from_json).status == 'stabilizing' }}
     - service: shell_command.t832_observe
       data:
         bridge_up: "{{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
@@ -319,15 +498,17 @@
         # bridge must hold; either one failing is counter-evidence.
         zdo_ok: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') and is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
       response_variable: t832_observed
+      continue_on_error: true
     - condition: template
-      value_template: "{{ t832_observed['returncode'] == 0 }}"
+      value_template: "{{ t832_observed is defined and t832_observed['returncode'] == 0 }}"
     - service: shell_command.t832_close_if_stable
       data:
         bridge_up: "{{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
         normal_traffic: "{{ is_state('binary_sensor.zigbee2mqtt_mesh_communication_outage', 'off') }}"
       response_variable: t832_closed
+      continue_on_error: true
     - condition: template
-      value_template: "{{ t832_closed['returncode'] == 0 }}"
+      value_template: "{{ t832_closed is defined and t832_closed['returncode'] == 0 }}"
     - service: system_log.write
       data:
         message: >-

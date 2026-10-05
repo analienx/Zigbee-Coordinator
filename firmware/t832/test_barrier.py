@@ -2,15 +2,22 @@
 
 Structure tests parse deploy/t832_capture_barrier.yaml and prove every
 destructive step is gated by a response_variable plus a template condition,
-with bounded waits and no continue_on_error or notifications.
+with bounded waits and no notifications. Fallible services carry
+continue_on_error only with fail-closed response gates (R4-F05).
 
 Chain tests walk the same step order with the real incident CLI and mocked
 services (supervisor API shim, RTS helper shim): each injected failure must
 halt the chain with the latch preserved, and success must reach stabilizing
 with the RTS helper invoked exactly once after stop confirmation.
+
+Phase tests (R4-F03) prove the close schedule is phase-independent: the
+real observe/close decision code runs under virtual clocks at every
+first-tick offset, driven on the YAML's real minutes:/5 grid. Slow
+real-time legs in test_stability.py cover the full YAML+CLI path.
 """
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -21,6 +28,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -151,9 +159,56 @@ class BarrierStructureTests(unittest.TestCase):
         self.assertNotIn("notify.", text)
         for automation in self.automations:
             self.assertEqual(automation.get("mode"), "single")
-            # Prose may discuss the pattern; only real action keys matter.
-            for step in flatten_actions(automation["actions"]):
-                self.assertNotIn("continue_on_error", step)
+
+    def test_tolerant_steps_are_fail_closed(self) -> None:
+        # R4-F05: continue_on_error is allowed only on fallible services,
+        # and every tolerated response must be consumed by a later
+        # fail-closed gate — never silently swallowed past a destructive
+        # or recovery step.
+        allowed = {
+            "hassio.addon_stop",
+            "hassio.addon_start",
+            "mqtt.publish",
+            "input_text.set_value",
+        }
+        for automation in self.automations:
+            steps = flatten_actions(automation["actions"])
+            cond_texts = all_condition_texts(automation["actions"])
+            for step in steps:
+                if not isinstance(step, dict) or "continue_on_error" not in step:
+                    continue
+                service = step.get("service", "")
+                self.assertTrue(
+                    service in allowed or service.startswith("shell_command."),
+                    f"continue_on_error on non-fallible {service}",
+                )
+                if "response_variable" not in step:
+                    continue
+                var = step["response_variable"]
+                if any(var in text for text in cond_texts):
+                    continue
+                # A tolerated response in a terminal failure branch is
+                # fail-closed when nothing but neutral steps (expectation
+                # cleanup, logging) precedes the run-ending halt.
+                idx = steps.index(step)
+                neutral = {"input_text.set_value", "logbook.log"}
+                closed = False
+                for later in steps[idx + 1:]:
+                    if not isinstance(later, dict):
+                        continue
+                    if later.get("condition") == "template" and "false" in str(
+                        later.get("value_template", "")
+                    ):
+                        closed = True
+                        break
+                    if later.get("service") not in neutral and (
+                        "service" in later or "action" in later
+                    ):
+                        break
+                self.assertTrue(
+                    closed,
+                    f"tolerated response {var} has no fail-closed gate",
+                )
 
     def test_production_triggers_reused(self) -> None:
         ids = {t.get("id") for t in self.barrier["triggers"]}
@@ -233,16 +288,25 @@ class BarrierStructureTests(unittest.TestCase):
             i for i, s in enumerate(steps)
             if s.get("service") == "shell_command.t832_zdo_proof" and i > wait_at
         )
-        recover_at = next(
-            i for i, s in enumerate(steps)
-            if s.get("service") == "shell_command.t832_recovery_result"
-            and i > proof_at
-            and s.get("data", {}).get("success") is True
-        )
         proof_data = steps[proof_at].get("data", {})
         self.assertIn("wait.trigger.payload_json.transaction", str(proof_data.get("transaction", "")))
-        recover_data = steps[recover_at].get("data", {})
-        self.assertIn("wait.trigger.payload_json.transaction", str(recover_data.get("zdo_transaction", "")))
+        # R4-F02: the wait branch consumes the OBSERVED wait transaction
+        # while the late-probe branch consumes the incident-derived one
+        # the probe verified — both bindings stay transaction-exact.
+        wait_recoveries = [
+            s for s in steps
+            if s.get("service") == "shell_command.t832_recovery_result"
+            and s.get("data", {}).get("success") is True
+            and "wait.trigger.payload_json.transaction" in str(s.get("data", {}).get("zdo_transaction", ""))
+        ]
+        self.assertEqual(len(wait_recoveries), 1)
+        late_recoveries = [
+            s for s in steps
+            if s.get("service") == "shell_command.t832_recovery_result"
+            and s.get("data", {}).get("success") is True
+            and "t832_capture" in str(s.get("data", {}).get("zdo_transaction", ""))
+        ]
+        self.assertEqual(len(late_recoveries), 1)
 
     def test_mqtt_trigger_filters_at_fire_time(self) -> None:
         # B08: unrelated responses never fire the automation: the mqtt
@@ -884,6 +948,303 @@ class R3M3ShellBoundaryTests(unittest.TestCase):
         except ValueError:
             parsed = None
         self.assertNotEqual(parsed, payload)
+
+
+class R4F11AuthorizeCliTests(unittest.TestCase):
+    """R4-F11: the authorize-time observed-vs-bound verdict through the
+    real CLI, both miss directions, with distinct realistic 32-bit build
+    ids. Hashes prove integrity; only the post-verdict identity check
+    proves the running image is the bound one."""
+
+    OPS_A = 0xA5A50001
+    OPS_B = 0xA5A50002
+    CAPS = "0x003fffff"
+
+    def run_tool(self, state: Path, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(HERE / "t832_incident.py"), "--root", str(state), *argv],
+            capture_output=True,
+            text=True,
+        )
+
+    def stage(self, root: Path, bound_id: int, observed_id: int):
+        state = root / "private"
+        artifact = root / "fw.hex"
+        artifact.write_text(":020000040000FA\n", encoding="utf-8")
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        manifest_path = root / "build-manifest.json"
+        manifest_path.write_text(
+            json.dumps({
+                "variant": "T832-DIAG-R0",
+                "repository_commit": "a" * 40,
+                "artifacts": {"fw.hex": {"sha256": digest}},
+            }) + "\n",
+            encoding="utf-8",
+        )
+        proc = self.run_tool(
+            state, "bind-firmware", "--artifact", str(artifact),
+            "--role", "deployed", "--variant", "T832-DIAG-R0",
+            "--manifest", str(manifest_path), "--build-id", str(bound_id),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        incident_id = "20261005T080000.000000Z"
+        bundle = state / "incidents" / incident_id
+        bundle.mkdir(parents=True)
+        rows = [
+            {"observed_build_id": observed_id,
+             "capability_bitmap": self.CAPS, "marker": i}
+            for i in range(2)
+        ]
+        files = {
+            "manifest.json": json.dumps({
+                "incident_id": incident_id,
+                "diag_record_count": 2,
+                "host_event_count": 0,
+                "diag_unknown_time_count": 0,
+                "host_unknown_time_count": 0,
+                "unknown_supplement_count": 0,
+                "trigger_qualification": {"qualifying": True},
+            }),
+            "diag-15m.jsonl": "".join(json.dumps(r) + "\n" for r in rows),
+            "host-events-15m.jsonl": "",
+            "unknown-time-supplement.jsonl": "",
+        }
+        for name, content in files.items():
+            (bundle / name).write_text(content, encoding="utf-8")
+        hashes = {
+            name: hashlib.sha256((bundle / name).read_bytes()).hexdigest()
+            for name in files
+        }
+        (bundle / "SHA256.json").write_text(json.dumps(hashes), encoding="utf-8")
+        latch = {
+            "schema": 1,
+            "status": "captured",
+            "incident_id": incident_id,
+            "reset_used": False,
+            "bundle": str(bundle),
+            "trigger_qualifying": True,
+        }
+        (state / "state").mkdir(parents=True, exist_ok=True)
+        (state / "state" / "incident-latch.json").write_text(
+            json.dumps(latch), encoding="utf-8"
+        )
+        return state
+
+    def authorize(self, state: Path) -> subprocess.CompletedProcess:
+        return self.run_tool(state, "authorize-reset")
+
+    def test_miss_direction_a_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            state = self.stage(Path(td), self.OPS_A, self.OPS_B)
+            proc = self.authorize(state)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn(
+                f"reset-permit-build-mismatch:{self.OPS_B}:{self.OPS_A}:"
+                f"caps={self.CAPS}",
+                proc.stdout + proc.stderr,
+            )
+
+    def test_miss_direction_b_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            state = self.stage(Path(td), self.OPS_B, self.OPS_A)
+            proc = self.authorize(state)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn(
+                f"reset-permit-build-mismatch:{self.OPS_A}:{self.OPS_B}:"
+                f"caps={self.CAPS}",
+                proc.stdout + proc.stderr,
+            )
+
+    def test_match_authorizes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            state = self.stage(Path(td), self.OPS_A, self.OPS_A)
+            proc = self.authorize(state)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("reset_authorized", proc.stdout)
+
+
+class VirtualClock:
+    """Virtual HA/host clocks for the phase matrix: the real decision code
+    reads incident.utcnow, time.monotonic and current_boot_id, so patching
+    those three points virtualizes the whole window deterministically."""
+
+    def __init__(self) -> None:
+        self.wall = dt.datetime(2026, 10, 5, 8, 0, 0, tzinfo=dt.timezone.utc)
+        self.mono = 1000000.0
+
+    def utcnow(self) -> dt.datetime:
+        return self.wall
+
+    def monotonic(self) -> float:
+        return self.mono
+
+    def advance(self, seconds: float) -> None:
+        self.wall += dt.timedelta(seconds=seconds)
+        self.mono += seconds
+
+
+class R4F03PhaseTests(unittest.TestCase):
+    """R4-F03: the close schedule is phase-independent.
+
+    HA fires minutes:/5 on fixed wall boundaries, so the first tick after
+    recovery lands at an offset of 0..300s. For each pinned offset the real
+    stability_observation and close_if_stable run under virtual clocks on
+    the production grid (ticks at offset + 300k): healthy windows close
+    exactly once, at the first tick at or past the window end, and earlier
+    ticks refuse with window-not-complete rather than failing.
+
+    Timing-test split (documented, no live hardware): phases run fast here
+    through the real decision functions with virtual clocks; the YAML grid
+    itself is pinned by the timer contract test; the full YAML+CLI path at
+    a representative offset runs in test_stability.py slow legs.
+    """
+
+    PHASES = (0, 1, 120, 121, 130, 299, 300)
+    EXPECTED_CLOSE = {0: 600, 1: 601, 120: 720, 121: 721, 130: 730, 299: 899, 300: 600}
+
+    def run_phase(self, phi: int):
+        clock = VirtualClock()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = incident.Store(Path(tmp.name) / "private")
+        txn = f"ha-t832-phase-{phi}"
+        with mock.patch.object(incident, "utcnow", clock.utcnow), mock.patch(
+            "time.monotonic", clock.monotonic
+        ), mock.patch.object(incident, "current_boot_id", lambda: "phase-boot"):
+            store.atomic_json(
+                store.latch,
+                {"schema": 1, "status": "recovering",
+                 "incident_id": f"phase-{phi}", "reset_used": True},
+            )
+            incident.record_zdo_proof(store, txn)
+            verdict = incident.recovery_result(
+                store, success=True, normal_traffic=True, zdo_ok=True,
+                zdo_transaction=txn, failure_phase="recovery",
+            )
+            self.assertEqual(verdict.get("status"), "stabilizing")
+            base = clock.mono
+            ticks = []
+            tick = float(phi)
+            while tick <= 600 + 300:
+                ticks.append(tick)
+                tick += 300
+            closed_at = None
+            for tick in ticks:
+                clock.advance(tick - (clock.mono - base))
+                incident.stability_observation(
+                    store, bridge_up=True, normal_traffic=True, zdo_ok=True
+                )
+                try:
+                    result = incident.close_if_stable(
+                        store, bridge_up=True, normal_traffic=True
+                    )
+                except RuntimeError as exc:
+                    self.assertIn("stability-window-not-complete", str(exc))
+                    self.assertEqual(
+                        store.load(store.latch, {}).get("status"),
+                        "stabilizing",
+                    )
+                    continue
+                self.assertEqual(result.get("status"), "closed")
+                closed_at = tick
+                break
+            return store, clock, closed_at
+
+    def test_healthy_windows_close_exactly_once_per_phase(self) -> None:
+        for phi in self.PHASES:
+            with self.subTest(phi=phi):
+                store, clock, closed_at = self.run_phase(phi)
+                self.assertEqual(closed_at, self.EXPECTED_CLOSE[phi])
+                latch = store.load(store.latch, {})
+                self.assertEqual(latch.get("status"), "closed")
+                events = [
+                    json.loads(line)
+                    for line in store.host_events.read_text(
+                        encoding="utf-8"
+                    ).splitlines()
+                    if json.loads(line).get("kind") == "incident_closed"
+                ]
+                self.assertEqual(len(events), 1)
+                # A further tick finds non-stabilizing status: no second close.
+                clock.advance(300)
+                with self.assertRaises(RuntimeError) as ctx:
+                    incident.close_if_stable(
+                        store, bridge_up=True, normal_traffic=True
+                    )
+                self.assertIn("incident-not-stabilizing", str(ctx.exception))
+
+    def test_missed_close_tick_fails_out_of_window(self) -> None:
+        # Skip the tick that would close (730 at phi 130): the next grid
+        # tick lands past one full grace period and fails closed.
+        clock = VirtualClock()
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            with mock.patch.object(incident, "utcnow", clock.utcnow), mock.patch(
+                "time.monotonic", clock.monotonic
+            ), mock.patch.object(incident, "current_boot_id", lambda: "phase-boot"):
+                store.atomic_json(
+                    store.latch,
+                    {"schema": 1, "status": "recovering",
+                     "incident_id": "gap-130", "reset_used": True},
+                )
+                incident.record_zdo_proof(store, "ha-t832-gap-130")
+                incident.recovery_result(
+                    store, success=True, normal_traffic=True, zdo_ok=True,
+                    zdo_transaction="ha-t832-gap-130", failure_phase="recovery",
+                )
+                base = clock.mono
+                for tick in (130, 430):
+                    clock.advance(tick - (clock.mono - base))
+                    incident.stability_observation(
+                        store, bridge_up=True, normal_traffic=True, zdo_ok=True
+                    )
+                clock.advance(1030 - (clock.mono - base))
+                incident.stability_observation(
+                    store, bridge_up=True, normal_traffic=True, zdo_ok=True
+                )
+                failed = incident.close_if_stable(
+                    store, bridge_up=True, normal_traffic=True
+                )
+                self.assertEqual(failed.get("status"), "failed")
+                self.assertEqual(
+                    failed.get("failure_reason"), "stability-out-of-window"
+                )
+
+    def test_false_midpoint_observation_rejects(self) -> None:
+        # R4-F04 counterevidence through the same harness: one false
+        # observation among good ones fails the window at close time.
+        clock = VirtualClock()
+        with tempfile.TemporaryDirectory() as td:
+            store = incident.Store(Path(td) / "private")
+            with mock.patch.object(incident, "utcnow", clock.utcnow), mock.patch(
+                "time.monotonic", clock.monotonic
+            ), mock.patch.object(incident, "current_boot_id", lambda: "phase-boot"):
+                store.atomic_json(
+                    store.latch,
+                    {"schema": 1, "status": "recovering",
+                     "incident_id": "mid-false", "reset_used": True},
+                )
+                incident.record_zdo_proof(store, "ha-t832-mid-false")
+                incident.recovery_result(
+                    store, success=True, normal_traffic=True, zdo_ok=True,
+                    zdo_transaction="ha-t832-mid-false",
+                    failure_phase="recovery",
+                )
+                base = clock.mono
+                flags = [(True, True), (False, True), (True, True)]
+                for tick, (traffic, _) in zip((0, 300, 600), flags):
+                    clock.advance(tick - (clock.mono - base))
+                    incident.stability_observation(
+                        store, bridge_up=True, normal_traffic=traffic,
+                        zdo_ok=traffic,
+                    )
+                failed = incident.close_if_stable(
+                    store, bridge_up=True, normal_traffic=True
+                )
+                self.assertEqual(failed.get("status"), "failed")
+                self.assertEqual(
+                    failed.get("failure_reason"), "stability-window-failed"
+                )
 
 
 if __name__ == "__main__":
