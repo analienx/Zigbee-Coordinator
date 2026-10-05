@@ -202,10 +202,7 @@ def main():
             if size > (1 << 20):
                 raw = raw.split(b"\n", 1)[-1]
             for line in raw.decode("utf-8", errors="replace").splitlines():
-                try:
-                    rows.append({"raw_line": line})
-                except ValueError:
-                    continue
+                rows.append({"raw_line": line})
         result = startup_verdict(extract(rows), args.startup_id, incident.utcnow())
         result["event_type"] = "t832_startup_health"
         result["event_data"] = {"startup_id": args.startup_id}

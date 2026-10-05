@@ -1892,9 +1892,14 @@ def capture(
             malformed_payload=malformed,
         )
 
+        # Independent evidence belongs in every capture without depending on
+        # an operator remembering an extra --source deployment argument.
+        capture_sources = list(sources)
+        if store.host_events.exists() and str(store.host_events) not in capture_sources:
+            capture_sources.append(str(store.host_events))
         collection = _collect_locked(
             store,
-            sources,
+            capture_sources,
             config_fingerprint=config_fingerprint,
             initial_tail_bytes=initial_tail_bytes,
             retain_days=retain_days,

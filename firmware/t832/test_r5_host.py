@@ -59,7 +59,7 @@ class R5HostTests(unittest.TestCase):
             incoming.write_text("\n".join(json.dumps(row) for row in rows))
             sideband.ingest(store, incoming)
             result = incident.capture(store, trigger="startup_health", trigger_payload={"startup_id": "boot-1"},
-                sources=[str(store.host_events)], config_fingerprint=None, initial_tail_bytes=1 << 20,
+                sources=[], config_fingerprint=None, initial_tail_bytes=1 << 20,
                 retain_days=7, max_bytes=1 << 30, window_seconds=900, deadline_seconds=30)
             latch = store.load_strict(store.latch)
             self.assertTrue(latch["trigger_qualifying"])

@@ -35,18 +35,24 @@ def main():
     assert "T832Diag_fatalError" in error, "Error path does not call RAM latch"
     # Decode the branch address and require a self-targeting unconditional
     # branch. A generic branch somewhere in the function is not spin proof.
-    spins = []
-    for line in error.splitlines():
-        branch = re.search(r"^\s*([0-9a-fA-F]+):.*?\bb(?:\.w)?\s+(?:0x)?([0-9a-fA-F]+)\b", line)
-        if branch and int(branch[1], 16) == int(branch[2], 16):
-            spins.append(error.index(line))
+    def self_spins(code):
+        offsets = []
+        for line in code.splitlines():
+            branch = re.search(r"^\s*([0-9a-fA-F]+):.*?\bb(?:\.[nw])?\s+(?:0x)?([0-9a-fA-F]+)\b", line)
+            if branch and int(branch[1], 16) == int(branch[2], 16):
+                offsets.append(code.index(line))
+        return offsets
+
+    spins = self_spins(error)
     assert spins and error.index("T832Diag_fatalError") < max(spins), "original Error_SPIN after latch not proven"
     proof["error_before_original_spin"] = True
     hwi = body("Hwi_excHandler")
     assert "T832Diag_fatalException" in hwi, "default Hwi path does not call RAM latch"
     asm = body("Hwi_excHandlerAsm")
     assert re.search(r"\bblx?\b", asm), "exception handler assembly call absent"
+    assert self_spins(asm), "original exception assembly spin absent"
     proof["default_exception_path_calls_latch"] = True
+    proof["original_exception_assembly_spin_linked"] = True
     proof["raw_disassembly_sha_source"] = args.disassembly.name
     args.output.write_text(json.dumps(proof, indent=2) + "\n")
     print("R5 linked fatal hooks + no calls + preserved Error_SPIN: PASS")
