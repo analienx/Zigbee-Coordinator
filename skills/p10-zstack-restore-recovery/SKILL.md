@@ -24,11 +24,15 @@ Treat this as a recovery path for this exact failure class, not as a blanket rep
 
 Current zigbee-herdsman restore flow writes the restored NVRAM, resets, and then calls `beginStartup()`, which uses `ZDO_STARTUP_FROM_APP` when the adapter is not already `ZB_COORD`. TI BDB guidance distinguishes network formation from initialization/resumption of an already restored network. Do not silently convert a restored-network recovery into a new formation attempt.
 
-**Later runtime limit, 2026-10-05:** recovery did trigger without HA shutdown,
-but ROM PING/SYNC received no ACK; paced generic entry and USB bridge reset also
-failed normal SYS acceptance. The earlier manual recovery is not a universal
-reset guarantee. Preserve the failure latch/evidence and obtain verified device
-management access before another distinct vendor reset; see the reference above.
+**Later runtime limit, 2026-10-05:** the detector fired without HA shutdown.
+The exact original USB reset-only script was retested unchanged: ROM PING timed
+out and independent normal SYS was **0/3**, no version. Experimental SYNCH/pin
+pacing and bridge reset also failed; they are not prerequisites of the handoff.
+Always probe normal SYS/NV after the original script, even on ROM error or missing
+stdout; do not repeat the known failed simple RTS pulse on a reviewed episode.
+Ethernet is not required for this USB procedure. Preserve the unresolved latch
+and evidence rather than replaying backups or implying the radio recovered.
+See the reference above for the exact sequence and acceptance limits.
 
 References:
 - zigbee-herdsman Z-Stack manager: https://github.com/Koenkk/zigbee-herdsman/blob/master/src/adapter/z-stack/adapter/manager.ts

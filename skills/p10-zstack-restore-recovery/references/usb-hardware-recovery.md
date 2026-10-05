@@ -15,7 +15,7 @@ Use this branch for a previously running, validated network that loses command s
 The failure detector must also work after HA boot, before MQTT publication. A failed add-on can leave bridge state `unknown`, inventory outage `off` and unavailable-device count zero. Add a startup grace check and bounded periodic reconciliation against actual Supervisor add-on state; state-transition triggers alone are insufficient. Respect intended manual boot, shutdown guards and unresolved-attempt latches. A periodic check must not stop a healthy started add-on.
 
 1. With the application stopped, issue bounded read-only probes: three SYS ping attempts and SYS version. If the radio is responsive, validate its state and return **without a reset**. Partial or inconsistent responses need diagnosis, not a reset loop.
-2. Only when all ping attempts and version fail may a reviewed normal-boot reset run once. On the measured MR4U this was a 150 ms RTS pulse with DTR inactive, which failed the 2026-10-04 outage. Preserve that result. If all post-pulse SYS probes still fail, the same reviewed episode may escalate once to the proven ROM reset-only sequence below. Partial SYS replies, unexpected firmware or an NV mismatch require diagnosis instead.
+2. Only when all ping attempts and version fail may a reviewed normal-boot reset run once. On the measured MR4U this was a 150 ms RTS pulse with DTR inactive, which failed the 2026-10-04 outage. Preserve that result. If all post-pulse SYS probes still fail, the same reviewed episode may escalate once to the proven ROM reset-only sequence below. Partial SYS replies, unexpected firmware or an NV mismatch require diagnosis instead. For a separately reviewed already-failed episode, preserve its evidence and skip the known failed simple RTS pulse; follow the original BSL handoff directly.
 3. Before the pulse, write and fsync a private **pending-attempt latch**. Preserve it across HA/recovery-process restarts. Deassert reset/boot signals in a finally path.
 4. After either reset tier, require repeated valid SYS ping, an accepted SYS version and read-only state validation: effective IEEE, NIB PAN/extended PAN/channel, configured/startup/BDB flags, active-key fingerprint and non-regressed security counters. A valid ping alone does not authorize application startup.
 5. Start stock Zigbee2MQTT only after those gates pass. Keep the attempt latched while raw validation has passed but application acceptance is incomplete.
@@ -32,9 +32,9 @@ a missing USB device is a different failure class. Ethernet is not required.
 - Preflight the official [smlight-cc-flasher command implementation](https://github.com/smlight-tech/smlight-cc-flasher/blob/main/smlight_cc_flasher/command.py), pinned to the reviewed version/source. The incident used **0.1.7**, installed into an isolated executable `/config/.smlight-recovery` target, without changing HA Core global dependencies. `/tmp` failed its native `gpiod` import. Validate native imports before any reset, and again after a Core image upgrade; never install packages on the outage path.
 - Hold one recovery lock throughout both tiers. Stop/verify the application owner; close the normal-ZNP descriptor before opening the same verified **P10 if02** at **500000 baud**, with exclusive serial access. Recheck USB device/chipset label and preserved backup hash at the transition. Do not target if00 or silently switch interfaces.
 - Persist and fsync the failed RTS result and `bsl_pending` before bootloader entry. Call `Bootloader(port, ci.transport).invoke_bootloader()` in default **generic** mode (DTR bootloader, RTS reset), once. Do not use generic2, the flashing CLI or full `Flasher.connect/flash` paths.
-- Require ROM autobaud SYNCH (`55 55`) ACK before `cmdPing()`, `cmdGetChipId()`, `cmdReset()`. Require successful ping and reset ACK, and a valid chip-ID response. The vendor library implicitly issues **GET_STATUS** for ping/chip-ID verification: include that read-only command in the writer allowlist. Permit only SYNCH `0x55`, PING `0x20`, GET_STATUS `0x23`, GET_CHIP_ID `0x28`, RESET `0x25` with no arguments. Reject erase, download, memory/CCFG writes before transport output. A ROM chip ID alone does not establish P10: retain the independently verified USB/chipset identity, and do not confuse an ICEPICK wafer ID with ROM GET_CHIP_ID.
-- Bound the BSL operation and cleanup, deassert DTR/RTS and close on errors. Reopen at normal **115200 baud**, independently require three valid SYS pings/version and the full read-only NV gate before starting Z2M. A wrapper exit code or ROM reset ACK alone is insufficient.
-- Persist phase/result JSON and use nonzero process exit on failure. Keep within the host shell-command budget (the HA implementation uses 12 seconds for BSL, 55 seconds for the episode). Any interrupted/failed tier blocks automatic retries across reboot. Do not reinterpret an already latched older episode as permission to rerun; separate manual recovery needs explicit review and preserved evidence.
+- Preserve the **unchanged original reset-only script** from the successful incident, pinned by source hash in the private deployment. Its exact sequence is default generic `invoke_bootloader()`, then `cmdPing()`, `cmdGetChipId()`, `cmdReset()`, close. Do not add mandatory SYNCH or custom pulse pacing as a prerequisite. The reviewed vendor library implicitly uses GET_STATUS. Verify fixed script/library sources before entry; never invoke a flashing CLI or erase/download/memory/CCFG methods. A ROM chip ID alone is not P10 identification.
+- Bound execution and close the port, then **always independently reopen at 115200** and probe normal SYS/NV, even if the original script reports an error, has missing stdout or times out. The original script catches exceptions and exits zero. Neither its exit status, ROM ID nor a reset ACK alone is acceptance; successful normal SYS/NV and application ZDO govern recovery.
+- Persist private phase/result evidence. Keep within the host budget (the HA controller uses a 15-second child bound and 55-second episode). Failed/interrupted attempts block automatic retries. A separate failed-episode review must be exact, one-use and archived, never an automatic latch override.
 - Release the active latch only after normal SYS/NV plus the fresh correlated ZDO closed-join test all pass. Archive previous failed evidence rather than deleting it. Preserve the configured TX setting.
 
 ## Evidence limits
@@ -55,28 +55,22 @@ The HA implementation and deployment evidence live in the private Home Assistant
 
 ## Later failure limits — 2026-10-05
 
-A later runtime hang occurred without HA shutdown. The automation did trigger,
-but ROM PING received no ACK and the durable latch blocked subsequent polls.
-Reviewed changes added explicit autobaud **SYNCH `0x55` (`55 55`) before PING**
-and a settled generic DTR/RTS sequence (initial lines inactive, 100 ms reset hold).
-Neither obtained a ROM SYNC ACK in that incident. One exact-device USB bridge
-reset also failed normal SYS acceptance. Preserve these negative results:
-yesterday's manual success does not prove reliable bootloader entry for every
-hang, and sending USB control changes is not proof of a physical P10 reset.
+A later runtime hang occurred without HA shutdown. The detector fired but ROM
+PING timed out and the durable latch blocked later polls. Explicit SYNCH, settled
+pin timing and an exact-device USB bridge reset were separate unsuccessful
+experiments, **not requirements of the proven handoff**. Production now uses the
+unchanged original reset-only script and always performs independent normal
+SYS/NV probing, regardless of ROM stdout or return status.
 
-Include SYNCH alongside PING/GET_STATUS/GET_CHIP_ID/RESET in the narrow allowlist.
-The vendor `sendSynch` implementation calls `transport.flush`, absent on ordinary
-pyserial-asyncio 0.6: use its existing SYNCH encoder/ACK path with awaited writes,
-not an unreviewed replacement flasher. Python's asserted initial serial lines
-differ from WebSerial's inactive initial state; normalize/pace the same reviewed
-generic mapping rather than trying unrelated polarities or another radio.
+That exact script was also tested unchanged on 2026-10-05, without an extra simple
+RTS reset: ROM PING timed out and independent normal SYS returned **0/3**, with no
+version. Preserve this negative result alongside yesterday's acceptance. It does
+not prove a bad backup, a physical reset assertion or a hardware root cause.
+Ethernet is not a prerequisite for this USB branch. Do not replace the supplied
+procedure with a request for networking or repeated power cycles. Other transport
+changes are separate reviewed interventions with possible implicit reset effects.
 
-Require an ACK at every stage and record the precise failed phase. Unit tests
-cannot establish electrical reset efficacy. If SYS and ROM SYNC both fail,
-stop USB retries and obtain current management access for one separately reviewed
-vendor P10 reset/BSL command after model/radio-index verification. A management
-mode change may itself reset the device; record the confounder. Keep existing
-network state and never flash/replay NV to fix this unproven transport fault.
-Operator review of a failed attempt must be exact, one-use and archived; it must
-not turn failed/pending latches into automatic retry permission. HA notifications
-should persist the failed protocol phase even if a mobile alert is missed.
+Yesterday's ROM stdout was not reliably saved; the hard evidence is its subsequent
+normal SYS/NV/ZDO acceptance. Never invent a ROM ACK transcript from that outcome.
+Retain all failed evidence and a durable phase-specific HA notification. Keep
+existing network state and do not flash/replay NV to fix this unproven fault.
