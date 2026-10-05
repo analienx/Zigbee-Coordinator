@@ -181,10 +181,25 @@ from infra failures, through actual external paths.
        collision, authorize-time scan bounded by bundle caps, F10 neg via
        B02 lineage, automation/YAML tests excluded from host neg (no
        pre-R4 pairing).
-- Seal/CI/PR pending: commit + push `codex/t832-diag-r0`, exact-final-SHA
-  hosted 5-job green, artifacts (images/symbols/hashes/maps/schema/host
-  tools/provenance), full PR38 description update, Codex handoff with
-  `flash_authorized=false`, no merge.
+- Seal/CI/PR pending: exact-final-SHA hosted 5-job green, artifacts
+  (images/symbols/hashes/maps/schema/host tools/provenance), full PR38
+  description update, Codex handoff with `flash_authorized=false`,
+  no merge.
+- CI#1 run 37277551741 on dd9ea8d: negative-control SUCCESS (B01/B02 +
+  R4-F01/R4-F09 intended failures reproduced); firmware/interop/
+  host-regressions/control FAILED pre-repair-verdict:
+  (a) harness use-before-definition (`sdk_sendToHost_mirror`) broke all
+  gcc builds; (b) 4× `test_mesh_outage_runs_to_stabilizing` — nested
+  catcher run clobbered the outer `bus_mark`, outer scan skipped arrived
+  messages, mid-run suppression lost (runs still completed);
+  (c) 2× stop-phase terminal tests wrongly expected RTS==1 although stop
+  precedes the reset helper (fail-closed is rts==0, permit retained);
+  (d) `late-tick-closes` leg built a 450 s gap (>360 budget) instead of
+  a phase shift — correctly failed as coverage gap.
+  Repair round 2 (uncommitted when CI#1 ran): forward declaration,
+  `bus_mark` save/restore in `deliver_catchers`, rts==0 fail-closed
+  assertions, phase-shifted late leg (150/450/750, gaps 300, close 750
+  inside grace — consistent with the R4F03 phase matrix).
 
 ## Next action
 

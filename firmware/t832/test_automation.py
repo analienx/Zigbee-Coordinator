@@ -263,15 +263,21 @@ class Ha:
                     if matched is not None:
                         matched["platform"] = "mqtt"
                         # HA runs automations in isolated scopes: save and
-                        # restore the suspended run's variables and flag.
+                        # restore the suspended run's variables, flag, and
+                        # bus cursor. run_body resets the cursor, and
+                        # without the restore the outer run's trigger scan
+                        # would skip messages that arrived mid-run (losing
+                        # mid-run suppression).
                         saved_vars = self.vars
                         saved_running = self.running
+                        saved_mark = self.bus_mark
                         self.running_ids.add(auto_id)
                         try:
                             self.run_body(matched, auto)
                         finally:
                             self.vars = saved_vars
                             self.running = saved_running
+                            self.bus_mark = saved_mark
                             self.running_ids.discard(auto_id)
                         fired = True
                         break
@@ -1191,6 +1197,9 @@ class R4F05TerminalTests(BarrierAutomationTests):
     def test_stop_exception_halts_terminal(self) -> None:
         # The stop API itself blows up and the add-on never reports
         # stopped: bounded polls, then addon-stop-unconfirmed/stop.
+        # Stop precedes the reset helper, so the terminal halts with the
+        # RTS never invoked (fail-closed) while the consumed permit stays
+        # consumed.
         def setup() -> None:
             self.ha.on_publish = zdo_hook("match")
             self.ha.stop_plan = [{"exc": "supervisor-timeout"}]
@@ -1198,7 +1207,9 @@ class R4F05TerminalTests(BarrierAutomationTests):
         latch = self.terminal(setup)
         self.assertEqual(latch.get("failure_reason"), "addon-stop-unconfirmed")
         self.assertEqual(latch.get("failure_phase"), "stop")
-        self.assert_permit_retained(latch)
+        self.assertEqual(latch.get("status"), "failed")
+        self.assertTrue(latch.get("reset_used"))
+        self.assertEqual(self.rts_invocations(), 0)
         self.assertEqual(self.ha.start_plan, [])
 
     def test_start_exception_halts_terminal(self) -> None:
@@ -1214,6 +1225,8 @@ class R4F05TerminalTests(BarrierAutomationTests):
     def test_malformed_state_poll_halts_terminal(self) -> None:
         # The supervisor pipe tears mid-stream: rc!=0 with garbage stdout
         # never parses, and the bounded poll still reports unconfirmed.
+        # Same fail-closed shape as the stop exception: no RTS past the
+        # unconfirmed stop, permit retained.
         def setup() -> None:
             self.ha.on_publish = zdo_hook("match")
             self.ha.shell_plan["t832_addon_state"] = [
@@ -1223,7 +1236,9 @@ class R4F05TerminalTests(BarrierAutomationTests):
         latch = self.terminal(setup)
         self.assertEqual(latch.get("failure_reason"), "addon-stop-unconfirmed")
         self.assertEqual(latch.get("failure_phase"), "stop")
-        self.assert_permit_retained(latch)
+        self.assertEqual(latch.get("status"), "failed")
+        self.assertTrue(latch.get("reset_used"))
+        self.assertEqual(self.rts_invocations(), 0)
 
     def test_publish_error_halts_unconfirmed(self) -> None:
         # The single ZDO request never leaves: timeout, no proof, the

@@ -916,6 +916,9 @@ static void dump_scenario(const char *path)
  * through its own dequeue/finish. Only the stage-3 owned refusal retires,
  * and exactly the frame the sendToHost queue hook just stored. Same call
  * order as the patched SDK (queue observes first, refusal follows). */
+/* Forward: defined with the patched-site mirrors below. */
+static void sdk_sendToHost_mirror(uint8_t cmd0, uint8_t cmd1, uint8_t len,
+                                  uint8_t fail_stage);
 static void test_tx_refused_stages(void)
 {
   uint8_t payload[2] = {1, 2};

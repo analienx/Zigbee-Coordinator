@@ -119,14 +119,18 @@ def leg_gap_fails(case) -> str:
 
 
 def leg_late_tick_closes(case) -> str:
-    # R4-F03: the first close attempt comes a full cadence late (phase
-    # offset), inside the one-period grace: a healthy window still closes
-    # exactly once instead of failing on phase alone.
+    # R4-F03: the whole tick train is phase-shifted a half cadence late,
+    # so the closing tick lands past the window end but inside the
+    # one-period grace: a healthy window still closes exactly once
+    # instead of failing on phase alone. Gaps stay one cadence (300 s),
+    # inside the 360 s budget — a 450 s gap would (correctly) fail as a
+    # coverage gap instead.
     recover(case)
+    time.sleep(150)
     tick(case)
     time.sleep(300)
     tick(case)
-    time.sleep(450)
+    time.sleep(300)
     tick(case)
     latch = case.latch()
     assert latch.get("status") == "closed", latch
