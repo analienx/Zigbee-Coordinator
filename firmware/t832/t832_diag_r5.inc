@@ -2,7 +2,7 @@
  * Snapshot ages are uint32 RAM values; wire current/max pairs saturate at
  * 65535 ms. SWD retains full ages. No history accumulates during a stall. */
 #define T832_R5_VALUES 13u
-#define T832_R5_NWK 12u
+#define T832_R5_NWK 17u
 #define T832_R5_EXPORTS (T832_R5_VALUES + 12u + 8u + T832_R5_NWK + 4u)
 typedef struct {
     uint32_t sampled_ms, blocked_since, blocked_mask, blocked_sticky;
@@ -241,6 +241,8 @@ uint8_t T832Diag_nwkDue(void)
 void T832Diag_nwkPressure(uint8_t selector, uint16_t current, uint16_t limit)
 {
     if (selector >= T832_R5_NWK) return;
+    if (!t832R5.nwk_limit[selector] && limit)
+        T832Diag_record(T832_DIAG_EV_NWK_LIMIT, selector, limit, 0u);
     t832R5.nwk[selector] = current;
     if (current > t832R5.nwk_max[selector]) t832R5.nwk_max[selector] = current;
     t832R5.nwk_limit[selector] = limit;

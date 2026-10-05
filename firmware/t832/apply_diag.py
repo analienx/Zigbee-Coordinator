@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import hashlib
 import json
 import shutil
 import subprocess
@@ -55,15 +56,21 @@ class Exact:
         actual = text.count(old)
         if actual != count:
             raise SystemExit(f"{path}: {label}: expected {count} exact match(es), found {actual}")
-        path.write_text(text.replace(old, new, count), encoding="utf-8")
-        self.edits.append({"label": label, "path": str(path).replace("\\", "/")})
+        result = text.replace(old, new, count)
+        path.write_text(result, encoding="utf-8")
+        self.edits.append({"label": label, "path": str(path).replace("\\", "/"),
+                           "before_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                           "after_sha256": hashlib.sha256(result.encode()).hexdigest()})
 
     def append(self, path: Path, text: str, label: str) -> None:
         existing = path.read_text(encoding="utf-8")
         if text.strip() in existing:
             raise SystemExit(f"{path}: {label}: diagnostic block already present")
-        path.write_text(existing.rstrip() + "\n\n" + text.rstrip() + "\n", encoding="utf-8")
-        self.edits.append({"label": label, "path": str(path).replace("\\", "/")})
+        result = existing.rstrip() + "\n\n" + text.rstrip() + "\n"
+        path.write_text(result, encoding="utf-8")
+        self.edits.append({"label": label, "path": str(path).replace("\\", "/"),
+                           "before_sha256": hashlib.sha256(existing.encode()).hexdigest(),
+                           "after_sha256": hashlib.sha256(result.encode()).hexdigest()})
 
 
 def include_after(ex: Exact, path: Path, marker: str, header: str, label: str) -> None:
@@ -105,6 +112,9 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # Compile-time diagnostic identity without changing KCTRL routing/resource semantics.
     # T832_BUILD_ID is the immutable source identity (candidate short SHA).
     build_id = candidate_build_id()
+    version = mt / "mt_version.c"
+    ex.replace(version, "CODE_REVISION_NUMBER >>", "T832_BUILD_ID >>",
+               "diag.sys_version_build_id", count=4)
     opts = sdk / "source/ti/zstack/apps/znp/znp_cnf.opts"
     ex.replace(
         opts,
@@ -703,9 +713,15 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "control": control_evidence,
         "diagnostic_edits": ex.edits,
         "copied_runtime": [
-            "source/ti/zstack/mt/t832_diag.h",
-            "source/ti/zstack/mt/t832_diag_impl.inc",
+            {"path": str(path.relative_to(sdk)).replace("\\", "/"),
+             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in (mt / "t832_diag.h", mt / "t832_diag_impl.inc",
+                         mt / "t832_diag_r5.inc", mt / "t832_diag_nwk.inc",
+                         mt / "t832_fatal.h", kernel / "runtime/t832_fatal.h",
+                         kernel / "family/arm/v8m/t832_fatal.h")
         ],
+        "diagnostic_identity": {"sys_version_revision": int(build_id, 16),
+                                "debug_build_id": int(build_id, 16)},
     }
 
 

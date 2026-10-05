@@ -1935,6 +1935,10 @@ def capture(
             # Last stages are selected within the latest boot group using
             # record chronology, not file arrival order.
             last_stages: dict[str, object] = {}
+            # Also support importlib-based callers outside this directory.
+            module_path = str(Path(__file__).resolve().parent)
+            if module_path not in sys.path:
+                sys.path.insert(0, module_path)
             import t832_sideband
             bridge_events = t832_sideband.extract(host)
             bridge_summary = t832_sideband.correlate(bridge_events)

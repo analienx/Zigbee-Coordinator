@@ -73,10 +73,16 @@
     "35": "NPI_TRAP",
     "36": "NPI_ALLOC_FAIL",
     "37": "BOOT_CAPTURE_INVALID",
-    "38": "TIMING_APPROX"
+    "38": "TIMING_APPROX",
+    "39": "BLOCK_SNAPSHOT",
+    "40": "PIPELINE",
+    "41": "UART_EVENT",
+    "42": "NWK_PRESSURE",
+    "43": "TASK_STAT",
+    "44": "BOOT_TIMING",
+    "45": "NWK_LIMIT"
   },
   "event_semantics": {
-    "BOOT": "a=early reset cause (0xFFFF when capture invalid), b=MT task id, c=capture validity 1/0",
     "HEALTH": "live-built, sequence 0; a=MT schedules since last accepted health baseline (saturated, nonzero under scheduling), b=MT actual-work age ms, c=NPI transport-work age ms",
     "RESOURCE:a=1": "b=RX high-water bytes, c=max approximate normal NPI queue depth",
     "RESOURCE:a=2": "b=max observed TX-active age ms, c=Zigbee-stack work age ms",
@@ -84,7 +90,7 @@
     "RESOURCE:a=4": "b/c=TX frame counter low/high 16 bits",
     "RESOURCE:a=5": "b/c=oldest normal-pending age ms low/high (0 when none)",
     "RESOURCE:a=6": "b/c=telemetry export-loss counter low/high (own bounded loss accounting, never a radio fault)",
-    "RESOURCE:a=7": "heap free/largest in 16-byte units; 0xFFFF/0xFFFF when the heap API reports zero size (unavailable)",
+    "RESOURCE:a=7": "R5: always unavailable (0xFFFF/0xFFFF); heap traversal disabled pending bench timing. R4 with capability bit18: free/largest in 16-byte units.",
     "RESOURCE:a=8": "b=diagnostic TX completions, c=sync-SRSP TX completions (saturated 16 bit)",
     "RESOURCE:a=9": "b=AF confirmed count, c=AF rejected count (saturated 16 bit)",
     "RESOURCE:a=10": "b=last MT command cmd0<<8|cmd1, c=its age ms (saturated)",
@@ -105,6 +111,17 @@
     "NPI_TRAP": "central NPI RX overflow trap site; a=attempted size, b=available space; trap preserved after recording",
     "NPI_ALLOC_FAIL": "allocation refusal; a=1 NPI TX path (b=stage 1 frame/2 queue-record/3 unsupported in sendToHost, 4/5/6 in processStackMsg; only the owned entry is reconciled), 2 NPI RX path (no TX state touched)",
     "FIRST_FAULT": "sticky first critical record re-emitted with the snapshot flag; a/b/c/repeat keep the original payload, flags bits7..2 carry the original event kind; never overwritten by ring pressure",
-    "TIMING_APPROX": "pre-scheduler records exist with assumed 1 ms tick; a=count of pre-scheduler records, b=MT task id; their timing is approximate"
-  }
+    "TIMING_APPROX": "pre-scheduler records exist with assumed 1 ms tick; a=count of pre-scheduler records, b=MT task id; their timing is approximate",
+    "BLOCK_SNAPSHOT": "a=index 0..12 below; b=current, c=lifetime maximum; all values/ages saturated uint16. Index0 c=sticky mask union. RAM has full uint32 ages. Updated before EVERY export gate, including limiter. Fragment timestamps are sample times, not export times.",
+    "PIPELINE": "a=0: b=current generation, c=SREQ cmd0<<8|cmd1; a=1: b=furthest stage, c=observed stage bitmask; a=2..11: b=max RX-to-stage latency ms for stage a-1, c=current generation. Historical maxima span all generations in this boot; they are not per-request samples. Callbacks can precede write-accepted return; mask records observations without inventing chronological order.",
+    "UART_EVENT": "a=0..5: b=saturated count, c=age since last event (0xFFFF unavailable/saturated): accepted, write callback, TX_BEGIN, TX_FINISHED, RX callback, rejected. a=6: b=raw signed16 RX status, c=raw signed16 write status. a=7: b=current accepted-no-FINISHED age, c=sticky max. Accepted/copied RX bytes remain RESOURCE:3; attempted overflow bytes remain NPI_RX_OVERFLOW.",
+    "NWK_PRESSURE": "a=index below; b=current occupancy, c=lifetime max. Sample timestamp is first_ms/last_ms. 0xFFFF current if not yet sampled. Configured capacities are in diag_manifest.json; queue API is byte-returning. Sample may be old when ZStack task does not progress; never infer a fresh zero.",
+    "TASK_STAT": "a=0/1: b=TI Task_Mode, c=stack size for NPI/shared OSAL-ZStack; a=2/3: b=used stack watermark, c=handle validity. Task_stat runs once per 60 s in MT task context. Timestamp0 indicates unavailable/unrun. Shared OSAL handle may also execute MT; this is not proof of three independent tasks.",
+    "BOOT_TIMING": "a=1 MT init,2 UART configured,3 first genuine ZStack event,4 first SYS SRSP wire completion after successful MT RPC return,5 same for ZDO; b/c=boot uptime low/high32. Milestones4/5 prove RPC/wire progress, not operation-specific success; host-owner ZDO proof remains required. Early milestone2 clock is approximate until MT initializes tick period.",
+    "BOOT": "a=reset source; decoder supplies symbolic class from pinned AON enum; c=validity. 0=PWR_ON,1=PIN_RESET,2=VDDS_LOSS,4=VDDR_LOSS,5=CLK_LOSS,6=SYSRESET,7=WARMRESET,8=shutdown wake,9=TCK wake; other=UNKNOWN. Host boot epoch is persisted, wire boot_session stays constant."
+  },
+  "r5_snapshot_indices": ["block_mask", "blocked_age_ms", "normal_pending", "oldest_pending_age_ms", "transport_age_ms", "mt_work_age_ms", "npi_transport_age_ms", "npi_task_age_ms", "zstack_work_age_ms", "af_outstanding", "af_oldest_age_ms", "sreq_stage_age_ms", "mt_scheduler_age_ms"],
+  "r5_pipeline_stages": ["RX_ACCEPTED", "MT_DISPATCH_ENTERED", "HANDLER_RETURNED", "SRSP_BUILD_ACCEPTED", "NPI_QUEUE_ACCEPTED", "NPI_DEQUEUED", "UART_WRITE_ACCEPTED", "UART_WRITE_CALLBACK", "TX_BEGIN", "TX_FINISHED"],
+  "r5_nwk_indices": ["WAITING", "SENT", "CONFIRMED", "SCHEDULED", "HOLD", "DONE", "routes_used", "routes_active", "routes_repair_or_link_fail", "route_discovery_used", "source_routes_used", "broadcast_used"],
+  "r5_capabilities": {"22": "blocked RAM snapshot", "23": "fatal RAM latch (SWD only)", "24": "generation-bound SREQ stages", "25": "public UART events", "26": "NWK occupancy", "27": "task mode/stack stats"}
 }

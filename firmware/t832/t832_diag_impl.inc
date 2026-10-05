@@ -1611,7 +1611,7 @@ void T832Diag_exportPoll(void)
   }
 
   /* One R5 snapshot per accepted opportunity. A whole rotation is bounded
-   * by 245 s at the 5 s limiter; rings keep at least a slot on most polls.
+   * by 270 s at the 5 s limiter; rings keep at least a slot on most polls.
    * Export unblocking emits the block summary first, including sticky mask
    * and maximum block age even though current blockage is now zero. */
   if (nbatch < T832_DIAG_BATCH_MAX) {

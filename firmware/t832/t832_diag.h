@@ -84,10 +84,11 @@ enum {
   T832_DIAG_EV_UART_EVENT,
   T832_DIAG_EV_NWK_PRESSURE,
   T832_DIAG_EV_TASK_STAT,
-  T832_DIAG_EV_BOOT_TIMING
+  T832_DIAG_EV_BOOT_TIMING,
+  T832_DIAG_EV_NWK_LIMIT
 };
 
-_Static_assert(T832_DIAG_EV_BOOT_TIMING <= 63u,
+_Static_assert(T832_DIAG_EV_NWK_LIMIT <= 63u,
                "first-fault original-kind tag needs 6 flag bits");
 
 /* Snapshot re-emit marker in record flags (bit 1); bit 0 stays critical. */

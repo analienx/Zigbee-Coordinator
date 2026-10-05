@@ -6,9 +6,9 @@ generation-bound SREQ stages, UART2 callbacks/events, NWK/task sampling, and
 an allocation-free fatal RAM latch. The matched control excludes these hooks.
 
 `T832-BUILD-MANIFEST.json` binds the exact repository SHA, variant, image and
-symbol hashes. SYS_VERSION retains the KCTRL revision; the diagnostic DEBUG
-frame contains the candidate short SHA plus its capability bitmap. SYS_VERSION
-alone cannot identify this image. Bind the deployed image through the collector's
+symbol hashes. SYS_VERSION revision and the diagnostic DEBUG frame both contain
+the candidate short SHA; DEBUG additionally carries its capability bitmap.
+Bind the deployed image through the collector's
 manifest validation and preserve the actual image hash.
 
 `flash_authorized` is **false**. Green hosted CI proves build and regression

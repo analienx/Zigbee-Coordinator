@@ -348,6 +348,7 @@ static void test_sizes(void)
 static void test_boot_and_caps(void)
 {
   DecFrame f;
+  DecRec boot;
   fresh(9u);
   CHECK(t832Diag.capabilities == 0x0FFBFFFFu);
   emit_one();
@@ -356,10 +357,10 @@ static void test_boot_and_caps(void)
   CHECK(f.build_id == 0xA5A50001u);
   CHECK(f.caps == 0x0FFBFFFFu);
   CHECK(f.nrec >= 1u);
-  CHECK(f.rec[0].kind == 1u);
-  CHECK(f.rec[0].a == 0x12u);
-  CHECK(f.rec[0].b == 9u);
-  CHECK(f.rec[0].c == 1u);
+  CHECK(find_kind(1u, &boot));
+  CHECK(boot.a == 0x12u);
+  CHECK(boot.b == 9u);
+  CHECK(boot.c == 1u);
 }
 
 static void test_boot_invalid(void)
