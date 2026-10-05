@@ -113,8 +113,12 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # T832_BUILD_ID is the immutable source identity (candidate short SHA).
     build_id = candidate_build_id()
     version = mt / "mt_version.c"
-    ex.replace(version, "CODE_REVISION_NUMBER >>", "T832_BUILD_ID >>",
-               "diag.sys_version_build_id", count=4)
+    # Herdsman interprets revision as a feature/date threshold. A random
+    # git SHA here would enable assoc/LED paths that the matched control
+    # does not enable. Keep the diagnostic identity in the same bucket;
+    # exact candidate SHA remains in DEBUG and the package manifest.
+    ex.replace(version, "CODE_REVISION_NUMBER >>", "8320002u >>",
+               "diag.sys_version_variant_id", count=4)
     opts = sdk / "source/ti/zstack/apps/znp/znp_cnf.opts"
     ex.replace(
         opts,
@@ -724,7 +728,7 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
                          mt / "t832_fatal.h", kernel / "runtime/t832_fatal.h",
                          kernel / "family/arm/v8m/t832_fatal.h")
         ],
-        "diagnostic_identity": {"sys_version_revision": int(build_id, 16),
+        "diagnostic_identity": {"sys_version_revision": 8320002,
                                 "debug_build_id": int(build_id, 16)},
     }
 

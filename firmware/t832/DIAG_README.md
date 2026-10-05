@@ -6,8 +6,10 @@ generation-bound SREQ stages, UART2 callbacks/events, NWK/task sampling, and
 an allocation-free fatal RAM latch. The matched control excludes these hooks.
 
 `T832-BUILD-MANIFEST.json` binds the exact repository SHA, variant, image and
-symbol hashes. SYS_VERSION revision and the diagnostic DEBUG frame both contain
-the candidate short SHA; DEBUG additionally carries its capability bitmap.
+symbol hashes. SYS_VERSION revision 8320002 identifies this DIAG variant
+(matched control 8320001); DEBUG carries the exact candidate short SHA and
+capability bitmap. Revisions retain the same pinned Herdsman feature thresholds;
+a random git SHA in SYS_VERSION would change its date-based feature selection.
 Bind the deployed image through the collector's
 manifest validation and preserve the actual image hash.
 

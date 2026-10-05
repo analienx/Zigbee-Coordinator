@@ -1567,6 +1567,7 @@ void T832Diag_exportPoll(void)
 
   /* Sampling MUST happen before rate limiting and every export gate. */
   T832Diag_sampleR5(now);
+  r5_idx_saved = t832R5.resource_cursor;
 
   /* Due detection never advances baselines: overdue work stays pending until
    * its records are staged into an accepted frame (see below). */
@@ -1613,7 +1614,7 @@ void T832Diag_exportPoll(void)
   }
 
   /* One R5 snapshot per accepted opportunity. A whole rotation is bounded
-   * by 285 s at the 5 s limiter; rings keep at least a slot on most polls.
+   * at least 285 s at the 5 s limiter; normal traffic can delay it further.
    * Export unblocking emits the block summary first, including sticky mask
    * and maximum block age even though current blockage is now zero. */
   if (nbatch < T832_DIAG_BATCH_MAX) {

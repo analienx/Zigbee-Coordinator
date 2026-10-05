@@ -22,7 +22,7 @@ is part of this assignment. A green run cannot close hardware gates.
 | R5-11 | Private file-only validated bridge contract and incident correlation (`t832_sideband.py`), explicit no-BOOT/unexpected-class outcomes | Wire independent observer into actual ESP/USB owner; this candidate does not invent unavailable bridge counters |
 | R5-12 | Fresh existing-owner adapter probe (pinned Herdsman 10.9.1), bounded non-overlapping requests; file-backed startup qualification and event entry into the same barrier/latch, without MQTT transition | Install observer/startup scheduling in HA/Z2M after separate integration review; no running integration claimed |
 | R5-13 | Same-run/SHA/toolchain control + DIAG, hash-chain diagnostic delta and paired manifest audit | Production-semantics lane needs a pinned deployed baseline; not silently substituted with KCTRL |
-| R5-14 | Distinct README/files, SYS_VERSION + DEBUG short SHA, full image/symbol hashes and binding manifest | Operator verifies deployed image; flash stays unauthorized |
+| R5-14 | Distinct README/files, SYS_VERSION variant revision 8320002 (control 8320001), DEBUG exact short SHA, full image/symbol hashes and binding manifest | Operator verifies deployed image; flash stays unauthorized |
 
 Fatal hooks use a direct pinned-source call rather than enabling TI global
 hooks or stack-check flags. Error policy and exception enablement remain as
