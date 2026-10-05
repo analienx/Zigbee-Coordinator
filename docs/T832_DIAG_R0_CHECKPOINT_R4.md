@@ -213,8 +213,19 @@ from infra failures, through actual external paths.
   loop iteration in `test_f01_owned_refusals_drain_and_export` is the
   pinned regression for the collision.
 
+## CI#3 evidence (exact SHA 15eb803bc208de3a70e539e930daac827a10902a)
+
+Run 37282777884: 5/5 SUCCESS (firmware, control, interop,
+host-regressions, negative-control). Artifacts
+`mr4u-p10-t832-diag-r0` (33 files) + `mr4u-p10-t832-control-r0`
+(16 files): images, maps, generated sources, provenance, SHA256SUMS —
+all 49 files hash-verified against the hosted SHA256SUMS; manifests pin
+repository_commit 15eb803 with flash_authorized false. PR38 description
+rewritten with final SHA, run id, repair history, reviewers, limits.
+
 ## Next action
 
-Await reviewer reports; repair findings; commit + push; watch hosted CI
-to green on the exact final SHA; reconcile artifacts; update PR38 body;
-complete the evidence ledger below and hand off for Codex acceptance.
+Record the final exact-SHA green run above; commit this ledger; push;
+watch hosted CI#4 to green on the new final SHA; reconcile artifacts;
+hand off for Codex acceptance with flash_authorized=false. No live
+actions, no merge.
