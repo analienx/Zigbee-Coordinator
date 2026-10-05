@@ -99,6 +99,30 @@ def download(url):
     return data
 
 
+def management_container(memory):
+    """Package exact addressed bytes in the verified vendor two-segment format.
+
+    Only gaps inside the application span become erased (0xff) padding. No
+    NV, CCFG gaps, other banks, or changed input bytes are permitted.
+    This establishes format/byte equivalence, not closed-source UI acceptance.
+    """
+    app = {address:value for address,value in memory.items() if 0 <= address < 0xfd800}
+    cfg = {address:value for address,value in memory.items() if 0x50000000 <= address < 0x5000007c}
+    if not app or min(app) != 0 or set(cfg) != set(range(0x50000000,0x5000007c)) or len(app)+len(cfg) != len(memory):
+        raise ValueError('unsupported candidate segment geometry / NV records')
+    app_bytes = bytes(app.get(address,255) for address in range(max(app)+1))
+    cfg_bytes = bytes(cfg[address] for address in range(0x50000000,0x5000007c))
+    payload = b'SLZB'+b''.join(struct.pack('>III',address,len(data),binascii.crc32(data)&0xffffffff)
+                              for address,data in ((0,app_bytes),(0x50000000,cfg_bytes)))+app_bytes+cfg_bytes
+    unpacked,segments = slzb(payload)
+    if any(unpacked[address] != value for address,value in memory.items()):
+        raise ValueError('container changed input bytes')
+    padding = set(unpacked)-set(memory)
+    if any(address >= 0xfd800 or unpacked[address] != 255 for address in padding):
+        raise ValueError('unsafe container padding')
+    return payload,segments,len(padding)
+
+
 def reviewed_power_difference(differences):
     # The exact two differing words select TI's supported VDDR-HH boost mode.
     # They do not change LF/HF clock, DCDC enable, BSL pin, vectors or protection.
@@ -163,6 +187,18 @@ def main():
         result['reference_prefix_hex'] = rollback[:32].hex()
         result['reference_suffix_hex'] = rollback[-128:].hex()
     (root/'ccfg-bsl.json').write_text(json.dumps(result,indent=2)+'\n')
+    if result['verdict'] == 'compatible':
+        packaged,segments,padding = management_container(ihex(raw))
+        (root/'T832-DIAG-R0.slzb.bin').write_bytes(packaged)
+        contract = {'candidate_commit':CANDIDATE,'source_hex_sha256':HEX_HASH,
+                    'upload_file':'T832-DIAG-R0.slzb.bin','upload_sha256':hashlib.sha256(packaged).hexdigest(),
+                    'upload_bytes':len(packaged),'format':'SLZB / two big-endian address-length-CRC32 descriptors',
+                    'segments':segments,'addressed_bytes_equal':True,'added_erased_padding_bytes':padding,
+                    'nv_programmed_bytes':0,'reference_container_sha256':ROLLBACK_HASH,
+                    'management_backend_acceptance':'not live-tested; vendor-format equivalence only',
+                    'hex_rename_supported':False,'operator_permit_must_bind_upload_hash':True,
+                    'flash_authorized':False}
+        (root/'management-upload.json').write_text(json.dumps(contract,indent=2)+'\n')
     print(json.dumps(result,indent=2))
 
 

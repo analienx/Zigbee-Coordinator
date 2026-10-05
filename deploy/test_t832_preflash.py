@@ -72,4 +72,18 @@ class Tests(unittest.TestCase):
         differences['MODE_CONF'][0]='0xf379d5ff' # LF clock changed
         self.assertFalse(a.reviewed_power_difference(differences))
 
+    def test_management_container_preserves_addressed_bytes_and_only_ff_gaps(self):
+        memory={0:1,1:2,7:8,**{0x50000000+i:i for i in range(124)}}
+        raw,segments,padding=a.management_container(memory)
+        unpacked,_=a.slzb(raw)
+        self.assertEqual(padding,5)
+        self.assertTrue(all(unpacked[address]==value for address,value in memory.items()))
+        self.assertEqual(bytes(unpacked[i] for i in range(2,7)),b'\xff'*5)
+        self.assertEqual([row['size'] for row in segments],[8,124])
+
+    def test_management_container_refuses_nv_or_incomplete_ccfg(self):
+        memory={0:1,**{0x50000000+i:i for i in range(124)}}
+        for invalid in ({**memory,0xfd800:1},{**memory,0x100000:1},{key:value for key,value in memory.items() if key!=0x50000001}):
+            with self.assertRaises(ValueError): a.management_container(invalid)
+
 if __name__=='__main__': unittest.main()
