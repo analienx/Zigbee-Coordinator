@@ -73,11 +73,13 @@ def capture(args):
         raise ValueError('explicit management release confirmation required')
     if not 30 <= args.seconds <= 900: raise ValueError('capture duration out of bounds')
     root = args.bundle.resolve(strict=True)
-    if not str(root).startswith('/homeassistant/zigbee2mqtt/p10-flash-ready/') or root.stat().st_mode & 0o077:
+    if not str(root).startswith('/homeassistant/p10-flash-ready/') or root.stat().st_mode & 0o077:
         raise ValueError('private staged bundle required')
     raw_image = (root/'T832-DIAG-R0.hex').read_bytes()
     if hashlib.sha256(raw_image).hexdigest()!=IMAGE_HASH: raise ValueError('staged image hash mismatch')
-    plan = json.loads((root/'capture-plan.json').read_text())
+    plan = json.loads((root/('capture-plan-v2.json' if (root/'capture-plan-v2.json').exists() else 'capture-plan.json')).read_text())
+    if plan.get('image_sha256') != IMAGE_HASH or plan.get('serial_path') != PORT:
+        raise ValueError('capture plan target binding mismatch')
     decoder = root/'t832_incident.py'
     if hashlib.sha256(decoder.read_bytes()).hexdigest()!=plan['decoder_sha256']:
         raise ValueError('staged decoder hash mismatch')
