@@ -19,7 +19,7 @@ is part of this assignment. A green run cannot close hardware gates.
 | R5-08 | Memory_getStats removed; heap capability absent and RESOURCE:7 unavailable. Allocation/refusal evidence retained | Optional fragmented-heap bench before reinstatement |
 | R5-09 | Symbolic pinned reset enum, collector boot continuity, sideband persisted per-radio frontier, boot milestones, reset-tier/next-BOOT correlation | Controlled reset and verified radio binding |
 | R5-10 | Retention investigated, capability absent; RAM-only SWD fallback | Exact RTS/PIN SRAM-retention bench before any noinit feature |
-| R5-11 | Private file-only validated bridge contract and incident correlation (`t832_sideband.py`), explicit no-BOOT/unexpected-class outcomes | Wire independent observer into actual ESP/USB owner; this candidate does not invent unavailable bridge counters |
+| R5-11 | Private file-only validated bridge contract and incident correlation (`t832_sideband.py`), explicit no-BOOT/unexpected-class outcomes | Wire host-side observer around existing SLZB-OS/USB interfaces; no ESP or Ember firmware change, and no invented unavailable bridge counters |
 | R5-12 | Fresh existing-owner adapter probe (pinned Herdsman 10.9.1), bounded non-overlapping requests; file-backed startup qualification and event entry into the same barrier/latch, without MQTT transition | Install observer/startup scheduling in HA/Z2M after separate integration review; no running integration claimed |
 | R5-13 | Same-run/SHA/toolchain control + DIAG, hash-chain diagnostic delta and paired manifest audit | Production-semantics lane needs a pinned deployed baseline; not silently substituted with KCTRL |
 | R5-14 | Distinct README/files, SYS_VERSION variant revision 8320002 (control 8320001), DEBUG exact short SHA, full image/symbol hashes and binding manifest | Operator verifies deployed image; flash stays unauthorized |
@@ -112,20 +112,31 @@ telemetry, missing observer, permission errors or absent add-on evidence cannot
 authorize reset. The producer/scheduler is an **undeployed integration seam**;
 if Z2M never starts far enough to expose its adapter, qualification fails closed.
 
-## Hardware release runbook
+## Deployment states
 
-1. Review same-SHA matched artifacts, hashes, TI fatal disassembly, maps and
-   diagnostic-only delta; preserve exact manifest in the collector binding.
-2. On bench verify boot/reset enum, real pinned Herdsman DEBUG decode, UART
-   callback ordering, normal AF/ZDO/SYS under load, NV integrity and normal ZNP
-   priority/sync suppression. Measure Task_stat/NWK/critical-section cost.
-3. Exercise one controlled reset with independent control-line/radio evidence
-   and the next BOOT. Verify no NV erase/restore/re-pair side effects.
-4. Separately review/install the private observer/startup/barrier candidate.
-   Fault-inject missing/stale evidence, stuck owner request and restart replay;
-   prove capture completes before the existing single-reset helper is permitted.
-5. Only after explicit deployment authorization run 72 h/until reproduction,
-   with matched KCTRL control. Preserve pre-reset SWD if the UART stays silent.
+Follow the [P10 deployment gates](T832_P10_DEPLOYMENT_GATES.md), incorporating
+issue #73 comment 5998837901. Only CC2674P10 changes; ESP32/SLZB-OS and
+EFR32MG26/Ember remain unchanged. R5-11 uses existing interfaces from the host.
+
+The exact validated firmware remains SHA `1f08f3c1e5da067a1db144e07dc71fd7e155a217`;
+this documentation update does not create a replacement image. Current state
+is candidate validated, **not yet FLASH-READY**, `flash_authorized=false`.
+
+1. **FLASH-READY:** exact image/target binding, fresh private backup and restore
+   plan, hashed rollback image, board-specific CCFG/BSL/recovery proof, erase
+   semantics or acknowledged possible NV loss, exclusive transport ownership,
+   first-boot capture staging, and one explicit operator upload permit.
+2. **POST-FLASH SMOKE:** exact live identity/decoding, repeated SYS probes,
+   reset/boot proof, NV/identity/security/frame-counter verification and a
+   controlled restore if needed, UART/load/Task/NWK cost, then real Z2M traffic.
+3. **PRODUCTION-SOAK-READY:** smoke passed; authorized 72 h/until-reproduction
+   observation. Automatic recovery additionally requires separately reviewed
+   observer/barrier installation; manual incident handling can precede it.
+
+No NV HEX records does not prove uploader NV preservation. The installed
+management upload erase semantics and board-specific CCFG/BSL recovery remain
+open facts. Real UART timing and observer cost are post-upload checks. Preserve
+pre-reset SWD if UART stays silent; no unproven retention feature is enabled.
 
 KCTRL changes TX_FINISHED completion, NVOCMP recovery and resource capacities.
 A non-reproducing trial is an A/B outcome; it cannot identify which change

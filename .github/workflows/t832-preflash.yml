@@ -1,0 +1,43 @@
+name: T832 exact-image preflash evidence
+on:
+  push:
+    branches: [codex/t832-r5-deployment-gates]
+    paths: [deploy/t832_preflash_audit.py, deploy/test_t832_preflash.py, deploy/t832_first_boot_capture.py, docs/T832_P10_DEPLOYMENT_GATES.md, .github/workflows/t832-preflash.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fetch exact validated candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir evidence
+          gh api repos/analienx/Zigbee-Coordinator/actions/artifacts/11357617790/zip > evidence/candidate.zip
+      - name: Compare pinned candidate and vendor rollback CCFG
+        run: |
+          python3 -m unittest discover -s deploy -p test_t832_preflash.py -v
+          python3 deploy/t832_preflash_audit.py evidence
+          python3 -c 'import json; assert json.load(open("evidence/ccfg-bsl.json"))["verdict"] == "compatible"'
+      - name: Package unchanged exact candidate and staged passive reader
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          with zipfile.ZipFile('evidence/candidate.zip') as z:
+              for name in ('T832-DIAG-R0.hex','T832-DIAG-R0.out','T832-BUILD-MANIFEST.json'):
+                  Path('evidence',name).write_bytes(z.read(name))
+              Path('evidence/t832_incident.py').write_bytes(z.read('provenance/t832_incident.py'))
+          Path('evidence/t832_first_boot_capture.py').write_bytes(Path('deploy/t832_first_boot_capture.py').read_bytes())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t832-preflash-evidence
+          path: evidence
+          if-no-files-found: error
