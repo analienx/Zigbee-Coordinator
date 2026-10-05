@@ -3,16 +3,52 @@ import importlib.util
 from pathlib import Path
 import struct
 import unittest
+import sys
 
 spec=importlib.util.spec_from_file_location('audit',Path(__file__).with_name('t832_preflash_audit.py'))
 a=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
+spec=importlib.util.spec_from_file_location('capture',Path(__file__).with_name('t832_first_boot_capture.py'))
+c=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(c)
+sys.path.insert(0,str(Path(__file__).parents[1]/'firmware/t832'))
+import t832_incident as codec
 
 def row(kind,address,data):
     raw=bytes([len(data)])+address.to_bytes(2,'big')+bytes([kind])+data
     return ':'+(raw+bytes([-sum(raw)&255])).hex()+'\n'
 
 class Tests(unittest.TestCase):
+    def frame(self,payload,command=b'\x4f\x80'):
+        raw=bytes([len(payload)])+command+payload
+        check=0
+        for value in raw: check^=value
+        return b'\xfe'+raw+bytes([check])
+
+    def test_fragmented_raw_znp_frame_and_checksum_recovery(self):
+        parser=c.Parser()
+        good=self.frame(b'hello')
+        bad=good[:-1]+bytes([good[-1]^1])
+        frames=[]
+        for byte in b'noise'+bad+good: frames.extend(parser.feed(bytes([byte])))
+        self.assertEqual(frames,[good])
+        self.assertEqual(parser.bad_fcs,1)
+
+    def test_actual_r5_debug_decode_and_build_binding(self):
+        header=codec.HEADER.pack(b'T8D1',2,0,1,1,123,c.BUILD_ID,0x0ffbffff,0,0,0)
+        record=codec.RECORD.pack(1,123,0,1,0,0,0,0,0)
+        text=('T832D2:'+(header+b'\x01'+record).hex()).encode()
+        frame=self.frame(bytes([len(text)])+text)
+        value=c.diagnostic(frame,codec)
+        self.assertTrue(value['expected_build'])
+        self.assertEqual(value['header']['schema'],2)
+        changed=text.replace(b'c1f3081f',b'00000000')
+        self.assertFalse(c.diagnostic(self.frame(bytes([len(changed)])+changed),codec)['expected_build'])
+
+    def test_bad_debug_length_rejected_and_non_debug_ignored(self):
+        with self.assertRaises(ValueError): c.diagnostic(self.frame(b'\x01T832D2:x'),codec)
+        self.assertIsNone(c.diagnostic(self.frame(b'abc',b'\x61\x01'),codec))
+
     def test_hex_extended_address_and_checksum(self):
         raw=(row(4,0,b'\x50\x00')+row(0,0,b'abcd')+row(1,0,b'')).encode()
         self.assertEqual(a.ihex(raw)[0x50000000],ord('a'))

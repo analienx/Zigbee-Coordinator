@@ -2,7 +2,7 @@ name: T832 exact-image preflash evidence
 on:
   push:
     branches: [codex/t832-r5-deployment-gates]
-    paths: [deploy/t832_preflash_audit.py, deploy/test_t832_preflash.py, .github/workflows/t832-preflash.yml]
+    paths: [deploy/t832_preflash_audit.py, deploy/test_t832_preflash.py, deploy/t832_first_boot_capture.py, .github/workflows/t832-preflash.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,6 +24,17 @@ jobs:
           python3 -m unittest discover -s deploy -p test_t832_preflash.py -v
           python3 deploy/t832_preflash_audit.py evidence
           python3 -c 'import json; assert json.load(open("evidence/ccfg-bsl.json"))["verdict"] == "compatible"'
+      - name: Package unchanged exact candidate and staged passive reader
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          with zipfile.ZipFile('evidence/candidate.zip') as z:
+              for name in ('T832-DIAG-R0.hex','T832-DIAG-R0.out','T832-BUILD-MANIFEST.json'):
+                  Path('evidence',name).write_bytes(z.read(name))
+              Path('evidence/t832_incident.py').write_bytes(z.read('provenance/t832_incident.py'))
+          Path('evidence/t832_first_boot_capture.py').write_bytes(Path('deploy/t832_first_boot_capture.py').read_bytes())
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
