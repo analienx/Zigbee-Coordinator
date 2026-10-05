@@ -29,12 +29,13 @@ const OwnerProbe = require('../owner_probe.cjs');
     assert(method.includes('requestWithReply') && method.includes('extNwkInfo'));
     // SYS_VERSION identity must not change actual pinned feature selection.
     const Adapter = require(adapterFile).ZStackAdapter;
+    const {ZnpVersion} = require('zigbee-herdsman/dist/adapter/z-stack/adapter/tstype');
     for (const revision of ['8320001', '8320002']) {
-        const receiver = {version: {product: 2, revision}};
+        const receiver = {version: {product: ZnpVersion.ZStack3x0, revision}};
         assert.equal(Adapter.prototype.supportsAssocRemove.call(receiver), false);
         assert.equal(Adapter.prototype.supportsAssocAdd.call(receiver), false);
     }
-    const newFeatures = {version: {product: 2, revision: '20211029'}};
+    const newFeatures = {version: {product: ZnpVersion.ZStack3x0, revision: '20211029'}};
     assert.equal(Adapter.prototype.supportsAssocRemove.call(newFeatures), true);
     assert.equal(Adapter.prototype.supportsAssocAdd.call(newFeatures), true);
     console.log('R5 owner probe: fresh pinned adapter request, bounded hang, no overlapping requests PASS');
