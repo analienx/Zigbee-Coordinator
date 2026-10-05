@@ -1,5 +1,6 @@
 """Hosted-only static audit; never contacts a device or writes firmware."""
 import hashlib
+import binascii
 import json
 from pathlib import Path
 import re
@@ -66,6 +67,29 @@ def decode(memory, offsets):
             'nv_hex_records': sum(0xfd800 <= addr < 0x100000 for addr in memory)}
 
 
+def slzb(raw):
+    # Exact vendor 20240716 container: magic + two BE address/length/CRC
+    # descriptors, followed by application and CCFG. CRC and complete extent
+    # establish the mapping; never guess that a binary tail is CCFG.
+    if raw[:4] != b'SLZB' or len(raw) < 28:
+        raise ValueError('unsupported vendor container')
+    memory, cursor, descriptors = {}, 28, []
+    for offset in (4,16):
+        address, size, crc = struct.unpack('>III',raw[offset:offset+12])
+        segment = raw[cursor:cursor+size]
+        if len(segment) != size or binascii.crc32(segment) & 0xffffffff != crc:
+            raise ValueError('vendor segment CRC/extent mismatch')
+        for index,value in enumerate(segment):
+            if address+index in memory:
+                raise ValueError('vendor segment overlap')
+            memory[address+index] = value
+        descriptors.append({'address':f'0x{address:08x}','size':size,'crc32':f'0x{crc:08x}'})
+        cursor += size
+    if cursor != len(raw) or [x['address'] for x in descriptors] != ['0x00000000','0x50000000']:
+        raise ValueError('unexpected vendor container geometry')
+    return memory, descriptors
+
+
 def download(url):
     with urllib.request.urlopen(url, timeout=30) as response:
         data = response.read(4_000_001)
@@ -95,8 +119,12 @@ def main():
               'sdk_commit': SDK, 'header_sha256': hashlib.sha256(header).hexdigest(),
               'candidate': decode(ihex(raw), offsets), 'verdict': 'unresolved',
               'flash_authorized': False}
-    if rollback.lstrip().startswith(b':'):
-        result['reference'] = decode(ihex(rollback), offsets)
+    if rollback.lstrip().startswith(b':') or rollback.startswith(b'SLZB'):
+        if rollback.startswith(b'SLZB'):
+            reference, result['vendor_segments'] = slzb(rollback)
+        else:
+            reference = ihex(rollback)
+        result['reference'] = decode(reference, offsets)
         a,b = result['candidate'],result['reference']
         critical = ('BL_CONFIG','IMAGE_VALID_CONF','ERASE_CONF','ERASE_CONF_1',
                     'CCFG_TAP_DAP_0','CCFG_TAP_DAP_1','TRUSTZONE_FLASH_CFG',
