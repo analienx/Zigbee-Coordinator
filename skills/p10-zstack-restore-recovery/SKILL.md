@@ -9,18 +9,30 @@ Use this skill for SMLIGHT/other CC2674P10 coordinators when an existing Zigbee 
 
 ## Known failure signature
 
-The recovery finding confirmed on 2026-10-01 is narrow and important:
+The recovery observation on 2026-10-01 is narrow:
 
 - coordinator backup parsing/restore succeeds;
 - PAN ID, extended PAN ID, channel, coordinator IEEE, network key and restored security records are present as expected;
 - a soft reset succeeds and the radio still answers normal ZNP requests;
 - Zigbee2MQTT/zigbee-herdsman then calls `ZDO_STARTUP_FROM_APP`;
 - the CC2674P10 stops responding or fails to reach coordinator state during that transition;
-- replacing that post-restore transition with `APP_CNF_BDB_START_COMMISSIONING(mode=0x00)` allows the restored network to resume on the affected P10.
+- a later `APP_CNF_BDB_START_COMMISSIONING(mode=0x00)` attempt over Ethernet resumed the restored network on the affected P10; transport/Core context differed from the failed USB startup.
 
 Treat this as a recovery path for this exact failure class, not as a blanket replacement for every healthy Z-Stack startup.
 
+**Evidence boundary updated 2026-10-04:** mode-0 resumption succeeded over Ethernet, while a later USB attempt timed out. Transport/Core context changed, so this is not proof of an isolated BDB root cause or a universal mode-0 fix. A subsequently running coordinator developed progressive AF/ZDO/SYS timeouts; that runtime failure is a separate decision branch. A simple USB RTS pulse failed, but reviewed **USB ROM BSL entry → ping/chip ID → explicit ROM reset** recovered normal SYS/NV and outbound ZDO without flashing or NV changes. Read [bounded USB hardware recovery](references/usb-hardware-recovery.md) for the exact reset-only contract before adding automation or acting on an unresponsive USB radio. Do not reissue commissioning commands until bidirectional SYS traffic is proven.
+
 Current zigbee-herdsman restore flow writes the restored NVRAM, resets, and then calls `beginStartup()`, which uses `ZDO_STARTUP_FROM_APP` when the adapter is not already `ZB_COORD`. TI BDB guidance distinguishes network formation from initialization/resumption of an already restored network. Do not silently convert a restored-network recovery into a new formation attempt.
+
+**Later runtime limit, 2026-10-05:** the detector fired without HA shutdown.
+The exact original USB reset-only script was retested unchanged: ROM PING timed
+out and independent normal SYS was **0/3**, no version. Experimental SYNCH/pin
+pacing and bridge reset also failed; they are not prerequisites of the handoff.
+Always probe normal SYS/NV after the original script, even on ROM error or missing
+stdout; do not repeat the known failed simple RTS pulse on a reviewed episode.
+Ethernet is not required for this USB procedure. Preserve the unresolved latch
+and evidence rather than replaying backups or implying the radio recovered.
+See the reference above for the exact sequence and acceptance limits.
 
 References:
 - zigbee-herdsman Z-Stack manager: https://github.com/Koenkk/zigbee-herdsman/blob/master/src/adapter/z-stack/adapter/manager.ts
@@ -107,7 +119,7 @@ A successful network restore and a healthy USB enumeration do **not** prove that
 - a normal ZNP `SYS_RESET_REQ(type=SOFT)` produced no reset response and did not restore command traffic;
 - restarting Home Assistant did not fix the condition because the MR4U itself remained powered through PoE.
 
-Treat this as a **transport/bridge state failure**, not as evidence that the restored NVRAM or backup is wrong.
+Treat this as a **command-path failure signature**, not as evidence that the restored NVRAM or backup is wrong. Unsolicited traffic alone cannot distinguish a bridge fault from a radio that no longer services requests. Record transport, Core firmware and reset context before attributing a cause.
 
 ### Diagnose directionality before rewriting anything
 
@@ -131,7 +143,7 @@ A phone drawing charge current from a USB port is not a valid USB-data test. A c
 
 On a PoE-powered MR4U used in USB communication mode, restarting or even power-cycling the Home Assistant host can leave the MR4U ESP32-S3/USB↔UART bridge continuously powered. Therefore a bridge latch can survive the HA restart.
 
-When the one-way transport signature above is proven, perform a **true MR4U cold power-cycle** while Zigbee2MQTT is stopped:
+When a cold power-cycle is selected for this signature, keep Zigbee2MQTT stopped and remove **all MR4U power**:
 
 1. disconnect the MR4U USB cable;
 2. remove PoE/power so the MR4U has no remaining power source;
@@ -142,6 +154,8 @@ When the one-way transport signature above is proven, perform a **true MR4U cold
 7. require a successful `SYS_PING` before starting Zigbee2MQTT.
 
 In the confirmed incident, the first post-power-cycle pings could still time out during early boot; a valid ping response appeared a few seconds later. Do not declare failure on the first immediate probe if USB has only just enumerated.
+
+A later 2026-10-03 incident on coordinator firmware 20240716 was not cleared by the reported physical power-cycle. Re-entering USB mode also preceded recovery, without an explicit management-UI radio-reset action. Such a mode transition can change transport or implicitly reset hardware; do not claim it proves either a bridge-only fault or an isolated reset fix. If SYS remains unresponsive, stop here and use the bounded hardware-recovery gate rather than repeatedly cycling power or restoring NVRAM.
 
 Only after bidirectional ZNP traffic is restored should Zigbee2MQTT be started again. If Zigbee2MQTT then passes adapter initialization and resumes publishing live production-device traffic, keep the restored NVRAM intact.
 
@@ -170,6 +184,8 @@ Do not confuse old debug lines retained in the add-on log with logging from the 
 ## If BDB mode 0x00 does not recover the P10
 
 Do not jump to hardware replacement or mass re-pairing. Escalate in this order:
+
+These writer lanes require responsive bidirectional ZNP and evidence of a restore/state mismatch. A local SYS timeout on a previously working network is not permission to rewrite NVRAM; first follow the transport/hardware branch above.
 
 ### Lane A — independent NVRAM writer
 
