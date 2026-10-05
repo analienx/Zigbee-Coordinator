@@ -1,0 +1,13 @@
+{
+  "name": "t832-herdsman-interop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "T832-DIAG-R0 hosted interop probe against pinned zigbee-herdsman",
+  "type": "commonjs",
+  "dependencies": {
+    "zigbee-herdsman": "10.9.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

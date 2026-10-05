@@ -1,0 +1,27 @@
+[Unit]
+Description=T832-DIAG-R0 file-only collector (one poll)
+Documentation=file:docs/T832_DIAG_R0_RUNBOOK.md
+# UNDEPLOYED CANDIDATE. Enable only after the runbook prerequisites are met:
+#   systemctl enable --now t832-collector.timer
+# Status: systemctl status t832-collector.service t832-collector.timer
+# Logs:   journalctl -u t832-collector.service
+
+[Service]
+Type=oneshot
+User=homeassistant
+Group=homeassistant
+UMask=0077
+ExecStart=/usr/bin/python3 /config/python_scripts/t832_incident.py \
+  --root /config/.private/t832-diag \
+  --source /config/zigbee2mqtt/log \
+  --source /config/home-assistant.log \
+  collect
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/config/.private/t832-diag
+ReadOnlyPaths=/config/zigbee2mqtt/log /config/home-assistant.log

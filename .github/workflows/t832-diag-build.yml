@@ -1,0 +1,1243 @@
+name: Build T832 CC2674P10 diagnostic firmware
+
+on:
+  push:
+    branches:
+      - codex/t832-diag-r0
+      - exp/mr4u-p10-t832-diag-r0
+    paths:
+      - ".github/workflows/t832-diag-build.yml"
+      - "firmware/t832/**"
+      - "docs/TI_ZNP_CC2674P10_*"
+      - "docs/T832_DIAG_R0_*"
+      - "deploy/t832_capture_barrier.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t832-diag-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: Build and verify T832-DIAG-R0
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+
+      - name: Validate T832 control and diagnostic policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
+          python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
+          python3 -m unittest repo/firmware/t832/test_diag.py -v
+          python3 -m pip install --quiet pyyaml jinja2
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_diag_host_test.c \
+            -o /tmp/t832harness \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          /tmp/t832harness
+          /tmp/t832harness dump /tmp/t832-payloads.hex
+          python3 -m py_compile             repo/firmware/t832/apply_diag.py             repo/firmware/t832/t832_diag_decode.py             repo/firmware/t832/t832_incident.py
+
+      - name: Install CCS 12.8.0 SimpleLink toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl tar xz-utils \
+            libc6-i386 libusb-0.1-4 libncurses5 libtinfo5 \
+            libx11-6 libxext6 libxrender1 libxtst6 libxi6 libxt6 libxinerama1 \
+            libgtk2.0-0 libnss3 xvfb
+
+          mkdir -p "$HOME/ti/downloads"
+          cd "$HOME/ti/downloads"
+          CCS_TARBALL=CCS12.8.0.00012_web_linux-x64.tar.gz
+          CCS_URL=https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/${CCS_TARBALL}
+          curl -fL --retry 5 --retry-delay 2 -o "$CCS_TARBALL" "$CCS_URL"
+          tar xzf "$CCS_TARBALL"
+
+          SETUP=$(find . -maxdepth 3 -type f -name 'ccs_setup_12.8.0.00012.run' -print -quit)
+          test -n "$SETUP" || { echo "CCS installer not found"; exit 1; }
+          chmod +x "$SETUP"
+          "$SETUP" \
+            --mode unattended \
+            --enable-components PF_WCONN \
+            --prefix "$HOME/ti/ccs1280"
+
+          SYSCFG_SETUP="$HOME/ti/downloads/sysconfig-1.21.1_3772-setup.run"
+          curl -fL --retry 5 --retry-delay 2 \
+            -o "$SYSCFG_SETUP" \
+            https://software-dl.ti.com/ccs/esd/sysconfig/sysconfig-1.21.1_3772-setup.run
+          chmod +x "$SYSCFG_SETUP"
+          "$SYSCFG_SETUP" \
+            --mode unattended \
+            --prefix "$HOME/ti/sysconfig_1.21.1"
+
+      - name: Verify and export exact toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMCLANG=$(find "$HOME/ti/ccs1280" -type f -name tiarmclang -perm -u+x -print -quit)
+          SYSCONFIG=$(find "$HOME/ti/sysconfig_1.21.1" -type f -name sysconfig_cli.sh -print -quit)
+          XDC=$(find "$HOME/ti/ccs1280" -type d -name 'xdctools_3_62_01_16_core' -print -quit)
+          CCS_ECLIPSE=$(find "$HOME/ti/ccs1280" -type f -name eclipse -path '*/eclipse/eclipse' -perm -u+x -print -quit)
+
+          test -n "$TIARMCLANG" || { echo "::error::TI ARM Clang missing"; exit 1; }
+          test -n "$SYSCONFIG" || { echo "::error::SysConfig 1.21.1 missing"; exit 1; }
+          test -n "$XDC" || { echo "::error::XDCTools 3.62.01.16 missing"; exit 1; }
+          test -n "$CCS_ECLIPSE" || { echo "::error::CCS Eclipse missing"; exit 1; }
+
+          "$TIARMCLANG" --version | tee /tmp/tiarmclang-version.txt
+          grep -F '3.2.2.LTS' /tmp/tiarmclang-version.txt
+          case "$SYSCONFIG" in *sysconfig_1.21.1*) ;; *) exit 1;; esac
+          case "$XDC" in *xdctools_3_62_01_16_core*) ;; *) exit 1;; esac
+
+          {
+            echo "TIARMCLANG=$TIARMCLANG"
+            echo "SYSCONFIG=$SYSCONFIG"
+            echo "XDC=$XDC"
+            echo "CCS_ECLIPSE=$CCS_ECLIPSE"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "## T832 toolchain"
+            echo "- CCS: 12.8.0.00012"
+            echo "- TI ARM Clang: 3.2.2.LTS"
+            echo "- SysConfig: 1.21.1.3772"
+            echo "- XDCTools: 3.62.01.16"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prefer pinned SysConfig 1.21.1 over CCS-bundled 1.21.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLED=$(find "$HOME/ti/ccs1280" -maxdepth 5 -type d -name 'sysconfig_1.21.0' -print -quit)
+          test -n "$BUNDLED" || { echo "::error::CCS-bundled SysConfig 1.21.0 not found"; exit 1; }
+          test -x "$HOME/ti/sysconfig_1.21.1/sysconfig_cli.sh" || { echo "::error::pinned SysConfig 1.21.1 missing"; exit 1; }
+          mv "$BUNDLED" "$BUNDLED.orig-1.21.0"
+          ln -s "$HOME/ti/sysconfig_1.21.1" "$BUNDLED"
+          test "$(readlink "$BUNDLED")" = "$HOME/ti/sysconfig_1.21.1"
+          "$BUNDLED/sysconfig_cli.sh" --version > /tmp/sysconfig-version.txt 2>&1 || true
+          cat /tmp/sysconfig-version.txt
+          {
+            echo "## T832 SysConfig pin"
+            echo "- CCS-bundled 1.21.0 redirected to standalone 1.21.1.3772 (SDK 8.32 requires >= 1.21.1)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          path: sdk833
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+
+      - name: Apply fail-closed T832 diagnostic delta on control base
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          test "$(git -C sdk833 rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
+          test "$(git -C examples rev-parse HEAD)" = "87ff5b638b632050228a7504f35cf3b95581c278"
+
+          mkdir -p build-evidence
+          python3 repo/firmware/t832/apply_diag.py             --sdk sdk             --examples examples             --control-manifest repo/firmware/t832/manifest.json             --evidence build-evidence/diag-patch-evidence.json
+
+          jq '.control' build-evidence/diag-patch-evidence.json > build-evidence/patch-evidence.json
+
+          # Include the two new runtime sources in the diagnostic patch evidence.
+          git -C sdk add -N             source/ti/zstack/mt/t832_diag.h             source/ti/zstack/mt/t832_diag_impl.inc
+
+          git -C sdk diff --check
+          git -C examples diff --check
+          git -C sdk diff --binary > build-evidence/T832-DIAG-R0-sdk.patch
+          git -C examples diff --binary > build-evidence/T832-DIAG-R0-project-seed.patch
+          { git -C sdk diff --name-only; git -C sdk ls-files --others --exclude-standard; } | sort -u > build-evidence/changed-sdk-files.txt
+          git -C examples diff --name-only | sort > build-evidence/changed-example-files.txt
+
+          python3 - <<'PY'
+          import subprocess
+
+          control_allowed = {
+              "source/ti/zstack/apps/znp/znp_cnf.opts",
+              "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd",
+              "source/ti/zstack/mt/mt_version.c",
+              "source/ti/zstack/npi/npi_tl_uart.c",
+              "source/ti/zstack/npi/npi_tl_uart.h",
+              "source/ti/zstack/stack/nwk/nwk_globals.c",
+          }
+          diag_allowed = control_allowed | {
+              "source/ti/common/nv/nvocmp.c",
+              "source/ti/zstack/npi/npi_task.c",
+              "source/ti/zstack/startup/main.c",
+              "source/ti/zstack/mt/mt.c",
+              "source/ti/zstack/mt/mt.h",
+              "source/ti/zstack/mt/mt_debug.c",
+              "source/ti/zstack/mt/mt_task.c",
+              "source/ti/zstack/mt/mt_zdo.c",
+              "source/ti/zstack/mt/t832_diag.h",
+              "source/ti/zstack/mt/t832_diag_impl.inc",
+              "source/ti/zstack/mt/t832_diag_r5.inc",
+              "source/ti/zstack/mt/t832_diag_nwk.inc",
+              "source/ti/zstack/mt/t832_fatal.h",
+              "kernel/tirtos7/packages/ti/sysbios/runtime/Error.c",
+              "kernel/tirtos7/packages/ti/sysbios/runtime/t832_fatal.h",
+              "kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/Hwi.c",
+              "kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/t832_fatal.h",
+              "source/ti/zstack/npi/npi_client_mt.c",
+              "source/ti/zstack/stack/api/zstacktask.c",
+          }
+          examples_allowed = {
+              "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/"
+              "znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec"
+          }
+
+          def changed(repo):
+              diff = subprocess.run(
+                  ["git", "-C", repo, "diff", "--name-only"],
+                  check=True, text=True, capture_output=True
+              ).stdout.splitlines()
+              other = subprocess.run(
+                  ["git", "-C", repo, "ls-files", "--others", "--exclude-standard"],
+                  check=True, text=True, capture_output=True
+              ).stdout.splitlines()
+              return set(diff) | set(other)
+
+          if changed("sdk") != diag_allowed:
+              raise SystemExit(f"unclassified SDK delta: {sorted(changed('sdk'))}")
+          if changed("examples") != examples_allowed:
+              raise SystemExit(f"unclassified project-seed delta: {sorted(changed('examples'))}")
+          print("T832-DIAG-R0 source allowlists: PASS")
+          PY
+          python3 repo/firmware/t832/test_r5_pinned.py --sdk sdk
+
+      - name: Prove 8.33 project seed is compatible with pinned 8.32 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/audit_contract.py compat \
+            --manifest repo/firmware/t832/manifest.json \
+            --sdk832 sdk \
+            --sdk833 sdk833 \
+            --examples examples \
+            --evidence build-evidence/project-seed-compatibility.json
+
+      - name: Build pinned SDK libraries with TI documented CMake flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cmake >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends cmake
+          fi
+          cmake --version
+          export CMAKE="$(command -v cmake)"
+          export TICLANG_ARMCOMPILER="$(dirname "$(dirname "$TIARMCLANG")")"
+          export XDC_INSTALL_DIR="$XDC"
+          export SYSCONFIG_TOOL="$SYSCONFIG"
+          export GCC_ARMCOMPILER=
+          export IAR_ARMCOMPILER=
+          "$CMAKE" -G"Unix Makefiles" -S sdk -B sdk/build/ticlang --log-level=VERBOSE
+          "$CMAKE" --build sdk/build/ticlang --target tirtos7_m33f drivers_cc26x4 display_cc26x4 driverlib_cc13x4_cc26x3_cc26x4 spiffs_m33f_cc26xx
+          python3 - <<'PYEOF'
+          import pathlib
+          import shutil
+          import sys
+          sdk = pathlib.Path("sdk")
+          build = sdk / "build" / "ticlang"
+          wanted = {
+              "sysbios.a": "kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m33f/sysbios.a",
+              "drivers_cc26x4.a": "source/ti/drivers/lib/ticlang/m33f/drivers_cc26x4.a",
+              "display_cc26x4.a": "source/ti/display/lib/ticlang/m33f/display_cc26x4.a",
+              "driverlib.lib": "source/ti/devices/cc13x4_cc26x4/driverlib/bin/ticlang/driverlib.lib",
+              "spiffs_cc26xx.a": "source/third_party/spiffs/lib/ticlang/m33f/spiffs_cc26xx.a",
+          }
+          built = [p for p in build.rglob("*") if p.suffix in (".a", ".lib") and p.is_file()]
+          print("built archives:")
+          for p in sorted(built):
+              print("  " + str(p.relative_to(sdk)) + " " + str(p.stat().st_size))
+          by_name = {}
+          for p in built:
+              by_name.setdefault(p.name, []).append(p)
+          for name, dest in wanted.items():
+              cands = by_name.get(name, [])
+              if len(cands) != 1:
+                  sys.exit("expected exactly one built " + name + ", found " + str(len(cands)))
+              src = cands[0]
+              if src.stat().st_size == 0:
+                  sys.exit("built " + name + " is empty")
+              out = sdk / dest
+              out.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, out)
+              print("installed " + name + " -> " + dest)
+          PYEOF
+          {
+            echo "## T832 SDK libraries"
+            echo "- TI-documented top-level CMake configure plus targeted ticlang build of the CC26x4/M33F archives the ZNP link consumes."
+            echo "- tirtos7_m4 (Cortex-M4 soft-float sysbios) excluded: its m3-family gcc-syntax asm uses VFP vpush/vpop, rejected by ticlang under soft-float; unrelated to the M33F application."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Register pinned F2 SDK and SysConfig with CCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ccs-workspace
+          mkdir -p ccs-workspace
+
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1"
+
+      - name: Import hardened CC2674P10 ZNP project seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECTSPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec"
+          test -f "$PROJECTSPEC"
+
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$PROJECTSPEC" \
+            -ccs.overwrite
+
+          IMPORTED_OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts')
+          test "$(printf '%s\n' "$IMPORTED_OPTS" | sed '/^$/d' | wc -l)" = 1
+          test "$(sha256sum sdk/source/ti/zstack/apps/znp/znp_cnf.opts | cut -d' ' -f1)" = \
+               "$(sha256sum "$IMPORTED_OPTS" | cut -d' ' -f1)"
+
+      - name: Build only T832-DIAG-R0 ZNP project
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_EM_CC2674P10_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee build-evidence/ccs-build.log
+
+          OUT=$(find ccs-workspace -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace -type f -name '*.map' -print -quit)
+          GENH=$(find ccs-workspace -type f -name 'ti_zstack_config.h' -print -quit)
+          OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts' -print -quit)
+          test -n "$OUT" || { echo "::error::No .out produced"; exit 1; }
+          test -n "$MAP" || { echo "::error::No linker .map produced"; exit 1; }
+          test -n "$GENH" || { echo "::error::No generated ti_zstack_config.h produced"; exit 1; }
+          test -n "$OPTS" || { echo "::error::No imported znp_cnf.opts found"; exit 1; }
+
+          {
+            echo "OUT=$OUT"
+            echo "MAP=$MAP"
+            echo "GENH=$GENH"
+            echo "OPTS=$OPTS"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate effective compiler-macro proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > build-evidence/t832-macro-probe.c <<'EOF'
+          /* T832 evidence-only preprocessor probe. Runtime code is never linked. */
+          EOF
+          "$TIARMCLANG" \
+            -dM -E -x c \
+            @"$OPTS" \
+            build-evidence/t832-macro-probe.c \
+            > build-evidence/effective-macros.txt
+
+          # Keep the generated header that participated in the real project.
+          cp "$GENH" build-evidence/ti_zstack_config.h
+
+      - name: Prove build identity, hook linkage and absent paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- workspace opts T832 lines (must list both -D flags) ---"
+          grep 'T832' "$OPTS" || { echo "::error::diag -D flags missing from workspace opts $OPTS"; grep '^-D' "$OPTS" || true; exit 1; }
+          echo "--- effective-macros T832 lines ---"
+          grep '^#define T832' build-evidence/effective-macros.txt || {
+            echo "::error::T832 defines missing from preprocessor probe output"
+            echo "--- full opts file ---"
+            cat "$OPTS"
+            exit 1
+          }
+          EXPECTED_BUILD="0x$(git -C repo rev-parse --short=8 HEAD)"
+          ACTUAL_BUILD=$(grep '^#define T832_BUILD_ID ' build-evidence/effective-macros.txt | awk '{print $3}')
+          test -n "$ACTUAL_BUILD" || { echo "::error::T832_BUILD_ID present but value empty"; exit 1; }
+          test "$ACTUAL_BUILD" = "$EXPECTED_BUILD" || { echo "::error::T832_BUILD_ID $ACTUAL_BUILD != $EXPECTED_BUILD"; exit 1; }
+          grep -q '^#define T832_DIAG_R0 1' build-evidence/effective-macros.txt || {
+            echo "::error::T832_DIAG_R0 flag missing from preprocessor probe output"
+            exit 1
+          }
+          TIARMOBJDUMP="$(dirname "$TIARMCLANG")/tiarmobjdump"
+          test -x "$TIARMOBJDUMP"
+          "$TIARMOBJDUMP" --disassemble "$OUT" > build-evidence/disasm.txt
+          python3 repo/firmware/t832/audit_r5_image.py --disassembly build-evidence/disasm.txt --output build-evidence/r5-image-gates.json
+          python3 - <<'PY'
+          import pathlib, re, sys
+          evidence = {}
+          def check(name, ok, detail=""):
+              evidence[name] = {"pass": bool(ok), "detail": detail}
+              print(("PASS " if ok else "FAIL ") + name + (" " + detail if detail else ""))
+              if not ok:
+                  raise SystemExit(f"image gate failed: {name} {detail}")
+          import os
+          map_path = os.environ["MAP"]
+          check("map-found", map_path.endswith(".map"), map_path)
+          text = pathlib.Path(map_path).read_text(encoding="utf-8", errors="replace")
+          for sym in ("T832Diag_exportPoll", "T832Diag_captureResetCauseEarly",
+                      "t832DiagResetCauseEarly", "T832Diag_npiTxDequeue",
+                      "T832Diag_afDispatch", "T832Diag_npiTrap"):
+              check(f"linked:{sym}", sym in text)
+          for sym in ("Boot_getBootReason", "syncReqRspWatchDogTimeoutCB",
+                      "npiSyncTxQueue", "NPITask_ProcessSyncTXQ"):
+              check(f"absent:{sym}", sym not in text)
+          dis = pathlib.Path("build-evidence/disasm.txt").read_text(encoding="utf-8", errors="replace")
+          mains = [m.start() for m in re.finditer(r"<main>:", dis)]
+          check("disasm-main", len(mains) == 1, f"count={len(mains)}")
+          window = dis[mains[0]:mains[0] + 20000]
+          hit = "T832Diag_captureResetCauseEarly" in window and re.search(r"\bbl\b", window) is not None
+          check("main-calls-capture", hit)
+          import json
+          pathlib.Path("build-evidence/image-gates.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          PY
+
+      - name: Enforce compiled capacity, NVS, stack and SRAM contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/audit_contract.py build \
+            --manifest repo/firmware/t832/manifest.json \
+            --patch-evidence build-evidence/patch-evidence.json \
+            --sdk sdk \
+            --workspace ccs-workspace \
+            --effective-macros build-evidence/effective-macros.txt \
+            --generated-header "$GENH" \
+            --map-file "$MAP" \
+            --out-file "$OUT" \
+            --evidence build-evidence/compiled-contract.json
+
+      - name: Package flash artifact and evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMOBJCOPY="$(dirname "$TIARMCLANG")/tiarmobjcopy"
+          test -x "$TIARMOBJCOPY"
+
+          mkdir -p bundle/linked bundle/generated bundle/provenance
+          cp "$OUT" bundle/T832-DIAG-R0.out
+          "$TIARMOBJCOPY" "$OUT" --output-target ihex bundle/T832-DIAG-R0.hex
+
+          cp "$MAP" bundle/linked/
+          find ccs-workspace -type f -name '*linkInfo.xml' -exec cp {} bundle/linked/ \;
+          find ccs-workspace -type f \( \
+              -name 'ti_devices_config.c' -o \
+              -name 'ti_drivers_config.c' -o \
+              -name 'ti_drivers_config.h' -o \
+              -name 'ti_radio_config.c' -o \
+              -name 'ti_radio_config.h' -o \
+              -name 'ti_zstack_config.h' -o \
+              -name 'ti_zstack_config.c' \
+            \) -exec cp {} bundle/generated/ \;
+
+          test -s bundle/T832-DIAG-R0.hex
+          test -s bundle/T832-DIAG-R0.out
+          cp repo/firmware/t832/manifest.json bundle/provenance/manifest.json
+          cp repo/firmware/t832/diag_manifest.json bundle/provenance/diag_manifest.json
+          cp repo/firmware/t832/diag_schema.json bundle/provenance/diag_schema.json
+          cp repo/firmware/t832/t832_incident.py bundle/provenance/t832_incident.py
+          cp repo/firmware/t832/t832_diag_decode.py bundle/provenance/t832_diag_decode.py
+          cp repo/firmware/t832/DIAG_README.md bundle/README.md
+          cp repo/firmware/t832/t832_sideband.py bundle/provenance/
+          cp repo/firmware/t832/t832_fatal.h bundle/provenance/
+          cp repo/firmware/t832/owner_probe.cjs bundle/provenance/
+          cp repo/docs/T832_DIAG_R0_R5.md bundle/provenance/
+          cp build-evidence/* bundle/provenance/
+
+          {
+            echo "variant=T832-DIAG-R0"
+            echo "repo_commit=$GITHUB_SHA"
+            echo "sdk_commit=$(git -C sdk rev-parse HEAD)"
+            echo "sdk_833_compat_commit=$(git -C sdk833 rev-parse HEAD)"
+            echo "examples_commit=$(git -C examples rev-parse HEAD)"
+            echo "ccs=12.8.0.00012"
+            printf "tiarmclang="; "$TIARMCLANG" --version | head -1
+            echo "sysconfig=1.21.1.3772"
+            echo "xdctools=3.62.01.16"
+          } > bundle/provenance/TOOLCHAIN.txt
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          artifacts = {}
+          for name in ("T832-DIAG-R0.hex", "T832-DIAG-R0.out"):
+              p = Path("bundle") / name
+              artifacts[name] = {
+                  "bytes": p.stat().st_size,
+                  "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+              }
+          evidence = {
+              "compiled_contract": hashlib.sha256(
+                  Path("build-evidence/compiled-contract.json").read_bytes()
+              ).hexdigest(),
+              "project_seed_compatibility": hashlib.sha256(
+                  Path("build-evidence/project-seed-compatibility.json").read_bytes()
+              ).hexdigest(),
+              "diagnostic_patch": hashlib.sha256(
+                  Path("build-evidence/diag-patch-evidence.json").read_bytes()
+              ).hexdigest(),
+          }
+          out = {
+              "variant": "T832-DIAG-R0",
+              "repository_commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "sys_version_revision": 8320002,
+              "debug_build_id": int(os.environ["GITHUB_SHA"][:8], 16),
+              "capability_bitmap": "0x0ffbffff",
+              "toolchain": {"ccs": "12.8.0.00012", "ti_clang": "3.2.2.LTS", "sysconfig": "1.21.1.3772", "xdc": "3.62.01.16"},
+              "sdk_commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+              "sdk_833_compat_commit": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+              "examples_commit": "87ff5b638b632050228a7504f35cf3b95581c278",
+              "artifacts": artifacts,
+              "evidence_sha256": evidence,
+              "flash_authorized": False,
+              "note": "CI build integrity does not satisfy production board/backup/CCFG gates.",
+          }
+          Path("bundle/T832-BUILD-MANIFEST.json").write_text(
+              json.dumps(out, indent=2) + "\n"
+          )
+          PY
+
+          (cd bundle && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+          {
+            echo
+            echo "## T832-DIAG-R0 artifact"
+            jq -r '"- HEX: \(.artifacts["T832-DIAG-R0.hex"].bytes) bytes — `\(.artifacts["T832-DIAG-R0.hex"].sha256)`"' bundle/T832-BUILD-MANIFEST.json
+            echo "- Project-seed compatibility: **PASS**"
+            echo "- Compiled capacity/NVS/stack/RAM contract: **PASS**"
+            echo "- Flash authorization: **NO** — board/CCFG/recovery/backup gates remain separate."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mr4u-p10-t832-diag-r0
+          path: bundle/
+          compression-level: 9
+          retention-days: 30
+          if-no-files-found: error
+
+  control:
+    name: Build matched T832-KCTRL-R0 control
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+
+      - name: Validate T832 control and diagnostic policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
+          python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
+          python3 -m unittest repo/firmware/t832/test_diag.py -v
+          python3 -m pip install --quiet pyyaml jinja2
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_diag_host_test.c \
+            -o /tmp/t832harness \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          /tmp/t832harness
+          /tmp/t832harness dump /tmp/t832-payloads.hex
+          python3 -m py_compile             repo/firmware/t832/apply_diag.py             repo/firmware/t832/t832_diag_decode.py             repo/firmware/t832/t832_incident.py
+
+      - name: Install CCS 12.8.0 SimpleLink toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl tar xz-utils \
+            libc6-i386 libusb-0.1-4 libncurses5 libtinfo5 \
+            libx11-6 libxext6 libxrender1 libxtst6 libxi6 libxt6 libxinerama1 \
+            libgtk2.0-0 libnss3 xvfb
+
+          mkdir -p "$HOME/ti/downloads"
+          cd "$HOME/ti/downloads"
+          CCS_TARBALL=CCS12.8.0.00012_web_linux-x64.tar.gz
+          CCS_URL=https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/${CCS_TARBALL}
+          curl -fL --retry 5 --retry-delay 2 -o "$CCS_TARBALL" "$CCS_URL"
+          tar xzf "$CCS_TARBALL"
+
+          SETUP=$(find . -maxdepth 3 -type f -name 'ccs_setup_12.8.0.00012.run' -print -quit)
+          test -n "$SETUP" || { echo "CCS installer not found"; exit 1; }
+          chmod +x "$SETUP"
+          "$SETUP" \
+            --mode unattended \
+            --enable-components PF_WCONN \
+            --prefix "$HOME/ti/ccs1280"
+
+          SYSCFG_SETUP="$HOME/ti/downloads/sysconfig-1.21.1_3772-setup.run"
+          curl -fL --retry 5 --retry-delay 2 \
+            -o "$SYSCFG_SETUP" \
+            https://software-dl.ti.com/ccs/esd/sysconfig/sysconfig-1.21.1_3772-setup.run
+          chmod +x "$SYSCFG_SETUP"
+          "$SYSCFG_SETUP" \
+            --mode unattended \
+            --prefix "$HOME/ti/sysconfig_1.21.1"
+
+      - name: Verify and export exact toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMCLANG=$(find "$HOME/ti/ccs1280" -type f -name tiarmclang -perm -u+x -print -quit)
+          SYSCONFIG=$(find "$HOME/ti/sysconfig_1.21.1" -type f -name sysconfig_cli.sh -print -quit)
+          XDC=$(find "$HOME/ti/ccs1280" -type d -name 'xdctools_3_62_01_16_core' -print -quit)
+          CCS_ECLIPSE=$(find "$HOME/ti/ccs1280" -type f -name eclipse -path '*/eclipse/eclipse' -perm -u+x -print -quit)
+
+          test -n "$TIARMCLANG" || { echo "::error::TI ARM Clang missing"; exit 1; }
+          test -n "$SYSCONFIG" || { echo "::error::SysConfig 1.21.1 missing"; exit 1; }
+          test -n "$XDC" || { echo "::error::XDCTools 3.62.01.16 missing"; exit 1; }
+          test -n "$CCS_ECLIPSE" || { echo "::error::CCS Eclipse missing"; exit 1; }
+
+          "$TIARMCLANG" --version | tee /tmp/tiarmclang-version.txt
+          grep -F '3.2.2.LTS' /tmp/tiarmclang-version.txt
+          case "$SYSCONFIG" in *sysconfig_1.21.1*) ;; *) exit 1;; esac
+          case "$XDC" in *xdctools_3_62_01_16_core*) ;; *) exit 1;; esac
+
+          {
+            echo "TIARMCLANG=$TIARMCLANG"
+            echo "SYSCONFIG=$SYSCONFIG"
+            echo "XDC=$XDC"
+            echo "CCS_ECLIPSE=$CCS_ECLIPSE"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "## T832 toolchain"
+            echo "- CCS: 12.8.0.00012"
+            echo "- TI ARM Clang: 3.2.2.LTS"
+            echo "- SysConfig: 1.21.1.3772"
+            echo "- XDCTools: 3.62.01.16"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prefer pinned SysConfig 1.21.1 over CCS-bundled 1.21.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLED=$(find "$HOME/ti/ccs1280" -maxdepth 5 -type d -name 'sysconfig_1.21.0' -print -quit)
+          test -n "$BUNDLED" || { echo "::error::CCS-bundled SysConfig 1.21.0 not found"; exit 1; }
+          test -x "$HOME/ti/sysconfig_1.21.1/sysconfig_cli.sh" || { echo "::error::pinned SysConfig 1.21.1 missing"; exit 1; }
+          mv "$BUNDLED" "$BUNDLED.orig-1.21.0"
+          ln -s "$HOME/ti/sysconfig_1.21.1" "$BUNDLED"
+          test "$(readlink "$BUNDLED")" = "$HOME/ti/sysconfig_1.21.1"
+          "$BUNDLED/sysconfig_cli.sh" --version > /tmp/sysconfig-version.txt 2>&1 || true
+          cat /tmp/sysconfig-version.txt
+          {
+            echo "## T832 SysConfig pin"
+            echo "- CCS-bundled 1.21.0 redirected to standalone 1.21.1.3772 (SDK 8.32 requires >= 1.21.1)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          path: sdk833
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+
+      - name: Apply fail-closed T832 control delta only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          test "$(git -C examples rev-parse HEAD)" = "87ff5b638b632050228a7504f35cf3b95581c278"
+
+          mkdir -p build-evidence
+          python3 repo/firmware/t832/apply_kctrl.py \
+            --sdk sdk \
+            --examples examples \
+            --manifest repo/firmware/t832/manifest.json \
+            --evidence build-evidence/control-patch-evidence.json
+
+          git -C sdk diff --check
+          git -C examples diff --check
+          git -C sdk diff --binary > build-evidence/T832-KCTRL-R0-sdk.patch
+          git -C examples diff --binary > build-evidence/T832-KCTRL-R0-project-seed.patch
+
+          python3 - <<'PY'
+          import subprocess
+          control_allowed = {
+              "source/ti/zstack/apps/znp/znp_cnf.opts",
+              "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd",
+              "source/ti/zstack/mt/mt_version.c",
+              "source/ti/zstack/npi/npi_tl_uart.c",
+              "source/ti/zstack/npi/npi_tl_uart.h",
+              "source/ti/zstack/stack/nwk/nwk_globals.c",
+          }
+          examples_allowed = {
+              "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/"
+              "znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec"
+          }
+          def changed(repo):
+              diff = subprocess.run(
+                  ["git", "-C", repo, "diff", "--name-only"],
+                  check=True, text=True, capture_output=True
+              ).stdout.splitlines()
+              other = subprocess.run(
+                  ["git", "-C", repo, "ls-files", "--others", "--exclude-standard"],
+                  check=True, text=True, capture_output=True
+              ).stdout.splitlines()
+              return set(diff) | set(other)
+          if changed("sdk") != control_allowed:
+              raise SystemExit(f"unclassified SDK delta: {sorted(changed('sdk'))}")
+          if changed("examples") != examples_allowed:
+              raise SystemExit(f"unclassified project-seed delta: {sorted(changed('examples'))}")
+          print("T832-KCTRL-R0 source allowlists: PASS")
+          PY
+
+      - name: Build pinned SDK libraries with TI documented CMake flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cmake >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends cmake
+          fi
+          cmake --version
+          export CMAKE="$(command -v cmake)"
+          export TICLANG_ARMCOMPILER="$(dirname "$(dirname "$TIARMCLANG")")"
+          export XDC_INSTALL_DIR="$XDC"
+          export SYSCONFIG_TOOL="$SYSCONFIG"
+          export GCC_ARMCOMPILER=
+          export IAR_ARMCOMPILER=
+          "$CMAKE" -G"Unix Makefiles" -S sdk -B sdk/build/ticlang --log-level=VERBOSE
+          "$CMAKE" --build sdk/build/ticlang --target tirtos7_m33f drivers_cc26x4 display_cc26x4 driverlib_cc13x4_cc26x3_cc26x4 spiffs_m33f_cc26xx
+          python3 - <<'PYEOF'
+          import pathlib
+          import shutil
+          import sys
+          sdk = pathlib.Path("sdk")
+          build = sdk / "build" / "ticlang"
+          wanted = {
+              "sysbios.a": "kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m33f/sysbios.a",
+              "drivers_cc26x4.a": "source/ti/drivers/lib/ticlang/m33f/drivers_cc26x4.a",
+              "display_cc26x4.a": "source/ti/display/lib/ticlang/m33f/display_cc26x4.a",
+              "driverlib.lib": "source/ti/devices/cc13x4_cc26x4/driverlib/bin/ticlang/driverlib.lib",
+              "spiffs_cc26xx.a": "source/third_party/spiffs/lib/ticlang/m33f/spiffs_cc26xx.a",
+          }
+          built = [p for p in build.rglob("*") if p.suffix in (".a", ".lib") and p.is_file()]
+          print("built archives:")
+          for p in sorted(built):
+              print("  " + str(p.relative_to(sdk)) + " " + str(p.stat().st_size))
+          by_name = {}
+          for p in built:
+              by_name.setdefault(p.name, []).append(p)
+          for name, dest in wanted.items():
+              cands = by_name.get(name, [])
+              if len(cands) != 1:
+                  sys.exit("expected exactly one built " + name + ", found " + str(len(cands)))
+              src = cands[0]
+              if src.stat().st_size == 0:
+                  sys.exit("built " + name + " is empty")
+              out = sdk / dest
+              out.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, out)
+              print("installed " + name + " -> " + dest)
+          PYEOF
+          {
+            echo "## T832 SDK libraries"
+            echo "- TI-documented top-level CMake configure plus targeted ticlang build of the CC26x4/M33F archives the ZNP link consumes."
+            echo "- tirtos7_m4 (Cortex-M4 soft-float sysbios) excluded: its m3-family gcc-syntax asm uses VFP vpush/vpop, rejected by ticlang under soft-float; unrelated to the M33F application."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Register pinned F2 SDK and SysConfig with CCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ccs-workspace
+          mkdir -p ccs-workspace
+
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1"
+
+      - name: Import hardened CC2674P10 ZNP project seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECTSPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec"
+          test -f "$PROJECTSPEC"
+
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$PROJECTSPEC" \
+            -ccs.overwrite
+
+          IMPORTED_OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts')
+          test "$(printf '%s\n' "$IMPORTED_OPTS" | sed '/^$/d' | wc -l)" = 1
+          test "$(sha256sum sdk/source/ti/zstack/apps/znp/znp_cnf.opts | cut -d' ' -f1)" = \
+               "$(sha256sum "$IMPORTED_OPTS" | cut -d' ' -f1)"
+
+      - name: Build only T832-KCTRL-R0 ZNP project
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_EM_CC2674P10_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee build-evidence/ccs-build.log
+
+          OUT=$(find ccs-workspace -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace -type f -name '*.map' -print -quit)
+          GENH=$(find ccs-workspace -type f -name 'ti_zstack_config.h' -print -quit)
+          OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts' -print -quit)
+          test -n "$OUT" || { echo "::error::No .out produced"; exit 1; }
+          test -n "$MAP" || { echo "::error::No linker .map produced"; exit 1; }
+          test -n "$GENH" || { echo "::error::No generated ti_zstack_config.h produced"; exit 1; }
+          test -n "$OPTS" || { echo "::error::No imported znp_cnf.opts found"; exit 1; }
+
+          {
+            echo "OUT=$OUT"
+            echo "MAP=$MAP"
+            echo "GENH=$GENH"
+            echo "OPTS=$OPTS"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate effective compiler-macro proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > build-evidence/t832-macro-probe.c <<'EOF'
+          /* T832 evidence-only preprocessor probe. Runtime code is never linked. */
+          EOF
+          "$TIARMCLANG" \
+            -dM -E -x c \
+            @"$OPTS" \
+            build-evidence/t832-macro-probe.c \
+            > build-evidence/effective-macros.txt
+
+          # Keep the generated header that participated in the real project.
+          cp "$GENH" build-evidence/ti_zstack_config.h
+
+      - name: Enforce compiled capacity, NVS, stack and SRAM contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/audit_contract.py build \
+            --manifest repo/firmware/t832/manifest.json \
+            --patch-evidence build-evidence/control-patch-evidence.json \
+            --sdk sdk \
+            --workspace ccs-workspace \
+            --effective-macros build-evidence/effective-macros.txt \
+            --generated-header "$GENH" \
+            --map-file "$MAP" \
+            --out-file "$OUT" \
+            --evidence build-evidence/compiled-contract.json
+
+      - name: Package control flash artifact and evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMOBJCOPY="$(dirname "$TIARMCLANG")/tiarmobjcopy"
+          test -x "$TIARMOBJCOPY"
+
+          mkdir -p bundle/linked bundle/generated bundle/provenance
+          OUT=$(find ccs-workspace -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace -type f -name '*.map' -print -quit)
+          cp "$OUT" bundle/T832-CONTROL-R0.out
+          "$TIARMOBJCOPY" "$OUT" --output-target ihex bundle/T832-CONTROL-R0.hex
+          cp "$MAP" bundle/linked/
+          find ccs-workspace -type f -name '*linkInfo.xml' -exec cp {} bundle/linked/ \;
+          find ccs-workspace -type f \( -name 'ti_zstack_config.h' -o -name 'ti_zstack_config.c' \) -exec cp {} bundle/generated/ \;
+          test -s bundle/T832-CONTROL-R0.hex
+          test -s bundle/T832-CONTROL-R0.out
+          cp repo/firmware/t832/manifest.json bundle/provenance/manifest.json
+          cp build-evidence/* bundle/provenance/
+          cp repo/firmware/t832/README.md bundle/README.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          artifacts = {}
+          for name in ("T832-CONTROL-R0.hex", "T832-CONTROL-R0.out"):
+              p = Path("bundle") / name
+              artifacts[name] = {"bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+          out = {
+              "variant": "T832-CONTROL-R0", "repository_commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"], "artifacts": artifacts,
+              "sdk_commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+              "sdk_833_compat_commit": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+              "examples_commit": "87ff5b638b632050228a7504f35cf3b95581c278",
+              "toolchain": {"ccs": "12.8.0.00012", "ti_clang": "3.2.2.LTS", "sysconfig": "1.21.1.3772", "xdc": "3.62.01.16"},
+              "flash_authorized": False,
+          }
+          Path("bundle/T832-BUILD-MANIFEST.json").write_text(json.dumps(out, indent=2) + "\n")
+          PY
+          (cd bundle && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mr4u-p10-t832-control-r0
+          path: bundle/
+          compression-level: 9
+          retention-days: 30
+          if-no-files-found: error
+
+  interop:
+    name: Herdsman interop (C bytes to pinned parser to decoders)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+
+      - name: Build harness and emit C payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_diag_host_test.c \
+            -o /tmp/t832harness \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          /tmp/t832harness
+          /tmp/t832harness dump /tmp/t832-payloads.hex
+          test -s /tmp/t832-payloads.hex
+
+      - name: Parse with pinned zigbee-herdsman 10.9.1
+        shell: bash
+        working-directory: repo/firmware/t832/interop
+        run: |
+          set -euo pipefail
+          node --version
+          test "$(node -p 'process.versions.node.split(".")[0]')" -ge 20
+          npm install --no-audit --no-fund
+          npm ls zigbee-herdsman
+          node herdsman_interop.cjs /tmp/t832-payloads.hex /tmp/z2m-roundtrip.log
+          node herdsman_interop.cjs --negatives /tmp/z2m-negative.log
+          node owner_probe_test.cjs
+
+      - name: Prove records survive through both decoders
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/t832_diag_decode.py /tmp/z2m-roundtrip.log --output /tmp/decoded.jsonl
+          python3 - <<'PY'
+          import importlib.util, json, pathlib, sys
+          spec = importlib.util.spec_from_file_location(
+              "t832_incident", "repo/firmware/t832/t832_incident.py")
+          incident = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(incident)
+          payloads = [l.strip() for l in pathlib.Path("/tmp/t832-payloads.hex").read_text().splitlines() if l.strip()]
+          expected = []
+          for hexline in payloads:
+              frame, records = incident.decode_frame_payload(bytes.fromhex(hexline[2:]).decode("ascii"))
+              for rec in records:
+                  expected.append((frame["export_sequence"], rec["sequence"], rec["kind"], rec["a"], rec["b"], rec["c"]))
+          rows = [json.loads(l) for l in pathlib.Path("/tmp/decoded.jsonl").read_text().splitlines()]
+          diag = [r for r in rows if r.get("type") == "t832_diag"]
+          assert diag, "no diagnostic rows survived herdsman"
+          assert len(diag) == len(expected), f"{len(diag)} != {len(expected)}"
+          for row, want in zip(diag, expected):
+              assert row["repr"] == "herdsman-buffer-v1", row["repr"]
+              assert row["schema"] == 2
+              got = (row["export_sequence"], row["record"]["sequence"], row["record"]["kind"], row["record"]["a"], row["record"]["b"], row["record"]["c"])
+              assert got == want, f"{got} != {want}"
+          seqs = [r["export_sequence"] for r in diag]
+          assert all(b - a in (0, 1) for a, b in zip(seqs, seqs[1:])), "export sequence must be gapless here"
+          store = incident.Store(pathlib.Path("/tmp/t832neg"))
+          got = incident.collect(store, ["/tmp/z2m-negative.log"], config_fingerprint=None, initial_tail_bytes=1 << 20, retain_days=7, max_bytes=1 << 30)
+          day = incident.utcnow().strftime("%Y-%m-%d")
+          negrows = [json.loads(l) for l in (store.stream / f"diag-{day}.jsonl").read_text().splitlines()]
+          assert negrows, "negatives produced no rows at all"
+          assert all(r.get("type") != "t832_diag" for r in negrows), negrows
+          print(f"INTEROP PASS: {len(diag)} records round-tripped, negatives rejected")
+          PY
+  host-regressions:
+    name: Host regressions for ACCEPTANCE-R2 (fast lane)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+
+      - name: Run C recorder regressions on the real implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_diag_host_test.c \
+            -o /tmp/t832harness \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          /tmp/t832harness
+          gcc -std=c11 -Wall -Wextra \
+            -I repo/firmware/t832 -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_r5_test.c -o /tmp/t832r5
+          /tmp/t832r5
+
+      - name: Run Python collector/decoder/barrier regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
+          python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
+          python3 -m unittest repo/firmware/t832/test_diag.py
+          python3 -m pip install --quiet pyyaml jinja2
+          python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py
+          python3 -m unittest repo/firmware/t832/test_r5_host.py
+
+  negative-control:
+    name: Negative control on reviewed pre-fix tree (R3 B01/B02 + R4 F01/F06-F09)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          fetch-depth: 0
+
+      - name: Prove B01/B02/R4-F01/R4-F09 fixtures fail before the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pinned pre-fix tree: reviewed R2 seal SHA. The probe asserts
+          # post-fix semantics, so it must FAIL here (defect reproduced).
+          # Stubs are unchanged since that SHA; only the implementation
+          # overlays, keeping the pre-fix API surface. Headers are NOT pinned: the probe never calls post-SHA header additions.
+          mkdir -p /tmp/neg-overlay
+          git -C repo show 8dd181bdf0dcf9a6d275d03705902b8c78459556:firmware/t832/t832_diag_impl.inc \
+            > /tmp/neg-overlay/t832_diag_impl.inc
+          gcc -std=c11 -Wall -Wextra \
+            -I /tmp/neg-overlay \
+            -I repo/firmware/t832 \
+            -I repo/firmware/t832/host_harness \
+            -I repo/firmware/t832/host_harness/stubs \
+            repo/firmware/t832/host_harness/t832_neg_r3.c \
+            -o /tmp/t832neg \
+            -Wl,--wrap=malloc -Wl,--wrap=calloc \
+            -Wl,--wrap=realloc -Wl,--wrap=free
+          set +e
+          /tmp/t832neg > /tmp/neg-out.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/neg-out.txt
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::negative control unexpectedly passed on the pre-fix tree"
+            exit 1
+          fi
+          # R4-F12: a nonzero exit alone is not evidence — a crash exits
+          # nonzero too. Every probe must have run, and every R4 probe
+          # must show at least one INTENDED assertion failure naming it.
+          for probe in b01 b02 r4-f01 r4-f09; do
+            if ! grep -q "^NEG-PROBE $probe$" /tmp/neg-out.txt; then
+              echo "::error::negative control probe $probe never ran"
+              exit 1
+            fi
+          done
+          if ! grep -q "^NEG-RESULT: " /tmp/neg-out.txt; then
+            echo "::error::negative control produced no NEG-RESULT summary (likely crash, not assertion failures)"
+            exit 1
+          fi
+          for probe in r4-f01 r4-f09; do
+            if ! grep -q "^NEG-FAIL $probe " /tmp/neg-out.txt; then
+              echo "::error::negative control probe $probe shows no intended assertion failure"
+              exit 1
+            fi
+          done
+          echo "NEGATIVE CONTROL PASS: intended assertion failures reproduced on 8dd181b (rc=$rc)"
+
+      - name: Prove R4 host regressions fail on the pre-R4 module
+        shell: bash
+        run: |
+          set -euo pipefail
+          # R4-F12 host negative control: the reviewed R4-base module
+          # (pinned R3-M5 seal 8d59a798, pre-R4 fixes) overlaid under the
+          # CURRENT R4 regression tests. Each named test must FAIL with
+          # its intended assertion — passes, errors, and collection
+          # failures are all job failures. Automation/YAML tests are
+          # excluded: their defect and fixture are both uncommitted, so
+          # no pre-R4 pairing exists (see ledger).
+          mkdir -p /tmp/negpy
+          git -C repo show 8d59a79891be0a4c18454c854dadc3d4855f21ca:firmware/t832/t832_incident.py > /tmp/negpy/t832_incident.py
+          cp repo/firmware/t832/test_diag.py /tmp/negpy/test_diag.py
+          cd /tmp/negpy
+          set +e
+          python3 -m unittest -v \
+            test_diag.R4F06LatchTests.test_falsy_latches_rejected_before_work \
+            test_diag.R4F06LatchTests.test_incomplete_permit_rejected \
+            test_diag.R4F06LatchTests.test_manual_clear_nonforce_rejects_falsy \
+            test_diag.R3M2ReadBoundsTests.test_window_above_cap_preserves_newest_fault \
+            test_diag.R3M2ReadBoundsTests.test_window_midnight_files_order_by_source_time \
+            > /tmp/negpy-out.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/negpy-out.txt
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::R4 host regressions unexpectedly passed on the pre-R4 module"
+            exit 1
+          fi
+          for t in test_falsy_latches_rejected_before_work test_incomplete_permit_rejected test_manual_clear_nonforce_rejects_falsy \
+                   test_window_above_cap_preserves_newest_fault test_window_midnight_files_order_by_source_time; do
+            if ! grep -q "^FAIL: $t " /tmp/negpy-out.txt; then
+              echo "::error::expected intended FAIL for $t on the pre-R4 module"
+              exit 1
+            fi
+          done
+          echo "HOST NEGATIVE CONTROL PASS: intended R4 assertion failures reproduced on 8d59a798 module"
+
+      - name: Prove F07 deadline loss on the pre-R4 module
+        shell: bash
+        run: |
+          set -euo pipefail
+          # R4-F07 defect shape: a blown scan deadline raises TimeoutError
+          # and loses the chunk instead of committing the scanned prefix
+          # with an explicit note. Assert exactly that on the pinned pre-R4 module.
+          cd /tmp/negpy
+          python3 - <<'PYEOF'
+          import importlib.util
+          import pathlib
+          import tempfile
+          import time
+          spec = importlib.util.spec_from_file_location(
+              "t832_incident_old", pathlib.Path("/tmp/negpy/t832_incident.py"))
+          assert spec and spec.loader
+          old = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(old)
+          with tempfile.TemporaryDirectory() as td:
+              log = pathlib.Path(td) / "z2m.log"
+              log.write_text("2026-10-03T09:00:00Z boot\n" * 300)
+              try:
+                  old.read_increment(
+                      log, {}, initial_tail_bytes=1 << 20,
+                      deadline_s=time.monotonic() - 1.0)
+              except TimeoutError as exc:
+                  print(f"F07-DEFECT-REPRODUCED: TimeoutError (no commit): {exc}")
+              else:
+                  raise SystemExit(
+                      "F07 probe unexpectedly committed on the pre-R4 module")
+          PYEOF
+          echo "F07 NEGATIVE CONTROL PASS: TimeoutError loss reproduced on 8d59a798 module"
+      - name: Prove R5 blocked-history regression against the reviewed R4 SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r5-overlay
+          git -C repo show d6c475e6b04a25d4a3c2993dbc9a07dbc9386651:firmware/t832/t832_diag_impl.inc > /tmp/r5-overlay/t832_diag_impl.inc
+          for lane in fixed old; do
+            extra=()
+            if [ "$lane" = old ]; then extra=(-I /tmp/r5-overlay); fi
+            gcc -std=c11 "${extra[@]}" -I repo/firmware/t832 -I repo/firmware/t832/host_harness \
+              -I repo/firmware/t832/host_harness/stubs repo/firmware/t832/host_harness/t832_r5_compat_probe.c -o /tmp/r5-compat-$lane
+          done
+          /tmp/r5-compat-fixed
+          set +e
+          /tmp/r5-compat-old > /tmp/r5-negative.txt
+          rc=$?
+          set -e
+          cat /tmp/r5-negative.txt
+          test "$rc" -eq 23
+          grep -q '^R5-BLOCKED-HISTORY-LOST$' /tmp/r5-negative.txt
+
+  stability:
+    name: Real-time stability windows (R4 preserved)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+      - run: python3 -m pip install --quiet pyyaml jinja2
+      - run: python3 -m unittest repo/firmware/t832/test_stability.py -v
+
+  paired-provenance:
+    name: Same-run control/DIAG hashes and diagnostic-only delta
+    needs: [firmware, control]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: mr4u-p10-t832-diag-r0
+          path: diag
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: mr4u-p10-t832-control-r0
+          path: control
+      - run: python3 repo/firmware/t832/audit_paired.py --diag diag --control control --sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID" --output T832-PAIRED-PROVENANCE.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-r5-paired-provenance
+          path: T832-PAIRED-PROVENANCE.json
+          if-no-files-found: error

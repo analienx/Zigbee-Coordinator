@@ -103,6 +103,22 @@ jobs:
             echo "- XDCTools: 3.62.01.16"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Prefer pinned SysConfig 1.21.1 over CCS-bundled 1.21.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLED=$(find "$HOME/ti/ccs1280" -maxdepth 5 -type d -name 'sysconfig_1.21.0' -print -quit)
+          test -n "$BUNDLED" || { echo "::error::CCS-bundled SysConfig 1.21.0 not found"; exit 1; }
+          test -x "$HOME/ti/sysconfig_1.21.1/sysconfig_cli.sh" || { echo "::error::pinned SysConfig 1.21.1 missing"; exit 1; }
+          mv "$BUNDLED" "$BUNDLED.orig-1.21.0"
+          ln -s "$HOME/ti/sysconfig_1.21.1" "$BUNDLED"
+          test "$(readlink "$BUNDLED")" = "$HOME/ti/sysconfig_1.21.1"
+          "$BUNDLED/sysconfig_cli.sh" --version > /tmp/sysconfig-version.txt 2>&1 || true
+          cat /tmp/sysconfig-version.txt
+          {
+            echo "## T832 SysConfig pin"
+            echo "- CCS-bundled 1.21.0 redirected to standalone 1.21.1.3772 (SDK 8.32 requires >= 1.21.1)."
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: TexasInstruments/simplelink-lowpower-f2-sdk
@@ -182,6 +198,60 @@ jobs:
             --examples examples \
             --evidence build-evidence/project-seed-compatibility.json
 
+      - name: Build pinned SDK libraries with TI documented CMake flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cmake >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends cmake
+          fi
+          cmake --version
+          export CMAKE="$(command -v cmake)"
+          export TICLANG_ARMCOMPILER="$(dirname "$(dirname "$TIARMCLANG")")"
+          export XDC_INSTALL_DIR="$XDC"
+          export SYSCONFIG_TOOL="$SYSCONFIG"
+          export GCC_ARMCOMPILER=
+          export IAR_ARMCOMPILER=
+          "$CMAKE" -G"Unix Makefiles" -S sdk -B sdk/build/ticlang --log-level=VERBOSE
+          "$CMAKE" --build sdk/build/ticlang --target tirtos7_m33f drivers_cc26x4 display_cc26x4 driverlib_cc13x4_cc26x3_cc26x4 spiffs_m33f_cc26xx
+          python3 - <<'PYEOF'
+          import pathlib
+          import shutil
+          import sys
+          sdk = pathlib.Path("sdk")
+          build = sdk / "build" / "ticlang"
+          wanted = {
+              "sysbios.a": "kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m33f/sysbios.a",
+              "drivers_cc26x4.a": "source/ti/drivers/lib/ticlang/m33f/drivers_cc26x4.a",
+              "display_cc26x4.a": "source/ti/display/lib/ticlang/m33f/display_cc26x4.a",
+              "driverlib.lib": "source/ti/devices/cc13x4_cc26x4/driverlib/bin/ticlang/driverlib.lib",
+              "spiffs_cc26xx.a": "source/third_party/spiffs/lib/ticlang/m33f/spiffs_cc26xx.a",
+          }
+          built = [p for p in build.rglob("*") if p.suffix in (".a", ".lib") and p.is_file()]
+          print("built archives:")
+          for p in sorted(built):
+              print("  " + str(p.relative_to(sdk)) + " " + str(p.stat().st_size))
+          by_name = {}
+          for p in built:
+              by_name.setdefault(p.name, []).append(p)
+          for name, dest in wanted.items():
+              cands = by_name.get(name, [])
+              if len(cands) != 1:
+                  sys.exit("expected exactly one built " + name + ", found " + str(len(cands)))
+              src = cands[0]
+              if src.stat().st_size == 0:
+                  sys.exit("built " + name + " is empty")
+              out = sdk / dest
+              out.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, out)
+              print("installed " + name + " -> " + dest)
+          PYEOF
+          {
+            echo "## T832 SDK libraries"
+            echo "- TI-documented top-level CMake configure plus targeted ticlang build of the CC26x4/M33F archives the ZNP link consumes."
+            echo "- tirtos7_m4 (Cortex-M4 soft-float sysbios) excluded: its m3-family gcc-syntax asm uses VFP vpush/vpop, rejected by ticlang under soft-float; unrelated to the M33F application."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Register pinned F2 SDK and SysConfig with CCS
         shell: bash
         run: |

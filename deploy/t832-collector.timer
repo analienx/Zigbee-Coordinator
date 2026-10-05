@@ -1,0 +1,13 @@
+[Unit]
+Description=T832-DIAG-R0 file-only collector schedule (every 60 s)
+Documentation=file:docs/T832_DIAG_R0_RUNBOOK.md
+# UNDEPLOYED CANDIDATE. See t832-collector.service.
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=60s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

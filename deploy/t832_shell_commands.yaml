@@ -1,0 +1,75 @@
+# T832-DIAG-R0 shell_command fragment (UNDEPLOYED CANDIDATE).
+#
+# Merge into the home-assistant-stack shell_command.yaml. All commands are
+# file-only except t832_addon_state (supervisor API read) and the pre-existing
+# mr4u_p10_rts_reset (the validated R2 helper, unchanged).
+#
+# Required placeholders at deploy time:
+#   /config/python_scripts/t832_incident.py  - the candidate incident tool
+#   /config/.private/t832-diag               - state root (mode 0700)
+#   /config/zigbee2mqtt/log                  - Z2M file log with herdsman
+#                                             'zh:zstack:znp' debug namespace
+t832_capture: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  --source /config/zigbee2mqtt/log
+  --source /config/home-assistant.log
+  capture --trigger "{{ trigger }}"
+  --triggers /config/t832_capture_barrier.yaml
+  --trigger-topic "{{ trigger_topic }}"
+  --trigger-payload '{{ trigger_payload_json | tojson if trigger_payload_json is mapping else trigger_payload_json }}'
+  --require-firmware-binding
+t832_authorize_reset: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  authorize-reset
+t832_mark_recovering: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  mark-recovering
+t832_zdo_proof: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  record-zdo-proof
+  --transaction "{{ transaction }}"
+t832_zdo_proof_state: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  zdo-proof-state
+  --transaction "{{ transaction }}"
+t832_rts_used: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  record-rts-used
+t832_recovery_result: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  recovery-result
+  --success "{{ success }}"
+  --normal-traffic "{{ normal_traffic }}"
+  --zdo-ok "{{ zdo_ok }}"
+  --zdo-transaction "{{ zdo_transaction }}"
+  --failure-reason "{{ failure_reason | default('') }}"
+  --failure-phase "{{ failure_phase | default('') }}"
+t832_observe: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  stability-observation
+  --bridge-up "{{ bridge_up }}"
+  --normal-traffic "{{ normal_traffic }}"
+  --zdo-ok "{{ zdo_ok }}"
+t832_close_if_stable: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  close-if-stable
+  --bridge-up "{{ bridge_up }}"
+  --normal-traffic "{{ normal_traffic }}"
+t832_status: >-
+  python3 /config/python_scripts/t832_incident.py
+  --root /config/.private/t832-diag
+  status
+t832_addon_state: >-
+  curl -sS --max-time 10
+  -H "Authorization: Bearer ${SUPERVISOR_TOKEN}"
+  http://supervisor/addons/45df7312_zigbee2mqtt/info
+  | python3 -c "import json,sys; print(json.dumps({'state': json.load(sys.stdin)['data']['state']}))"
