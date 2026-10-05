@@ -1,0 +1,29 @@
+name: T832 exact-image preflash evidence
+on:
+  push:
+    branches: [codex/t832-r5-deployment-gates]
+    paths: [deploy/t832_preflash_audit.py, .github/workflows/t832-preflash.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fetch exact validated candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir evidence
+          gh api repos/analienx/Zigbee-Coordinator/actions/artifacts/11357617790/zip > evidence/candidate.zip
+      - name: Compare pinned candidate and vendor rollback CCFG
+        run: python3 deploy/t832_preflash_audit.py evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t832-preflash-evidence
+          path: evidence
+          if-no-files-found: error
