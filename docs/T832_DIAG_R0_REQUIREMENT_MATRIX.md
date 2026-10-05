@@ -1,4 +1,10 @@
-# T832-DIAG-R0 requirement matrix (corrected)
+# T832-DIAG-R0 R4 requirement matrix (historical)
+
+**Superseded for the current candidate by [R5 closure](T832_DIAG_R0_R5.md).**
+The R4 rows below describe historical acceptance, not current capabilities:
+R5 disables heap traversal, adds task/NWK sampling and fatal Error/exception
+RAM hooks, and samples bounded state even while export is blocked. Use the R5
+matrix and exact-SHA hosted run for current release decisions.
 
 Candidate branch: `codex/t832-diag-r0`. Control base: T832-KCTRL-R0 per
 `firmware/t832/manifest.json`. Diagnostic delta: `firmware/t832/apply_diag.py` +

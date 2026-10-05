@@ -39,6 +39,7 @@ def main():
 #include "t832_diag_host_test.c"
 #undef main
 typedef void *UART2_Handle;
+typedef uint16_t uint16;
 #define NPI_FLOW_CTRL 0
 #define NPI_TL_BUF_SIZE 64u
 #define UART_ISR_BUF_SIZE 64u

@@ -1,8 +1,8 @@
 # T832-DIAG-R0 observer cost (bounded estimate, not a hardware measurement)
 
-RAM (proven): `sizeof(T832DiagState) <= 4096` by `_Static_assert`
-(harness prints the exact size; ≈ 2.9 KiB: 2560 B rings + 20 B first-fault +
-8×6 B TX FIFO + 8×12 B AF table + counters/timestamps/flags). Linked map must
+RAM (compile-gated): recorder + R5 snapshot + fatal latch + early capture
+together remain <=4096 bytes by `_Static_assert`; this includes 2560 B rings,
+TX/AF ownership, task handles, stage maxima and all fixed snapshots. Linked map must
 still show `>= 8192` bytes unallocated SRAM via the compiled-contract gate.
 Rings are 64 critical + 64 routine 20-byte records; live system records
 (HEALTH/AF_STATE/TASK_EVENTS/RESOURCE) are built at export time and never sit
@@ -15,7 +15,7 @@ text chars + 1 length byte = 234 B MT payload (≤ 240 B budget including the
 DEBUG envelope accounting; static frame bound, asserted by the harness
 frame-budget test on every emitted frame). Worst case is 12 frames/minute
 (≤ 2808 payload bytes/minute) carrying up to 48 records/minute against a
-periodic production of ≈ 20 records/minute plus command traffic; routine-ring
+periodic snapshots plus command traffic; routine-ring
 loss under bursts is counted (`routine_overwrite`) and the drain test runs
 with periodics enabled. Typical volume is far less under backpressure, and
 there is no backlog replay. Normal ZNP traffic always wins: export is gated
@@ -26,7 +26,8 @@ CPU/hook cost (worst-case bounds, MT task or ISR context as noted):
   section (no preemption race); 64-bit extension + scale. No false wraps.
 - `record()`: one CS pair, one last-slot compare (coalesce), one 20-byte
   copy. Coalescing bounds repeat storms to one slot.
-- Command RX/dispatch/complete: `record()` only.
+- Command RX/dispatch/complete: bounded record plus generation/stage writes
+  and tick read; no history allocation.
 - AF dispatch parse: bounded offset reads (7 or 16 byte minimum lengths),
   one 8-slot table scan on insert/confirm.
 - Queue hook: one 8-slot shadow-FIFO push; a full FIFO refuses the push
@@ -37,15 +38,23 @@ CPU/hook cost (worst-case bounds, MT task or ISR context as noted):
   generation, or nothing when the stash is the overflow sentinel.
 - Dequeue hook: SOF check + head compare, O(1).
 - TX finish: in-flight class resolution, O(1), one conditional record.
-- NPI task wake / ZStack progress: single timestamp write, no record.
+- NPI task wake: timestamp write. ZStack progress also runs bounded NWK table
+  occupancy sampling at most once per 60 s (150 route + 40 discovery + 250
+  source-route + 30 broadcast slots, plus six queue counts); no lock or alloc.
 - NV hooks (task context, under NV mutex): word writes + tick read only.
-- Export poll (1 s MT tick, early-outs on 5 s gate): builds at most 4
-  records; hex conversion only on the export path, never in hooks.
-- Heap sampling: `Memory_getStats` only in the 60 s RESOURCE tick (MT task
-  context), one call per tick; unavailable reported as `0xFFFF/0xFFFF`.
-  Each resourceDue export stages up to 2 of the 13 rotating selectors
-  (`res_ext_idx % 13`), so a full rotation — heap slot included — recurs
-  about every 7 exports (~7 min unimpeded), not every 60 s.
+- Export poll (1 s MT tick): samples 13 fixed current/max values before every
+  gate in a bounded critical section. It builds at most 4 wire records;
+  hex conversion stays on the export path. Each accepted frame carries one
+  rotating R5 fragment (57 slots, at least 285 s per rotation). Blocking can
+  delay export indefinitely; full RAM snapshots remain available by SWD.
+- Task_stat scans two known fixed stacks at most once per 60 s in MT task
+  context outside the interrupt lock. It is approximate and needs bench cost
+  measurement. Global stack checks and Hwi stack scan remain disabled.
+- Heap `Memory_getStats` traversal is disabled; RESOURCE:7 stays unavailable.
+  Existing 13-selector RESOURCE rotation still exports two per 60 s tick.
+- Fatal latch writes a fixed RAM structure before the existing spin. It calls
+  no function and performs no clock/lock/NV/UART/formatting operation; raw
+  cached timing is approximate, and retention is not claimed.
 - No allocation, formatting, UART, flash, or waits exist in any hook or
   fault path; the validator greps every hot hook body for them.
 
