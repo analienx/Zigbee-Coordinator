@@ -23,7 +23,7 @@ class Tests(unittest.TestCase):
         for state in ('stopped','error'): c.quiescent({'state':state,'watchdog':False})
         for info in ({'state':'started','watchdog':False},{'state':'error','watchdog':True},{'state':'unknown','watchdog':False}):
             with self.assertRaises(ValueError):c.quiescent(info)
-    def frame(self,payload,command=b'\x4f\x80'):
+    def frame(self,payload,command=b'\x48\x80'):
         raw=bytes([len(payload)])+command+payload
         check=0
         for value in raw: check^=value
@@ -52,6 +52,12 @@ class Tests(unittest.TestCase):
     def test_bad_debug_length_rejected_and_non_debug_ignored(self):
         with self.assertRaises(ValueError): c.diagnostic(self.frame(b'\x01T832D2:x'),codec)
         self.assertIsNone(c.diagnostic(self.frame(b'abc',b'\x61\x01'),codec))
+        self.assertIsNone(c.diagnostic(self.frame(b'\x01x',b'\x4f\x80'),codec))
+
+    def test_raw_debug_command_matches_firmware_interop_contract(self):
+        interop=(Path(__file__).parents[1]/'firmware/t832/interop/herdsman_interop.cjs').read_text()
+        self.assertIn('CMD0_DEBUG_AREQ = 0x48',interop)
+        self.assertIn('CMD1_DEBUG_MSG = 0x80',interop)
 
     def test_hex_extended_address_and_checksum(self):
         raw=(row(4,0,b'\x50\x00')+row(0,0,b'abcd')+row(1,0,b'')).encode()

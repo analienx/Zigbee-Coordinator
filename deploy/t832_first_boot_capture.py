@@ -53,7 +53,8 @@ class Parser:
 
 
 def diagnostic(frame, codec):
-    if frame[2:4] != b'\x4f\x80': return None
+    # AREQ (0x40) | TI MT_RPC_SYS_DBG (0x08), MT_DEBUG_MSG (0x80).
+    if frame[2:4] != b'\x48\x80': return None
     payload = frame[4:-1]
     if not payload or payload[0] != len(payload)-1:
         raise ValueError('DEBUG length mismatch')
