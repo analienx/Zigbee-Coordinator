@@ -528,7 +528,7 @@ jobs:
               "variant": "T832-DIAG-R0",
               "repository_commit": os.environ["GITHUB_SHA"],
               "run_id": os.environ["GITHUB_RUN_ID"],
-              "sys_version_revision": 8320002,
+              "sys_version_revision": 8320003,
               "debug_build_id": int(os.environ["GITHUB_SHA"][:8], 16),
               "capability_bitmap": "0x0ffbffff",
               "toolchain": {"ccs": "12.8.0.00012", "ti_clang": "3.2.2.LTS", "sysconfig": "1.21.1.3772", "xdc": "3.62.01.16"},
