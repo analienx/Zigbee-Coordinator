@@ -150,8 +150,8 @@
       "target": "sdk:source/ti/zstack/apps/znp/znp_cnf.opts",
       "symbol": "ZDSECMGR_TC_DEVICE_MAX",
       "upstream": "40",
-      "configured": "400",
-      "rationale": "Provide Trust Center device/key capacity well above the current ~100-device network so security state is not the limiting resource.",
+      "configured": "112",
+      "rationale": "Diagnostic-build Trust Center capacity sized just above the current verified backup population of 103 link keys. 112 pre-initializes only nine spare TCLK slots, maximizing write/compaction headroom in the fixed vendor-compatible 5-page (10 KiB) NVOCMP region while permit-join remains closed during diagnosis.",
       "proof": [
         "effective_macros",
         "compile_assert",

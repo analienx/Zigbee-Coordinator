@@ -117,7 +117,7 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # git SHA here would enable assoc/LED paths that the matched control
     # does not enable. Keep the diagnostic identity in the same bucket;
     # exact candidate SHA remains in DEBUG and the package manifest.
-    ex.replace(version, "CODE_REVISION_NUMBER >>", "8320002u >>",
+    ex.replace(version, "CODE_REVISION_NUMBER >>", "8320003u >>",
                "diag.sys_version_variant_id", count=4)
     opts = sdk / "source/ti/zstack/apps/znp/znp_cnf.opts"
     ex.replace(
@@ -715,6 +715,28 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "diag.nv.init_action",
         count=3,
     )
+    ex.replace(
+        nv,
+        "        NVOCMP_initNv(&NVOCMP_nvHandle);\n",
+        "        NVOCMP_initNv(&NVOCMP_nvHandle);\n"
+        "        T832Diag_nvEvent(5u, (uint16_t)NVOCMP_getFreeNvApi(),\n"
+        "            (uint16_t)(((uint16_t)NVOCMP_nvHandle.actPage << 8) |\n"
+        "                       (uint16_t)NVOCMP_nvHandle.tailPage));\n",
+        "diag.nv.capacity_snapshot",
+    )
+    ex.replace(
+        nv,
+        "          // Failure means there\'s no place to put this item\n"
+        "          NVOCMP_ALERT(false, \"Out of NV.\")\n"
+        "          err = (NVOCMP_failW != NVINTF_SUCCESS) ?\n",
+        "          // Failure means there\'s no place to put this item\n"
+        "          T832Diag_nvEvent(6u, (uint16_t)NVOCMP_getFreeNvApi(),\n"
+        "              (uint16_t)(((uint16_t)pNvHandle->actPage << 8) |\n"
+        "                         (uint16_t)pNvHandle->tailPage));\n"
+        "          NVOCMP_ALERT(false, \"Out of NV.\")\n"
+        "          err = (NVOCMP_failW != NVINTF_SUCCESS) ?\n",
+        "diag.nv.out_of_space_snapshot",
+    )
 
     return {
         "variant": VARIANT,
@@ -728,7 +750,7 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
                          mt / "t832_fatal.h", kernel / "runtime/t832_fatal.h",
                          kernel / "family/arm/v8m/t832_fatal.h")
         ],
-        "diagnostic_identity": {"sys_version_revision": 8320002,
+        "diagnostic_identity": {"sys_version_revision": 8320003,
                                 "debug_build_id": int(build_id, 16)},
     }
 
