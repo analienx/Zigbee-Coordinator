@@ -280,6 +280,7 @@
     "NPI_WRITE_COMPLETE": "a bytes,b driver callback age,c pending; explicitly not physical UART idle",
     "BOOT_TIMING": "R6 milestones6/7 are SYS/ZDO driver callbacks; milestones4/5 are unavailable",
     "PIPELINE": "With capability28, stages9/10 are unbound and unavailable. TX events count separately.",
-    "timestamps": "NV record timestamps mark deferred sampling, not the original NV API instant."
+    "timestamps": "NV record timestamps mark deferred sampling, not the original NV API instant.",
+    "NV_FAULT": "a8 is the sticky first NV failure: b raw status,c request bytes at that first failure; exported from POD to the critical ring. Topology records are last API boundary, not first-failure topology."
   }
 }

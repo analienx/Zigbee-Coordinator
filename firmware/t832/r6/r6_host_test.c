@@ -14,13 +14,16 @@ int main(void)
     t832R6Nv.sequence=1;T832R6Nv_poll(1000);
     CHECK(t832Diag.record_sequence==before);
     t832R6Nv.pages=NVOCMP_NVPAGES;t832R6Nv.tail=NVOCMP_NVPAGES-1;
-    t832R6Nv.ready=1;t832R6Nv.requests=400;
+    t832R6Nv.ready=1;t832R6Nv.requests=400;t832R6Nv.first_failure=5;t832R6Nv.first_failure_requested=1;
     for(unsigned i=0;i<NVOCMP_NVPAGES;i++){t832R6Nv.states[i]=0x7E;t832R6Nv.offsets[i]=16;}
     t832R6Nv.sequence=2;t832Diag.sync_outstanding=1;
     advance_ms(1000);T832Diag_exportPoll();
     CHECK(t832R6NvLastSequence==2);
     CHECK(t832Diag.record_sequence>before);
     CHECK(host_frame_count==0); /* Snapshot survives suppressed UART output. */
+    CHECK(t832Diag.first_fault_valid!=0);
+    CHECK(t832Diag.first_fault.kind==T832_DIAG_EV_NV_FAULT);
+    CHECK(t832Diag.first_fault.a==8 && t832Diag.first_fault.b==5 && t832Diag.first_fault.c==1);
     fresh(9u);
     T832Diag_commandRx(0x21u,2u);T832Diag_commandDispatch(0x21u,2u);
     T832Diag_responseQueued(0x61u,2u,0u,NULL);

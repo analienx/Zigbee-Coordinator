@@ -34,4 +34,7 @@ static void T832R6Nv_poll(uint32_t now)
     T832Diag_record(T832_DIAG_EV_NV_COUNTERS,2u,(uint16_t)s.compact_failures,(uint16_t)(s.compact_failures>>16));
     T832Diag_record(T832_DIAG_EV_NV_RESULT,s.stage,s.requested,s.status);
     T832Diag_record(T832_DIAG_EV_NV_RESULT,7u,s.init_action,s.first_failure);
+    /* The first NV failure uses the bounded critical ring and sticky fault
+     * snapshot. Routine topology pressure cannot bury it. No hot-path calls. */
+    if(s.first_failure)T832Diag_record(T832_DIAG_EV_NV_FAULT,8u,s.first_failure,s.first_failure_requested);
 }
