@@ -34,7 +34,9 @@ void NV_LINUX_read(uint8_t pg,uint16_t off,uint8_t *buf,uint16_t len) {
 }
 int_fast16_t NV_LINUX_write(uint8_t pg,uint16_t off,uint8_t *buf,uint16_t len) {
     bounds(pg,off,len);uint8_t *dst=flash+(size_t)pg*PAGE+off;
-    for(unsigned i=0;i<len;i++)if((dst[i]&buf[i])!=buf[i])return -1;
+    for(unsigned i=0;i<len;i++)if((dst[i]&buf[i])!=buf[i]) {
+        fprintf(stderr,"flash program rejected 0-to-1: page=%u offset=%u bytes=%u\n",pg,off,len);return -1;
+    }
     for(unsigned i=0;i<len;i++)dst[i]&=buf[i];boundary();return 0;
 }
 int_fast16_t NV_LINUX_erase(uint8_t pg) {

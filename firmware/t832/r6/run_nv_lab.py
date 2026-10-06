@@ -62,7 +62,8 @@ def run(sdk,out):
             damaged=folder/f'cut-{cut}.bin';shutil.copyfile(baseline,damaged)
             result=operation(exe,damaged,'compact',cut)
             if result.get('power_cut')!=cut:raise ValueError('fault not reached')
-            operation(exe,damaged,'verify-anchor')
+            try:operation(exe,damaged,'verify-anchor')
+            except RuntimeError as error:raise RuntimeError(f'{profile}/{variant} compaction cut={cut}/{measured}: {error}') from error
         mutation_image=folder/'mutation-measure.bin';shutil.copyfile(baseline,mutation_image)
         mutation_ops=operation(exe,mutation_image,'mutate')['physical_operations']
         if not 0<mutation_ops<=4096:raise ValueError('mutation fault fixture outside bounds')
