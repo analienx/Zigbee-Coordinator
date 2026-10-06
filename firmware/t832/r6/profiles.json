@@ -10,6 +10,7 @@
   "growth_reserve_percent": 25,
   "profiles": {
     "production-demand": {"tc_devices": 128, "device_list": 75, "binding_entries": 4, "addresses": 213, "current_link_keys": 103, "declared_key_reserve": 25},
-    "capacity-400": {"tc_devices": 400, "device_list": 75, "binding_entries": 4, "addresses": 485, "current_link_keys": 103, "declared_key_reserve": 297}
+    "capacity-400": {"tc_devices": 400, "device_list": 75, "binding_entries": 4, "addresses": 485, "current_link_keys": 103, "declared_key_reserve": 297},
+    "vendor-20240716": {"tc_devices": 400, "device_list": 75, "binding_entries": 4, "addresses": 485, "current_link_keys": 103, "declared_key_reserve": 297, "preserved_nvs_pages": 15, "growth_reserve_percent": 0, "minimum_free_bytes": 2048}
   }
 }

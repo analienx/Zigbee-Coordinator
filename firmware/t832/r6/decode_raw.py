@@ -53,8 +53,8 @@ def binding(manifest):
     build = doc.get('debug_build_id')
     if not re.fullmatch(r'[0-9a-f]{40}', commit) or type(build) is not int or build != int(commit[:8], 16):
         raise ValueError('DIAG manifest SHA/build identity required')
-    if doc.get('variant') not in ('T832-R6-DIAG-production-demand', 'T832-R6-DIAG-capacity-400'):
-        raise ValueError('R6 DIAG manifest variant required')
+    if doc.get('variant') not in ('T832-R6-DIAG-production-demand', 'T832-R6-DIAG-capacity-400','T832-R7-DIAG-vendor-20240716'):
+        raise ValueError('supported DIAG manifest variant required')
     root = manifest.parent
     for name in ('t832_incident.py', 'diag_schema.json', doc['variant'] + '.hex'):
         meta = doc['artifacts'][name]

@@ -55,6 +55,15 @@ int main(int argc,char **argv) {
         return 0;
     }
     require(init,"init",0);
+    if(!strcmp(argv[1],"verify-known-headroom-failure")) {
+        /* Characterization only: every live item must still match. A store
+         * below the append reserve is not accepted power-cut recovery. */
+        population(0,0,4);anchor(0);
+        unsigned free=api.getFreeNV();
+        if(free>=MINIMUM_FREE_BYTES)exit(77);
+        printf("{\"init_status\":0,\"saved_items_readable\":true,\"free_bytes\":%u,\"required_bytes\":%u,\"headroom_gate_passed\":false,\"recovery_accepted\":false}\n",free,MINIMUM_FREE_BYTES);
+        return 0;
+    }
 #ifdef T832_NVLAB_DIAG
     if(t832R6Nv.stage!=8 || t832R6Nv.status!=init || !t832R6Nv.ready || t832R6Nv.pages!=NVOCMP_NVPAGES)exit(73);
     if(!strcmp(argv[1],"observer-api")) {
