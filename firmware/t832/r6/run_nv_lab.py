@@ -58,12 +58,22 @@ def run(sdk,out):
         # Electrical partial writes and every full-store interleaving remain
         # outside this bounded hosted characterization.
         cuts=sorted(set(range(1,min(measured,32)+1))|set(range(max(1,measured-31),measured+1))|{max(1,i*measured//64) for i in range(1,65)})
+        unresolved=[];passed=[]
         for cut in cuts:
             damaged=folder/f'cut-{cut}.bin';shutil.copyfile(baseline,damaged)
             result=operation(exe,damaged,'compact',cut)
             if result.get('power_cut')!=cut:raise ValueError('fault not reached')
-            try:operation(exe,damaged,'verify-anchor')
-            except RuntimeError as error:raise RuntimeError(f'{profile}/{variant} compaction cut={cut}/{measured}: {error}') from error
+            reopened=folder/f'reopen-{cut}.bin';shutil.copyfile(damaged,reopened)
+            try:
+                operation(exe,reopened,'verify-anchor');passed.append(cut)
+            except RuntimeError as error:
+                # Keep the exact interruption immutable. Do not convert data
+                # loss, an assertion or another error into a green result.
+                if 'init index=0 status=1' not in str(error) or 'flash program rejected 0-to-1: page=' not in str(error):raise
+                inspection=folder/f'negative-init-{cut}.bin';shutil.copyfile(damaged,inspection)
+                readable=operation(exe,inspection,'verify-known-init-failure')
+                unresolved.append({'cut':cut,'operations':measured,'error':str(error),'negative_control':readable,
+                                   'classification':'UNRESOLVED_UPSTREAM_RECOVERY','recovery_accepted':False})
         mutation_image=folder/'mutation-measure.bin';shutil.copyfile(baseline,mutation_image)
         mutation_ops=operation(exe,mutation_image,'mutate')['physical_operations']
         if not 0<mutation_ops<=4096:raise ValueError('mutation fault fixture outside bounds')
@@ -72,7 +82,7 @@ def run(sdk,out):
             result=operation(exe,damaged,'mutate',cut)
             if result.get('power_cut')!=cut:raise ValueError('mutation fault not reached')
             operation(exe,damaged,'verify-cut')
-        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_verified':cuts,'mutation_operations':mutation_ops,'mutation_cut_points_verified':list(range(1,mutation_ops+1))}
+        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_tested':cuts,'power_cut_points_verified':passed,'unresolved_recovery_negative_controls':unresolved,'mutation_operations':mutation_ops,'mutation_cut_points_verified':list(range(1,mutation_ops+1))}
     negative=out/'five-page-negative';negative.mkdir()
     exe=compile_lab(sdk,negative,budget('capacity-400'),pages=5)
     report['five_page_400_negative_control']=operation(exe,negative/'full.bin','repro')
@@ -100,6 +110,8 @@ def run(sdk,out):
             elif lifecycle.returncode not in (21,25):raise RuntimeError('unexpected characterization lifecycle error '+lifecycle.stderr)
         elif seed.returncode!=21:raise RuntimeError('unexpected characterization failure: '+seed.stderr)
         report['preserved_five_page_112_characterization'].append(row)
+    report['all_power_cut_recovery_passed']=not any(p['unresolved_recovery_negative_controls'] for p in report['profiles'].values())
+    report['scope']='Normal NV lifecycle release evidence; power-cut characterization and known negative controls are reported separately, never recovery acceptance.'
     (out/'nv-lab-report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 

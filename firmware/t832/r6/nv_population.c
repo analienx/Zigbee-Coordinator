@@ -45,7 +45,16 @@ static void anchor(int create) {
 }
 int main(int argc,char **argv) {
     if(argc!=2)return 2;
-    NVOCMP_loadApiPtrsExt(&api);require(api.initNV(NULL),"init",0);
+    NVOCMP_loadApiPtrsExt(&api);uint8_t init=api.initNV(NULL);
+    if(!strcmp(argv[1],"verify-known-init-failure")) {
+        /* Negative control, not accepted recovery: require the failed init
+         * status and prove the saved items remain readable. No test writes. */
+        if(init!=NVINTF_FAILURE)exit(72);
+        population(0,0,4);anchor(0);
+        printf("{\"init_status\":%u,\"saved_items_readable\":true,\"recovery_accepted\":false}\n",init);
+        return 0;
+    }
+    require(init,"init",0);
     if(!strcmp(argv[1],"repro")) {
         uint8_t byte=0;NVINTF_itemID_t startup=id(9,0);
         require(api.createItem(startup,1,&byte),"neutral-create",0);

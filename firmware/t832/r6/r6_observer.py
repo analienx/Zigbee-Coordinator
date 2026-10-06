@@ -35,8 +35,8 @@ def patch_nv(nv):
             depth+=(text[end]=='{')-(text[end]=='}');end+=1
         old=text[match.start():end]
         if name=='NVOCMP_initNvApi':
-            index=old.rindex('return(NVOCMP_failF);')
-            new=old[:index]+'T832R6Nv_capture(8u,0u,NVOCMP_failF);\n    '+old[index:]
+            index=old.rindex('return(NVOCMP_failW);')
+            new=old[:index]+'T832R6Nv_capture(8u,0u,NVOCMP_failW);\n    '+old[index:]
         else:
             if old.count('NVOCMP_UNLOCK(err);')!=1:raise ValueError('API unlock mismatch '+name)
             new=old.replace('NVOCMP_UNLOCK(err);','T832R6Nv_capture(8u,t832R6Nv.requested,err);\n    NVOCMP_UNLOCK(err);')

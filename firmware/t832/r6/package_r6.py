@@ -47,6 +47,7 @@ def package(a):
     for name in ('t832_incident.py','t832_diag_decode.py','diag_schema.json','t832_first_boot_capture.py'):
         if (source/name).is_file():shutil.copy2(source/name,a.out/name)
     shutil.copy2(source/'r6/README.md',a.out/'README.md')
+    lab=json.loads(a.lab.read_text())
     manifest={'variant':stem,'repository_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
               'profile':c,'sdk_commit':'6499c3f53fc5fb5806213be695450a7b43fbaf3d',
               'examples_commit':'87ff5b638b632050228a7504f35cf3b95581c278',
@@ -56,6 +57,8 @@ def package(a):
               'sys_version_revision':8320012 if a.variant=='DIAG' else 8320011,
               'debug_build_id':int(os.environ['GITHUB_SHA'][:8],16) if a.variant=='DIAG' else None,
               'hardware_validated':False,'flash_authorized':False,
+              'all_power_cut_recovery_passed':lab['all_power_cut_recovery_passed'],
+              'unresolved_recovery_negative_controls':lab['profiles'][a.profile+'-'+a.variant]['unresolved_recovery_negative_controls'],
               'artifacts':{str(p.relative_to(a.out)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in a.out.rglob('*') if p.is_file()}}
     (a.out/'T832-BUILD-MANIFEST.json').write_text(json.dumps(manifest,indent=2)+'\n')
     (a.out/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+str(p.relative_to(a.out))+'\n' for p in sorted(a.out.rglob('*')) if p.is_file() and p.name!='SHA256SUMS'))

@@ -11,14 +11,14 @@ void T832R6Nv_capture(uint16_t stage,uint16_t requested,uint16_t status)
     if(stage==5u && t832R6Nv.requests!=UINT32_MAX)t832R6Nv.requests++;
     if(stage==1u && t832R6Nv.compactions!=UINT32_MAX)t832R6Nv.compactions++;
     if(stage==3u && t832R6Nv.compact_failures!=UINT32_MAX)t832R6Nv.compact_failures++;
-    if((stage==3u || stage==6u) && status && !t832R6Nv.first_failure)t832R6Nv.first_failure=status;
+    if((stage==3u || stage==6u || stage==8u) && status && !t832R6Nv.first_failure)t832R6Nv.first_failure=status;
     if(stage==7u)t832R6Nv.init_action=status;
     t832R6Nv.pages=NVOCMP_nvHandle.nvSize;
     t832R6Nv.head=NVOCMP_nvHandle.headPage;
     t832R6Nv.tail=NVOCMP_nvHandle.tailPage;
     t832R6Nv.active=NVOCMP_nvHandle.actPage;
     t832R6Nv.active_offset=NVOCMP_nvHandle.actOffset;
-    t832R6Nv.ready=(NVOCMP_failF==NVINTF_SUCCESS);
+    t832R6Nv.ready=(NVOCMP_failF==NVINTF_SUCCESS && NVOCMP_failW==NVINTF_SUCCESS);
     for(unsigned i=0;i<NVOCMP_NVPAGES;i++) {
         t832R6Nv.offsets[i]=NVOCMP_nvHandle.pageInfo[i].offset;
         t832R6Nv.states[i]=NVOCMP_nvHandle.pageInfo[i].state;

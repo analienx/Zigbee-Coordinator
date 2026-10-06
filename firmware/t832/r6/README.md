@@ -35,6 +35,16 @@ the fixture at selected physical program/erase boundaries. This does not
 model partial electrical writes, TI's NVS driver or the complete live ZStack.
 No household keys, IDs or raw pages enter public artifacts.
 
+**Unresolved recovery counterexample:** the stricter flash model found a
+TI compaction-reopen path that attempts a 0-to-1 page-state program and
+returns init failure. This remains a separately named negative control,
+not a successful recovery test. The interrupted image is kept immutable;
+the negative probe requires init failure and all saved items readable.
+Other errors/data loss fail CI. The report and image manifest expose
+`all_power_cut_recovery_passed` and the exact unresolved cuts. No destructive
+reformat or algorithm workaround is applied. Hosted compilation and normal
+NV lifecycle acceptance do not qualify this firmware for power-loss recovery.
+
 The five-page/400-key negative control requires incomplete population,
 create API failure, reads that still work, and BADLENGTH on an exhausted
 tiny update. It reproduces the capacity failure class, not the exact vendor
