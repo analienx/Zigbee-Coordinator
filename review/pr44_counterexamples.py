@@ -95,7 +95,8 @@ def driver_probes(sdk, out):
         env = dict(os.environ, NVLAB_IMAGE=str(image))
         subprocess.run([str(exe), "seed"], env=env, capture_output=True, text=True, check=True)
         raw = bytearray(image.read_bytes())
-        raw[0] = 0  # NOR-legal corruption of the active page state.
+        assert raw[14 * 2048] == 0xFE
+        raw[2048] = 0xFE  # A second structurally valid XDST page: ambiguous topology.
         image.write_bytes(raw)
         before = hashlib.sha256(raw).hexdigest()
         result = subprocess.run([str(exe), "read"], env=env, capture_output=True, text=True)
@@ -103,6 +104,7 @@ def driver_probes(sdk, out):
         row = {"exit": result.returncode, "nv_changed": before != after,
                "stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
         results[policy + "_unknown_topology"] = row
+        (out / "driver-counterexamples.json").write_text(json.dumps(results, indent=2) + "\n")
         if policy == "lab":
             assert result.returncode == 80 and before == after
         else:
