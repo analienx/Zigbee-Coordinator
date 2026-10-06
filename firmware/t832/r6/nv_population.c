@@ -81,6 +81,12 @@ int main(int argc,char **argv) {
         population(0,0,4);
     } else if(!strcmp(argv[1],"verify"))population(0,0,4);
     else if(!strcmp(argv[1],"anchor"))anchor(1);
+    else if(!strcmp(argv[1],"churn")) {
+        uint8_t bytes[20];
+        payload(bytes,20,4,0,5);require(api.updateItem(id(4,0),20,bytes),"churn-new",0);
+        payload(bytes,20,4,0,4);require(api.updateItem(id(4,0),20,bytes),"churn-original",0);
+        population(0,0,4);anchor(0);
+    }
     else if(!strcmp(argv[1],"verify-anchor")){population(0,0,4);anchor(0);}
     else if(!strcmp(argv[1],"mutate")) {
         uint8_t bytes[20],value=0x5A;payload(bytes,20,4,0,5);

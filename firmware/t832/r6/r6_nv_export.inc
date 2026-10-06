@@ -1,5 +1,7 @@
 /* MT task context only. No NV lock, flash reads or NV API calls. */
 #include "nv_r6_probe.h"
+_Static_assert(sizeof(T832DiagState)+sizeof(T832R5State)+sizeof(T832FatalLatch)+
+               sizeof(T832R6NvSnapshot)+16u<=4096u,"All R6 diagnostic RAM remains within 4 KiB");
 static uint32_t t832R6NvLastSequence,t832R6NvLastMs;
 static void T832R6Nv_poll(uint32_t now)
 {

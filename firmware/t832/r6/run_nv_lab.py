@@ -48,11 +48,16 @@ def run(sdk,out):
         image=folder/'population.bin'
         seed=operation(exe,image,'seed');exercise=operation(exe,image,'exercise');verify=operation(exe,image,'verify')
         operation(exe,image,'anchor')
+        operation(exe,image,'churn')
         # Each subprocess is a real reopen: driver static state is not retained.
         baseline=folder/'fault-base.bin';shutil.copyfile(image,baseline)
         measured=operation(exe,image,'compact')['physical_operations']
         if not 6<measured<=4096:raise ValueError('compaction fixture must transfer actual live data with bounded operations')
-        cuts=list(range(1,measured+1))
+        # All boundaries for short transactions. Larger table compactions
+        # cover the first/last 32 operations and 64 spread across the copy.
+        # Electrical partial writes and every full-store interleaving remain
+        # outside this bounded hosted characterization.
+        cuts=sorted(set(range(1,min(measured,32)+1))|set(range(max(1,measured-31),measured+1))|{max(1,i*measured//64) for i in range(1,65)})
         for cut in cuts:
             damaged=folder/f'cut-{cut}.bin';shutil.copyfile(baseline,damaged)
             result=operation(exe,damaged,'compact',cut)
