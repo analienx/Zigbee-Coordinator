@@ -1,4 +1,4 @@
-"""T832 R8 fail-safe power-cut recovery for pinned TI NVOCMP.
+"""T832 R8 bounded power-cut recovery changes for pinned TI NVOCMP.
 
 M1 root cause (R7 SHA 3d8129d, hosted run 37494326769, TI SDK 8.32 pin
 6499c3f53fc5fb5806213be695450a7b43fbaf3d, nvocmp.c LF sha256
@@ -40,13 +40,12 @@ then copies every item exactly once. Headers that disagree with the
 topology simply reconcile to nothing and the re-compaction duplicates
 but cannot lose data.
 
-P3 (read-only reopen mutation): NORMAL_RESUME runs a full maintenance
-compaction whenever the active page tail item is complete, so every
-healthy reopen rewrites page states/modes (persisted per operation).
-A fresh-process read-only reopen must perform zero physical mutations
-in the normal path, and on-demand (update-path) compaction already
-self-regulates space, so the unconditional resume-time compaction is
-removed. Genuine tail healing (FOLLOWBIT set) is untouched.
+P3 (read-only fixture reopen mutation): NORMAL_RESUME's fallback compacts
+when NVOCMP_readHeader did not recognize the tail signature (FOLLOWBIT
+clear). FOLLOWBIT denotes a recognized signature, not a torn item. The
+fixture reaches that fallback; removing it defers this maintenance to
+on-demand update-path compaction. Recognized-header processing remains
+unchanged. Hosted cut coverage does not prove every malformed-tail case.
 
 Safety properties of the patch: no NV erase/reformat primitive is
 added (NVOCMP_eraseNvApi/RECOVER_FROM_COMPACT_FAILURE stay absent),
@@ -64,12 +63,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from apply_diag import Exact
 
-FIX_ID = 't832-r8-nv-recovery-01'
+FIX_ID = 't832-r8-nv-recovery-02'
 # LF sha256 of the pristine pinned nvocmp.c this patch applies to.
 PRISTINE_ALGO_SHA256 = 'd37c7f314696c8669413cfb098900e41ffd2a4d48704481e5dd8c9a8c012d6d6'
 PRISTINE_SDK_COMMIT = '6499c3f53fc5fb5806213be695450a7b43fbaf3d'
 
-MARKER = 'T832-R8 power-cut recovery (t832-r8-nv-recovery-01)'
+MARKER = 'T832-R8 power-cut recovery (t832-r8-nv-recovery-02)'
 
 
 def _lines(*ls):
@@ -90,8 +89,8 @@ P1_NEW = _lines(
     '        action = NVOCMP_NORMAL_RESUME;',
 )
 
-# P3: drop the unconditional resume-time maintenance compaction. Healing a
-# torn tail item (FOLLOWBIT set) stays; a complete tail item needs nothing.
+# P3: defer missing-signature fallback compaction to the update path.
+# Recognized-header (FOLLOWBIT set) processing remains unchanged.
 P3_OLD = _lines(
     '          if(iHdr.stats & NVOCMP_FOLLOWBIT)',
     '          {',
@@ -108,10 +107,10 @@ P3_OLD = _lines(
     '          }',
 )
 P3_NEW = _lines(
-    '          /* ' + MARKER + ' P3: no maintenance compaction on resume. A',
-    '             complete tail item needs no action; on-demand compaction',
-    '             still self-regulates space. This keeps a read-only reopen',
-    '             free of physical mutations in the normal path. */',
+    '          /* ' + MARKER + ' P3: defer missing-signature fallback',
+    '             compaction to the update path. FOLLOWBIT identifies a',
+    '             recognized header signature; its processing stays below.',
+    '             Hosted fixture reopen performs no physical mutations. */',
     '          if(iHdr.stats & NVOCMP_FOLLOWBIT)',
     '          {',
     '            status = NVOCMP_findItem(pNvHandle, pNvHandle->actPage, pNvHandle->actOffset - NVOCMP_ITEMHDRLEN - iHdr.len,',
@@ -154,6 +153,35 @@ HELPER = _lines(
     '  }',
     '}',
     '/******************************************************************************',
+    ' * @fn      NVOCMP_recoverCopiesEqual',
+    ' * @brief   Prove both records are CRC-valid, bounded, equal copies.',
+    ' */',
+    'static bool NVOCMP_recoverCopiesEqual(const NVOCMP_itemHdr_t *a, const NVOCMP_itemHdr_t *b)',
+    '{',
+    '  uint8_t aBytes[NVOCMP_XFERBLKMAX], bBytes[NVOCMP_XFERBLKMAX];',
+    '  uint16_t done = 0, count;',
+    '  if(a->len != b->len || a->hofs < NVOCMP_PGDATAOFS || b->hofs < NVOCMP_PGDATAOFS',
+    '     || a->len > a->hofs - NVOCMP_PGDATAOFS || b->len > b->hofs - NVOCMP_PGDATAOFS)',
+    '  {',
+    '    return(false);',
+    '  }',
+    '  if(NVOCMP_verifyCRC(a->hofs - a->len, a->len, a->crc8, a->hpage, false)',
+    '     || NVOCMP_verifyCRC(b->hofs - b->len, b->len, b->crc8, b->hpage, false))',
+    '  {',
+    '    return(false);',
+    '  }',
+    '  while(done < a->len)',
+    '  {',
+    '    count = a->len - done;',
+    '    if(count > NVOCMP_XFERBLKMAX) count = NVOCMP_XFERBLKMAX;',
+    '    NVOCMP_read(a->hpage, a->hofs - a->len + done, aBytes, count);',
+    '    NVOCMP_read(b->hpage, b->hofs - b->len + done, bBytes, count);',
+    '    if(memcmp(aBytes, bBytes, count)) return(false);',
+    '    done += count;',
+    '  }',
+    '  return(true);',
+    '}',
+    '/******************************************************************************',
     ' * @fn      NVOCMP_recoverFindActive',
     ' *',
     ' * @brief   Quietly test whether an active copy of an item id lives on',
@@ -161,12 +189,12 @@ HELPER = _lines(
     ' *          compacts)',
     ' *',
     ' * @param   pNvHandle - pointer to NV handle',
-    ' * @param   cid - compressed item id to look for',
+    ' * @param   copy - destination record requiring an identical valid survivor',
     ' * @param   skipPg - page to exclude from the search',
     ' *',
     ' * @return  true when an active copy was found',
     ' */',
-    'static bool NVOCMP_recoverFindActive(NVOCMP_nvHandle_t *pNvHandle, uint32_t cid, uint8_t skipPg)',
+    'static bool NVOCMP_recoverFindActive(NVOCMP_nvHandle_t *pNvHandle, const NVOCMP_itemHdr_t *copy, uint8_t skipPg)',
     '{',
     '  uint8_t pg;',
     '  uint16_t ofs;',
@@ -183,7 +211,7 @@ HELPER = _lines(
     '      ofs -= NVOCMP_ITEMHDRLEN;',
     '      NVOCMP_readHeader(pg, ofs, &iHdr, false);',
     '      if((iHdr.stats & NVOCMP_ACTIVEIDBIT) && !(iHdr.stats & NVOCMP_VALIDIDBIT)',
-    '         && (cid == iHdr.cmpid))',
+    '         && (copy->cmpid == iHdr.cmpid) && NVOCMP_recoverCopiesEqual(copy, &iHdr))',
     '      {',
     '        return(true);',
     '      }',
@@ -241,7 +269,7 @@ HELPER = _lines(
     '    ofs -= NVOCMP_ITEMHDRLEN;',
     '    NVOCMP_readHeader(dstPg, ofs, &iHdr, false);',
     '    if((iHdr.stats & NVOCMP_ACTIVEIDBIT) && !(iHdr.stats & NVOCMP_VALIDIDBIT)',
-    '       && NVOCMP_recoverFindActive(pNvHandle, iHdr.cmpid, dstPg))',
+    '       && NVOCMP_recoverFindActive(pNvHandle, &iHdr, dstPg))',
     '    {',
     '      NVOCMP_setItemInactive(pNvHandle, dstPg, ofs);',
     '    }',

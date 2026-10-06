@@ -91,6 +91,8 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
                     unresolved.append({'cut':cut,'operations':measured,'error':str(proof_error),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF','recovery_accepted':False});continue
                 if proof_check['free_bytes']<contract['minimum_free_bytes']:
                     unresolved.append({'cut':cut,'operations':measured,'error':'write-proof headroom=%u required=%u'%(proof_check['free_bytes'],contract['minimum_free_bytes']),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF_HEADROOM','recovery_accepted':False});continue
+                # Reopen the exact post-write image and recheck every saved item.
+                operation(exe,proof,'verify-anchor')
                 # Determinism is like-for-like: the neutral create/update/delete
                 # cycle consumes flash (one 7-byte NVOCMP_ITEMHDRLEN header +
                 # payload per copy; delete only marks status, never reclaims),
@@ -188,6 +190,8 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
     report['all_power_cut_recovery_passed']=all(not p['unresolved_recovery_negative_controls'] and p['power_cut_points_write_proof']==p['power_cut_points_verified'] and p['readonly_reopen_unchanged'] for p in report['profiles'].values())
     report['scope']='Normal NV lifecycle release evidence; power-cut characterization and known negative controls are reported separately, never recovery acceptance.'
     (out/'nv-lab-report.json').write_text(json.dumps(report,indent=2)+'\n')
+    if 'vendor-20240716' in profiles and not report['all_power_cut_recovery_passed']:
+        raise RuntimeError('required vendor-profile recovery/write acceptance failed; evidence preserved')
     return report
 
 if __name__=='__main__':

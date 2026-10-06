@@ -28,7 +28,7 @@ def synthetic_pristine():
 
 class RecoveryFixTests(unittest.TestCase):
     def test_identity_constants(self):
-        self.assertEqual(FIX_ID, 't832-r8-nv-recovery-01')
+        self.assertEqual(FIX_ID, 't832-r8-nv-recovery-02')
         self.assertEqual(len(PRISTINE_ALGO_SHA256), 64)
         int(PRISTINE_ALGO_SHA256, 16)
 

@@ -146,6 +146,7 @@ int main(int argc,char **argv) {
         if(readback!=0x5A)exit(78);
         require(api.deleteItem(neutral),"neutral-delete",0);
         if(api.getItemLen(neutral))exit(79);
+        population(0,0,4);anchor(0);
     }
     else if(!strcmp(argv[1],"compact"))require(api.compactNV(0),"compact",0);
     else return 2;
