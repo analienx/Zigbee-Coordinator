@@ -36,7 +36,14 @@ SysConfig and actual linked NVS driver attributes/runtime clamp. It retains
 75 device slots (+one parent) and four binding slots; TI derives 485 addresses.
 It starts from the pristine pinned TI baseline, with matched BASE and DIAG,
 using the already reviewed deferred NV recorder. Destructive compaction
-reformat remains disabled. SYS revisions are BASE8320021 and DIAG8320022.
+reformat remains disabled. The minimal debug follow-up uses distinct SYS revisions
+BASE8320031 and DIAG8320032 (the original R7 used8320021/8320022).
+Recovery duplicate settling now verifies bounds, both CRCs and payload equality
+before inactivation. Hosted post-cut writes verify all saved records and their
+fresh-process persistence; a failed required write/recovery gate stops packaging.
+The path to the next working debug image does not require a spare board or the
+experimental hardware qualification checker. Use the established coordinator
+backup, one-shot flash, NV readback and existing-network recovery procedure.
 
 The configured persistent floor is 24,067 B; fourteen data pages provide
 28,448 B. A separate 2,048-byte append reserve is required. This does not claim

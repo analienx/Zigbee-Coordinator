@@ -1,7 +1,7 @@
 name: T832 R7 vendor-layout NV regression
 on:
   push:
-    branches: [codex/t832-r7-vendor-nvs, codex/t832-r8-powercut-recovery]
+    branches: [codex/t832-r7-vendor-nvs, codex/t832-r8-powercut-recovery, codex/t832-r9-minimal-debug]
     paths: ['firmware/t832/**', 'deploy/t832_preflash_audit.py', '.github/workflows/t832-r7-nv.yml']
   workflow_dispatch:
 permissions:
@@ -28,7 +28,9 @@ jobs:
           python3 repo/firmware/t832/r7/vendor_nvs_audit.py --out vendor-nvs-audit.json
           python3 -m unittest discover -s repo/firmware/t832/r7 -p 'test_*.py' -v
           python3 -m unittest discover -s repo/firmware/t832/r6 -p 'test_*.py' -v
+          python3 repo/firmware/t832/r6/verify_corrupt_duplicate.py --sdk sdk --out nv-evidence-corrupt-copy
           python3 repo/firmware/t832/r6/run_nv_lab.py --sdk sdk --out nv-evidence --profiles vendor-20240716
+          cp nv-evidence-corrupt-copy/report.json nv-evidence/corrupt-copy-report.json
           cp vendor-nvs-audit.json nv-evidence/vendor-nvs-audit.json
       - name: Preserve collector and recorder regressions
         run: |
