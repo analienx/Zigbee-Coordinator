@@ -1,0 +1,64 @@
+/* Synthetic public fixture: no household IDs, keys or page dumps. */
+#include "nv_linux.h"
+#include "ti/common/nv/nvocmp.h"
+#include <string.h>
+static NVINTF_nvFuncts_t api;
+static void require(uint8_t status,const char *op,unsigned index) {
+    if(status){fprintf(stderr,"%s index=%u status=%u\n",op,index,status);exit(20+status);}
+}
+static NVINTF_itemID_t id(unsigned family,unsigned index) {
+    NVINTF_itemID_t value={NVINTF_SYSID_ZSTACK,(uint16_t)family,(uint16_t)index};return value;
+}
+static void payload(uint8_t *buf,unsigned size,unsigned family,unsigned index,unsigned generation) {
+    for(unsigned i=0;i<size;i++)buf[i]=(uint8_t)(family*17+index+i+generation);
+}
+static void population(int create,int update,unsigned generation) {
+    const unsigned counts[]={TCLK_COUNT,DEVICE_COUNT,ADDRESS_COUNT,100};
+    const unsigned sizes[]={20,16,12,16};
+    uint8_t bytes[20],readback[20];
+    for(unsigned family=0;family<4;family++)for(unsigned n=0;n<counts[family];n++) {
+        NVINTF_itemID_t item=id(4+family,n);
+        payload(bytes,sizes[family],4+family,n,family==0?generation:0);
+        if(create)require(api.createItem(item,sizes[family],bytes),"create",n);
+        else if(update && family==0)require(api.updateItem(item,sizes[family],bytes),"update",n);
+        else {
+            if(api.getItemLen(item)!=sizes[family])exit(60);
+            require(api.readItem(item,0,sizes[family],readback),"read",n);
+            if(memcmp(bytes,readback,sizes[family]))exit(61);
+        }
+    }
+}
+int main(int argc,char **argv) {
+    if(argc!=2)return 2;
+    NVOCMP_loadApiPtrsExt(&api);require(api.initNV(NULL),"init",0);
+    if(!strcmp(argv[1],"repro")) {
+        uint8_t byte=0;NVINTF_itemID_t startup=id(9,0);
+        require(api.createItem(startup,1,&byte),"neutral-create",0);
+        uint8_t status=0,bytes[20];unsigned n;
+        for(n=0;n<TCLK_COUNT;n++) {
+            payload(bytes,20,4,n,0);status=api.createItem(id(4,n),20,bytes);
+            if(status)break;
+        }
+        require(api.readItem(startup,0,1,&byte),"neutral-read",0);
+        uint8_t write_status=api.updateItem(startup,1,&byte);
+        printf("{\"created_tclk\":%u,\"create_status\":%u,\"tiny_update_status\":%u,\"reads_work\":true}\n",n,status,write_status);
+        return status==NVINTF_BADLENGTH && write_status==NVINTF_BADLENGTH?0:63;
+    }
+    if(!strcmp(argv[1],"seed"))population(1,0,0);
+    else if(!strcmp(argv[1],"exercise")) {
+        population(0,0,0);
+        for(unsigned gen=1;gen<=4;gen++)population(0,1,gen);
+        uint8_t value=0x55;NVINTF_itemID_t temporary=id(8,0);
+        require(api.createItem(temporary,1,&value),"create-extra",0);
+        require(api.updateItem(temporary,1,&value),"update-extra",0);
+        require(api.deleteItem(temporary),"delete",0);
+        require(api.compactNV(0),"compact",0);
+        population(0,0,4);
+    } else if(!strcmp(argv[1],"verify"))population(0,0,4);
+    else if(!strcmp(argv[1],"compact"))require(api.compactNV(0),"compact",0);
+    else return 2;
+    unsigned free=api.getFreeNV();
+    if(free<MINIMUM_FREE_BYTES){fprintf(stderr,"headroom=%u required=%u\n",free,MINIMUM_FREE_BYTES);return 62;}
+    printf("{\"pages\":%u,\"tclk\":%u,\"free_bytes\":%u,\"physical_operations\":%u}\n",NVOCMP_NVPAGES,TCLK_COUNT,free,nv_lab_operations);
+    return 0;
+}

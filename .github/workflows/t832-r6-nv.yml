@@ -1,0 +1,31 @@
+name: T832 R6 real-driver NV regression
+on:
+  push:
+    branches: [codex/t832-r6-nv-contract]
+    paths: ['firmware/t832/r6/**', '.github/workflows/t832-r6-nv.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nv-lab:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {path: repo}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          sparse-checkout: source/ti/common/nv
+      - name: Contract negative tests and actual TI NVOCMP population
+        run: |
+          python3 -m unittest discover -s repo/firmware/t832/r6 -p 'test_*.py' -v
+          python3 repo/firmware/t832/r6/run_nv_lab.py --sdk sdk --out nv-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t832-r6-nv-evidence
+          path: nv-evidence
+          if-no-files-found: error
