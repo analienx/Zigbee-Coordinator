@@ -64,21 +64,20 @@ capacity.
 
 ### 2. Bound Trust Center capacity for the diagnostic build
 
-Set `ZDSECMGR_TC_DEVICE_MAX=128`.
+Set `ZDSECMGR_TC_DEVICE_MAX=112`.
 
-Current backup evidence contains roughly 103 link keys, so 128 provides useful
-headroom while preventing the boot-time table initialization from consuming
+Current backup evidence was rechecked live and contains exactly 103 link keys across 104 devices, so 112 adds only nine spare persistent slots while preventing the boot-time table initialization from consuming
 the entire NV region.
 
-Minimum TCLK allocation at 128 slots:
+Minimum TCLK allocation at 112 slots:
 
 ```
-128 * 27 = 3,456 bytes
+112 * 27 = 3,456 bytes
 ```
 
 That leaves 6,784 gross bytes for the rest of NV before compaction overhead.
 
-This is a **diagnostic-build limit**, not a claim that 128 is the ideal final
+This is a **diagnostic-build limit**, not a claim that 112 is the ideal final
 production capacity.
 
 ### 3. Add NV capacity telemetry
