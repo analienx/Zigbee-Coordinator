@@ -136,6 +136,17 @@ int main(int argc,char **argv) {
         if(len && len!=1)exit(69);
         if(len){require(api.readItem(id(12,0),0,1,&value),"partial-extra-read",0);if(value!=0x5A && value!=0x5B)exit(70);}
     }
+    else if(!strcmp(argv[1],"write-proof")) {
+        /* Neutral post-recovery append/update proof. Synthetic family 13
+         * only, net-zero (create/update/delete): no household state. */
+        uint8_t value=0xA5,readback=0;NVINTF_itemID_t neutral=id(13,0);
+        require(api.createItem(neutral,1,&value),"neutral-append",0);
+        value=0x5A;require(api.updateItem(neutral,1,&value),"neutral-update",0);
+        require(api.readItem(neutral,0,1,&readback),"neutral-read",0);
+        if(readback!=0x5A)exit(78);
+        require(api.deleteItem(neutral),"neutral-delete",0);
+        if(api.getItemLen(neutral))exit(79);
+    }
     else if(!strcmp(argv[1],"compact"))require(api.compactNV(0),"compact",0);
     else return 2;
     unsigned free=api.getFreeNV();

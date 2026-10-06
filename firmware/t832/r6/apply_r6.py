@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 from apply_diag import Exact, apply_diag
 from nv_contract import budget
+from nv_recovery_fix import apply_fix as apply_recovery_fix,verify_fixed as verify_recovery_fixed
 
 HERE=Path(__file__).resolve().parent
 SDK='6499c3f53fc5fb5806213be695450a7b43fbaf3d'
@@ -48,7 +49,11 @@ def base(sdk,examples,profile):
     ex.replace(version,'1,  /* Software maintenance release number */',
                '1,  /* Software maintenance release number */\n'+''.join(f'                                   ((CODE_REVISION_NUMBER >> {n}) & 0xFF),\n' for n in (0,8,16,24)).rstrip(),
                'r6.revision_format')
-    return {'variant':'T832-R6-BASE','budget':c,'edits':ex.edits,'recovery_policy':'OFF; RECOVERY_POLICY change requires separate review',
+    nvocmp=sdk/'source/ti/common/nv/nvocmp.c'
+    recovery_edits=apply_recovery_fix(nvocmp)
+    recovery_fix=verify_recovery_fixed(nvocmp.read_text())
+    if len(recovery_edits)!=5:raise ValueError('recovery fix not applied to firmware source')
+    return {'variant':'T832-R6-BASE','budget':c,'edits':ex.edits+recovery_edits,'nv_recovery_fix':recovery_fix,'recovery_policy':'T832-R8 fail-safe init recovery (t832-r8-nv-recovery-01); destructive RECOVER_FROM_COMPACT_FAILURE stays off',
             'transport_policy':'pristine TI write callback completion','sdk_commit':SDK,'examples_commit':EXAMPLES}
 
 def apply(sdk,examples,profile,variant,series='R6'):
