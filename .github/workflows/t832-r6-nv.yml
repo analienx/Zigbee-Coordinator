@@ -2,7 +2,7 @@ name: T832 R6 real-driver NV regression
 on:
   push:
     branches: [codex/t832-r6-nv-contract]
-    paths: ['firmware/t832/r6/**', '.github/workflows/t832-r6-nv.yml']
+    paths: ['firmware/t832/**', 'deploy/t832_preflash_audit.py', '.github/workflows/t832-r6-nv.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,9 +23,302 @@ jobs:
         run: |
           python3 -m unittest discover -s repo/firmware/t832/r6 -p 'test_*.py' -v
           python3 repo/firmware/t832/r6/run_nv_lab.py --sdk sdk --out nv-evidence
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: t832-r6-nv-evidence
           path: nv-evidence
           if-no-files-found: error
+
+  firmware:
+    name: R6 ${{ matrix.variant }} / ${{ matrix.profile }}
+    needs: nv-lab
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [BASE, DIAG]
+        profile: [production-demand, capacity-400]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {path: repo}
+      - name: Install CCS 12.8.0 SimpleLink toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl tar xz-utils \
+            libc6-i386 libusb-0.1-4 libncurses5 libtinfo5 \
+            libx11-6 libxext6 libxrender1 libxtst6 libxi6 libxt6 libxinerama1 \
+            libgtk2.0-0 libnss3 xvfb
+
+          mkdir -p "$HOME/ti/downloads"
+          cd "$HOME/ti/downloads"
+          CCS_TARBALL=CCS12.8.0.00012_web_linux-x64.tar.gz
+          CCS_URL=https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/${CCS_TARBALL}
+          curl -fL --retry 5 --retry-delay 2 -o "$CCS_TARBALL" "$CCS_URL"
+          tar xzf "$CCS_TARBALL"
+
+          SETUP=$(find . -maxdepth 3 -type f -name 'ccs_setup_12.8.0.00012.run' -print -quit)
+          test -n "$SETUP" || { echo "CCS installer not found"; exit 1; }
+          chmod +x "$SETUP"
+          "$SETUP" \
+            --mode unattended \
+            --enable-components PF_WCONN \
+            --prefix "$HOME/ti/ccs1280"
+
+          SYSCFG_SETUP="$HOME/ti/downloads/sysconfig-1.21.1_3772-setup.run"
+          curl -fL --retry 5 --retry-delay 2 \
+            -o "$SYSCFG_SETUP" \
+            https://software-dl.ti.com/ccs/esd/sysconfig/sysconfig-1.21.1_3772-setup.run
+          chmod +x "$SYSCFG_SETUP"
+          "$SYSCFG_SETUP" \
+            --mode unattended \
+            --prefix "$HOME/ti/sysconfig_1.21.1"
+
+      - name: Verify and export exact toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMCLANG=$(find "$HOME/ti/ccs1280" -type f -name tiarmclang -perm -u+x -print -quit)
+          SYSCONFIG=$(find "$HOME/ti/sysconfig_1.21.1" -type f -name sysconfig_cli.sh -print -quit)
+          XDC=$(find "$HOME/ti/ccs1280" -type d -name 'xdctools_3_62_01_16_core' -print -quit)
+          CCS_ECLIPSE=$(find "$HOME/ti/ccs1280" -type f -name eclipse -path '*/eclipse/eclipse' -perm -u+x -print -quit)
+
+          test -n "$TIARMCLANG" || { echo "::error::TI ARM Clang missing"; exit 1; }
+          test -n "$SYSCONFIG" || { echo "::error::SysConfig 1.21.1 missing"; exit 1; }
+          test -n "$XDC" || { echo "::error::XDCTools 3.62.01.16 missing"; exit 1; }
+          test -n "$CCS_ECLIPSE" || { echo "::error::CCS Eclipse missing"; exit 1; }
+
+          "$TIARMCLANG" --version | tee /tmp/tiarmclang-version.txt
+          grep -F '3.2.2.LTS' /tmp/tiarmclang-version.txt
+          case "$SYSCONFIG" in *sysconfig_1.21.1*) ;; *) exit 1;; esac
+          case "$XDC" in *xdctools_3_62_01_16_core*) ;; *) exit 1;; esac
+
+          {
+            echo "TIARMCLANG=$TIARMCLANG"
+            echo "SYSCONFIG=$SYSCONFIG"
+            echo "XDC=$XDC"
+            echo "CCS_ECLIPSE=$CCS_ECLIPSE"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "## T832 toolchain"
+            echo "- CCS: 12.8.0.00012"
+            echo "- TI ARM Clang: 3.2.2.LTS"
+            echo "- SysConfig: 1.21.1.3772"
+            echo "- XDCTools: 3.62.01.16"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prefer pinned SysConfig 1.21.1 over CCS-bundled 1.21.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLED=$(find "$HOME/ti/ccs1280" -maxdepth 5 -type d -name 'sysconfig_1.21.0' -print -quit)
+          test -n "$BUNDLED" || { echo "::error::CCS-bundled SysConfig 1.21.0 not found"; exit 1; }
+          test -x "$HOME/ti/sysconfig_1.21.1/sysconfig_cli.sh" || { echo "::error::pinned SysConfig 1.21.1 missing"; exit 1; }
+          mv "$BUNDLED" "$BUNDLED.orig-1.21.0"
+          ln -s "$HOME/ti/sysconfig_1.21.1" "$BUNDLED"
+          test "$(readlink "$BUNDLED")" = "$HOME/ti/sysconfig_1.21.1"
+          "$BUNDLED/sysconfig_cli.sh" --version > /tmp/sysconfig-version.txt 2>&1 || true
+          cat /tmp/sysconfig-version.txt
+          {
+            echo "## T832 SysConfig pin"
+            echo "- CCS-bundled 1.21.0 redirected to standalone 1.21.1.3772 (SDK 8.32 requires >= 1.21.1)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          path: sdk833
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+
+      - name: Apply minimal BASE or matched observational DIAG
+        env:
+          PROFILE: ${{ matrix.profile }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p build-evidence
+          python3 repo/firmware/t832/r6/apply_r6.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --evidence build-evidence/r6-patch.json
+          git -C sdk diff --check
+          git -C examples diff --check
+          git -C sdk add -N .
+          git -C sdk diff --binary > build-evidence/sdk.patch
+          git -C examples diff --binary > build-evidence/project-seed.patch
+          if [ "$VARIANT" = DIAG ]; then python3 repo/firmware/t832/test_r5_pinned.py --sdk sdk; fi
+          python3 repo/firmware/t832/r6/audit_source.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --output build-evidence/source-gates.json
+      - name: Build pinned SDK libraries with TI documented CMake flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cmake >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends cmake
+          fi
+          cmake --version
+          export CMAKE="$(command -v cmake)"
+          export TICLANG_ARMCOMPILER="$(dirname "$(dirname "$TIARMCLANG")")"
+          export XDC_INSTALL_DIR="$XDC"
+          export SYSCONFIG_TOOL="$SYSCONFIG"
+          export GCC_ARMCOMPILER=
+          export IAR_ARMCOMPILER=
+          "$CMAKE" -G"Unix Makefiles" -S sdk -B sdk/build/ticlang --log-level=VERBOSE
+          "$CMAKE" --build sdk/build/ticlang --target tirtos7_m33f drivers_cc26x4 display_cc26x4 driverlib_cc13x4_cc26x3_cc26x4 spiffs_m33f_cc26xx
+          python3 - <<'PYEOF'
+          import pathlib
+          import shutil
+          import sys
+          sdk = pathlib.Path("sdk")
+          build = sdk / "build" / "ticlang"
+          wanted = {
+              "sysbios.a": "kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m33f/sysbios.a",
+              "drivers_cc26x4.a": "source/ti/drivers/lib/ticlang/m33f/drivers_cc26x4.a",
+              "display_cc26x4.a": "source/ti/display/lib/ticlang/m33f/display_cc26x4.a",
+              "driverlib.lib": "source/ti/devices/cc13x4_cc26x4/driverlib/bin/ticlang/driverlib.lib",
+              "spiffs_cc26xx.a": "source/third_party/spiffs/lib/ticlang/m33f/spiffs_cc26xx.a",
+          }
+          built = [p for p in build.rglob("*") if p.suffix in (".a", ".lib") and p.is_file()]
+          print("built archives:")
+          for p in sorted(built):
+              print("  " + str(p.relative_to(sdk)) + " " + str(p.stat().st_size))
+          by_name = {}
+          for p in built:
+              by_name.setdefault(p.name, []).append(p)
+          for name, dest in wanted.items():
+              cands = by_name.get(name, [])
+              if len(cands) != 1:
+                  sys.exit("expected exactly one built " + name + ", found " + str(len(cands)))
+              src = cands[0]
+              if src.stat().st_size == 0:
+                  sys.exit("built " + name + " is empty")
+              out = sdk / dest
+              out.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, out)
+              print("installed " + name + " -> " + dest)
+          PYEOF
+          {
+            echo "## T832 SDK libraries"
+            echo "- TI-documented top-level CMake configure plus targeted ticlang build of the CC26x4/M33F archives the ZNP link consumes."
+            echo "- tirtos7_m4 (Cortex-M4 soft-float sysbios) excluded: its m3-family gcc-syntax asm uses VFP vpush/vpop, rejected by ticlang under soft-float; unrelated to the M33F application."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Register pinned F2 SDK and SysConfig with CCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ccs-workspace
+          mkdir -p ccs-workspace
+
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1"
+
+      - name: Import hardened CC2674P10 ZNP project seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECTSPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec"
+          test -f "$PROJECTSPEC"
+
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$PROJECTSPEC" \
+            -ccs.overwrite
+
+          IMPORTED_OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts')
+          test "$(printf '%s\n' "$IMPORTED_OPTS" | sed '/^$/d' | wc -l)" = 1
+          test "$(sha256sum sdk/source/ti/zstack/apps/znp/znp_cnf.opts | cut -d' ' -f1)" = \
+               "$(sha256sum "$IMPORTED_OPTS" | cut -d' ' -f1)"
+
+      - name: Build only T832-DIAG-R0 ZNP project
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          xvfb-run -a "$CCS_ECLIPSE" \
+            -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_EM_CC2674P10_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee build-evidence/ccs-build.log
+
+          OUT=$(find ccs-workspace -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace -type f -name '*.map' -print -quit)
+          GENH=$(find ccs-workspace -type f -name 'ti_zstack_config.h' -print -quit)
+          OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts' -print -quit)
+          test -n "$OUT" || { echo "::error::No .out produced"; exit 1; }
+          test -n "$MAP" || { echo "::error::No linker .map produced"; exit 1; }
+          test -n "$GENH" || { echo "::error::No generated ti_zstack_config.h produced"; exit 1; }
+          test -n "$OPTS" || { echo "::error::No imported znp_cnf.opts found"; exit 1; }
+
+          {
+            echo "OUT=$OUT"
+            echo "MAP=$MAP"
+            echo "GENH=$GENH"
+            echo "OPTS=$OPTS"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate effective compiler-macro proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > build-evidence/t832-macro-probe.c <<'EOF'
+          /* T832 evidence-only preprocessor probe. Runtime code is never linked. */
+          EOF
+          "$TIARMCLANG" \
+            -dM -E -x c \
+            @"$OPTS" \
+            build-evidence/t832-macro-probe.c \
+            > build-evidence/effective-macros.txt
+
+          # Keep the generated header that participated in the real project.
+          cp "$GENH" build-evidence/ti_zstack_config.h
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: t832-r6-nv-evidence
+          path: nv-lab-evidence
+      - name: Audit and package canonical P10 images
+        env:
+          PROFILE: ${{ matrix.profile }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex build-evidence/candidate.hex
+          GEN=$(find ccs-workspace -type f -name ti_drivers_config.c -print -quit)
+          test -n "$GEN"
+          python3 repo/firmware/t832/r6/package_r6.py --profile "$PROFILE" --variant "$VARIANT" --generated "$GEN" --macros build-evidence/effective-macros.txt --map "$MAP" --hex build-evidence/candidate.hex --elf "$OUT" --header sdk/source/ti/devices/cc13x4_cc26x4/inc/hw_ccfg.h --patch build-evidence/r6-patch.json --lab nv-lab-evidence/nv-lab-report.json --out bundle
+          cp build-evidence/source-gates.json build-evidence/sdk.patch build-evidence/project-seed.patch bundle/provenance/
+          (cd bundle && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-r6-${{ matrix.variant }}-${{ matrix.profile }}
+          path: bundle/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: failure()
+        with:
+          name: t832-r6-failure-${{ matrix.variant }}-${{ matrix.profile }}
+          path: build-evidence/

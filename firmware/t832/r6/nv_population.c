@@ -49,7 +49,9 @@ int main(int argc,char **argv) {
         uint8_t write_status=api.updateItem(startup,1,&byte);
         require(api.readItem(startup,0,1,&byte),"neutral-read-after-exhaustion",0);
         printf("{\"created_tclk\":%u,\"create_status\":%u,\"tail_items\":%u,\"tiny_update_status\":%u,\"reads_work\":true}\n",n,status,tail,write_status);
-        return status==NVINTF_BADLENGTH && write_status==NVINTF_BADLENGTH?0:63;
+        /* createItem maps addItem failure to NVINTF_FAILURE; updateItem
+         * preserves BADLENGTH. Assert the real APIs' different semantics. */
+        return n<TCLK_COUNT && status==NVINTF_FAILURE && write_status==NVINTF_BADLENGTH?0:63;
     }
     if(!strcmp(argv[1],"seed"))population(1,0,0);
     else if(!strcmp(argv[1],"exercise")) {

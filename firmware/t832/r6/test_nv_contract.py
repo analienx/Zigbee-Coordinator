@@ -13,7 +13,7 @@ class Tests(unittest.TestCase):
         self.assertGreaterEqual((c['nvs_pages']-c['compaction_reserve_pages'])*2032,c['live_bytes']+c['growth_bytes'])
     def test_compiler_capacity_and_recovery_policy_mismatch_fail_closed(self):
         c=budget('production-demand')
-        text='\n'.join(f'#define {k} {v}' for k,v in {'ZDSECMGR_TC_DEVICE_MAX':128,'NWK_MAX_DEVICE_LIST':75,'NWK_MAX_ADDRESSES':256,'NVOCMP_NVPAGES':c['nvs_pages'],'NVOCMP_NVS_INDEX':0}.items())
+        text='\n'.join(f'#define {k} {v}' for k,v in {'ZDSECMGR_TC_DEVICE_MAX':128,'NWK_MAX_DEVICE_LIST':75,'NWK_MAX_BINDING_ENTRIES':4,'NVOCMP_NVPAGES':c['nvs_pages'],'NVOCMP_NVS_INDEX':0}.items())
         check_macros(text,c)
         for changed in (text.replace('MAX 128','MAX 400'),text+'\n#define NVOCMP_RECOVER_FROM_COMPACT_FAILURE 1'):
             with self.assertRaises(ValueError):check_macros(changed,c)
@@ -26,7 +26,7 @@ const NVS_Config NVS_config[1] = {{
 }};'''
         check_generated(text,c)
         with self.assertRaises(ValueError):check_generated(text.replace('NVSCC26XX_fxnTable','NVSSPI25X_fxnTable'),c)
-        check_map(f' FLASH_NV 0 {c["nvs_base"]:08x} {c["nvs_bytes"]:08x}',c)
-        with self.assertRaises(ValueError):check_map(' FLASH_NV 0 000fd800 00002800',c)
+        check_map(f' FLASH_NV {c["nvs_base"]:08x} {c["nvs_bytes"]:08x} 00000000 {c["nvs_bytes"]:08x}',c)
+        with self.assertRaises(ValueError):check_map(' FLASH_NV 000fd800 00002800 00000000 00002800',c)
 
 if __name__=='__main__':unittest.main()

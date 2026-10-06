@@ -15,7 +15,7 @@ def compile_lab(sdk,out,contract,pages=None):
     p=contract['capacities'];exe=out/'nv-population'
     command=['gcc','-std=c11','-O1','-g','-D_GNU_SOURCE','-DNV_LINUX','-DNVOCMP_POSIX_MUTEX',
              '-DDeviceFamily_CC26X4','-DNVOCMP_NVPAGES='+str(pages or contract['nvs_pages']),
-             '-DTCLK_COUNT='+str(p['tc_devices']),'-DDEVICE_COUNT='+str(p['device_list']),
+             '-DTCLK_COUNT='+str(p['tc_devices']),'-DDEVICE_COUNT='+str(p['device_list']+1),
              '-DADDRESS_COUNT='+str(p['addresses']),'-DMINIMUM_FREE_BYTES='+str(0 if pages else contract['minimum_free_bytes']),
              '-I'+str(HERE),'-I'+str(sdk/'source'),'-I'+str(sdk/'source/ti/common/nv'),
              str(sdk/'source/ti/common/nv/nvocmp.c'),str(sdk/'source/ti/common/nv/crc.c'),

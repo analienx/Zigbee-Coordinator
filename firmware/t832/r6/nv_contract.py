@@ -15,7 +15,9 @@ HERE=Path(__file__).resolve().parent
 def budget(profile):
     config=json.loads((HERE/'profiles.json').read_text())
     p=config['profiles'][profile]
-    costs={'tclk':p['tc_devices']*27,'device_list':p['device_list']*23,
+    if p['addresses']!=p['device_list']+1+p['binding_entries']+5+p['tc_devices']:
+        raise ValueError('address-manager capacity disagrees with TI coordinator formula')
+    costs={'tclk':p['tc_devices']*27,'device_list':(p['device_list']+1)*23,
            'address_manager':p['addresses']*19,'other_nv':config['other_nv_bytes']}
     live=sum(costs.values())
     growth=math.ceil(live*config['growth_reserve_percent']/100)
@@ -45,7 +47,7 @@ def check_generated(text,contract):
 def check_macros(text,contract):
     required={'ZDSECMGR_TC_DEVICE_MAX':contract['capacities']['tc_devices'],
               'NWK_MAX_DEVICE_LIST':contract['capacities']['device_list'],
-              'NWK_MAX_ADDRESSES':contract['capacities']['addresses'],
+              'NWK_MAX_BINDING_ENTRIES':contract['capacities']['binding_entries'],
               'NVOCMP_NVPAGES':contract['nvs_pages'],'NVOCMP_NVS_INDEX':0}
     for name,value in required.items():
         found=re.search(r'^#define\s+'+name+r'\s+([^\n]+)$',text,re.M)
@@ -53,7 +55,7 @@ def check_macros(text,contract):
     if re.search(r'^#define\s+NVOCMP_RECOVER_FROM_COMPACT_FAILURE\b',text,re.M):raise ValueError('destructive NV recovery must be disabled')
 
 def check_map(text,contract):
-    m=re.search(r'^\s*FLASH_NV\s+0\s+([\da-f]+)\s+([\da-f]+)',text,re.M|re.I)
+    m=re.search(r'^\s*FLASH_NV\s+([\da-f]{8,})\s+([\da-f]{8,})',text,re.M|re.I)
     if not m or tuple(int(v,16) for v in m.groups())!=(contract['nvs_base'],contract['nvs_bytes']):raise ValueError('linked NVS region mismatch')
 
 if __name__=='__main__':
