@@ -38,12 +38,12 @@ def operation(exe,image,verb,cut=None):
     if result.returncode:raise RuntimeError(f'{verb}: exit={result.returncode}: {result.stderr} {result.stdout}')
     return json.loads(result.stdout)
 
-def run(sdk,out):
+def run(sdk,out,profiles=('production-demand','capacity-400')):
     out.mkdir(parents=True,exist_ok=False)
     head=subprocess.check_output(['git','-C',str(sdk),'rev-parse','HEAD'],text=True).strip()
     if head!='6499c3f53fc5fb5806213be695450a7b43fbaf3d':raise ValueError('SDK pin mismatch')
     report={'sdk_commit':head,'real_algorithm_sha256':hashlib.sha256((sdk/'source/ti/common/nv/nvocmp.c').read_bytes()).hexdigest(),'profiles':{},'hardware_validated':False}
-    for profile,variant in ((p,v) for p in ('production-demand','capacity-400') for v in ('BASE','DIAG')):
+    for profile,variant in ((p,v) for p in profiles for v in ('BASE','DIAG')):
         contract=budget(profile);folder=out/(profile+'-'+variant);folder.mkdir();exe=compile_lab(sdk,folder,contract,diagnostic=variant=='DIAG')
         image=folder/'population.bin'
         seed=operation(exe,image,'seed')
@@ -115,6 +115,22 @@ def run(sdk,out):
             elif lifecycle.returncode not in (21,25):raise RuntimeError('unexpected characterization lifecycle error '+lifecycle.stderr)
         elif seed.returncode!=21:raise RuntimeError('unexpected characterization failure: '+seed.stderr)
         report['preserved_five_page_112_characterization'].append(row)
+    # PR40 used 112 TCLK slots AND 76 device slots AND 197 addresses.
+    # Test all three configured families, not only the occupied backup rows.
+    # A failed real-driver population is a deployment rejection even if a
+    # tiny write happens to fit in the remaining fragment.
+    if 'vendor-20240716' in profiles:
+        folder=out/'pr40-full-capacity-negative';folder.mkdir()
+        contract=budget('vendor-20240716')
+        contract['capacities']=dict(contract['capacities'],tc_devices=112,device_list=75,addresses=197)
+        executable=compile_lab(sdk,folder,contract,pages=5)
+        env=dict(os.environ,NVLAB_IMAGE=str(folder/'population.bin'));env.pop('NVLAB_CUT_OP',None)
+        result=subprocess.run([str(executable),'seed'],env=env,capture_output=True,text=True,timeout=30)
+        if result.returncode!=21 or 'status=1' not in result.stderr:
+            raise ValueError('PR40 full-capacity negative control did not reject allocation')
+        report['pr40_full_capacity_negative_control']={'tclk_slots':112,'device_records':76,'address_records':197,
+            'pages':5,'seed_returncode':result.returncode,'allocation_failure':result.stderr.strip(),
+            'deployment_rejected':True,'synthetic_table_sized_records':True,'hardware_validated':False}
     report['all_power_cut_recovery_passed']=not any(p['unresolved_recovery_negative_controls'] for p in report['profiles'].values())
     report['scope']='Normal NV lifecycle release evidence; power-cut characterization and known negative controls are reported separately, never recovery acceptance.'
     (out/'nv-lab-report.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -122,4 +138,5 @@ def run(sdk,out):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--sdk',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
-    a=p.parse_args();print(json.dumps(run(a.sdk.resolve(),a.out.resolve()),indent=2))
+    p.add_argument('--profiles',nargs='+',choices=['production-demand','capacity-400','vendor-20240716'],default=['production-demand','capacity-400'])
+    a=p.parse_args();print(json.dumps(run(a.sdk.resolve(),a.out.resolve(),a.profiles),indent=2))

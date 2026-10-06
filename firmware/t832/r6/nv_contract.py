@@ -20,17 +20,26 @@ def budget(profile):
     costs={'tclk':p['tc_devices']*27,'device_list':(p['device_list']+1)*23,
            'address_manager':p['addresses']*19,'other_nv':config['other_nv_bytes']}
     live=sum(costs.values())
-    growth=math.ceil(live*config['growth_reserve_percent']/100)
+    growth=math.ceil(live*p.get('growth_reserve_percent',config['growth_reserve_percent'])/100)
     payload_per_page=config['sector_bytes']-config['page_metadata_bytes']
     pages=math.ceil((live+growth)/payload_per_page)+config['compaction_reserve_pages']
+    reserve=config['compaction_reserve_pages']
+    if 'preserved_nvs_pages' in p:
+        # R7 restores the independently audited vendor layout. This has an
+        # explicit one-sector append reserve, not the R6 experiment's 25%
+        # growth promise or three reserved pages. Never enlarge it silently.
+        pages=p['preserved_nvs_pages'];reserve=1
+        minimum=p['minimum_free_bytes']
+        if (pages-reserve)*payload_per_page < live+minimum:
+            raise ValueError('preserved vendor NVS cannot hold all configured tables and reserve')
     if not 3<=pages<255:raise ValueError('NV page count outside driver representation')
     size=pages*config['sector_bytes'];base=config['flash_bytes']-size
     if base<0x80000:raise ValueError('insufficient application flash margin')
     if p['current_link_keys']+p['declared_key_reserve']!=p['tc_devices']:raise ValueError('undeclared security capacity')
     return dict(profile=profile,capacities=p,costs=costs,live_bytes=live,growth_bytes=growth,
                 nvs_pages=pages,nvs_bytes=size,nvs_base=base,nvs_end=config['flash_bytes'],
-                sector_bytes=config['sector_bytes'],compaction_reserve_pages=config['compaction_reserve_pages'],
-                minimum_free_bytes=growth,estimate_only=True,flash_authorized=False)
+                sector_bytes=config['sector_bytes'],compaction_reserve_pages=reserve,
+                minimum_free_bytes=p.get('minimum_free_bytes',growth),estimate_only=True,flash_authorized=False)
 
 def check_generated(text,contract):
     # Match the actual backend/index rather than a random occurrence of base/size.

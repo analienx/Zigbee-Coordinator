@@ -51,23 +51,28 @@ def base(sdk,examples,profile):
     return {'variant':'T832-R6-BASE','budget':c,'edits':ex.edits,'recovery_policy':'OFF; RECOVERY_POLICY change requires separate review',
             'transport_policy':'pristine TI write callback completion','sdk_commit':SDK,'examples_commit':EXAMPLES}
 
-def apply(sdk,examples,profile,variant):
+def apply(sdk,examples,profile,variant,series='R6'):
+    if series not in ('R6','R7') or ((series=='R7') != (profile=='vendor-20240716')):
+        raise ValueError('series/profile mismatch')
+    base_revision,diag_revision=(8320021,8320022) if series=='R7' else (8320011,8320012)
     if variant=='DIAG':
         evidence=apply_diag(sdk,examples,HERE/'profiles.json',base_apply=lambda s,e,m:base(s,e,profile),
-                            revision=8320012,pristine_transport=True)
-        evidence['variant']='T832-R6-DIAG'
+                            revision=diag_revision,pristine_transport=True)
+        evidence['variant']=f'T832-{series}-DIAG'
         from r6_observer import apply_observer
         evidence['r6_observer']=apply_observer(sdk)
     else:
         evidence=base(sdk,examples,profile)
         version=sdk/'source/ti/zstack/mt/mt_version.c'
-        ex=Exact();ex.replace(version,'CODE_REVISION_NUMBER >>','8320011u >>','r6.base_revision',count=4)
+        ex=Exact();ex.replace(version,'CODE_REVISION_NUMBER >>',f'{base_revision}u >>','r6.base_revision',count=4)
         evidence['edits']+=ex.edits
+        evidence['variant']=f'T832-{series}-BASE'
     return evidence
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--sdk',type=Path,required=True);p.add_argument('--examples',type=Path,required=True)
-    p.add_argument('--profile',choices=['production-demand','capacity-400'],required=True);p.add_argument('--variant',choices=['BASE','DIAG'],required=True)
+    p.add_argument('--profile',choices=['production-demand','capacity-400','vendor-20240716'],required=True);p.add_argument('--variant',choices=['BASE','DIAG'],required=True)
+    p.add_argument('--series',choices=['R6','R7'],default='R6')
     p.add_argument('--evidence',type=Path,required=True);a=p.parse_args()
-    e=apply(a.sdk.resolve(),a.examples.resolve(),a.profile,a.variant)
+    e=apply(a.sdk.resolve(),a.examples.resolve(),a.profile,a.variant,a.series)
     a.evidence.parent.mkdir(parents=True,exist_ok=True);a.evidence.write_text(json.dumps(e,indent=2)+'\n')

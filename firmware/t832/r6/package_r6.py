@@ -31,11 +31,22 @@ def package(a):
         expected='0x'+os.environ['GITHUB_SHA'][:8]
         if '#define T832_BUILD_ID '+expected not in macros:raise ValueError('DEBUG identity mismatch')
     payload,segments,padding=management_container(memory)
+    vendor_proof=None
+    if a.series=='R7':
+        if not a.vendor_audit:raise ValueError('R7 requires the pinned vendor binary audit')
+        sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'r7'))
+        from vendor_nvs_audit import audit_candidate, SHA as VENDOR_SHA
+        reference=json.loads(a.vendor_audit.read_text())
+        if reference.get('reference_sha256')!=VENDOR_SHA:raise ValueError('reference binary proof identity mismatch')
+        vendor_proof={'reference':reference,'candidate':audit_candidate(payload,maptext,c)}
     a.out.mkdir(parents=True,exist_ok=False)
-    stem=f'T832-R6-{a.variant}-{a.profile}'
+    if a.series not in ('R6','R7') or ((a.series=='R7') != (a.profile=='vendor-20240716')):
+        raise ValueError('series/profile mismatch')
+    stem=f'T832-{a.series}-{a.variant}-{a.profile}'
     (a.out/(stem+'.slzb.bin')).write_bytes(payload)
     for path,suffix in ((a.hex,'.hex'),(a.elf,'.out'),(a.map,'.map')):shutil.copy2(path,a.out/(stem+suffix))
     provenance=a.out/'provenance';provenance.mkdir()
+    if vendor_proof:(provenance/'vendor-layout-proof.json').write_text(json.dumps(vendor_proof,indent=2)+'\n')
     for path in (a.generated,a.macros,a.patch,a.lab,a.header):shutil.copy2(path,provenance/path.name)
     for name in ('source-gates.json','sdk.patch','project-seed.patch','ccs-build.log','ti_zstack_config.h'):
         path=a.patch.parent/name
@@ -47,7 +58,7 @@ def package(a):
     for name in ('t832_incident.py','t832_diag_decode.py','diag_schema.json'):
         shutil.copy2(source/name,a.out/name)
     shutil.copy2(source/'r6/decode_raw.py',a.out/'decode_raw.py')
-    shutil.copy2(source/'r6/README.md',a.out/'README.md')
+    shutil.copy2(source/('r7/README.md' if a.series=='R7' else 'r6/README.md'),a.out/'README.md')
     lab=json.loads(a.lab.read_text())
     manifest={'variant':stem,'repository_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
               'profile':c,'sdk_commit':'6499c3f53fc5fb5806213be695450a7b43fbaf3d',
@@ -55,7 +66,7 @@ def package(a):
               'board':'SLZB-06P10 / CC2674P10; UART and DIO15 BSL; bench acceptance pending',
               'toolchain':{'ccs':'12.8.0.00012','ti_clang':'3.2.2.LTS','sysconfig':'1.21.1.3772','xdc':'3.62.01.16'},
               'sram_unused_bytes':rows['SRAM']['unused'],'container_segments':segments,'erased_gap_padding_bytes':padding,
-              'sys_version_revision':8320012 if a.variant=='DIAG' else 8320011,
+              'sys_version_revision':(8320022 if a.variant=='DIAG' else 8320021) if a.series=='R7' else (8320012 if a.variant=='DIAG' else 8320011),
               'debug_build_id':int(os.environ['GITHUB_SHA'][:8],16) if a.variant=='DIAG' else None,
               'hardware_validated':False,'flash_authorized':False,
               'all_power_cut_recovery_passed':lab['all_power_cut_recovery_passed'],
@@ -67,5 +78,7 @@ def package(a):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--profile',required=True);p.add_argument('--variant',required=True)
+    p.add_argument('--series',choices=['R6','R7'],default='R6')
+    p.add_argument('--vendor-audit',type=Path)
     for name in ('generated','macros','map','hex','elf','header','patch','lab','out'):p.add_argument('--'+name,type=Path,required=True)
     package(p.parse_args())
