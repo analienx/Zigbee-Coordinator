@@ -1,6 +1,7 @@
 """R6 observation layer. Exact edits; pristine TI functional paths retained."""
 from pathlib import Path
 import shutil
+import re
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 from apply_diag import Exact
@@ -22,6 +23,24 @@ def patch_nv(nv):
         marker=f'err = NVOCMP_addItem(&NVOCMP_nvHandle, &iHdr, pBuf, NVOCMP_{op});'
         ex.replace(nv,marker,'T832R6Nv_capture(5u,(uint16_t)len,0u);\n      '+marker+
                    '\n      T832R6Nv_capture(6u,(uint16_t)len,err);','r6.nv.write_pod.'+op)
+    # Compaction's inner result precedes final page-state transitions. Capture
+    # the topology again at the completed API boundary, under its existing NV
+    # serialization, so the exporter cannot mistake intermediate state for
+    # final free space. No synchronization policy is changed.
+    for name in ('NVOCMP_compactNvApi','NVOCMP_createItemApi','NVOCMP_updateItemApi','NVOCMP_writeItemApi','NVOCMP_deleteItemApi','NVOCMP_initNvApi'):
+        text=nv.read_text();match=re.search(r'static uint8_t '+name+r'\([^;]*?\)\s*\{',text)
+        if not match:raise ValueError('API boundary missing '+name)
+        end=match.end();depth=1
+        while depth:
+            depth+=(text[end]=='{')-(text[end]=='}');end+=1
+        old=text[match.start():end]
+        if name=='NVOCMP_initNvApi':
+            index=old.rindex('return(NVOCMP_failF);')
+            new=old[:index]+'T832R6Nv_capture(8u,0u,NVOCMP_failF);\n    '+old[index:]
+        else:
+            if old.count('NVOCMP_UNLOCK(err);')!=1:raise ValueError('API unlock mismatch '+name)
+            new=old.replace('NVOCMP_UNLOCK(err);','T832R6Nv_capture(8u,t832R6Nv.requested,err);\n    NVOCMP_UNLOCK(err);')
+        ex.replace(nv,old,new,'r6.nv.final_boundary.'+name)
     ex.append(nv,'#include "nv_r6_probe.inc"','r6.nv.pod_implementation')
     return ex.edits
 

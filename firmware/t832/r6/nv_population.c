@@ -78,7 +78,9 @@ int main(int argc,char **argv) {
         unsigned estimated=0;
         for(unsigned i=0;i<t832R6Nv.pages;i++)
             if(i!=t832R6Nv.tail && (t832R6Nv.states[i]==0xFF || t832R6Nv.states[i]==0x7E || t832R6Nv.states[i]==0x7C))estimated+=2048-t832R6Nv.offsets[i];
-        if(estimated!=free || t832R6Nv.pages!=NVOCMP_NVPAGES || !t832R6Nv.ready)exit(66);
+        if(estimated!=free || t832R6Nv.pages!=NVOCMP_NVPAGES || !t832R6Nv.ready) {
+            fprintf(stderr,"POD boundary mismatch: estimated=%u actual=%u pages=%u expected=%u ready=%u stage=%u\n",estimated,free,t832R6Nv.pages,NVOCMP_NVPAGES,t832R6Nv.ready,t832R6Nv.stage);exit(66);
+        }
     }
 #endif
     if(free<MINIMUM_FREE_BYTES){fprintf(stderr,"headroom=%u required=%u\n",free,MINIMUM_FREE_BYTES);return 62;}

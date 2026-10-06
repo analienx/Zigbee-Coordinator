@@ -36,5 +36,5 @@ int main(void)
     CHECK((t832R5.stage_seen&(1u<<9))==0);
     CHECK(t832R5.uart_count[3]==1);
     puts("R6 HOST PASS: bounded POD sampling during stalls and truthful driver/wire separation");
-    return host_failures?1:0;
+    return failures?1:0;
 }
