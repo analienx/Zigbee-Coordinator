@@ -75,6 +75,9 @@ callbacks. Host receipt of the actual response remains necessary.
 
 NV hot-path hooks store a fixed POD snapshot (<=128 bytes), counters,
 first failure, last request/status, init action and page offsets/states.
+Completed-API EXIST/NOTFOUND remain visible as ordinary outcomes; they do
+not become the first storage fault. Final request metadata uses the actual
+API length, zero for deletion, or requested free bytes for explicit compaction.
 They call no clock, gate, allocation, formatting, flash or NV API.
 The MT task copies only a committed snapshot under a bounded critical
 section, then records/exports outside it, before UART export suppression.

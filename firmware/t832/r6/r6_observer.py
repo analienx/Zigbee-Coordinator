@@ -39,7 +39,8 @@ def patch_nv(nv):
             new=old[:index]+'T832R6Nv_capture(8u,0u,NVOCMP_failW);\n    '+old[index:]
         else:
             if old.count('NVOCMP_UNLOCK(err);')!=1:raise ValueError('API unlock mismatch '+name)
-            new=old.replace('NVOCMP_UNLOCK(err);','T832R6Nv_capture(8u,t832R6Nv.requested,err);\n    NVOCMP_UNLOCK(err);')
+            requested='0u' if name=='NVOCMP_deleteItemApi' else 'minAvail' if name=='NVOCMP_compactNvApi' else '(uint16_t)len'
+            new=old.replace('NVOCMP_UNLOCK(err);',f'T832R6Nv_capture(8u,{requested},err);\n    NVOCMP_UNLOCK(err);')
         ex.replace(nv,old,new,'r6.nv.final_boundary.'+name)
     ex.append(nv,'#include "nv_r6_probe.inc"','r6.nv.pod_implementation')
     return ex.edits

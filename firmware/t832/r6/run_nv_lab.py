@@ -46,7 +46,11 @@ def run(sdk,out):
     for profile,variant in ((p,v) for p in ('production-demand','capacity-400') for v in ('BASE','DIAG')):
         contract=budget(profile);folder=out/(profile+'-'+variant);folder.mkdir();exe=compile_lab(sdk,folder,contract,diagnostic=variant=='DIAG')
         image=folder/'population.bin'
-        seed=operation(exe,image,'seed');exercise=operation(exe,image,'exercise');verify=operation(exe,image,'verify')
+        seed=operation(exe,image,'seed')
+        if variant=='DIAG':
+            observer_image=folder/'observer-api.bin';shutil.copyfile(image,observer_image)
+            observer=operation(exe,observer_image,'observer-api')
+        exercise=operation(exe,image,'exercise');verify=operation(exe,image,'verify')
         operation(exe,image,'anchor')
         operation(exe,image,'churn')
         # Each subprocess is a real reopen: driver static state is not retained.
@@ -83,6 +87,7 @@ def run(sdk,out):
             if result.get('power_cut')!=cut:raise ValueError('mutation fault not reached')
             operation(exe,damaged,'verify-cut')
         report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_tested':cuts,'power_cut_points_verified':passed,'unresolved_recovery_negative_controls':unresolved,'mutation_operations':mutation_ops,'mutation_cut_points_verified':list(range(1,mutation_ops+1))}
+        if variant=='DIAG':report['profiles'][profile+'-'+variant]['observer_api_contract']=observer
     negative=out/'five-page-negative';negative.mkdir()
     exe=compile_lab(sdk,negative,budget('capacity-400'),pages=5)
     report['five_page_400_negative_control']=operation(exe,negative/'full.bin','repro')

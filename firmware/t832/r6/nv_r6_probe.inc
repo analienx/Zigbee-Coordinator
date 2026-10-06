@@ -11,7 +11,10 @@ void T832R6Nv_capture(uint16_t stage,uint16_t requested,uint16_t status)
     if(stage==5u && t832R6Nv.requests!=UINT32_MAX)t832R6Nv.requests++;
     if(stage==1u && t832R6Nv.compactions!=UINT32_MAX)t832R6Nv.compactions++;
     if(stage==3u && t832R6Nv.compact_failures!=UINT32_MAX)t832R6Nv.compact_failures++;
-    if((stage==3u || stage==6u || stage==8u) && status && !t832R6Nv.first_failure) {
+    /* EXIST/NOTFOUND at a completed API boundary are ordinary lookup/create
+     * outcomes. Preserve their raw status, without declaring a storage fault. */
+    if((stage==3u || stage==6u || stage==8u) && status && !t832R6Nv.first_failure &&
+       !(stage==8u && (status==NVINTF_EXIST || status==NVINTF_NOTFOUND))) {
         t832R6Nv.first_failure=status;
         t832R6Nv.first_failure_requested=requested;
     }
