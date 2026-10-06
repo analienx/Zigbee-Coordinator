@@ -18,7 +18,9 @@ jobs:
           path: sdk
           sparse-checkout: source/ti/common/nv
       - name: Reproduce adverse review cases against PR44 source
-        run: python3 repo/review/pr44_counterexamples.py --sdk sdk --out review-evidence
+        run: |
+          python3 -m pip install --quiet capstone==5.0.6
+          python3 repo/review/pr44_counterexamples.py --sdk sdk --out review-evidence
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
