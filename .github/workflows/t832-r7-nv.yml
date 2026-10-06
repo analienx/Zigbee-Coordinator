@@ -29,8 +29,10 @@ jobs:
           python3 -m unittest discover -s repo/firmware/t832/r7 -p 'test_*.py' -v
           python3 -m unittest discover -s repo/firmware/t832/r6 -p 'test_*.py' -v
           python3 repo/firmware/t832/r6/verify_corrupt_duplicate.py --sdk sdk --out nv-evidence-corrupt-copy
+          python3 repo/firmware/t832/r6/verify_write_gate.py --sdk sdk --out nv-evidence-write-gate
           python3 repo/firmware/t832/r6/run_nv_lab.py --sdk sdk --out nv-evidence --profiles vendor-20240716
           cp nv-evidence-corrupt-copy/report.json nv-evidence/corrupt-copy-report.json
+          cp nv-evidence-write-gate/report.json nv-evidence/write-gate-report.json
           cp vendor-nvs-audit.json nv-evidence/vendor-nvs-audit.json
       - name: Preserve collector and recorder regressions
         run: |
