@@ -102,9 +102,13 @@ class Bundle:
 
 
 def verify_small(bundle):
-    seal = json.loads((Path(bundle) / 'seal.json').read_text())
+    try:
+        seal = json.loads((Path(bundle) / 'seal.json').read_text())
+        ref = seal.get('vendor_ref_sha256')
+    except FileNotFoundError:
+        ref = None
     return verify(bundle, nvs_base=BASE, nvs_bytes=BYTES,
-                  vendor_ref_sha256=seal['vendor_ref_sha256'])
+                  vendor_ref_sha256=ref)
 
 
 class HwQualTests(unittest.TestCase):

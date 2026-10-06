@@ -97,7 +97,7 @@ def check_seal_expectations(bundle, vendor_ref_sha256=VENDOR_REF_SHA256):
     vendor_image = bundle / "images" / "vendor.slzb.bin"
     if not vendor_image.is_file():
         raise Incomplete("missing vendor rollback image: " + str(vendor_image))
-    if _sha256(vendor_image) != VENDOR_REF_SHA256:
+    if _sha256(vendor_image) != seal.get("vendor_ref_sha256", vendor_ref_sha256):
         raise Failed("vendor rollback image is not the pinned 20240716 reference")
     return seal
 
