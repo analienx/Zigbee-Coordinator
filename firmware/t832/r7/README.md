@@ -53,6 +53,10 @@ schema, collector and hashes are packaged together.
 
 Known interrupted-compaction recovery counterexamples remain explicit negative
 controls; a successful hosted run is not power-loss or electrical validation.
+The first R7 hosted run also exposed a post-cut append reserve of 1,777 B,
+below the unchanged 2,048-B gate. This is reported as failed recovery acceptance,
+with all saved records verified on an immutable-copy reopen; the reserve is
+not lowered to make that interruption pass. Normal lifecycle gates stay strict.
 The Linux backend does not execute the complete TI stack or reproduce private
 vendor pages. Exact inherited-page and vendor item-schema compatibility,
 boot read/write/reboot behavior, security counters and radio operation still
