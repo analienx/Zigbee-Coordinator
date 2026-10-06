@@ -40,8 +40,15 @@ int main(int argc,char **argv) {
             if(status)break;
         }
         require(api.readItem(startup,0,1,&byte),"neutral-read",0);
+        /* A failed 27-byte create can leave room for an 8-byte item. Exhaust
+         * that tail explicitly before claiming a tiny-write failure. */
+        unsigned tail=0;
+        while(tail<1024 && !api.createItem(id(10,tail),1,&byte))tail++;
+        if(tail==1024)exit(64);
+        byte^=1;
         uint8_t write_status=api.updateItem(startup,1,&byte);
-        printf("{\"created_tclk\":%u,\"create_status\":%u,\"tiny_update_status\":%u,\"reads_work\":true}\n",n,status,write_status);
+        require(api.readItem(startup,0,1,&byte),"neutral-read-after-exhaustion",0);
+        printf("{\"created_tclk\":%u,\"create_status\":%u,\"tail_items\":%u,\"tiny_update_status\":%u,\"reads_work\":true}\n",n,status,tail,write_status);
         return status==NVINTF_BADLENGTH && write_status==NVINTF_BADLENGTH?0:63;
     }
     if(!strcmp(argv[1],"seed"))population(1,0,0);

@@ -29,7 +29,7 @@ def operation(exe,image,verb,cut=None):
     if cut is not None:env['NVLAB_CUT_OP']=str(cut)
     result=subprocess.run([str(exe),verb],env=env,capture_output=True,text=True,timeout=30)
     if cut is not None and result.returncode==77:return {'power_cut':cut}
-    if result.returncode:raise RuntimeError(f'{verb}: exit={result.returncode}: {result.stderr}')
+    if result.returncode:raise RuntimeError(f'{verb}: exit={result.returncode}: {result.stderr} {result.stdout}')
     return json.loads(result.stdout)
 
 def run(sdk,out):
