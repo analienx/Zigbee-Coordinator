@@ -389,6 +389,83 @@ Initial lab points may include 8 pages (16 KiB) and 16 pages (32 KiB), but these
 
 The generated budget and stress results determine the final profile.
 
+## 4.6 Illustrative lower-bound sizing from the current network
+
+This is a sanity check, **not the final generated budget**.
+
+Current TI 8.32 source defines:
+
+```
+NWK_MAX_ADDRESSES =
+    (NWK_MAX_DEVICE_LIST + 1)
+  + NWK_MAX_BINDING_ENTRIES
+  + (5 + ZDSECMGR_TC_DEVICE_MAX)
+```
+
+Using the published TI sizing coefficients and a representative current-network case:
+
+```
+TCLK capacity              = 103
+NWK_MAX_DEVICE_LIST        = 20
+NWK_MAX_BINDING_ENTRIES    = 4
+NWK_MAX_ADDRESSES          = 133
+
+device list   20  * 23 B   =   460 B
+TCLK          103 * 27 B   = 2,781 B
+addresses     133 * 19 B   = 2,527 B
+other TI estimate          = 2,300 B
+-----------------------------------
+illustrative total          = 8,068 B
+```
+
+A five-sector P10 region has:
+
+```
+5 * 2048 = 10,240 B raw
+```
+
+but multi-page NVOCMP reserves one page as the transfer/compaction destination. Each page also begins with 16 bytes of page/compaction metadata.
+
+Approximate steady-state data capacity is therefore:
+
+```
+4 * (2048 - 16) = 8,128 B
+```
+
+The illustrative current-network budget leaves only:
+
+```
+8,128 - 8,068 = 60 B
+```
+
+of margin.
+
+That is nowhere near an acceptable copy-on-write/compaction reserve.
+
+The same lower-bound model gives useful starting points:
+
+| Profile | Example inputs | Estimated active bytes | Smallest page count that merely fits | Comment |
+|---|---|---:|---:|---|
+| current-like | TCLK 103, device list 20 | 8,068 | 5 | essentially zero reserve |
+| demand reserve | TCLK 128, device list 20 | 9,218 | 6 | fits but still thin |
+| demand reserve | TCLK 128, device list 32 | 9,722 | 6 | fits but still thin |
+| large | TCLK 200, device list 50 | 13,790 | 8 | almost no reserve at minimum |
+| 400 class | TCLK 400, device list 75 | 24,040 | 13 | minimum is not an operational target |
+
+For example, 16 P10 sectors would provide approximately:
+
+```
+15 * 2032 = 30,480 B
+```
+
+of non-compaction-page data capacity, leaving about 6.4 KiB over the illustrative 400-class lower bound.
+
+Again: these numbers are **illustrative lower bounds**. The ~2.3 KiB TI "other items" value is an estimate and target-specific extra tables may increase the requirement. R6 CI must calculate/measure the exact linked configuration and then validate it with the real NVOCMP lifecycle.
+
+The practical implication is already strong enough:
+
+> Five P10 pages are not a defensible production storage contract for the current network without a measured proof of substantial free/compactable space.
+
 ---
 
 # 5. Host-side NVOCMP CI harness
