@@ -74,14 +74,15 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
             except RuntimeError as error:
                 # Keep the exact interruption immutable. Do not convert data
                 # loss, an assertion or another error into a green result.
-                headroom_failure=re.fullmatch(r'verify-anchor: exit=62: headroom=(\d+) required=(\d+)\s*',str(error))
+                headroom_failure=re.fullmatch(r'verify-anchor: exit=62: (?:flash program rejected 0-to-1: page=\d+ offset=\d+ bytes=\d+\n)*headroom=(\d+) required=(\d+)\s*',str(error))
                 if profile=='vendor-20240716' and headroom_failure:
                     inspection=folder/f'negative-headroom-{cut}.bin';shutil.copyfile(damaged,inspection)
                     readable=operation(exe,inspection,'verify-known-headroom-failure')
                     if readable['required_bytes']!=contract['minimum_free_bytes'] or readable['free_bytes']>=readable['required_bytes']:
                         raise ValueError('interrupted-compaction headroom failure not reproduced')
                     unresolved.append({'cut':cut,'operations':measured,'error':str(error),'negative_control':readable,
-                        'classification':'UNRESOLVED_POST_CUT_HEADROOM','recovery_accepted':False})
+                        'classification':'UNRESOLVED_POST_CUT_FLASH_PROGRAM_AND_HEADROOM' if 'flash program rejected' in str(error) else 'UNRESOLVED_POST_CUT_HEADROOM',
+                        'recovery_accepted':False})
                     continue
                 if 'init index=0 status=1' not in str(error) or 'flash program rejected 0-to-1: page=' not in str(error):raise
                 inspection=folder/f'negative-init-{cut}.bin';shutil.copyfile(damaged,inspection)
