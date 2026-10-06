@@ -26,6 +26,12 @@ jobs:
         run: |
           python3 -m unittest discover -s repo/firmware/t832/r6 -p 'test_*.py' -v
           python3 repo/firmware/t832/r6/run_nv_lab.py --sdk sdk --out nv-evidence
+      - name: Preserve collector and recorder regressions
+        run: |
+          python3 -m pip install --quiet pyyaml jinja2
+          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_r5_host.py repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py -v
+          gcc -std=c11 -I repo/firmware/t832 -I repo/firmware/t832/host_harness -I repo/firmware/t832/host_harness/stubs repo/firmware/t832/host_harness/t832_diag_host_test.c -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -o /tmp/recorder-regressions
+          /tmp/recorder-regressions
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

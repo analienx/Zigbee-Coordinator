@@ -47,17 +47,26 @@ def run(sdk,out):
         contract=budget(profile);folder=out/(profile+'-'+variant);folder.mkdir();exe=compile_lab(sdk,folder,contract,diagnostic=variant=='DIAG')
         image=folder/'population.bin'
         seed=operation(exe,image,'seed');exercise=operation(exe,image,'exercise');verify=operation(exe,image,'verify')
+        operation(exe,image,'anchor')
         # Each subprocess is a real reopen: driver static state is not retained.
         baseline=folder/'fault-base.bin';shutil.copyfile(image,baseline)
         measured=operation(exe,image,'compact')['physical_operations']
-        cuts=sorted({1,2,3,4,5,6,7,8,9,10,measured//4,measured//2,3*measured//4,measured-1,measured})
-        cuts=[n for n in cuts if n>0 and n<=measured]
+        if not 6<measured<=4096:raise ValueError('compaction fixture must transfer actual live data with bounded operations')
+        cuts=list(range(1,measured+1))
         for cut in cuts:
             damaged=folder/f'cut-{cut}.bin';shutil.copyfile(baseline,damaged)
             result=operation(exe,damaged,'compact',cut)
             if result.get('power_cut')!=cut:raise ValueError('fault not reached')
-            operation(exe,damaged,'verify')
-        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_verified':cuts}
+            operation(exe,damaged,'verify-anchor')
+        mutation_image=folder/'mutation-measure.bin';shutil.copyfile(baseline,mutation_image)
+        mutation_ops=operation(exe,mutation_image,'mutate')['physical_operations']
+        if not 0<mutation_ops<=4096:raise ValueError('mutation fault fixture outside bounds')
+        for cut in range(1,mutation_ops+1):
+            damaged=folder/f'mutation-cut-{cut}.bin';shutil.copyfile(baseline,damaged)
+            result=operation(exe,damaged,'mutate',cut)
+            if result.get('power_cut')!=cut:raise ValueError('mutation fault not reached')
+            operation(exe,damaged,'verify-cut')
+        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_verified':cuts,'mutation_operations':mutation_ops,'mutation_cut_points_verified':list(range(1,mutation_ops+1))}
     negative=out/'five-page-negative';negative.mkdir()
     exe=compile_lab(sdk,negative,budget('capacity-400'),pages=5)
     report['five_page_400_negative_control']=operation(exe,negative/'full.bin','repro')

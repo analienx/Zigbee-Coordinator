@@ -21,14 +21,26 @@ static void population(int create,int update,unsigned generation) {
     uint8_t bytes[20],readback[20];
     for(unsigned family=0;family<4;family++)for(unsigned n=0;n<counts[family];n++) {
         NVINTF_itemID_t item=id(4+family,n);
-        payload(bytes,sizes[family],4+family,n,family==0?generation:0);
+        payload(bytes,sizes[family],4+family,n,family==0?(generation==99?4:generation):0);
         if(create)require(api.createItem(item,sizes[family],bytes),"create",n);
         else if(update && family==0)require(api.updateItem(item,sizes[family],bytes),"update",n);
         else {
             if(api.getItemLen(item)!=sizes[family])exit(60);
             require(api.readItem(item,0,sizes[family],readback),"read",n);
-            if(memcmp(bytes,readback,sizes[family]))exit(61);
+            if(memcmp(bytes,readback,sizes[family])) {
+                if(generation!=99 || family!=0 || n!=0)exit(61);
+                payload(bytes,sizes[family],4+family,n,5);
+                if(memcmp(bytes,readback,sizes[family]))exit(61);
+            }
         }
+    }
+}
+static void anchor(int create) {
+    uint8_t bytes[512],readback[512];memset(bytes,0xA6,sizeof(bytes));
+    if(create)require(api.createItem(id(11,0),sizeof(bytes),bytes),"anchor-create",0);
+    else {
+        require(api.readItem(id(11,0),0,sizeof(bytes),readback),"anchor-read",0);
+        if(memcmp(bytes,readback,sizeof(bytes)))exit(67);
     }
 }
 int main(int argc,char **argv) {
@@ -51,6 +63,7 @@ int main(int argc,char **argv) {
         byte^=1;
         uint8_t write_status=api.updateItem(startup,1,&byte);
         require(api.readItem(startup,0,1,&byte),"neutral-read-after-exhaustion",0);
+        if(byte!=0)exit(71);
         printf("{\"created_tclk\":%u,\"create_status\":%u,\"tail_items\":%u,\"tiny_update_status\":%u,\"reads_work\":true}\n",n,status,tail,write_status);
         /* createItem maps addItem failure to NVINTF_FAILURE; updateItem
          * preserves BADLENGTH. Assert the real APIs' different semantics. */
@@ -67,6 +80,23 @@ int main(int argc,char **argv) {
         require(api.compactNV(0),"compact",0);
         population(0,0,4);
     } else if(!strcmp(argv[1],"verify"))population(0,0,4);
+    else if(!strcmp(argv[1],"anchor"))anchor(1);
+    else if(!strcmp(argv[1],"verify-anchor")){population(0,0,4);anchor(0);}
+    else if(!strcmp(argv[1],"mutate")) {
+        uint8_t bytes[20],value=0x5A;payload(bytes,20,4,0,5);
+        require(api.updateItem(id(4,0),20,bytes),"atomic-update",0);
+        require(api.createItem(id(12,0),1,&value),"atomic-create",0);
+        value=0x5B;require(api.updateItem(id(12,0),1,&value),"atomic-extra-update",0);
+        require(api.deleteItem(id(12,0)),"atomic-delete",0);
+        uint8_t readback[20];require(api.readItem(id(4,0),0,20,readback),"mutation-readback",0);
+        if(memcmp(bytes,readback,20) || api.getItemLen(id(12,0)))exit(68);
+    }
+    else if(!strcmp(argv[1],"verify-cut")) {
+        population(0,0,99);anchor(0);
+        unsigned len=api.getItemLen(id(12,0));uint8_t value;
+        if(len && len!=1)exit(69);
+        if(len){require(api.readItem(id(12,0),0,1,&value),"partial-extra-read",0);if(value!=0x5A && value!=0x5B)exit(70);}
+    }
     else if(!strcmp(argv[1],"compact"))require(api.compactNV(0),"compact",0);
     else return 2;
     unsigned free=api.getFreeNV();
