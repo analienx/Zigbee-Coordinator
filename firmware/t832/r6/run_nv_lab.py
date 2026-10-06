@@ -11,15 +11,21 @@ from nv_contract import budget
 
 HERE=Path(__file__).resolve().parent
 
-def compile_lab(sdk,out,contract,pages=None):
+def compile_lab(sdk,out,contract,pages=None,diagnostic=False):
     p=contract['capacities'];exe=out/'nv-population'
+    nv_source=sdk/'source/ti/common/nv/nvocmp.c'
+    if diagnostic:
+        from r6_observer import patch_nv
+        nv_source=out/'nvocmp.c';shutil.copy2(sdk/'source/ti/common/nv/nvocmp.c',nv_source)
+        patch_nv(nv_source)
     command=['gcc','-std=c11','-O1','-g','-D_GNU_SOURCE','-DNV_LINUX','-DNVOCMP_POSIX_MUTEX',
              '-DDeviceFamily_CC26X4','-DNVOCMP_NVPAGES='+str(pages or contract['nvs_pages']),
              '-DTCLK_COUNT='+str(p['tc_devices']),'-DDEVICE_COUNT='+str(p['device_list']+1),
              '-DADDRESS_COUNT='+str(p['addresses']),'-DMINIMUM_FREE_BYTES='+str(0 if pages else contract['minimum_free_bytes']),
              '-I'+str(HERE),'-I'+str(sdk/'source'),'-I'+str(sdk/'source/ti/common/nv'),
-             str(sdk/'source/ti/common/nv/nvocmp.c'),str(sdk/'source/ti/common/nv/crc.c'),
+             str(nv_source),str(sdk/'source/ti/common/nv/crc.c'),
              str(HERE/'nv_linux.c'),str(HERE/'nv_population.c'),'-pthread','-o',str(exe)]
+    if diagnostic:command[1:1]=['-DT832_NVLAB_DIAG=1','-I'+str(out)]
     subprocess.run(command,check=True)
     return exe
 
@@ -37,8 +43,8 @@ def run(sdk,out):
     head=subprocess.check_output(['git','-C',str(sdk),'rev-parse','HEAD'],text=True).strip()
     if head!='6499c3f53fc5fb5806213be695450a7b43fbaf3d':raise ValueError('SDK pin mismatch')
     report={'sdk_commit':head,'real_algorithm_sha256':hashlib.sha256((sdk/'source/ti/common/nv/nvocmp.c').read_bytes()).hexdigest(),'profiles':{},'hardware_validated':False}
-    for profile in ('production-demand','capacity-400'):
-        contract=budget(profile);folder=out/profile;folder.mkdir();exe=compile_lab(sdk,folder,contract)
+    for profile,variant in ((p,v) for p in ('production-demand','capacity-400') for v in ('BASE','DIAG')):
+        contract=budget(profile);folder=out/(profile+'-'+variant);folder.mkdir();exe=compile_lab(sdk,folder,contract,diagnostic=variant=='DIAG')
         image=folder/'population.bin'
         seed=operation(exe,image,'seed');exercise=operation(exe,image,'exercise');verify=operation(exe,image,'verify')
         # Each subprocess is a real reopen: driver static state is not retained.
@@ -51,7 +57,7 @@ def run(sdk,out):
             result=operation(exe,damaged,'compact',cut)
             if result.get('power_cut')!=cut:raise ValueError('fault not reached')
             operation(exe,damaged,'verify')
-        report['profiles'][profile]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_verified':cuts}
+        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_verified':cuts}
     negative=out/'five-page-negative';negative.mkdir()
     exe=compile_lab(sdk,negative,budget('capacity-400'),pages=5)
     report['five_page_400_negative_control']=operation(exe,negative/'full.bin','repro')

@@ -2,6 +2,9 @@
 #include "nv_linux.h"
 #include "ti/common/nv/nvocmp.h"
 #include <string.h>
+#ifdef T832_NVLAB_DIAG
+#include "nv_r6_probe.h"
+#endif
 static NVINTF_nvFuncts_t api;
 static void require(uint8_t status,const char *op,unsigned index) {
     if(status){fprintf(stderr,"%s index=%u status=%u\n",op,index,status);exit(20+status);}
@@ -67,6 +70,17 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"compact"))require(api.compactNV(0),"compact",0);
     else return 2;
     unsigned free=api.getFreeNV();
+#ifdef T832_NVLAB_DIAG
+    if(t832R6Nv.sequence&1u)exit(65);
+    /* After a fresh read-only reopen, initialization snapshot may precede
+     * final ready state. Compare committed topology after mutation/compact. */
+    if(!strcmp(argv[1],"exercise") || !strcmp(argv[1],"compact")) {
+        unsigned estimated=0;
+        for(unsigned i=0;i<t832R6Nv.pages;i++)
+            if(i!=t832R6Nv.tail && (t832R6Nv.states[i]==0xFF || t832R6Nv.states[i]==0x7E || t832R6Nv.states[i]==0x7C))estimated+=2048-t832R6Nv.offsets[i];
+        if(estimated!=free || t832R6Nv.pages!=NVOCMP_NVPAGES || !t832R6Nv.ready)exit(66);
+    }
+#endif
     if(free<MINIMUM_FREE_BYTES){fprintf(stderr,"headroom=%u required=%u\n",free,MINIMUM_FREE_BYTES);return 62;}
     printf("{\"pages\":%u,\"tclk\":%u,\"free_bytes\":%u,\"physical_operations\":%u}\n",NVOCMP_NVPAGES,TCLK_COUNT,free,nv_lab_operations);
     return 0;

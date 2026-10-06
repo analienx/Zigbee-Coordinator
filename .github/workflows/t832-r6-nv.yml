@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: t832-r6-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   nv-lab:
     runs-on: ubuntu-22.04
@@ -43,6 +46,44 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {path: repo}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          path: sdk833
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+
+      - name: Apply minimal BASE or matched observational DIAG
+        env:
+          PROFILE: ${{ matrix.profile }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p build-evidence
+          python3 repo/firmware/t832/r6/apply_r6.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --evidence build-evidence/r6-patch.json
+          git -C sdk diff --check
+          git -C examples diff --check
+          git -C sdk add -N .
+          git -C sdk diff --binary > build-evidence/sdk.patch
+          git -C examples diff --binary > build-evidence/project-seed.patch
+          if [ "$VARIANT" = DIAG ]; then
+            python3 repo/firmware/t832/test_r5_pinned.py --sdk sdk
+            PAGES=$(jq -r .control.budget.nvs_pages build-evidence/r6-patch.json)
+            python3 repo/firmware/t832/r6/run_r6_host.py --sdk sdk --pages "$PAGES"
+          fi
+          python3 repo/firmware/t832/r6/audit_source.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --output build-evidence/source-gates.json
       - name: Install CCS 12.8.0 SimpleLink toolchain
         shell: bash
         run: |
@@ -129,40 +170,6 @@ jobs:
             echo "- CCS-bundled 1.21.0 redirected to standalone 1.21.1.3772 (SDK 8.32 requires >= 1.21.1)."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: TexasInstruments/simplelink-lowpower-f2-sdk
-          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
-          path: sdk
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: TexasInstruments/simplelink-lowpower-f2-sdk
-          ref: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
-          path: sdk833
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: TexasInstruments/simplelink-zstack-examples
-          ref: 87ff5b638b632050228a7504f35cf3b95581c278
-          path: examples
-
-      - name: Apply minimal BASE or matched observational DIAG
-        env:
-          PROFILE: ${{ matrix.profile }}
-          VARIANT: ${{ matrix.variant }}
-        run: |
-          set -euo pipefail
-          test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
-          mkdir -p build-evidence
-          python3 repo/firmware/t832/r6/apply_r6.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --evidence build-evidence/r6-patch.json
-          git -C sdk diff --check
-          git -C examples diff --check
-          git -C sdk add -N .
-          git -C sdk diff --binary > build-evidence/sdk.patch
-          git -C examples diff --binary > build-evidence/project-seed.patch
-          if [ "$VARIANT" = DIAG ]; then python3 repo/firmware/t832/test_r5_pinned.py --sdk sdk; fi
-          python3 repo/firmware/t832/r6/audit_source.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --output build-evidence/source-gates.json
       - name: Build pinned SDK libraries with TI documented CMake flow
         shell: bash
         run: |
