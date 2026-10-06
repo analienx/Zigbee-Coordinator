@@ -71,14 +71,21 @@ the intact sources, leaking ~one page permanently:
 Recomputed post-recovery free values match the hosted report exactly
 (1777 = 1500+18+18+223+18 over ACT pages; 1795 and 1993 likewise).
 
-## Fix direction (M2)
+## Fix direction (M2, revised after M3 cut-194 lesson)
 
-P1: mark `pgXdst`, not stale `tailPage`. P2: settle the CDST
-destination (complete the transfer when its compact headers prove the
-copy finished; erase it when headers are absent/torn, which proves
-cleanPage never ran; never erase on disagreement). P3: drop the
-unconditional resume-time maintenance compaction so a read-only reopen
-performs zero physical mutations in the normal path. Implemented as
-`t832-r8-nv-recovery-01` in `firmware/t832/r6/nv_recovery_fix.py`,
-applied identically to BASE/DIAG firmware sources and lab sources,
-fingerprinted by `audit_source.py` and `run_nv_lab.py`.
+P1: mark `pgXdst`, not stale `tailPage`. P2 (final): never trust the
+destination compact headers and never erase the destination. Refresh
+every page offset to its true data end in RAM (a reused destination
+keeps a smaller cursor that would hide live items and cause a false
+drain-erase), inactivate each destination copy that still has a live
+original elsewhere (verbatim copies; sole survivors kept), then let the
+caller re-compact exactly once per item. An earlier "complete the
+transfer" design was rejected: headers are also written when the copy
+itself was rejected, and a reused destination keeps earlier headers,
+so completion hid live originals (exhaustive cut-194: end cursor 16
+over a live anchor). P3: drop the unconditional resume-time maintenance
+compaction so a read-only reopen performs zero physical mutations in
+the normal path. Implemented as `t832-r8-nv-recovery-01` in
+`firmware/t832/r6/nv_recovery_fix.py`, applied identically to
+BASE/DIAG firmware sources and lab sources, fingerprinted by
+`audit_source.py` and `run_nv_lab.py`.
