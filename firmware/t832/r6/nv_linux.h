@@ -9,7 +9,7 @@ typedef struct {size_t sectorSize,regionSize;} NVS_Attrs;
 #define NVS_HANDLE ((NVS_Handle)1)
 #define NVOCMP_FLASHACCESS(err) ((void)(err));
 #define NVOCMP_ALERT(cond,message) ((void)(cond));
-#define NVOCMP_EXCEPTION(pg,err) fprintf(stderr,"NV exception: page=%u status=%u\n",(unsigned)(pg),(unsigned)(err));
+#define NVOCMP_EXCEPTION(pg,err) fprintf(stderr,"NV exception: status=%u\n",(unsigned)(err));
 #define NVOCMP_ASSERT(cond,message) do {if(!(cond)){fprintf(stderr,"NV invariant: %s\n",message);exit(80);}} while(0);
 void NV_LINUX_init(void);
 void NV_LINUX_save(void);
