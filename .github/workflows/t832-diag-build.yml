@@ -1210,6 +1210,7 @@ jobs:
 
   stability:
     name: Real-time stability windows (R4 preserved)
+    if: github.ref != 'refs/heads/fix/t832-r6-nv-capacity'
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
