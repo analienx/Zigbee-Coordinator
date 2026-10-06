@@ -55,6 +55,9 @@ int main(int argc,char **argv) {
         return 0;
     }
     require(init,"init",0);
+#ifdef T832_NVLAB_DIAG
+    if(t832R6Nv.stage!=8 || t832R6Nv.status!=init || !t832R6Nv.ready || t832R6Nv.pages!=NVOCMP_NVPAGES)exit(73);
+#endif
     if(!strcmp(argv[1],"repro")) {
         uint8_t byte=0;NVINTF_itemID_t startup=id(9,0);
         require(api.createItem(startup,1,&byte),"neutral-create",0);

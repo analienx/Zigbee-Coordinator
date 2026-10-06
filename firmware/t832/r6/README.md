@@ -26,7 +26,10 @@ reformat (`NVOCMP_RECOVER_FROM_COMPACT_FAILURE`) is OFF; it is a destructive
 75 child/device-list limit (+1 parent slot), four default binding slots,
 213 TI-derived address-manager entries. `capacity-400`: 400 TC records and
 485 addresses. `profiles.json` binds both, including 2.3 KiB other NV,
-25% live-data growth and two reserved compaction/headroom pages.
+25% live-data growth and three reserved compaction/headroom pages. The third
+page covers measured post-interruption fragmentation: seventeen pages left
+5,840 bytes in one 400-key recovery case, below the 6,017-byte growth gate.
+The resulting experimental layouts are eleven and eighteen pages.
 The estimate is a floor. GitHub Actions runs TI's actual unmodified NVOCMP
 algorithm on a Linux flash backend with synthetic table-sized records,
 full population, repeated updates, extra item create/update/delete, forced

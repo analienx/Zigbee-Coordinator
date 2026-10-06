@@ -5,7 +5,7 @@
   "sector_bytes": 2048,
   "page_metadata_bytes": 16,
   "item_header_bytes": 7,
-  "compaction_reserve_pages": 2,
+  "compaction_reserve_pages": 3,
   "other_nv_bytes": 2304,
   "growth_reserve_percent": 25,
   "profiles": {
