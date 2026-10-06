@@ -69,7 +69,7 @@ class NvCapacityContractTests(unittest.TestCase):
         self.assertIn("diag.nv.out_of_space_snapshot", apply_diag)
         self.assertIn("stage == 5u", runtime)
         self.assertIn("stage == 6u", runtime)
-        self.assertIn("free bytes", runtime)
+        self.assertIn("available bytes", runtime)
 
 
 if __name__ == "__main__":
