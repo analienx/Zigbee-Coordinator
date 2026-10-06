@@ -6,6 +6,17 @@
 >
 > It is intentionally separate from the incident history. The goal is to isolate **where the CC2674P10 hang is introduced**, not merely to produce another firmware that “seems stable”.
 
+> **Post-R5 amendment (2026-10-06):** the immediate implementation path is now governed by
+> [P10_R6_HARDENING_PLAN.md](./P10_R6_HARDENING_PLAN.md).
+>
+> R5 exposed a firmware-side NV write failure before the intended long-soak experiment.
+> The R6 plan makes the persistent-storage contract a hard Gate 0, separates capacity/NVS,
+> transport semantics and diagnostics into independent variants, and supersedes the earlier
+> assumption that `NVOCMP_NVPAGES 2 -> 5` was itself the leading defect.
+>
+> Until the R6 NV contract is bench-proven, the earlier T830-KCTRL/T832-KCTRL production
+> sequence below is **historical planning context, not flash authorization**.
+
 ---
 
 # 1. Current evidence that constrains the design
