@@ -715,6 +715,28 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "diag.nv.init_action",
         count=3,
     )
+    ex.replace(
+        nv,
+        "        NVOCMP_initNv(&NVOCMP_nvHandle);\n",
+        "        NVOCMP_initNv(&NVOCMP_nvHandle);\n"
+        "        T832Diag_nvEvent(5u, (uint16_t)NVOCMP_getFreeNvApi(),\n"
+        "            (uint16_t)(((uint16_t)NVOCMP_nvHandle.actPage << 8) |\n"
+        "                       (uint16_t)NVOCMP_nvHandle.tailPage));\n",
+        "diag.nv.capacity_snapshot",
+    )
+    ex.replace(
+        nv,
+        "          // Failure means there\'s no place to put this item\n"
+        "          NVOCMP_ALERT(false, \"Out of NV.\")\n"
+        "          err = (NVOCMP_failW != NVINTF_SUCCESS) ?\n",
+        "          // Failure means there\'s no place to put this item\n"
+        "          T832Diag_nvEvent(6u, (uint16_t)NVOCMP_getFreeNvApi(),\n"
+        "              (uint16_t)(((uint16_t)pNvHandle->actPage << 8) |\n"
+        "                         (uint16_t)pNvHandle->tailPage));\n"
+        "          NVOCMP_ALERT(false, \"Out of NV.\")\n"
+        "          err = (NVOCMP_failW != NVINTF_SUCCESS) ?\n",
+        "diag.nv.out_of_space_snapshot",
+    )
 
     return {
         "variant": VARIANT,
