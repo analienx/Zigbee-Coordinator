@@ -294,7 +294,7 @@ static void NPITLUART_eventCallBack(UART2_Handle handle, uint32_t event, uint32_
     for mutation_id in queue_ids:
         patch.record(mutation_id, nwk, "NWK queue value + compile assertion")
 
-    # Shared C/ISR stack; expand P10 NVOCMP/NVS storage for the 400-slot TC table.
+    # Shared C/ISR stack; preserve 5-page P10 NVS layout.
     linker = sdk / "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     text = linker.read_text(encoding="utf-8")
     for old in (
@@ -348,9 +348,8 @@ static void NPITLUART_eventCallBack(UART2_Handle handle, uint32_t event, uint32_
     version.write_text(text.replace(old_version, new_version, 1), encoding="utf-8")
     patch.record("build.mt_version_identity", version, "product id + CODE_REVISION_NUMBER bytes")
 
-    # The 8.33 project seed is internally inconsistent and too small for the
-    # 400-slot TC table: compiler says five NVOCMP pages while linker says two.
-    # T832-R6 explicitly uses sixteen 2-KiB pages (32 KiB).
+    # The 8.33 project seed is internally inconsistent: compiler says five
+    # NVOCMP pages while linker says two. T832 explicitly uses five.
     project = examples / "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec"
     syscfg = examples / "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg"
     if not project.exists() or not syscfg.exists():
@@ -358,23 +357,9 @@ static void NPITLUART_eventCallBack(UART2_Handle handle, uint32_t event, uint32_
     patch.replace_exact(
         "restore.project_seed_nvs_pages",
         project,
-        "-DNVOCMP_NVPAGES=5",
-        "-DNVOCMP_NVPAGES=16",
-        detail="project compiler NVS pages 5 -> 16 for 32-KiB R6 storage contract",
-    )
-    patch.replace_exact(
-        "restore.project_seed_nvs_region",
-        syscfg,
-        "NVS1.internalFlash.regionSize = 0x2800;\nNVS1.internalFlash.regionBase = 0xFD800;",
-        "NVS1.internalFlash.regionSize = 0x8000;\nNVS1.internalFlash.regionBase = 0xF8000;",
-        detail="P10 internal NVS region 0xFD800/0x2800 -> 0xF8000/0x8000",
-    )
-    patch.replace_exact(
-        "restore.project_seed_nvs_pages",
-        project,
         "--define=NVOCMP_NVPAGES=2",
-        "--define=NVOCMP_NVPAGES=16",
-        detail="project linker NVS pages 2 -> 16 for 32-KiB R6 storage contract",
+        "--define=NVOCMP_NVPAGES=5",
+        detail="project linker NVS pages 2 -> 5 to match compiler and 8.32 linker contract",
     )
 
     expected_ids = {m["id"] for m in manifest["mutations"]}
@@ -397,7 +382,6 @@ static void NPITLUART_eventCallBack(UART2_Handle handle, uint32_t event, uint32_
             "znp_cnf_opts": sha256_path(opts),
             "mt_version_c": sha256_path(version),
             "projectspec": sha256_path(project),
-            "syscfg": sha256_path(syscfg),
             "linker_cmd": sha256_path(linker),
         },
     }
