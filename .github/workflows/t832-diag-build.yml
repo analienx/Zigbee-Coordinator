@@ -5,6 +5,7 @@ on:
     branches:
       - codex/t832-diag-r0
       - exp/mr4u-p10-t832-diag-r0
+      - fix/t832-r6-nv-capacity
     paths:
       - ".github/workflows/t832-diag-build.yml"
       - "firmware/t832/**"
@@ -37,7 +38,7 @@ jobs:
           set -euo pipefail
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
-          python3 -m unittest repo/firmware/t832/test_diag.py -v
+          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py -v
           python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
           gcc -std=c11 -Wall -Wextra \
