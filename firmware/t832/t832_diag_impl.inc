@@ -1246,7 +1246,7 @@ void T832Diag_nvEvent(uint8_t stage, uint16_t b, uint16_t c)
   } else if (stage == 4u) {
     T832Diag_record(T832_DIAG_EV_NV_FAULT, 4u, b, 0u);
   } else if (stage == 5u) {
-    /* Boot-time capacity snapshot: b=free bytes, c=actPage<<8 | tailPage. */
+    /* Boot-time capacity snapshot: b=available bytes, c=actPage<<8 | tailPage. */
     T832Diag_record(T832_DIAG_EV_NV_EVENT, 5u, b, c);
   } else if (stage == 6u) {
     /* Out-of-space snapshot emitted only on the failing allocation path. */
