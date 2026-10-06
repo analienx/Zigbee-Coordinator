@@ -36,7 +36,9 @@ def check_generated(text,contract):
     # Match the actual backend/index rather than a random occurrence of base/size.
     arrays=re.findall(r'static char (flashBuf\d+)\[(0x[\da-f]+)\].*?location\((0x[\da-f]+)\)',text,re.I)
     attrs=re.search(r'NVSCC26XX_HWAttrs\s+nvsCC26XXHWAttrs\[\d+\]\s*=\s*\{\s*/\*.*?\*/\s*\{\s*\.regionBase\s*=\s*\(void \*\)\s*(\w+),\s*\.regionSize\s*=\s*(0x[\da-f]+)',text,re.S|re.I)
-    configs=re.search(r'const NVS_Config NVS_config\[\d+\]\s*=\s*\{(.*?)\n\};',text,re.S)
+    # TI's generated NVS_config dimension is CONFIG_NVS_COUNT, whereas the
+    # internal backend attribute array uses a literal integer dimension.
+    configs=re.search(r'const NVS_Config NVS_config\[\w+\]\s*=\s*\{(.*?)\n\};',text,re.S)
     if not attrs or not configs:raise ValueError('generated internal NVS backend missing')
     name,size=attrs.groups()
     if (name,hex(contract['nvs_bytes']),hex(contract['nvs_base'])) not in [(n,s.lower(),b.lower()) for n,s,b in arrays]:raise ValueError('generated flash allocation mismatch')

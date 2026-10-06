@@ -25,6 +25,11 @@ const NVS_Config NVS_config[1] = {{
 {{ .fxnTablePtr = &NVSCC26XX_fxnTable, .object = &nvsCC26XXObjects[0], .hwAttrs = &nvsCC26XXHWAttrs[0] }}
 }};'''
         check_generated(text,c)
+        generated=text.replace('const NVS_Config NVS_config[1]', '#define CONFIG_NVS_COUNT 2\nconst NVS_Config NVS_config[CONFIG_NVS_COUNT]')
+        check_generated(generated,c)
+        for changed in (generated.replace('nvsCC26XXObjects[0]', 'nvsCC26XXObjects[1]'),
+                        generated.replace(size, '0x2800'), generated.replace(base, '0xfd800')):
+            with self.assertRaises(ValueError):check_generated(changed,c)
         with self.assertRaises(ValueError):check_generated(text.replace('NVSCC26XX_fxnTable','NVSSPI25X_fxnTable'),c)
         check_map(f' FLASH_NV {c["nvs_base"]:08x} {c["nvs_bytes"]:08x} 00000000 {c["nvs_bytes"]:08x}',c)
         with self.assertRaises(ValueError):check_map(' FLASH_NV 000fd800 00002800 00000000 00002800',c)
