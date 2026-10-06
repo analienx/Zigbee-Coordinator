@@ -102,15 +102,15 @@ R6 is ready for the next controlled hardware upload when all of these pass:
 - NV telemetry hooks linked;
 - host diagnostic harness;
 - exact build identity/decoder compatibility;
-- **NV fixture lifecycle**:
-  - boot an existing-network fixture;
-  - read an existing item;
-  - update an existing item;
-  - create a new item;
-  - force/trigger compaction;
-  - reboot;
-  - verify all expected items persist;
-  - verify non-zero write headroom remains.
+- current backup capacity check: 104 devices / 103 link keys fit below the
+  diagnostic 112-slot TCLK ceiling with only nine empty slots pre-created;
+- exact SLZB management container round-trip/CRC/no-NV-overlap test.
+
+A synthetic NVOCMP lifecycle harness is useful follow-up evidence but is **not a
+flash gate**. TI's published SDK exposes `NV_LINUX` hooks but does not ship the
+Linux backing implementation in the pinned tree; inventing a storage emulator
+would add a new model of the NV driver instead of proving the real P10 path.
+The decisive write test is therefore the immediate post-flash hardware smoke.
 
 No 72-hour soak is required before the next diagnostic flash.
 
@@ -120,11 +120,13 @@ No 72-hour soak is required before the next diagnostic flash.
 2. stop Z2M and obtain sole P10 ownership;
 3. upload the exact R6 image once;
 4. verify R6 identity and SYS ping/version;
-5. immediately verify NV:
-   - existing read;
-   - neutral update;
-   - new temporary diagnostic item if the MT surface permits it;
-   - free-space telemetry remains sane;
+5. immediately verify NV on the real P10 before Z2M owns it:
+   - read STARTUP_OPTION (or another known existing item);
+   - write the same neutral value and require success;
+   - read it back and require equality;
+   - if the extended NV surface permits a disposable test item without
+     disturbing coordinator semantics, create/read/update it once;
+   - require sane available-space/page telemetry and no stage-6 NV fault;
 6. start the original network;
 7. verify real AF/ZDO/SYS and device traffic;
 8. begin active reproduction/stress of the original coordinator hang.
