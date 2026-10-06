@@ -72,10 +72,10 @@ the entire NV region.
 Minimum TCLK allocation at 112 slots:
 
 ```
-112 * 27 = 3,456 bytes
+112 * 27 = 3,024 bytes
 ```
 
-That leaves 6,784 gross bytes for the rest of NV before compaction overhead.
+That leaves 7,216 gross bytes for the rest of NV before compaction overhead.
 
 This is a **diagnostic-build limit**, not a claim that 112 is the ideal final
 production capacity.
