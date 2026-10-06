@@ -316,7 +316,6 @@ jobs:
           GEN=$(find ccs-workspace -type f -name ti_drivers_config.c -print -quit)
           test -n "$GEN"
           python3 repo/firmware/t832/r6/package_r6.py --profile "$PROFILE" --variant "$VARIANT" --generated "$GEN" --macros build-evidence/effective-macros.txt --map "$MAP" --hex build-evidence/candidate.hex --elf "$OUT" --header sdk/source/ti/devices/cc13x4_cc26x4/inc/hw_ccfg.h --patch build-evidence/r6-patch.json --lab nv-lab-evidence/nv-lab-report.json --out bundle
-          cp build-evidence/source-gates.json build-evidence/sdk.patch build-evidence/project-seed.patch bundle/provenance/
           (cd bundle && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

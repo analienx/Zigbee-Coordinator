@@ -32,9 +32,12 @@ def base(sdk,examples,profile):
     ex.replace(project,'--define=NVOCMP_NVPAGES=2',f'--define=NVOCMP_NVPAGES={c["nvs_pages"]}','r6.linker_pages')
     linker=sdk/'source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd'
     ex.replace(linker,'#define NVOCMP_NVPAGES          5',f'#define NVOCMP_NVPAGES          {c["nvs_pages"]}','r6.linker_region')
-    ex.replace(seed/'znp.syscfg','    NVS1.internalFlash.regionBase = 0xFD800;\n    NVS1.internalFlash.regionSize = 0x2800;',
-               f'    NVS1.internalFlash.regionBase = {hex(c["nvs_base"])};\n    NVS1.internalFlash.regionSize = {hex(c["nvs_bytes"])};',
-               'r6.generated_nvs_region')
+    cfg=seed/'znp.syscfg';raw=cfg.read_bytes();newline=b'\r\n' if b'\r\n' in raw else b'\n'
+    old=b'    NVS1.internalFlash.regionBase = 0xFD800;\n    NVS1.internalFlash.regionSize = 0x2800;'.replace(b'\n',newline)
+    new=f'    NVS1.internalFlash.regionBase = {hex(c["nvs_base"])};\n    NVS1.internalFlash.regionSize = {hex(c["nvs_bytes"])};'.encode().replace(b'\n',newline)
+    if raw.count(old)!=1:raise ValueError('pinned P10 SysConfig region mismatch')
+    result=raw.replace(old,new);cfg.write_bytes(result)
+    ex.edits.append({'label':'r6.generated_nvs_region','path':str(cfg),'before_sha256':hashlib.sha256(raw).hexdigest(),'after_sha256':hashlib.sha256(result).hexdigest()})
     version=sdk/'source/ti/zstack/mt/mt_version.c'
     defines['NVOCMP_NVPAGES']=c['nvs_pages']
     assertions='\n#include "nwk_globals.h"\n'+''.join(f'_Static_assert({k} == {v}, "R6 effective {k}");\n' for k,v in defines.items())
@@ -51,14 +54,14 @@ def base(sdk,examples,profile):
 def apply(sdk,examples,profile,variant):
     if variant=='DIAG':
         evidence=apply_diag(sdk,examples,HERE/'profiles.json',base_apply=lambda s,e,m:base(s,e,profile),
-                            revision=8320004,pristine_transport=True)
+                            revision=8320012,pristine_transport=True)
         evidence['variant']='T832-R6-DIAG'
         from r6_observer import apply_observer
         evidence['r6_observer']=apply_observer(sdk)
     else:
         evidence=base(sdk,examples,profile)
         version=sdk/'source/ti/zstack/mt/mt_version.c'
-        ex=Exact();ex.replace(version,'CODE_REVISION_NUMBER >>','8320003u >>','r6.base_revision',count=4)
+        ex=Exact();ex.replace(version,'CODE_REVISION_NUMBER >>','8320011u >>','r6.base_revision',count=4)
         evidence['edits']+=ex.edits
     return evidence
 

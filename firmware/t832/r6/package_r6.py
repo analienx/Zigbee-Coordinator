@@ -37,6 +37,10 @@ def package(a):
     for path,suffix in ((a.hex,'.hex'),(a.elf,'.out'),(a.map,'.map')):shutil.copy2(path,a.out/(stem+suffix))
     provenance=a.out/'provenance';provenance.mkdir()
     for path in (a.generated,a.macros,a.patch,a.lab,a.header):shutil.copy2(path,provenance/path.name)
+    for name in ('source-gates.json','sdk.patch','project-seed.patch','ccs-build.log','ti_zstack_config.h'):
+        path=a.patch.parent/name
+        if not path.is_file():raise ValueError('missing build provenance '+name)
+        shutil.copy2(path,provenance/name)
     (provenance/'nv-contract.json').write_text(json.dumps(c,indent=2)+'\n')
     (provenance/'ccfg-gate.json').write_text(json.dumps(cfg,indent=2)+'\n')
     source=Path(__file__).resolve().parent.parent
@@ -49,7 +53,7 @@ def package(a):
               'board':'SLZB-06P10 / CC2674P10; UART and DIO15 BSL; bench acceptance pending',
               'toolchain':{'ccs':'12.8.0.00012','ti_clang':'3.2.2.LTS','sysconfig':'1.21.1.3772','xdc':'3.62.01.16'},
               'sram_unused_bytes':rows['SRAM']['unused'],'container_segments':segments,'erased_gap_padding_bytes':padding,
-              'sys_version_revision':8320004 if a.variant=='DIAG' else 8320003,
+              'sys_version_revision':8320012 if a.variant=='DIAG' else 8320011,
               'debug_build_id':int(os.environ['GITHUB_SHA'][:8],16) if a.variant=='DIAG' else None,
               'hardware_validated':False,'flash_authorized':False,
               'artifacts':{str(p.relative_to(a.out)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in a.out.rglob('*') if p.is_file()}}
