@@ -134,7 +134,9 @@ class HwQualTests(unittest.TestCase):
             with self.assertRaises(Failed) as ctx:
                 verify_small(root)
             self.assertIn('one-shot', str(ctx.exception))
-            result2 = verify(root, resal_reason='recheck', nvs_base=BASE, nvs_bytes=BYTES)
+            seal = json.loads((Path(root) / 'seal.json').read_text())
+            result2 = verify(root, resal_reason='recheck', nvs_base=BASE, nvs_bytes=BYTES,
+                             vendor_ref_sha256=seal['vendor_ref_sha256'])
             self.assertEqual(result2['reseal_reason'], 'recheck')
 
     def test_dump_hash_mismatch_fails(self):
