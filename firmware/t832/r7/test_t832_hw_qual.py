@@ -49,7 +49,7 @@ class Bundle:
         seal = {'base_slzb_sha256': sha(images['base']),
                 'diag_slzb_sha256': sha(images['diag']),
                 'manifest_sha256': sha(b'manifest'),
-                'vendor_ref_sha256': VENDOR_REF_SHA256}
+                'vendor_ref_sha256': sha(images['vendor'])}
         (self.root / 'dut.json').write_text(json.dumps({'model': model, 'mcu': mcu}))
         (self.root / 'seal.json').write_text(json.dumps(seal))
         tail = b'\x00' * (DUMP_SIZE - (BASE + BYTES))
@@ -102,7 +102,9 @@ class Bundle:
 
 
 def verify_small(bundle):
-    return verify(bundle, nvs_base=BASE, nvs_bytes=BYTES)
+    seal = json.loads((Path(bundle) / 'seal.json').read_text())
+    return verify(bundle, nvs_base=BASE, nvs_bytes=BYTES,
+                  vendor_ref_sha256=seal['vendor_ref_sha256'])
 
 
 class HwQualTests(unittest.TestCase):
@@ -178,6 +180,12 @@ class HwQualTests(unittest.TestCase):
             with self.assertRaises(Incomplete):
                 verify_small(root)
             self.assertFalse((Path(root) / QUAL_SEAL).is_file())
+
+    def test_production_default_pins_real_vendor_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write()
+            with self.assertRaises(Failed):
+                verify(root, nvs_base=BASE, nvs_bytes=BYTES)
 
     def test_plan_command(self):
         self.assertEqual(main(['plan']), 0)

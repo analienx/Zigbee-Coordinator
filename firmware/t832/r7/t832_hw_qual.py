@@ -81,12 +81,12 @@ def check_dut(bundle):
     return dut
 
 
-def check_seal_expectations(bundle):
+def check_seal_expectations(bundle, vendor_ref_sha256=VENDOR_REF_SHA256):
     seal = _load_json(bundle / "seal.json")
     for key in ("base_slzb_sha256", "diag_slzb_sha256", "manifest_sha256"):
         if key not in seal:
             raise Incomplete("seal.json lacks %r" % key)
-    if seal.get("vendor_ref_sha256", VENDOR_REF_SHA256) != VENDOR_REF_SHA256:
+    if seal.get("vendor_ref_sha256", vendor_ref_sha256) != vendor_ref_sha256:
         raise Failed("vendor rollback reference hash mismatch")
     for name, key in (("base", "base_slzb_sha256"), ("diag", "diag_slzb_sha256")):
         image = bundle / "images" / ("%s.slzb.bin" % name)
@@ -225,14 +225,15 @@ def check_phase(events, phase):
             "counters": counters[0], "writes": len(writes)}
 
 
-def verify(bundle, resal_reason=None, nvs_base=VENDOR_NVS_BASE, nvs_bytes=VENDOR_NVS_BYTES):
+def verify(bundle, resal_reason=None, nvs_base=VENDOR_NVS_BASE, nvs_bytes=VENDOR_NVS_BYTES,
+         vendor_ref_sha256=VENDOR_REF_SHA256):
     bundle = Path(bundle)
     seal_path = bundle / QUAL_SEAL
     if seal_path.is_file() and resal_reason is None:
         raise Failed("bundle already sealed (one-shot semantics); "
                      "re-verify only with an explicit --reseal reason")
     dut = check_dut(bundle)
-    seal = check_seal_expectations(bundle)
+    seal = check_seal_expectations(bundle, vendor_ref_sha256=vendor_ref_sha256)
     check_dumps(bundle, nvs_base=nvs_base, nvs_bytes=nvs_bytes)
     events = check_transcript(bundle)
     phases = {}
