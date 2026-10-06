@@ -39,7 +39,7 @@ class Bundle:
         fields.setdefault('seq', self.seq)
         return fields
 
-    def write(self, model='SLZB-06P10', mcu='CC2674P10', key='k' * 64,
+    def write(self, model='SLZB-06P10', mcu='CC2674P10', key=b'k' * 64,
               counters=((7, 9), (7, 10)), tamper=None, extra=(), drop=()):
         images = {}
         for name, app in self.apps.items():
