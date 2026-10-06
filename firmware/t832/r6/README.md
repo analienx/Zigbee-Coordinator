@@ -3,6 +3,14 @@
 R5 is withdrawn from deployment. Production remains on restored vendor
 20240716 over TCP; this assignment performs no HA, radio or ESP changes.
 
+This branch is a separate NVLAB/minimal-control experiment. Latest PR #40
+proposes a fast 112-key diagnostic with the original five-page geometry.
+Do not silently replace that deployed-layout proposal with these enlarged
+profiles: moving NVS requires an independently proved migration/restore.
+The lab also characterizes five-page/112-key operation across explicit
+synthetic child-table occupancies. These assumptions are not a replay of
+the private household backup and do not settle real-device sufficiency.
+
 R6 BASE starts from pristine pinned TI 8.32 and the pinned P10 project seed.
 Only restore/key-management APIs, explicit persistent capacities and the
 coherent compiler/linker/SysConfig NV allocation change. UART completion,
@@ -42,7 +50,9 @@ hashes and provenance. Format equivalence does not prove uploader behavior.
 
 ## R6 diagnostic semantics
 
-Capability bit28 identifies pristine TI callback completion. Clear bit5:
+Capability bit28 identifies pristine TI callback completion; bit29 identifies
+the deferred NV POD topology. Bit14's legacy timed NV events are absent.
+Clear bit5:
 frame-bound wire-finished completion is unavailable on this baseline.
 The original write callback retains NPI completion and shadow ownership
 ends there. Public TX_BEGIN/TX_FINISHED events count physical UART activity

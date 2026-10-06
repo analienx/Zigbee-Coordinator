@@ -269,7 +269,8 @@
     "27": "task mode/stack stats"
   },
   "r6_capabilities": {
-    "28": "Pristine TI driver-callback completion; frame-bound wire finish unavailable (bit5 clear)"
+    "28": "Pristine TI driver-callback completion; frame-bound wire finish unavailable (bit5 clear)",
+    "29": "NV POD topology/counters sampled after serialized API boundaries; legacy timed NV capability14 absent"
   },
   "r6_semantics": {
     "NV_TOPOLOGY": "a0:b pages,c ready; a1:b head,c tail; a2:b active,c offset",

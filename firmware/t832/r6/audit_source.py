@@ -10,6 +10,21 @@ from nv_contract import budget
 
 def pristine(sdk,path):return subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+path],text=True)
 def audit(a):
+    allowed={'source/ti/zstack/apps/znp/znp_cnf.opts','source/ti/zstack/mt/mt_version.c',
+             'source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd'}
+    if a.variant=='DIAG':
+        allowed|={'source/ti/common/nv/'+n for n in ('nvocmp.c','nv_r6_probe.h','nv_r6_probe.inc')}
+        allowed|={'source/ti/zstack/mt/'+n for n in ('mt.c','mt.h','mt_debug.c','mt_task.c','mt_zdo.c','t832_diag.h','t832_diag_impl.inc','t832_diag_r5.inc','t832_diag_nwk.inc','t832_fatal.h','nv_r6_probe.h','r6_nv_export.inc')}
+        allowed|={'source/ti/zstack/npi/'+n for n in ('npi_task.c','npi_client_mt.c','npi_tl_uart.c')}
+        allowed|={'source/ti/zstack/startup/main.c','source/ti/zstack/stack/api/zstacktask.c',
+                  'kernel/tirtos7/packages/ti/sysbios/runtime/Error.c','kernel/tirtos7/packages/ti/sysbios/runtime/t832_fatal.h',
+                  'kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/Hwi.c','kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/t832_fatal.h'}
+    changed=set(subprocess.check_output(['git','-C',str(a.sdk),'diff','--name-only'],text=True).splitlines())
+    changed|=set(subprocess.check_output(['git','-C',str(a.sdk),'ls-files','--others','--exclude-standard'],text=True).splitlines())
+    if changed!=allowed:raise ValueError('unclassified or missing SDK delta '+str(sorted(changed^allowed)))
+    seeds=set(subprocess.check_output(['git','-C',str(a.examples),'diff','--name-only'],text=True).splitlines())
+    prefix='examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/'
+    if seeds!={prefix+'znp.syscfg',prefix+'ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec'}:raise ValueError('unclassified project seed delta')
     uart='source/ti/zstack/npi/npi_tl_uart.c';actual=(a.sdk/uart).read_text();original=pristine(a.sdk,uart)
     cb=function(actual,'NPITLUART_writeCallBack')
     if a.variant=='DIAG':

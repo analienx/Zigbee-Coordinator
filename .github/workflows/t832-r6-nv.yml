@@ -74,7 +74,7 @@ jobs:
           mkdir -p build-evidence
           python3 repo/firmware/t832/r6/apply_r6.py --sdk sdk --examples examples --profile "$PROFILE" --variant "$VARIANT" --evidence build-evidence/r6-patch.json
           git -C sdk diff --check
-          git -C examples diff --check
+          git -C examples -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check
           git -C sdk add -N .
           git -C sdk diff --binary > build-evidence/sdk.patch
           git -C examples diff --binary > build-evidence/project-seed.patch

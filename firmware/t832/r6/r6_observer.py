@@ -69,6 +69,8 @@ def apply_observer(sdk):
                '    T832Diag_uartWriteComplete((uint16_t)size);','r6.write_callback_observer')
     ex.replace(impl,'      T832_DIAG_CAP_RX_OVERFLOW | T832_DIAG_CAP_TX_FINISHED |',
                '      T832_DIAG_CAP_RX_OVERFLOW | (1u << 28) |','r6.callback_semantics_capability')
+    ex.replace(impl,'      T832_DIAG_CAP_NV_COMPACT | T832_DIAG_CAP_AF_AGE |',
+               '      (1u << 29) | T832_DIAG_CAP_AF_AGE |','r6.pod_nv_capability')
     ex.replace(impl,'void T832Diag_exportPoll(void)', '#include "r6_nv_export.inc"\n\nvoid T832Diag_exportPoll(void)','r6.nv.deferred_export')
     ex.replace(impl,'  T832Diag_sampleR5(now);','  T832Diag_sampleR5(now);\n  T832R6Nv_poll(now);','r6.nv.sample_before_gates')
     return edits+ex.edits

@@ -61,6 +61,30 @@ def run(sdk,out):
     negative=out/'five-page-negative';negative.mkdir()
     exe=compile_lab(sdk,negative,budget('capacity-400'),pages=5)
     report['five_page_400_negative_control']=operation(exe,negative/'full.bin','repro')
+    # Characterize PR #40's preserved-geometry proposal without pretending
+    # guessed table occupancy is a household fixture. All TCLK slots exist;
+    # 104 addresses models the published device count; child NV occupancy
+    # varies explicitly. Results are evidence, not a hardware release gate.
+    report['preserved_five_page_112_characterization']=[]
+    for child_records in (4,14,20,36,50,76):
+        folder=out/f'five-page-112-children-{child_records}';folder.mkdir()
+        contract=budget('production-demand')
+        contract['capacities']=dict(contract['capacities'],tc_devices=112,device_list=child_records-1,addresses=104)
+        executable=compile_lab(sdk,folder,contract,pages=5)
+        image=folder/'population.bin';env=dict(os.environ,NVLAB_IMAGE=str(image));env.pop('NVLAB_CUT_OP',None)
+        seed=subprocess.run([str(executable),'seed'],env=env,capture_output=True,text=True,timeout=30)
+        row={'tclk_slots':112,'addresses':104,'child_records':child_records,'other_payload_bytes':1600,
+             'seed_returncode':seed.returncode,'seed_status':seed.stderr.strip(),
+             'synthetic_assumptions_only':True,'hardware_validated':False}
+        if seed.returncode==0:
+            row['seed']=json.loads(seed.stdout)
+            lifecycle=subprocess.run([str(executable),'exercise'],env=env,capture_output=True,text=True,timeout=30)
+            row['lifecycle']={'returncode':lifecycle.returncode,'status':lifecycle.stderr.strip()}
+            if lifecycle.returncode==0:
+                row['lifecycle']['result']=json.loads(lifecycle.stdout);row['reopen']=operation(executable,image,'verify')
+            elif lifecycle.returncode not in (21,25):raise RuntimeError('unexpected characterization lifecycle error '+lifecycle.stderr)
+        elif seed.returncode!=21:raise RuntimeError('unexpected characterization failure: '+seed.stderr)
+        report['preserved_five_page_112_characterization'].append(row)
     (out/'nv-lab-report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 
