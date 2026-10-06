@@ -12,7 +12,7 @@ execution:
   host_specialist: explicit-user-authorized USB/Zigbee coordinator hardware operations only; never use local execution as build/test/verification evidence
 
 executor:
-  environment: windows_notebook
+  environment: github_hosted_actions
   runtime: github_actions
   interface: github_actions
   management_paths:
