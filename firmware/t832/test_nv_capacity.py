@@ -62,6 +62,15 @@ class NvCapacityContractTests(unittest.TestCase):
         self.assertIn("128", rationale)
         self.assertIn("vendor-compatible", rationale)
 
+    def test_r6_nv_telemetry_hooks_present(self):
+        apply_diag = (HERE / "apply_diag.py").read_text(encoding="utf-8")
+        runtime = (HERE / "t832_diag_impl.inc").read_text(encoding="utf-8")
+        self.assertIn("diag.nv.capacity_snapshot", apply_diag)
+        self.assertIn("diag.nv.out_of_space_snapshot", apply_diag)
+        self.assertIn("stage == 5u", runtime)
+        self.assertIn("stage == 6u", runtime)
+        self.assertIn("free bytes", runtime)
+
 
 if __name__ == "__main__":
     unittest.main()
