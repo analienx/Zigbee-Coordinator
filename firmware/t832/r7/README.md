@@ -1,8 +1,9 @@
 # T832 R7 — restore the audited vendor NVS extent
 
-This candidate is for bench review. No household flash is authorized by its
-manifest. The public firmware repository builds and tests only in GitHub-hosted
-Actions against the exact candidate SHA.
+This candidate is for review and the established supervised coordinator flash
+procedure. Its manifest records build evidence, not a live deployment receipt.
+The public firmware repository builds and tests only in GitHub-hosted Actions
+against the exact candidate SHA.
 
 ## Forensic finding
 
@@ -35,8 +36,10 @@ SysConfig and actual linked NVS driver attributes/runtime clamp. It retains
 400 TCLK slots (also observed by read-only vendor NV length boundaries),
 75 device slots (+one parent) and four binding slots; TI derives 485 addresses.
 It starts from the pristine pinned TI baseline, with matched BASE and DIAG,
-using the already reviewed deferred NV recorder. Destructive compaction
-reformat remains disabled. The minimal debug follow-up uses distinct SYS revisions
+using the already reviewed deferred NV recorder. The optional destructive
+compaction-failure reformat remains disabled; inherited TI startup cleanup paths
+are unchanged and are not claimed to fail closed on every malformed topology.
+The minimal debug follow-up uses distinct SYS revisions
 BASE8320031 and DIAG8320032 (the original R7 used8320021/8320022).
 Recovery duplicate settling now verifies bounds, both CRCs and payload equality
 before inactivation. Hosted post-cut writes verify all saved records and their
@@ -58,26 +61,28 @@ not just the generated map. Existing recorder, protocol, decoder and recovery
 ordering regressions remain required. Symbols, HEX, BIN, map, generated files,
 schema, collector and hashes are packaged together.
 
-Known interrupted-compaction recovery counterexamples remain explicit negative
-controls; a successful hosted run is not power-loss or electrical validation.
-The first R7 hosted run also exposed a post-cut append reserve of 1,777 B,
-below the unchanged 2,048-B gate. This is reported as failed recovery acceptance,
-with all saved records verified on an immutable-copy reopen; the reserve is
-not lowered to make that interruption pass. Normal lifecycle gates stay strict.
+The original R7 hosted run exposed interrupted-compaction recovery failures,
+including a 1,777-B append reserve below the unchanged 2,048-B gate. R8 addresses
+those cases, and this follow-up requires every tested interruption to recover,
+write, preserve all saved records and reopen successfully. The reserve gate is
+unchanged. Hosted tests exercise the pinned driver against synthetic flash;
+they do not claim live coordinator validation.
 The Linux backend does not execute the complete TI stack or reproduce private
 vendor pages. Exact inherited-page and vendor item-schema compatibility,
-boot read/write/reboot behavior, security counters and radio operation still
-require a sacrificial P10. No household backup or key enters public CI.
+boot read/write/reboot behavior, security counters and radio operation remain
+checks on the existing coordinator through the established backup and recovery
+procedure. A spare board is not a prerequisite. No household backup or key enters
+public CI.
 
 ## Before any household candidate deployment
 
-Keep production on the vendor image. Require a verified current original-network
-restore/readback, cold backup and counters above the highest emitted values.
+Before the next supervised flash, retain a verified current original-network
+readback, cold backup and counters above the highest emitted values.
 Do not use BDB mode0 to hide a missing NIB, wrong IEEE or wrong key. Prove uploader
 erase/program ranges and a complete rollback/restore receipt. Do not form a
 replacement network, erase NV, touch MG26, or use a reset/restore retry loop.
-Validate BASE then DIAG on sacrificial hardware with synthetic state before
-using household state. Capture diagnostics before recovery, including init
+Use the DIAG candidate for the minimum working debug path; BASE remains its
+matched control image. Capture diagnostics before recovery, including init
 action, page topology, request size, deepest status and first failure.
 
 For raw evidence use the bundled manifest-bound `decode_raw.py`; report identity

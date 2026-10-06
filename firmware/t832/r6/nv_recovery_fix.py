@@ -1,4 +1,4 @@
-"""T832 R8 fail-safe power-cut recovery for pinned TI NVOCMP.
+"""T832 R8 bounded power-cut recovery changes for pinned TI NVOCMP.
 
 M1 root cause (R7 SHA 3d8129d, hosted run 37494326769, TI SDK 8.32 pin
 6499c3f53fc5fb5806213be695450a7b43fbaf3d, nvocmp.c LF sha256
@@ -40,13 +40,12 @@ then copies every item exactly once. Headers that disagree with the
 topology simply reconcile to nothing and the re-compaction duplicates
 but cannot lose data.
 
-P3 (read-only reopen mutation): NORMAL_RESUME runs a full maintenance
-compaction whenever the active page tail item is complete, so every
-healthy reopen rewrites page states/modes (persisted per operation).
-A fresh-process read-only reopen must perform zero physical mutations
-in the normal path, and on-demand (update-path) compaction already
-self-regulates space, so the unconditional resume-time compaction is
-removed. Genuine tail healing (FOLLOWBIT set) is untouched.
+P3 (read-only fixture reopen mutation): NORMAL_RESUME's fallback compacts
+when NVOCMP_readHeader did not recognize the tail signature (FOLLOWBIT
+clear). FOLLOWBIT denotes a recognized signature, not a torn item. The
+fixture reaches that fallback; removing it defers this maintenance to
+on-demand update-path compaction. Recognized-header processing remains
+unchanged. Hosted cut coverage does not prove every malformed-tail case.
 
 Safety properties of the patch: no NV erase/reformat primitive is
 added (NVOCMP_eraseNvApi/RECOVER_FROM_COMPACT_FAILURE stay absent),
@@ -90,8 +89,8 @@ P1_NEW = _lines(
     '        action = NVOCMP_NORMAL_RESUME;',
 )
 
-# P3: drop the unconditional resume-time maintenance compaction. Healing a
-# torn tail item (FOLLOWBIT set) stays; a complete tail item needs nothing.
+# P3: defer missing-signature fallback compaction to the update path.
+# Recognized-header (FOLLOWBIT set) processing remains unchanged.
 P3_OLD = _lines(
     '          if(iHdr.stats & NVOCMP_FOLLOWBIT)',
     '          {',
@@ -108,10 +107,10 @@ P3_OLD = _lines(
     '          }',
 )
 P3_NEW = _lines(
-    '          /* ' + MARKER + ' P3: no maintenance compaction on resume. A',
-    '             complete tail item needs no action; on-demand compaction',
-    '             still self-regulates space. This keeps a read-only reopen',
-    '             free of physical mutations in the normal path. */',
+    '          /* ' + MARKER + ' P3: defer missing-signature fallback',
+    '             compaction to the update path. FOLLOWBIT identifies a',
+    '             recognized header signature; its processing stays below.',
+    '             Hosted fixture reopen performs no physical mutations. */',
     '          if(iHdr.stats & NVOCMP_FOLLOWBIT)',
     '          {',
     '            status = NVOCMP_findItem(pNvHandle, pNvHandle->actPage, pNvHandle->actOffset - NVOCMP_ITEMHDRLEN - iHdr.len,',
