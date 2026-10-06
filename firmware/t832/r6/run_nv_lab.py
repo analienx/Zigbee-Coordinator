@@ -14,10 +14,13 @@ HERE=Path(__file__).resolve().parent
 
 def compile_lab(sdk,out,contract,pages=None,diagnostic=False):
     p=contract['capacities'];exe=out/'nv-population'
-    nv_source=sdk/'source/ti/common/nv/nvocmp.c'
+    from nv_recovery_fix import apply_fix as apply_recovery_fix,verify_fixed as verify_recovery_fixed,FIX_ID as RECOVERY_FIX_ID
+    nv_source=out/'nvocmp.c';shutil.copy2(sdk/'source/ti/common/nv/nvocmp.c',nv_source)
+    fix_edits=apply_recovery_fix(nv_source)
+    fix_fingerprint=verify_recovery_fixed(nv_source.read_text())
+    if len(fix_edits)!=4 or fix_fingerprint['fix_id']!=RECOVERY_FIX_ID:raise ValueError('recovery fix not applied to lab source')
     if diagnostic:
         from r6_observer import patch_nv
-        nv_source=out/'nvocmp.c';shutil.copy2(sdk/'source/ti/common/nv/nvocmp.c',nv_source)
         patch_nv(nv_source)
     command=['gcc','-std=c11','-O1','-g','-D_GNU_SOURCE','-DNV_LINUX','-DNVOCMP_POSIX_MUTEX',
              '-DDeviceFamily_CC26X4','-DNVOCMP_NVPAGES='+str(pages or contract['nvs_pages']),
@@ -28,6 +31,7 @@ def compile_lab(sdk,out,contract,pages=None,diagnostic=False):
              str(HERE/'nv_linux.c'),str(HERE/'nv_population.c'),'-pthread','-o',str(exe)]
     if diagnostic:command[1:1]=['-DT832_NVLAB_DIAG=1','-I'+str(out)]
     subprocess.run(command,check=True)
+    (out/'recovery-fix.json').write_text(json.dumps(fix_fingerprint,indent=2)+'\n')
     return exe
 
 def operation(exe,image,verb,cut=None):
@@ -54,23 +58,42 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
         exercise=operation(exe,image,'exercise');verify=operation(exe,image,'verify')
         operation(exe,image,'anchor')
         operation(exe,image,'churn')
+        readonly=folder/'readonly-reopen.bin';shutil.copyfile(image,readonly)
+        readonly_before=hashlib.sha256(readonly.read_bytes()).hexdigest()
+        operation(exe,readonly,'verify')
+        readonly_after=hashlib.sha256(readonly.read_bytes()).hexdigest()
+        readonly_unchanged=(readonly_before==readonly_after)
+        if not readonly_unchanged:raise ValueError('read-only reopen mutated '+profile+'-'+variant)
         # Each subprocess is a real reopen: driver static state is not retained.
         baseline=folder/'fault-base.bin';shutil.copyfile(image,baseline)
         measured=operation(exe,image,'compact')['physical_operations']
         if not 6<measured<=4096:raise ValueError('compaction fixture must transfer actual live data with bounded operations')
-        # All boundaries for short transactions. Larger table compactions
-        # cover the first/last 32 operations and 64 spread across the copy.
+        # The vendor-20240716 fixture cuts EVERY physical compaction operation.
+        # Other profiles keep the bounded sample (first/last 32 plus 64 spread).
         # Electrical partial writes and every full-store interleaving remain
         # outside this bounded hosted characterization.
-        cuts=sorted(set(range(1,min(measured,32)+1))|set(range(max(1,measured-31),measured+1))|{max(1,i*measured//64) for i in range(1,65)})
-        unresolved=[];passed=[]
+        if profile=='vendor-20240716':
+            cuts=list(range(1,measured+1))
+        else:
+            cuts=sorted(set(range(1,min(measured,32)+1))|set(range(max(1,measured-31),measured+1))|{max(1,i*measured//64) for i in range(1,65)})
+        unresolved=[];passed=[];write_proofs=[]
         for cut in cuts:
             damaged=folder/f'cut-{cut}.bin';shutil.copyfile(baseline,damaged)
             result=operation(exe,damaged,'compact',cut)
             if result.get('power_cut')!=cut:raise ValueError('fault not reached')
             reopened=folder/f'reopen-{cut}.bin';shutil.copyfile(damaged,reopened)
             try:
-                operation(exe,reopened,'verify-anchor');passed.append(cut)
+                anchor_check=operation(exe,reopened,'verify-anchor')
+                proof=folder/f'write-proof-{cut}.bin';shutil.copyfile(damaged,proof)
+                try:
+                    proof_check=operation(exe,proof,'write-proof')
+                except RuntimeError as proof_error:
+                    unresolved.append({'cut':cut,'operations':measured,'error':str(proof_error),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF','recovery_accepted':False});continue
+                if proof_check['free_bytes']<contract['minimum_free_bytes']:
+                    unresolved.append({'cut':cut,'operations':measured,'error':'write-proof headroom=%u required=%u'%(proof_check['free_bytes'],contract['minimum_free_bytes']),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF_HEADROOM','recovery_accepted':False});continue
+                if proof_check['free_bytes']!=anchor_check['free_bytes']:
+                    unresolved.append({'cut':cut,'operations':measured,'error':'nondeterministic free boot1=%u boot2=%u'%(anchor_check['free_bytes'],proof_check['free_bytes']),'classification':'UNRESOLVED_POST_CUT_NONDETERMINISM','recovery_accepted':False});continue
+                write_proofs.append(cut);passed.append(cut)
             except RuntimeError as error:
                 # Keep the exact interruption immutable. Do not convert data
                 # loss, an assertion or another error into a green result.
@@ -97,7 +120,7 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
             result=operation(exe,damaged,'mutate',cut)
             if result.get('power_cut')!=cut:raise ValueError('mutation fault not reached')
             operation(exe,damaged,'verify-cut')
-        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_tested':cuts,'power_cut_points_verified':passed,'unresolved_recovery_negative_controls':unresolved,'mutation_operations':mutation_ops,'mutation_cut_points_verified':list(range(1,mutation_ops+1))}
+        report['profiles'][profile+'-'+variant]={'budget':contract,'seed':seed,'exercise':exercise,'reopen':verify,'compaction_operations':measured,'power_cut_points_tested':cuts,'power_cut_points_verified':passed,'power_cut_points_write_proof':write_proofs,'unresolved_recovery_negative_controls':unresolved,'mutation_operations':mutation_ops,'mutation_cut_points_verified':list(range(1,mutation_ops+1)),'readonly_reopen_unchanged':readonly_unchanged,'readonly_reopen_sha256':[readonly_before,readonly_after]}
         if variant=='DIAG':report['profiles'][profile+'-'+variant]['observer_api_contract']=observer
     negative=out/'five-page-negative';negative.mkdir()
     exe=compile_lab(sdk,negative,budget('capacity-400'),pages=5)
@@ -142,7 +165,13 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
         report['pr40_full_capacity_negative_control']={'tclk_slots':112,'device_records':76,'address_records':197,
             'pages':5,'seed_returncode':result.returncode,'allocation_failure':result.stderr.strip(),
             'deployment_rejected':True,'synthetic_table_sized_records':True,'hardware_validated':False}
-    report['all_power_cut_recovery_passed']=not any(p['unresolved_recovery_negative_controls'] for p in report['profiles'].values())
+    fps=[]
+    for fix_json in sorted(out.rglob('recovery-fix.json')):
+        fps.append(json.loads(fix_json.read_text()))
+    if not fps:raise ValueError('recovery fix evidence missing')
+    if any(fp!=fps[0] for fp in fps):raise ValueError('lab algorithm skew across fixtures')
+    report['recovery_fix']=fps[0]
+    report['all_power_cut_recovery_passed']=all(not p['unresolved_recovery_negative_controls'] and p['power_cut_points_write_proof']==p['power_cut_points_verified'] and p['readonly_reopen_unchanged'] for p in report['profiles'].values())
     report['scope']='Normal NV lifecycle release evidence; power-cut characterization and known negative controls are reported separately, never recovery acceptance.'
     (out/'nv-lab-report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

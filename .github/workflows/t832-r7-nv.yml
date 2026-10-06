@@ -1,7 +1,7 @@
 name: T832 R7 vendor-layout NV regression
 on:
   push:
-    branches: [codex/t832-r7-vendor-nvs]
+    branches: [codex/t832-r7-vendor-nvs, codex/t832-r8-powercut-recovery]
     paths: ['firmware/t832/**', 'deploy/t832_preflash_audit.py', '.github/workflows/t832-r7-nv.yml']
   workflow_dispatch:
 permissions:
