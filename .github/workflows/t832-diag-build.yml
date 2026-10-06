@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
-          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py -v
+          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py repo/firmware/t832/test_package_slzb.py -v
           python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
           gcc -std=c11 -Wall -Wextra \
@@ -459,6 +459,10 @@ jobs:
           mkdir -p bundle/linked bundle/generated bundle/provenance
           cp "$OUT" bundle/T832-DIAG-R0.out
           "$TIARMOBJCOPY" "$OUT" --output-target ihex bundle/T832-DIAG-R0.hex
+          python3 repo/firmware/t832/package_slzb.py \
+            --hex bundle/T832-DIAG-R0.hex \
+            --output bundle/T832-DIAG-R0.slzb.bin \
+            --manifest bundle/T832-SLZB-MANIFEST.json
 
           cp "$MAP" bundle/linked/
           find ccs-workspace -type f -name '*linkInfo.xml' -exec cp {} bundle/linked/ \;
@@ -479,6 +483,7 @@ jobs:
           cp repo/firmware/t832/diag_schema.json bundle/provenance/diag_schema.json
           cp repo/firmware/t832/t832_incident.py bundle/provenance/t832_incident.py
           cp repo/firmware/t832/t832_diag_decode.py bundle/provenance/t832_diag_decode.py
+          cp repo/firmware/t832/package_slzb.py bundle/provenance/package_slzb.py
           cp repo/firmware/t832/DIAG_README.md bundle/README.md
           cp repo/firmware/t832/t832_sideband.py bundle/provenance/
           cp repo/firmware/t832/t832_fatal.h bundle/provenance/
@@ -502,7 +507,7 @@ jobs:
           from pathlib import Path
           import hashlib, json, os
           artifacts = {}
-          for name in ("T832-DIAG-R0.hex", "T832-DIAG-R0.out"):
+          for name in ("T832-DIAG-R0.hex", "T832-DIAG-R0.out", "T832-DIAG-R0.slzb.bin"):
               p = Path("bundle") / name
               artifacts[name] = {
                   "bytes": p.stat().st_size,
@@ -546,6 +551,7 @@ jobs:
             echo
             echo "## T832-DIAG-R0 artifact"
             jq -r '"- HEX: \(.artifacts["T832-DIAG-R0.hex"].bytes) bytes — `\(.artifacts["T832-DIAG-R0.hex"].sha256)`"' bundle/T832-BUILD-MANIFEST.json
+            jq -r '"- SLZB BIN: \(.artifacts["T832-DIAG-R0.slzb.bin"].bytes) bytes — `\(.artifacts["T832-DIAG-R0.slzb.bin"].sha256)`"' bundle/T832-BUILD-MANIFEST.json
             echo "- Project-seed compatibility: **PASS**"
             echo "- Compiled capacity/NVS/stack/RAM contract: **PASS**"
             echo "- Flash authorization: **NO** — board/CCFG/recovery/backup gates remain separate."
@@ -575,7 +581,7 @@ jobs:
           set -euo pipefail
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
-          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py -v
+          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py repo/firmware/t832/test_package_slzb.py -v
           python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py repo/firmware/t832/test_r5_host.py -v
           gcc -std=c11 -Wall -Wextra \
@@ -1050,7 +1056,7 @@ jobs:
           set -euo pipefail
           python3 repo/firmware/t832/validate_manifest.py repo/firmware/t832/manifest.json
           python3 repo/firmware/t832/validate_diag.py --root repo/firmware/t832
-          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py
+          python3 -m unittest repo/firmware/t832/test_diag.py repo/firmware/t832/test_nv_capacity.py repo/firmware/t832/test_package_slzb.py
           python3 -m pip install --quiet pyyaml jinja2
           python3 -m unittest repo/firmware/t832/test_barrier.py repo/firmware/t832/test_automation.py
           python3 -m unittest repo/firmware/t832/test_r5_host.py
