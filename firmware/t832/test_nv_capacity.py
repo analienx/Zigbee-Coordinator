@@ -37,11 +37,11 @@ class NvCapacityContractTests(unittest.TestCase):
             if item["id"] == "capacity.tc_devices"
         )
         configured = int(mutation["configured"])
-        self.assertEqual(configured, 128)
+        self.assertEqual(configured, 112)
 
         minimum_tclk_bytes = configured * TCLK_SLOT_BYTES_MIN
         self.assertLess(minimum_tclk_bytes, NV_REGION_BYTES // 2)
-        self.assertEqual(minimum_tclk_bytes, 3456)
+        self.assertEqual(minimum_tclk_bytes, 3024)
 
     def test_r6_does_not_move_or_expand_p10_nvs_region(self):
         source = APPLY.read_text(encoding="utf-8")
@@ -59,7 +59,7 @@ class NvCapacityContractTests(unittest.TestCase):
         )
         rationale = mutation["rationale"].lower()
         self.assertIn("10 kib", rationale)
-        self.assertIn("128", rationale)
+        self.assertIn("112", rationale)
         self.assertIn("vendor-compatible", rationale)
 
     def test_r6_nv_telemetry_hooks_present(self):
