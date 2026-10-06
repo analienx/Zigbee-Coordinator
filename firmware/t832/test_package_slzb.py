@@ -1,6 +1,19 @@
+import importlib.util
+from pathlib import Path
+import sys
 import unittest
 
-from firmware.t832.package_slzb import CCFG_BASE, CCFG_SIZE, NV_BASE, management_container, slzb
+HERE = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location("t832_package_slzb", HERE / "package_slzb.py")
+assert spec and spec.loader
+pkg = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = pkg
+spec.loader.exec_module(pkg)
+CCFG_BASE = pkg.CCFG_BASE
+CCFG_SIZE = pkg.CCFG_SIZE
+NV_BASE = pkg.NV_BASE
+management_container = pkg.management_container
+slzb = pkg.slzb
 
 
 def sample_memory():
