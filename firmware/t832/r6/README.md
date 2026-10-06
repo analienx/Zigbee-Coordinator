@@ -84,6 +84,17 @@ fresh flash scan. POD and fatal RAM remain inspectable if telemetry stalls.
 New schema2 event kinds46..50: NV_TOPOLOGY, NV_SPACE, NV_COUNTERS,
 NV_RESULT and NPI_WRITE_COMPLETE. Existing IDs remain stable.
 
+The bundle includes a manifest-bound offline raw decoder:
+`python3 decode_raw.py --raw /private/bench.raw --output /private/new-decode`.
+It checks the exact candidate image/decoder/schema hashes and observed wire
+build identity, retains mismatches and malformed frames, and reports missing
+diagnostics with a failing exit code. Keep raw/decoded output private.
+It does not open a radio or prove first BOOT was captured. Obtain raw bytes
+through the separately quiesced bench UART capture; the old deployment
+`t832_first_boot_capture.py` is bound to R5 and must not be used for R6.
+The incident collector and its `bind-firmware` command accept this bundle's
+manifest, variant and build ID for subsequent log-based incident capture.
+
 ## Targeted bench gate before another household flash
 
 1. Use a spare P10, pinned candidate BIN and private disposable fixture.

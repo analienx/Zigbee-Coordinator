@@ -44,8 +44,9 @@ def package(a):
     (provenance/'nv-contract.json').write_text(json.dumps(c,indent=2)+'\n')
     (provenance/'ccfg-gate.json').write_text(json.dumps(cfg,indent=2)+'\n')
     source=Path(__file__).resolve().parent.parent
-    for name in ('t832_incident.py','t832_diag_decode.py','diag_schema.json','t832_first_boot_capture.py'):
-        if (source/name).is_file():shutil.copy2(source/name,a.out/name)
+    for name in ('t832_incident.py','t832_diag_decode.py','diag_schema.json'):
+        shutil.copy2(source/name,a.out/name)
+    shutil.copy2(source/'r6/decode_raw.py',a.out/'decode_raw.py')
     shutil.copy2(source/'r6/README.md',a.out/'README.md')
     lab=json.loads(a.lab.read_text())
     manifest={'variant':stem,'repository_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
