@@ -91,8 +91,22 @@ def run(sdk,out,profiles=('production-demand','capacity-400')):
                     unresolved.append({'cut':cut,'operations':measured,'error':str(proof_error),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF','recovery_accepted':False});continue
                 if proof_check['free_bytes']<contract['minimum_free_bytes']:
                     unresolved.append({'cut':cut,'operations':measured,'error':'write-proof headroom=%u required=%u'%(proof_check['free_bytes'],contract['minimum_free_bytes']),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF_HEADROOM','recovery_accepted':False});continue
-                if proof_check['free_bytes']!=anchor_check['free_bytes']:
-                    unresolved.append({'cut':cut,'operations':measured,'error':'nondeterministic free boot1=%u boot2=%u'%(anchor_check['free_bytes'],proof_check['free_bytes']),'classification':'UNRESOLVED_POST_CUT_NONDETERMINISM','recovery_accepted':False});continue
+                # Determinism is like-for-like: the neutral create/update/delete
+                # cycle consumes flash (one 7-byte NVOCMP_ITEMHDRLEN header +
+                # payload per copy; delete only marks status, never reclaims),
+                # so post-write free can never equal pre-write free -- not even
+                # on pristine vendor code. Same writes on identical damage must
+                # yield identical free; and free must strictly decrease,
+                # proving the free accounting is live rather than constant.
+                proof2=folder/f'write-proof-repeat-{cut}.bin';shutil.copyfile(damaged,proof2)
+                try:
+                    proof2_check=operation(exe,proof2,'write-proof')
+                except RuntimeError as proof_error:
+                    unresolved.append({'cut':cut,'operations':measured,'error':str(proof_error),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF','recovery_accepted':False});continue
+                if proof2_check['free_bytes']!=proof_check['free_bytes']:
+                    unresolved.append({'cut':cut,'operations':measured,'error':'nondeterministic free proof1=%u proof2=%u'%(proof_check['free_bytes'],proof2_check['free_bytes']),'classification':'UNRESOLVED_POST_CUT_NONDETERMINISM','recovery_accepted':False});continue
+                if proof_check['free_bytes']>=anchor_check['free_bytes']:
+                    unresolved.append({'cut':cut,'operations':measured,'error':'write-proof consumed no flash anchor=%u proof=%u'%(anchor_check['free_bytes'],proof_check['free_bytes']),'classification':'UNRESOLVED_POST_CUT_WRITE_PROOF_NOOP','recovery_accepted':False});continue
                 write_proofs.append(cut);passed.append(cut)
             except RuntimeError as error:
                 # Keep the exact interruption immutable. Do not convert data
