@@ -10,30 +10,118 @@
     "max_payload_bytes": 240
   },
   "packet": [
-    ["magic", "4 bytes", "T8D1"],
-    ["schema", "u8", 2],
-    ["packet_kind", "u8", "1=record batch"],
-    ["export_sequence", "u16", "monotonic per boot"],
-    ["boot_session", "u16", "constant RAM slot; host collector establishes reboot association from BOOT record plus sequence/uptime discontinuity"],
-    ["uptime_ms", "u64", "extended ClockP hardware time"],
-    ["firmware_build_id", "u32", "T832_BUILD_ID: candidate short git SHA baked at build time"],
-    ["capability_bitmap", "u32", "supported runtime hooks"],
-    ["critical_overwrite", "u16", "critical recorder overwrite count"],
-    ["routine_overwrite", "u16", "routine recorder overwrite count"],
-    ["export_skipped", "u16", "backpressure/sync/pending skips"],
-    ["record_count", "u8", "1..4 records follow"],
-    ["records", "20 bytes each", "T832DiagRecord, oldest first"]
+    [
+      "magic",
+      "4 bytes",
+      "T8D1"
+    ],
+    [
+      "schema",
+      "u8",
+      2
+    ],
+    [
+      "packet_kind",
+      "u8",
+      "1=record batch"
+    ],
+    [
+      "export_sequence",
+      "u16",
+      "monotonic per boot"
+    ],
+    [
+      "boot_session",
+      "u16",
+      "constant RAM slot; host collector establishes reboot association from BOOT record plus sequence/uptime discontinuity"
+    ],
+    [
+      "uptime_ms",
+      "u64",
+      "extended ClockP hardware time"
+    ],
+    [
+      "firmware_build_id",
+      "u32",
+      "T832_BUILD_ID: candidate short git SHA baked at build time"
+    ],
+    [
+      "capability_bitmap",
+      "u32",
+      "supported runtime hooks"
+    ],
+    [
+      "critical_overwrite",
+      "u16",
+      "critical recorder overwrite count"
+    ],
+    [
+      "routine_overwrite",
+      "u16",
+      "routine recorder overwrite count"
+    ],
+    [
+      "export_skipped",
+      "u16",
+      "backpressure/sync/pending skips"
+    ],
+    [
+      "record_count",
+      "u8",
+      "1..4 records follow"
+    ],
+    [
+      "records",
+      "20 bytes each",
+      "T832DiagRecord, oldest first"
+    ]
   ],
   "record": [
-    ["first_ms", "u32", "first occurrence low 32 bits"],
-    ["last_ms", "u32", "last occurrence low 32 bits"],
-    ["sequence", "u16", "record sequence; 0 for live-built system records"],
-    ["kind", "u8", "event kind"],
-    ["flags", "u8", "bit0=critical, bit1=snapshot re-emit, bits7..2=original kind on FIRST_FAULT snapshots"],
-    ["a", "u16", "event-specific"],
-    ["b", "u16", "event-specific"],
-    ["c", "u16", "event-specific"],
-    ["repeat_count", "u16", "coalesced repeat count"]
+    [
+      "first_ms",
+      "u32",
+      "first occurrence low 32 bits"
+    ],
+    [
+      "last_ms",
+      "u32",
+      "last occurrence low 32 bits"
+    ],
+    [
+      "sequence",
+      "u16",
+      "record sequence; 0 for live-built system records"
+    ],
+    [
+      "kind",
+      "u8",
+      "event kind"
+    ],
+    [
+      "flags",
+      "u8",
+      "bit0=critical, bit1=snapshot re-emit, bits7..2=original kind on FIRST_FAULT snapshots"
+    ],
+    [
+      "a",
+      "u16",
+      "event-specific"
+    ],
+    [
+      "b",
+      "u16",
+      "event-specific"
+    ],
+    [
+      "c",
+      "u16",
+      "event-specific"
+    ],
+    [
+      "repeat_count",
+      "u16",
+      "coalesced repeat count"
+    ]
   ],
   "event_kinds": {
     "1": "BOOT",
@@ -80,7 +168,12 @@
     "42": "NWK_PRESSURE",
     "43": "TASK_STAT",
     "44": "BOOT_TIMING",
-    "45": "NWK_LIMIT"
+    "45": "NWK_LIMIT",
+    "46": "NV_TOPOLOGY",
+    "47": "NV_SPACE",
+    "48": "NV_COUNTERS",
+    "49": "NV_RESULT",
+    "50": "NPI_WRITE_COMPLETE"
   },
   "event_semantics": {
     "HEALTH": "live-built, sequence 0; a=MT schedules since last accepted health baseline (saturated, nonzero under scheduling), b=MT actual-work age ms, c=NPI transport-work age ms",
@@ -121,8 +214,73 @@
     "BOOT_TIMING": "a=1 MT init,2 UART configured,3 first genuine ZStack event,4 first SYS SRSP wire completion after successful MT RPC return,5 same for ZDO; b/c=boot uptime low/high32. Milestones4/5 prove RPC/wire progress, not operation-specific success; host-owner ZDO proof remains required. Early milestone2 clock is approximate until MT initializes tick period.",
     "BOOT": "a=reset source; decoder supplies symbolic class from pinned AON enum; c=validity. 0=PWR_ON,1=PIN_RESET,2=VDDS_LOSS,4=VDDR_LOSS,5=CLK_LOSS,6=SYSRESET,7=WARMRESET,8=shutdown wake,9=TCK wake; other=UNKNOWN. Host boot epoch is persisted, wire boot_session stays constant."
   },
-  "r5_snapshot_indices": ["block_mask", "blocked_age_ms", "normal_pending", "oldest_pending_age_ms", "transport_age_ms", "mt_work_age_ms", "npi_transport_age_ms", "npi_task_age_ms", "zstack_work_age_ms", "af_outstanding", "af_oldest_age_ms", "sreq_stage_age_ms", "mt_scheduler_age_ms"],
-  "r5_pipeline_stages": ["RX_ACCEPTED", "MT_DISPATCH_ENTERED", "HANDLER_RETURNED", "SRSP_BUILD_ACCEPTED", "NPI_QUEUE_ACCEPTED", "NPI_DEQUEUED", "UART_WRITE_ACCEPTED", "UART_WRITE_CALLBACK", "TX_BEGIN", "TX_FINISHED"],
-  "r5_nwk_indices": ["WAITING", "SENT", "CONFIRMED", "SCHEDULED", "HOLD", "DONE", "buffers_total", "routes_used", "routes_active", "routes_disc", "routes_link_fail", "routes_repair", "routes_expired", "route_discovery_used", "source_routes_used", "broadcast_used", "sampler_valid"],
-  "r5_capabilities": {"22": "blocked RAM snapshot", "23": "fatal RAM latch (SWD only)", "24": "generation-bound SREQ stages", "25": "public UART events", "26": "NWK occupancy", "27": "task mode/stack stats"}
+  "r5_snapshot_indices": [
+    "block_mask",
+    "blocked_age_ms",
+    "normal_pending",
+    "oldest_pending_age_ms",
+    "transport_age_ms",
+    "mt_work_age_ms",
+    "npi_transport_age_ms",
+    "npi_task_age_ms",
+    "zstack_work_age_ms",
+    "af_outstanding",
+    "af_oldest_age_ms",
+    "sreq_stage_age_ms",
+    "mt_scheduler_age_ms"
+  ],
+  "r5_pipeline_stages": [
+    "RX_ACCEPTED",
+    "MT_DISPATCH_ENTERED",
+    "HANDLER_RETURNED",
+    "SRSP_BUILD_ACCEPTED",
+    "NPI_QUEUE_ACCEPTED",
+    "NPI_DEQUEUED",
+    "UART_WRITE_ACCEPTED",
+    "UART_WRITE_CALLBACK",
+    "TX_BEGIN",
+    "TX_FINISHED"
+  ],
+  "r5_nwk_indices": [
+    "WAITING",
+    "SENT",
+    "CONFIRMED",
+    "SCHEDULED",
+    "HOLD",
+    "DONE",
+    "buffers_total",
+    "routes_used",
+    "routes_active",
+    "routes_disc",
+    "routes_link_fail",
+    "routes_repair",
+    "routes_expired",
+    "route_discovery_used",
+    "source_routes_used",
+    "broadcast_used",
+    "sampler_valid"
+  ],
+  "r5_capabilities": {
+    "22": "blocked RAM snapshot",
+    "23": "fatal RAM latch (SWD only)",
+    "24": "generation-bound SREQ stages",
+    "25": "public UART events",
+    "26": "NWK occupancy",
+    "27": "task mode/stack stats"
+  },
+  "r6_capabilities": {
+    "28": "Pristine TI driver-callback completion; frame-bound wire finish unavailable (bit5 clear)",
+    "29": "NV POD topology/counters sampled after serialized API boundaries; legacy timed NV capability14 absent"
+  },
+  "r6_semantics": {
+    "NV_TOPOLOGY": "a0:b pages,c ready; a1:b head,c tail; a2:b active,c offset",
+    "NV_SPACE": "a page index,b offset,c raw page state; a65535:b/c free RAM estimate low/high32 (last API boundary; not flash scan)",
+    "NV_COUNTERS": "a0 add-item attempts (create/update/write that reached addItem; excludes reads, deletes and already-existing creates),a1 automatic get-destination compactions,a2 failures of those compactions; b/c counter low/high32. Explicit compactNV API calls are visible in NV_RESULT rather than these automatic-compaction counters.",
+    "NV_RESULT": "a last stage,b requested length (zero for delete, requested minimum free bytes for explicit compact),c raw status; a7:b init action,c first storage failure. Completed-API EXIST/NOTFOUND are recorded but do not latch a storage fault. No item identity or payload.",
+    "NPI_WRITE_COMPLETE": "a bytes,b driver callback age,c pending; explicitly not physical UART idle",
+    "BOOT_TIMING": "R6 milestones6/7 are SYS/ZDO driver callbacks; milestones4/5 are unavailable",
+    "PIPELINE": "With capability28, stages9/10 are unbound and unavailable. TX events count separately.",
+    "timestamps": "NV record timestamps mark deferred sampling, not the original NV API instant.",
+    "NV_FAULT": "a8 is the sticky first NV failure: b raw status,c request bytes at that first failure; exported from POD to the critical ring. Topology records are last API boundary, not first-failure topology."
+  }
 }

@@ -188,6 +188,11 @@ EVENT_NAMES = {
     43: "TASK_STAT",
     44: "BOOT_TIMING",
     45: "NWK_LIMIT",
+    46: "NV_TOPOLOGY",
+    47: "NV_SPACE",
+    48: "NV_COUNTERS",
+    49: "NV_RESULT",
+    50: "NPI_WRITE_COMPLETE",
 }
 
 DEFAULT_SOURCES = [

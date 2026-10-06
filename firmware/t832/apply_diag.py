@@ -77,9 +77,10 @@ def include_after(ex: Exact, path: Path, marker: str, header: str, label: str) -
     ex.replace(path, marker, marker + f'#include "{header}"\n', label)
 
 
-def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, Any]:
+def apply_diag(sdk: Path, examples: Path, control_manifest: Path,
+               *, base_apply=None, revision=8320002, pristine_transport=False) -> dict[str, Any]:
     control = load_control_module()
-    control_evidence = control.apply(sdk, examples, control_manifest)
+    control_evidence = (base_apply or control.apply)(sdk, examples, control_manifest)
     ex = Exact()
 
     mt = sdk / "source/ti/zstack/mt"
@@ -117,7 +118,7 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # git SHA here would enable assoc/LED paths that the matched control
     # does not enable. Keep the diagnostic identity in the same bucket;
     # exact candidate SHA remains in DEBUG and the package manifest.
-    ex.replace(version, "CODE_REVISION_NUMBER >>", "8320002u >>",
+    ex.replace(version, "CODE_REVISION_NUMBER >>", f"{revision}u >>",
                "diag.sys_version_variant_id", count=4)
     opts = sdk / "source/ti/zstack/apps/znp/znp_cnf.opts"
     ex.replace(
@@ -547,6 +548,23 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
     # UART: effective config, RX progress/overflow, write start/rejection and
     # true end-of-wire completion. KCTRL's TX_FINISHED behavior is preserved.
     uart = npi / "npi_tl_uart.c"
+    if pristine_transport:
+        ex.replace(uart,
+            "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status);\n",
+            "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status);\n"
+            "static void NPITLUART_eventCallBack(UART2_Handle handle, uint32_t event, uint32_t data, void *userArg);\n",
+            "diag.r6.uart.observer_declaration")
+        ex.replace(uart,
+            "    params.writeCallback = NPITLUART_writeCallBack;\n",
+            "    params.writeCallback = NPITLUART_writeCallBack;\n"
+            "    params.eventCallback = NPITLUART_eventCallBack;\n"
+            "    params.eventMask |= UART2_EVENT_TX_FINISHED;\n",
+            "diag.r6.uart.observer_config")
+        ex.append(uart,
+            "static void NPITLUART_eventCallBack(UART2_Handle handle, uint32_t event, uint32_t data, void *userArg)\n"
+            "{\n    if (event == UART2_EVENT_TX_FINISHED)\n    {\n"
+            "        T832Diag_uartTxFinished(TransportTxLen);\n    }\n}\n",
+            "diag.r6.uart.observer_only")
     include_after(ex, uart, '#include "npi_tl_uart.h"\n', "t832_diag.h", "diag.uart.include")
     ex.replace(uart, "    params.eventMask |= UART2_EVENT_TX_FINISHED;\n",
                "    params.eventMask |= UART2_EVENT_TX_FINISHED | UART2_EVENT_TX_BEGIN |\n"
@@ -607,7 +625,7 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
         "    T832Diag_uartEvent(2u, (uint16_t)size, (int16_t)status);\n",
         "diag.uart.write_callback",
     )
-    ex.replace(
+    if not pristine_transport: ex.replace(
         uart,
         "    if (event == UART2_EVENT_TX_FINISHED)\n    {\n"
         "        uint32_t key = OsalPort_enterCS();\n",
@@ -665,56 +683,57 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
                "                T832Diag_npiQueueAccepted(pNPIMsg->pBuf[2], pNPIMsg->pBuf[3], pNPIMsg->pBuf[1]);\n",
                "diag.pipeline.npi_queue_accepted", count=2)
 
-    # NV compaction begin/end/failure/duration, recovery reformat entry, and
-    # init/recovery action breadcrumbs. Hooks only record; erase/reformat
-    # policy (NVOCMP_RECOVER_FROM_COMPACT_FAILURE) is unchanged.
-    nv = sdk / "source/ti/common/nv/nvocmp.c"
-    ex.replace(
-        nv,
-        '#include "nvocmp.h"\n',
-        '#include "nvocmp.h"\n'
-        "\n"
-        "extern void T832Diag_nvEvent(uint8_t stage, uint16_t b, uint16_t c);\n"
-        "extern void T832Diag_nvInit(uint8_t action);\n",
-        "diag.nv.decls",
-    )
-    ex.replace(
-        nv,
-        "    pNvHandle->compactInfo.xSrcEOffset = 0;\n"
-        "    status = NVOCMP_compact(pNvHandle);\n",
-        "    pNvHandle->compactInfo.xSrcEOffset = 0;\n"
-        "    T832Diag_nvEvent(1u, nBytes, 0u);\n"
-        "    status = NVOCMP_compact(pNvHandle);\n"
-        "    T832Diag_nvEvent(status == NVOCMP_COMPACT_FAILURE ? 3u : 2u,"
-        " (uint16_t)status, 0u);\n",
-        "diag.nv.compact_site_4sp",
-    )
-    ex.replace(
-        nv,
-        "  pNvHandle->compactInfo.xSrcSOffset = pNvHandle->pageInfo[srcPg].offset;\n"
-        "  status = NVOCMP_compact(pNvHandle);\n",
-        "  pNvHandle->compactInfo.xSrcSOffset = pNvHandle->pageInfo[srcPg].offset;\n"
-        "  T832Diag_nvEvent(1u, nBytes, 0u);\n"
-        "  status = NVOCMP_compact(pNvHandle);\n"
-        "  T832Diag_nvEvent(status == NVOCMP_COMPACT_FAILURE ? 3u : 2u,"
-        " (uint16_t)status, 0u);\n",
-        "diag.nv.compact_site_2sp",
-    )
-    ex.replace(
-        nv,
-        "#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE",
-        "#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE\n"
-        "        T832Diag_nvEvent(4u, NVOCMP_NVSIZE, 0u);",
-        "diag.nv.reformat_entry",
-        count=2,
-    )
-    ex.replace(
-        nv,
-        "  gAction = action;\n",
-        "  gAction = action;\n  T832Diag_nvInit((uint8_t)action);\n",
-        "diag.nv.init_action",
-        count=3,
-    )
+    if not pristine_transport:
+        # NV compaction begin/end/failure/duration, recovery reformat entry, and
+        # init/recovery action breadcrumbs. Hooks only record; erase/reformat
+        # policy (NVOCMP_RECOVER_FROM_COMPACT_FAILURE) is unchanged.
+        nv = sdk / "source/ti/common/nv/nvocmp.c"
+        ex.replace(
+            nv,
+            '#include "nvocmp.h"\n',
+            '#include "nvocmp.h"\n'
+            "\n"
+            "extern void T832Diag_nvEvent(uint8_t stage, uint16_t b, uint16_t c);\n"
+            "extern void T832Diag_nvInit(uint8_t action);\n",
+            "diag.nv.decls",
+        )
+        ex.replace(
+            nv,
+            "    pNvHandle->compactInfo.xSrcEOffset = 0;\n"
+            "    status = NVOCMP_compact(pNvHandle);\n",
+            "    pNvHandle->compactInfo.xSrcEOffset = 0;\n"
+            "    T832Diag_nvEvent(1u, nBytes, 0u);\n"
+            "    status = NVOCMP_compact(pNvHandle);\n"
+            "    T832Diag_nvEvent(status == NVOCMP_COMPACT_FAILURE ? 3u : 2u,"
+            " (uint16_t)status, 0u);\n",
+            "diag.nv.compact_site_4sp",
+        )
+        ex.replace(
+            nv,
+            "  pNvHandle->compactInfo.xSrcSOffset = pNvHandle->pageInfo[srcPg].offset;\n"
+            "  status = NVOCMP_compact(pNvHandle);\n",
+            "  pNvHandle->compactInfo.xSrcSOffset = pNvHandle->pageInfo[srcPg].offset;\n"
+            "  T832Diag_nvEvent(1u, nBytes, 0u);\n"
+            "  status = NVOCMP_compact(pNvHandle);\n"
+            "  T832Diag_nvEvent(status == NVOCMP_COMPACT_FAILURE ? 3u : 2u,"
+            " (uint16_t)status, 0u);\n",
+            "diag.nv.compact_site_2sp",
+        )
+        ex.replace(
+            nv,
+            "#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE",
+            "#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE\n"
+            "        T832Diag_nvEvent(4u, NVOCMP_NVSIZE, 0u);",
+            "diag.nv.reformat_entry",
+            count=2,
+        )
+        ex.replace(
+            nv,
+            "  gAction = action;\n",
+            "  gAction = action;\n  T832Diag_nvInit((uint8_t)action);\n",
+            "diag.nv.init_action",
+            count=3,
+        )
 
     return {
         "variant": VARIANT,
@@ -728,7 +747,7 @@ def apply_diag(sdk: Path, examples: Path, control_manifest: Path) -> dict[str, A
                          mt / "t832_fatal.h", kernel / "runtime/t832_fatal.h",
                          kernel / "family/arm/v8m/t832_fatal.h")
         ],
-        "diagnostic_identity": {"sys_version_revision": 8320002,
+        "diagnostic_identity": {"sys_version_revision": revision,
                                 "debug_build_id": int(build_id, 16)},
     }
 
