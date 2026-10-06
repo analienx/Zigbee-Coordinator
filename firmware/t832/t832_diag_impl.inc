@@ -1236,7 +1236,6 @@ void T832Diag_rxBufferFull(void)
 
 void T832Diag_nvEvent(uint8_t stage, uint16_t b, uint16_t c)
 {
-  (void)c;
   if (stage == 1u) {
     t832Diag.nv_start_ms = (uint32_t)T832Diag_nowMs();
     T832Diag_record(T832_DIAG_EV_NV_EVENT, 1u, b, 0u);
@@ -1246,6 +1245,12 @@ void T832Diag_nvEvent(uint8_t stage, uint16_t b, uint16_t c)
                     stage, b, dur);
   } else if (stage == 4u) {
     T832Diag_record(T832_DIAG_EV_NV_FAULT, 4u, b, 0u);
+  } else if (stage == 5u) {
+    /* Boot-time capacity snapshot: b=free bytes, c=actPage<<8 | tailPage. */
+    T832Diag_record(T832_DIAG_EV_NV_EVENT, 5u, b, c);
+  } else if (stage == 6u) {
+    /* Out-of-space snapshot emitted only on the failing allocation path. */
+    T832Diag_record(T832_DIAG_EV_NV_FAULT, 6u, b, c);
   }
 }
 
