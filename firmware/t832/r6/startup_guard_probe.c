@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
            varies) on the current image; reports how many landed. */
         unsigned want = argc > 2 ? (unsigned)strtoul(argv[2], NULL, 10) : 0;
         unsigned got = 0;
-        NVINTF_itemID_t it = {NVINTF_SYSID_ZSTACK, 2000, 0};
+        NVINTF_itemID_t it = {NVINTF_SYSID_ZSTACK, 34, 0};
         uint8_t one = 0x5A;
         if(first || again) return 35;
         for(; got < want && got < 60000u; got++) {
