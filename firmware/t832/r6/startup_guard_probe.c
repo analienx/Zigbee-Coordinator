@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
     } else if(!strcmp(argv[1], "reject")) {
         write = api.writeItem(id, sizeof(data), data);
         read = api.readItem(id, 0, sizeof(actual), actual);
-        if(!first || first != again || !write || !read || nv_lab_operations) return 32;
+        if(!first || first != again || !write || !read || api.getFreeNV() || api.compactNV(0) == 0 || api.eraseNV() == 0 || nv_lab_operations) return 32;
     } else return 2;
     printf("{\"init_status\":%u,\"reinit_status\":%u,\"write_status\":%u,\"read_status\":%u,\"physical_operations\":%u}\n",
            first, again, write, read, nv_lab_operations);

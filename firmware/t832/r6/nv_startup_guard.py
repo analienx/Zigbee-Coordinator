@@ -49,7 +49,7 @@ static uint8_t NVOCMP_startupClassify(void)
 '''
 
 def function(text,name):
-    match=re.search(r'static (?:void|uint8_t) '+name+r'\([^;]*?\)\s*\{',text)
+    match=re.search(r'static (?:void|uint8_t|uint32_t) '+name+r'\([^;]*?\)\s*\{',text)
     if not match:raise ValueError('function missing '+name)
     end=match.end();depth=1
     while depth:
@@ -112,6 +112,14 @@ def apply_guard(nv):
     if new.count(anchor)!=1:raise ValueError('init API return mismatch')
     new=new.replace(anchor,'T832_NV_INIT_DONE:\n'+anchor)
     ex.replace(nv,old,new,'r10.startup.api-failure-latch')
+    # Upstream checkItem only rejects NOTREADY; BADVERSION/FAILURE otherwise
+    # reaches the uninitialized page cursor. Cover all public memory traversals.
+    for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi'):
+        old=function(nv.read_text(),name)
+        value='0' if name=='NVOCMP_getFreeNvApi' else 'NVOCMP_failF'
+        guard=f'\n    if(NVOCMP_failF != NVINTF_SUCCESS) return({value}); /* T832-R10 fatal init gate */'
+        pos=old.index('{')+1;new=old[:pos]+guard+old[pos:]
+        ex.replace(nv,old,new,'r10.startup.fatal-gate.'+name)
     verify_guard(nv.read_text())
     return ex.edits
 
@@ -123,4 +131,6 @@ def verify_guard(text):
         raise ValueError('destructive startup fallback remains')
     if 'goto T832_NV_INIT_DONE;' not in function(text,'NVOCMP_initNvApi'):
         raise ValueError('public API failure not latched')
+    for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi'):
+        if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
     return {'guard_id':'t832-r10-preserve-startup-nv-01','nonblank_invalid_policy':'preserve-and-reject','whole_region_preflight':True}

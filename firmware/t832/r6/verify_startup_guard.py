@@ -17,7 +17,8 @@ def verify(sdk,out):
         subprocess.run(cmd,check=True)
         def invoke(image,verb):
             env=dict(os.environ,NVLAB_IMAGE=str(image));env.pop('NVLAB_CUT_OP',None)
-            p=subprocess.run([str(exe),verb],env=env,capture_output=True,text=True,check=True,timeout=20)
+            p=subprocess.run([str(exe),verb],env=env,capture_output=True,text=True,timeout=20)
+            if p.returncode:raise RuntimeError(f'{image.name}/{verb}: exit={p.returncode}, stderr={p.stderr}, stdout={p.stdout}')
             return json.loads(p.stdout)
         seed=out/(exe.name+'-seed.bin');blank=invoke(seed,'seed');assert blank['physical_operations']>0
         pristine=seed.read_bytes();before=hashlib.sha256(pristine).hexdigest();healthy=invoke(seed,'healthy')
