@@ -1,7 +1,8 @@
 """Hosted pure-python oracle invariants for the R10 startup corpus.
 
-No SDK, no probe, no flash backend: locks the state-count oracle, the
-compact-preflight mirror, and the F5 check()-only evidence discipline.
+No SDK, no probe, no flash backend: locks the state-count policy mirror,
+the compact-preflight mirror, and the F5 check()-only evidence discipline.
+These lock the Python case-construction rules, not the driver itself.
 """
 import re
 import unittest
@@ -85,7 +86,9 @@ class OracleCorpusTest(unittest.TestCase):
         lone = image([page(0x7E, 0x0C)])
         self.assertEqual(v.oracle_decision(lone), ('REJECT', 'TOPO_LONE_OR_EMPTY'))
 
-    def test_oracle_multi_act_admitted_with_proof(self):
+    def test_oracle_identical_twin_act_admitted(self):
+        # Only byte-identical twins are admitted; divergent twins are
+        # rejected (see test_oracle_divergent_act_rejected).
         twin = image([page(0x7C), page(0x7C)] + [page()] * 12 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(twin), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
 

@@ -1,9 +1,12 @@
 """Actual pinned driver; run only in GitHub-hosted Actions.
 
-R10 preservation corpus v2 (F1-F5): compact-header negatives using
+R10 preservation corpus v2 (F1-F9): compact-header negatives using
 physically plausible 1->0 corruption, legacy fail-closed negatives,
-multi-ACT/mixed admission locks with an executable state-count oracle,
-exact sanity-bitmask asserts, and derived (never hard-coded) evidence.
+identical-twin multi-ACT/mixed admission locks, exact sanity-bitmask
+asserts, and derived (never hard-coded) evidence. The Python oracles below
+mirror classifier policy for case construction; they are not independent
+proof of the driver. Only the hosted driver-probe runs count as execution
+evidence.
 """
 import argparse
 import hashlib
@@ -121,7 +124,8 @@ def _cmp(page, idx):
 
 
 def oracle_compact(page, state):
-    """Independent mirror of the C compact preflight (structural half).
+    """Policy mirror of the C compact preflight (structural half): replays
+    the same admission rules for case construction, not independent proof.
     Returns (ok, tag)."""
     this, start, end = _cmp(page, 0), _cmp(page, 1), _cmp(page, 2)
     for h in (this, start, end):
@@ -185,7 +189,8 @@ def _fwd(a, b):
 
 
 def oracle_decision(img):
-    """Independent mirror of classifier + driver startup decision. Returns
+    """Policy mirror of classifier + driver startup decision: same rules,
+    Python-side, for case construction; not independent proof. Returns
     (verdict, tag) where verdict is 'REJECT' or 'ADMIT'. First failure in
     page-scan order wins, exactly like the C classifier's early returns."""
     check(len(img) == PAGE * NVPAGES, 'oracle image size', size=len(img))
@@ -253,10 +258,9 @@ def oracle_decision(img):
         for pg in act_pages[1:]:
             if img[pg * PAGE:(pg + 1) * PAGE] != first_act:
                 return 'REJECT', 'TOPO_DIVERGENT_ACT'
-    # Multiple ACT pages are admitted by proof, not by counting: resume
-    # consumes only the last ACT for its start cursor, every runtime search
-    # walks all pages by offset chain regardless of state, and live-id
-    # collisions resolve deterministically (R8 mutation-cut precedent).
+    # Only byte-identical ACT twins are admitted: first-match search cannot
+    # diverge on identical pages. Divergent twins fail closed above; no claim
+    # is made about arbitrary multi-ACT topologies.
     first_fe = next((pg for pg in range(NVPAGES) if modes[pg] == 0xFE), None)
     if inactive == NVPAGES:
         return 'ADMIT', 'ADMIT_INIT'
@@ -316,9 +320,11 @@ def _compositions(n, k):
 
 
 def enumerate_topology(nvpages=NVPAGES):
-    """Deterministic exhaustive enumeration of every 15-page state-count
-    family (nact, xdst, rdy, act, full, xsrc). Compact-agnostic: vectors
-    whose outcome depends on compact metadata are tagged COMPACT_GATED."""
+    """Deterministic state-count family enumeration over every 15-page
+    composition (nact, xdst, rdy, act, full, xsrc). This is Python model
+    combinatorics, not 15,504 driver executions; only the hosted probe runs
+    below count as execution evidence. Compact-agnostic: vectors whose
+    outcome depends on compact metadata are tagged COMPACT_GATED."""
     fams = {'reject_topo': 0, 'admit_init': 0, 'admit_resume_direct': 0,
             'admit_mark_or_gated': 0, 'admit_recover_compact': 0,
             'compact_gated': 0}
@@ -956,7 +962,9 @@ def verify(sdk, out):
                          'admit_names': ADMIT_CASES,
                          'reject_count': len(REJECT_CASES),
                          'admit_count': len(ADMIT_CASES)},
-              'oracle': {'enumeration': enumeration},
+              'oracle': {'kind': 'python-state-count-model (policy mirror, '
+                                 'not independent driver proof)',
+                         'enumeration': enumeration},
               'sanitizer_flags': SANITIZER_FLAGS,
               'hardware_validated': False, 'private_data_used': False,
               'failures': failures}

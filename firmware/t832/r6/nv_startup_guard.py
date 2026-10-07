@@ -12,7 +12,10 @@ HELPER=r'''/* T832-R10: classify every page before the first erase/program.
    offset, page data-end cursor) is structurally and topologically admitted
    here, read-only, before scanPage/recovery can mutate. Anything else
    preserves the image and rejects. F2: legacy generations fail closed;
-   migration is not qualified. */
+   migration is not qualified. F6: multi-page RECOVER_ERASE ranges fail
+   closed (non-end pages erase unconditionally). F7: duplicate PGCDST
+   metadata fails closed. F8: divergent ACT twins fail closed. F9: reserved
+   page-header cycle/allActive values fail closed. */
 static uint16_t NVOCMP_findOffset(uint8_t pg, uint16_t ofs);
 static bool NVOCMP_startupErased(uint8_t pg, uint16_t start)
 {
@@ -62,6 +65,8 @@ static bool NVOCMP_startupOnBoundary(uint8_t pg, uint16_t cursor, uint16_t endTr
 static uint8_t NVOCMP_startupClassify(void)
 {
   uint8_t inactive = 0, destinations = 0, sources = 0, ready = 0, dataPages = 0;
+  uint8_t actPgs[NVOCMP_NVPAGES];
+  uint8_t actN = 0;
   uint8_t modes[NVOCMP_NVPAGES];
   uint8_t spages[NVOCMP_NVPAGES];
   uint8_t epages[NVOCMP_NVPAGES];
@@ -98,6 +103,11 @@ static uint8_t NVOCMP_startupClassify(void)
        hdr->state != NVOCMP_PGRDY && hdr->state != NVOCMP_PGACT &&
        hdr->state != NVOCMP_PGFULL && hdr->state != NVOCMP_PGXSRC)
       return NVINTF_BADVERSION;
+    /* F9: TI reserves allActive 1/2 (only SOMEINACTIVE=0/ALLACTIVE=3 exist)
+       and cycle 0x00/0xFF (valid 0x01..0xFE). allActive steers compaction
+       and inactive marking; a reserved value fails closed. */
+    if(hdr->allActive != 0 && hdr->allActive != 3) return NVINTF_BADVERSION;
+    if(((raw >> 8) & 0xFF) == 0x00 || ((raw >> 8) & 0xFF) == 0xFF) return NVINTF_BADVERSION;
     if(hdr->state == NVOCMP_PGNACT && !NVOCMP_startupErased(pg, NVOCMP_PGDATAOFS))
       return NVINTF_BADVERSION;
     /* F1: admit the compact metadata before it can steer recovery. */
@@ -180,15 +190,41 @@ static uint8_t NVOCMP_startupClassify(void)
     if(hdr->state == NVOCMP_PGXSRC) sources++;
     if(hdr->state == NVOCMP_PGRDY) ready++;
     if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) dataPages++;
+    if(hdr->state == NVOCMP_PGACT) actPgs[actN++] = pg;
   }
   /* Reject the upstream FORCE_CLEAN decisions before scanPage initializes even
      a truly blank page. Rejected topology must preserve the complete image.
-     Multiple ACT pages stay admitted by proof (see the oracle): resume
-     consumes only the last ACT cursor, every search walks all pages, and
-     live-id collisions resolve deterministically. */
+     Multiple ACT pages are admitted only as byte-identical twins: first-match
+     search cannot diverge on identical pages. Anything else fails closed. */
   if(destinations > 1 || sources > 1 || ready > 1 ||
      (inactive != NVOCMP_NVSIZE && !destinations && !sources && !dataPages))
     return NVINTF_FAILURE;
+  /* F7: findDstPage consumes only the first PGCDST page, so more than one
+     PGCDST metadata page is ambiguous and fails closed. */
+  {
+    uint8_t cdst = 0;
+    for(pg = 0; pg < NVOCMP_NVSIZE; pg++) if(modes[pg] == NVOCMP_PGCDST) cdst++;
+    if(cdst > 1) return NVINTF_FAILURE;
+  }
+  /* F8: divergent ACT pages can hold conflicting live values for the same
+     ID under first-match search. Twins must match byte for byte. */
+  if(actN > 1)
+  {
+    uint8_t b0[32], b1[32];
+    uint8_t a;
+    uint16_t off;
+    for(a = 1; a < actN; a++)
+    {
+      for(off = 0; off < FLASH_PAGE_SIZE; off += sizeof(b0))
+      {
+        uint16_t count = FLASH_PAGE_SIZE - off;
+        if(count > sizeof(b0)) count = sizeof(b0);
+        NVOCMP_read(actPgs[0], off, b0, count);
+        NVOCMP_read(actPgs[a], off, b1, count);
+        if(memcmp(b0, b1, count)) return NVINTF_FAILURE;
+      }
+    }
+  }
   /* F1 RECOVER_ERASE gate: when the driver would consume a PGCDST page's
      source range in cleanPage, admit that range only if fully validated:
      non-null pages, a span that cannot circle the store, a destination
@@ -218,6 +254,11 @@ static uint8_t NVOCMP_startupClassify(void)
         dsf = (uint16_t)((f >= spg) ? (f - spg) : (f + NVOCMP_NVSIZE - spg));
         if(dse + 1u > (uint16_t)(NVOCMP_NVSIZE - 1u)) return NVINTF_BADVERSION;
         if(dsf <= dse) return NVINTF_BADVERSION;
+        /* F6: cleanPage erases non-end range pages unconditionally (the
+           offset correction forces PGDATAOFS), so a multi-page stale range
+           can target live-only records. Fail closed; preservation beats
+           automatic recovery. */
+        if(spg != epg) return NVINTF_BADVERSION;
         endTrue = NVOCMP_findOffset(epg, FLASH_PAGE_SIZE);
         if(eoff == NVOCMP_PGDATAOFS)
         {

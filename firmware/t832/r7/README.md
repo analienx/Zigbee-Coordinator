@@ -102,19 +102,25 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks86 rejecting cases across asserting and
-embedded-style nonfatal assertion lanes: 12 hand-picked topologies plus 31
-enumerated generated cases (valid-NOR torn header bytes, ambiguous
-destination/source/ready pairs, lone-ready, torn-erase remnants). Each must
-reject repeated init and a full extended-API sweep (create/update/delete/read/
-readCont/write/getItemLen/doNext/expectComp/compact/erase/getFree/sanity plus a
-balanced lock/unlock pair) with zero physical operations and identical
-full-image hashes. A dedicated adverse oracle proves expectComp(nonzero) cannot
-reach the page walker after a rejected init; the whole sweep also runs under
-AddressSanitizer+UndefinedBehaviorSanitizer with no findings. Missing recovery
-destinations return a latched error instead of the upstream startup spin.
-Healthy reopen stays unchanged; truly blank initialization still succeeds.
-Existing exhaustive compaction/write gates apply.
+The actual pinned-driver gate now checks 70 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes: 39 hand-picked cases (topologies,
+compact-header negatives, legacy fail-closed, mixed recovery, RDY cursor,
+multi-page erase range, duplicate PGCDST, divergent ACT, reserved header
+fields) plus 31 enumerated generated cases (valid-NOR torn header bytes,
+ambiguous destination/source/ready pairs, lone-ready, torn-erase remnants).
+Each must reject repeated init and a full extended-API sweep
+(create/update/delete/read/readCont/write/getItemLen/doNext/expectComp/
+compact/erase/getFree/sanity plus a balanced lock/unlock pair) with zero
+physical operations and identical full-image hashes. A dedicated adverse probe
+verb shows expectComp(nonzero) cannot reach the page walker after a rejected
+init; the whole sweep also runs under AddressSanitizer+
+UndefinedBehaviorSanitizer with no findings. Only byte-identical ACT twins are
+admitted; divergent twins fail closed. Missing recovery destinations return a
+latched error instead of the upstream startup spin. Healthy reopen stays
+unchanged; truly blank initialization still succeeds. Existing exhaustive
+compaction/write gates apply. The 15,504 state-count families in the report are
+Python model combinatorics, not driver executions; execution evidence is the
+counted probe runs (560 reject, 32 admit, 280 sanitizer).
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.
