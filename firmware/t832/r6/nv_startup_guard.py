@@ -14,11 +14,15 @@ HELPER=r'''/* T832-R10: classify every page before the first erase/program.
    preserves the image and rejects. F2: legacy generations fail closed;
    migration is not qualified. F6: multi-page RECOVER_ERASE ranges fail
    closed (non-end pages erase unconditionally). F7: duplicate PGCDST
-   metadata fails closed. F8: ACT/FULL live IDs must agree pairwise
+   metadata fails closed. F8: ACT/FULL/XSRC live IDs must agree pairwise
    (verbatim twins incl. both CRCs) or fail closed, except divergent
    pairs on the valid tail ID of a resume topology with at most one
-   older copy (resume dedups it). F9: reserved page-header
-   cycle/allActive values fail closed. */
+   older copy and no older twin alongside (resume dedups the single
+   nearest copy; mixed sets leave order-dependent survivors). F9:
+   reserved page-header cycle/allActive values fail closed. RDY pages
+   must be data-free (the driver never writes data to RDY). Erase
+   admission also requires the XDST tail-mark to land on an erased
+   page, or init fails every boot. */
 static uint16_t NVOCMP_findOffset(uint8_t pg, uint16_t ofs);
 static void NVOCMP_readHeader(uint8_t pg, uint16_t ofs, NVOCMP_itemHdr_t *iHdr, bool flag);
 /* R8 provides the definition below (apply_fix always applies R8 first); the
@@ -221,6 +225,12 @@ static uint8_t NVOCMP_startupClassify(void)
     if(((raw >> 8) & 0xFF) == 0x00 || ((raw >> 8) & 0xFF) == 0xFF) return NVINTF_BADVERSION;
     if(hdr->state == NVOCMP_PGNACT && !NVOCMP_startupErased(pg, NVOCMP_PGDATAOFS))
       return NVINTF_BADVERSION;
+    /* L0-F7/CH-F2: a RDY page carrying data is a flash-fault shape.
+       Mark-before-write lands data on ACT only, never RDY, so RDY
+       data fails closed here instead of admitting an end page the
+       driver would cursor-write and then strand. */
+    if(hdr->state == NVOCMP_PGRDY && !NVOCMP_startupErased(pg, NVOCMP_PGDATAOFS))
+      return NVINTF_BADVERSION;
     /* F1: admit the compact metadata before it can steer recovery. */
     NVOCMP_read(pg, NVOCMP_PGHDRLEN, cmp, sizeof(cmp));
     mode = cmp[2];
@@ -302,7 +312,12 @@ static uint8_t NVOCMP_startupClassify(void)
     if(hdr->state == NVOCMP_PGRDY) ready++;
     if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) dataPages++;
     if(hdr->state == NVOCMP_PGACT) actPgs[actN++] = pg;
-    if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) chkPgs[chkN++] = pg;
+    /* CH-F3: XSRC originals survive RECOVER_ERASE untouched, so an
+       XSRC/ACT divergent pair is a live read-flip. The proof walks
+       XSRC pages too; resume topologies carry no XSRC, so the tail
+       exception below never excuses an XSRC copy. */
+    if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL ||
+       hdr->state == NVOCMP_PGXSRC) chkPgs[chkN++] = pg;
   }
   /* Reject the upstream FORCE_CLEAN decisions before scanPage initializes even
      a truly blank page. Rejected topology must preserve the complete image.
@@ -317,18 +332,19 @@ static uint8_t NVOCMP_startupClassify(void)
   for(pg = 0; pg < NVOCMP_NVSIZE; pg++) if(modes[pg] == NVOCMP_PGCDST) cdst++;
   if(cdst > 1) return NVINTF_FAILURE;
   /* F8 agreement proof: every pair of live copies sharing a compressed ID
-     across (or within) ACT and FULL pages must be verbatim twins (bounds,
-     both CRCs, payload bytes). RESUME reads from the last ACT page while
-     RECOVER_ERASE reads from the first, so divergent copies would return
-     different values on the two paths. Anything unparseable fails closed.
-     Exception: a divergent pair on the live, CRC-valid tail ID of the
-     NULL-cursor last ACT converges only when the driver takes
-     NORMAL_RESUME (exactly one XDST and no XSRC, or the no-XDST/XSRC
-     resume-mark branch with no PGCDST and a spare NACT): resume inactivates
-     exactly one older copy (the first strict match below the tail), so the
-     tail-ID census below admits at most one older non-twin copy and
-     update-transients admit while erase-path and multi-copy divergence
-     fails closed. */
+     across (or within) ACT, FULL, and XSRC pages must be verbatim twins
+     (bounds, both CRCs, payload bytes). RESUME reads from the last ACT
+     page while RECOVER_ERASE reads from the first, so divergent copies
+     would return different values on the two paths. Anything unparseable
+     fails closed. Exception: a divergent pair on the live, CRC-valid
+     tail ID of the NULL-cursor last ACT converges only when the driver
+     takes NORMAL_RESUME (exactly one XDST and no XSRC, or the
+     no-XDST/XSRC resume-mark branch with no PGCDST and a spare NACT):
+     resume inactivates exactly one older copy (the first strict match
+     below the tail), so the tail-ID census below admits at most one
+     older non-twin copy with no older twin alongside, and
+     update-transients admit while erase-path, mixed-set, and
+     multi-copy divergence fails closed. */
   {
     uint8_t i, j;
     bool tailOk = false;
@@ -357,12 +373,18 @@ static uint8_t NVOCMP_startupClassify(void)
     }
     if(tailOk)
     {
-      /* Tail-ID census: resume dedups exactly one older copy, so more than
-         one older live non-twin copy of the tail ID (across ACT and FULL
-         pages) leaves divergent survivors and fails closed. Verbatim twins
-         of the tail read identically on every path. */
+      /* Tail-ID census: resume dedups exactly one older copy (the
+         first strict match below the tail), so more than one older
+         live non-twin copy of the tail ID (across ACT, FULL, and
+         XSRC pages) leaves divergent survivors and fails closed.
+         Verbatim twins of the tail read identically on every path,
+         but a MIXED older set (a twin plus a non-twin, L0-F1) leaves
+         the survivor order-dependent (resume kills only the
+         nearest-below-tail, which may be the twin) and fails closed.
+         Admitted older sets: none, one non-twin, or twins-only. */
       uint8_t c;
       uint8_t older = 0;
+      uint8_t olderTwin = 0;
       for(c = 0; c < chkN; c++)
       {
         NVOCMP_startupWalk_t w;
@@ -374,10 +396,14 @@ static uint8_t NVOCMP_startupClassify(void)
           r = NVOCMP_startupWalkNext(&w, &h);
           if(r < 0) return NVINTF_FAILURE;
           if(r == 0) break;
-          if(h.cmpid == tailCmpid && (h.hpage != tailH.hpage || h.hofs != tailH.hofs) &&
-             !NVOCMP_recoverCopiesEqual(&tailH, &h))
+          if(h.cmpid == tailCmpid && (h.hpage != tailH.hpage || h.hofs != tailH.hofs))
           {
-            if(++older > 1) return NVINTF_FAILURE;
+            if(NVOCMP_recoverCopiesEqual(&tailH, &h))
+            {
+              olderTwin++;
+              if(older > 0) return NVINTF_FAILURE;
+            }
+            else if(++older > 1 || olderTwin > 0) return NVINTF_FAILURE;
           }
         }
       }
@@ -448,6 +474,19 @@ static uint8_t NVOCMP_startupClassify(void)
            item above eoff verbatim-twinned on dst). */
         else if(eoff > endTrue) return NVINTF_BADVERSION;
         else if(eoff != endTrue && !NVOCMP_startupSuffixTwinned(epg, eoff, endTrue, f)) return NVINTF_BADVERSION;
+        /* Tail-markability (L0-F2/F3): cleanPage erases every non-end
+           range page (the offset correction forces PGDATAOFS) and the
+           end page iff drained, then XDST-marks ADDPAGE(dst, count).
+           NOR programs 1->0 only, so the mark succeeds only onto an
+           erased (0xFF) state byte; anything else fails the mark,
+           fails init, and bricks every boot. */
+        {
+          uint8_t tail = (uint8_t)(((uint16_t)f + dse + (eoff == NVOCMP_PGDATAOFS ? 1u : 0u)) % NVOCMP_NVSIZE);
+          uint32_t tailRaw = 0;
+          NVOCMP_pageHdr_t *tailHdr = (NVOCMP_pageHdr_t *)&tailRaw;
+          NVOCMP_read(tail, NVOCMP_PGHDROFS, (uint8_t *)tailHdr, NVOCMP_PGHDRLEN);
+          if(tailHdr->state != NVOCMP_PGNACT) return NVINTF_BADVERSION;
+        }
       }
     }
   }
@@ -570,7 +609,7 @@ def verify_guard(text):
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi','NVOCMP_expectCompApi'):
         if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
     classify=function(text,'NVOCMP_startupClassify')
-    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census','NVOCMP_startupSuffixTwinned'):
+    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census','NVOCMP_startupSuffixTwinned','Tail-markability'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
     if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')

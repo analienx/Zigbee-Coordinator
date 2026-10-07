@@ -102,11 +102,11 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks 78 rejecting cases across asserting and
-embedded-style nonfatal assertion lanes: 47 hand-picked cases (topologies,
+The actual pinned-driver gate now checks 81 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes: 50 hand-picked cases (topologies,
 compact-header negatives, legacy fail-closed, mixed recovery, RDY cursor,
 multi-page erase range, duplicate PGCDST, divergent ACT twins and same-page duplicates, reserved header
-fields, erase-tail divergent pairs, tail trios, stale end offsets, FULL-scope pairs, XSRC-scope pairs, RDY data, mixed twin+divergent trios) plus 31 enumerated generated cases (valid-NOR torn header bytes,
+fields, erase-tail divergent pairs, tail trios, stale end offsets, FULL-scope pairs, XSRC-scope pairs, RDY data, mixed twin+divergent trios, unmarkable erase tails) plus 31 enumerated generated cases (valid-NOR torn header bytes,
 ambiguous destination/source/ready pairs, lone-ready, torn-erase remnants).
 Each must reject repeated init and a full extended-API sweep
 (create/update/delete/read/readCont/write/getItemLen/doNext/expectComp/
@@ -115,12 +115,12 @@ physical operations and identical full-image hashes. A dedicated adverse probe
 verb shows expectComp(nonzero) cannot reach the page walker after a rejected
 init; the whole sweep also runs under AddressSanitizer+
 UndefinedBehaviorSanitizer with no findings. ACT/FULL/XSRC live IDs must agree pairwise across and within ACT, FULL, and XSRC pages:
-every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy, which resume dedups (lab-proven by mutation cuts). Below-end erase offsets admit only with the suffix proof (every live item above the offset verbatim-twinned on dst), since cleanPage hides the suffix. Missing recovery destinations return a
+every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy and no older twin alongside, which resume dedups (lab-proven by mutation cuts). Below-end erase offsets admit only with the suffix proof (every live item above the offset verbatim-twinned on dst), since cleanPage hides the suffix. Erase admission also requires the driver's XDST tail-mark to land on an erased page, or init fails every boot. Missing recovery destinations return a
 latched error instead of the upstream startup spin. Healthy reopen stays
 unchanged; truly blank initialization still succeeds. Existing exhaustive
 compaction/write gates apply. The 15,504 state-count families in the report are
 Python model combinatorics, not driver executions; execution evidence is the
-counted probe runs (624 reject, 56 admit, 312 sanitizer).
+counted probe runs (648 reject, 32 admit, 324 sanitizer).
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.

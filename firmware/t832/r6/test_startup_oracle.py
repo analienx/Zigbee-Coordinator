@@ -304,10 +304,12 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([end] + [page()] * 13 + [dst])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_BELOW_END'))
 
-    def test_oracle_erase_twinned_suffix_admitted(self):
-        # F1/P1: below-end eoff with every live item above it twinned on
-        # dst is a proved-fresh frontier: hiding the originals hides
-        # nothing, so the range admits.
+    def test_oracle_erase_twinned_suffix_singleton_rejected(self):
+        # F1/P1 + L0-F2 (4b): below-end eoff with every live item above
+        # it twinned on dst passes the suffix proof, but the singleton
+        # range leaves cleanPages=0, landing the XDST tail-mark on dst
+        # itself (FULL): init would fail every boot, so the
+        # tail-markability gate fails it closed.
         lo = live_item(1, 33, 0, 5)
         hi = live_item(1, 33, 0, 5)
         dst = (bytes((0x78, 0x01, 0x0F, 0x96))
@@ -317,6 +319,22 @@ class OracleCorpusTest(unittest.TestCase):
                + padded(hi))
         end = page(0x7C, data=padded(lo, hi))
         img = image([end] + [page()] * 13 + [dst])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_TAIL_STATE'))
+
+    def test_oracle_erase_twinned_markable_tail_admitted(self):
+        # L0-F2/F3 (4b): the tail-markability gate admits when the
+        # driver's XDST tail-mark lands on an erased page: multi-page
+        # range, twinned below-end suffix, tail erased.
+        lo = live_item(1, 33, 0, 5)
+        hi = live_item(1, 33, 0, 5)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1C, 0x00, 0x01, 0x96))
+               + padded(hi))
+        end = page(0x7C, data=padded(lo, hi))
+        blank = b'\xff' * PAGE
+        img = image([blank, end, dst] + [page()] * 12)
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
     def test_oracle_erase_topology_divergent_rejected(self):
@@ -334,36 +352,36 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
     def test_oracle_xsrc_act_divergent_rejected(self):
-        # CH-F3 (4a): the F8 proof scope covers XSRC pages: an
-        # XSRC/ACT divergent pair conflicts even on a compact
-        # topology. (C follows in 4b; 4a C still admits.)
+        # CH-F3: the F8 proof scope covers XSRC pages: an XSRC/ACT
+        # divergent pair conflicts even on a compact topology
+        # (mirrored by the 4b C chkPgs).
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
         x = page(0x70, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         img = image([a, x] + [page()] * 12 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
     def test_oracle_xsrc_act_twins_admitted(self):
-        # CH-F3 (4a): XSRC verbatim twins agree (no over-reject from
-        # the wider scope): a compact copy mid-flight matches source.
+        # CH-F3: XSRC verbatim twins agree (no over-reject from the
+        # wider scope): a compact copy mid-flight matches source.
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
         x = page(0x70, data=padded(live_item(1, 33, 0, 5)))
         img = image([a, x] + [page()] * 12 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_COMPACT'))
 
     def test_oracle_rdy_data_rejected(self):
-        # L0-F7 (4a): a RDY page carrying data fails the scan: the
-        # driver never writes data to RDY (mark-before-write lands
-        # data on ACT only). (C follows in 4b; 4a C still admits.)
+        # L0-F7: a RDY page carrying data fails the scan: the driver
+        # never writes data to RDY (mark-before-write lands data on
+        # ACT only; mirrored by the 4b C scan rule).
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
         rdy = page(0x7E, data=padded(live_item(1, 33, 1, 5)))
         img = image([a, rdy] + [page()] * 13)
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'RDY_DATA'))
 
     def test_oracle_mixed_trio_twinned_rejected(self):
-        # L0-F1 (4a): the mirror rejects every divergent pair,
-        # including a twin+divergent mixed older set on a resume
-        # topology; only C's census may excuse tail-ID shapes, and 4b
-        # rejects mixed sets there too.
+        # L0-F1: the mirror rejects every divergent pair, including a
+        # twin+divergent mixed older set on a resume topology; only
+        # C's census may excuse tail-ID shapes, and it rejects mixed
+        # sets (4b).
         d = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         w = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
         t = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
@@ -371,8 +389,8 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
     def test_oracle_full_act_divergent_rejected(self):
-        # L1-F10 pin (4a): an ACT+FULL divergent pair conflicts at
-        # the mirror; pins FULL in the proof scope.
+        # L1-F10 pin: an ACT+FULL divergent pair conflicts at the
+        # mirror; pins FULL in the proof scope.
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
         f = page(0x78, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         img = image([a, f] + [page()] * 12 + [page(0xFE)])
