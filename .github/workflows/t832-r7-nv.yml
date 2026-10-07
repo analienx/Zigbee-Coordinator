@@ -92,6 +92,12 @@ jobs:
           ref: 87ff5b638b632050228a7504f35cf3b95581c278
           path: examples
 
+      - name: Trace production NV-init caller (Q3)
+        run: |
+          set -euo pipefail
+          mkdir -p build-evidence
+          python3 repo/firmware/t832/r6/trace_nv_caller.py --sdk sdk --examples examples --out build-evidence/nv-caller-trace
+
       - name: Apply minimal BASE or matched observational DIAG
         env:
           PROFILE: ${{ matrix.profile }}
