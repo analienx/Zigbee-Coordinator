@@ -298,9 +298,13 @@ def oracle_decision(img):
     # sharing an ID across (or within) ACT pages must agree in length and
     # payload bytes. RESUME reads from the last ACT while RECOVER_ERASE
     # reads from the first, so divergent copies would return different
-    # values on the two paths. Anything unparseable fails closed. C
-    # additionally requires both CRCs valid (strict superset); every corpus
-    # verdict here is CRC-decisive-identical (twins valid, conflicts differ).
+    # values on the two paths. Anything unparseable fails closed. C refines
+    # two shapes this mirror cannot see: it requires both CRCs valid (this
+    # mirror compares length and payload bytes only), and it admits
+    # divergent pairs on the live CRC-valid tail ID of the NULL-cursor last
+    # ACT (resume dedups the older twin; the hosted lab mutation cuts prove
+    # that path). Every corpus verdict here matches C: twins are valid,
+    # conflicts differ with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
         if states[pg] != 0x7C:

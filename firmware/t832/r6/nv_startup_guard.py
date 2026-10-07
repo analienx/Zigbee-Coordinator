@@ -15,7 +15,8 @@ HELPER=r'''/* T832-R10: classify every page before the first erase/program.
    migration is not qualified. F6: multi-page RECOVER_ERASE ranges fail
    closed (non-end pages erase unconditionally). F7: duplicate PGCDST
    metadata fails closed. F8: ACT live IDs must agree pairwise (verbatim
-   twins incl. both CRCs) or fail closed. F9: reserved page-header
+   twins incl. both CRCs) or fail closed, except divergent pairs on the
+   valid tail ID which resume dedups. F9: reserved page-header
    cycle/allActive values fail closed. */
 static uint16_t NVOCMP_findOffset(uint8_t pg, uint16_t ofs);
 static void NVOCMP_readHeader(uint8_t pg, uint16_t ofs, NVOCMP_itemHdr_t *iHdr, bool flag);
@@ -111,9 +112,10 @@ static int8_t NVOCMP_startupWalkNext(NVOCMP_startupWalk_t *w, NVOCMP_itemHdr_t *
   }
 }
 
-/* True when page pg holds a live copy of ref->cmpid that is not a verbatim
-   twin of ref, or when the page cannot be walked to a clean end. */
-static bool NVOCMP_startupActConflict(uint8_t pg, const NVOCMP_itemHdr_t *ref)
+/* True when page pg holds a live copy of ref->cmpid that is neither a
+   verbatim twin of ref nor covered by the tail-convergence exception, or
+   when the page cannot be walked to a clean end. */
+static bool NVOCMP_startupActConflict(uint8_t pg, const NVOCMP_itemHdr_t *ref, bool tailOk, uint32_t tailCmpid)
 {
   NVOCMP_startupWalk_t w;
   NVOCMP_itemHdr_t g;
@@ -125,7 +127,7 @@ static bool NVOCMP_startupActConflict(uint8_t pg, const NVOCMP_itemHdr_t *ref)
     if(r < 0) return true;
     if(r == 0) return false;
     if(g.cmpid == ref->cmpid && (g.hpage != ref->hpage || g.hofs != ref->hofs) &&
-       !NVOCMP_recoverCopiesEqual(ref, &g)) return true;
+       !NVOCMP_recoverCopiesEqual(ref, &g) && !(tailOk && ref->cmpid == tailCmpid)) return true;
   }
 }
 
@@ -277,9 +279,34 @@ static uint8_t NVOCMP_startupClassify(void)
      across (or within) ACT pages must be verbatim twins (bounds, both CRCs,
      payload bytes). RESUME reads from the last ACT page while RECOVER_ERASE
      reads from the first, so divergent copies would return different values
-     on the two paths. Anything unparseable fails closed. */
+     on the two paths. Anything unparseable fails closed. Exception: a
+     divergent pair on the live, CRC-valid tail ID of the NULL-cursor last
+     ACT converges (resume dedups the older twin; appends and COMPR=0
+     compaction keep the tail newest), so update-transients admit. */
   {
     uint8_t i, j;
+    bool tailOk = false;
+    uint32_t tailCmpid = 0;
+    if(actN > 0)
+    {
+      uint8_t lastAct = actPgs[actN - 1];
+      uint8_t cursorBytes[4];
+      uint16_t tailEnd;
+      NVOCMP_itemHdr_t tailH;
+      NVOCMP_read(lastAct, NVOCMP_PGHDRLEN, cursorBytes, sizeof(cursorBytes));
+      tailEnd = NVOCMP_findOffset(lastAct, FLASH_PAGE_SIZE);
+      if(cursorBytes[0] == 0xFF && cursorBytes[1] == 0xFF && tailEnd >= NVOCMP_PGDATAOFS + NVOCMP_ITEMHDRLEN)
+      {
+        NVOCMP_readHeader(lastAct, (uint16_t)(tailEnd - NVOCMP_ITEMHDRLEN), &tailH, false);
+        if((tailH.stats & NVOCMP_FOLLOWBIT) && (tailH.stats & NVOCMP_ACTIVEIDBIT) &&
+           !(tailH.stats & NVOCMP_VALIDIDBIT) && tailH.len <= (uint16_t)(tailEnd - NVOCMP_ITEMHDRLEN - NVOCMP_PGDATAOFS) &&
+           NVOCMP_verifyCRC((uint16_t)(tailEnd - NVOCMP_ITEMHDRLEN - tailH.len), tailH.len, tailH.crc8, lastAct, false) == NVINTF_SUCCESS)
+        {
+          tailOk = true;
+          tailCmpid = tailH.cmpid;
+        }
+      }
+    }
     for(i = 0; i < actN; i++)
     {
       NVOCMP_startupWalk_t w;
@@ -292,7 +319,7 @@ static uint8_t NVOCMP_startupClassify(void)
         if(r < 0) return NVINTF_FAILURE;
         if(r == 0) break;
         for(j = 0; j < actN; j++)
-          if(NVOCMP_startupActConflict(actPgs[j], &h)) return NVINTF_FAILURE;
+          if(NVOCMP_startupActConflict(actPgs[j], &h, tailOk, tailCmpid)) return NVINTF_FAILURE;
       }
     }
   }

@@ -252,7 +252,10 @@ class OracleCorpusTest(unittest.TestCase):
 
     def test_oracle_divergent_act_rejected(self):
         # F8: twins sharing a live ID with differing values conflict, even
-        # though each page walks cleanly.
+        # though each page walks cleanly. (C would additionally admit a
+        # divergent pair on a CRC-valid tail ID; the mirror cannot check
+        # CRCs, so it conservatively rejects all divergence. The hosted lab
+        # mutation cuts prove the C exception admits valid-tail transients.)
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
         b = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         img = image([a, b] + [page()] * 12 + [page(0xFE)])
