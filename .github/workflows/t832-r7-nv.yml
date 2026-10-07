@@ -48,6 +48,12 @@ jobs:
           name: t832-r7-nv-evidence
           path: nv-evidence
           if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: t832-r7-startup-guard-evidence
+          path: nv-evidence-startup-guard
+          if-no-files-found: warn
 
   firmware:
     name: R7 ${{ matrix.variant }} / ${{ matrix.profile }}

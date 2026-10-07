@@ -15,8 +15,13 @@ int main(int argc, char **argv) {
     if(!strcmp(argv[1], "seed")) {
         if(first || again || api.createItem(id, sizeof(data), data)) return 30;
     } else if(!strcmp(argv[1], "healthy")) {
+        uint32_t sanity;
         read = api.readItem(id, 0, sizeof(actual), actual);
-        if(first || again || read || memcmp(data, actual, sizeof(data))) return 31;
+        sanity = api.sanityCheck();
+        if(first || again || read || memcmp(data, actual, sizeof(data)) || sanity) return 31;
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"read_status\":%u,\"sanity_status\":%u,\"physical_operations\":%u}\n",
+               first, again, read, sanity, nv_lab_operations);
+        return 0;
     } else if(!strcmp(argv[1], "reject")) {
         /* Full extended-API sweep after a rejected init. Every entry must
            fail closed with zero physical operations on the preserved image. */
@@ -56,6 +61,21 @@ int main(int argc, char **argv) {
         if(!first || first != again || !exp_nz || exp_z || nv_lab_operations) return 33;
         printf("{\"init_status\":%u,\"reinit_status\":%u,\"expectcomp_nonzero\":%u,\"expectcomp_zero\":%u,\"physical_operations\":%u}\n",
                first, again, exp_nz, exp_z, nv_lab_operations);
+        return 0;
+    } else if(!strcmp(argv[1], "admit")) {
+        /* Admitted-topology oracle: init must succeed twice, the seed item
+           must read back exactly, sanity must be clean. Legitimate init may
+           perform bounded writes (tail marking, resume dedup); the verifier
+           bounds them and re-runs this verb on the mutated image to prove
+           the store converges instead of degrading further. */
+        uint32_t sanity;
+        unsigned free;
+        read = api.readItem(id, 0, sizeof(actual), actual);
+        sanity = api.sanityCheck();
+        free = api.getFreeNV();
+        if(first || again || read || memcmp(data, actual, sizeof(data)) || sanity) return 34;
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"read_status\":%u,\"sanity_status\":%u,\"getfree\":%u,\"physical_operations\":%u}\n",
+               first, again, read, sanity, free, nv_lab_operations);
         return 0;
     } else return 2;
     printf("{\"init_status\":%u,\"reinit_status\":%u,\"write_status\":%u,\"read_status\":%u,\"physical_operations\":%u}\n",
