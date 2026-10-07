@@ -196,6 +196,28 @@ def suffix_twinned(img, epg, eoff, fpg):
     return True
 
 
+def page_twinned(img, pg, fpg):
+    """Mirror of the C whole-page twin proof (4c): every live item on
+    page pg must be twinned (length and payload) on the dst page, and
+    both pages must walk to a clean end. True only when proved. (C
+    additionally requires both CRCs valid.)"""
+    live, anomaly = walk_live(img[pg * PAGE:(pg + 1) * PAGE])
+    if anomaly:
+        return False
+    dst_live, dst_anomaly = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
+    if dst_anomaly:
+        return False
+    twins = set()
+    for h in dst_live:
+        twins.add(((h['sysid'], h['itemid'], h['subid']), h['len'],
+                   bytes(img[fpg * PAGE + h['hofs'] - h['len']:fpg * PAGE + h['hofs']])))
+    for h in live:
+        if ((h['sysid'], h['itemid'], h['subid']), h['len'],
+                bytes(img[pg * PAGE + h['hofs'] - h['len']:pg * PAGE + h['hofs']])) not in twins:
+            return False
+    return True
+
+
 def oracle_compact(page, state):
     """Policy mirror of the C compact preflight (structural half): replays
     the same admission rules for case construction, not independent proof.
@@ -342,8 +364,11 @@ def oracle_decision(img):
     # CRC-valid tail ID of the NULL-cursor last ACT on a resume
     # topology with at most one older non-twin copy (resume dedups
     # the single older copy; the hosted lab mutation cuts prove that
-    # path). Every corpus verdict here matches C: twins are valid,
-    # conflicts differ with torn tails.
+    # path). Every corpus verdict here matches C except the 4c
+    # red-first extension controls (admit-erase-twinned-nonend and
+    # -drained: the oracle leads with the twinned-erasure extension,
+    # 4d C follows); elsewhere twins are valid and conflicts differ
+    # with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
         if states[pg] not in (0x7C, 0x78, 0x70):
@@ -389,19 +414,27 @@ def oracle_decision(img):
         return 'REJECT', 'CMP_ERASE_RANGE_DST'
     # F6: cleanPage erases non-end range pages unconditionally (the offset
     # correction forces PGDATAOFS), so each non-end page must be
-    # blank/header-only (nothing to destroy) or the range fails closed.
+    # blank/header-only (nothing to destroy) or fully live-twinned on
+    # dst (CH-F1, 4c: erasing originals destroys nothing when every
+    # live item survives verbatim on dst), or the range fails closed.
+    # The oracle leads on the twinned extension here: 4c C still
+    # requires blank non-end pages (red-first controls
+    # admit-erase-twinned-nonend/-drained); 4d adds the matching C rule.
     p = spg
     while p != epg:
         if find_end(img[p * PAGE:(p + 1) * PAGE]) > PGDATAOFS:
-            return 'REJECT', 'CMP_ERASE_RANGE_MULTI'
+            if not page_twinned(img, p, f):
+                return 'REJECT', 'CMP_ERASE_RANGE_MULTI'
         p = (p + 1) % NVPAGES
     end_true = find_end(img[epg * PAGE:(epg + 1) * PAGE])
     if eoff == PGDATAOFS:
         # Fully-drained form: cleanPage erases the end page without
-        # reading data through the offset. Safe only when the end page
-        # holds no data (blank, or header-only); a torn end offset on a
-        # live end page would erase live items.
-        if end_true > PGDATAOFS:
+        # reading data through the offset. Safe when the end page
+        # holds no data (blank, or header-only), or when every live
+        # item on it is twinned on dst (CH-F1, 4c: same erasure
+        # argument as the non-end extension); a torn end offset on an
+        # untwinned live end page would erase live items.
+        if end_true > PGDATAOFS and not suffix_twinned(img, epg, eoff, f):
             return 'REJECT', 'CMP_ERASE_LIVE_END'
     elif eoff > end_true:
         return 'REJECT', 'CMP_ERASE_ABOVE_END'
@@ -463,6 +496,26 @@ def enumerate_topology(nvpages=NVPAGES):
         else:
             fams['reject_topo'] += 1
     return {'total': total, 'nvpages': nvpages, 'families': fams}
+
+
+def program_tail_singleton(b, name):
+    """Hand-built live singleton item with an explicit non-seed ID
+    (2,99,0) on page 6 (ACT). CRC-stale is fine: singletons take no
+    CRC check (no pair to compare), and resume dedup is ID-specific,
+    so the tail takes no twin anywhere and resume converges quietly.
+    Header bytes are programmed only where the seed left them erased,
+    so both seed page forms (NACT-header, fully-erased) work."""
+    put1to0(b, 6 * PAGE + 0, 0x7C, name)
+    if b[6 * PAGE + 1] == 0xFF:
+        put1to0(b, 6 * PAGE + 1, 0x01, name)
+    if b[6 * PAGE + 2] == 0xFF:
+        put1to0(b, 6 * PAGE + 2, 0x0F, name)
+    if b[6 * PAGE + 3] == 0xFF:
+        put1to0(b, 6 * PAGE + 3, 0x96, name)
+    for i in range(5):
+        put1to0(b, 6 * PAGE + PGDATAOFS + i, 0xBB, name)
+    for i, v in enumerate((0x08, 0x63, 0x00, 0x00, 0x14, 0x42, 0x96)):
+        put1to0(b, 6 * PAGE + 21 + i, v, name)
 
 
 def hand_picked(name, b, last, info):
@@ -982,6 +1035,110 @@ def hand_picked(name, b, last, info):
               case=name, offset=20, old=hex(old))
         put1to0(b, 0 * PAGE + 20, old ^ (old & -old), name)
         return {'family': 'mixed-divergent-act-trio-twinned'}
+    if name == 'admit-erase-twinned-multi':
+        # Converging twinned-suffix admit (4c pin, green on 4b C):
+        # multi-page range [2..3] with a blank non-end page, a
+        # below-end twinned suffix on the end page, an erased tail
+        # (page 13), and a singleton tail ID on page 6 so resume
+        # dedup (ID-specific) converges quietly on the second init.
+        # First hosted driver execution of the suffix-true branch
+        # (closes L0-F4/L1-F11/L2-N6).
+        copy_page_1to0(b, 0, 3, name)
+        end = info['E']
+        top = parse_item(bytes(b[3 * PAGE:4 * PAGE]), end - 7)
+        check(top['live'] and top['len'] == 116, 'seed top item not as expected',
+              case=name, end=end, top=top)
+        check(end + 123 <= FLASH_PAGE_SIZE, 'seed page too full to append',
+              case=name, end=end)
+        orig = bytes(b[3 * PAGE + end - 123:3 * PAGE + end])
+        for i in range(116):
+            put1to0(b, 3 * PAGE + end + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 3 * PAGE + end + 116 + i, orig[116 + i], name)
+        program_tail_singleton(b, name)
+        put1to0(b, 12 * PAGE + 0, 0x78, name)
+        base = 12 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x02, name)
+        put1to0(b, base + 12, end & 0xFF, name)
+        put1to0(b, base + 13, (end >> 8) & 0xFF, name)
+        put1to0(b, base + 14, 0x03, name)
+        for i in range(116):
+            put1to0(b, 12 * PAGE + 16 + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 12 * PAGE + 16 + 116 + i, orig[116 + i], name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        return {'family': 'admit-erase-twinned-multi', 'seed_end': end,
+                'eoffset': end}
+    if name == 'admit-erase-twinned-nonend':
+        # CH-F1 red-first anchor (4c): range [2..3] with a live-twinned
+        # (fully-consumed) non-end page. cleanPage erases it, which
+        # destroys nothing (twins survive on dst), but 4b C demands
+        # blank non-end pages and false-bricks; 4d extends the rule.
+        copy_page_1to0(b, 0, 2, name)
+        copy_page_1to0(b, 0, 3, name)
+        end = info['E']
+        top = parse_item(bytes(b[3 * PAGE:4 * PAGE]), end - 7)
+        check(top['live'] and top['len'] == 116, 'seed top item not as expected',
+              case=name, end=end, top=top)
+        check(end + 123 <= FLASH_PAGE_SIZE, 'seed page too full to append',
+              case=name, end=end)
+        orig = bytes(b[3 * PAGE + end - 123:3 * PAGE + end])
+        for i in range(116):
+            put1to0(b, 3 * PAGE + end + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 3 * PAGE + end + 116 + i, orig[116 + i], name)
+        program_tail_singleton(b, name)
+        put1to0(b, 12 * PAGE + 0, 0x78, name)
+        base = 12 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x02, name)
+        put1to0(b, base + 12, end & 0xFF, name)
+        put1to0(b, base + 13, (end >> 8) & 0xFF, name)
+        put1to0(b, base + 14, 0x03, name)
+        for i in range(116):
+            put1to0(b, 12 * PAGE + 16 + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 12 * PAGE + 16 + 116 + i, orig[116 + i], name)
+        for i in range(116):
+            put1to0(b, 12 * PAGE + end + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 12 * PAGE + end + 116 + i, orig[116 + i], name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        return {'family': 'admit-erase-twinned-nonend', 'seed_end': end,
+                'eoffset': end}
+    if name == 'admit-erase-twinned-drained':
+        # CH-F1 red-first anchor (4c): drained singleton range [5..5]
+        # with a live-twinned end page. cleanPage erases it (5 ops:
+        # erase + NACT header + 3 NULL slots), which destroys nothing
+        # (twins survive on dst), but 4b C demands a blank drained end
+        # and false-bricks; 4d extends the rule. Tail is (12+1)%15 =
+        # page 13 (erased); first-init cost 6 ops (erase + tail-mark).
+        copy_page_1to0(b, 0, 5, name)
+        program_tail_singleton(b, name)
+        put1to0(b, 12 * PAGE + 0, 0x78, name)
+        base = 12 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x05, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x05, name)
+        end = info['E']
+        orig = bytes(b[0 * PAGE + 16:0 * PAGE + end])
+        check(len(orig) == 123, 'seed item not as expected',
+              case=name, end=end, size=len(orig))
+        for i in range(116):
+            put1to0(b, 12 * PAGE + 16 + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 12 * PAGE + 16 + 116 + i, orig[116 + i], name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        return {'family': 'admit-erase-twinned-drained', 'seed_end': end}
     return {'family': 'hand-picked'}
 
 
@@ -1053,7 +1210,8 @@ for _pg in (3, 8, 11):
 for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
 ADMIT_CASES = ['multi-act-twins', 'multi-act-rdy', 'admit-full-nact-mark',
-               'admit-drained-short-end']
+               'admit-drained-short-end', 'admit-erase-twinned-multi',
+               'admit-erase-twinned-nonend', 'admit-erase-twinned-drained']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -1103,6 +1261,9 @@ EXPECTED_TAG = {
     'multi-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
     'admit-drained-short-end': 'ADMIT_RECOVER_ERASE',
+    'admit-erase-twinned-multi': 'ADMIT_RECOVER_ERASE',
+    'admit-erase-twinned-nonend': 'ADMIT_RECOVER_ERASE',
+    'admit-erase-twinned-drained': 'ADMIT_RECOVER_ERASE',
 }
 for _name in REJECT_CASES:
     if _name.startswith('gen-torn-'):

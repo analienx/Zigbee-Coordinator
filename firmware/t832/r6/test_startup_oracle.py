@@ -396,6 +396,55 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([a, f] + [page()] * 12 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
+    def test_oracle_erase_twinned_nonend_admitted(self):
+        # CH-F1 (4c): a non-end range page whose live items all survive
+        # verbatim on dst admits: cleanPage erases it unconditionally,
+        # which destroys nothing. (C follows in 4d; 4c C still demands
+        # blank non-end pages.)
+        o = live_item(1, 33, 0, 5)
+        lo = live_item(1, 33, 0, 5)
+        hi = live_item(1, 33, 0, 5)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1C, 0x00, 0x01, 0x96))
+               + padded(o, hi))
+        nonend = page(0x7C, data=padded(o))
+        end = page(0x7C, data=padded(lo, hi))
+        img = image([nonend, end, dst] + [page()] * 12)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+
+    def test_oracle_erase_twinned_nonend_untwinned_rejected(self):
+        # CH-F1 (4c): a non-end range page with a live item missing its
+        # dst twin still fails closed: erasing it would lose the only
+        # copy.
+        lo = live_item(1, 33, 0, 5)
+        hi = live_item(1, 33, 0, 5)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1C, 0x00, 0x01, 0x96))
+               + padded(hi))
+        nonend = page(0x7C, data=padded(live_item(9, 9, 9, 5)))
+        end = page(0x7C, data=padded(lo, hi))
+        img = image([nonend, end, dst] + [page()] * 12)
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
+
+    def test_oracle_erase_drained_twinned_admitted(self):
+        # CH-F1 (4c): a drained end page whose live items all survive
+        # verbatim on dst admits: cleanPage erases it, which destroys
+        # nothing. (C follows in 4d; 4c C still demands a blank
+        # drained end.)
+        lo = live_item(1, 33, 0, 5)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + padded(lo))
+        end = page(0x7C, data=padded(lo))
+        img = image([end, dst] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+
 
 if __name__ == '__main__':
     unittest.main()
