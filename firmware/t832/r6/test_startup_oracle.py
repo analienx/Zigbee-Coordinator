@@ -460,5 +460,43 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
 
+class StartupCostBoundTest(unittest.TestCase):
+    # Q2: the analytic startup-read bound is pure policy math over a page
+    # census; lock its units (T832 read costs) and its shape (capped walks,
+    # quadratic pairwise term, PGCDST-gated erase term).
+    def test_copies_equal_units(self):
+        self.assertEqual(v._q2_copies_equal(1), (4, 12))
+        self.assertEqual(v._q2_copies_equal(116), (16, 472))
+        self.assertEqual(v._q2_copies_equal(0), (2, 8))
+
+    def test_census_counts_live(self):
+        two = padded(live_item(1, 33, 0, 5), live_item(1, 33, 1, 116))
+        census = v.q2_census(image([page(0x7C, data=two)]))
+        self.assertEqual(census[0]['state'], 0x7C)
+        self.assertEqual(census[0]['live'], 2)
+        self.assertEqual(census[0]['maxlen'], 116)
+        self.assertEqual(sum(p['live'] for p in census[1:]), 0)
+
+    def test_bound_grows_with_density_and_twins(self):
+        one = v.q2_classify_bound(v.q2_census(image([page(0x7C, data=padded(live_item(1, 33, 0, 5)))])))
+        two = v.q2_classify_bound(v.q2_census(image([page(0x7C, data=padded(live_item(1, 33, 0, 5),
+                                                                             live_item(1, 33, 1, 5)))])))
+        pg = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
+        twinned = v.q2_classify_bound(v.q2_census(image([pg, pg])))
+        self.assertLess(one, two)
+        self.assertLess(two, twinned)
+
+    def test_bound_erase_term_needs_pgcdst(self):
+        lo = live_item(1, 33, 0, 5)
+        plain = v.q2_classify_bound(v.q2_census(image([page(0x7C, data=padded(lo))])))
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + padded(lo))
+        with_dst = v.q2_classify_bound(v.q2_census(image([page(0x7C, data=padded(lo)), dst])))
+        self.assertLess(plain, with_dst)
+
+
 if __name__ == '__main__':
     unittest.main()

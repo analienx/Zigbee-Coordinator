@@ -1,11 +1,12 @@
 /* Actual driver probe; physical operation count and immutable-image oracle. */
 #include "nvocmp.c"
 #include <string.h>
+#include <stdlib.h>
 #ifndef ENABLE_SANITY_CHECK
 #error "startup guard probe requires ENABLE_SANITY_CHECK for full-surface sweep"
 #endif
 int main(int argc, char **argv) {
-    if(argc != 2) return 2;
+    if(argc < 2 || argc > 3) return 2;
     NVINTF_nvFuncts_t api;
     NVINTF_itemID_t id = {NVINTF_SYSID_ZSTACK, 33, 0};
     uint8_t data[116], actual[116]; memset(data, 0xAA, sizeof(data));
@@ -76,6 +77,27 @@ int main(int argc, char **argv) {
         if(first || again || read || memcmp(data, actual, sizeof(data)) || sanity) return 34;
         printf("{\"init_status\":%u,\"reinit_status\":%u,\"read_status\":%u,\"sanity_status\":%u,\"getfree\":%u,\"physical_operations\":%u}\n",
                first, again, read, sanity, free, nv_lab_operations);
+        return 0;
+    } else if(!strcmp(argv[1], "fill")) {
+        /* Q2 dense-store builder: create N distinct 1-byte items (subID
+           varies) on the current image; reports how many landed. */
+        unsigned want = argc > 2 ? (unsigned)strtoul(argv[2], NULL, 10) : 0;
+        unsigned got = 0;
+        NVINTF_itemID_t it = {NVINTF_SYSID_ZSTACK, 2000, 0};
+        uint8_t one = 0x5A;
+        if(first || again) return 35;
+        for(; got < want && got < 60000u; got++) {
+            it.subID = (uint16_t)got;
+            if(api.createItem(it, sizeof(one), &one)) break;
+        }
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"want\":%u,\"created\":%u,\"physical_operations\":%u,\"read_calls\":%u,\"read_bytes\":%u}\n",
+               first, again, want, got, nv_lab_operations, nv_lab_read_calls, nv_lab_read_bytes);
+        return 0;
+    } else if(!strcmp(argv[1], "cost")) {
+        /* Q2 startup-cost oracle: two bare inits and nothing else, so the
+           measured reads are pure init (classify + driver scan/resume). */
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"physical_operations\":%u,\"read_calls\":%u,\"read_bytes\":%u}\n",
+               first, again, nv_lab_operations, nv_lab_read_calls, nv_lab_read_bytes);
         return 0;
     } else return 2;
     printf("{\"init_status\":%u,\"reinit_status\":%u,\"write_status\":%u,\"read_status\":%u,\"physical_operations\":%u}\n",

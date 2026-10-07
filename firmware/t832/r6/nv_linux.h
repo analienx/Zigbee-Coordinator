@@ -24,4 +24,5 @@ void NV_LINUX_read(uint8_t pg,uint16_t off,uint8_t *buf,uint16_t len);
 int_fast16_t NV_LINUX_write(uint8_t pg,uint16_t off,uint8_t *buf,uint16_t len);
 int_fast16_t NV_LINUX_erase(uint8_t pg);
 extern unsigned nv_lab_operations;
+extern unsigned nv_lab_read_calls, nv_lab_read_bytes;
 #endif

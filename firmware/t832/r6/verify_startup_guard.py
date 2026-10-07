@@ -7,7 +7,8 @@ values rejected), exact sanity-bitmask asserts, and derived
 (never hard-coded) evidence. The Python oracles below
 mirror classifier policy for case construction; they are not independent
 proof of the driver. Only the hosted driver-probe runs count as execution
-evidence.
+evidence. Q2 adds host-side read accounting plus an analytic per-image
+startup-read bound; the cost verb measures, the bound gates.
 """
 import argparse
 import hashlib
@@ -162,6 +163,80 @@ def walk_live(page):
             slides += 1
             if slides > 64:
                 return live, True
+
+
+# Q2 startup-cost model (T832 constants: FASTOFF=1 whole-page findOffset at
+# 1 call x 2048B, no RAM_OPTIMIZATION, readHeader 1 call x 7B,
+# XFERBLKMAX=32, HDRCRCINC=5). Every walk is capped (512 steps, 64 slides);
+# anomalies only end walks early, so caps computed from a clean-end census
+# soundly bound any image.
+Q2_WALK_CALLS = 1 + 513 + 65  # findOffset + steps + slides at trip points
+Q2_WALK_BYTES = 2048 + (513 + 65) * 7
+Q2_DRIVER_CALLS_PER_INIT = NVPAGES * 1200  # flat scan/resume allowance
+Q2_DRIVER_BYTES_PER_INIT = NVPAGES * (2048 + 8400)
+
+
+def _q2_copies_equal(maxlen):
+    """(calls, bytes) for one NVOCMP_recoverCopiesEqual at payload maxlen."""
+    n = maxlen + 4  # +HDRCRCINC-1
+    crc_calls = (n + 31) // 32
+    cmp_calls = (maxlen + 31) // 32 if maxlen else 0
+    return 2 * crc_calls + 2 * cmp_calls, 2 * n + 2 * maxlen
+
+
+def q2_census(img):
+    """Per-page census for the cost bound: state, compact mode, live-header
+    count (capped at walk capacity), max payload length."""
+    pages = []
+    for pg in range(NVPAGES):
+        page = img[pg * PAGE:(pg + 1) * PAGE]
+        live, _ = walk_live(page)
+        pages.append({'state': page[0], 'mode': page[6],
+                      'live': min(len(live), 513),
+                      'maxlen': min(max([h['len'] for h in live] + [0]), 2048)})
+    return pages
+
+
+def q2_classify_bound(census):
+    """Sound per-init (calls, bytes) ceiling for NVOCMP_startupClassify on
+    an image with the given census. Assumes every walk runs to a clean end
+    with no early exit; any anomaly or early reject only reads less."""
+    calls, nbytes = 0, 0
+    for p in census:
+        # page-header read, erased scan, compact-meta read, cursor
+        # findOffset + boundary walk (513 reads at its trip point).
+        calls += 1 + 64 + 1 + 1 + 513
+        nbytes += 4 + 2048 + 12 + 2048 + 513 * 7
+    chk = [p for p in census if p['state'] in (0x7C, 0x78, 0x70)]
+    nchk = len(chk)
+    htot = sum(p['live'] for p in chk)
+    hmax = max([p['live'] for p in chk] + [0])
+    lmax = max([p['maxlen'] for p in chk] + [0])
+    ce_calls, ce_bytes = _q2_copies_equal(lmax)
+    # tail block: cursor read + findOffset + tail header + tail CRC.
+    calls += 1 + 1 + 1 + (lmax + 4 + 31) // 32
+    nbytes += 4 + 2048 + 7 + lmax + 4
+    # tail-ID census: one walk per chk page + one proof per older copy.
+    calls += nchk * Q2_WALK_CALLS + htot * ce_calls
+    nbytes += nchk * Q2_WALK_BYTES + htot * ce_bytes
+    # pairwise proof: one outer walk per chk page; every live header
+    # launches one conflict walk per chk page; cmpid matches re-prove.
+    walks = nchk + htot * nchk
+    calls += walks * Q2_WALK_CALLS + htot * nchk * hmax * ce_calls
+    nbytes += walks * Q2_WALK_BYTES + htot * nchk * hmax * ce_bytes
+    # F1 erase-branch twin proofs, only when a PGCDST page exists. The
+    # driver runs PageTwinned on non-end range pages and SuffixTwinned on
+    # the end page (any state); charging every page the PageTwinned shape
+    # plus a boundary walk covers both, wherever the range lands.
+    dst = [p for p in census if p['mode'] == 0xFE]
+    if dst and nchk:
+        hdst = max(p['live'] for p in dst)
+        for p in census:
+            calls += 1 + 513 + Q2_WALK_CALLS \
+                + p['live'] * (Q2_WALK_CALLS + hdst * ce_calls)
+            nbytes += 2048 + 513 * 7 + Q2_WALK_BYTES \
+                + p['live'] * (Q2_WALK_BYTES + hdst * ce_bytes)
+    return calls, nbytes
 
 
 def _cmp(page, idx):
@@ -1326,7 +1401,7 @@ def verify(sdk, out):
     apply_fix(source)
     rows = []
     failures = []
-    reject_done = sanitizer_done = admit_done = 0
+    reject_done = sanitizer_done = admit_done = cost_done = 0
     for embedded in (False, True):
         for sanitizer in (False, True):
             tag = ('embedded' if embedded else 'asserting') + ('-sanitizer' if sanitizer else '')
@@ -1352,11 +1427,11 @@ def verify(sdk, out):
                 failures.append({'lane': tag, 'phase': 'compile', 'error': str(exc)[:2000]})
                 continue
 
-            def invoke(image, verb):
+            def invoke(image, verb, *args):
                 env = dict(os.environ, NVLAB_IMAGE=str(image))
                 env.pop('NVLAB_CUT_OP', None)
                 try:
-                    p = subprocess.run([str(exe), verb], env=env, capture_output=True,
+                    p = subprocess.run([str(exe), verb, *args], env=env, capture_output=True,
                                        text=True, timeout=INVOKE_TIMEOUT)
                 except subprocess.TimeoutExpired as exc:
                     after = Path(image).read_bytes() if Path(image).is_file() else b''
@@ -1378,6 +1453,24 @@ def verify(sdk, out):
 
             lane = {'embedded_asserts': embedded, 'sanitizer': sanitizer,
                     'rejections': {}, 'admits': {}, 'lane_failures': []}
+
+            def measure_cost(cname, cimg):
+                """Q2: run the bare-init cost verb on a copy of cimg and prove
+                the measured startup reads sit under the analytic bound."""
+                cp = out / (exe.name + '-costrun-' + cname + '.bin')
+                cp.write_bytes(cimg)
+                cost = invoke(cp, 'cost')
+                census = q2_census(cimg)
+                cc, cb = q2_classify_bound(census)
+                cap_calls = 2 * (cc + Q2_DRIVER_CALLS_PER_INIT)
+                cap_bytes = 2 * (cb + Q2_DRIVER_BYTES_PER_INIT)
+                check(cost['read_calls'] <= cap_calls and cost['read_bytes'] <= cap_bytes,
+                      'startup reads exceed analytic bound', lane=tag, case=cname,
+                      cost=cost, cap_calls=cap_calls, cap_bytes=cap_bytes)
+                lane.setdefault('startup_cost', {})[cname] = {
+                    'measured': cost, 'cap_calls': cap_calls,
+                    'cap_bytes': cap_bytes, 'census': census}
+                return cost
 
             def setup_lane():
                 seed = out / (exe.name + '-seed.bin')
@@ -1471,6 +1564,8 @@ def verify(sdk, out):
                           case=name, oracle_tag=otag, expected=EXPECTED_TAG[name])
                     p = out / (exe.name + '-admit-' + name + '.bin')
                     p.write_bytes(b)
+                    measure_cost('admit-' + name, bytes(b))
+                    cost_done += 1
                     first = invoke(p, 'admit')
                     admit_done += 1
                     check(first['init_status'] == 0 and first['reinit_status'] == 0,
@@ -1499,6 +1594,29 @@ def verify(sdk, out):
                                                   'sha_after': hashlib.sha256(after).hexdigest()})
                     failures.append({'lane': tag, 'case': name, 'error': str(exc)[:2000],
                                      'sha_after': hashlib.sha256(after).hexdigest()})
+            dense_cases = []
+            try:
+                dense = out / (exe.name + '-cost-dense.bin')
+                f = invoke(dense, 'fill', '220')
+                check(f['created'] == 220, 'dense fill short', lane=tag, fill=f)
+                dense_cases.append(('dense-single', dense.read_bytes()))
+                twin = bytearray(dense.read_bytes())
+                copy_page_1to0(twin, 0, 1, 'dense-twinned')
+                dense_cases.append(('dense-twinned', bytes(twin)))
+            except Exception as exc:
+                lane['lane_failures'].append({'case': 'dense-build',
+                                              'error': str(exc)[:2000]})
+                failures.append({'lane': tag, 'case': 'dense-build',
+                                 'error': str(exc)[:2000]})
+            for cname, cimg in dense_cases:
+                try:
+                    measure_cost(cname, cimg)
+                    cost_done += 1
+                except Exception as exc:
+                    lane['lane_failures'].append({'case': cname,
+                                                  'error': str(exc)[:2000]})
+                    failures.append({'lane': tag, 'case': cname,
+                                     'error': str(exc)[:2000]})
             rows.append(lane)
     check(len(REJECT_CASES) == len(set(REJECT_CASES)), 'duplicate reject case names')
     check(len(ADMIT_CASES) == len(set(ADMIT_CASES)), 'duplicate admit case names')
@@ -1509,6 +1627,42 @@ def verify(sdk, out):
     sanitizer_lanes = len([l for l in rows if l['sanitizer']])
     sanitizer_expected = sanitizer_lanes * len(REJECT_CASES) * 2
     admit_expected = lanes_built * len(ADMIT_CASES) * 2
+    cost_expected = lanes_built * (len(ADMIT_CASES) + 2)
+    cost_short = cost_done != cost_expected
+    if cost_short:
+        failures.append({'phase': 'cost-coverage', 'cost_done': cost_done,
+                         'cost_expected': cost_expected})
+    stack_usage = {'available': False}
+    try:
+        tu = out / 'stack_tu.c'
+        tu.write_text('#include "nvocmp.c"\n')
+        subprocess.run(['gcc', '-std=c11', '-O1', '-fstack-usage', '-D_GNU_SOURCE',
+                        '-DNV_LINUX', '-DNVOCMP_POSIX_MUTEX', '-DENABLE_SANITY_CHECK',
+                        '-DDeviceFamily_CC26X4', '-DNVOCMP_NVPAGES=15',
+                        '-I' + str(out), '-I' + str(HERE), '-I' + str(sdk / 'source'),
+                        '-I' + str(sdk / 'source/ti/common/nv'),
+                        '-c', str(tu), '-o', str(out / 'stack_tu.o')],
+                       check=True, cwd=out, capture_output=True, text=True, timeout=120)
+        su = out / 'stack_tu.su'
+        if su.is_file():
+            frames = {}
+            for line in su.read_text().splitlines():
+                toks = line.split(':')
+                for i, tok in enumerate(toks):
+                    if tok.startswith('NVOCMP_') and i + 2 < len(toks) \
+                            and toks[i + 1].strip().isdigit():
+                        frames[tok] = {'bytes': int(toks[i + 1]), 'kind': toks[i + 2]}
+            t832 = {k: v for k, v in frames.items()
+                    if 'startup' in k.lower() or 'recover' in k.lower()}
+            stack_usage = {'available': True, 't832_frames': t832,
+                           'classify': frames.get('NVOCMP_startupClassify')}
+        else:
+            stack_usage = {'available': False, 'error': 'stack_tu.su not emitted'}
+    except Exception as exc:
+        stack_usage = {'available': False, 'error': str(exc)[:500]}
+    if stack_usage.get('classify') and stack_usage['classify']['bytes'] > 1024:
+        failures.append({'phase': 'stack-frame',
+                         'frames': stack_usage['t832_frames']})
     enumeration = enumerate_topology()
     check(enumeration['total'] == 15504, 'topology enumeration incomplete',
           enumeration=enumeration)
@@ -1519,9 +1673,12 @@ def verify(sdk, out):
               'rejection_cases': reject_done,
               'sanitizer_sweeps': sanitizer_done,
               'admit_runs': admit_done,
+              'cost_runs': cost_done,
               'reject_runs_expected': reject_expected,
               'sanitizer_runs_expected': sanitizer_expected,
               'admit_runs_expected': admit_expected,
+              'cost_runs_expected': cost_expected,
+              'stack_usage': stack_usage,
               'corpus': {'version': CORPUS_VERSION, 'reject_names': REJECT_CASES,
                          'admit_names': ADMIT_CASES,
                          'reject_count': len(REJECT_CASES),
@@ -1535,7 +1692,7 @@ def verify(sdk, out):
     (out / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'ok': ok, 'rejection_cases': reject_done,
                       'sanitizer_sweeps': sanitizer_done, 'admit_runs': admit_done,
-                      'failures': len(failures)}))
+                      'cost_runs': cost_done, 'failures': len(failures)}))
     check(ok, 'startup preservation gate failed; see report failures',
           failures=len(failures))
     check(reject_done == reject_expected, 'reject runs incomplete',

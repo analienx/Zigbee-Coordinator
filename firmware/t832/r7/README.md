@@ -130,3 +130,35 @@ The next authorized firmware experiment must retain original native records and
 physical NV before upload, capture first boot, and establish uploader erase-range
 evidence before calling this an inherited-NV fix. R10 is not authorized to flash
 by its build manifest; do not automatically deploy it after vendor recovery.
+
+## R10 startup-cost qualification (Q2)
+
+Per-read costs on T832 (CC26X4, FASTOFF=1, no RAM_OPTIMIZATION, 2KB pages,
+XFERBLKMAX=32): findOffset is 1 call x 2048B; readHeader is 1 call x 7B;
+the erased scan is at most 64 calls x 2048B; the boundary walk is at most
+513 calls x 7B; CopiesEqual(len) re-reads both payloads at
+2*ceil((len+4)/32) + 2*ceil(len/32) calls and 4*len+8 bytes. Every
+classifier walk is capped (512 steps, 64 slides); anomalies and early
+rejects only read less, so a clean-end census soundly bounds any image.
+
+Per-init classify ceiling for C chk pages (ACT/FULL/XSRC) with Htot live
+headers (Hmax max per page) and max payload Lmax: the 15-page header loop
+plus one tail block, a tail census of C walks with at most Htot re-proofs,
+and the pairwise proof of C outer walks with Htot x C conflict walks and at
+most Htot x C x Hmax cmpid-match re-proofs; erase-branch twin proofs run
+only when a PGCDST page exists. The hosted gate computes this ceiling from
+each measured image's own census (q2_classify_bound in
+verify_startup_guard.py) and fails if two bare inits exceed twice the
+classify ceiling plus a flat driver scan/resume allowance. Measured cases:
+all 8 admit pre-images (including PGCDST erase shapes, which exercise
+PageTwinned/SuffixTwinned), one 220-item dense page, and its two-page
+identical twin (which exercises the quadratic pairwise proof with
+byte-compare re-proofs on every live ID).
+
+Stack/RAM: the classify frame is capped at 1KB by host -fstack-usage
+(frames recorded in report.json; exact array accounting is 5 x 15B page
+vectors + 30B offsets + locals, under 200B). Helpers nest at most two
+walks deep (~8B each) plus one 64B compare-buffer pair and one header
+struct; no recursion, no malloc. The 2KB tBuffer page buffer is
+pre-existing driver static storage. Measured startup reads (hosted): see
+the run table below once the instrumented gate goes green.
