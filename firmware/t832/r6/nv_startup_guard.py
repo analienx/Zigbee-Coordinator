@@ -14,9 +14,10 @@ HELPER=r'''/* T832-R10: classify every page before the first erase/program.
    preserves the image and rejects. F2: legacy generations fail closed;
    migration is not qualified. F6: multi-page RECOVER_ERASE ranges fail
    closed (non-end pages erase unconditionally). F7: duplicate PGCDST
-   metadata fails closed. F8: ACT live IDs must agree pairwise (verbatim
-   twins incl. both CRCs) or fail closed, except divergent pairs on the
-   valid tail ID which resume dedups. F9: reserved page-header
+   metadata fails closed. F8: ACT/FULL live IDs must agree pairwise
+   (verbatim twins incl. both CRCs) or fail closed, except divergent
+   pairs on the valid tail ID of a resume topology with at most one
+   older copy (resume dedups it). F9: reserved page-header
    cycle/allActive values fail closed. */
 static uint16_t NVOCMP_findOffset(uint8_t pg, uint16_t ofs);
 static void NVOCMP_readHeader(uint8_t pg, uint16_t ofs, NVOCMP_itemHdr_t *iHdr, bool flag);
@@ -45,7 +46,7 @@ static uint16_t NVOCMP_startupCmpOff(const uint8_t *b)
 }
 
 /* Read-only item-boundary walk: NV items pack data-first from
-   NVOCMP_PGDATAOFS with each 7-byte header last (len uses the HDRLE
+   NVOCMP_PGDATAOFS with each 7-byte header last (len uses the HDRLE=0
    branch of NVOCMP_readHeader). Walk downward from the true data end;
    true only when cursor lands exactly on an item boundary. */
 static bool NVOCMP_startupOnBoundary(uint8_t pg, uint16_t cursor, uint16_t endTrue)
@@ -89,7 +90,11 @@ static void NVOCMP_startupWalkInit(NVOCMP_startupWalk_t *w, uint8_t pg)
 /* Next live header at or below the cursor: 1 fills *out, 0 at a clean chain
    end, -1 on anything unparseable (the caller fails closed). Unrecognized
    tail bytes (erased gaps, torn writes) slide past bounded; every valid
-   header steps down exactly, so the walk always terminates. */
+   header steps down exactly, so the walk always terminates. Torn bytes are
+   1->0 prefixes of the true bytes being programmed, so forging a valid
+   window that skips a live header needs a bit-precise tear (adversarial
+   fault injection, which this NOR guard is not built to resist); random
+   power-cut tears cannot forge one. The driver's own walks share this. */
 static int8_t NVOCMP_startupWalkNext(NVOCMP_startupWalk_t *w, NVOCMP_itemHdr_t *out)
 {
   for(;;)
@@ -133,9 +138,10 @@ static bool NVOCMP_startupActConflict(uint8_t pg, const NVOCMP_itemHdr_t *ref, b
 
 static uint8_t NVOCMP_startupClassify(void)
 {
-  uint8_t inactive = 0, destinations = 0, sources = 0, ready = 0, dataPages = 0;
-  uint8_t actN = 0;
+  uint8_t inactive = 0, destinations = 0, sources = 0, ready = 0, dataPages = 0, cdst = 0;
+  uint8_t actN = 0, chkN = 0;
   uint8_t actPgs[NVOCMP_NVPAGES];
+  uint8_t chkPgs[NVOCMP_NVPAGES];
   uint8_t modes[NVOCMP_NVPAGES];
   uint8_t spages[NVOCMP_NVPAGES];
   uint8_t epages[NVOCMP_NVPAGES];
@@ -260,6 +266,7 @@ static uint8_t NVOCMP_startupClassify(void)
     if(hdr->state == NVOCMP_PGRDY) ready++;
     if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) dataPages++;
     if(hdr->state == NVOCMP_PGACT) actPgs[actN++] = pg;
+    if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) chkPgs[chkN++] = pg;
   }
   /* Reject the upstream FORCE_CLEAN decisions before scanPage initializes even
      a truly blank page. Rejected topology must preserve the complete image.
@@ -269,30 +276,35 @@ static uint8_t NVOCMP_startupClassify(void)
      (inactive != NVOCMP_NVSIZE && !destinations && !sources && !dataPages))
     return NVINTF_FAILURE;
   /* F7: findDstPage consumes only the first PGCDST page, so more than one
-     PGCDST metadata page is ambiguous and fails closed. */
-  {
-    uint8_t cdst = 0;
-    for(pg = 0; pg < NVOCMP_NVSIZE; pg++) if(modes[pg] == NVOCMP_PGCDST) cdst++;
-    if(cdst > 1) return NVINTF_FAILURE;
-  }
+     PGCDST metadata page is ambiguous and fails closed. Counted here so
+     the F8 resume-topology gate below can use it. */
+  for(pg = 0; pg < NVOCMP_NVSIZE; pg++) if(modes[pg] == NVOCMP_PGCDST) cdst++;
+  if(cdst > 1) return NVINTF_FAILURE;
   /* F8 agreement proof: every pair of live copies sharing a compressed ID
-     across (or within) ACT pages must be verbatim twins (bounds, both CRCs,
-     payload bytes). RESUME reads from the last ACT page while RECOVER_ERASE
-     reads from the first, so divergent copies would return different values
-     on the two paths. Anything unparseable fails closed. Exception: a
-     divergent pair on the live, CRC-valid tail ID of the NULL-cursor last
-     ACT converges (resume dedups the older twin; appends and COMPR=0
-     compaction keep the tail newest), so update-transients admit. */
+     across (or within) ACT and FULL pages must be verbatim twins (bounds,
+     both CRCs, payload bytes). RESUME reads from the last ACT page while
+     RECOVER_ERASE reads from the first, so divergent copies would return
+     different values on the two paths. Anything unparseable fails closed.
+     Exception: a divergent pair on the live, CRC-valid tail ID of the
+     NULL-cursor last ACT converges only when the driver takes
+     NORMAL_RESUME (exactly one XDST and no XSRC, or the no-XDST/XSRC
+     resume-mark branch with no PGCDST and a spare NACT): resume inactivates
+     exactly one older copy (the first strict match below the tail), so the
+     tail-ID census below admits at most one older non-twin copy and
+     update-transients admit while erase-path and multi-copy divergence
+     fails closed. */
   {
     uint8_t i, j;
     bool tailOk = false;
+    bool resumeTopo = (destinations == 1 && sources == 0) ||
+        (!destinations && !sources && dataPages && !cdst && inactive);
     uint32_t tailCmpid = 0;
-    if(actN > 0)
+    NVOCMP_itemHdr_t tailH;
+    if(actN > 0 && resumeTopo)
     {
       uint8_t lastAct = actPgs[actN - 1];
       uint8_t cursorBytes[4];
       uint16_t tailEnd;
-      NVOCMP_itemHdr_t tailH;
       NVOCMP_read(lastAct, NVOCMP_PGHDRLEN, cursorBytes, sizeof(cursorBytes));
       tailEnd = NVOCMP_findOffset(lastAct, FLASH_PAGE_SIZE);
       if(cursorBytes[0] == 0xFF && cursorBytes[1] == 0xFF && tailEnd >= NVOCMP_PGDATAOFS + NVOCMP_ITEMHDRLEN)
@@ -307,19 +319,46 @@ static uint8_t NVOCMP_startupClassify(void)
         }
       }
     }
-    for(i = 0; i < actN; i++)
+    if(tailOk)
+    {
+      /* Tail-ID census: resume dedups exactly one older copy, so more than
+         one older live non-twin copy of the tail ID (across ACT and FULL
+         pages) leaves divergent survivors and fails closed. Verbatim twins
+         of the tail read identically on every path. */
+      uint8_t c;
+      uint8_t older = 0;
+      for(c = 0; c < chkN; c++)
+      {
+        NVOCMP_startupWalk_t w;
+        NVOCMP_itemHdr_t h;
+        int8_t r;
+        NVOCMP_startupWalkInit(&w, chkPgs[c]);
+        for(;;)
+        {
+          r = NVOCMP_startupWalkNext(&w, &h);
+          if(r < 0) return NVINTF_FAILURE;
+          if(r == 0) break;
+          if(h.cmpid == tailCmpid && (h.hpage != tailH.hpage || h.hofs != tailH.hofs) &&
+             !NVOCMP_recoverCopiesEqual(&tailH, &h))
+          {
+            if(++older > 1) return NVINTF_FAILURE;
+          }
+        }
+      }
+    }
+    for(i = 0; i < chkN; i++)
     {
       NVOCMP_startupWalk_t w;
       NVOCMP_itemHdr_t h;
       int8_t r;
-      NVOCMP_startupWalkInit(&w, actPgs[i]);
+      NVOCMP_startupWalkInit(&w, chkPgs[i]);
       for(;;)
       {
         r = NVOCMP_startupWalkNext(&w, &h);
         if(r < 0) return NVINTF_FAILURE;
         if(r == 0) break;
-        for(j = 0; j < actN; j++)
-          if(NVOCMP_startupActConflict(actPgs[j], &h, tailOk, tailCmpid)) return NVINTF_FAILURE;
+        for(j = 0; j < chkN; j++)
+          if(NVOCMP_startupActConflict(chkPgs[j], &h, tailOk, tailCmpid)) return NVINTF_FAILURE;
       }
     }
   }
@@ -367,9 +406,10 @@ static uint8_t NVOCMP_startupClassify(void)
              live end page would erase live items. */
           if(endTrue > NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
         }
-        else if(eoff > endTrue) return NVINTF_BADVERSION;
-        if(eoff != NVOCMP_PGDATAOFS && eoff < endTrue && !NVOCMP_startupOnBoundary(epg, eoff, endTrue))
-          return NVINTF_BADVERSION;
+        /* Fresh ranges record the frozen end exactly; below-end is a
+           stale range or torn header, and cleanPage would cursor-write
+           it over live items. */
+        else if(eoff != endTrue) return NVINTF_BADVERSION;
       }
     }
   }
@@ -492,7 +532,7 @@ def verify_guard(text):
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi','NVOCMP_expectCompApi'):
         if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
     classify=function(text,'NVOCMP_startupClassify')
-    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict'):
+    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
     if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')

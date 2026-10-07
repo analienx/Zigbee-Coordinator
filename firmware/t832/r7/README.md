@@ -114,8 +114,8 @@ compact/erase/getFree/sanity plus a balanced lock/unlock pair) with zero
 physical operations and identical full-image hashes. A dedicated adverse probe
 verb shows expectComp(nonzero) cannot reach the page walker after a rejected
 init; the whole sweep also runs under AddressSanitizer+
-UndefinedBehaviorSanitizer with no findings. ACT live IDs must agree pairwise across and within ACT pages:
-every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID which resume dedups (lab-proven by mutation cuts). Missing recovery destinations return a
+UndefinedBehaviorSanitizer with no findings. ACT/FULL live IDs must agree pairwise across and within ACT and FULL pages:
+every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy, which resume dedups (lab-proven by mutation cuts). Missing recovery destinations return a
 latched error instead of the upstream startup spin. Healthy reopen stays
 unchanged; truly blank initialization still succeeds. Existing exhaustive
 compaction/write gates apply. The 15,504 state-count families in the report are

@@ -90,7 +90,7 @@ def find_end(page):
 
 
 def hdr_len(b3, b4):
-    # HDRLE branch of NVOCMP_readHeader (NVOCMP_HDRLE is 0 on this target).
+    # HDRLE=0 branch of NVOCMP_readHeader.
     return ((b3 & 0x3F) << 6) | ((b4 >> 2) & 0x3F)
 
 
@@ -302,7 +302,8 @@ def oracle_decision(img):
     # closed. C refines two shapes this mirror cannot see: it requires
     # both CRCs valid (this mirror compares length and payload bytes
     # only), and it admits divergent pairs on the live CRC-valid tail ID
-    # of the NULL-cursor last ACT (resume dedups the older twin; the
+    # of the NULL-cursor last ACT on a resume topology with at most one
+    # older non-twin copy (resume dedups the single older twin; the
     # hosted lab mutation cuts prove that path). Every corpus verdict here
     # matches C: twins are valid, conflicts differ with torn tails.
     act_live = {}

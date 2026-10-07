@@ -26,7 +26,7 @@ def image(pages):
 
 
 def item_data(length):
-    # Data-first layout with the HDRLE header encoding the driver reads.
+    # Data-first layout with the HDRLE=0 header encoding the driver reads.
     b3 = (length >> 6) & 0x3F
     b4 = ((length & 0x3F) << 2) & 0xFF
     hdr = bytes((0x04, 0x21, 0x00, b3, b4, 0x42, 0x96))
@@ -253,9 +253,10 @@ class OracleCorpusTest(unittest.TestCase):
     def test_oracle_divergent_act_rejected(self):
         # F8: twins sharing a live ID with differing values conflict, even
         # though each page walks cleanly. (C would additionally admit a
-        # divergent pair on a CRC-valid tail ID; the mirror cannot check
-        # CRCs, so it conservatively rejects all divergence. The hosted lab
-        # mutation cuts prove the C exception admits valid-tail transients.)
+        # divergent pair on a CRC-valid tail ID on a resume topology with
+        # a single older copy; the mirror cannot check CRCs, so it
+        # conservatively rejects all divergence. The hosted lab mutation
+        # cuts prove the C exception admits valid-tail transients.)
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
         b = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         img = image([a, b] + [page()] * 12 + [page(0xFE)])
