@@ -167,6 +167,32 @@ def _cmp(page, idx):
             'sig': page[o + 3], 'raw': bytes(page[o:o + 4])}
 
 
+def suffix_twinned(img, epg, eoff, fpg):
+    """Mirror of the C suffix proof: every live item strictly above eoff
+    on the end page must be twinned (length and payload) on the dst page,
+    and both pages must walk to a clean end. True only when proved. (C
+    additionally requires both CRCs valid.)"""
+    end_page = img[epg * PAGE:(epg + 1) * PAGE]
+    if not on_boundary(end_page, eoff, find_end(end_page)):
+        return False
+    live, anomaly = walk_live(end_page)
+    if anomaly:
+        return False
+    dst_live, dst_anomaly = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
+    if dst_anomaly:
+        return False
+    twins = set()
+    for h in dst_live:
+        twins.add(((h['sysid'], h['itemid'], h['subid']), h['len'],
+                   bytes(img[fpg * PAGE + h['hofs'] - h['len']:fpg * PAGE + h['hofs']])))
+    for h in live:
+        if h['hofs'] > eoff:
+            if ((h['sysid'], h['itemid'], h['subid']), h['len'],
+                    bytes(img[epg * PAGE + h['hofs'] - h['len']:epg * PAGE + h['hofs']])) not in twins:
+                return False
+    return True
+
+
 def oracle_compact(page, state):
     """Policy mirror of the C compact preflight (structural half): replays
     the same admission rules for case construction, not independent proof.
@@ -365,16 +391,16 @@ def oracle_decision(img):
         # live end page would erase live items.
         if end_true > PGDATAOFS:
             return 'REJECT', 'CMP_ERASE_LIVE_END'
+    elif eoff > end_true:
+        return 'REJECT', 'CMP_ERASE_ABOVE_END'
     elif eoff != end_true:
-        # Fresh ranges record the frozen end exactly (sources are
-        # XSRC-frozen before compact() records XSRCENDHDR, and R8 P2a
-        # raises RAM offsets to findOffset), so below-end is a stale
-        # range or torn header. cleanPage cursor-writes it onto the end
-        # page and marks the page FULL after P2a ran, hiding live items
-        # above it; a stale-smaller value is never consumed.
-        if eoff > end_true:
-            return 'REJECT', 'CMP_ERASE_ABOVE_END'
-        return 'REJECT', 'CMP_ERASE_BELOW_END'
+        # Below-end erase offsets are fresh partial-consumption
+        # frontiers (dst-full rounds stop mid-page) or stale/torn
+        # values. cleanPage hides everything above eoff, so admission
+        # needs the suffix proof: on-boundary, and every live item above
+        # eoff twinned on the dst page.
+        if not suffix_twinned(img, epg, eoff, f):
+            return 'REJECT', 'CMP_ERASE_BELOW_END'
     return 'ADMIT', 'ADMIT_RECOVER_ERASE'
 
 

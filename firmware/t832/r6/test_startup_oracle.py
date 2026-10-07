@@ -288,10 +288,11 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(full), ('REJECT', 'DRIVER_UNKNOWN_LATCH'))
 
     def test_oracle_erase_below_end_rejected(self):
-        # F1/P1: an end offset below the true end, even on an item
-        # boundary, is a stale range or torn header: cleanPage would
-        # cursor-write it over live items. Only the true end (or the
-        # drained mark over a blank end) is consumable.
+        # F1/P1: an end offset below the true end is a fresh
+        # partial-consumption frontier or a stale/torn value. cleanPage
+        # hides everything above it, so admission needs the suffix proof:
+        # here the live item above eoff has no twin on dst, so the
+        # hidden original would be lost.
         dst = (bytes((0x78, 0x01, 0x0F, 0x96))
                + bytes((0xFF, 0xFF, 0xFE, 0x96))
                + bytes((0x10, 0x00, 0x00, 0x96))
@@ -302,6 +303,21 @@ class OracleCorpusTest(unittest.TestCase):
         end = page(0x7C, data=padded(lo, hi))
         img = image([end] + [page()] * 13 + [dst])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_BELOW_END'))
+
+    def test_oracle_erase_twinned_suffix_admitted(self):
+        # F1/P1: below-end eoff with every live item above it twinned on
+        # dst is a proved-fresh frontier: hiding the originals hides
+        # nothing, so the range admits.
+        lo = live_item(1, 33, 0, 5)
+        hi = live_item(1, 33, 0, 5)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1C, 0x00, 0x00, 0x96))
+               + padded(hi))
+        end = page(0x7C, data=padded(lo, hi))
+        img = image([end] + [page()] * 13 + [dst])
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
     def test_oracle_erase_topology_divergent_rejected(self):
         # F8/P0: the mirror rejects divergent pairs on every topology;

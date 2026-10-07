@@ -117,6 +117,42 @@ static int8_t NVOCMP_startupWalkNext(NVOCMP_startupWalk_t *w, NVOCMP_itemHdr_t *
   }
 }
 
+/* Suffix proof: true only when every live item strictly above eoff on page
+   epg has a verbatim twin on page fpg and both pages walk to a clean end.
+   Below-end erase offsets are fresh partial-consumption frontiers (dst-full
+   rounds stop mid-page) or stale/torn values; cleanPage hides everything
+   above eoff, which is safe only when each hidden live item survives
+   verbatim on dst. Anything unparseable fails closed. */
+static bool NVOCMP_startupSuffixTwinned(uint8_t epg, uint16_t eoff, uint16_t endTrue, uint8_t fpg)
+{
+  NVOCMP_startupWalk_t w;
+  NVOCMP_itemHdr_t h;
+  int8_t r;
+  if(!NVOCMP_startupOnBoundary(epg, eoff, endTrue)) return false;
+  NVOCMP_startupWalkInit(&w, epg);
+  for(;;)
+  {
+    r = NVOCMP_startupWalkNext(&w, &h);
+    if(r < 0) return false;
+    if(r == 0) return true;
+    if(h.hofs > eoff)
+    {
+      NVOCMP_startupWalk_t v;
+      NVOCMP_itemHdr_t g;
+      int8_t s;
+      bool twinned = false;
+      NVOCMP_startupWalkInit(&v, fpg);
+      for(;;)
+      {
+        s = NVOCMP_startupWalkNext(&v, &g);
+        if(s < 0) return false;
+        if(s == 0) break;
+        if(g.cmpid == h.cmpid && NVOCMP_recoverCopiesEqual(&h, &g)) { twinned = true; break; }
+      }
+      if(!twinned) return false;
+    }
+  }
+}
 /* True when page pg holds a live copy of ref->cmpid that is neither a
    verbatim twin of ref nor covered by the tail-convergence exception, or
    when the page cannot be walked to a clean end. */
@@ -406,10 +442,12 @@ static uint8_t NVOCMP_startupClassify(void)
              live end page would erase live items. */
           if(endTrue > NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
         }
-        /* Fresh ranges record the frozen end exactly; below-end is a
-           stale range or torn header, and cleanPage would cursor-write
-           it over live items. */
-        else if(eoff != endTrue) return NVINTF_BADVERSION;
+        /* Below-end erase offsets are fresh partial-consumption
+           frontiers or stale/torn values; cleanPage hides everything
+           above eoff, so admission needs the suffix proof (every live
+           item above eoff verbatim-twinned on dst). */
+        else if(eoff > endTrue) return NVINTF_BADVERSION;
+        else if(eoff != endTrue && !NVOCMP_startupSuffixTwinned(epg, eoff, endTrue, f)) return NVINTF_BADVERSION;
       }
     }
   }
@@ -532,7 +570,7 @@ def verify_guard(text):
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi','NVOCMP_expectCompApi'):
         if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
     classify=function(text,'NVOCMP_startupClassify')
-    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census'):
+    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census','NVOCMP_startupSuffixTwinned'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
     if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')
