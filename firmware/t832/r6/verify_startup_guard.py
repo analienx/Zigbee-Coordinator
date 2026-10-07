@@ -207,6 +207,12 @@ def oracle_decision(img):
             return 'REJECT', 'LEGACY'
         if sig != 0x96 or (verbyte >> 2) != 0x03 or state not in VALID_STATES:
             return 'REJECT', 'BAD_HEADER'
+        # F9: TI reserves allActive 1/2 and cycle 0x00/0xFF. A non-erased
+        # current-format header carrying them is rejected.
+        if (verbyte & 0x03) not in (0x00, 0x03):
+            return 'REJECT', 'BAD_ALLACTIVE'
+        if not 0x01 <= page[1] <= 0xFE:
+            return 'REJECT', 'BAD_CYCLE'
         if state == 0xFF and bytes(page[PGDATAOFS:]) != b'\xff' * (PAGE - PGDATAOFS):
             return 'REJECT', 'NACT_DATA'
         ok, tag = oracle_compact(page, state)
@@ -235,6 +241,18 @@ def oracle_decision(img):
         return 'REJECT', 'TOPO_DUP_RDY'
     if inactive != NVPAGES and not destinations and not sources and not data:
         return 'REJECT', 'TOPO_LONE_OR_EMPTY'
+    # F7: the driver consumes only the first PGCDST page, so ambiguous
+    # destination metadata fails closed instead of silently picking one.
+    if sum(1 for m in modes if m == 0xFE) > 1:
+        return 'REJECT', 'CMP_DUP_PGCDST'
+    # F8: only byte-identical ACT twins are admitted. Divergent pages can
+    # hold conflicting live values for the same ID under first-match search.
+    act_pages = [pg for pg in range(NVPAGES) if states[pg] == 0x7C]
+    if len(act_pages) > 1:
+        first_act = img[act_pages[0] * PAGE:(act_pages[0] + 1) * PAGE]
+        for pg in act_pages[1:]:
+            if img[pg * PAGE:(pg + 1) * PAGE] != first_act:
+                return 'REJECT', 'TOPO_DIVERGENT_ACT'
     # Multiple ACT pages are admitted by proof, not by counting: resume
     # consumes only the last ACT for its start cursor, every runtime search
     # walks all pages by offset chain regardless of state, and live-id
@@ -267,6 +285,11 @@ def oracle_decision(img):
         return 'REJECT', 'CMP_ERASE_RANGE_SPAN'
     if _fwd(spg, f) <= _fwd(spg, epg):
         return 'REJECT', 'CMP_ERASE_RANGE_DST'
+    # F6: cleanPage erases non-end range pages unconditionally (the offset
+    # correction forces PGDATAOFS), so a multi-page stale range can target
+    # live-only records. Fail closed unless the range is a single page.
+    if spg != epg:
+        return 'REJECT', 'CMP_ERASE_RANGE_MULTI'
     end_true = find_end(img[epg * PAGE:(epg + 1) * PAGE])
     if eoff == PGDATAOFS:
         # Fully-drained form: cleanPage erases the end page without
@@ -550,6 +573,62 @@ def hand_picked(name, b, last, info):
         for pg in list(range(2, 5)) + list(range(6, 15)):
             put1to0(b, pg * PAGE + 0, 0x78, name)
         return {'family': 'admit-drained-short-end'}
+    if name == 'cmp-erase-range-multi-live':
+        # F6: structurally valid stale range [0..1] with a blank end page.
+        # Page 0 holds the live seed item; cleanPage erases non-end pages
+        # unconditionally, so pre-fix admission would erase live-only data.
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 14 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x00, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x01, name)
+        return {'family': 'cmp-erase-range-multi'}
+    if name == 'cmp-dup-pgdst':
+        # F7: two PGCDST metadata pages. Page 13 carries a valid single-page
+        # drained range; page 14 carries a null range. Pre-fix code silently
+        # consumes the first; ambiguous metadata must fail closed.
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 13 * PAGE
+        # Seed page 13 already carries a valid NACT header (same init that
+        # headers page 2 per rdy-cursor-zero); only state and compact slots
+        # are programmed here.
+        put1to0(b, base + 0, 0x78, name)
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x05, name)
+        put1to0(b, base + 11, 0x96, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x05, name)
+        put1to0(b, base + 15, 0x96, name)
+        put1to0(b, 14 * PAGE + 6, 0xFE, name)
+        return {'family': 'cmp-dup-pgdst'}
+    if name == 'mixed-divergent-act':
+        # F8: identical twin except one cleared data bit on page 1. First-match
+        # search would return divergent values depending on actPage choice.
+        copy_page_1to0(b, 0, 1, name)
+        old = b[1 * PAGE + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 1 * PAGE + 20, old ^ (old & -old), name)
+        return {'family': 'mixed-divergent-act'}
+    if name in ('hdr-cycle-zero', 'hdr-cycle-erased', 'hdr-allactive-1',
+                'hdr-allactive-2'):
+        # F9: fully programmed FULL header on page 2 with one reserved field.
+        # Torn-program form: every byte is a 1->0 program from erased.
+        fields = {'hdr-cycle-zero': (0x00, 0x0F),
+                  'hdr-cycle-erased': (0xFF, 0x0F),
+                  'hdr-allactive-1': (0x01, 0x0D),
+                  'hdr-allactive-2': (0x01, 0x0E)}[name]
+        b[2 * PAGE:2 * PAGE + 16] = (bytes((0x78, fields[0], fields[1], 0x96))
+                                    + b'\xff\xff\xff\x96' * 3)
+        b[2 * PAGE + 16:3 * PAGE] = b'\xff' * (PAGE - PGDATAOFS)
+        return {'family': 'hdr-reserved'}
     return {'family': 'hand-picked'}
 
 
@@ -600,7 +679,10 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'cmp-half-null', 'cmp-eoffset-misaligned', 'cmp-erase-range-dst',
                 'legacy-mixed-active', 'legacy-dup-active', 'legacy-dup-xfer',
                 'legacy-ambiguous-current', 'mixed-dup-xdst-xsrc',
-                'mixed-multiact-dup-xdst', 'rdy-cursor-zero']
+                'mixed-multiact-dup-xdst', 'rdy-cursor-zero',
+                'cmp-erase-range-multi-live', 'cmp-dup-pgdst',
+                'mixed-divergent-act', 'hdr-cycle-zero', 'hdr-cycle-erased',
+                'hdr-allactive-1', 'hdr-allactive-2']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -640,6 +722,13 @@ EXPECTED_TAG = {
     'mixed-dup-xdst-xsrc': 'TOPO_DUP_XDST',
     'mixed-multiact-dup-xdst': 'TOPO_DUP_XDST',
     'rdy-cursor-zero': 'CMP_RDY_CURSOR',
+    'cmp-erase-range-multi-live': 'CMP_ERASE_RANGE_MULTI',
+    'cmp-dup-pgdst': 'CMP_DUP_PGCDST',
+    'mixed-divergent-act': 'TOPO_DIVERGENT_ACT',
+    'hdr-cycle-zero': 'BAD_CYCLE',
+    'hdr-cycle-erased': 'BAD_CYCLE',
+    'hdr-allactive-1': 'BAD_ALLACTIVE',
+    'hdr-allactive-2': 'BAD_ALLACTIVE',
     'admit-twin-act': 'ADMIT_RESUME_DIRECT',
     'admit-mixed-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',

@@ -169,6 +169,49 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([xdst, rdy] + [page()] * 13)
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
 
+    def test_oracle_dup_pgdst_rejected(self):
+        # F7: two PGCDST metadata pages fail closed even when each page is
+        # structurally valid on its own.
+        fe = (bytes((0x78, 0x01, 0x0F, 0x96))
+              + bytes((0xFF, 0xFF, 0xFE, 0x96))
+              + b'\xff\xff\xff\x96' * 2
+              + b'\xff' * (PAGE - 16))
+        img = image([page(0x7C), fe, fe] + [page()] * 12)
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_DUP_PGCDST'))
+
+    def test_oracle_erase_range_multi_rejected(self):
+        # F6: a multi-page stale range fails closed even with a blank end
+        # page, since non-end pages are erased unconditionally.
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x01, 0x96))
+               + b'\xff' * (PAGE - 16))
+        blank = b'\xff' * PAGE
+        img = image([page(0x7C), blank, dst] + [page()] * 12)
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
+
+    def test_oracle_divergent_act_rejected(self):
+        # F8: ACT twins differing by one data bit fail closed; only
+        # byte-identical twins are admitted.
+        p1 = page(0x7C)
+        p2 = bytearray(page(0x7C))
+        p2[20] = 0x00
+        img = image([p1, bytes(p2)] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_DIVERGENT_ACT'))
+
+    def test_oracle_reserved_header_rejected(self):
+        # F9: reserved allActive (1/2) and cycle (0x00/0xFF) fail closed.
+        vectors = {(0x00, 0x0F): 'BAD_CYCLE', (0xFF, 0x0F): 'BAD_CYCLE',
+                   (0x01, 0x0D): 'BAD_ALLACTIVE', (0x01, 0x0E): 'BAD_ALLACTIVE'}
+        for (cycle, verbyte), tag in vectors.items():
+            with self.subTest(cycle=cycle, verbyte=verbyte):
+                bad = (bytes((0x78, cycle, verbyte, 0x96))
+                       + b'\xff\xff\xff\x96' * 3
+                       + b'\xff' * (PAGE - 16))
+                img = image([page(0x7C), bad] + [page()] * 12 + [page(0xFE)])
+                self.assertEqual(v.oracle_decision(img), ('REJECT', tag))
+
     def test_oracle_unknown_topology_latched(self):
         full = image([page(0x78)] * 15)
         self.assertEqual(v.oracle_decision(full), ('REJECT', 'DRIVER_UNKNOWN_LATCH'))
