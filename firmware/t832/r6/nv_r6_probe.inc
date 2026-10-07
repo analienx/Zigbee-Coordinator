@@ -19,6 +19,13 @@ void T832R6Nv_capture(uint16_t stage,uint16_t requested,uint16_t status)
         t832R6Nv.first_failure_requested=requested;
     }
     if(stage==7u)t832R6Nv.init_action=status;
+    /* Q3: the classifier rejects before scanPage/gAction, so the handle
+     * above is zeroed and init_action reads NORMAL_INIT. The latch keeps
+     * the true cause. Same TU (included at the end of nvocmp.c). */
+    t832R6Nv.rej_status=t832R10Reject.status;
+    t832R6Nv.rej_page=t832R10Reject.page;
+    t832R6Nv.rej_site=t832R10Reject.site;
+    t832R6Nv.rej_raw=t832R10Reject.raw;
     t832R6Nv.pages=NVOCMP_nvHandle.nvSize;
     t832R6Nv.head=NVOCMP_nvHandle.headPage;
     t832R6Nv.tail=NVOCMP_nvHandle.tailPage;

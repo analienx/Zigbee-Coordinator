@@ -122,6 +122,49 @@ static int8_t NVOCMP_startupWalkNext(NVOCMP_startupWalk_t *w, NVOCMP_itemHdr_t *
   }
 }
 
+/* Q3 rejection latch: classify returns before scanPage populates
+   pageInfo or gAction, so a bare status cannot say which page, field,
+   or check rejected. Every reject path below latches status/page/site
+   plus the offending raw byte when one is at hand (header bytes only:
+   never item IDs, payloads, or keys). Site 0 means no rejection;
+   page 0xFF means the check is not page-scoped. The latch clears on
+   every classify entry so a re-init never reads a stale cause. */
+typedef struct
+{
+  uint8_t status;
+  uint8_t page;
+  uint8_t site;
+  uint8_t raw;
+} NVOCMP_startupReject_t;
+static NVOCMP_startupReject_t t832R10Reject;
+enum
+{
+  NVOCMP_REJ_NONE = 0,
+  NVOCMP_REJ_LEGACY, NVOCMP_REJ_HDR_SIGVER, NVOCMP_REJ_HDR_STATE,
+  NVOCMP_REJ_HDR_ALLACTIVE, NVOCMP_REJ_HDR_CYCLE, NVOCMP_REJ_NACT_DATA,
+  NVOCMP_REJ_RDY_DATA, NVOCMP_REJ_CMP_SIG, NVOCMP_REJ_CMP_MODE,
+  NVOCMP_REJ_XSRC_PAGE, NVOCMP_REJ_XSRC_PAIR, NVOCMP_REJ_XSRC_SIG,
+  NVOCMP_REJ_XSRC_OFF, NVOCMP_REJ_CURSOR_RANGE, NVOCMP_REJ_NACT_RDY_MODE,
+  NVOCMP_REJ_RDY_CURSOR, NVOCMP_REJ_NACT_CURSOR, NVOCMP_REJ_SLOT_ERASE,
+  NVOCMP_REJ_XDST_MODE, NVOCMP_REJ_XDST_CURSOR, NVOCMP_REJ_CDST_STATE,
+  NVOCMP_REJ_CDST_CURSOR, NVOCMP_REJ_CURSOR_ABOVE_END,
+  NVOCMP_REJ_CURSOR_OFF_BOUNDARY, NVOCMP_REJ_TOPO_COUNTS,
+  NVOCMP_REJ_DUP_PGCDST, NVOCMP_REJ_CENSUS_WALK, NVOCMP_REJ_TAIL_MIXED,
+  NVOCMP_REJ_TAIL_MULTI, NVOCMP_REJ_PAIR_WALK, NVOCMP_REJ_PAIR_CONFLICT,
+  NVOCMP_REJ_ERASE_NULL_RANGE, NVOCMP_REJ_ERASE_SPAN,
+  NVOCMP_REJ_ERASE_DST_IN_RANGE, NVOCMP_REJ_ERASE_NONTWINNED,
+  NVOCMP_REJ_ERASE_END_NONTWINNED, NVOCMP_REJ_ERASE_EOFF_ABOVE,
+  NVOCMP_REJ_ERASE_SUFFIX_NONTWINNED, NVOCMP_REJ_ERASE_TAIL_MARK
+};
+static uint8_t NVOCMP_startupReject(uint8_t st, uint8_t pg, uint8_t site, uint8_t raw)
+{
+  t832R10Reject.status = st;
+  t832R10Reject.page = pg;
+  t832R10Reject.site = site;
+  t832R10Reject.raw = raw;
+  return st;
+}
+
 /* Suffix proof: true only when every live item strictly above eoff on page
    epg has a verbatim twin on page fpg and both pages walk to a clean end.
    Below-end erase offsets are fresh partial-consumption frontiers (dst-full
@@ -221,6 +264,7 @@ static uint8_t NVOCMP_startupClassify(void)
   uint8_t epages[NVOCMP_NVPAGES];
   uint16_t eoffs[NVOCMP_NVPAGES];
   uint8_t pg;
+  t832R10Reject.status = t832R10Reject.page = t832R10Reject.site = t832R10Reject.raw = 0;
   for(pg = 0; pg < NVOCMP_NVSIZE; pg++)
   {
     uint32_t raw = 0;
@@ -244,50 +288,50 @@ static uint8_t NVOCMP_startupClassify(void)
     {
       uint8_t legacy = (hdr->version << 2) | hdr->allActive;
       if(hdr->signature == NVOCTP_SIGNATURE && legacy == NVOCTP_VERSION &&
-         (hdr->state == NVOCTP_PGACTIVE || hdr->state == NVOCTP_PGXFER)) return NVINTF_FAILURE;
+         (hdr->state == NVOCTP_PGACTIVE || hdr->state == NVOCTP_PGXFER)) return NVOCMP_startupReject(NVINTF_FAILURE, pg, NVOCMP_REJ_LEGACY, hdr->state);
     }
     if(hdr->signature != NVOCMP_SIGNATURE || hdr->version != NVOCMP_VERSION)
-      return NVINTF_BADVERSION;
+      return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_HDR_SIGVER, hdr->signature);
     if(hdr->state != NVOCMP_PGNACT && hdr->state != NVOCMP_PGXDST &&
        hdr->state != NVOCMP_PGRDY && hdr->state != NVOCMP_PGACT &&
        hdr->state != NVOCMP_PGFULL && hdr->state != NVOCMP_PGXSRC)
-      return NVINTF_BADVERSION;
+      return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_HDR_STATE, hdr->state);
     /* F9: TI reserves allActive 1/2 (only SOMEINACTIVE=0/ALLACTIVE=3 exist)
        and cycle 0x00/0xFF (valid 0x01..0xFE). allActive steers compaction
        and inactive marking; a reserved value fails closed. */
-    if(hdr->allActive != 0 && hdr->allActive != 3) return NVINTF_BADVERSION;
-    if(((raw >> 8) & 0xFF) == 0x00 || ((raw >> 8) & 0xFF) == 0xFF) return NVINTF_BADVERSION;
+    if(hdr->allActive != 0 && hdr->allActive != 3) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_HDR_ALLACTIVE, hdr->allActive);
+    if(((raw >> 8) & 0xFF) == 0x00 || ((raw >> 8) & 0xFF) == 0xFF) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_HDR_CYCLE, (uint8_t)((raw >> 8) & 0xFF));
     if(hdr->state == NVOCMP_PGNACT && !NVOCMP_startupErased(pg, NVOCMP_PGDATAOFS))
-      return NVINTF_BADVERSION;
+      return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_NACT_DATA, 0);
     /* L0-F7/CH-F2: a RDY page carrying data is a flash-fault shape.
        Mark-before-write lands data on ACT only, never RDY, so RDY
        data fails closed here instead of admitting an end page the
        driver would cursor-write and then strand. */
     if(hdr->state == NVOCMP_PGRDY && !NVOCMP_startupErased(pg, NVOCMP_PGDATAOFS))
-      return NVINTF_BADVERSION;
+      return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_RDY_DATA, 0);
     /* F1: admit the compact metadata before it can steer recovery. */
     NVOCMP_read(pg, NVOCMP_PGHDRLEN, cmp, sizeof(cmp));
     mode = cmp[2];
     cursor = NVOCMP_startupCmpOff(cmp);
-    if(cmp[3] != 0xFF && cmp[3] != NVOCMP_SIGNATURE) return NVINTF_BADVERSION;
-    if(cmp[7] != 0xFF && cmp[7] != NVOCMP_SIGNATURE) return NVINTF_BADVERSION;
-    if(cmp[11] != 0xFF && cmp[11] != NVOCMP_SIGNATURE) return NVINTF_BADVERSION;
+    if(cmp[3] != 0xFF && cmp[3] != NVOCMP_SIGNATURE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CMP_SIG, 3);
+    if(cmp[7] != 0xFF && cmp[7] != NVOCMP_SIGNATURE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CMP_SIG, 7);
+    if(cmp[11] != 0xFF && cmp[11] != NVOCMP_SIGNATURE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CMP_SIG, 11);
     if(mode != NVOCMP_PGNORMAL && mode != NVOCMP_PGCDST &&
-       mode != NVOCMP_PGCDONE && mode != NVOCMP_PGCSRC) return NVINTF_BADVERSION;
+       mode != NVOCMP_PGCDONE && mode != NVOCMP_PGCSRC) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CMP_MODE, mode);
     for(s = 0; s < 2; s++)
     {
       const uint8_t *h = &cmp[4 + s * 4];
       uint8_t hpg = h[2];
       uint16_t hoff = NVOCMP_startupCmpOff(h);
-      if(hpg != NVOCMP_NULLPAGE && hpg >= NVOCMP_NVSIZE) return NVINTF_BADVERSION;
-      if((hpg == NVOCMP_NULLPAGE) != (hoff == NVOCMP_NULLOFFSET)) return NVINTF_BADVERSION;
-      if(hpg != NVOCMP_NULLPAGE && h[3] != NVOCMP_SIGNATURE) return NVINTF_BADVERSION;
-      if(hpg != NVOCMP_NULLPAGE && hoff > FLASH_PAGE_SIZE) return NVINTF_BADVERSION;
+      if(hpg != NVOCMP_NULLPAGE && hpg >= NVOCMP_NVSIZE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_XSRC_PAGE, hpg);
+      if((hpg == NVOCMP_NULLPAGE) != (hoff == NVOCMP_NULLOFFSET)) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_XSRC_PAIR, s);
+      if(hpg != NVOCMP_NULLPAGE && h[3] != NVOCMP_SIGNATURE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_XSRC_SIG, h[3]);
+      if(hpg != NVOCMP_NULLPAGE && hoff > FLASH_PAGE_SIZE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_XSRC_OFF, (uint8_t)(hoff & 0xFF));
     }
     if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL || hdr->state == NVOCMP_PGXSRC)
     {
       if(cursor != NVOCMP_NULLOFFSET &&
-         (cursor < NVOCMP_PGDATAOFS || cursor > FLASH_PAGE_SIZE)) return NVINTF_BADVERSION;
+         (cursor < NVOCMP_PGDATAOFS || cursor > FLASH_PAGE_SIZE)) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CURSOR_RANGE, (uint8_t)(cursor & 0xFF));
     }
     if(hdr->state == NVOCMP_PGNACT || hdr->state == NVOCMP_PGRDY)
     {
@@ -300,29 +344,29 @@ static uint8_t NVOCMP_startupClassify(void)
          including a torn 16->0, could steer a later write into the page
          header region. */
       uint8_t s2;
-      if(mode != NVOCMP_PGNORMAL) return NVINTF_BADVERSION;
+      if(mode != NVOCMP_PGNORMAL) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_NACT_RDY_MODE, mode);
       if(hdr->state == NVOCMP_PGRDY)
       {
-        if(cursor != NVOCMP_NULLOFFSET && cursor != NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
+        if(cursor != NVOCMP_NULLOFFSET && cursor != NVOCMP_PGDATAOFS) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_RDY_CURSOR, (uint8_t)(cursor & 0xFF));
       }
-      else if(cursor != NVOCMP_NULLOFFSET && cursor > FLASH_PAGE_SIZE) return NVINTF_BADVERSION;
+      else if(cursor != NVOCMP_NULLOFFSET && cursor > FLASH_PAGE_SIZE) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_NACT_CURSOR, (uint8_t)(cursor & 0xFF));
       for(s2 = 0; s2 < 2; s2++)
       {
         const uint8_t *h = &cmp[4 + s2 * 4];
         if(NVOCMP_startupCmpOff(h) != NVOCMP_NULLOFFSET || h[2] != NVOCMP_NULLPAGE)
-          return NVINTF_BADVERSION;
+          return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_SLOT_ERASE, s2);
       }
     }
     if(hdr->state == NVOCMP_PGXDST)
     {
-      if(mode != NVOCMP_PGNORMAL && mode != NVOCMP_PGCDST) return NVINTF_BADVERSION;
-      if(cursor != NVOCMP_NULLOFFSET) return NVINTF_BADVERSION;
+      if(mode != NVOCMP_PGNORMAL && mode != NVOCMP_PGCDST) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_XDST_MODE, mode);
+      if(cursor != NVOCMP_NULLOFFSET) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_XDST_CURSOR, (uint8_t)(cursor & 0xFF));
     }
     if(mode == NVOCMP_PGCDST)
     {
       if(hdr->state != NVOCMP_PGXDST && hdr->state != NVOCMP_PGACT &&
-         hdr->state != NVOCMP_PGFULL) return NVINTF_BADVERSION;
-      if(cursor != NVOCMP_NULLOFFSET) return NVINTF_BADVERSION;
+         hdr->state != NVOCMP_PGFULL) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CDST_STATE, hdr->state);
+      if(cursor != NVOCMP_NULLOFFSET) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CDST_CURSOR, (uint8_t)(cursor & 0xFF));
     }
     if((hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL ||
         hdr->state == NVOCMP_PGXSRC) && cursor != NVOCMP_NULLOFFSET)
@@ -333,8 +377,8 @@ static uint8_t NVOCMP_startupClassify(void)
          boundary would misparse a header, so only boundaries are admitted.
          Above the true end is impossible: 1->0 writes never grow a value. */
       uint16_t endTrue = NVOCMP_findOffset(pg, FLASH_PAGE_SIZE);
-      if(cursor > endTrue) return NVINTF_BADVERSION;
-      if(cursor < endTrue && !NVOCMP_startupOnBoundary(pg, cursor, endTrue)) return NVINTF_BADVERSION;
+      if(cursor > endTrue) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CURSOR_ABOVE_END, (uint8_t)(cursor & 0xFF));
+      if(cursor < endTrue && !NVOCMP_startupOnBoundary(pg, cursor, endTrue)) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CURSOR_OFF_BOUNDARY, (uint8_t)(cursor & 0xFF));
     }
     modes[pg] = mode;
     spages[pg] = cmp[6];
@@ -359,12 +403,12 @@ static uint8_t NVOCMP_startupClassify(void)
      shared live ID agrees; anything else fails closed. */
   if(destinations > 1 || sources > 1 || ready > 1 ||
      (inactive != NVOCMP_NVSIZE && !destinations && !sources && !dataPages))
-    return NVINTF_FAILURE;
+    return NVOCMP_startupReject(NVINTF_FAILURE, NVOCMP_NULLPAGE, NVOCMP_REJ_TOPO_COUNTS, (uint8_t)((destinations & 3) | ((sources & 3) << 2) | ((ready & 3) << 4) | (dataPages ? 64 : 0) | ((inactive != NVOCMP_NVSIZE) ? 128 : 0)));
   /* F7: findDstPage consumes only the first PGCDST page, so more than one
      PGCDST metadata page is ambiguous and fails closed. Counted here so
      the F8 resume-topology gate below can use it. */
   for(pg = 0; pg < NVOCMP_NVSIZE; pg++) if(modes[pg] == NVOCMP_PGCDST) cdst++;
-  if(cdst > 1) return NVINTF_FAILURE;
+  if(cdst > 1) return NVOCMP_startupReject(NVINTF_FAILURE, NVOCMP_NULLPAGE, NVOCMP_REJ_DUP_PGCDST, cdst);
   /* F8 agreement proof: every pair of live copies sharing a compressed ID
      across (or within) ACT, FULL, and XSRC pages must be verbatim twins
      (bounds, both CRCs, payload bytes). RESUME reads from the last ACT
@@ -428,16 +472,16 @@ static uint8_t NVOCMP_startupClassify(void)
         for(;;)
         {
           r = NVOCMP_startupWalkNext(&w, &h);
-          if(r < 0) return NVINTF_FAILURE;
+          if(r < 0) return NVOCMP_startupReject(NVINTF_FAILURE, chkPgs[c], NVOCMP_REJ_CENSUS_WALK, c);
           if(r == 0) break;
           if(h.cmpid == tailCmpid && (h.hpage != tailH.hpage || h.hofs != tailH.hofs))
           {
             if(NVOCMP_recoverCopiesEqual(&tailH, &h))
             {
               olderTwin++;
-              if(older > 0) return NVINTF_FAILURE;
+              if(older > 0) return NVOCMP_startupReject(NVINTF_FAILURE, chkPgs[c], NVOCMP_REJ_TAIL_MIXED, c);
             }
-            else if(++older > 1 || olderTwin > 0) return NVINTF_FAILURE;
+            else if(++older > 1 || olderTwin > 0) return NVOCMP_startupReject(NVINTF_FAILURE, chkPgs[c], NVOCMP_REJ_TAIL_MULTI, c);
           }
         }
       }
@@ -451,10 +495,10 @@ static uint8_t NVOCMP_startupClassify(void)
       for(;;)
       {
         r = NVOCMP_startupWalkNext(&w, &h);
-        if(r < 0) return NVINTF_FAILURE;
+        if(r < 0) return NVOCMP_startupReject(NVINTF_FAILURE, chkPgs[i], NVOCMP_REJ_PAIR_WALK, i);
         if(r == 0) break;
         for(j = 0; j < chkN; j++)
-          if(NVOCMP_startupActConflict(chkPgs[j], &h, tailOk, tailCmpid)) return NVINTF_FAILURE;
+          if(NVOCMP_startupActConflict(chkPgs[j], &h, tailOk, tailCmpid)) return NVOCMP_startupReject(NVINTF_FAILURE, chkPgs[j], NVOCMP_REJ_PAIR_CONFLICT, i);
       }
     }
   }
@@ -482,11 +526,11 @@ static uint8_t NVOCMP_startupClassify(void)
         spg = spages[f];
         epg = epages[f];
         eoff = eoffs[f];
-        if(spg == NVOCMP_NULLPAGE || epg == NVOCMP_NULLPAGE) return NVINTF_BADVERSION;
+        if(spg == NVOCMP_NULLPAGE || epg == NVOCMP_NULLPAGE) return NVOCMP_startupReject(NVINTF_BADVERSION, f, NVOCMP_REJ_ERASE_NULL_RANGE, (uint8_t)((spg == NVOCMP_NULLPAGE ? 1 : 0) | (epg == NVOCMP_NULLPAGE ? 2 : 0)));
         dse = (uint16_t)((epg >= spg) ? (epg - spg) : (epg + NVOCMP_NVSIZE - spg));
         dsf = (uint16_t)((f >= spg) ? (f - spg) : (f + NVOCMP_NVSIZE - spg));
-        if(dse + 1u > (uint16_t)(NVOCMP_NVSIZE - 1u)) return NVINTF_BADVERSION;
-        if(dsf <= dse) return NVINTF_BADVERSION;
+        if(dse + 1u > (uint16_t)(NVOCMP_NVSIZE - 1u)) return NVOCMP_startupReject(NVINTF_BADVERSION, f, NVOCMP_REJ_ERASE_SPAN, (uint8_t)(dse & 0xFF));
+        if(dsf <= dse) return NVOCMP_startupReject(NVINTF_BADVERSION, f, NVOCMP_REJ_ERASE_DST_IN_RANGE, (uint8_t)(dsf & 0xFF));
         /* F6: cleanPage erases non-end range pages unconditionally (the
            offset correction forces PGDATAOFS), so each non-end page must be
            blank/header-only (nothing to destroy) or fully live-twinned
@@ -495,7 +539,7 @@ static uint8_t NVOCMP_startupClassify(void)
            closed. Preservation beats automatic recovery. */
         for(pg = spg; pg != epg; pg = NVOCMP_INCPAGE(pg))
           if(NVOCMP_findOffset(pg, FLASH_PAGE_SIZE) > NVOCMP_PGDATAOFS &&
-             !NVOCMP_startupPageTwinned(pg, f)) return NVINTF_BADVERSION;
+             !NVOCMP_startupPageTwinned(pg, f)) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_ERASE_NONTWINNED, f);
         endTrue = NVOCMP_findOffset(epg, FLASH_PAGE_SIZE);
         if(eoff == NVOCMP_PGDATAOFS)
         {
@@ -506,14 +550,14 @@ static uint8_t NVOCMP_startupClassify(void)
              as the non-end extension); a torn end offset on an
              untwinned live end page would erase live items. */
           if(endTrue > NVOCMP_PGDATAOFS &&
-             !NVOCMP_startupSuffixTwinned(epg, NVOCMP_PGDATAOFS, endTrue, f)) return NVINTF_BADVERSION;
+             !NVOCMP_startupSuffixTwinned(epg, NVOCMP_PGDATAOFS, endTrue, f)) return NVOCMP_startupReject(NVINTF_BADVERSION, epg, NVOCMP_REJ_ERASE_END_NONTWINNED, f);
         }
         /* Below-end erase offsets are fresh partial-consumption
            frontiers or stale/torn values; cleanPage hides everything
            above eoff, so admission needs the suffix proof (every live
            item above eoff verbatim-twinned on dst). */
-        else if(eoff > endTrue) return NVINTF_BADVERSION;
-        else if(eoff != endTrue && !NVOCMP_startupSuffixTwinned(epg, eoff, endTrue, f)) return NVINTF_BADVERSION;
+        else if(eoff > endTrue) return NVOCMP_startupReject(NVINTF_BADVERSION, epg, NVOCMP_REJ_ERASE_EOFF_ABOVE, (uint8_t)(eoff & 0xFF));
+        else if(eoff != endTrue && !NVOCMP_startupSuffixTwinned(epg, eoff, endTrue, f)) return NVOCMP_startupReject(NVINTF_BADVERSION, epg, NVOCMP_REJ_ERASE_SUFFIX_NONTWINNED, f);
         /* Tail-markability (L0-F2/F3; P2 tail-in-range): cleanPage
            erases every non-end range page (the offset correction
            forces PGDATAOFS) and the end page iff drained, then
@@ -534,7 +578,7 @@ static uint8_t NVOCMP_startupClassify(void)
             uint32_t tailRaw = 0;
             NVOCMP_pageHdr_t *tailHdr = (NVOCMP_pageHdr_t *)&tailRaw;
             NVOCMP_read(tail, NVOCMP_PGHDROFS, (uint8_t *)tailHdr, NVOCMP_PGHDRLEN);
-            if(tailHdr->state != NVOCMP_PGNACT) return NVINTF_BADVERSION;
+            if(tailHdr->state != NVOCMP_PGNACT) return NVOCMP_startupReject(NVINTF_BADVERSION, tail, NVOCMP_REJ_ERASE_TAIL_MARK, tailHdr->state);
           }
         }
       }
@@ -667,6 +711,12 @@ def verify_guard(text):
     classify=function(text,'NVOCMP_startupClassify')
     for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census','NVOCMP_startupSuffixTwinned','Tail-markability','NVOCMP_startupPageTwinned'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
+    # Q3: every classify reject path latches status/page/site/raw; the latch
+    # clears on entry so a re-init never reports a stale cause.
+    if text.count('return NVOCMP_startupReject(') != 41:
+        raise ValueError('reject latch coverage is not 41 sites')
+    if 't832R10Reject.status = t832R10Reject.page = t832R10Reject.site = t832R10Reject.raw = 0;' not in classify:
+        raise ValueError('reject latch clear-on-entry absent')
     if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')
     if '(1UL << NVOCMP_failF)' not in function(text,'NVOCMP_sanityCheckApi'):

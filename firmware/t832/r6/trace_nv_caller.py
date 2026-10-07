@@ -57,12 +57,21 @@ def main():
             and 'common/nv/nvintf.h' not in h['file']]
     if not prod:
         raise SystemExit('Q3 trace found no production NV-init caller')
+    calls = [h for h in prod
+             if re.search(r'(->|\.)initNV\s*\(|[^_a-zA-Z]initNV\s*\([^;]*$',
+                          h['match'])
+             and 'NVOCMP_initNvApi' not in h['match']]
     a.out.mkdir(parents=True, exist_ok=True)
     import json
     (a.out / 'nv-caller-trace.json').write_text(
         json.dumps({'hits': len(hits), 'production': len(prod),
-                    'excerpts': prod[:MAX_EXCERPTS]}, indent=2) + '\n')
-    print(json.dumps({'hits': len(hits), 'production': len(prod)}))
+                    'calls': len(calls), 'excerpts': prod[:MAX_EXCERPTS]}, indent=2) + '\n')
+    print(json.dumps({'hits': len(hits), 'production': len(prod),
+                      'calls': len(calls)}))
+    for h in calls[:30]:
+        print('CALL %s:%d: %s' % (h['file'], h['line'], h['match']))
+    for h in prod[:60]:
+        print('REF %s:%d: %s' % (h['file'], h['line'], h['match']))
 
 
 if __name__ == '__main__':

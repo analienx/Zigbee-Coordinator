@@ -93,6 +93,12 @@ int main(int argc, char **argv) {
         printf("{\"init_status\":%u,\"reinit_status\":%u,\"want\":%u,\"created\":%u,\"physical_operations\":%u,\"read_calls\":%u,\"read_bytes\":%u}\n",
                first, again, want, got, nv_lab_operations, nv_lab_read_calls, nv_lab_read_bytes);
         return 0;
+    } else if(!strcmp(argv[1], "latch")) {
+        /* Q3 rejection-latch oracle: two bare inits, then the raw latch.
+           Zeros mean the classifier admitted on the final init. */
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"rej_status\":%u,\"rej_page\":%u,\"rej_site\":%u,\"rej_raw\":%u,\"physical_operations\":%u}\n",
+               first, again, t832R10Reject.status, t832R10Reject.page, t832R10Reject.site, t832R10Reject.raw, nv_lab_operations);
+        return 0;
     } else if(!strcmp(argv[1], "cost")) {
         /* Q2 startup-cost oracle: two bare inits and nothing else, so the
            measured reads are pure init (classify + driver scan/resume). */

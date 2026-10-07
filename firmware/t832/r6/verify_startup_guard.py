@@ -264,76 +264,129 @@ def _cmp(page, idx):
             'sig': page[o + 3], 'raw': bytes(page[o:o + 4])}
 
 
+# Q3 reject-site mirror: numeric copy of the C NVOCMP_REJ_* enum in
+# nv_startup_guard.py. Order-locked against the C source by
+# test_startup_oracle; the hosted latch asserts cross-check every value.
+REJ = {
+    'NONE': 0, 'LEGACY': 1, 'HDR_SIGVER': 2, 'HDR_STATE': 3,
+    'HDR_ALLACTIVE': 4, 'HDR_CYCLE': 5, 'NACT_DATA': 6, 'RDY_DATA': 7,
+    'CMP_SIG': 8, 'CMP_MODE': 9, 'XSRC_PAGE': 10, 'XSRC_PAIR': 11,
+    'XSRC_SIG': 12, 'XSRC_OFF': 13, 'CURSOR_RANGE': 14,
+    'NACT_RDY_MODE': 15, 'RDY_CURSOR': 16, 'NACT_CURSOR': 17,
+    'SLOT_ERASE': 18, 'XDST_MODE': 19, 'XDST_CURSOR': 20,
+    'CDST_STATE': 21, 'CDST_CURSOR': 22, 'CURSOR_ABOVE_END': 23,
+    'CURSOR_OFF_BOUNDARY': 24, 'TOPO_COUNTS': 25, 'DUP_PGCDST': 26,
+    'CENSUS_WALK': 27, 'TAIL_MIXED': 28, 'TAIL_MULTI': 29,
+    'PAIR_WALK': 30, 'PAIR_CONFLICT': 31, 'ERASE_NULL_RANGE': 32,
+    'ERASE_SPAN': 33, 'ERASE_DST_IN_RANGE': 34, 'ERASE_NONTWINNED': 35,
+    'ERASE_END_NONTWINNED': 36, 'ERASE_EOFF_ABOVE': 37,
+    'ERASE_SUFFIX_NONTWINNED': 38, 'ERASE_TAIL_MARK': 39,
+}
+NVINTF_SUCCESS = 0
+NVINTF_FAILURE = 1
+NVINTF_BADVERSION = 12
+NULLPAGE = 0xFF
+
+
+def crc8(data, crc=0):
+    """TI crc.c mirror: CRC-8/poly-0x97, MSB-first, init 0, no reflection."""
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x97) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def crc_ok(page, h):
+    """NVOCMP_verifyCRC mirror (HDRLE=0): payload plus the first 4 header
+    bytes, then the length final byte, must equal the stored CRC."""
+    if h['len'] > h['hofs']:
+        return False
+    span = bytes(page[h['hofs'] - h['len']:h['hofs'] + 4])
+    return crc8(span + bytes([(h['len'] & 0x3F) << 2])) == h['crc']
+
+
+def cmpid(h):
+    return (h['sysid'], h['itemid'], h['subid'])
+
+
+def copies_equal(img, apg, a, bpg, b):
+    """NVOCMP_recoverCopiesEqual mirror: equal length, in-bounds headers,
+    both CRCs valid, identical payload bytes."""
+    if a['len'] != b['len']:
+        return False
+    for h in (a, b):
+        if h['hofs'] < PGDATAOFS or h['len'] > h['hofs'] - PGDATAOFS:
+            return False
+    apage = img[apg * PAGE:(apg + 1) * PAGE]
+    bpage = img[bpg * PAGE:(bpg + 1) * PAGE]
+    if not crc_ok(apage, a) or not crc_ok(bpage, b):
+        return False
+    return (bytes(apage[a['hofs'] - a['len']:a['hofs']]) ==
+            bytes(bpage[b['hofs'] - b['len']:b['hofs']]))
+
+
 def suffix_twinned(img, epg, eoff, fpg):
     """Mirror of the C suffix proof: every live item strictly above eoff
-    on the end page must be twinned (length and payload) on the dst page,
-    and both pages must walk to a clean end. True only when proved. (C
-    additionally requires both CRCs valid.)"""
+    on the end page must be twinned (bounds, both CRCs, payload bytes)
+    on the dst page. The outer walk must reach a clean end; the inner
+    walk breaks at the first twin, so dst bytes below a found twin are
+    never read and a dst anomaly past every twin still proves."""
     end_page = img[epg * PAGE:(epg + 1) * PAGE]
     if not on_boundary(end_page, eoff, find_end(end_page)):
         return False
     live, anomaly = walk_live(end_page)
     if anomaly:
         return False
-    dst_live, dst_anomaly = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
-    if dst_anomaly:
-        return False
-    twins = set()
-    for h in dst_live:
-        twins.add(((h['sysid'], h['itemid'], h['subid']), h['len'],
-                   bytes(img[fpg * PAGE + h['hofs'] - h['len']:fpg * PAGE + h['hofs']])))
+    dst_live, _ = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
     for h in live:
         if h['hofs'] > eoff:
-            if ((h['sysid'], h['itemid'], h['subid']), h['len'],
-                    bytes(img[epg * PAGE + h['hofs'] - h['len']:epg * PAGE + h['hofs']])) not in twins:
+            if not any(cmpid(g) == cmpid(h) and copies_equal(img, epg, h, fpg, g)
+                       for g in dst_live):
                 return False
     return True
 
 
 def page_twinned(img, pg, fpg):
     """Mirror of the C whole-page twin proof (4c): every live item on
-    page pg must be twinned (length and payload) on the dst page, and
-    both pages must walk to a clean end. True only when proved. (C
-    additionally requires both CRCs valid.)"""
+    page pg must be twinned (bounds, both CRCs, payload bytes) on the
+    dst page. The outer walk must reach a clean end; each inner walk
+    breaks at the first twin, so dst bytes below a found twin are never
+    read and a dst anomaly past every twin still proves."""
     live, anomaly = walk_live(img[pg * PAGE:(pg + 1) * PAGE])
     if anomaly:
         return False
-    dst_live, dst_anomaly = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
-    if dst_anomaly:
-        return False
-    twins = set()
-    for h in dst_live:
-        twins.add(((h['sysid'], h['itemid'], h['subid']), h['len'],
-                   bytes(img[fpg * PAGE + h['hofs'] - h['len']:fpg * PAGE + h['hofs']])))
+    dst_live, _ = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
     for h in live:
-        if ((h['sysid'], h['itemid'], h['subid']), h['len'],
-                bytes(img[pg * PAGE + h['hofs'] - h['len']:pg * PAGE + h['hofs']])) not in twins:
+        if not any(cmpid(g) == cmpid(h) and copies_equal(img, pg, h, fpg, g)
+                   for g in dst_live):
             return False
     return True
 
 
 def oracle_compact(page, state):
     """Policy mirror of the C compact preflight (structural half): replays
-    the same admission rules for case construction, not independent proof.
-    Returns (ok, tag)."""
+    the same admission rules, in the same order, for case construction,
+    not independent proof. Returns (ok, tag, site, raw); the page is
+    added by the caller."""
     this, start, end = _cmp(page, 0), _cmp(page, 1), _cmp(page, 2)
-    for h in (this, start, end):
+    for idx, h in ((3, this), (7, start), (11, end)):
         if h['sig'] not in SIG_VALUES:
-            return False, 'CMP_SIG'
+            return False, 'CMP_SIG', REJ['CMP_SIG'], idx
     if this['page'] not in MODE_VALUES:
-        return False, 'CMP_MODE'
-    for h in (start, end):
+        return False, 'CMP_MODE', REJ['CMP_MODE'], this['page']
+    for s, h in ((0, start), (1, end)):
         if h['page'] != 0xFF and not 0 <= h['page'] < NVPAGES:
-            return False, 'CMP_PAGE_RANGE'
+            return False, 'CMP_PAGE_RANGE', REJ['XSRC_PAGE'], h['page']
         if (h['page'] == 0xFF) != (h['off'] == 0xFFFF):
-            return False, 'CMP_NULL'
+            return False, 'CMP_NULL', REJ['XSRC_PAIR'], s
         if h['page'] != 0xFF and h['sig'] != 0x96:
-            return False, 'CMP_RANGE_SIG'
+            return False, 'CMP_RANGE_SIG', REJ['XSRC_SIG'], h['sig']
         if h['page'] != 0xFF and not 0 <= h['off'] <= FLASH_PAGE_SIZE:
-            return False, 'CMP_OFFSET_RANGE'
+            return False, 'CMP_OFFSET_RANGE', REJ['XSRC_OFF'], h['off'] & 0xFF
     if state in (0x7C, 0x78, 0x70):
         if this['off'] != 0xFFFF and not PGDATAOFS <= this['off'] <= FLASH_PAGE_SIZE:
-            return False, 'CMP_CURSOR_RANGE'
+            return False, 'CMP_CURSOR_RANGE', REJ['CURSOR_RANGE'], this['off'] & 0xFF
     if state in (0xFF, 0x7E):
         # NACT/RDY pages are never compact writers; mode must stay normal.
         # NACT offsets are forced to PGDATAOFS by scanPage, so the NACT
@@ -344,43 +397,113 @@ def oracle_compact(page, state):
         # admitted: any other value, including a torn 16->0, could steer a
         # later write into the page header region. XSRC slots must stay in
         # an erase form, since no writer targets them on these states.
+        # (C latches one shared site for both states here.)
         if this['page'] != 0xFF:
-            return False, 'CMP_NACT_MODE' if state == 0xFF else 'CMP_RDY_MODE'
+            return False, ('CMP_NACT_MODE' if state == 0xFF else 'CMP_RDY_MODE'), \
+                REJ['NACT_RDY_MODE'], this['page']
         if state == 0x7E:
             if this['off'] != 0xFFFF and this['off'] != PGDATAOFS:
-                return False, 'CMP_RDY_CURSOR'
+                return False, 'CMP_RDY_CURSOR', REJ['RDY_CURSOR'], this['off'] & 0xFF
         elif this['off'] != 0xFFFF and not 0 <= this['off'] <= FLASH_PAGE_SIZE:
-            return False, 'CMP_QUIRK_CURSOR'
-        for h in (start, end):
+            return False, 'CMP_QUIRK_CURSOR', REJ['NACT_CURSOR'], this['off'] & 0xFF
+        for s2, h in ((0, start), (1, end)):
             if h['raw'] not in (b'\xff\xff\xff\xff', b'\xff\xff\xff\x96'):
-                return False, 'CMP_STALE_FORM'
+                return False, 'CMP_STALE_FORM', REJ['SLOT_ERASE'], s2
     if state == 0xFE:
         if this['page'] not in (0xFF, 0xFE):
-            return False, 'CMP_XDST_MODE'
+            return False, 'CMP_XDST_MODE', REJ['XDST_MODE'], this['page']
         if this['off'] != 0xFFFF:
-            return False, 'CMP_XDST_CURSOR'
+            return False, 'CMP_XDST_CURSOR', REJ['XDST_CURSOR'], this['off'] & 0xFF
     if this['page'] == 0xFE:
         if state not in (0xFE, 0x7C, 0x78):
-            return False, 'CMP_FE_STATE'
+            return False, 'CMP_FE_STATE', REJ['CDST_STATE'], state
         if this['off'] != 0xFFFF:
-            return False, 'CMP_FE_CURSOR'
+            return False, 'CMP_FE_CURSOR', REJ['CDST_CURSOR'], this['off'] & 0xFF
     if state in (0x7C, 0x78, 0x70) and this['off'] != 0xFFFF:
         end_true = find_end(page)
         if this['off'] > end_true:
-            return False, 'CMP_CURSOR_ABOVE_END'
+            return False, 'CMP_CURSOR_ABOVE_END', REJ['CURSOR_ABOVE_END'], \
+                this['off'] & 0xFF
         if this['off'] < end_true and not on_boundary(page, this['off'], end_true):
-            return False, 'CMP_CURSOR_MISALIGNED'
-    return True, 'CMP_OK'
+            return False, 'CMP_CURSOR_MISALIGNED', REJ['CURSOR_OFF_BOUNDARY'], \
+                this['off'] & 0xFF
+    return True, 'CMP_OK', REJ['NONE'], 0
 
 
 def _fwd(a, b):
     return (b - a + NVPAGES) % NVPAGES
 
 
-def oracle_decision(img):
+def act_conflict(img, jpg, ipg, h, tail_ok, tail_id):
+    """NVOCMP_startupActConflict mirror: true when page jpg holds a live
+    copy of h's ID that is neither h itself nor a verbatim twin (bounds,
+    both CRCs, payload) outside the tail exception, or when jpg cannot
+    be walked to a clean end (a walk anomaly also returns true)."""
+    live, anomaly = walk_live(img[jpg * PAGE:(jpg + 1) * PAGE])
+    if anomaly:
+        return True
+    for g in live:
+        if cmpid(g) == cmpid(h) and (jpg, g['hofs']) != (ipg, h['hofs']) \
+                and not copies_equal(img, ipg, h, jpg, g) \
+                and not (tail_ok and cmpid(h) == tail_id):
+            return True
+    return False
+
+
+def oracle_f8_site(img, states, destinations, sources, data, inactive, cdst):
+    """Exact C-order mirror of the F8 agreement proof. Returns
+    (site, page, raw) for the first C reject, or None when C admits."""
+    chk = [pg for pg in range(NVPAGES) if states[pg] in (0x7C, 0x78, 0x70)]
+    act_pgs = [pg for pg in chk if states[pg] == 0x7C]
+    resume_topo = (destinations == 1 and sources == 0) or \
+        (destinations == 0 and sources == 0 and data and not cdst and inactive)
+    tail_ok = False
+    tail_id = None
+    tail_h = None
+    last_act = None
+    if act_pgs and resume_topo:
+        last_act = act_pgs[-1]
+        page = img[last_act * PAGE:(last_act + 1) * PAGE]
+        tail_end = find_end(page)
+        if page[4] == 0xFF and page[5] == 0xFF and tail_end >= PGDATAOFS + 7:
+            h = parse_item(page, tail_end - 7)
+            if h['follow'] and h['live'] and h['len'] <= tail_end - 7 - PGDATAOFS \
+                    and crc_ok(page, h):
+                tail_ok = True
+                tail_id = cmpid(h)
+                tail_h = h
+    if tail_ok:
+        older = older_twin = 0
+        for c, cpg in enumerate(chk):
+            live, anomaly = walk_live(img[cpg * PAGE:(cpg + 1) * PAGE])
+            if anomaly:
+                return REJ['CENSUS_WALK'], cpg, c
+            for h in live:
+                if cmpid(h) == tail_id and (cpg, h['hofs']) != (last_act, tail_h['hofs']):
+                    if copies_equal(img, last_act, tail_h, cpg, h):
+                        older_twin += 1
+                        if older > 0:
+                            return REJ['TAIL_MIXED'], cpg, c
+                    else:
+                        older += 1
+                        if older > 1 or older_twin > 0:
+                            return REJ['TAIL_MULTI'], cpg, c
+    for i, ipg in enumerate(chk):
+        live, anomaly = walk_live(img[ipg * PAGE:(ipg + 1) * PAGE])
+        if anomaly:
+            return REJ['PAIR_WALK'], ipg, i
+        for h in live:
+            for j, jpg in enumerate(chk):
+                if act_conflict(img, jpg, ipg, h, tail_ok, tail_id):
+                    return REJ['PAIR_CONFLICT'], jpg, i
+    return None
+
+
+def _oracle_decision(img):
     """Policy mirror of classifier + driver startup decision: same rules,
     Python-side, for case construction; not independent proof. Returns
-    (verdict, tag) where verdict is 'REJECT' or 'ADMIT'. First failure in
+    (verdict, tag, latch) where verdict is 'REJECT' or 'ADMIT' and latch
+    is the expected Q3 (status, site, page, raw) tuple. First failure in
     page-scan order wins, exactly like the C classifier's early returns."""
     check(len(img) == PAGE * NVPAGES, 'oracle image size', size=len(img))
     states, modes, spages, epages, eoffs = [], [], [], [], []
@@ -398,25 +521,34 @@ def oracle_decision(img):
         state, verbyte, sig = page[0], page[2], page[3]
         legacy_field = ((verbyte >> 2) << 2) | (verbyte & 0x03)
         if sig == 0x96 and legacy_field == 0x02 and state in LEGACY_STATES:
-            return 'REJECT', 'LEGACY'
+            return 'REJECT', 'LEGACY', (NVINTF_FAILURE, REJ['LEGACY'], pg, state)
         if sig != 0x96 or (verbyte >> 2) != 0x03 or state not in VALID_STATES:
-            return 'REJECT', 'BAD_HEADER'
+            # C checks signature/version before state; the latch follows.
+            if sig != 0x96 or (verbyte >> 2) != 0x03:
+                return 'REJECT', 'BAD_HEADER', \
+                    (NVINTF_BADVERSION, REJ['HDR_SIGVER'], pg, sig)
+            return 'REJECT', 'BAD_HEADER', \
+                (NVINTF_BADVERSION, REJ['HDR_STATE'], pg, state)
         # F9: TI reserves allActive 1/2 and cycle 0x00/0xFF. A non-erased
         # current-format header carrying them is rejected.
         if (verbyte & 0x03) not in (0x00, 0x03):
-            return 'REJECT', 'BAD_ALLACTIVE'
+            return 'REJECT', 'BAD_ALLACTIVE', \
+                (NVINTF_BADVERSION, REJ['HDR_ALLACTIVE'], pg, verbyte & 0x03)
         if not 0x01 <= page[1] <= 0xFE:
-            return 'REJECT', 'BAD_CYCLE'
+            return 'REJECT', 'BAD_CYCLE', \
+                (NVINTF_BADVERSION, REJ['HDR_CYCLE'], pg, page[1])
         if state == 0xFF and bytes(page[PGDATAOFS:]) != b'\xff' * (PAGE - PGDATAOFS):
-            return 'REJECT', 'NACT_DATA'
+            return 'REJECT', 'NACT_DATA', \
+                (NVINTF_BADVERSION, REJ['NACT_DATA'], pg, 0)
         # L0-F7/CH-F2: a RDY page carrying data is a flash-fault
         # shape (mark-before-write lands data on ACT only, never RDY),
         # so it fails the scan (mirrored by the 4b C scan rule).
         if state == 0x7E and bytes(page[PGDATAOFS:]) != b'\xff' * (PAGE - PGDATAOFS):
-            return 'REJECT', 'RDY_DATA'
-        ok, tag = oracle_compact(page, state)
+            return 'REJECT', 'RDY_DATA', \
+                (NVINTF_BADVERSION, REJ['RDY_DATA'], pg, 0)
+        ok, tag, site, raw = oracle_compact(page, state)
         if not ok:
-            return 'REJECT', tag
+            return 'REJECT', tag, (NVINTF_BADVERSION, site, pg, raw)
         states.append(state)
         modes.append(_cmp(page, 0)['page'])
         spages.append(_cmp(page, 1)['page'])
@@ -432,77 +564,88 @@ def oracle_decision(img):
             ready += 1
         else:
             data += 1
+    # C packs the topology counters into one raw byte for the latch.
+    topo_raw = ((destinations & 3) | ((sources & 3) << 2) |
+                ((ready & 3) << 4) | (64 if data else 0) |
+                (128 if inactive != NVPAGES else 0))
     if destinations > 1:
-        return 'REJECT', 'TOPO_DUP_XDST'
+        return 'REJECT', 'TOPO_DUP_XDST', \
+            (NVINTF_FAILURE, REJ['TOPO_COUNTS'], NULLPAGE, topo_raw)
     if sources > 1:
-        return 'REJECT', 'TOPO_DUP_XSRC'
+        return 'REJECT', 'TOPO_DUP_XSRC', \
+            (NVINTF_FAILURE, REJ['TOPO_COUNTS'], NULLPAGE, topo_raw)
     if ready > 1:
-        return 'REJECT', 'TOPO_DUP_RDY'
+        return 'REJECT', 'TOPO_DUP_RDY', \
+            (NVINTF_FAILURE, REJ['TOPO_COUNTS'], NULLPAGE, topo_raw)
     if inactive != NVPAGES and not destinations and not sources and not data:
-        return 'REJECT', 'TOPO_LONE_OR_EMPTY'
+        return 'REJECT', 'TOPO_LONE_OR_EMPTY', \
+            (NVINTF_FAILURE, REJ['TOPO_COUNTS'], NULLPAGE, topo_raw)
     # F7: the driver consumes only the first PGCDST page, so ambiguous
     # destination metadata fails closed instead of silently picking one.
-    if sum(1 for m in modes if m == 0xFE) > 1:
-        return 'REJECT', 'CMP_DUP_PGCDST'
-    # F8 agreement proof (mirrors the C gate): every pair of live copies
+    cdst = sum(1 for m in modes if m == 0xFE)
+    if cdst > 1:
+        return 'REJECT', 'CMP_DUP_PGCDST', \
+            (NVINTF_FAILURE, REJ['DUP_PGCDST'], NULLPAGE, cdst)
+    # F8 agreement proof, mirrored in exact C traversal order (tail
+    # census, then the pairwise walks): every pair of live copies
     # sharing an ID across (or within) ACT, FULL, and XSRC pages must
-    # agree in length and payload bytes. RESUME reads from the last ACT
-    # while RECOVER_ERASE reads from the first, so divergent copies
-    # would return different values on the two paths; XSRC originals
-    # survive RECOVER_ERASE untouched, so an XSRC/ACT divergent pair
-    # (CH-F3) is a live read-flip. Anything unparseable fails closed.
-    # (XSRC scope is mirrored by the 4b C chkPgs.) C refines two
-    # shapes this mirror cannot see: it
-    # requires both CRCs valid (this mirror compares length and
-    # payload bytes only), and it admits divergent pairs on the live
-    # CRC-valid tail ID of the NULL-cursor last ACT on a resume
-    # topology with at most one older non-twin copy (resume dedups
-    # the single older copy; the hosted lab mutation cuts prove that
-    # path). Every corpus verdict here matches C: twins are valid,
-    # conflicts differ with torn tails.
-    act_live = {}
-    for pg in range(NVPAGES):
-        if states[pg] not in (0x7C, 0x78, 0x70):
-            continue
-        live, anomaly = walk_live(img[pg * PAGE:(pg + 1) * PAGE])
-        if anomaly:
-            return 'REJECT', 'TOPO_ACT_CONFLICT'
-        for h in live:
-            key = (h['sysid'], h['itemid'], h['subid'])
-            payload = bytes(img[pg * PAGE + h['hofs'] - h['len']:
-                                pg * PAGE + h['hofs']])
-            for seen in act_live.get(key, []):
-                if seen != (h['len'], payload):
-                    return 'REJECT', 'TOPO_ACT_CONFLICT'
-            act_live.setdefault(key, []).append((h['len'], payload))
+    # be verbatim twins (bounds, both CRCs, payload bytes). RESUME
+    # reads from the last ACT while RECOVER_ERASE reads from the first,
+    # so divergent copies would return different values on the two
+    # paths; XSRC originals survive RECOVER_ERASE untouched, so an
+    # XSRC/ACT divergent pair (CH-F3) is a live read-flip. Anything
+    # unparseable fails closed. The tail-ID exception (live CRC-valid
+    # tail of the NULL-cursor last ACT on a resume topology, resume
+    # deduping the single older copy) is mirrored bit-for-bit,
+    # including CRC validity.
+    f8 = oracle_f8_site(img, states, destinations, sources, data,
+                        inactive, cdst)
+    if f8 is not None:
+        site, page, raw = f8
+        return 'REJECT', 'TOPO_ACT_CONFLICT', (NVINTF_FAILURE, site, page, raw)
     first_fe = next((pg for pg in range(NVPAGES) if modes[pg] == 0xFE), None)
     if inactive == NVPAGES:
-        return 'ADMIT', 'ADMIT_INIT'
+        return 'ADMIT', 'ADMIT_INIT', (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
     if sources:
         if destinations:
-            return 'ADMIT', 'ADMIT_RECOVER_COMPACT'
+            return 'ADMIT', 'ADMIT_RECOVER_COMPACT', \
+                (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
         if inactive:
-            return 'ADMIT', 'ADMIT_RECOVER_COMPACT_NACT'
+            return 'ADMIT', 'ADMIT_RECOVER_COMPACT_NACT', \
+                (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
         if first_fe is None:
-            return 'REJECT', 'DRIVER_UNKNOWN_LATCH'
+            # P3: the classifier ADMITs (no latch); the driver then fails
+            # with ERROR_UNKNOWN. Latch zeros are the correct expectation.
+            return 'REJECT', 'DRIVER_UNKNOWN_LATCH', \
+                (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
     elif destinations:
-        return 'ADMIT', 'ADMIT_RESUME_DIRECT'
+        return 'ADMIT', 'ADMIT_RESUME_DIRECT', \
+            (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
     elif data:
         if first_fe is None:
             if inactive:
-                return 'ADMIT', 'ADMIT_RESUME_MARK'
-            return 'REJECT', 'DRIVER_UNKNOWN_LATCH'
+                return 'ADMIT', 'ADMIT_RESUME_MARK', \
+                    (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
+            return 'REJECT', 'DRIVER_UNKNOWN_LATCH', \
+                (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
     else:
-        return 'REJECT', 'TOPO_LONE_OR_EMPTY'
+        # Unreachable (the TOPO_LONE_OR_EMPTY check above catches this
+        # shape first); mapped to the same C site for completeness.
+        return 'REJECT', 'TOPO_LONE_OR_EMPTY', \
+            (NVINTF_FAILURE, REJ['TOPO_COUNTS'], NULLPAGE, topo_raw)
     # RECOVER_ERASE branch: the first PGCDST page's range drives cleanPage.
     f = first_fe
     spg, epg, eoff = spages[f], epages[f], eoffs[f]
     if spg == 0xFF or epg == 0xFF:
-        return 'REJECT', 'CMP_ERASE_RANGE_NULL'
+        return 'REJECT', 'CMP_ERASE_RANGE_NULL', \
+            (NVINTF_BADVERSION, REJ['ERASE_NULL_RANGE'], f,
+             (1 if spg == 0xFF else 0) | (2 if epg == 0xFF else 0))
     if _fwd(spg, epg) + 1 > NVPAGES - 1:
-        return 'REJECT', 'CMP_ERASE_RANGE_SPAN'
+        return 'REJECT', 'CMP_ERASE_RANGE_SPAN', \
+            (NVINTF_BADVERSION, REJ['ERASE_SPAN'], f, _fwd(spg, epg) & 0xFF)
     if _fwd(spg, f) <= _fwd(spg, epg):
-        return 'REJECT', 'CMP_ERASE_RANGE_DST'
+        return 'REJECT', 'CMP_ERASE_RANGE_DST', \
+            (NVINTF_BADVERSION, REJ['ERASE_DST_IN_RANGE'], f, _fwd(spg, f) & 0xFF)
     # F6: cleanPage erases non-end range pages unconditionally (the offset
     # correction forces PGDATAOFS), so each non-end page must be
     # blank/header-only (nothing to destroy) or fully live-twinned on
@@ -513,7 +656,8 @@ def oracle_decision(img):
     while p != epg:
         if find_end(img[p * PAGE:(p + 1) * PAGE]) > PGDATAOFS:
             if not page_twinned(img, p, f):
-                return 'REJECT', 'CMP_ERASE_RANGE_MULTI'
+                return 'REJECT', 'CMP_ERASE_RANGE_MULTI', \
+                    (NVINTF_BADVERSION, REJ['ERASE_NONTWINNED'], p, f)
         p = (p + 1) % NVPAGES
     end_true = find_end(img[epg * PAGE:(epg + 1) * PAGE])
     if eoff == PGDATAOFS:
@@ -524,9 +668,11 @@ def oracle_decision(img):
         # argument as the non-end extension); a torn end offset on an
         # untwinned live end page would erase live items.
         if end_true > PGDATAOFS and not suffix_twinned(img, epg, eoff, f):
-            return 'REJECT', 'CMP_ERASE_LIVE_END'
+            return 'REJECT', 'CMP_ERASE_LIVE_END', \
+                (NVINTF_BADVERSION, REJ['ERASE_END_NONTWINNED'], epg, f)
     elif eoff > end_true:
-        return 'REJECT', 'CMP_ERASE_ABOVE_END'
+        return 'REJECT', 'CMP_ERASE_ABOVE_END', \
+            (NVINTF_BADVERSION, REJ['ERASE_EOFF_ABOVE'], epg, eoff & 0xFF)
     elif eoff != end_true:
         # Below-end erase offsets are fresh partial-consumption
         # frontiers (dst-full rounds stop mid-page) or stale/torn
@@ -534,7 +680,8 @@ def oracle_decision(img):
         # needs the suffix proof: on-boundary, and every live item above
         # eoff twinned on the dst page.
         if not suffix_twinned(img, epg, eoff, f):
-            return 'REJECT', 'CMP_ERASE_BELOW_END'
+            return 'REJECT', 'CMP_ERASE_BELOW_END', \
+                (NVINTF_BADVERSION, REJ['ERASE_SUFFIX_NONTWINNED'], epg, f)
     # Tail-markability (L0-F2/F3, 4b; P2 tail-in-range, 4e): cleanPage
     # erases every non-end range page (the offset correction forces
     # PGDATAOFS) and the end page iff drained, then XDST-marks
@@ -553,8 +700,21 @@ def oracle_decision(img):
     if eoff == PGDATAOFS:
         erased.add(epg)
     if img[tail * PAGE] != 0xFF and tail not in erased:
-        return 'REJECT', 'CMP_ERASE_TAIL_STATE'
-    return 'ADMIT', 'ADMIT_RECOVER_ERASE'
+        return 'REJECT', 'CMP_ERASE_TAIL_STATE', \
+            (NVINTF_BADVERSION, REJ['ERASE_TAIL_MARK'], tail, img[tail * PAGE])
+    return 'ADMIT', 'ADMIT_RECOVER_ERASE', (NVINTF_SUCCESS, REJ['NONE'], 0, 0)
+
+
+def oracle_decision(img):
+    """(verdict, tag) view of _oracle_decision for existing callers."""
+    verdict, tag, _latch = _oracle_decision(img)
+    return verdict, tag
+
+
+def oracle_latch(img):
+    """(status, site, page, raw) view: the expected Q3 latch bytes."""
+    _verdict, _tag, latch = _oracle_decision(img)
+    return latch
 
 
 def _compositions(n, k):
@@ -1519,6 +1679,18 @@ def verify(sdk, out):
             seed_end = find_end(bytes(pristine[0:PAGE]))
             check(PGDATAOFS < seed_end <= FLASH_PAGE_SIZE, 'seed page end out of range',
                   lane=tag, seed_end=seed_end)
+            # Q3 CRC self-check: the production driver wrote the seed
+            # item, so the CRC mirror must validate it. A mismatch here
+            # means the mirror (not the latch) is wrong; fail loudly.
+            seed_live, seed_anomaly = walk_live(bytes(pristine[0:PAGE]))
+            check(not seed_anomaly, 'seed page walk anomalous', lane=tag)
+            seed_items = [h for h in seed_live
+                          if (h['sysid'], h['itemid'], h['subid']) == (1, 33, 0)]
+            check(len(seed_items) == 1, 'seed item not unique', lane=tag,
+                  found=len(seed_items))
+            check(crc_ok(bytes(pristine[0:PAGE]), seed_items[0]),
+                  'CRC mirror disagrees with production driver', lane=tag,
+                  seed=dict(seed_items[0]))
             info = {'E': seed_end}
             for name in REJECT_CASES:
                 b = bytearray(pristine)
@@ -1560,8 +1732,27 @@ def verify(sdk, out):
                           case=name, adverse=adv)
                     check(adv['init_status'] == adv['reinit_status'],
                           'adverse re-init unstable', lane=tag, case=name, adverse=adv)
+                    # Q3: the production init must latch exactly the
+                    # oracle-predicted (status, site, page, raw).
+                    exp_latch = oracle_latch(bytes(b))
+                    got_latch = invoke(p, 'latch')
+                    check(p.read_bytes() == raw, 'latch verb mutated image',
+                          lane=tag, case=name, latch=got_latch)
+                    check(got_latch['physical_operations'] == 0,
+                          'latch verb wrote', lane=tag, case=name,
+                          latch=got_latch)
+                    check((got_latch['rej_status'], got_latch['rej_site'],
+                           got_latch['rej_page'], got_latch['rej_raw']) == exp_latch,
+                          'reject latch mismatch', lane=tag, case=name,
+                          latch=got_latch, expected=exp_latch,
+                          oracle_tag=otag)
+                    check(got_latch['init_status'] == r['init_status'],
+                          'latch init disagrees with reject init', lane=tag,
+                          case=name, latch=got_latch, result=r)
                     lane['rejections'][name] = {**r, 'mutation': mutation,
                                                  'oracle_tag': otag,
+                                                 'latch': got_latch,
+                                                 'expected_latch': exp_latch,
                                                  'unchanged_sha256': hashlib.sha256(raw).hexdigest(),
                                                  'adverse': adv}
                 except Exception as exc:
@@ -1602,8 +1793,16 @@ def verify(sdk, out):
                     check(second['physical_operations'] == 0,
                           'admit case did not converge', lane=tag, case=name,
                           result=second)
+                    # Q3: an admitted init latches zeros (clear-on-entry,
+                    # no reject path taken).
+                    got_latch = invoke(p, 'latch')
+                    check((got_latch['rej_status'], got_latch['rej_site'],
+                           got_latch['rej_page'], got_latch['rej_raw']) == (0, 0, 0, 0),
+                          'admit latched a rejection', lane=tag, case=name,
+                          latch=got_latch)
                     lane['admits'][name] = {**first, 'mutation': mutation,
                                             'oracle_tag': otag,
+                                            'latch': got_latch,
                                             'mid_sha256': mid_sha,
                                             'stability': second,
                                             'stability_operations': second['physical_operations']}

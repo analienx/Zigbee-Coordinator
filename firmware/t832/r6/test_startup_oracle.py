@@ -476,6 +476,23 @@ class StartupCostBoundTest(unittest.TestCase):
             'NVOCMP_recoverCopiesEqual': {'bytes': 160, 'kind': 'static'}})
         self.assertIn('NVOCMP_startupClassify', v.Q2_STACK_FRAMES)
 
+    def test_rej_table_matches_c_enum_order(self):
+        # The hosted latch asserts compare C-latched site numbers against
+        # REJ; a silent order drift would misattribute every rejection.
+        # The C enum in nv_startup_guard.py is the authority: every name's
+        # first occurrence is its enum entry (the block precedes all uses).
+        src = (v.HERE / 'nv_startup_guard.py').read_text()
+        names = []
+        for match in re.finditer(r'NVOCMP_REJ_[A-Z_]+', src):
+            if match.group(0) not in names:
+                names.append(match.group(0))
+        self.assertEqual(names, ['NVOCMP_REJ_' + key for key in v.REJ])
+        self.assertEqual(len(v.REJ), 40)
+        # C auto-numbers the enum 0..39 in declaration order.
+        self.assertEqual(sorted(v.REJ.values()), list(range(40)))
+        self.assertEqual(v.REJ['NONE'], 0)
+        self.assertEqual(src.count('return NVOCMP_startupReject('), 41)
+
     def test_copies_equal_units(self):
         self.assertEqual(v._q2_copies_equal(1), (4, 12))
         self.assertEqual(v._q2_copies_equal(116), (16, 472))
