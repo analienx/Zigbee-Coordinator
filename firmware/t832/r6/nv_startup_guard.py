@@ -337,7 +337,7 @@ def verify_guard(text):
     classify=function(text,'NVOCMP_startupClassify')
     for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
-    if 'MIGRATE_DISABLED' in classify:
+    if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')
     if '(1UL << NVOCMP_failF)' not in function(text,'NVOCMP_sanityCheckApi'):
         raise ValueError('sanityCheck fatal gate is not the TI bitmask')
