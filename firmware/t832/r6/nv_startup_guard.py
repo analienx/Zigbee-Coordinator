@@ -49,7 +49,7 @@ static uint8_t NVOCMP_startupClassify(void)
 '''
 
 def function(text,name):
-    match=re.search(r'static (?:void|uint8_t|uint32_t) '+name+r'\([^;]*?\)\s*\{',text)
+    match=re.search(r'static (?:void|uint8_t|uint32_t) '+name+r'\s*\([^;]*?\)\s*\{',text)
     if not match:raise ValueError('function missing '+name)
     end=match.end();depth=1
     while depth:
