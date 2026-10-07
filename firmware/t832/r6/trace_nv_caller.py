@@ -70,8 +70,13 @@ def main():
                       'calls': len(calls)}))
     for h in calls[:30]:
         print('CALL %s:%d: %s' % (h['file'], h['line'], h['match']))
-    for h in prod[:60]:
-        print('REF %s:%d: %s' % (h['file'], h['line'], h['match']))
+    prio = [h for h in calls
+            if re.search(r'zstack|examples|znp|main\.c|osal_nv', h['file'])]
+    for h in (prio + [h for h in calls if h not in prio])[:12]:
+        print('CTX %s:%d begin' % (h['file'], h['line']))
+        for line in h['context']:
+            print('CTX | ' + line[:200])
+        print('CTX %s:%d end' % (h['file'], h['line']))
 
 
 if __name__ == '__main__':
