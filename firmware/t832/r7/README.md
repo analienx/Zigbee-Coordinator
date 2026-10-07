@@ -102,12 +102,13 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks20 rejecting cases across asserting and
+The actual pinned-driver gate now checks24 rejecting cases across asserting and
 embedded-style nonfatal assertion lanes. Each must reject repeated init and
 subsequent read/write APIs with zero physical operations and identical full-image
 hashes. Cases cover signature/version/state mismatch, a blank header hiding data,
 NACT containing records, multiple destinations/ready pages, and an early blank
-page before a later corrupt page or ambiguous topology. Healthy reopen stays unchanged; truly blank
+page before a later corrupt page or ambiguous topology. Missing recovery destinations
+return a latched error instead of the upstream startup spin. Healthy reopen stays unchanged; truly blank
 initialization still succeeds. Existing exhaustive compaction/write gates apply.
 
 An original-state-only host recovery has now been designed with a retained genuine

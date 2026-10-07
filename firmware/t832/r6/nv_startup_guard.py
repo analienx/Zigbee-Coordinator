@@ -99,6 +99,14 @@ def apply_guard(nv):
     new=new.replace(cleanup,'''  case NVOCMP_FORCE_CLEAN :
       NVOCMP_failF = NVOCMP_failW = NVINTF_FAILURE;
       return; /* T832-R10: no destructive fallback. */''')
+    unknown='''  case NVOCMP_ERROR_UNKNOWN :
+      /* When this error happens, NV area should be erased to restart.
+       * This while loop is for only debug purpose */
+      NVOCMP_ASSERT1(0);'''
+    if new.count(unknown)!=1:raise ValueError('unknown topology stop mismatch')
+    new=new.replace(unknown,'''  case NVOCMP_ERROR_UNKNOWN :
+      NVOCMP_failF = NVOCMP_failW = NVINTF_FAILURE;
+      return; /* T832-R10: report unavailable recovery instead of spinning. */''')
     # A scan failure must latch the public API, not leave failF=SUCCESS.
     bad='''    if(status != NVINTF_SUCCESS)
     {
@@ -141,6 +149,8 @@ def verify_guard(text):
         raise ValueError('nonblank startup classifier absent')
     if 'action = NVOCMP_FORCE_CLEAN;' in init or '// Erase All pages before start' in init:
         raise ValueError('destructive startup fallback remains')
+    if 'NVOCMP_ASSERT1(0);' in init or 'report unavailable recovery instead of spinning' not in init:
+        raise ValueError('unknown topology startup spin remains')
     if 'goto T832_NV_INIT_DONE;' not in function(text,'NVOCMP_initNvApi'):
         raise ValueError('public API failure not latched')
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi'):

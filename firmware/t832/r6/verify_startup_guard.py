@@ -24,7 +24,7 @@ def verify(sdk,out):
         pristine=seed.read_bytes();before=hashlib.sha256(pristine).hexdigest();healthy=invoke(seed,'healthy')
         assert seed.read_bytes()==pristine and healthy['physical_operations']==0
         cases={}
-        for name in ('signature','version','state','erased-header-with-data','nact-with-data','two-xdst','two-ready','blank-before-bad','blank-before-two-xdst','blank-before-only-ready'):
+        for name in ('signature','version','state','erased-header-with-data','nact-with-data','two-xdst','two-ready','blank-before-bad','blank-before-two-xdst','blank-before-only-ready','full-without-destination','source-without-destination'):
             b=bytearray(pristine);last=14*2048
             if name=='signature':b[last+3]=0x94
             if name=='version':b[last+2]=4
@@ -36,11 +36,14 @@ def verify(sdk,out):
             if name=='blank-before-bad':b[2048:4096]=b'\xff'*2048;b[last+3]=0x94
             if name=='blank-before-two-xdst':b[2048:4096]=b'\xff'*2048;b[4096]=0xfe
             if name=='blank-before-only-ready':b[:2048]=b'\xff'*2048;b[2048]=0x7e;b[last]=0xff
+            if name in ('full-without-destination','source-without-destination'):
+                for page in range(15):b[page*2048]=0x78
+                if name=='source-without-destination':b[0]=0x70
             p=out/(exe.name+'-'+name+'.bin');p.write_bytes(b);raw=p.read_bytes();r=invoke(p,'reject')
             assert p.read_bytes()==raw and r['physical_operations']==0
             cases[name]={**r,'unchanged_sha256':hashlib.sha256(raw).hexdigest()}
         rows.append({'embedded_asserts':embedded,'blank_init':blank,'healthy':healthy,'healthy_sha256':before,'rejections':cases})
-    result={'ok':True,'lanes':rows,'rejection_cases':20,'hardware_validated':False,'private_data_used':False}
-    (out/'report.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({'ok':True,'rejection_cases':20}))
+    result={'ok':True,'lanes':rows,'rejection_cases':24,'hardware_validated':False,'private_data_used':False}
+    (out/'report.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({'ok':True,'rejection_cases':24}))
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--sdk',type=Path,required=True);p.add_argument('--out',type=Path,required=True);a=p.parse_args();verify(a.sdk.resolve(),a.out.resolve())
