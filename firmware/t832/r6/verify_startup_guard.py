@@ -345,10 +345,13 @@ def oracle_decision(img):
     if _fwd(spg, f) <= _fwd(spg, epg):
         return 'REJECT', 'CMP_ERASE_RANGE_DST'
     # F6: cleanPage erases non-end range pages unconditionally (the offset
-    # correction forces PGDATAOFS), so a multi-page stale range can target
-    # live-only records. Fail closed unless the range is a single page.
-    if spg != epg:
-        return 'REJECT', 'CMP_ERASE_RANGE_MULTI'
+    # correction forces PGDATAOFS), so each non-end page must be
+    # blank/header-only (nothing to destroy) or the range fails closed.
+    p = spg
+    while p != epg:
+        if find_end(img[p * PAGE:(p + 1) * PAGE]) > PGDATAOFS:
+            return 'REJECT', 'CMP_ERASE_RANGE_MULTI'
+        p = (p + 1) % NVPAGES
     end_true = find_end(img[epg * PAGE:(epg + 1) * PAGE])
     if eoff == PGDATAOFS:
         # Fully-drained form: cleanPage erases the end page without

@@ -326,10 +326,11 @@ static uint8_t NVOCMP_startupClassify(void)
         if(dse + 1u > (uint16_t)(NVOCMP_NVSIZE - 1u)) return NVINTF_BADVERSION;
         if(dsf <= dse) return NVINTF_BADVERSION;
         /* F6: cleanPage erases non-end range pages unconditionally (the
-           offset correction forces PGDATAOFS), so a multi-page stale range
-           can target live-only records. Fail closed; preservation beats
-           automatic recovery. */
-        if(spg != epg) return NVINTF_BADVERSION;
+           offset correction forces PGDATAOFS), so each non-end page must be
+           blank/header-only (nothing to destroy) or the range fails closed.
+           Preservation beats automatic recovery. */
+        for(pg = spg; pg != epg; pg = NVOCMP_INCPAGE(pg))
+          if(NVOCMP_findOffset(pg, FLASH_PAGE_SIZE) > NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
         endTrue = NVOCMP_findOffset(epg, FLASH_PAGE_SIZE);
         if(eoff == NVOCMP_PGDATAOFS)
         {

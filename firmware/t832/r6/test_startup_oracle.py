@@ -226,8 +226,21 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_DUP_PGCDST'))
 
     def test_oracle_erase_range_multi_rejected(self):
-        # F6: a multi-page stale range fails closed even with a blank end
-        # page, since non-end pages are erased unconditionally.
+        # F6: a multi-page range whose non-end page holds data fails closed,
+        # since cleanPage erases non-end pages unconditionally.
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x01, 0x96))
+               + b'\xff' * (PAGE - 16))
+        blank = b'\xff' * PAGE
+        live = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
+        img = image([live, blank, dst] + [page()] * 12)
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
+
+    def test_oracle_erase_range_multi_blank_admitted(self):
+        # F6: a multi-page range whose non-end pages are all blank admits
+        # (cut-20 lab shape): erasing blank pages destroys nothing.
         dst = (bytes((0x78, 0x01, 0x0F, 0x96))
                + bytes((0xFF, 0xFF, 0xFE, 0x96))
                + bytes((0x10, 0x00, 0x00, 0x96))
@@ -235,7 +248,7 @@ class OracleCorpusTest(unittest.TestCase):
                + b'\xff' * (PAGE - 16))
         blank = b'\xff' * PAGE
         img = image([page(0x7C), blank, dst] + [page()] * 12)
-        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
     def test_oracle_divergent_act_rejected(self):
         # F8: twins sharing a live ID with differing values conflict, even
