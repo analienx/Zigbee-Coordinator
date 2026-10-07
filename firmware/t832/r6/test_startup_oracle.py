@@ -25,26 +25,30 @@ def image(pages):
     return b''.join(check_pages[:15])
 
 
+def finish_item(payload, b0, b1, b2, b3):
+    # HDRLE=0 header with a production-faithful CRC (Q3: the oracle now
+    # mirrors C's CRC requirement, so fixtures must carry valid CRCs).
+    crc = v.crc8(bytes(payload) + bytes((b0, b1, b2, b3))
+                 + bytes([(len(payload) & 0x3F) << 2]))
+    b4 = (((len(payload) & 0x3F) << 2) | ((crc >> 6) & 0x03)) & 0xFF
+    b5 = (((crc & 0x3F) << 2) | 0x02) & 0xFF
+    return bytes(payload) + bytes((b0, b1, b2, b3, b4, b5, 0x96))
+
+
 def item_data(length):
     # Data-first layout with the HDRLE=0 header encoding the driver reads.
     b3 = (length >> 6) & 0x3F
-    b4 = ((length & 0x3F) << 2) & 0xFF
-    hdr = bytes((0x04, 0x21, 0x00, b3, b4, 0x42, 0x96))
-    return bytes([0xAA]) * length + hdr + b'\xff' * (PAGE - 16 - 7 - length)
+    body = finish_item(bytes([0xAA]) * length, 0x04, 0x21, 0x00, b3)
+    return body + b'\xff' * (PAGE - 16 - len(body))
 
 
 def live_item(sysid, itemid, subid, length, fill=0xAA):
-    # One live (active, valid-signature) item with an explicit ID. CRC byte
-    # is zeroed: the Python proof compares length and payload bytes only (C
-    # additionally requires both CRCs valid), and these pages never reach
-    # the driver probe.
+    # One live (active, valid-signature, valid-CRC) item with an explicit ID.
     b0 = ((sysid & 0x3F) << 2) | ((itemid >> 8) & 0x03)
     b1 = itemid & 0xFF
     b2 = (subid >> 2) & 0xFF
     b3 = ((subid & 0x03) << 6) | ((length >> 6) & 0x3F)
-    b4 = ((length & 0x3F) << 2) & 0xFF
-    hdr = bytes((b0, b1, b2, b3, b4, 0x42, 0x96))
-    return bytes((fill,)) * length + hdr
+    return finish_item(bytes((fill,)) * length, b0, b1, b2, b3)
 
 
 def padded(*blobs):
