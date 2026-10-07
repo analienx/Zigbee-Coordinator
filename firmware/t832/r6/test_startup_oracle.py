@@ -42,13 +42,18 @@ def item_data(length):
     return body + b'\xff' * (PAGE - 16 - len(body))
 
 
-def live_item(sysid, itemid, subid, length, fill=0xAA):
-    # One live (active, valid-signature, valid-CRC) item with an explicit ID.
+def live_item(sysid, itemid, subid, length, fill=0xAA, crc_valid=True):
+    # One live (active, valid-signature) item with an explicit ID. CRC is
+    # production-faithful unless crc_valid=False tears one CRC bit (the
+    # torn-tail shapes that defeat the tail exception).
     b0 = ((sysid & 0x3F) << 2) | ((itemid >> 8) & 0x03)
     b1 = itemid & 0xFF
     b2 = (subid >> 2) & 0xFF
     b3 = ((subid & 0x03) << 6) | ((length >> 6) & 0x3F)
-    return finish_item(bytes((fill,)) * length, b0, b1, b2, b3)
+    blob = bytearray(finish_item(bytes((fill,)) * length, b0, b1, b2, b3))
+    if not crc_valid:
+        blob[length + 4] ^= 0x01
+    return bytes(blob)
 
 
 def padded(*blobs):
@@ -133,8 +138,9 @@ class OracleCorpusTest(unittest.TestCase):
 
     def test_oracle_same_page_differ_rejected(self):
         # F8: same ID with differing live values on one page conflicts.
+        # The tail is torn so the tail exception cannot apply.
         lo = live_item(1, 33, 0, 5, fill=0xAA)
-        hi = live_item(1, 33, 0, 5, fill=0xAB)
+        hi = live_item(1, 33, 0, 5, fill=0xAB, crc_valid=False)
         p = page(0x7C, data=padded(lo, hi))
         img = image([p] + [page()] * 13 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
@@ -256,15 +262,24 @@ class OracleCorpusTest(unittest.TestCase):
 
     def test_oracle_divergent_act_rejected(self):
         # F8: twins sharing a live ID with differing values conflict, even
-        # though each page walks cleanly. (C would additionally admit a
-        # divergent pair on a CRC-valid tail ID on a resume topology with
-        # a single older copy; the mirror cannot check CRCs, so it
-        # conservatively rejects all divergence. The hosted lab mutation
-        # cuts prove the C exception admits valid-tail transients.)
+        # though each page walks cleanly. The tail is torn so the
+        # tail exception cannot apply (see the valid-tail admit pin
+        # below for the exception itself).
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        b = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB,
+                                              crc_valid=False)))
+        img = image([a, b] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+
+    def test_oracle_divergent_valid_tail_admitted(self):
+        # F8 tail exception: a divergent pair on a CRC-valid tail ID on
+        # a resume topology with a single older copy admits (resume
+        # dedups the single older copy; the hosted lab mutation cuts
+        # prove that path).
         a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
         b = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         img = image([a, b] + [page()] * 12 + [page(0xFE)])
-        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
 
     def test_oracle_act_walk_anomaly_rejected(self):
         # F8: an ACT page whose top cannot be parsed to a clean chain end
@@ -394,8 +409,10 @@ class OracleCorpusTest(unittest.TestCase):
 
     def test_oracle_full_act_divergent_rejected(self):
         # L1-F10 pin: an ACT+FULL divergent pair conflicts at the
-        # mirror; pins FULL in the proof scope.
-        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        # mirror; pins FULL in the proof scope. The ACT tail is torn
+        # so the tail exception cannot apply.
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA,
+                                              crc_valid=False)))
         f = page(0x78, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
         img = image([a, f] + [page()] * 12 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
@@ -495,7 +512,8 @@ class StartupCostBoundTest(unittest.TestCase):
         # C auto-numbers the enum 0..39 in declaration order.
         self.assertEqual(sorted(v.REJ.values()), list(range(40)))
         self.assertEqual(v.REJ['NONE'], 0)
-        self.assertEqual(src.count('return NVOCMP_startupReject('), 41)
+        self.assertEqual(len(re.findall(r'return NVOCMP_startupReject\(NVINTF_',
+                                        src)), 41)
 
     def test_copies_equal_units(self):
         self.assertEqual(v._q2_copies_equal(1), (4, 12))
