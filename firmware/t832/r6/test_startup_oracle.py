@@ -135,6 +135,21 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([live] + [page()] * 13 + [dst])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_LIVE_END'))
 
+    def test_oracle_drained_blank_end_admitted(self):
+        # Cut-195 form: the PGCDST range fully drained (eoff 16) and its
+        # end page erased. cleanPage erases without reading through the
+        # offset, so a blank (or header-only) end page is safe to admit.
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x01, 0x96))
+               + bytes((0x10, 0x00, 0x01, 0x96))
+               + b'\xff' * (PAGE - 16))
+        blank = b'\xff' * PAGE
+        img = image([dst, blank] + [page(0x78)] * 13)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+        img = image([dst, page()] + [page(0x78)] * 13)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+
     def test_oracle_unknown_topology_latched(self):
         full = image([page(0x78)] * 15)
         self.assertEqual(v.oracle_decision(full), ('REJECT', 'DRIVER_UNKNOWN_LATCH'))

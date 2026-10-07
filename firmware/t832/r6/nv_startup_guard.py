@@ -211,8 +211,15 @@ static uint8_t NVOCMP_startupClassify(void)
         if(dse + 1u > (uint16_t)(NVOCMP_NVSIZE - 1u)) return NVINTF_BADVERSION;
         if(dsf <= dse) return NVINTF_BADVERSION;
         endTrue = NVOCMP_findOffset(epg, FLASH_PAGE_SIZE);
-        if(eoff > endTrue) return NVINTF_BADVERSION;
-        if(eoff == NVOCMP_PGDATAOFS && endTrue != NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
+        if(eoff == NVOCMP_PGDATAOFS)
+        {
+          /* Fully-drained form: cleanPage erases the end page without
+             reading data through the offset. Safe only when the end page
+             holds no data (blank, or header-only); a torn end offset on a
+             live end page would erase live items. */
+          if(endTrue > NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
+        }
+        else if(eoff > endTrue) return NVINTF_BADVERSION;
         if(eoff != NVOCMP_PGDATAOFS && eoff < endTrue && !NVOCMP_startupOnBoundary(epg, eoff, endTrue))
           return NVINTF_BADVERSION;
       }

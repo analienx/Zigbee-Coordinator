@@ -262,10 +262,15 @@ def oracle_decision(img):
     if _fwd(spg, f) <= _fwd(spg, epg):
         return 'REJECT', 'CMP_ERASE_RANGE_DST'
     end_true = find_end(img[epg * PAGE:(epg + 1) * PAGE])
-    if eoff > end_true:
+    if eoff == PGDATAOFS:
+        # Fully-drained form: cleanPage erases the end page without
+        # reading data through the offset. Safe only when the end page
+        # holds no data (blank, or header-only); a torn end offset on a
+        # live end page would erase live items.
+        if end_true > PGDATAOFS:
+            return 'REJECT', 'CMP_ERASE_LIVE_END'
+    elif eoff > end_true:
         return 'REJECT', 'CMP_ERASE_ABOVE_END'
-    if eoff == PGDATAOFS and end_true != PGDATAOFS:
-        return 'REJECT', 'CMP_ERASE_LIVE_END'
     if (eoff != PGDATAOFS and eoff < end_true
             and not on_boundary(img[epg * PAGE:(epg + 1) * PAGE], eoff, end_true)):
         return 'REJECT', 'CMP_ERASE_MISALIGNED'
@@ -501,6 +506,31 @@ def hand_picked(name, b, last, info):
         for pg in range(1, 13):
             put1to0(b, pg * PAGE + 0, 0x78, name)
         return {'family': 'admit-full-mark-path'}
+    if name == 'admit-drained-blank-end':
+        # R10 cut-195 shape: the PGCDST source range fully drained and its
+        # end page erased (blank) while the end offset stays at the drained
+        # mark 16. Recovery erases the already-blank end page; the tail
+        # (dst + cleaned count) lands on the NACT page, which carries a
+        # valid header (the driver-observed cut-195 pg03 form) so the
+        # second init converges with zero operations.
+        put1to0(b, 0 * PAGE + 0, 0x78, name)
+        base = 0 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x05, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x05, name)
+        b[1 * PAGE:1 * PAGE + 16] = bytes((0xFF, 0x05, 0x0F, 0x96,
+                                           0xFF, 0xFF, 0xFF, 0x96,
+                                           0xFF, 0xFF, 0xFF, 0x96,
+                                           0xFF, 0xFF, 0xFF, 0x96))
+        b[1 * PAGE + 16:2 * PAGE] = b'\xff' * (PAGE - PGDATAOFS)
+        b[5 * PAGE:6 * PAGE] = b'\xff' * PAGE
+        for pg in list(range(2, 5)) + list(range(6, 15)):
+            put1to0(b, pg * PAGE + 0, 0x78, name)
+        return {'family': 'admit-drained-blank-end'}
     return {'family': 'hand-picked'}
 
 
@@ -562,7 +592,8 @@ for _pg in (3, 8, 11):
     REJECT_CASES.append('gen-lone-ready-%d' % _pg)
 for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
-ADMIT_CASES = ['admit-twin-act', 'admit-mixed-act-rdy', 'admit-full-nact-mark']
+ADMIT_CASES = ['admit-twin-act', 'admit-mixed-act-rdy', 'admit-full-nact-mark',
+               'admit-drained-blank-end']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -592,6 +623,7 @@ EXPECTED_TAG = {
     'admit-twin-act': 'ADMIT_RESUME_DIRECT',
     'admit-mixed-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
+    'admit-drained-blank-end': 'ADMIT_RECOVER_ERASE',
 }
 for _name in REJECT_CASES:
     if _name.startswith('gen-torn-'):
