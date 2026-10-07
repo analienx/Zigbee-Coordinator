@@ -160,5 +160,26 @@ Stack/RAM: the classify frame is capped at 1KB by host -fstack-usage
 vectors + 30B offsets + locals, under 200B). Helpers nest at most two
 walks deep (~8B each) plus one 64B compare-buffer pair and one header
 struct; no recursion, no malloc. The 2KB tBuffer page buffer is
-pre-existing driver static storage. Measured startup reads (hosted): see
-the run table below once the instrumented gate goes green.
+pre-existing driver static storage.
+
+Measured per-init startup reads (hosted run 37695080465, SHA 2226485;
+identical on all 4 lanes; the gate measures two inits and halves here):
+
+| case | calls | bytes | cap bytes |
+|---|---|---|---|
+| 8 admit shapes (range) | 107-660 | 40-94KB | 326-872KB |
+| dense-single (220 items) | 25,112 | 420KB | 2.1MB |
+| dense-twinned (440 live) | 99,115 | 1.54MB | 7.6MB |
+
+The dense-twinned case exercises the full quadratic pairwise proof with
+a byte-compare re-proof on every live ID and still sits 5x under its
+per-image ceiling. Realistic stores look like the admit row (a handful
+of live records per page), not the dense rows, so realistic startup
+reads stay near 100KB of internal-flash reads during initNV.
+
+Stack frames at -O0 (all static, no dynamic allocation): classify 320,
+PageTwinned 128, SuffixTwinned 128, ActConflict 96, WalkNext 32,
+WalkInit 32, OnBoundary 64, Erased 96, CopiesEqual 128. Deepest guard
+nesting is 3 frames (classify + twin proof + compare, about 576B) plus
+driver callees; the gate fails if any expected frame is absent from the
+-fstack-usage report or classify exceeds 1KB.
