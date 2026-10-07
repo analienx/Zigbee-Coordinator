@@ -2,8 +2,8 @@
 
 R10 preservation corpus v2 (F1-F9): compact-header negatives using
 physically plausible 1->0 corruption, legacy fail-closed negatives,
-identical-twin multi-ACT/mixed admission locks, exact sanity-bitmask
-asserts, and derived (never hard-coded) evidence. The Python oracles below
+multi-ACT fail-closed locks, exact sanity-bitmask asserts, and derived
+(never hard-coded) evidence. The Python oracles below
 mirror classifier policy for case construction; they are not independent
 proof of the driver. Only the hosted driver-probe runs count as execution
 evidence.
@@ -250,17 +250,12 @@ def oracle_decision(img):
     # destination metadata fails closed instead of silently picking one.
     if sum(1 for m in modes if m == 0xFE) > 1:
         return 'REJECT', 'CMP_DUP_PGCDST'
-    # F8: only byte-identical ACT twins are admitted. Divergent pages can
-    # hold conflicting live values for the same ID under first-match search.
-    act_pages = [pg for pg in range(NVPAGES) if states[pg] == 0x7C]
-    if len(act_pages) > 1:
-        first_act = img[act_pages[0] * PAGE:(act_pages[0] + 1) * PAGE]
-        for pg in act_pages[1:]:
-            if img[pg * PAGE:(pg + 1) * PAGE] != first_act:
-                return 'REJECT', 'TOPO_DIVERGENT_ACT'
-    # Only byte-identical ACT twins are admitted: first-match search cannot
-    # diverge on identical pages. Divergent twins fail closed above; no claim
-    # is made about arbitrary multi-ACT topologies.
+    # F8: multiple ACT pages fail closed, even byte-identical twins:
+    # divergent twins can hold conflicting live values for the same ID
+    # under first-match search, and resume dedups live IDs across twins,
+    # so twin admission cannot converge.
+    if sum(1 for s in states if s == 0x7C) > 1:
+        return 'REJECT', 'TOPO_MULTI_ACT'
     first_fe = next((pg for pg in range(NVPAGES) if modes[pg] == 0xFE), None)
     if inactive == NVPAGES:
         return 'ADMIT', 'ADMIT_INIT'
@@ -536,13 +531,15 @@ def hand_picked(name, b, last, info):
         put1to0(b, 2 * PAGE + 4, 0x00, name)
         put1to0(b, 2 * PAGE + 5, 0x00, name)
         return {'family': 'rdy-cursor-zero'}
-    if name == 'admit-twin-act':
+    if name == 'multi-act-twins':
+        # F8: byte-identical ACT twins. Resume dedups live IDs across them,
+        # so even this narrow shape cannot converge and fails closed.
         copy_page_1to0(b, 0, 1, name)
-        return {'family': 'admit-multi-act'}
-    if name == 'admit-mixed-act-rdy':
+        return {'family': 'multi-act-twins'}
+    if name == 'multi-act-rdy':
         copy_page_1to0(b, 0, 1, name)
         put1to0(b, 2 * PAGE + 0, 0x7E, name)
-        return {'family': 'admit-mixed-act-rdy'}
+        return {'family': 'multi-act-rdy'}
     if name == 'admit-full-nact-mark':
         put1to0(b, 0 * PAGE + 0, 0x78, name)
         put1to0(b, 14 * PAGE + 0, 0x78, name)
@@ -688,7 +685,8 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'mixed-multiact-dup-xdst', 'rdy-cursor-zero',
                 'cmp-erase-range-multi-live', 'cmp-dup-pgdst',
                 'mixed-divergent-act', 'hdr-cycle-zero', 'hdr-cycle-erased',
-                'hdr-allactive-1', 'hdr-allactive-2']
+                'hdr-allactive-1', 'hdr-allactive-2', 'multi-act-twins',
+                'multi-act-rdy']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -699,8 +697,7 @@ for _pg in (3, 8, 11):
     REJECT_CASES.append('gen-lone-ready-%d' % _pg)
 for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
-ADMIT_CASES = ['admit-twin-act', 'admit-mixed-act-rdy', 'admit-full-nact-mark',
-               'admit-drained-short-end']
+ADMIT_CASES = ['admit-full-nact-mark', 'admit-drained-short-end']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -730,13 +727,13 @@ EXPECTED_TAG = {
     'rdy-cursor-zero': 'CMP_RDY_CURSOR',
     'cmp-erase-range-multi-live': 'CMP_ERASE_RANGE_MULTI',
     'cmp-dup-pgdst': 'CMP_DUP_PGCDST',
-    'mixed-divergent-act': 'TOPO_DIVERGENT_ACT',
+    'mixed-divergent-act': 'TOPO_MULTI_ACT',
     'hdr-cycle-zero': 'BAD_CYCLE',
     'hdr-cycle-erased': 'BAD_CYCLE',
     'hdr-allactive-1': 'BAD_ALLACTIVE',
     'hdr-allactive-2': 'BAD_ALLACTIVE',
-    'admit-twin-act': 'ADMIT_RESUME_DIRECT',
-    'admit-mixed-act-rdy': 'ADMIT_RESUME_DIRECT',
+    'multi-act-twins': 'TOPO_MULTI_ACT',
+    'multi-act-rdy': 'TOPO_MULTI_ACT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
     'admit-drained-short-end': 'ADMIT_RECOVER_ERASE',
 }

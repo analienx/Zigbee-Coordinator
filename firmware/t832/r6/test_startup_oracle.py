@@ -86,11 +86,11 @@ class OracleCorpusTest(unittest.TestCase):
         lone = image([page(0x7E, 0x0C)])
         self.assertEqual(v.oracle_decision(lone), ('REJECT', 'TOPO_LONE_OR_EMPTY'))
 
-    def test_oracle_identical_twin_act_admitted(self):
-        # Only byte-identical twins are admitted; divergent twins are
-        # rejected (see test_oracle_divergent_act_rejected).
+    def test_oracle_multi_act_rejected(self):
+        # F8: even byte-identical twins fail closed, since resume dedups
+        # live IDs across them and admission cannot converge.
         twin = image([page(0x7C), page(0x7C)] + [page()] * 12 + [page(0xFE)])
-        self.assertEqual(v.oracle_decision(twin), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
+        self.assertEqual(v.oracle_decision(twin), ('REJECT', 'TOPO_MULTI_ACT'))
 
     def test_oracle_dup_recovery_rejected(self):
         two_xdst = image([page(0x7C), page(0xFE)] + [page()] * 12 + [page(0xFE)])
@@ -195,13 +195,13 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
 
     def test_oracle_divergent_act_rejected(self):
-        # F8: ACT twins differing by one data bit fail closed; only
-        # byte-identical twins are admitted.
+        # F8: ACT twins differing by one data bit fail closed under the
+        # same multi-ACT rule.
         p1 = page(0x7C)
         p2 = bytearray(page(0x7C))
         p2[20] = 0x00
         img = image([p1, bytes(p2)] + [page()] * 12 + [page(0xFE)])
-        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_DIVERGENT_ACT'))
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_MULTI_ACT'))
 
     def test_oracle_reserved_header_rejected(self):
         # F9: reserved allActive (1/2) and cycle (0x00/0xFF) fail closed.
