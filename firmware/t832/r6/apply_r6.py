@@ -52,14 +52,14 @@ def base(sdk,examples,profile):
     nvocmp=sdk/'source/ti/common/nv/nvocmp.c'
     recovery_edits=apply_recovery_fix(nvocmp)
     recovery_fix=verify_recovery_fixed(nvocmp.read_text())
-    if len(recovery_edits)!=5:raise ValueError('recovery fix not applied to firmware source')
+    if len(recovery_edits)!=8:raise ValueError('recovery and startup preservation fixes not applied to firmware source')
     return {'variant':'T832-R6-BASE','budget':c,'edits':ex.edits+recovery_edits,'nv_recovery_fix':recovery_fix,'recovery_policy':'T832-R8 bounded init recovery (t832-r8-nv-recovery-02); destructive RECOVER_FROM_COMPACT_FAILURE stays off',
             'transport_policy':'pristine TI write callback completion','sdk_commit':SDK,'examples_commit':EXAMPLES}
 
 def apply(sdk,examples,profile,variant,series='R6'):
     if series not in ('R6','R7') or ((series=='R7') != (profile=='vendor-20240716')):
         raise ValueError('series/profile mismatch')
-    base_revision,diag_revision=(8320031,8320032) if series=='R7' else (8320011,8320012)
+    base_revision,diag_revision=(8320041,8320042) if series=='R7' else (8320011,8320012)
     if variant=='DIAG':
         evidence=apply_diag(sdk,examples,HERE/'profiles.json',base_apply=lambda s,e,m:base(s,e,profile),
                             revision=diag_revision,pristine_transport=True)

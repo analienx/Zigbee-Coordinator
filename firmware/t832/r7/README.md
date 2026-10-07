@@ -37,10 +37,13 @@ SysConfig and actual linked NVS driver attributes/runtime clamp. It retains
 75 device slots (+one parent) and four binding slots; TI derives 485 addresses.
 It starts from the pristine pinned TI baseline, with matched BASE and DIAG,
 using the already reviewed deferred NV recorder. The optional destructive
-compaction-failure reformat remains disabled; inherited TI startup cleanup paths
-are unchanged and are not claimed to fail closed on every malformed topology.
+compaction-failure reformat remains disabled. The R10 follow-up classifies every
+page before startup writes, rejects nonblank incompatible headers or NACT data,
+and latches failed initialization instead of FORCE_CLEAN on ambiguous topology.
+Fully erased pages can still be initialized. This does not qualify every torn
+electrical write, legacy migration or private vendor schema.
 The minimal debug follow-up uses distinct SYS revisions
-BASE8320031 and DIAG8320032 (the original R7 used8320021/8320022).
+BASE8320041 and DIAG8320042 (PR45 used8320031/8320032).
 Recovery duplicate settling now verifies bounds, both CRCs and payload equality
 before inactivation. Hosted post-cut writes verify all saved records and their
 fresh-process persistence; a failed required write/recovery gate stops packaging.
@@ -88,3 +91,30 @@ action, page topology, request size, deepest status and first failure.
 For raw evidence use the bundled manifest-bound `decode_raw.py`; report identity
 mismatches, missing telemetry and partial captures as failures. No live or
 hardware qualification is implied by the image's successful compilation.
+
+## R10 motivation and bounded preservation evidence
+
+PR45's actual flash booted DIAG8320032 and answered SYS/DEBUG but lost the
+commissioned NIB. Additional telemetry showed fresh initialization,467 successful
+NV transactions,zero compactions and16756 appendable bytes. The complete physical
+post-boot NV snapshot contained no native NIB, including inactive records. This
+differs from R6's exhausted five-page configuration. It does not identify whether
+the management uploader or TI's original destructive scan/init path removed NV.
+Private snapshots and network keys remain outside this public repository.
+
+The actual pinned-driver gate now checks16 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes. Each must reject repeated init and
+subsequent read/write APIs with zero physical operations and identical full-image
+hashes. Cases cover signature/version/state mismatch, a blank header hiding data,
+NACT containing records, multiple destinations/ready pages, and an early blank
+page before a later corrupt page. Healthy reopen stays unchanged; truly blank
+initialization still succeeds. Existing exhaustive compaction/write gates apply.
+
+An original-state-only host recovery has now been designed with a retained genuine
+native NIB and saved associations; it does not require provisional formation.
+Factory NV can also lack the address and security-manager tables, so an offline
+fixture that pre-creates these does not establish live restore qualification.
+The next authorized firmware experiment must retain original native records and
+physical NV before upload, capture first boot, and establish uploader erase-range
+evidence before calling this an inherited-NV fix. R10 is not authorized to flash
+by its build manifest; do not automatically deploy it after vendor recovery.

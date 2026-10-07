@@ -358,7 +358,8 @@ def apply_fix(nvocmp):
     ex.replace(nvocmp, HELPER_ANCHOR_OLD, HELPER_ANCHOR_NEW, 't832-r8.recovery.p2-helpers')
     ex.replace(nvocmp, REFRESH_ANCHOR_OLD, REFRESH_ANCHOR_NEW, 't832-r8.recovery.p2a-refresh-call')
     ex.replace(nvocmp, CASE_OLD, CASE_NEW, 't832-r8.recovery.p2b-settle-call')
-    return ex.edits
+    from nv_startup_guard import apply_guard
+    return ex.edits+apply_guard(nvocmp)
 
 
 def verify_fixed(text):

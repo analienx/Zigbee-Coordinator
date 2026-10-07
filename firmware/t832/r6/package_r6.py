@@ -62,15 +62,23 @@ def package(a):
     lab=json.loads(a.lab.read_text())
     if a.series=='R7' and not lab.get('all_power_cut_recovery_passed'):
         raise ValueError('required recovery/write gate failed; candidate packaging refused')
+    startup=None
+    if a.series=='R7':
+        guard_report=a.lab.parent/'startup-guard-report.json'
+        startup=json.loads(guard_report.read_text())
+        if startup.get('ok') is not True or startup.get('rejection_cases')!=16:
+            raise ValueError('nonblank startup preservation gate failed')
+        shutil.copy2(guard_report,provenance/guard_report.name)
     manifest={'variant':stem,'repository_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
               'profile':c,'sdk_commit':'6499c3f53fc5fb5806213be695450a7b43fbaf3d',
               'examples_commit':'87ff5b638b632050228a7504f35cf3b95581c278',
               'board':'SLZB-06P10 / CC2674P10; UART and DIO15 BSL; bench acceptance pending',
               'toolchain':{'ccs':'12.8.0.00012','ti_clang':'3.2.2.LTS','sysconfig':'1.21.1.3772','xdc':'3.62.01.16'},
               'sram_unused_bytes':rows['SRAM']['unused'],'container_segments':segments,'erased_gap_padding_bytes':padding,
-              'sys_version_revision':(8320032 if a.variant=='DIAG' else 8320031) if a.series=='R7' else (8320012 if a.variant=='DIAG' else 8320011),
+              'sys_version_revision':(8320042 if a.variant=='DIAG' else 8320041) if a.series=='R7' else (8320012 if a.variant=='DIAG' else 8320011),
               'debug_build_id':int(os.environ['GITHUB_SHA'][:8],16) if a.variant=='DIAG' else None,
               'hardware_validated':False,'flash_authorized':False,
+              'startup_preservation_cases':startup['rejection_cases'] if startup else None,
               'all_power_cut_recovery_passed':lab['all_power_cut_recovery_passed'],
               'unresolved_recovery_negative_controls':lab['profiles'][a.profile+'-'+a.variant]['unresolved_recovery_negative_controls'],
               'artifacts':{str(p.relative_to(a.out)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in a.out.rglob('*') if p.is_file()}}
