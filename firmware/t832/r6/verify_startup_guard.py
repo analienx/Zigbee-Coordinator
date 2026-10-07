@@ -506,10 +506,13 @@ def hand_picked(name, b, last, info):
         for pg in range(1, 13):
             put1to0(b, pg * PAGE + 0, 0x78, name)
         return {'family': 'admit-full-mark-path'}
-    if name == 'admit-drained-blank-end':
-        # R10 cut-195 shape: the PGCDST source range fully drained and its
-        # end page erased (blank) while the end offset stays at the drained
-        # mark 16. Recovery erases the already-blank end page; the tail
+    if name == 'admit-drained-short-end':
+        # R10 cut-195 shape: the PGCDST source range fully drained while the
+        # end offset stays at the drained mark 16 and the end page holds no
+        # data (true end 4, below PGDATAOFS). A fully-blank end would cost a
+        # second scan-heal erase, so the end page carries the power-cut form
+        # scanPage healing itself leaves behind: page header written, compact
+        # slots still erased. Recovery erases the end page once; the tail
         # (dst + cleaned count) lands on the NACT page, which carries a
         # valid header (the driver-observed cut-195 pg03 form) so the
         # second init converges with zero operations.
@@ -527,10 +530,12 @@ def hand_picked(name, b, last, info):
                                            0xFF, 0xFF, 0xFF, 0x96,
                                            0xFF, 0xFF, 0xFF, 0x96))
         b[1 * PAGE + 16:2 * PAGE] = b'\xff' * (PAGE - PGDATAOFS)
-        b[5 * PAGE:6 * PAGE] = b'\xff' * PAGE
+        b[5 * PAGE:5 * PAGE + 16] = (bytes((0xFF, 0x02, 0x0F, 0x96))
+                                    + b'\xff' * 12)
+        b[5 * PAGE + 16:6 * PAGE] = b'\xff' * (PAGE - PGDATAOFS)
         for pg in list(range(2, 5)) + list(range(6, 15)):
             put1to0(b, pg * PAGE + 0, 0x78, name)
-        return {'family': 'admit-drained-blank-end'}
+        return {'family': 'admit-drained-short-end'}
     return {'family': 'hand-picked'}
 
 
@@ -593,7 +598,7 @@ for _pg in (3, 8, 11):
 for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
 ADMIT_CASES = ['admit-twin-act', 'admit-mixed-act-rdy', 'admit-full-nact-mark',
-               'admit-drained-blank-end']
+               'admit-drained-short-end']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -623,7 +628,7 @@ EXPECTED_TAG = {
     'admit-twin-act': 'ADMIT_RESUME_DIRECT',
     'admit-mixed-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
-    'admit-drained-blank-end': 'ADMIT_RECOVER_ERASE',
+    'admit-drained-short-end': 'ADMIT_RECOVER_ERASE',
 }
 for _name in REJECT_CASES:
     if _name.startswith('gen-torn-'):
