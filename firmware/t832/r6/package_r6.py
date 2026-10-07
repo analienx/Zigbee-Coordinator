@@ -66,7 +66,7 @@ def package(a):
     if a.series=='R7':
         guard_report=a.lab.parent/'startup-guard-report.json'
         startup=json.loads(guard_report.read_text())
-        if startup.get('ok') is not True or startup.get('rejection_cases')!=16:
+        if startup.get('ok') is not True or startup.get('rejection_cases')!=20:
             raise ValueError('nonblank startup preservation gate failed')
         shutil.copy2(guard_report,provenance/guard_report.name)
     manifest={'variant':stem,'repository_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],

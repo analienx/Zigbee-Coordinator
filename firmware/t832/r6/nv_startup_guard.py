@@ -24,16 +24,18 @@ static bool NVOCMP_startupErased(uint8_t pg, uint16_t start)
 
 static uint8_t NVOCMP_startupClassify(void)
 {
+  uint8_t inactive = 0, destinations = 0, sources = 0, ready = 0, dataPages = 0;
+  uint8_t legacyPages = 0;
   for(uint8_t pg = 0; pg < NVOCMP_NVSIZE; pg++)
   {
     uint32_t raw = 0;
     NVOCMP_pageHdr_t *hdr = (NVOCMP_pageHdr_t *)&raw;
     NVOCMP_read(pg, NVOCMP_PGHDROFS, (uint8_t *)hdr, NVOCMP_PGHDRLEN);
-    if(raw == 0xFFFFFFFF && NVOCMP_startupErased(pg, 0)) continue;
+    if(raw == 0xFFFFFFFF && NVOCMP_startupErased(pg, 0)) { inactive++; continue; }
 #if !defined(NVOCMP_MIGRATE_DISABLED)
     uint8_t legacy = (hdr->version << 2) | hdr->allActive;
     if(hdr->signature == NVOCTP_SIGNATURE && legacy == NVOCTP_VERSION &&
-       (hdr->state == NVOCTP_PGACTIVE || hdr->state == NVOCTP_PGXFER)) continue;
+       (hdr->state == NVOCTP_PGACTIVE || hdr->state == NVOCTP_PGXFER)) { legacyPages++; continue; }
 #endif
     if(hdr->signature != NVOCMP_SIGNATURE || hdr->version != NVOCMP_VERSION)
       return NVINTF_BADVERSION;
@@ -43,7 +45,17 @@ static uint8_t NVOCMP_startupClassify(void)
       return NVINTF_BADVERSION;
     if(hdr->state == NVOCMP_PGNACT && !NVOCMP_startupErased(pg, NVOCMP_PGDATAOFS))
       return NVINTF_BADVERSION;
+    if(hdr->state == NVOCMP_PGNACT) inactive++;
+    if(hdr->state == NVOCMP_PGXDST) destinations++;
+    if(hdr->state == NVOCMP_PGXSRC) sources++;
+    if(hdr->state == NVOCMP_PGRDY) ready++;
+    if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) dataPages++;
   }
+  /* Reject the upstream FORCE_CLEAN decisions before scanPage initializes even
+     a truly blank page. Rejected topology must preserve the complete image. */
+  if(!legacyPages && (destinations > 1 || sources > 1 || ready > 1 ||
+     (inactive != NVOCMP_NVSIZE && !destinations && !sources && !dataPages)))
+    return NVINTF_FAILURE;
   return NVINTF_SUCCESS;
 }
 '''
