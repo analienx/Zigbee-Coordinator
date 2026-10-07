@@ -364,10 +364,8 @@ def oracle_decision(img):
     # CRC-valid tail ID of the NULL-cursor last ACT on a resume
     # topology with at most one older non-twin copy (resume dedups
     # the single older copy; the hosted lab mutation cuts prove that
-    # path). Every corpus verdict here matches C except the 4e
-    # red-first control admit-erase-tail-inrange (the oracle admits a
-    # tail cleanPage erases first; 4f C follows); elsewhere twins are
-    # valid and conflicts differ with torn tails.
+    # path). Every corpus verdict here matches C: twins are valid,
+    # conflicts differ with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
         if states[pg] not in (0x7C, 0x78, 0x70):
@@ -449,10 +447,8 @@ def oracle_decision(img):
     # (dst + count) % NVPAGES. The mark succeeds onto an erased (0xFF)
     # state byte, or onto a page cleanPage itself erases first (a
     # non-end range page, or the end page iff drained); anything else
-    # fails init every boot, so it fails closed here. The oracle leads
-    # on the tail-in-range completion here: 4e C still demands a
-    # pre-erased tail (red-first control admit-erase-tail-inrange);
-    # 4f adds the matching C rule.
+    # fails init every boot, so it fails closed here. (Tail-in-range
+    # completion mirrored by the 4f C erased-set check.)
     cleaned = _fwd(spg, epg) + (1 if eoff == PGDATAOFS else 0)
     tail = (f + cleaned) % NVPAGES
     erased = set()
@@ -1150,12 +1146,12 @@ def hand_picked(name, b, last, info):
         put1to0(b, 14 * PAGE + 0, 0x78, name)
         return {'family': 'admit-erase-twinned-drained', 'seed_end': end}
     if name == 'admit-erase-tail-inrange':
-        # P2 red-first anchor (4e): drained singleton range [0..0] with
+        # P2 (4e red-first anchor): drained singleton range [0..0] with
         # a live-twinned end page, dst page 14. Tail is (14+0+1)%15 =
         # page 0: the drained end itself, which cleanPage erases (5
-        # ops) before the XDST mark lands on it. The 4e oracle admits
-        # (tail in erased set); 4e C demands a pre-erased tail and
-        # false-bricks; 4f completes the rule. First-init cost 6 ops.
+        # ops) before the XDST mark lands on it; the 4f erased-set
+        # check admits it (pre-4f C false-bricked). First-init cost
+        # 6 ops.
         program_tail_singleton(b, name)
         put1to0(b, 14 * PAGE + 0, 0x78, name)
         base = 14 * PAGE

@@ -514,20 +514,36 @@ static uint8_t NVOCMP_startupClassify(void)
            item above eoff verbatim-twinned on dst). */
         else if(eoff > endTrue) return NVINTF_BADVERSION;
         else if(eoff != endTrue && !NVOCMP_startupSuffixTwinned(epg, eoff, endTrue, f)) return NVINTF_BADVERSION;
-        /* Tail-markability (L0-F2/F3): cleanPage erases every non-end
-           range page (the offset correction forces PGDATAOFS) and the
-           end page iff drained, then XDST-marks ADDPAGE(dst, count).
-           NOR programs 1->0 only, so the mark succeeds only onto an
-           erased (0xFF) state byte; anything else fails the mark,
+        /* Tail-markability (L0-F2/F3; P2 tail-in-range): cleanPage
+           erases every non-end range page (the offset correction
+           forces PGDATAOFS) and the end page iff drained, then
+           XDST-marks ADDPAGE(dst, count). NOR programs 1->0 only, so
+           the mark succeeds onto an erased (0xFF) state byte, or onto
+           a page cleanPage itself erases first (a non-end range page,
+           or the end page iff drained); anything else fails the mark,
            fails init, and bricks every boot. */
         {
           uint8_t tail = (uint8_t)(((uint16_t)f + dse + (eoff == NVOCMP_PGDATAOFS ? 1u : 0u)) % NVOCMP_NVSIZE);
-          uint32_t tailRaw = 0;
-          NVOCMP_pageHdr_t *tailHdr = (NVOCMP_pageHdr_t *)&tailRaw;
-          NVOCMP_read(tail, NVOCMP_PGHDROFS, (uint8_t *)tailHdr, NVOCMP_PGHDRLEN);
-          if(tailHdr->state != NVOCMP_PGNACT) return NVINTF_BADVERSION;
+          uint8_t tailErased = 0;
+          uint8_t q;
+          for(q = spg; q != epg; q = NVOCMP_INCPAGE(q))
+            if(q == tail) { tailErased = 1; break; }
+          if(tail == epg && eoff == NVOCMP_PGDATAOFS) tailErased = 1;
+          if(!tailErased)
+          {
+            uint32_t tailRaw = 0;
+            NVOCMP_pageHdr_t *tailHdr = (NVOCMP_pageHdr_t *)&tailRaw;
+            NVOCMP_read(tail, NVOCMP_PGHDROFS, (uint8_t *)tailHdr, NVOCMP_PGHDRLEN);
+            if(tailHdr->state != NVOCMP_PGNACT) return NVINTF_BADVERSION;
+          }
         }
       }
+      /* P3: eraseBranch with no PGCDST falls through here (SUCCESS at
+         the classify layer). Data-without-destination-and-without-spare
+         still fails closed end-to-end via the R10 ERROR_UNKNOWN latch
+         with 0 ops (the oracle models that latched outcome as
+         DRIVER_UNKNOWN_LATCH); resume-mark shapes (spare NACT) proceed
+         to NORMAL_RESUME below. Verdicts agree at the init boundary. */
     }
   }
   return NVINTF_SUCCESS;
