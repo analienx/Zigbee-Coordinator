@@ -364,8 +364,10 @@ def oracle_decision(img):
     # CRC-valid tail ID of the NULL-cursor last ACT on a resume
     # topology with at most one older non-twin copy (resume dedups
     # the single older copy; the hosted lab mutation cuts prove that
-    # path). Every corpus verdict here matches C: twins are valid,
-    # conflicts differ with torn tails.
+    # path). Every corpus verdict here matches C except the 4e
+    # red-first control admit-erase-tail-inrange (the oracle admits a
+    # tail cleanPage erases first; 4f C follows); elsewhere twins are
+    # valid and conflicts differ with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
         if states[pg] not in (0x7C, 0x78, 0x70):
@@ -441,13 +443,26 @@ def oracle_decision(img):
         # eoff twinned on the dst page.
         if not suffix_twinned(img, epg, eoff, f):
             return 'REJECT', 'CMP_ERASE_BELOW_END'
-    # Tail-markability (L0-F2/F3, 4b): cleanPage erases every non-end
-    # range page (the offset correction forces PGDATAOFS) and the end
-    # page iff drained, then XDST-marks (dst + count) % NVPAGES. The
-    # mark succeeds only onto an erased (0xFF) state byte; anything
-    # else fails init every boot, so it fails closed here.
+    # Tail-markability (L0-F2/F3, 4b; P2 tail-in-range, 4e): cleanPage
+    # erases every non-end range page (the offset correction forces
+    # PGDATAOFS) and the end page iff drained, then XDST-marks
+    # (dst + count) % NVPAGES. The mark succeeds onto an erased (0xFF)
+    # state byte, or onto a page cleanPage itself erases first (a
+    # non-end range page, or the end page iff drained); anything else
+    # fails init every boot, so it fails closed here. The oracle leads
+    # on the tail-in-range completion here: 4e C still demands a
+    # pre-erased tail (red-first control admit-erase-tail-inrange);
+    # 4f adds the matching C rule.
     cleaned = _fwd(spg, epg) + (1 if eoff == PGDATAOFS else 0)
-    if img[((f + cleaned) % NVPAGES) * PAGE] != 0xFF:
+    tail = (f + cleaned) % NVPAGES
+    erased = set()
+    p = spg
+    while p != epg:
+        erased.add(p)
+        p = (p + 1) % NVPAGES
+    if eoff == PGDATAOFS:
+        erased.add(epg)
+    if img[tail * PAGE] != 0xFF and tail not in erased:
         return 'REJECT', 'CMP_ERASE_TAIL_STATE'
     return 'ADMIT', 'ADMIT_RECOVER_ERASE'
 
@@ -1134,6 +1149,32 @@ def hand_picked(name, b, last, info):
             put1to0(b, 12 * PAGE + 16 + 116 + i, orig[116 + i], name)
         put1to0(b, 14 * PAGE + 0, 0x78, name)
         return {'family': 'admit-erase-twinned-drained', 'seed_end': end}
+    if name == 'admit-erase-tail-inrange':
+        # P2 red-first anchor (4e): drained singleton range [0..0] with
+        # a live-twinned end page, dst page 14. Tail is (14+0+1)%15 =
+        # page 0: the drained end itself, which cleanPage erases (5
+        # ops) before the XDST mark lands on it. The 4e oracle admits
+        # (tail in erased set); 4e C demands a pre-erased tail and
+        # false-bricks; 4f completes the rule. First-init cost 6 ops.
+        program_tail_singleton(b, name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 14 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x00, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x00, name)
+        end = info['E']
+        orig = bytes(b[0 * PAGE + 16:0 * PAGE + end])
+        check(len(orig) == 123, 'seed item not as expected',
+              case=name, end=end, size=len(orig))
+        for i in range(116):
+            put1to0(b, 14 * PAGE + 16 + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 14 * PAGE + 16 + 116 + i, orig[116 + i], name)
+        return {'family': 'admit-erase-tail-inrange', 'seed_end': end}
     return {'family': 'hand-picked'}
 
 
@@ -1206,7 +1247,8 @@ for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
 ADMIT_CASES = ['multi-act-twins', 'multi-act-rdy', 'admit-full-nact-mark',
                'admit-drained-short-end', 'admit-erase-twinned-multi',
-               'admit-erase-twinned-nonend', 'admit-erase-twinned-drained']
+               'admit-erase-twinned-nonend', 'admit-erase-twinned-drained',
+               'admit-erase-tail-inrange']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -1259,6 +1301,7 @@ EXPECTED_TAG = {
     'admit-erase-twinned-multi': 'ADMIT_RECOVER_ERASE',
     'admit-erase-twinned-nonend': 'ADMIT_RECOVER_ERASE',
     'admit-erase-twinned-drained': 'ADMIT_RECOVER_ERASE',
+    'admit-erase-tail-inrange': 'ADMIT_RECOVER_ERASE',
 }
 for _name in REJECT_CASES:
     if _name.startswith('gen-torn-'):

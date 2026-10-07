@@ -444,6 +444,21 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([end, dst] + [page()] * 13)
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
+    def test_oracle_erase_tail_inrange_erased_admitted(self):
+        # P2 (4e): the computed tail lies on the drained end page
+        # itself, which cleanPage erases before the XDST mark lands:
+        # the mark succeeds, so the tail gate admits. (C follows in
+        # 4f; 4e C still demands a pre-erased tail.)
+        lo = live_item(1, 33, 0, 5)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + padded(lo))
+        end = page(0x7C, data=padded(lo))
+        img = image([end] + [page()] * 13 + [dst])
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+
 
 if __name__ == '__main__':
     unittest.main()

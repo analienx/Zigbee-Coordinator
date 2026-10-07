@@ -115,12 +115,12 @@ physical operations and identical full-image hashes. A dedicated adverse probe
 verb shows expectComp(nonzero) cannot reach the page walker after a rejected
 init; the whole sweep also runs under AddressSanitizer+
 UndefinedBehaviorSanitizer with no findings. ACT/FULL/XSRC live IDs must agree pairwise across and within ACT, FULL, and XSRC pages:
-every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy and no older twin alongside, which resume dedups (lab-proven by mutation cuts). Below-end erase offsets admit only with the suffix proof (every live item above the offset verbatim-twinned on dst), since cleanPage hides the suffix. Non-end range pages admit when blank or all-live-twinned on dst, and drained ends admit when blank or twinned, since cleanPage erases them (twins survive). Erase admission also requires the driver's XDST tail-mark to land on an erased page, or init fails every boot. Missing recovery destinations return a
+every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy and no older twin alongside, which resume dedups (lab-proven by mutation cuts). Below-end erase offsets admit only with the suffix proof (every live item above the offset verbatim-twinned on dst), since cleanPage hides the suffix. Non-end range pages admit when blank or all-live-twinned on dst, and drained ends admit when blank or twinned, since cleanPage erases them (twins survive). Erase admission also requires the driver's XDST tail-mark to land on an erased page, or on a page cleanPage erases first (in-range), or init fails every boot. Missing recovery destinations return a
 latched error instead of the upstream startup spin. Healthy reopen stays
 unchanged; truly blank initialization still succeeds. Existing exhaustive
 compaction/write gates apply. The 15,504 state-count families in the report are
 Python model combinatorics, not driver executions; execution evidence is the
-counted probe runs (648 reject, 56 admit, 324 sanitizer).
+counted probe runs (648 reject, 64 admit, 324 sanitizer).
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.
