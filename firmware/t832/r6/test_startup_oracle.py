@@ -397,10 +397,10 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
     def test_oracle_erase_twinned_nonend_admitted(self):
-        # CH-F1 (4c): a non-end range page whose live items all survive
+        # CH-F1: a non-end range page whose live items all survive
         # verbatim on dst admits: cleanPage erases it unconditionally,
-        # which destroys nothing. (C follows in 4d; 4c C still demands
-        # blank non-end pages.)
+        # which destroys nothing (mirrored by the 4d C page-twin
+        # proof).
         o = live_item(1, 33, 0, 5)
         lo = live_item(1, 33, 0, 5)
         hi = live_item(1, 33, 0, 5)
@@ -431,10 +431,9 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
 
     def test_oracle_erase_drained_twinned_admitted(self):
-        # CH-F1 (4c): a drained end page whose live items all survive
+        # CH-F1: a drained end page whose live items all survive
         # verbatim on dst admits: cleanPage erases it, which destroys
-        # nothing. (C follows in 4d; 4c C still demands a blank
-        # drained end.)
+        # nothing (mirrored by the 4d C suffix proof at eoff 16).
         lo = live_item(1, 33, 0, 5)
         dst = (bytes((0x78, 0x01, 0x0F, 0x96))
                + bytes((0xFF, 0xFF, 0xFE, 0x96))

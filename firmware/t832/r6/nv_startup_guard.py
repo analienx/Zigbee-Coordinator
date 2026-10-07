@@ -13,7 +13,8 @@ HELPER=r'''/* T832-R10: classify every page before the first erase/program.
    here, read-only, before scanPage/recovery can mutate. Anything else
    preserves the image and rejects. F2: legacy generations fail closed;
    migration is not qualified. F6: multi-page RECOVER_ERASE ranges fail
-   closed (non-end pages erase unconditionally). F7: duplicate PGCDST
+   closed (non-end pages erase unconditionally: blank or all-live-twinned).
+   F7: duplicate PGCDST
    metadata fails closed. F8: ACT/FULL/XSRC live IDs must agree pairwise
    (verbatim twins incl. both CRCs) or fail closed, except divergent
    pairs on the valid tail ID of a resume topology with at most one
@@ -140,6 +141,39 @@ static bool NVOCMP_startupSuffixTwinned(uint8_t epg, uint16_t eoff, uint16_t end
     if(r < 0) return false;
     if(r == 0) return true;
     if(h.hofs > eoff)
+    {
+      NVOCMP_startupWalk_t v;
+      NVOCMP_itemHdr_t g;
+      int8_t s;
+      bool twinned = false;
+      NVOCMP_startupWalkInit(&v, fpg);
+      for(;;)
+      {
+        s = NVOCMP_startupWalkNext(&v, &g);
+        if(s < 0) return false;
+        if(s == 0) break;
+        if(g.cmpid == h.cmpid && NVOCMP_recoverCopiesEqual(&h, &g)) { twinned = true; break; }
+      }
+      if(!twinned) return false;
+    }
+  }
+}
+/* Whole-page twin proof: true only when every live item on page pg
+   has a verbatim twin on page fpg and both pages walk to a clean end.
+   Non-end erase pages erase unconditionally, which is safe only when
+   each erased live item survives verbatim on dst. Anything
+   unparseable fails closed. */
+static bool NVOCMP_startupPageTwinned(uint8_t pg, uint8_t fpg)
+{
+  NVOCMP_startupWalk_t w;
+  NVOCMP_itemHdr_t h;
+  int8_t r;
+  NVOCMP_startupWalkInit(&w, pg);
+  for(;;)
+  {
+    r = NVOCMP_startupWalkNext(&w, &h);
+    if(r < 0) return false;
+    if(r == 0) return true;
     {
       NVOCMP_startupWalk_t v;
       NVOCMP_itemHdr_t g;
@@ -455,18 +489,24 @@ static uint8_t NVOCMP_startupClassify(void)
         if(dsf <= dse) return NVINTF_BADVERSION;
         /* F6: cleanPage erases non-end range pages unconditionally (the
            offset correction forces PGDATAOFS), so each non-end page must be
-           blank/header-only (nothing to destroy) or the range fails closed.
-           Preservation beats automatic recovery. */
+           blank/header-only (nothing to destroy) or fully live-twinned
+           on dst (CH-F1: erasing originals destroys nothing when every
+           live item survives verbatim on dst), or the range fails
+           closed. Preservation beats automatic recovery. */
         for(pg = spg; pg != epg; pg = NVOCMP_INCPAGE(pg))
-          if(NVOCMP_findOffset(pg, FLASH_PAGE_SIZE) > NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
+          if(NVOCMP_findOffset(pg, FLASH_PAGE_SIZE) > NVOCMP_PGDATAOFS &&
+             !NVOCMP_startupPageTwinned(pg, f)) return NVINTF_BADVERSION;
         endTrue = NVOCMP_findOffset(epg, FLASH_PAGE_SIZE);
         if(eoff == NVOCMP_PGDATAOFS)
         {
           /* Fully-drained form: cleanPage erases the end page without
-             reading data through the offset. Safe only when the end page
-             holds no data (blank, or header-only); a torn end offset on a
-             live end page would erase live items. */
-          if(endTrue > NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
+             reading data through the offset. Safe when the end page
+             holds no data (blank, or header-only), or when every live
+             item on it is twinned on dst (CH-F1: same erasure argument
+             as the non-end extension); a torn end offset on an
+             untwinned live end page would erase live items. */
+          if(endTrue > NVOCMP_PGDATAOFS &&
+             !NVOCMP_startupSuffixTwinned(epg, NVOCMP_PGDATAOFS, endTrue, f)) return NVINTF_BADVERSION;
         }
         /* Below-end erase offsets are fresh partial-consumption
            frontiers or stale/torn values; cleanPage hides everything
@@ -609,7 +649,7 @@ def verify_guard(text):
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi','NVOCMP_expectCompApi'):
         if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
     classify=function(text,'NVOCMP_startupClassify')
-    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census','NVOCMP_startupSuffixTwinned','Tail-markability'):
+    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict','Tail-ID census','NVOCMP_startupSuffixTwinned','Tail-markability','NVOCMP_startupPageTwinned'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
     if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')

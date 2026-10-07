@@ -364,11 +364,8 @@ def oracle_decision(img):
     # CRC-valid tail ID of the NULL-cursor last ACT on a resume
     # topology with at most one older non-twin copy (resume dedups
     # the single older copy; the hosted lab mutation cuts prove that
-    # path). Every corpus verdict here matches C except the 4c
-    # red-first extension controls (admit-erase-twinned-nonend and
-    # -drained: the oracle leads with the twinned-erasure extension,
-    # 4d C follows); elsewhere twins are valid and conflicts differ
-    # with torn tails.
+    # path). Every corpus verdict here matches C: twins are valid,
+    # conflicts differ with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
         if states[pg] not in (0x7C, 0x78, 0x70):
@@ -417,9 +414,7 @@ def oracle_decision(img):
     # blank/header-only (nothing to destroy) or fully live-twinned on
     # dst (CH-F1, 4c: erasing originals destroys nothing when every
     # live item survives verbatim on dst), or the range fails closed.
-    # The oracle leads on the twinned extension here: 4c C still
-    # requires blank non-end pages (red-first controls
-    # admit-erase-twinned-nonend/-drained); 4d adds the matching C rule.
+    # (Twinned extension mirrored by the 4d C page-twin proof.)
     p = spg
     while p != epg:
         if find_end(img[p * PAGE:(p + 1) * PAGE]) > PGDATAOFS:
@@ -1073,10 +1068,10 @@ def hand_picked(name, b, last, info):
         return {'family': 'admit-erase-twinned-multi', 'seed_end': end,
                 'eoffset': end}
     if name == 'admit-erase-twinned-nonend':
-        # CH-F1 red-first anchor (4c): range [2..3] with a live-twinned
+        # CH-F1 (4c red-first anchor): range [2..3] with a live-twinned
         # (fully-consumed) non-end page. cleanPage erases it, which
-        # destroys nothing (twins survive on dst), but 4b C demands
-        # blank non-end pages and false-bricks; 4d extends the rule.
+        # destroys nothing (twins survive on dst); the 4d page-twin
+        # proof admits it (pre-4d C false-bricked).
         copy_page_1to0(b, 0, 2, name)
         copy_page_1to0(b, 0, 3, name)
         end = info['E']
@@ -1112,11 +1107,11 @@ def hand_picked(name, b, last, info):
         return {'family': 'admit-erase-twinned-nonend', 'seed_end': end,
                 'eoffset': end}
     if name == 'admit-erase-twinned-drained':
-        # CH-F1 red-first anchor (4c): drained singleton range [5..5]
+        # CH-F1 (4c red-first anchor): drained singleton range [5..5]
         # with a live-twinned end page. cleanPage erases it (5 ops:
         # erase + NACT header + 3 NULL slots), which destroys nothing
-        # (twins survive on dst), but 4b C demands a blank drained end
-        # and false-bricks; 4d extends the rule. Tail is (12+1)%15 =
+        # (twins survive on dst); the 4d suffix proof at eoff 16
+        # admits it (pre-4d C false-bricked). Tail is (12+1)%15 =
         # page 13 (erased); first-init cost 6 ops (erase + tail-mark).
         copy_page_1to0(b, 0, 5, name)
         program_tail_singleton(b, name)
