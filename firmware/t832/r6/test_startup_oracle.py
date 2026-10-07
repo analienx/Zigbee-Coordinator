@@ -60,7 +60,7 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.find_end(page(data=item_data(116))), 16 + 7 + 116)
 
     def test_boundary_walk(self):
-        body = item_data(5)
+        body = page(data=item_data(5))
         self.assertTrue(v.on_boundary(body, 16))
         self.assertTrue(v.on_boundary(body, 16 + 7 + 5))
         self.assertFalse(v.on_boundary(body, 16 + 7 + 4))
