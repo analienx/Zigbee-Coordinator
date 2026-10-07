@@ -33,6 +33,25 @@ def item_data(length):
     return bytes([0xAA]) * length + hdr + b'\xff' * (PAGE - 16 - 7 - length)
 
 
+def live_item(sysid, itemid, subid, length, fill=0xAA):
+    # One live (active, valid-signature) item with an explicit ID. CRC byte
+    # is zeroed: the Python proof compares length and payload bytes only (C
+    # additionally requires both CRCs valid), and these pages never reach
+    # the driver probe.
+    b0 = ((sysid & 0x3F) << 2) | ((itemid >> 8) & 0x03)
+    b1 = itemid & 0xFF
+    b2 = (subid >> 2) & 0xFF
+    b3 = ((subid & 0x03) << 6) | ((length >> 6) & 0x3F)
+    b4 = ((length & 0x3F) << 2) & 0xFF
+    hdr = bytes((b0, b1, b2, b3, b4, 0x42, 0x96))
+    return bytes((fill,)) * length + hdr
+
+
+def padded(*blobs):
+    body = b''.join(blobs)
+    return body + b'\xff' * (PAGE - 16 - len(body))
+
+
 class OracleCorpusTest(unittest.TestCase):
     def test_verifier_uses_no_bare_assert(self):
         text = (Path(__file__).resolve().parent / 'verify_startup_guard.py').read_text()
@@ -86,11 +105,35 @@ class OracleCorpusTest(unittest.TestCase):
         lone = image([page(0x7E, 0x0C)])
         self.assertEqual(v.oracle_decision(lone), ('REJECT', 'TOPO_LONE_OR_EMPTY'))
 
-    def test_oracle_multi_act_rejected(self):
-        # F8: even byte-identical twins fail closed, since resume dedups
-        # live IDs across them and admission cannot converge.
-        twin = image([page(0x7C), page(0x7C)] + [page()] * 12 + [page(0xFE)])
-        self.assertEqual(v.oracle_decision(twin), ('REJECT', 'TOPO_MULTI_ACT'))
+    def test_oracle_agreeing_twins_admitted(self):
+        # F8: twins whose shared live IDs all agree are admitted; resume
+        # dedups the older copy and the image converges to single-live.
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
+        b = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
+        img = image([a, b] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
+
+    def test_oracle_partitioned_act_admitted(self):
+        # F8: the lab-population shape (disjoint live IDs per ACT page).
+        ids = [(1, 6, 106), (1, 6, 212), (1, 4, 40)]
+        acts = [page(0x7C, data=padded(live_item(s, i, u, 12))) for s, i, u in ids]
+        img = image(acts + [page()] * 11 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
+
+    def test_oracle_same_page_agree_admitted(self):
+        # F8: identical live duplicates on one page agree.
+        blob = live_item(1, 33, 0, 5)
+        p = page(0x7C, data=padded(blob, blob))
+        img = image([p] + [page()] * 13 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
+
+    def test_oracle_same_page_differ_rejected(self):
+        # F8: same ID with differing live values on one page conflicts.
+        lo = live_item(1, 33, 0, 5, fill=0xAA)
+        hi = live_item(1, 33, 0, 5, fill=0xAB)
+        p = page(0x7C, data=padded(lo, hi))
+        img = image([p] + [page()] * 13 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
     def test_oracle_dup_recovery_rejected(self):
         two_xdst = image([page(0x7C), page(0xFE)] + [page()] * 12 + [page(0xFE)])
@@ -195,13 +238,21 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_MULTI'))
 
     def test_oracle_divergent_act_rejected(self):
-        # F8: ACT twins differing by one data bit fail closed under the
-        # same multi-ACT rule.
-        p1 = page(0x7C)
+        # F8: twins sharing a live ID with differing values conflict, even
+        # though each page walks cleanly.
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        b = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
+        img = image([a, b] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+
+    def test_oracle_act_walk_anomaly_rejected(self):
+        # F8: an ACT page whose top cannot be parsed to a clean chain end
+        # fails closed (agreement unprovable), here a stray byte with no
+        # header structure at all.
         p2 = bytearray(page(0x7C))
         p2[20] = 0x00
-        img = image([p1, bytes(p2)] + [page()] * 12 + [page(0xFE)])
-        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_MULTI_ACT'))
+        img = image([page(0x7C), bytes(p2)] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
     def test_oracle_reserved_header_rejected(self):
         # F9: reserved allActive (1/2) and cycle (0x00/0xFF) fail closed.

@@ -2,7 +2,8 @@
 
 R10 preservation corpus v2 (F1-F9): compact-header negatives using
 physically plausible 1->0 corruption, legacy fail-closed negatives,
-multi-ACT fail-closed locks, exact sanity-bitmask asserts, and derived
+multi-ACT agreement-proof locks (agreeing twins admitted, divergent live
+values rejected), exact sanity-bitmask asserts, and derived
 (never hard-coded) evidence. The Python oracles below
 mirror classifier policy for case construction; they are not independent
 proof of the driver. Only the hosted driver-probe runs count as execution
@@ -115,6 +116,49 @@ def on_boundary(page, cursor, end_true):
         if steps > 512:
             return False
     return pos == cursor
+
+
+def parse_item(page, hofs):
+    """HDRLE=0 item header parse mirroring NVOCMP_readHeader. Returns dict
+    with sysid/itemid/subid/len/crc/stats/follow/live/hofs."""
+    b = page[hofs:hofs + 7]
+    stats = b[5] & 0x03
+    follow = (b[6] == 0x96)
+    return {'sysid': (b[0] >> 2) & 0x3F,
+            'itemid': ((b[0] & 0x03) << 8) | b[1],
+            'subid': ((b[2] << 2) & 0x3FF) | ((b[3] >> 6) & 0x03),
+            'len': ((b[3] & 0x3F) << 6) | ((b[4] >> 2) & 0x3F),
+            'crc': ((b[4] & 0x03) << 6) | ((b[5] >> 2) & 0x3F),
+            'stats': stats, 'follow': follow, 'hofs': hofs,
+            'live': bool(follow and (stats & 0x02) and not (stats & 0x01))}
+
+
+def walk_live(page):
+    """Mirror of the C proof walk: collect live headers down the chain,
+    sliding past unrecognized tail bytes bounded. Returns (live, anomaly)."""
+    live = []
+    pos = find_end(page)
+    steps = slides = 0
+    while True:
+        if pos <= PGDATAOFS:
+            return live, False
+        if pos < PGDATAOFS + 7:
+            return live, True
+        h = parse_item(page, pos - 7)
+        if h['follow']:
+            if h['len'] > pos - 7 - PGDATAOFS:
+                return live, True
+            pos -= 7 + h['len']
+            steps += 1
+            if steps > 512:
+                return live, True
+            if h['live']:
+                live.append(h)
+        else:
+            pos -= 1
+            slides += 1
+            if slides > 64:
+                return live, True
 
 
 def _cmp(page, idx):
@@ -250,12 +294,28 @@ def oracle_decision(img):
     # destination metadata fails closed instead of silently picking one.
     if sum(1 for m in modes if m == 0xFE) > 1:
         return 'REJECT', 'CMP_DUP_PGCDST'
-    # F8: multiple ACT pages fail closed, even byte-identical twins:
-    # divergent twins can hold conflicting live values for the same ID
-    # under first-match search, and resume dedups live IDs across twins,
-    # so twin admission cannot converge.
-    if sum(1 for s in states if s == 0x7C) > 1:
-        return 'REJECT', 'TOPO_MULTI_ACT'
+    # F8 agreement proof (mirrors the C gate): every pair of live copies
+    # sharing an ID across (or within) ACT pages must agree in length and
+    # payload bytes. RESUME reads from the last ACT while RECOVER_ERASE
+    # reads from the first, so divergent copies would return different
+    # values on the two paths. Anything unparseable fails closed. C
+    # additionally requires both CRCs valid (strict superset); every corpus
+    # verdict here is CRC-decisive-identical (twins valid, conflicts differ).
+    act_live = {}
+    for pg in range(NVPAGES):
+        if states[pg] != 0x7C:
+            continue
+        live, anomaly = walk_live(img[pg * PAGE:(pg + 1) * PAGE])
+        if anomaly:
+            return 'REJECT', 'TOPO_ACT_CONFLICT'
+        for h in live:
+            key = (h['sysid'], h['itemid'], h['subid'])
+            payload = bytes(img[pg * PAGE + h['hofs'] - h['len']:
+                                pg * PAGE + h['hofs']])
+            for seen in act_live.get(key, []):
+                if seen != (h['len'], payload):
+                    return 'REJECT', 'TOPO_ACT_CONFLICT'
+            act_live.setdefault(key, []).append((h['len'], payload))
     first_fe = next((pg for pg in range(NVPAGES) if modes[pg] == 0xFE), None)
     if inactive == NVPAGES:
         return 'ADMIT', 'ADMIT_INIT'
@@ -532,14 +592,35 @@ def hand_picked(name, b, last, info):
         put1to0(b, 2 * PAGE + 5, 0x00, name)
         return {'family': 'rdy-cursor-zero'}
     if name == 'multi-act-twins':
-        # F8: byte-identical ACT twins. Resume dedups live IDs across them,
-        # so even this narrow shape cannot converge and fails closed.
+        # F8: byte-identical ACT twins. Every shared live ID agrees, so the
+        # agreement proof admits; resume dedups the older copy and the image
+        # converges to single-live.
         copy_page_1to0(b, 0, 1, name)
         return {'family': 'multi-act-twins'}
     if name == 'multi-act-rdy':
         copy_page_1to0(b, 0, 1, name)
         put1to0(b, 2 * PAGE + 0, 0x7E, name)
         return {'family': 'multi-act-rdy'}
+    if name == 'same-page-divergent-dup':
+        # F8: a second live copy of the seed item appended on page 0 with one
+        # flipped data bit (CRC now stale). Same ID, differing values on one
+        # page: first-match would return either depending on the walk start.
+        end = info['E']
+        top = parse_item(bytes(b[0 * PAGE:1 * PAGE]), end - 7)
+        check(top['live'] and top['len'] == 116, 'seed top item not as expected',
+              case=name, end=end, top=top)
+        check(end + 123 <= FLASH_PAGE_SIZE, 'seed page too full to append',
+              case=name, end=end)
+        orig = bytes(b[0 * PAGE + end - 123:0 * PAGE + end])
+        for i in range(116):
+            put1to0(b, 0 * PAGE + end + i, orig[i], name)
+        old = b[0 * PAGE + end + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 0 * PAGE + end + 20, old ^ (old & -old), name)
+        for i in range(7):
+            put1to0(b, 0 * PAGE + end + 116 + i, orig[116 + i], name)
+        return {'family': 'same-page-divergent-dup', 'seed_end': end}
     if name == 'admit-full-nact-mark':
         put1to0(b, 0 * PAGE + 0, 0x78, name)
         put1to0(b, 14 * PAGE + 0, 0x78, name)
@@ -612,8 +693,8 @@ def hand_picked(name, b, last, info):
         put1to0(b, 14 * PAGE + 6, 0xFE, name)
         return {'family': 'cmp-dup-pgdst'}
     if name == 'mixed-divergent-act':
-        # F8: identical twin except one cleared data bit on page 1. First-match
-        # search would return divergent values depending on actPage choice.
+        # F8: identical twin except one cleared data bit on page 1 (CRC now
+        # stale). Same live ID, differing values: the agreement proof fails.
         copy_page_1to0(b, 0, 1, name)
         old = b[1 * PAGE + 20]
         check(old != 0x00, 'seed data byte already clear, pick another offset',
@@ -685,8 +766,7 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'mixed-multiact-dup-xdst', 'rdy-cursor-zero',
                 'cmp-erase-range-multi-live', 'cmp-dup-pgdst',
                 'mixed-divergent-act', 'hdr-cycle-zero', 'hdr-cycle-erased',
-                'hdr-allactive-1', 'hdr-allactive-2', 'multi-act-twins',
-                'multi-act-rdy']
+                'hdr-allactive-1', 'hdr-allactive-2', 'same-page-divergent-dup']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -697,7 +777,8 @@ for _pg in (3, 8, 11):
     REJECT_CASES.append('gen-lone-ready-%d' % _pg)
 for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
-ADMIT_CASES = ['admit-full-nact-mark', 'admit-drained-short-end']
+ADMIT_CASES = ['multi-act-twins', 'multi-act-rdy', 'admit-full-nact-mark',
+               'admit-drained-short-end']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -727,13 +808,14 @@ EXPECTED_TAG = {
     'rdy-cursor-zero': 'CMP_RDY_CURSOR',
     'cmp-erase-range-multi-live': 'CMP_ERASE_RANGE_MULTI',
     'cmp-dup-pgdst': 'CMP_DUP_PGCDST',
-    'mixed-divergent-act': 'TOPO_MULTI_ACT',
+    'mixed-divergent-act': 'TOPO_ACT_CONFLICT',
     'hdr-cycle-zero': 'BAD_CYCLE',
     'hdr-cycle-erased': 'BAD_CYCLE',
     'hdr-allactive-1': 'BAD_ALLACTIVE',
     'hdr-allactive-2': 'BAD_ALLACTIVE',
-    'multi-act-twins': 'TOPO_MULTI_ACT',
-    'multi-act-rdy': 'TOPO_MULTI_ACT',
+    'same-page-divergent-dup': 'TOPO_ACT_CONFLICT',
+    'multi-act-twins': 'ADMIT_RESUME_DIRECT',
+    'multi-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
     'admit-drained-short-end': 'ADMIT_RECOVER_ERASE',
 }
