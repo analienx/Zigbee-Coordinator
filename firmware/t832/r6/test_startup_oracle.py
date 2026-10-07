@@ -286,6 +286,36 @@ class OracleCorpusTest(unittest.TestCase):
         full = image([page(0x78)] * 15)
         self.assertEqual(v.oracle_decision(full), ('REJECT', 'DRIVER_UNKNOWN_LATCH'))
 
+    def test_oracle_erase_below_end_rejected(self):
+        # F1/P1: an end offset below the true end, even on an item
+        # boundary, is a stale range or torn header: cleanPage would
+        # cursor-write it over live items. Only the true end (or the
+        # drained mark over a blank end) is consumable.
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1C, 0x00, 0x00, 0x96))
+               + b'\xff' * (PAGE - 16))
+        lo = live_item(1, 33, 0, 5)
+        hi = live_item(1, 33, 0, 5)
+        end = page(0x7C, data=padded(lo, hi))
+        img = image([end] + [page()] * 13 + [dst])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_BELOW_END'))
+
+    def test_oracle_erase_topology_divergent_rejected(self):
+        # F8/P0: the mirror rejects divergent pairs on every topology;
+        # only C's resume-gated tail exception may excuse one.
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        b = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x02, 0x96))
+               + bytes((0x10, 0x00, 0x02, 0x96))
+               + b'\xff' * (PAGE - 16))
+        blank = b'\xff' * PAGE
+        img = image([a, b, blank] + [page()] * 11 + [dst])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+
 
 if __name__ == '__main__':
     unittest.main()

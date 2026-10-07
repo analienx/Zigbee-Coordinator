@@ -102,11 +102,11 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks 71 rejecting cases across asserting and
-embedded-style nonfatal assertion lanes: 40 hand-picked cases (topologies,
+The actual pinned-driver gate now checks 74 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes: 43 hand-picked cases (topologies,
 compact-header negatives, legacy fail-closed, mixed recovery, RDY cursor,
 multi-page erase range, duplicate PGCDST, divergent ACT twins and same-page duplicates, reserved header
-fields) plus 31 enumerated generated cases (valid-NOR torn header bytes,
+fields, erase-tail divergent pairs, tail trios, stale end offsets) plus 31 enumerated generated cases (valid-NOR torn header bytes,
 ambiguous destination/source/ready pairs, lone-ready, torn-erase remnants).
 Each must reject repeated init and a full extended-API sweep
 (create/update/delete/read/readCont/write/getItemLen/doNext/expectComp/
@@ -120,7 +120,7 @@ latched error instead of the upstream startup spin. Healthy reopen stays
 unchanged; truly blank initialization still succeeds. Existing exhaustive
 compaction/write gates apply. The 15,504 state-count families in the report are
 Python model combinatorics, not driver executions; execution evidence is the
-counted probe runs (568 reject, 32 admit, 284 sanitizer).
+counted probe runs (592 reject, 32 admit, 296 sanitizer).
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.

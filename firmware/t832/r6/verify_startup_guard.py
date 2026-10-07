@@ -295,19 +295,19 @@ def oracle_decision(img):
     if sum(1 for m in modes if m == 0xFE) > 1:
         return 'REJECT', 'CMP_DUP_PGCDST'
     # F8 agreement proof (mirrors the C gate): every pair of live copies
-    # sharing an ID across (or within) ACT pages must agree in length and
-    # payload bytes. RESUME reads from the last ACT while RECOVER_ERASE
-    # reads from the first, so divergent copies would return different
-    # values on the two paths. Anything unparseable fails closed. C refines
-    # two shapes this mirror cannot see: it requires both CRCs valid (this
-    # mirror compares length and payload bytes only), and it admits
-    # divergent pairs on the live CRC-valid tail ID of the NULL-cursor last
-    # ACT (resume dedups the older twin; the hosted lab mutation cuts prove
-    # that path). Every corpus verdict here matches C: twins are valid,
-    # conflicts differ with torn tails.
+    # sharing an ID across (or within) ACT and FULL pages must agree in
+    # length and payload bytes. RESUME reads from the last ACT while
+    # RECOVER_ERASE reads from the first, so divergent copies would return
+    # different values on the two paths. Anything unparseable fails
+    # closed. C refines two shapes this mirror cannot see: it requires
+    # both CRCs valid (this mirror compares length and payload bytes
+    # only), and it admits divergent pairs on the live CRC-valid tail ID
+    # of the NULL-cursor last ACT (resume dedups the older twin; the
+    # hosted lab mutation cuts prove that path). Every corpus verdict here
+    # matches C: twins are valid, conflicts differ with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
-        if states[pg] != 0x7C:
+        if states[pg] not in (0x7C, 0x78):
             continue
         live, anomaly = walk_live(img[pg * PAGE:(pg + 1) * PAGE])
         if anomaly:
@@ -364,11 +364,16 @@ def oracle_decision(img):
         # live end page would erase live items.
         if end_true > PGDATAOFS:
             return 'REJECT', 'CMP_ERASE_LIVE_END'
-    elif eoff > end_true:
-        return 'REJECT', 'CMP_ERASE_ABOVE_END'
-    if (eoff != PGDATAOFS and eoff < end_true
-            and not on_boundary(img[epg * PAGE:(epg + 1) * PAGE], eoff, end_true)):
-        return 'REJECT', 'CMP_ERASE_MISALIGNED'
+    elif eoff != end_true:
+        # Fresh ranges record the frozen end exactly (sources are
+        # XSRC-frozen before compact() records XSRCENDHDR, and R8 P2a
+        # raises RAM offsets to findOffset), so below-end is a stale
+        # range or torn header. cleanPage cursor-writes it onto the end
+        # page and marks the page FULL after P2a ran, hiding live items
+        # above it; a stale-smaller value is never consumed.
+        if eoff > end_true:
+            return 'REJECT', 'CMP_ERASE_ABOVE_END'
+        return 'REJECT', 'CMP_ERASE_BELOW_END'
     return 'ADMIT', 'ADMIT_RECOVER_ERASE'
 
 
@@ -720,6 +725,80 @@ def hand_picked(name, b, last, info):
                                     + b'\xff\xff\xff\x96' * 3)
         b[2 * PAGE + 16:3 * PAGE] = b'\xff' * (PAGE - PGDATAOFS)
         return {'family': 'hdr-reserved'}
+    if name == 'mixed-divergent-act-erase':
+        # F8/P0: ERASE topology (no XDST/XSRC, valid drained range) with
+        # a divergent pair on the CRC-valid tail ID: page 1 (last ACT)
+        # keeps the pristine seed copy as tail, page 0 holds the same ID
+        # with one cleared data bit (stale CRC). RECOVER_ERASE runs no
+        # dedup and reads from the first ACT, so the tail exception must
+        # not excuse this pair; only resume topologies converge.
+        copy_page_1to0(b, 0, 1, name)
+        check(b[1 * PAGE + 4] == 0xFF and b[1 * PAGE + 5] == 0xFF,
+              'tail page cursor not null', case=name)
+        old = b[0 * PAGE + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 0 * PAGE + 20, old ^ (old & -old), name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 0 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x05, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x05, name)
+        b[5 * PAGE:5 * PAGE + 16] = (bytes((0xFF, 0x02, 0x0F, 0x96))
+                                    + b'\xff' * 12)
+        b[5 * PAGE + 16:6 * PAGE] = b'\xff' * (PAGE - PGDATAOFS)
+        return {'family': 'mixed-divergent-act-erase'}
+    if name == 'mixed-divergent-act-trio':
+        # F8/census: RESUME topology with three live copies of one ID:
+        # page 2 (last ACT) keeps the pristine seed copy as CRC-valid
+        # tail, pages 0 and 1 hold the same ID with different cleared
+        # data bits. Resume dedups exactly one older copy, so two
+        # survivors diverge and the tail exception must not excuse them.
+        copy_page_1to0(b, 0, 1, name)
+        copy_page_1to0(b, 0, 2, name)
+        check(b[2 * PAGE + 4] == 0xFF and b[2 * PAGE + 5] == 0xFF,
+              'tail page cursor not null', case=name)
+        old = b[0 * PAGE + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 0 * PAGE + 20, old ^ (old & -old), name)
+        old = b[1 * PAGE + 40]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=40, old=hex(old))
+        put1to0(b, 1 * PAGE + 40, old ^ (old & -old), name)
+        return {'family': 'mixed-divergent-act-trio'}
+    if name == 'cmp-eoffset-stale-boundary':
+        # F1/P1: ERASE range [0..0] over a two-item end page with the end
+        # offset on the interior item boundary (stale-smaller).
+        # cleanPage cursor-writes the stale offset and marks the page
+        # FULL after P2a ran, hiding the live item above it; only the
+        # true end (or the drained mark over a blank end) is consumable.
+        end = info['E']
+        top = parse_item(bytes(b[0 * PAGE:1 * PAGE]), end - 7)
+        check(top['live'] and top['len'] == 116, 'seed top item not as expected',
+              case=name, end=end, top=top)
+        check(end + 123 <= FLASH_PAGE_SIZE, 'seed page too full to append',
+              case=name, end=end)
+        orig = bytes(b[0 * PAGE + end - 123:0 * PAGE + end])
+        for i in range(116):
+            put1to0(b, 0 * PAGE + end + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 0 * PAGE + end + 116 + i, orig[116 + i], name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 14 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x00, name)
+        put1to0(b, base + 12, end & 0xFF, name)
+        put1to0(b, base + 13, (end >> 8) & 0xFF, name)
+        put1to0(b, base + 14, 0x00, name)
+        return {'family': 'cmp-eoffset-stale-boundary', 'seed_end': end,
+                'eoffset': end}
     return {'family': 'hand-picked'}
 
 
@@ -773,7 +852,9 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'mixed-multiact-dup-xdst', 'rdy-cursor-zero',
                 'cmp-erase-range-multi-live', 'cmp-dup-pgdst',
                 'mixed-divergent-act', 'hdr-cycle-zero', 'hdr-cycle-erased',
-                'hdr-allactive-1', 'hdr-allactive-2', 'same-page-divergent-dup']
+                'hdr-allactive-1', 'hdr-allactive-2', 'same-page-divergent-dup',
+                'mixed-divergent-act-erase', 'mixed-divergent-act-trio',
+                'cmp-eoffset-stale-boundary']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -806,7 +887,10 @@ EXPECTED_TAG = {
     'cmp-cursor-zero': 'CMP_CURSOR_RANGE',
     'cmp-cursor-misaligned': 'CMP_CURSOR_MISALIGNED',
     'cmp-half-null': 'CMP_NULL',
-    'cmp-eoffset-misaligned': 'CMP_ERASE_MISALIGNED',
+    'cmp-eoffset-misaligned': 'CMP_ERASE_BELOW_END',
+    'mixed-divergent-act-erase': 'TOPO_ACT_CONFLICT',
+    'mixed-divergent-act-trio': 'TOPO_ACT_CONFLICT',
+    'cmp-eoffset-stale-boundary': 'CMP_ERASE_BELOW_END',
     'cmp-erase-range-dst': 'CMP_ERASE_RANGE_DST',
     'legacy-mixed-active': 'LEGACY', 'legacy-dup-active': 'LEGACY',
     'legacy-dup-xfer': 'LEGACY', 'legacy-ambiguous-current': 'LEGACY',
