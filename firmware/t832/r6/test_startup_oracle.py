@@ -333,6 +333,51 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([a, b, blank] + [page()] * 11 + [dst])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
 
+    def test_oracle_xsrc_act_divergent_rejected(self):
+        # CH-F3 (4a): the F8 proof scope covers XSRC pages: an
+        # XSRC/ACT divergent pair conflicts even on a compact
+        # topology. (C follows in 4b; 4a C still admits.)
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        x = page(0x70, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
+        img = image([a, x] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+
+    def test_oracle_xsrc_act_twins_admitted(self):
+        # CH-F3 (4a): XSRC verbatim twins agree (no over-reject from
+        # the wider scope): a compact copy mid-flight matches source.
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
+        x = page(0x70, data=padded(live_item(1, 33, 0, 5)))
+        img = image([a, x] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_COMPACT'))
+
+    def test_oracle_rdy_data_rejected(self):
+        # L0-F7 (4a): a RDY page carrying data fails the scan: the
+        # driver never writes data to RDY (mark-before-write lands
+        # data on ACT only). (C follows in 4b; 4a C still admits.)
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5)))
+        rdy = page(0x7E, data=padded(live_item(1, 33, 1, 5)))
+        img = image([a, rdy] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'RDY_DATA'))
+
+    def test_oracle_mixed_trio_twinned_rejected(self):
+        # L0-F1 (4a): the mirror rejects every divergent pair,
+        # including a twin+divergent mixed older set on a resume
+        # topology; only C's census may excuse tail-ID shapes, and 4b
+        # rejects mixed sets there too.
+        d = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
+        w = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        t = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        img = image([d, w, t] + [page()] * 11 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+
+    def test_oracle_full_act_divergent_rejected(self):
+        # L1-F10 pin (4a): an ACT+FULL divergent pair conflicts at
+        # the mirror; pins FULL in the proof scope.
+        a = page(0x7C, data=padded(live_item(1, 33, 0, 5, fill=0xAA)))
+        f = page(0x78, data=padded(live_item(1, 33, 0, 5, fill=0xAB)))
+        img = image([a, f] + [page()] * 12 + [page(0xFE)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'TOPO_ACT_CONFLICT'))
+
 
 if __name__ == '__main__':
     unittest.main()

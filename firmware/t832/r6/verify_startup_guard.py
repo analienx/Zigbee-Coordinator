@@ -135,7 +135,10 @@ def parse_item(page, hofs):
 
 def walk_live(page):
     """Mirror of the C proof walk: collect live headers down the chain,
-    sliding past unrecognized tail bytes bounded. Returns (live, anomaly)."""
+    sliding past unrecognized tail bytes bounded. Returns (live, anomaly).
+    Signature-recognized headers below a dead tail are walked, not
+    skipped (the walk keys on FOLLOWBIT like resume's tail check);
+    dedup is ID-specific so they converge without effect."""
     live = []
     pos = find_end(page)
     steps = slides = 0
@@ -290,6 +293,13 @@ def oracle_decision(img):
             return 'REJECT', 'BAD_CYCLE'
         if state == 0xFF and bytes(page[PGDATAOFS:]) != b'\xff' * (PAGE - PGDATAOFS):
             return 'REJECT', 'NACT_DATA'
+        # L0-F7/CH-F2 (4a): a RDY page carrying data is a flash-fault
+        # shape (mark-before-write lands data on ACT only, never RDY),
+        # so it fails the scan. The oracle leads here: 4a C still
+        # admits RDY data (red-first control rdy-with-data); 4b adds
+        # the matching C scan rule.
+        if state == 0x7E and bytes(page[PGDATAOFS:]) != b'\xff' * (PAGE - PGDATAOFS):
+            return 'REJECT', 'RDY_DATA'
         ok, tag = oracle_compact(page, state)
         if not ok:
             return 'REJECT', tag
@@ -321,20 +331,30 @@ def oracle_decision(img):
     if sum(1 for m in modes if m == 0xFE) > 1:
         return 'REJECT', 'CMP_DUP_PGCDST'
     # F8 agreement proof (mirrors the C gate): every pair of live copies
-    # sharing an ID across (or within) ACT and FULL pages must agree in
-    # length and payload bytes. RESUME reads from the last ACT while
-    # RECOVER_ERASE reads from the first, so divergent copies would return
-    # different values on the two paths. Anything unparseable fails
-    # closed. C refines two shapes this mirror cannot see: it requires
-    # both CRCs valid (this mirror compares length and payload bytes
-    # only), and it admits divergent pairs on the live CRC-valid tail ID
-    # of the NULL-cursor last ACT on a resume topology with at most one
-    # older non-twin copy (resume dedups the single older twin; the
-    # hosted lab mutation cuts prove that path). Every corpus verdict here
-    # matches C: twins are valid, conflicts differ with torn tails.
+    # sharing an ID across (or within) ACT, FULL, and XSRC pages must
+    # agree in length and payload bytes. RESUME reads from the last ACT
+    # while RECOVER_ERASE reads from the first, so divergent copies
+    # would return different values on the two paths; XSRC originals
+    # survive RECOVER_ERASE untouched, so an XSRC/ACT divergent pair
+    # (CH-F3) is a live read-flip. Anything unparseable fails closed.
+    # The oracle leads on XSRC scope here: 4a C still walks ACT+FULL
+    # only (red-first control mixed-divergent-xsrc-act); 4b adds XSRC
+    # to chkPgs. C refines two shapes this mirror cannot see: it
+    # requires both CRCs valid (this mirror compares length and
+    # payload bytes only), and it admits divergent pairs on the live
+    # CRC-valid tail ID of the NULL-cursor last ACT on a resume
+    # topology with at most one older non-twin copy (resume dedups
+    # the single older copy; the hosted lab mutation cuts prove that
+    # path). Every corpus verdict here matches C except the 4a
+    # red-first controls: mixed-divergent-xsrc-act and rdy-with-data
+    # (the oracle leads with new rules, 4b C follows) and
+    # mixed-divergent-act-trio-twinned (the oracle always rejected
+    # divergence; 4a C's twin-blind census admits, 4b rejects mixed
+    # older sets). Elsewhere twins are valid and conflicts differ
+    # with torn tails.
     act_live = {}
     for pg in range(NVPAGES):
-        if states[pg] not in (0x7C, 0x78):
+        if states[pg] not in (0x7C, 0x78, 0x70):
             continue
         live, anomaly = walk_live(img[pg * PAGE:(pg + 1) * PAGE])
         if anomaly:
@@ -802,8 +822,10 @@ def hand_picked(name, b, last, info):
         # F1/P1: ERASE range [0..0] over a two-item end page with the end
         # offset on the interior item boundary (stale-smaller).
         # cleanPage cursor-writes the stale offset and marks the page
-        # FULL after P2a ran, hiding the live item above it; only the
-        # true end (or the drained mark over a blank end) is consumable.
+        # FULL, hiding the live item above it; admission needs the
+        # suffix proof (every hidden live item twinned on dst), which
+        # fails here (no twin), so only the true end, the drained mark
+        # over a blank end, or a proved-twinned suffix is consumable.
         end = info['E']
         top = parse_item(bytes(b[0 * PAGE:1 * PAGE]), end - 7)
         check(top['live'] and top['len'] == 116, 'seed top item not as expected',
@@ -826,6 +848,143 @@ def hand_picked(name, b, last, info):
         put1to0(b, base + 14, 0x00, name)
         return {'family': 'cmp-eoffset-stale-boundary', 'seed_end': end,
                 'eoffset': end}
+    if name == 'admit-erase-twinned-singleton':
+        # L0-F2 red-first anchor (4a): below-end twinned suffix on a
+        # singleton range [0..0]. Oracle and 4a C admit (the suffix
+        # proof passes), but the driver bricks: cleanPages=0 lands
+        # the XDST tail-mark on the FULL dst page itself, failing
+        # init every boot. 4b adds the tail-markability gate and
+        # moves this to the reject corpus.
+        end = info['E']
+        top = parse_item(bytes(b[0 * PAGE:1 * PAGE]), end - 7)
+        check(top['live'] and top['len'] == 116, 'seed top item not as expected',
+              case=name, end=end, top=top)
+        check(end + 123 <= FLASH_PAGE_SIZE, 'seed page too full to append',
+              case=name, end=end)
+        orig = bytes(b[0 * PAGE + end - 123:0 * PAGE + end])
+        for i in range(116):
+            put1to0(b, 0 * PAGE + end + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 0 * PAGE + end + 116 + i, orig[116 + i], name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 14 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x00, name)
+        put1to0(b, base + 12, end & 0xFF, name)
+        put1to0(b, base + 13, (end >> 8) & 0xFF, name)
+        put1to0(b, base + 14, 0x00, name)
+        for i in range(116):
+            put1to0(b, 14 * PAGE + 16 + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 14 * PAGE + 16 + 116 + i, orig[116 + i], name)
+        return {'family': 'admit-erase-twinned-singleton', 'seed_end': end,
+                'eoffset': end}
+    if name == 'admit-erase-twinned-unmarkable':
+        # L0-F3 red-first anchor (4a): multi-page range [4..5] with a
+        # blank non-end page and a twinned below-end suffix. Tail is
+        # (dst+1)%15 = page 0 (ACT, occupied), so the driver's XDST
+        # tail-mark fails every boot. Oracle and 4a C admit (no
+        # tail-markability rule yet); 4b gates it.
+        copy_page_1to0(b, 0, 5, name)
+        end = info['E']
+        top = parse_item(bytes(b[5 * PAGE:6 * PAGE]), end - 7)
+        check(top['live'] and top['len'] == 116, 'seed top item not as expected',
+              case=name, end=end, top=top)
+        check(end + 123 <= FLASH_PAGE_SIZE, 'seed page too full to append',
+              case=name, end=end)
+        orig = bytes(b[5 * PAGE + end - 123:5 * PAGE + end])
+        for i in range(116):
+            put1to0(b, 5 * PAGE + end + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 5 * PAGE + end + 116 + i, orig[116 + i], name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 14 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x04, name)
+        put1to0(b, base + 12, end & 0xFF, name)
+        put1to0(b, base + 13, (end >> 8) & 0xFF, name)
+        put1to0(b, base + 14, 0x05, name)
+        for i in range(116):
+            put1to0(b, 14 * PAGE + 16 + i, orig[i], name)
+        for i in range(7):
+            put1to0(b, 14 * PAGE + 16 + 116 + i, orig[116 + i], name)
+        return {'family': 'admit-erase-twinned-unmarkable', 'seed_end': end,
+                'eoffset': end}
+    if name == 'admit-erase-exact-singleton':
+        # L0-F2 companion (4a): singleton range [0..0] with an exact
+        # live end offset. cleanPages=0 lands the tail-mark on dst
+        # itself and the driver bricks. Oracle and 4a C admit (the
+        # exact end falls through); 4b gates it.
+        end = info['E']
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 14 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x00, name)
+        put1to0(b, base + 12, end & 0xFF, name)
+        put1to0(b, base + 13, (end >> 8) & 0xFF, name)
+        put1to0(b, base + 14, 0x00, name)
+        return {'family': 'admit-erase-exact-singleton', 'seed_end': end,
+                'eoffset': end}
+    if name == 'mixed-divergent-full-act':
+        # L1-F10 pin: ACT+FULL divergent pair with a torn (CRC-stale)
+        # tail, so neither the oracle nor C excuses it. Pins FULL in
+        # the F8 proof scope: a C regression dropping FULL admits.
+        copy_page_1to0(b, 0, 1, name)
+        put1to0(b, 1 * PAGE + 0, 0x78, name)
+        old = b[0 * PAGE + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 0 * PAGE + 20, old ^ (old & -old), name)
+        old = b[1 * PAGE + 40]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=40, old=hex(old))
+        put1to0(b, 1 * PAGE + 40, old ^ (old & -old), name)
+        return {'family': 'mixed-divergent-full-act'}
+    if name == 'mixed-divergent-xsrc-act':
+        # CH-F3 red-first anchor (4a): XSRC/ACT divergent pair on a
+        # compact topology. The 4a oracle walks XSRC and rejects; C
+        # (ACT+FULL scope) admits and the driver compacts (writes).
+        # 4b adds XSRC to chkPgs.
+        copy_page_1to0(b, 0, 1, name)
+        put1to0(b, 1 * PAGE + 0, 0x70, name)
+        old = b[1 * PAGE + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 1 * PAGE + 20, old ^ (old & -old), name)
+        return {'family': 'mixed-divergent-xsrc-act'}
+    if name == 'rdy-with-data':
+        # L0-F7/CH-F2 red-first anchor (4a): RDY page carrying a live
+        # item. The driver never writes data to RDY (mark-before-write
+        # lands data on ACT only), so RDY data is a flash-fault shape.
+        # The 4a oracle rejects (RDY_DATA); C admits; the driver
+        # resume-marks (writes). 4b adds the RDY-data-free scan rule.
+        end = info['E']
+        put1to0(b, 2 * PAGE + 0, 0x7E, name)
+        for i in range(end - PGDATAOFS):
+            put1to0(b, 2 * PAGE + PGDATAOFS + i, b[0 * PAGE + PGDATAOFS + i], name)
+        return {'family': 'rdy-with-data', 'seed_end': end}
+    if name == 'mixed-divergent-act-trio-twinned':
+        # L0-F1 red-first anchor (4a): resume topology with a pristine
+        # tail (page 2), a pristine twin (page 1) and a divergent older
+        # copy (page 0). The oracle rejects all divergence; C's
+        # twin-blind census counts one non-twin and admits, but resume
+        # dedups the nearest-below-tail (the twin), leaving the
+        # divergent copy live. 4b rejects mixed older sets.
+        copy_page_1to0(b, 0, 1, name)
+        copy_page_1to0(b, 0, 2, name)
+        check(b[2 * PAGE + 4] == 0xFF and b[2 * PAGE + 5] == 0xFF,
+              'tail page cursor not null', case=name)
+        old = b[0 * PAGE + 20]
+        check(old != 0x00, 'seed data byte already clear, pick another offset',
+              case=name, offset=20, old=hex(old))
+        put1to0(b, 0 * PAGE + 20, old ^ (old & -old), name)
+        return {'family': 'mixed-divergent-act-trio-twinned'}
     return {'family': 'hand-picked'}
 
 
@@ -881,7 +1040,9 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'mixed-divergent-act', 'hdr-cycle-zero', 'hdr-cycle-erased',
                 'hdr-allactive-1', 'hdr-allactive-2', 'same-page-divergent-dup',
                 'mixed-divergent-act-erase', 'mixed-divergent-act-trio',
-                'cmp-eoffset-stale-boundary']
+                'cmp-eoffset-stale-boundary', 'mixed-divergent-full-act',
+                'mixed-divergent-xsrc-act', 'rdy-with-data',
+                'mixed-divergent-act-trio-twinned']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -893,7 +1054,8 @@ for _pg in (3, 8, 11):
 for _pg in (2, 5, 9, 12):
     REJECT_CASES.append('gen-torn-erase-%d' % _pg)
 ADMIT_CASES = ['multi-act-twins', 'multi-act-rdy', 'admit-full-nact-mark',
-               'admit-drained-short-end']
+               'admit-drained-short-end', 'admit-erase-twinned-singleton',
+               'admit-erase-twinned-unmarkable', 'admit-erase-exact-singleton']
 
 EXPECTED_TAG = {
     'signature': 'BAD_HEADER', 'version': 'BAD_HEADER', 'state': 'BAD_HEADER',
@@ -932,6 +1094,13 @@ EXPECTED_TAG = {
     'hdr-allactive-1': 'BAD_ALLACTIVE',
     'hdr-allactive-2': 'BAD_ALLACTIVE',
     'same-page-divergent-dup': 'TOPO_ACT_CONFLICT',
+    'mixed-divergent-full-act': 'TOPO_ACT_CONFLICT',
+    'mixed-divergent-xsrc-act': 'TOPO_ACT_CONFLICT',
+    'rdy-with-data': 'RDY_DATA',
+    'mixed-divergent-act-trio-twinned': 'TOPO_ACT_CONFLICT',
+    'admit-erase-twinned-singleton': 'ADMIT_RECOVER_ERASE',
+    'admit-erase-twinned-unmarkable': 'ADMIT_RECOVER_ERASE',
+    'admit-erase-exact-singleton': 'ADMIT_RECOVER_ERASE',
     'multi-act-twins': 'ADMIT_RESUME_DIRECT',
     'multi-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
@@ -950,6 +1119,11 @@ for _name in REJECT_CASES:
         EXPECTED_TAG[_name] = 'TOPO_LONE_OR_EMPTY'
     elif _name.startswith('gen-torn-erase-'):
         EXPECTED_TAG[_name] = 'BAD_HEADER'
+# 4a: RDY pages carrying data fail the scan before the topology census,
+# so the two ready-pair cases touching the live seed page now tag
+# RDY_DATA (C still rejects: duplicate RDY).
+EXPECTED_TAG['gen-two-ready-0-1'] = 'RDY_DATA'
+EXPECTED_TAG['gen-two-ready-0-14'] = 'RDY_DATA'
 
 
 def verify(sdk, out):
