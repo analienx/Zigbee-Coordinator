@@ -143,14 +143,20 @@ def oracle_compact(page, state):
             return False, 'CMP_CURSOR_RANGE'
     if state in (0xFF, 0x7E):
         # NACT/RDY pages are never compact writers; mode must stay normal.
-        # The cursor slot tolerates quirk values: cleanPage can cursor-write
+        # NACT offsets are forced to PGDATAOFS by scanPage, so the NACT
+        # cursor slot tolerates quirk values: cleanPage can cursor-write
         # a fully-drained end offset onto an empty end page without changing
-        # its state, and NACT offsets are forced (RDY quirk cursors are
-        # inert: below the resume/item-walk floors). XSRC slots must stay in
+        # its state. RDY cursors are CONSUMED as data-end offsets (scanPage,
+        # getDstPage, RESUME), so only the null and drained forms are
+        # admitted: any other value, including a torn 16->0, could steer a
+        # later write into the page header region. XSRC slots must stay in
         # an erase form, since no writer targets them on these states.
         if this['page'] != 0xFF:
             return False, 'CMP_NACT_MODE' if state == 0xFF else 'CMP_RDY_MODE'
-        if this['off'] != 0xFFFF and not 0 <= this['off'] <= FLASH_PAGE_SIZE:
+        if state == 0x7E:
+            if this['off'] != 0xFFFF and this['off'] != PGDATAOFS:
+                return False, 'CMP_RDY_CURSOR'
+        elif this['off'] != 0xFFFF and not 0 <= this['off'] <= FLASH_PAGE_SIZE:
             return False, 'CMP_QUIRK_CURSOR'
         for h in (start, end):
             if h['raw'] not in (b'\xff\xff\xff\xff', b'\xff\xff\xff\x96'):
@@ -493,6 +499,14 @@ def hand_picked(name, b, last, info):
         copy_page_1to0(b, 0, 1, name)
         put1to0(b, 2 * PAGE + 0, 0xFE, name)
         return {'family': 'mixed-multiact-dup'}
+    if name == 'rdy-cursor-zero':
+        # RDY cursors are consumed as data-end offsets: a torn 16->0 here
+        # would steer a later write into the page header region. Only the
+        # null and drained forms are admitted.
+        put1to0(b, 2 * PAGE + 0, 0x7E, name)
+        put1to0(b, 2 * PAGE + 4, 0x00, name)
+        put1to0(b, 2 * PAGE + 5, 0x00, name)
+        return {'family': 'rdy-cursor-zero'}
     if name == 'admit-twin-act':
         copy_page_1to0(b, 0, 1, name)
         return {'family': 'admit-multi-act'}
@@ -586,7 +600,7 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'cmp-half-null', 'cmp-eoffset-misaligned', 'cmp-erase-range-dst',
                 'legacy-mixed-active', 'legacy-dup-active', 'legacy-dup-xfer',
                 'legacy-ambiguous-current', 'mixed-dup-xdst-xsrc',
-                'mixed-multiact-dup-xdst']
+                'mixed-multiact-dup-xdst', 'rdy-cursor-zero']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -625,6 +639,7 @@ EXPECTED_TAG = {
     'legacy-dup-xfer': 'LEGACY', 'legacy-ambiguous-current': 'LEGACY',
     'mixed-dup-xdst-xsrc': 'TOPO_DUP_XDST',
     'mixed-multiact-dup-xdst': 'TOPO_DUP_XDST',
+    'rdy-cursor-zero': 'CMP_RDY_CURSOR',
     'admit-twin-act': 'ADMIT_RESUME_DIRECT',
     'admit-mixed-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',

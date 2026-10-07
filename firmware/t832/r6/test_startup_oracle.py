@@ -150,6 +150,25 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([dst, page()] + [page(0x78)] * 13)
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
+    def test_oracle_rdy_cursor_zero_rejected(self):
+        # RDY cursors are consumed as data-end offsets: only null and the
+        # drained mark are admitted; a torn 16->0 must fail closed.
+        rdy = (bytes((0x7E, 0x01, 0x0F, 0x96))
+               + bytes((0x00, 0x00, 0xFF, 0x96))
+               + b'\xff\xff\xff\x96' * 2
+               + b'\xff' * (PAGE - 16))
+        img = image([page(0x7C, data=item_data(20)), rdy] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_RDY_CURSOR'))
+
+    def test_oracle_rdy_cursor_drained_admitted(self):
+        rdy = (bytes((0x7E, 0x01, 0x0F, 0x96))
+               + bytes((0x10, 0x00, 0xFF, 0x96))
+               + b'\xff\xff\xff\x96' * 2
+               + b'\xff' * (PAGE - 16))
+        xdst = page(0xFE)
+        img = image([xdst, rdy] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RESUME_DIRECT'))
+
     def test_oracle_unknown_topology_latched(self):
         full = image([page(0x78)] * 15)
         self.assertEqual(v.oracle_decision(full), ('REJECT', 'DRIVER_UNKNOWN_LATCH'))

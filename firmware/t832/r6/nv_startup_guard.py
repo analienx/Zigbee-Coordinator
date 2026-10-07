@@ -127,12 +127,20 @@ static uint8_t NVOCMP_startupClassify(void)
     if(hdr->state == NVOCMP_PGNACT || hdr->state == NVOCMP_PGRDY)
     {
       /* Never compact writers: mode stays normal and XSRC slots stay in an
-         erase form. The cursor slot tolerates quirk values (a fully-drained
-         end offset cursor-written onto an empty end page); NACT offsets are
-         forced and RDY quirk cursors sit below every consumption floor. */
+         erase form. NACT offsets are forced to PGDATAOFS by scanPage, so
+         the NACT cursor slot tolerates quirk values (a fully-drained end
+         offset cursor-written onto an empty end page). RDY cursors are
+         CONSUMED as data-end offsets (scanPage, getDstPage, RESUME), so
+         only the null and drained forms are admitted: any other value,
+         including a torn 16->0, could steer a later write into the page
+         header region. */
       uint8_t s2;
       if(mode != NVOCMP_PGNORMAL) return NVINTF_BADVERSION;
-      if(cursor != NVOCMP_NULLOFFSET && cursor > FLASH_PAGE_SIZE) return NVINTF_BADVERSION;
+      if(hdr->state == NVOCMP_PGRDY)
+      {
+        if(cursor != NVOCMP_NULLOFFSET && cursor != NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
+      }
+      else if(cursor != NVOCMP_NULLOFFSET && cursor > FLASH_PAGE_SIZE) return NVINTF_BADVERSION;
       for(s2 = 0; s2 < 2; s2++)
       {
         const uint8_t *h = &cmp[4 + s2 * 4];
