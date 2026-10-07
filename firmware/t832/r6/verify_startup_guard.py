@@ -368,7 +368,10 @@ def hand_picked(name, b, last, info):
         put1to0(b, base + 8, 0x10, name)
         put1to0(b, base + 9, 0x00, name)
         put1to0(b, base + 10, 0x00, name)
-        put1to0(b, base + 11, 0x97, name)
+        # Seed headers are NULL-form (sig already 0x96), so the plausible
+        # 1->0 corruption here is an over-programmed extra bit, not a torn
+        # first program. Either way the byte leaves the admitted set.
+        put1to0(b, base + 11, 0x86, name)
         put1to0(b, base + 12, 0x10, name)
         put1to0(b, base + 13, 0x00, name)
         put1to0(b, base + 14, 0x00, name)
@@ -386,7 +389,7 @@ def hand_picked(name, b, last, info):
         return {'family': 'cmp-oob-page-selector'}
     if name == 'cmp-eoffset-flash-boundary':
         put1to0(b, 14 * PAGE + 0, 0x78, name)
-        base = 0 * PAGE
+        base = 14 * PAGE
         put1to0(b, base + 6, 0xFE, name)
         put1to0(b, base + 8, 0x10, name)
         put1to0(b, base + 9, 0x00, name)
@@ -395,6 +398,17 @@ def hand_picked(name, b, last, info):
         put1to0(b, base + 13, 0x08, name)
         put1to0(b, base + 14, 0x00, name)
         return {'family': 'cmp-eoffset-boundary'}
+    if name == 'cmp-erase-range-dst':
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        base = 0 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x00, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x00, name)
+        return {'family': 'cmp-erase-range-dst'}
     if name == 'cmp-eoffset-oob':
         put1to0(b, 14 * PAGE + 0, 0x78, name)
         base = 0 * PAGE
@@ -438,7 +452,7 @@ def hand_picked(name, b, last, info):
         check(v > PGDATAOFS and v < end, 'no off-boundary torn end offset',
               case=name, end=end, candidate=v)
         put1to0(b, 14 * PAGE + 0, 0x78, name)
-        base = 0 * PAGE
+        base = 14 * PAGE
         put1to0(b, base + 6, 0xFE, name)
         put1to0(b, base + 8, 0x10, name)
         put1to0(b, base + 9, 0x00, name)
@@ -529,7 +543,7 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'cmp-validrange-liveend', 'cmp-torn-sig', 'cmp-oob-spage',
                 'cmp-eoffset-flash-boundary', 'cmp-eoffset-oob',
                 'cmp-cursor-oob-read', 'cmp-cursor-zero', 'cmp-cursor-misaligned',
-                'cmp-half-null', 'cmp-eoffset-misaligned',
+                'cmp-half-null', 'cmp-eoffset-misaligned', 'cmp-erase-range-dst',
                 'legacy-mixed-active', 'legacy-dup-active', 'legacy-dup-xfer',
                 'legacy-ambiguous-current', 'mixed-dup-xdst-xsrc',
                 'mixed-multiact-dup-xdst']
@@ -565,6 +579,7 @@ EXPECTED_TAG = {
     'cmp-cursor-misaligned': 'CMP_CURSOR_MISALIGNED',
     'cmp-half-null': 'CMP_NULL',
     'cmp-eoffset-misaligned': 'CMP_ERASE_MISALIGNED',
+    'cmp-erase-range-dst': 'CMP_ERASE_RANGE_DST',
     'legacy-mixed-active': 'LEGACY', 'legacy-dup-active': 'LEGACY',
     'legacy-dup-xfer': 'LEGACY', 'legacy-ambiguous-current': 'LEGACY',
     'mixed-dup-xdst-xsrc': 'TOPO_DUP_XDST',

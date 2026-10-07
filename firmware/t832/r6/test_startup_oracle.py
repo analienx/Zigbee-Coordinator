@@ -103,6 +103,25 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([bad] + [page()] * 13 + [page(0xFE)])
         self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_SIG'))
 
+    def test_oracle_erase_range_covering_dst_rejected(self):
+        dst = (bytes((0x7C, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + b'\xff' * (PAGE - 16))
+        img = image([dst] + [page()] * 13 + [page(0x78)])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_RANGE_DST'))
+
+    def test_oracle_erase_live_end_rejected(self):
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + b'\xff' * (PAGE - 16))
+        live = page(0x7C, data=item_data(20))
+        img = image([live] + [page()] * 13 + [dst])
+        self.assertEqual(v.oracle_decision(img), ('REJECT', 'CMP_ERASE_LIVE_END'))
+
     def test_oracle_unknown_topology_latched(self):
         full = image([page(0x78)] * 15)
         self.assertEqual(v.oracle_decision(full), ('REJECT', 'DRIVER_UNKNOWN_LATCH'))
