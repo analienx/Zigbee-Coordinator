@@ -66,7 +66,7 @@ def package(a):
     if a.series=='R7':
         guard_report=a.lab.parent/'startup-guard-report.json'
         startup=json.loads(guard_report.read_text())
-        if startup.get('ok') is not True or startup.get('rejection_cases')!=24:
+        if startup.get('ok') is not True or startup.get('rejection_cases')!=86 or startup.get('sanitizer_sweeps')!=86:
             raise ValueError('nonblank startup preservation gate failed')
         shutil.copy2(guard_report,provenance/guard_report.name)
     manifest={'variant':stem,'repository_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
@@ -79,6 +79,7 @@ def package(a):
               'debug_build_id':int(os.environ['GITHUB_SHA'][:8],16) if a.variant=='DIAG' else None,
               'hardware_validated':False,'flash_authorized':False,
               'startup_preservation_cases':startup['rejection_cases'] if startup else None,
+              'startup_sanitizer_sweeps':startup['sanitizer_sweeps'] if startup else None,
               'all_power_cut_recovery_passed':lab['all_power_cut_recovery_passed'],
               'unresolved_recovery_negative_controls':lab['profiles'][a.profile+'-'+a.variant]['unresolved_recovery_negative_controls'],
               'artifacts':{str(p.relative_to(a.out)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in a.out.rglob('*') if p.is_file()}}

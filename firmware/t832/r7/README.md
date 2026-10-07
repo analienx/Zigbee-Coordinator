@@ -102,14 +102,19 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks24 rejecting cases across asserting and
-embedded-style nonfatal assertion lanes. Each must reject repeated init and
-subsequent read/write APIs with zero physical operations and identical full-image
-hashes. Cases cover signature/version/state mismatch, a blank header hiding data,
-NACT containing records, multiple destinations/ready pages, and an early blank
-page before a later corrupt page or ambiguous topology. Missing recovery destinations
-return a latched error instead of the upstream startup spin. Healthy reopen stays unchanged; truly blank
-initialization still succeeds. Existing exhaustive compaction/write gates apply.
+The actual pinned-driver gate now checks86 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes: 12 hand-picked topologies plus 31
+enumerated generated cases (valid-NOR torn header bytes, ambiguous
+destination/source/ready pairs, lone-ready, torn-erase remnants). Each must
+reject repeated init and a full extended-API sweep (create/update/delete/read/
+readCont/write/getItemLen/doNext/expectComp/compact/erase/getFree/sanity plus a
+balanced lock/unlock pair) with zero physical operations and identical
+full-image hashes. A dedicated adverse oracle proves expectComp(nonzero) cannot
+reach the page walker after a rejected init; the whole sweep also runs under
+AddressSanitizer+UndefinedBehaviorSanitizer with no findings. Missing recovery
+destinations return a latched error instead of the upstream startup spin.
+Healthy reopen stays unchanged; truly blank initialization still succeeds.
+Existing exhaustive compaction/write gates apply.
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.

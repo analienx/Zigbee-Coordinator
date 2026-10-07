@@ -61,7 +61,7 @@ static uint8_t NVOCMP_startupClassify(void)
 '''
 
 def function(text,name):
-    match=re.search(r'static (?:void|uint8_t|uint32_t) '+name+r'\s*\([^;]*?\)\s*\{',text)
+    match=re.search(r'static (?:void|uint8_t|uint32_t|bool) '+name+r'\s*\([^;]*?\)\s*\{',text)
     if not match:raise ValueError('function missing '+name)
     end=match.end();depth=1
     while depth:
@@ -134,12 +134,29 @@ def apply_guard(nv):
     ex.replace(nv,old,new,'r10.startup.api-failure-latch')
     # Upstream checkItem only rejects NOTREADY; BADVERSION/FAILURE otherwise
     # reaches the uninitialized page cursor. Cover all public memory traversals.
+    # getFreeNvApi reports 0 free: the conservative direction for a dead
+    # driver. lock/unlock stay ungated: pure mutex ops with no NV state access
+    # (gating lock would break the lock/unlock pairing the API contract
+    # requires).
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi'):
         old=function(nv.read_text(),name)
         value='0' if name=='NVOCMP_getFreeNvApi' else 'NVOCMP_failF'
         guard=f'\n    if(NVOCMP_failF != NVINTF_SUCCESS) return({value}); /* T832-R10 fatal init gate */'
         pos=old.index('{')+1;new=old[:pos]+guard+old[pos:]
         ex.replace(nv,old,new,'r10.startup.fatal-gate.'+name)
+    # expectCompApi needs its own gate, scoped INSIDE if(len): nonzero len
+    # enters getDstPage with actPage still NULLPAGE after a rejected init, so
+    # the fatal-state return there is true ("cannot place without
+    # compaction"). true is safe because every follow-on action
+    # (compactNV/writeItem/eraseNV) is independently fail-closed. len==0 keeps
+    # the upstream false fast path, which performs no traversal and therefore
+    # needs no gate; a gate at function top would wrongly force true for the
+    # empty request.
+    old=function(nv.read_text(),'NVOCMP_expectCompApi')
+    anchor='  if(len)\n  {'
+    if old.count(anchor)!=1:raise ValueError('expectComp len branch mismatch')
+    new=old.replace(anchor,anchor+'\n    if(NVOCMP_failF != NVINTF_SUCCESS) return(true); /* T832-R10 fatal init gate */')
+    ex.replace(nv,old,new,'r10.startup.fatal-gate.NVOCMP_expectCompApi')
     verify_guard(nv.read_text())
     return ex.edits
 
@@ -153,6 +170,6 @@ def verify_guard(text):
         raise ValueError('unknown topology startup spin remains')
     if 'goto T832_NV_INIT_DONE;' not in function(text,'NVOCMP_initNvApi'):
         raise ValueError('public API failure not latched')
-    for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi'):
+    for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi','NVOCMP_expectCompApi'):
         if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
-    return {'guard_id':'t832-r10-preserve-startup-nv-01','nonblank_invalid_policy':'preserve-and-reject','whole_region_preflight':True}
+    return {'guard_id':'t832-r10-preserve-startup-nv-02','nonblank_invalid_policy':'preserve-and-reject','whole_region_preflight':True,'fatal_gates':6}
