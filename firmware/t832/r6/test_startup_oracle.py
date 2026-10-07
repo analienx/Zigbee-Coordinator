@@ -25,10 +25,11 @@ def image(pages):
 
 
 def item_data(length):
-    b3 = ((length & 0x3F) << 2) & 0xFF
-    b4 = (length >> 6) & 0x3F
+    # Data-first layout with the HDRLE header encoding the driver reads.
+    b3 = (length >> 6) & 0x3F
+    b4 = ((length & 0x3F) << 2) & 0xFF
     hdr = bytes((0x04, 0x21, 0x00, b3, b4, 0x42, 0x96))
-    return hdr + bytes([0xAA]) * length + b'\xff' * (PAGE - 16 - 7 - length)
+    return bytes([0xAA]) * length + hdr + b'\xff' * (PAGE - 16 - 7 - length)
 
 
 class OracleCorpusTest(unittest.TestCase):
@@ -59,13 +60,25 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(v.find_end(page()), 16)
         self.assertEqual(v.find_end(page(data=item_data(116))), 16 + 7 + 116)
 
+    def test_hdr_len_matches_driver_vector(self):
+        # Seed item header bytes produced by the pinned driver (len 116).
+        self.assertEqual(v.hdr_len(0x01, 0xD0), 116)
+
+    def test_boundary_walk_two_items(self):
+        two = item_data(5)[:12] + item_data(3)[:10] + b'\xff' * (PAGE - 16 - 22)
+        body = page(data=two)
+        self.assertTrue(v.on_boundary(body, 16, 38))
+        self.assertTrue(v.on_boundary(body, 28, 38))
+        self.assertTrue(v.on_boundary(body, 38, 38))
+        self.assertFalse(v.on_boundary(body, 30, 38))
+
     def test_boundary_walk(self):
         body = page(data=item_data(5))
-        self.assertTrue(v.on_boundary(body, 16))
-        self.assertTrue(v.on_boundary(body, 16 + 7 + 5))
-        self.assertFalse(v.on_boundary(body, 16 + 7 + 4))
-        self.assertFalse(v.on_boundary(body, 15))
-        self.assertFalse(v.on_boundary(body, 2049))
+        self.assertTrue(v.on_boundary(body, 16, 28))
+        self.assertTrue(v.on_boundary(body, 28, 28))
+        self.assertFalse(v.on_boundary(body, 27, 28))
+        self.assertFalse(v.on_boundary(body, 15, 28))
+        self.assertFalse(v.on_boundary(body, 2049, 2048))
 
     def test_oracle_init_and_lone(self):
         self.assertEqual(v.oracle_decision(image([])), ('ADMIT', 'ADMIT_INIT'))

@@ -86,25 +86,30 @@ def find_end(page):
 
 
 def hdr_len(b3, b4):
-    return ((b3 >> 2) & 0x3F) | ((b4 & 0x3F) << 6)
+    # HDRLE branch of NVOCMP_readHeader (NVOCMP_HDRLE is 0 on this target).
+    return ((b3 & 0x3F) << 6) | ((b4 >> 2) & 0x3F)
 
 
-def on_boundary(page, cursor):
-    """Mirror of the preflight item-boundary walk: items pack contiguously
-    from PGDATAOFS in 7+len steps. True only when cursor lands exactly on an
-    item boundary. Structure only; bounded and read-only."""
-    pos = PGDATAOFS
+def on_boundary(page, cursor, end_true):
+    """Mirror of the preflight item-boundary walk: NV items pack data-first
+    from PGDATAOFS with each 7-byte header last. Walk downward from the true
+    data end; true only when cursor lands exactly on an item boundary.
+    Structure only; bounded and read-only."""
+    pos = end_true
     steps = 0
-    if cursor < PGDATAOFS or cursor > FLASH_PAGE_SIZE:
+    if cursor < PGDATAOFS or cursor > end_true:
         return False
-    if cursor == PGDATAOFS:
+    if cursor == end_true:
         return True
-    while pos < cursor:
-        if pos + 7 > FLASH_PAGE_SIZE:
+    while pos > cursor:
+        if pos < PGDATAOFS + 7:
             return False
-        pos += 7 + hdr_len(page[pos + 3], page[pos + 4])
+        ln = hdr_len(page[pos - 7 + 3], page[pos - 7 + 4])
+        if ln > pos - 7 - PGDATAOFS:
+            return False
+        pos -= 7 + ln
         steps += 1
-        if steps > 512 or pos > FLASH_PAGE_SIZE:
+        if steps > 512:
             return False
     return pos == cursor
 
@@ -164,7 +169,7 @@ def oracle_compact(page, state):
         end_true = find_end(page)
         if this['off'] > end_true:
             return False, 'CMP_CURSOR_ABOVE_END'
-        if this['off'] < end_true and not on_boundary(page, this['off']):
+        if this['off'] < end_true and not on_boundary(page, this['off'], end_true):
             return False, 'CMP_CURSOR_MISALIGNED'
     return True, 'CMP_OK'
 
@@ -262,7 +267,7 @@ def oracle_decision(img):
     if eoff == PGDATAOFS and end_true != PGDATAOFS:
         return 'REJECT', 'CMP_ERASE_LIVE_END'
     if (eoff != PGDATAOFS and eoff < end_true
-            and not on_boundary(img[epg * PAGE:(epg + 1) * PAGE], eoff)):
+            and not on_boundary(img[epg * PAGE:(epg + 1) * PAGE], eoff, end_true)):
         return 'REJECT', 'CMP_ERASE_MISALIGNED'
     return 'ADMIT', 'ADMIT_RECOVER_ERASE'
 

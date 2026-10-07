@@ -34,25 +34,27 @@ static uint16_t NVOCMP_startupCmpOff(const uint8_t *b)
   return (uint16_t)b[0] | ((uint16_t)b[1] << 8);
 }
 
-/* Read-only item-boundary walk: items pack contiguously from
-   NVOCMP_PGDATAOFS in 7+len steps (len = bits 26..37 of the 7-byte LE
-   header). True only when cursor lands exactly on an item boundary. */
-static bool NVOCMP_startupOnBoundary(uint8_t pg, uint16_t cursor)
+/* Read-only item-boundary walk: NV items pack data-first from
+   NVOCMP_PGDATAOFS with each 7-byte header last (len uses the HDRLE
+   branch of NVOCMP_readHeader). Walk downward from the true data end;
+   true only when cursor lands exactly on an item boundary. */
+static bool NVOCMP_startupOnBoundary(uint8_t pg, uint16_t cursor, uint16_t endTrue)
 {
-  uint16_t pos = NVOCMP_PGDATAOFS;
+  uint16_t pos = endTrue;
   uint16_t steps = 0;
   uint8_t hdr[NVOCMP_ITEMHDRLEN];
   uint16_t len;
-  if(cursor < NVOCMP_PGDATAOFS || cursor > FLASH_PAGE_SIZE) return false;
-  if(cursor == NVOCMP_PGDATAOFS) return true;
-  while(pos < cursor)
+  if(cursor < NVOCMP_PGDATAOFS || cursor > endTrue) return false;
+  if(cursor == endTrue) return true;
+  while(pos > cursor)
   {
-    if(pos + NVOCMP_ITEMHDRLEN > FLASH_PAGE_SIZE) return false;
-    NVOCMP_read(pg, pos, hdr, NVOCMP_ITEMHDRLEN);
-    len = (uint16_t)(((uint16_t)(hdr[3] >> 2) & 0x3Fu) | ((uint16_t)(hdr[4] & 0x3Fu) << 6));
-    pos += NVOCMP_ITEMHDRLEN + len;
+    if(pos < NVOCMP_PGDATAOFS + NVOCMP_ITEMHDRLEN) return false;
+    NVOCMP_read(pg, (uint16_t)(pos - NVOCMP_ITEMHDRLEN), hdr, NVOCMP_ITEMHDRLEN);
+    len = (uint16_t)(((uint16_t)(hdr[3] & 0x3Fu) << 6) | ((uint16_t)(hdr[4] >> 2) & 0x3Fu));
+    if(len > (uint16_t)(pos - NVOCMP_ITEMHDRLEN - NVOCMP_PGDATAOFS)) return false;
+    pos -= NVOCMP_ITEMHDRLEN + len;
     steps++;
-    if(steps > 512u || pos > FLASH_PAGE_SIZE) return false;
+    if(steps > 512u) return false;
   }
   return pos == cursor;
 }
@@ -159,7 +161,7 @@ static uint8_t NVOCMP_startupClassify(void)
          Above the true end is impossible: 1->0 writes never grow a value. */
       uint16_t endTrue = NVOCMP_findOffset(pg, FLASH_PAGE_SIZE);
       if(cursor > endTrue) return NVINTF_BADVERSION;
-      if(cursor < endTrue && !NVOCMP_startupOnBoundary(pg, cursor)) return NVINTF_BADVERSION;
+      if(cursor < endTrue && !NVOCMP_startupOnBoundary(pg, cursor, endTrue)) return NVINTF_BADVERSION;
     }
     modes[pg] = mode;
     spages[pg] = cmp[6];
@@ -211,7 +213,7 @@ static uint8_t NVOCMP_startupClassify(void)
         endTrue = NVOCMP_findOffset(epg, FLASH_PAGE_SIZE);
         if(eoff > endTrue) return NVINTF_BADVERSION;
         if(eoff == NVOCMP_PGDATAOFS && endTrue != NVOCMP_PGDATAOFS) return NVINTF_BADVERSION;
-        if(eoff != NVOCMP_PGDATAOFS && eoff < endTrue && !NVOCMP_startupOnBoundary(epg, eoff))
+        if(eoff != NVOCMP_PGDATAOFS && eoff < endTrue && !NVOCMP_startupOnBoundary(epg, eoff, endTrue))
           return NVINTF_BADVERSION;
       }
     }
