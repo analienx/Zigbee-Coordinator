@@ -14,10 +14,15 @@ HELPER=r'''/* T832-R10: classify every page before the first erase/program.
    preserves the image and rejects. F2: legacy generations fail closed;
    migration is not qualified. F6: multi-page RECOVER_ERASE ranges fail
    closed (non-end pages erase unconditionally). F7: duplicate PGCDST
-   metadata fails closed. F8: multiple ACT pages fail closed (twins cannot
-   converge under resume dedup). F9: reserved page-header cycle/allActive
-   values fail closed. */
+   metadata fails closed. F8: ACT live IDs must agree pairwise (verbatim
+   twins incl. both CRCs) or fail closed. F9: reserved page-header
+   cycle/allActive values fail closed. */
 static uint16_t NVOCMP_findOffset(uint8_t pg, uint16_t ofs);
+static void NVOCMP_readHeader(uint8_t pg, uint16_t ofs, NVOCMP_itemHdr_t *iHdr, bool flag);
+/* R8 provides the definition below (apply_fix always applies R8 first); the
+   F8 proof reuses its verbatim-copy semantics so the gate and the recovery
+   settle agree on what a safe duplicate is. */
+static bool NVOCMP_recoverCopiesEqual(const NVOCMP_itemHdr_t *a, const NVOCMP_itemHdr_t *b);
 static bool NVOCMP_startupErased(uint8_t pg, uint16_t start)
 {
   uint8_t bytes[32];
@@ -63,10 +68,72 @@ static bool NVOCMP_startupOnBoundary(uint8_t pg, uint16_t cursor, uint16_t endTr
   return pos == cursor;
 }
 
+/* Read-only item walk state for the F8 agreement proof. */
+typedef struct
+{
+  uint8_t pg;
+  uint16_t pos;
+  uint16_t steps;
+  uint16_t slides;
+} NVOCMP_startupWalk_t;
+
+static void NVOCMP_startupWalkInit(NVOCMP_startupWalk_t *w, uint8_t pg)
+{
+  w->pg = pg;
+  w->pos = NVOCMP_findOffset(pg, FLASH_PAGE_SIZE);
+  w->steps = 0;
+  w->slides = 0;
+}
+
+/* Next live header at or below the cursor: 1 fills *out, 0 at a clean chain
+   end, -1 on anything unparseable (the caller fails closed). Unrecognized
+   tail bytes (erased gaps, torn writes) slide past bounded; every valid
+   header steps down exactly, so the walk always terminates. */
+static int8_t NVOCMP_startupWalkNext(NVOCMP_startupWalk_t *w, NVOCMP_itemHdr_t *out)
+{
+  for(;;)
+  {
+    if(w->pos <= NVOCMP_PGDATAOFS) return 0;
+    if(w->pos < NVOCMP_PGDATAOFS + NVOCMP_ITEMHDRLEN) return -1;
+    NVOCMP_readHeader(w->pg, (uint16_t)(w->pos - NVOCMP_ITEMHDRLEN), out, false);
+    if(out->stats & NVOCMP_FOLLOWBIT)
+    {
+      if(out->len > (uint16_t)(w->pos - NVOCMP_ITEMHDRLEN - NVOCMP_PGDATAOFS)) return -1;
+      w->pos -= NVOCMP_ITEMHDRLEN + out->len;
+      if(++w->steps > 512u) return -1;
+      if((out->stats & NVOCMP_ACTIVEIDBIT) && !(out->stats & NVOCMP_VALIDIDBIT)) return 1;
+    }
+    else
+    {
+      w->pos -= 1;
+      if(++w->slides > 64u) return -1;
+    }
+  }
+}
+
+/* True when page pg holds a live copy of ref->cmpid that is not a verbatim
+   twin of ref, or when the page cannot be walked to a clean end. */
+static bool NVOCMP_startupActConflict(uint8_t pg, const NVOCMP_itemHdr_t *ref)
+{
+  NVOCMP_startupWalk_t w;
+  NVOCMP_itemHdr_t g;
+  int8_t r;
+  NVOCMP_startupWalkInit(&w, pg);
+  for(;;)
+  {
+    r = NVOCMP_startupWalkNext(&w, &g);
+    if(r < 0) return true;
+    if(r == 0) return false;
+    if(g.cmpid == ref->cmpid && (g.hpage != ref->hpage || g.hofs != ref->hofs) &&
+       !NVOCMP_recoverCopiesEqual(ref, &g)) return true;
+  }
+}
+
 static uint8_t NVOCMP_startupClassify(void)
 {
   uint8_t inactive = 0, destinations = 0, sources = 0, ready = 0, dataPages = 0;
   uint8_t actN = 0;
+  uint8_t actPgs[NVOCMP_NVPAGES];
   uint8_t modes[NVOCMP_NVPAGES];
   uint8_t spages[NVOCMP_NVPAGES];
   uint8_t epages[NVOCMP_NVPAGES];
@@ -190,13 +257,13 @@ static uint8_t NVOCMP_startupClassify(void)
     if(hdr->state == NVOCMP_PGXSRC) sources++;
     if(hdr->state == NVOCMP_PGRDY) ready++;
     if(hdr->state == NVOCMP_PGACT || hdr->state == NVOCMP_PGFULL) dataPages++;
-    if(hdr->state == NVOCMP_PGACT) actN++;
+    if(hdr->state == NVOCMP_PGACT) actPgs[actN++] = pg;
   }
   /* Reject the upstream FORCE_CLEAN decisions before scanPage initializes even
      a truly blank page. Rejected topology must preserve the complete image.
-     Multiple ACT pages fail closed, even byte-identical twins: resume dedups
-     live IDs across them, so twin admission cannot converge. */
-  if(destinations > 1 || sources > 1 || ready > 1 || actN > 1 ||
+     ACT pages are admitted only when the F8 agreement proof below shows every
+     shared live ID agrees; anything else fails closed. */
+  if(destinations > 1 || sources > 1 || ready > 1 ||
      (inactive != NVOCMP_NVSIZE && !destinations && !sources && !dataPages))
     return NVINTF_FAILURE;
   /* F7: findDstPage consumes only the first PGCDST page, so more than one
@@ -205,6 +272,29 @@ static uint8_t NVOCMP_startupClassify(void)
     uint8_t cdst = 0;
     for(pg = 0; pg < NVOCMP_NVSIZE; pg++) if(modes[pg] == NVOCMP_PGCDST) cdst++;
     if(cdst > 1) return NVINTF_FAILURE;
+  }
+  /* F8 agreement proof: every pair of live copies sharing a compressed ID
+     across (or within) ACT pages must be verbatim twins (bounds, both CRCs,
+     payload bytes). RESUME reads from the last ACT page while RECOVER_ERASE
+     reads from the first, so divergent copies would return different values
+     on the two paths. Anything unparseable fails closed. */
+  {
+    uint8_t i, j;
+    for(i = 0; i < actN; i++)
+    {
+      NVOCMP_startupWalk_t w;
+      NVOCMP_itemHdr_t h;
+      int8_t r;
+      NVOCMP_startupWalkInit(&w, actPgs[i]);
+      for(;;)
+      {
+        r = NVOCMP_startupWalkNext(&w, &h);
+        if(r < 0) return NVINTF_FAILURE;
+        if(r == 0) break;
+        for(j = 0; j < actN; j++)
+          if(NVOCMP_startupActConflict(actPgs[j], &h)) return NVINTF_FAILURE;
+      }
+    }
   }
   /* F1 RECOVER_ERASE gate: when the driver would consume a PGCDST page's
      source range in cleanPage, admit that range only if fully validated:
@@ -374,7 +464,7 @@ def verify_guard(text):
     for name in ('NVOCMP_checkItem','NVOCMP_getFreeNvApi','NVOCMP_doNextApi','NVOCMP_eraseNvApi','NVOCMP_sanityCheckApi','NVOCMP_expectCompApi'):
         if '/* T832-R10 fatal init gate */' not in function(text,name):raise ValueError('fatal API gate absent '+name)
     classify=function(text,'NVOCMP_startupClassify')
-    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified'):
+    for marker in ('NVOCMP_startupOnBoundary','RECOVER_ERASE gate','Migration is not qualified','NVOCMP_startupActConflict'):
         if marker not in classify:raise ValueError('compact preflight marker absent '+marker)
     if '#if' in classify or '#endif' in classify:
         raise ValueError('legacy detection must be unconditional, not macro-gated')
