@@ -184,6 +184,25 @@ def _q2_copies_equal(maxlen):
     return 2 * crc_calls + 2 * cmp_calls, 2 * n + 2 * maxlen
 
 
+def q2_parse_stack_su(text):
+    """Parse gcc -fstack-usage output (path:line:col:func TAB bytes TAB
+    kind) into {func: {'bytes': n, 'kind': k}}."""
+    frames = {}
+    for line in text.splitlines():
+        toks = line.split()
+        if len(toks) != 3 or not toks[1].isdigit():
+            continue
+        frames[toks[0].split(':')[-1]] = {'bytes': int(toks[1]), 'kind': toks[2]}
+    return frames
+
+
+Q2_STACK_FRAMES = ('NVOCMP_startupClassify', 'NVOCMP_startupPageTwinned',
+                   'NVOCMP_startupSuffixTwinned', 'NVOCMP_startupActConflict',
+                   'NVOCMP_startupWalkNext', 'NVOCMP_startupWalkInit',
+                   'NVOCMP_startupOnBoundary', 'NVOCMP_startupErased',
+                   'NVOCMP_recoverCopiesEqual')
+
+
 def q2_census(img):
     """Per-page census for the cost bound: state, compact mode, live-header
     count (capped at walk capacity), max payload length."""
@@ -1636,7 +1655,9 @@ def verify(sdk, out):
     try:
         tu = out / 'stack_tu.c'
         tu.write_text('#include "nvocmp.c"\n')
-        subprocess.run(['gcc', '-std=c11', '-O1', '-fstack-usage', '-D_GNU_SOURCE',
+        # -O0 measurement build: -O1 inlines the single-callsite guard
+        # helpers into initNv and the .su file loses their frames.
+        subprocess.run(['gcc', '-std=c11', '-O0', '-fstack-usage', '-D_GNU_SOURCE',
                         '-DNV_LINUX', '-DNVOCMP_POSIX_MUTEX', '-DENABLE_SANITY_CHECK',
                         '-DDeviceFamily_CC26X4', '-DNVOCMP_NVPAGES=15',
                         '-I' + str(out), '-I' + str(HERE), '-I' + str(sdk / 'source'),
@@ -1645,21 +1666,18 @@ def verify(sdk, out):
                        check=True, cwd=out, capture_output=True, text=True, timeout=120)
         su = out / 'stack_tu.su'
         if su.is_file():
-            frames = {}
-            for line in su.read_text().splitlines():
-                toks = line.split(':')
-                for i, tok in enumerate(toks):
-                    if tok.startswith('NVOCMP_') and i + 2 < len(toks) \
-                            and toks[i + 1].strip().isdigit():
-                        frames[tok] = {'bytes': int(toks[i + 1]), 'kind': toks[i + 2]}
-            t832 = {k: v for k, v in frames.items()
-                    if 'startup' in k.lower() or 'recover' in k.lower()}
+            frames = q2_parse_stack_su(su.read_text())
+            t832 = {k: frames[k] for k in Q2_STACK_FRAMES if k in frames}
             stack_usage = {'available': True, 't832_frames': t832,
                            'classify': frames.get('NVOCMP_startupClassify')}
         else:
             stack_usage = {'available': False, 'error': 'stack_tu.su not emitted'}
     except Exception as exc:
         stack_usage = {'available': False, 'error': str(exc)[:500]}
+    missing = [k for k in Q2_STACK_FRAMES
+               if k not in stack_usage.get('t832_frames', {})]
+    if missing:
+        failures.append({'phase': 'stack-frame-missing', 'missing': missing})
     if stack_usage.get('classify') and stack_usage['classify']['bytes'] > 1024:
         failures.append({'phase': 'stack-frame',
                          'frames': stack_usage['t832_frames']})

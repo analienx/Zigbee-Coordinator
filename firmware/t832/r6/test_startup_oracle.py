@@ -464,6 +464,18 @@ class StartupCostBoundTest(unittest.TestCase):
     # Q2: the analytic startup-read bound is pure policy math over a page
     # census; lock its units (T832 read costs) and its shape (capped walks,
     # quadratic pairwise term, PGCDST-gated erase term).
+    def test_stack_su_parser_reads_tab_format(self):
+        # gcc -fstack-usage lines are path:line:col:func TAB bytes TAB kind;
+        # a colon-split parser silently yields zero frames (seen on run
+        # 37693565551), so the tab shape is locked here.
+        text = ('/b/nvocmp.c:2163:15:NVOCMP_startupWalkNext\t32\tstatic\n'
+                '/b/nvocmp.c:2796:13:NVOCMP_recoverCopiesEqual\t160\tstatic\n'
+                'junk line\n')
+        self.assertEqual(v.q2_parse_stack_su(text), {
+            'NVOCMP_startupWalkNext': {'bytes': 32, 'kind': 'static'},
+            'NVOCMP_recoverCopiesEqual': {'bytes': 160, 'kind': 'static'}})
+        self.assertIn('NVOCMP_startupClassify', v.Q2_STACK_FRAMES)
+
     def test_copies_equal_units(self):
         self.assertEqual(v._q2_copies_equal(1), (4, 12))
         self.assertEqual(v._q2_copies_equal(116), (16, 472))
