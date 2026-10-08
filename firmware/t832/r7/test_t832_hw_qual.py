@@ -125,7 +125,7 @@ def edit_events(root, edit):
 
 
 class HwQualTests(unittest.TestCase):
-    def test_post_vendor_identity_cannot_replace_cold_restart_identity(self):
+    def test_post_compact_identity_cannot_replace_cold_restart_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Bundle(tmp).write()
             def edit(events):
@@ -134,12 +134,29 @@ class HwQualTests(unittest.TestCase):
                               e['type'] == 'identity' and e['seq'] > cold['seq']]
                 for identity in identities: events.remove(identity)
                 rollback = next(e for e in events if e['type'] == 'vendor_rollback')
-                where = events.index(rollback) + 1
+                where = events.index(rollback)
                 events[where:where] = identities
             edit_events(root, edit)
             with self.assertRaisesRegex(Incomplete, 'identity.*before compaction'):
                 verify_small(root)
             self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_candidate_identity_cannot_follow_rollback_but_vendor_identity_can(self):
+        for phase in ('base', 'vendor-mid'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                root = Bundle(tmp).write()
+                def edit(events):
+                    identity = [e for e in events if e['phase'] == 'base' and e['type'] == 'identity'][-1]
+                    events.remove(identity); identity['phase'] = phase
+                    rollback = next(e for e in events if e['type'] == 'vendor_rollback')
+                    events.insert(events.index(rollback)+1, identity)
+                edit_events(root, edit)
+                if phase == 'base':
+                    with self.assertRaisesRegex(Failed, 'vendor rollback must follow'):
+                        verify_small(root)
+                    self.assertFalse((root / QUAL_SEAL).exists())
+                else:
+                    self.assertEqual(verify_small(root)['verdict'], 'PASS')
 
     def test_unscoped_flash_or_rollback_cannot_hide_an_extra_mutation(self):
         for kind in ('flash', 'vendor_rollback'):
