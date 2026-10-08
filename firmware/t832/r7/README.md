@@ -169,7 +169,7 @@ walks deep (~8B each) plus one 64B compare-buffer pair and one header
 struct; no recursion, no malloc. The 2KB tBuffer page buffer is
 pre-existing driver static storage.
 
-Measured per-init startup reads (hosted run 37695080465, SHA 2226485;
+Measured per-init startup reads (hosted run 37756068357, SHA 2f2e868;
 identical on all 4 lanes; the gate measures two inits and halves here):
 
 | case | calls | bytes | cap bytes |
@@ -177,12 +177,14 @@ identical on all 4 lanes; the gate measures two inits and halves here):
 | 8 admit shapes (range) | 107-660 | 40-94KB | 326-872KB |
 | dense-single (220 items) | 25,112 | 420KB | 2.1MB |
 | dense-twinned (440 live) | 99,115 | 1.54MB | 7.6MB |
+| populated-realistic (56x64B) | 2,120 | 155KB | 1.7MB |
 
 The dense-twinned case exercises the full quadratic pairwise proof with
 a byte-compare re-proof on every live ID and still sits 5x under its
-per-image ceiling. Realistic stores look like the admit row (a handful
-of live records per page), not the dense rows, so realistic startup
-reads stay near 100KB of internal-flash reads during initNV.
+per-image ceiling. The populated-realistic case (56 distinct 64-byte
+records, the brief's realistic-store shape with realistic count AND
+size) sits 11x under at 155KB per init, so realistic startup reads
+stay near 100-200KB of internal-flash reads during initNV.
 
 Stack frames at -O0 (all static, no dynamic allocation): classify 320,
 PageTwinned 128, SuffixTwinned 128, ActConflict 96, WalkNext 32,
@@ -195,13 +197,14 @@ driver callees; the gate fails if any expected frame is absent from the
 
 Failure-path visibility before this change: the classifier runs inside
 initNv before scanPage populates pageInfo and before any gAction write,
-so on a reject the stage-8 capture copies a zeroed handle and
-init_action reads 0, which is also the encoding of a true NORMAL_INIT.
-A bare BADVERSION/FAILURE status could not say which page, field, or
-check rejected.
+so on a reject the stage-8 capture copies a diagnosis-free handle
+(nvSize/active defaults plus image-dependent offsets/states, but no
+reject cause) and init_action reads 0, which is also the encoding of
+a true NORMAL_INIT. A bare BADVERSION/FAILURE status could not say
+which page, field, or check rejected.
 
 Production caller trace (hosted grep over the pinned SDK + examples,
-runs 37697037107/37699136404/37700709109/37702282371): the ZNP startup
+runs 37697037107/37699136404/37700709109/37702282371/37756068357): the ZNP startup
 entry calls zstack_user0Cfg.nvFps.initNV(NULL) at
 sdk/source/ti/zstack/startup/main.c:348 and ignores the return, then
 configures the stack task unconditionally; the OSAL wrapper
@@ -229,13 +232,13 @@ decodes through the existing generic incident codec; the numeric
 site table lives in verify_startup_guard.py and is order-locked
 against the C enum by a unit test.
 
-Proof (run 37699136404, also green on 37702282371): all 81 reject
-images x 4 lanes latch exactly the oracle-predicted (status, site,
-page, raw) through production init, and all 8 admit images latch
-zeros. The oracle mirrors the CRC-8/poly-0x97 check and the exact C
-traversal order (tail census, then pairwise walks, inner walks
-breaking at the first twin); a per-lane self-check validates the CRC
-mirror against the production-written seed item, so a mirror bug
-fails loudly instead of misattributing a cause. The P3 shapes
-(classifier admits, driver later fails ERROR_UNKNOWN) correctly
-expect latch zeros.
+Proof (run 37756068357): all 88 reject images x 4 lanes latch exactly
+the oracle-predicted (status, site, page, raw) through production
+init, and all 8 admit images latch zeros. The oracle mirrors the
+CRC-8/poly-0x97 check and the exact C traversal order (tail census,
+then pairwise walks, inner walks breaking at the first twin,
+per-header actions before anomaly trips); a per-lane self-check
+validates the CRC mirror against the production-written seed item,
+so a mirror bug fails loudly instead of misattributing a cause.
+The P3 shapes (classifier admits, driver later fails ERROR_UNKNOWN)
+correctly expect latch zeros.
