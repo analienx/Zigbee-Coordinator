@@ -63,9 +63,10 @@ decrease, including BASE-to-DIAG and vendor-boundary identity observations.
 Log actual unsigned 32-bit TX/RX values; counter floors do not restart at
 phase boundaries. The key-slot hash must be constant across both phases.
 Every `identity` must include actual SHA256 IEEE and key-slot digests,
-constant across the entire transcript including vendor boundaries. Counter
-fields are permitted only on `identity` events; off-label fields fail rather
-than being silently ignored. Record vendor-boundary assertions as separate
+constant across the entire transcript including vendor boundaries. The schema's
+exact `tx_counter` and `rx_counter` fields are permitted only on `identity`
+events; off-label uses fail rather than being silently ignored. Other spellings
+are not counter evidence and cannot replace either required field. Record vendor-boundary assertions as separate
 `identity` observations with a vendor phase label. `neutral_read` events
 require a valid readback SHA256 even outside the candidate phases.
 
