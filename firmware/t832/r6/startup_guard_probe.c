@@ -46,6 +46,9 @@ static void T832Diag_record(uint16_t ev, uint16_t a, uint16_t b, uint16_t c) {
    this hosted compile is the pin: any TI enum drift fails the build. */
 _Static_assert(NVOCMP_NORMAL_INIT == 0 && NVOCMP_ERROR_UNKNOWN == 6,
                "TI init-action enum drifted; update checker INIT_ACTIONS");
+_Static_assert(NVINTF_SUCCESS == 0 && NVINTF_FAILURE == 1 &&
+               NVINTF_BADVERSION == 12,
+               "TI NV status enum drifted; update checker NVINTF_STATUS");
 int main(int argc, char **argv) {
     if(argc < 2 || argc > 3) return 2;
     /* Q3 probe-contract tightening (R10 review F4): exactly the documented

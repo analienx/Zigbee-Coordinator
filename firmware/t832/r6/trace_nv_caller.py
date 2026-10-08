@@ -39,11 +39,13 @@ def iter_text_files(root):
 
 
 def executable_code_lines(lines):
-    """Return a same-length C/C++ code view with comments/strings blanked.
+    """Return a same-length C/C++ source view with comments/strings blanked.
 
     The caller gate must not accept a required call merely because its text
     survives in a comment or string literal. Newlines are already split, so
     block-comment state is the only state carried between lines.
+    This source-level gate does not evaluate preprocessor conditionals;
+    caller activity also depends on the pinned SDK and build configuration.
     """
     out = []
     block = False

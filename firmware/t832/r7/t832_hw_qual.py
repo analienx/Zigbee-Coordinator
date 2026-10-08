@@ -183,6 +183,32 @@ def _phase_events(events, phase):
     return [e for e in events if e.get("phase") == phase]
 
 
+def _counter_pairs(identities):
+    counters = [(e.get("tx_counter"), e.get("rx_counter")) for e in identities]
+    if any(tx is None or rx is None for tx, rx in counters):
+        raise Incomplete("identity lacks counters")
+    if any(type(v) is not int or not 0 <= v <= 0xffffffff
+           for pair in counters for v in pair):
+        raise Failed("security counters must be actual u32 integers")
+    return counters
+
+
+def _counter_progress(counters, context):
+    if any(b[0] < a[0] or b[1] < a[1]
+           for a, b in zip(counters, counters[1:])):
+        raise Failed("security counters decreased %s: %r" % (context, counters))
+
+
+def _write_digest(event, field):
+    value = event.get(field)
+    if value is None:
+        raise Incomplete("neutral write missing SHA256 evidence: " + field)
+    if (not isinstance(value, str) or len(value) != 64
+            or any(c not in '0123456789abcdef' for c in value.lower())):
+        raise Failed("neutral write has invalid SHA256 evidence: " + field)
+    return value.lower()
+
+
 def check_phase(events, phase):
     """One vendor->candidate->vendor phase must contain, in order: a flash
     of the candidate, at least one neutral write with matching readback,
@@ -201,7 +227,7 @@ def check_phase(events, phase):
         raise Failed("phase %r events out of required order" % phase)
     writes = [e for e in seq if e["type"] == "neutral_write"]
     for write in writes:
-        if write.get("readback_sha256") != write.get("write_sha256"):
+        if _write_digest(write, "readback_sha256") != _write_digest(write, "write_sha256"):
             raise Failed("neutral write readback mismatch in phase %r (seq %d)"
                          % (phase, write["seq"]))
     compacts = [e["seq"] for e in seq if e["type"] == "compact"]
@@ -216,14 +242,11 @@ def check_phase(events, phase):
     keys = {e.get("key_slot_sha256") for e in identities}
     if len(keys) != 1 or None in keys:
         raise Failed("phase %r key-slot hash not constant: %r" % (phase, keys))
-    counters = [(e.get("tx_counter"), e.get("rx_counter")) for e in identities]
-    if any(c is None or r is None for c, r in counters):
-        raise Incomplete("phase %r identity lacks counters" % phase)
-    if any((b[0] < a[0]) or (b[1] < a[1])
-           for a, b in zip(counters, counters[1:])):
-        raise Failed("phase %r security counters decreased: %r" % (phase, counters))
+    counters = _counter_pairs(identities)
+    _counter_progress(counters, "within phase %r" % phase)
     return {"phase": phase, "key_slot_sha256": keys.pop(),
-            "counters": counters[0], "writes": len(writes)}
+            "counters": counters[0], "last_counters": counters[-1],
+            "writes": len(writes)}
 
 
 def verify(bundle, resal_reason=None, nvs_base=VENDOR_NVS_BASE, nvs_bytes=VENDOR_NVS_BYTES,
@@ -253,6 +276,10 @@ def verify(bundle, resal_reason=None, nvs_base=VENDOR_NVS_BASE, nvs_bytes=VENDOR
         phases[phase] = check_phase(events, phase)
     if phases["base"]["key_slot_sha256"] != phases["diag"]["key_slot_sha256"]:
         raise Failed("key-slot hash differs between BASE and DIAG phases")
+    # Check the chronological transcript as well as each phase. This carries
+    # BASE's last floors into DIAG and includes vendor-boundary observations.
+    counters = _counter_pairs([e for e in events if e["type"] == "identity"])
+    _counter_progress(counters, "across the complete transcript")
     result = {"verdict": "PASS", "dut": {"model": dut["model"], "mcu": dut["mcu"]},
               "phases": phases,
               "reseal_reason": resal_reason}

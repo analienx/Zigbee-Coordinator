@@ -211,10 +211,12 @@ sdk/source/ti/zstack/startup/main.c:348 and ignores the return, then
 configures the stack task unconditionally; the OSAL wrapper
 osal_nv_init at sdk/source/ti/zstack/osal/osal_nv.c:103 likewise
 ignores it. The hosted trace gate strips C/C++ comments and string
-literals, then fail-closes unless both calls remain executable standalone
+literals, then fail-closes unless both source calls remain standalone
 statements exactly once; wrapping either call in if/assignment/return no
 longer satisfies the ignored-return contract. It records those required
 matches in nv-caller-trace.json and retains that JSON as a success artifact.
+The source gate does not evaluate preprocessor conditionals; its activity
+claim depends on the frozen SDK and the actual build configuration.
 Boot is therefore not gated on initNV status at either call site, so a
 rejected init still reaches the MT loop and the diagnosis record below
 can flow over the wire. Residual assumption:
