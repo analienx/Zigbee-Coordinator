@@ -184,7 +184,8 @@ class HwQualTests(unittest.TestCase):
             root = Bundle(tmp).write()
             path = root / 'transcript.jsonl'
             events = [json.loads(line) for line in path.read_text().splitlines()]
-            vendor = dict(events[6], phase='vendor-mid', tx_counter=0, rx_counter=0)
+            vendor = dict(events[7], type='identity', phase='vendor-mid',
+                          tx_counter=0, rx_counter=0)
             events.insert(7, vendor)
             for seq, event in enumerate(events, 1):event['seq'] = seq
             path.write_text(''.join(json.dumps(e)+'\n' for e in events))
