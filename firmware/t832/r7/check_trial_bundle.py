@@ -215,11 +215,14 @@ def check_records(blobs, errors, report):
             if not all(_u16(v) for v in (a, b, c)):
                 fail(errors, 'NV_RESULT a/b/c must be u16', index=n, record=r)
                 continue
-            if a not in (7, 9):
+            # The production exporter also emits stage/request/status with
+            # stages 0..8; those are compatible telemetry, not pair members.
+            if a > 9:
                 fail(errors, 'unknown NV_RESULT subtype', index=n, a=a,
                      record=r)
                 continue
-        if r['kind_name'] in ('BOOT', 'NV_RESULT'):
+        if r['kind_name'] == 'BOOT' or (r['kind_name'] == 'NV_RESULT'
+                                      and r['a'] in (7, 9)):
             seq.append(r)
 
     kinds = [r.get('kind_name') for r in seq]

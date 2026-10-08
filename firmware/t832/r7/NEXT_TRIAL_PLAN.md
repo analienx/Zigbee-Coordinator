@@ -107,6 +107,12 @@ NV_RESULT stream other than exact stable (a7,a9)* pairs), a missing
 network_state verdict, and preserved false (loss or inconclusive: the note
 says which). Repeated polls must reproduce the same a7 action/failure and
 a9 rejection latch; a changing first-boot diagnosis fails the trial.
+The pair stream filters a7/a9 after validating all NV_RESULT fields as u16.
+Valid generic stage records (a0..a6 and a8) emitted by the same production
+exporter are accepted without becoming pair members; subtypes above9 fail.
+The hosted startup-guard probe sends its actual C-exported records through
+this checker on every admit/reject case, with only the separate BOOT marker
+supplied by the harness.
 
 ## 5. Pass/fail criteria
 
