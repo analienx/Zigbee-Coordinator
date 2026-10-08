@@ -40,7 +40,8 @@ class Bundle:
         return fields
 
     def write(self, model='SLZB-06P10', mcu='CC2674P10', key=b'k' * 64,
-              counters=((7, 9), (7, 10)), tamper=None, extra=(), drop=()):
+              counters=((7, 9), (7, 10)), tamper=None, extra=(), drop=(),
+              phase_counters=None):
         images = {}
         for name, app in self.apps.items():
             raw = container(app)
@@ -74,7 +75,9 @@ class Bundle:
             (self.root / 'dumps' / (step + '.sha256')).write_text(sha(data) + '  x\n')
         w = sha(b'write')
         events = []
-        for phase, (c0, c1) in (('base', counters), ('diag', counters)):
+        phases = phase_counters or {'base': counters,
+                                   'diag': (counters[-1], counters[-1])}
+        for phase, (c0, c1) in phases.items():
             img = sha(images[phase])
             events.append(self.event(type='flash', phase=phase, image_sha256=img))
             events.append(self.event(type='neutral_write', phase=phase,
@@ -166,6 +169,41 @@ class HwQualTests(unittest.TestCase):
             with self.assertRaises(Failed) as ctx:
                 verify_small(root)
             self.assertIn('counters decreased', str(ctx.exception))
+
+    def test_counter_floors_carry_across_base_diag_boundary(self):
+        for diag in (((5, 5), (6, 6)), ((101, 5), (102, 6))):
+            with self.subTest(diag=diag), tempfile.TemporaryDirectory() as tmp:
+                root = Bundle(tmp).write(phase_counters={
+                    'base': ((90, 90), (100, 100)), 'diag': diag})
+                with self.assertRaisesRegex(Failed, 'counters decreased'):
+                    verify_small(root)
+                self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_vendor_boundary_identity_is_in_global_counter_sequence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write()
+            path = root / 'transcript.jsonl'
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+            vendor = dict(events[6], phase='vendor-mid', tx_counter=0, rx_counter=0)
+            events.insert(7, vendor)
+            for seq, event in enumerate(events, 1):event['seq'] = seq
+            path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+            with self.assertRaisesRegex(Failed, 'counters decreased'):
+                verify_small(root)
+            self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_counter_values_must_be_actual_u32(self):
+        for value in (True, -1, 2**32, '7', 7.0):
+            for field in ('tx_counter', 'rx_counter'):
+                with self.subTest(value=value, field=field), tempfile.TemporaryDirectory() as tmp:
+                    root = Bundle(tmp).write()
+                    path = root / 'transcript.jsonl'
+                    events = [json.loads(line) for line in path.read_text().splitlines()]
+                    for event in events:
+                        if event['type'] == 'identity':event[field] = value
+                    path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+                    with self.assertRaisesRegex(Failed, 'u32'):
+                        verify_small(root)
 
     def test_second_flash_in_phase_fails_even_if_same_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
