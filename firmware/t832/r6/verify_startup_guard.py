@@ -502,8 +502,6 @@ def oracle_f8_site(img, states, destinations, sources, data, inactive, cdst):
         older = older_twin = 0
         for c, cpg in enumerate(chk):
             live, anomaly = walk_live(img[cpg * PAGE:(cpg + 1) * PAGE])
-            if anomaly:
-                return REJ['CENSUS_WALK'], cpg, c
             for h in live:
                 if cmpid(h) == tail_id and (cpg, h['hofs']) != (last_act, tail_h['hofs']):
                     if copies_equal(img, last_act, tail_h, cpg, h):
@@ -514,14 +512,23 @@ def oracle_f8_site(img, states, destinations, sources, data, inactive, cdst):
                         older += 1
                         if older > 1 or older_twin > 0:
                             return REJ['TAIL_MULTI'], cpg, c
+            # C-order: the streaming C walk acts on headers above the
+            # anomaly before tripping on it, so per-header counts run
+            # before the anomaly trip (anomaly-first here diverged: C
+            # site 31 vs oracle 30 on headers-above-anomaly pages).
+            if anomaly:
+                return REJ['CENSUS_WALK'], cpg, c
     for i, ipg in enumerate(chk):
         live, anomaly = walk_live(img[ipg * PAGE:(ipg + 1) * PAGE])
-        if anomaly:
-            return REJ['PAIR_WALK'], ipg, i
         for h in live:
             for j, jpg in enumerate(chk):
                 if act_conflict(img, jpg, ipg, h, tail_ok, tail_id):
                     return REJ['PAIR_CONFLICT'], jpg, i
+        # C-order: per-header conflict checks (whose inner walks trip
+        # to conflict-true, mirroring C ActConflict) run before the
+        # outer walk's own anomaly trip.
+        if anomaly:
+            return REJ['PAIR_WALK'], ipg, i
     return None
 
 
@@ -1451,35 +1458,55 @@ def hand_picked(name, b, last, info):
         for i in range(7):
             put1to0(b, 14 * PAGE + 16 + 116 + i, orig[116 + i], name)
         return {'family': 'admit-erase-tail-inrange', 'seed_end': end}
-    if name in ('f8-census-walk-anomaly', 'f8-pair-walk-anomaly'):
-        # L1-P3 C-emission cover: page 0 holds a valid len-0 tail over a
-        # follow-bit header whose length (4095) overruns the remaining
-        # chain, so the proof walk trips. NULL cursor keeps the tail and
-        # trips CENSUS_WALK (site 27); a set cursor drops the tail, the
-        # census is skipped, and the same trip lands PAIR_WALK (30).
+    if name in ('f8-census-walk-anomaly', 'f8-pair-inner-trip',
+                  'f8-pair-walk-first', 'f8-census-count-before-trip'):
+        # L1-P3 C-emission cover + order-mirror regressions. bad is a
+        # follow-bit header whose length (4095) overruns the chain.
+        # census-walk-anomaly: NULL cursor keeps the tail; the census
+        # walk trips -> CENSUS_WALK (27). pair-inner-trip: set cursor
+        # drops the tail; pairwise ActConflict(tail)'s inner walk trips
+        # first -> PAIR_CONFLICT (31), proving C's act-before-trip order
+        # (the oracle used to say 30 here). pair-walk-first: the anomaly
+        # is the first thing walked (no headers above it) -> PAIR_WALK
+        # (30). census-count-before-trip: two divergents trip TAIL_MULTI
+        # (29) before the walk below them trips.
         hdr = bytes(b[0 * PAGE:0 * PAGE + 16])
+        bad = bytes((0x08, 0x63, 0x00, 0x3F, 0xFC, 0x02, 0x96))
+        _, tail_hdr = craft_item(2, 99, 0, b'')
+        if name == 'f8-pair-walk-first':
+            blob = bad
+            want_live, want_site = [], 30
+        elif name == 'f8-census-count-before-trip':
+            div_data, div_hdr = craft_item(1, 33, 0, b'\xa5' * 8)
+            _, tail0 = craft_item(1, 33, 0, b'')
+            blob = bad + div_data + div_hdr + div_data + div_hdr + tail0
+            want_live, want_site = [53, 46, 31], 29
+        else:
+            blob = bad + tail_hdr
+            want_live, want_site = [23], 27 \
+                if name == 'f8-census-walk-anomaly' else 31
+        null_cursor = name in ('f8-census-walk-anomaly',
+                               'f8-census-count-before-trip')
+        cursor = 0xFFFF if null_cursor else PGDATAOFS + len(blob)
         b[0 * PAGE:1 * PAGE] = b'\xff' * PAGE
         for i in range(16):
             v = hdr[i]
-            if name == 'f8-census-walk-anomaly' and i in (4, 5):
-                v = 0xFF
+            if i == 4:
+                v = (cursor >> 0) & 0xFF
+            elif i == 5:
+                v = (cursor >> 8) & 0xFF
             put1to0(b, 0 * PAGE + i, v, name)
-        if name == 'f8-pair-walk-anomaly':
-            put1to0(b, 0 * PAGE + 4, 0x1E, name)
-            put1to0(b, 0 * PAGE + 5, 0x00, name)
-        bad = bytes((0x08, 0x63, 0x00, 0x3F, 0xFC, 0x02, 0x96))
-        _, tail_hdr = craft_item(2, 99, 0, b'')
-        blob = bad + tail_hdr
         for i, v in enumerate(blob):
             put1to0(b, 0 * PAGE + PGDATAOFS + i, v, name)
         page = bytes(b[0 * PAGE:1 * PAGE])
         live, anomaly = walk_live(page)
-        check(anomaly and len(live) == 1 and live[0]['hofs'] == 23,
+        check(anomaly and [h['hofs'] for h in live] == want_live,
               'walk anomaly shape', case=name, live=live,
               anomaly=anomaly)
-        check(crc_ok(page, live[0]), 'walk anomaly tail CRC', case=name)
-        return {'family': 'f8-walk-anomaly', 'site': 27
-                if name == 'f8-census-walk-anomaly' else 30}
+        if live:
+            check(all(crc_ok(page, h) for h in live),
+                  'walk anomaly CRCs', case=name)
+        return {'family': 'f8-walk-anomaly', 'site': want_site}
     if name == 'tail-census-wrap-256':
         # L1-P1-1 red-first: 256 verbatim older twins of the tail ID wrap
         # the C uint8 olderTwin counter to 0; one trailing divergent copy
@@ -1659,7 +1686,8 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'cmp-erase-tail-singleton', 'cmp-erase-tail-unmarkable',
                 'cmp-erase-tail-exact', 'tail-census-wrap-256',
                 'erase-drained-first-live', 'erase-eoff-boundary-live',
-                'f8-census-walk-anomaly', 'f8-pair-walk-anomaly']
+                'f8-census-walk-anomaly', 'f8-pair-inner-trip',
+                'f8-pair-walk-first', 'f8-census-count-before-trip']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -1723,7 +1751,9 @@ EXPECTED_TAG = {
     'erase-drained-first-live': 'CMP_ERASE_LIVE_END',
     'erase-eoff-boundary-live': 'CMP_ERASE_BELOW_END',
     'f8-census-walk-anomaly': 'TOPO_ACT_CONFLICT',
-    'f8-pair-walk-anomaly': 'TOPO_ACT_CONFLICT',
+    'f8-pair-inner-trip': 'TOPO_ACT_CONFLICT',
+    'f8-pair-walk-first': 'TOPO_ACT_CONFLICT',
+    'f8-census-count-before-trip': 'TOPO_ACT_CONFLICT',
     'multi-act-twins': 'ADMIT_RESUME_DIRECT',
     'multi-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',

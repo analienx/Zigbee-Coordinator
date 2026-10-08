@@ -102,11 +102,11 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks 86 rejecting cases across asserting and
-embedded-style nonfatal assertion lanes: 55 hand-picked cases (topologies,
+The actual pinned-driver gate now checks 88 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes: 57 hand-picked cases (topologies,
 compact-header negatives, legacy fail-closed, mixed recovery, RDY cursor,
 multi-page erase range, duplicate PGCDST, divergent ACT twins and same-page duplicates, reserved header
-fields, erase-tail divergent pairs, tail trios, stale end offsets, FULL-scope pairs, XSRC-scope pairs, RDY data, mixed twin+divergent trios, unmarkable erase tails, tail-census wrap, drained/boundary first-headers, walk anomalies) plus 31 enumerated generated cases (valid-NOR torn header bytes,
+fields, erase-tail divergent pairs, tail trios, stale end offsets, FULL-scope pairs, XSRC-scope pairs, RDY data, mixed twin+divergent trios, unmarkable erase tails, tail-census wrap, drained/boundary first-headers, walk anomalies, inner-trip order, count-before-trip) plus 31 enumerated generated cases (valid-NOR torn header bytes,
 ambiguous destination/source/ready pairs, lone-ready, torn-erase remnants).
 Each must reject repeated init and a full extended-API sweep
 (create/update/delete/read/readCont/write/getItemLen/doNext/expectComp/
@@ -120,7 +120,7 @@ latched error instead of the upstream startup spin. Healthy reopen stays
 unchanged; truly blank initialization still succeeds. Existing exhaustive
 compaction/write gates apply. The 15,504 state-count families in the report are
 Python model combinatorics, not driver executions; execution evidence is the
-counted probe runs (688 reject, 64 admit, 344 sanitizer, 376 export9, 44 cost).
+counted probe runs (704 reject, 64 admit, 352 sanitizer, 384 export9, 44 cost).
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.
