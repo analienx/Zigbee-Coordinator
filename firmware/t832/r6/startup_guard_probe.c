@@ -41,6 +41,11 @@ static void T832Diag_record(uint16_t ev, uint16_t a, uint16_t b, uint16_t c) {
 #include "nv_r6_probe.h"
 #include "nv_r6_probe.inc"
 #include "r6_nv_export.inc"
+/* CH-P2: pin the TI init-action enum count the Q4 checker gates on
+   (INIT_ACTIONS=7 in check_trial_bundle.py). The SDK is download-only;
+   this hosted compile is the pin: any TI enum drift fails the build. */
+_Static_assert(NVOCMP_NORMAL_INIT == 0 && NVOCMP_ERROR_UNKNOWN == 6,
+               "TI init-action enum drifted; update checker INIT_ACTIONS");
 int main(int argc, char **argv) {
     if(argc < 2 || argc > 3) return 2;
     /* Q3 probe-contract tightening (R10 review F4): exactly the documented
@@ -144,7 +149,12 @@ int main(int argc, char **argv) {
         /* Q3 export-path proof: simulate the device stage-8 capture call,
            poll once, and print every captured DIAG record. The capture
            snapshot, poll gating, and a9 packing are unmodified production
-           .inc code; only transport/CS are host stubs (see above). */
+           .inc code; only transport/CS are host stubs (see above).
+           CH-P3 scope: reject-path a7 matches the device on both (no
+           stage-7 write before the early return either side); admit-path
+           a7 is host-shaped (this TU has no stage-7 auto-captures while
+           the device captures gAction), so the verifier pins a7 exactly
+           on reject and checks presence only on admit. */
         T832R6Nv_capture(8u, 0u, (uint16_t)NVOCMP_failW);
         T832R6Nv_poll(0u);
         printf("{\"init_status\":%u,\"reinit_status\":%u,\"physical_operations\":%u,\"records\":[",

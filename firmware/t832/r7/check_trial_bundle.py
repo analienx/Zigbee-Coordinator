@@ -1,10 +1,12 @@
 """Q4: offline checker for a next-trial evidence bundle.
 
 Validates manifest integrity (presence/size/sha256), NV image geometry,
-observed-vs-claimed page diffs, required first-boot records, and the
-NV_RESULT a9 rejection-latch decoding. Pure stdlib; runs on synthetic
-fixtures in public CI and on real captures offline. Exit 0 + JSON
-summary on success, exit 1 + errors otherwise.
+observed-vs-claimed page diffs, required first-boot records in order
+(single BOOT first, every a9 with a preceding a7, every a7 with a
+following a9), the NV_RESULT a9 rejection-latch decoding, and the
+recorded network-state comparison verdict. Pure stdlib; runs on
+synthetic fixtures in public CI and on real captures offline. Exit 0
++ JSON summary on success, exit 1 + errors otherwise.
 """
 import argparse
 import hashlib
@@ -62,18 +64,34 @@ def load_manifest(bundle):
     if not isinstance(meta['capture_window_s'], int) or \
             meta['capture_window_s'] < 120:
         return None, [{'error': 'meta.capture_window_s below 120 s'}]
+    netst = doc.get('network_state', {})
+    if not isinstance(netst, dict):
+        return None, [{'error': 'network_state not an object'}]
+    if not isinstance(netst.get('preserved'), bool):
+        return None, [{'error': 'network_state.preserved not a bool'}]
+    if not isinstance(netst.get('note'), str) or not netst['note'].strip():
+        return None, [{'error': 'network_state.note empty'}]
     return doc, []
 
 
 def check_files(bundle, doc, errors):
     blobs = {}
     files = doc.get('files', {})
+    if not isinstance(files, dict):
+        fail(errors, 'manifest files not an object')
+        return blobs
     for role in REQUIRED_ROLES:
         spec = files.get(role)
         if not spec:
             fail(errors, 'missing file role', role=role)
             continue
+        if not isinstance(spec, dict):
+            fail(errors, 'file role not an object', role=role)
+            continue
         raw = spec.get('file', '')
+        if not isinstance(raw, str) or not raw:
+            fail(errors, 'file path not a string', role=role)
+            continue
         path = bundle / raw
         try:
             inside = path.resolve().relative_to(bundle.resolve())
@@ -90,7 +108,9 @@ def check_files(bundle, doc, errors):
         except OSError as exc:
             fail(errors, 'file unreadable', role=role, detail=str(exc)[:200])
             continue
-        if 'size' in spec and len(data) != spec['size']:
+        if 'size' not in spec:
+            fail(errors, 'size pin missing', role=role)
+        elif len(data) != spec['size']:
             fail(errors, 'size mismatch', role=role, want=spec['size'],
                  got=len(data))
         digest = hashlib.sha256(data).hexdigest()
@@ -133,6 +153,11 @@ def check_images(blobs, doc, errors, report):
     if unexpected:
         fail(errors, 'program diff outside claimed ranges',
              unexpected_pages=unexpected, expected=sorted(expected))
+    # Claim slack is reported for operator review: an over-broad claim
+    # (up to all 15 pages) would make containment vacuous, so the
+    # claimed-but-untouched set is always visible next to the diffs.
+    # Range trust itself rests on the G3 tool-log evidence (plan §3).
+    report['claim_slack_pages'] = sorted(set(expected) - set(prog_diff))
     # Boot diff is reported for operator review; it is additionally
     # gated only when the manifest claims a boot allowlist.
     allowed = ranges.get('boot_allowed_pages')
@@ -155,17 +180,47 @@ def check_records(blobs, errors, report):
     if not isinstance(records, list):
         fail(errors, 'records not a list')
         return
-    kinds = [r.get('kind_name') for r in records if isinstance(r, dict)]
-    if 'BOOT' not in kinds:
+    for n, r in enumerate(records):
+        if not isinstance(r, dict) or not isinstance(r.get('kind_name'), str):
+            fail(errors, 'record malformed', index=n, record=r)
+    seq = [r for r in records if isinstance(r, dict) and
+           r.get('kind_name') in ('BOOT', 'NV_RESULT')]
+    kinds = [r.get('kind_name') for r in seq]
+    boots = [n for n, k in enumerate(kinds) if k == 'BOOT']
+    if not boots:
         fail(errors, 'missing BOOT record')
-    results = [r for r in records
-               if isinstance(r, dict) and r.get('kind_name') == 'NV_RESULT']
+    elif len(boots) > 1:
+        fail(errors, 'multiple BOOT records (reset in capture window)',
+             count=len(boots), positions=boots)
+    elif boots[0] != 0:
+        fail(errors, 'BOOT not first (out-of-order evidence)',
+             position=boots[0])
+    results = [r for r in seq if r.get('kind_name') == 'NV_RESULT']
     a7 = [r for r in results if r.get('a') == 7]
     a9 = [r for r in results if r.get('a') == 9]
     if not a7:
         fail(errors, 'missing NV_RESULT a7 (init action) record')
     if not a9:
         fail(errors, 'missing NV_RESULT a9 (rejection latch) record')
+    # Per-poll emission is unconditionally a7-then-a9 (r6_nv_export.inc),
+    # so in concatenated polls every a9 has a preceding a7 and every a7
+    # has a following a9. A lone leading a9 is out-of-order; a trailing
+    # lone a7 is truncated (or its a9 was buried on the routine ring).
+    a7pos = [n for n, r in enumerate(seq)
+             if r.get('kind_name') == 'NV_RESULT' and r.get('a') == 7]
+    a9pos = [n for n, r in enumerate(seq)
+             if r.get('kind_name') == 'NV_RESULT' and r.get('a') == 9]
+    for p in a9pos:
+        if not any(q < p for q in a7pos):
+            fail(errors, 'a9 without preceding a7 (out-of-order)',
+                 position=p)
+    for q in a7pos:
+        if not any(p > q for p in a9pos):
+            fail(errors, 'a7 without following a9 (truncated evidence)',
+                 position=q)
+    report['boot_count'] = len(boots)
+    report['a7_count'] = len(a7pos)
+    report['a9_count'] = len(a9pos)
     for n, r in enumerate(a7):
         action = r.get('b')
         if not isinstance(action, int) or not 0 <= action < INIT_ACTIONS:
@@ -215,6 +270,12 @@ def check_bundle(bundle):
         check_images(blobs, doc, errors, report)
     if 'records' in blobs:
         check_records(blobs, errors, report)
+    netst = doc.get('network_state', {})
+    report['network_state'] = {'preserved': netst.get('preserved'),
+                               'note': netst.get('note')}
+    if netst.get('preserved') is False:
+        fail(errors, 'trial finding: network state not preserved',
+             note=netst.get('note'))
     return {'ok': not errors, 'errors': errors, **report}
 
 

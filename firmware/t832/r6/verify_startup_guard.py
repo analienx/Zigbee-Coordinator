@@ -29,6 +29,10 @@ FLASH_PAGE_SIZE = 2048
 CORPUS_VERSION = 'enumerated-v2'
 SANITIZER_FLAGS = ['-fsanitize=address,undefined', '-fno-sanitize-recover=all',
                    '-fno-omit-frame-pointer']
+# CH-P3: tight by construction, not derived from first principles: two
+# seal admit cases saturate exactly 8 ops. This is a regression
+# tripwire (any future admit writing more fails closed for review),
+# not a proven upper bound; direction is fail-closed.
 ADMIT_MAX_OPS = 8
 INVOKE_TIMEOUT = 20
 VALID_STATES = frozenset((0xFF, 0xFE, 0x7E, 0x7C, 0x78, 0x70))
@@ -255,6 +259,10 @@ def q2_classify_bound(census):
                 + p['live'] * (Q2_WALK_CALLS + hdst * ce_calls)
             nbytes += 2048 + 513 * 7 + Q2_WALK_BYTES \
                 + p['live'] * (Q2_WALK_BYTES + hdst * ce_bytes)
+        # Tail-markability header read (L1-P3): at most one 4-byte page
+        # header read per classify, when the erase branch runs.
+        calls += 1
+        nbytes += 4
     return calls, nbytes
 
 
@@ -344,11 +352,12 @@ def copies_equal(img, apg, a, bpg, b):
 
 
 def suffix_twinned(img, epg, eoff, fpg):
-    """Mirror of the C suffix proof: every live item strictly above eoff
+    """Mirror of the C suffix proof: every live item at or above eoff
     on the end page must be twinned (bounds, both CRCs, payload bytes)
-    on the dst page. The outer walk must reach a clean end; the inner
-    walk breaks at the first twin, so dst bytes below a found twin are
-    never read and a dst anomaly past every twin still proves."""
+    on the dst page (L1-P1-2: the boundary header itself is hidden by
+    the post-clean walk from eoff). The outer walk must reach a clean
+    end; the inner walk breaks at the first twin, so dst bytes below a
+    found twin are never read and a dst anomaly past every twin proves."""
     end_page = img[epg * PAGE:(epg + 1) * PAGE]
     if not on_boundary(end_page, eoff, find_end(end_page)):
         return False
@@ -357,7 +366,7 @@ def suffix_twinned(img, epg, eoff, fpg):
         return False
     dst_live, _ = walk_live(img[fpg * PAGE:(fpg + 1) * PAGE])
     for h in live:
-        if h['hofs'] > eoff:
+        if h['hofs'] >= eoff:
             if not any(cmpid(g) == cmpid(h) and copies_equal(img, epg, h, fpg, g)
                        for g in dst_live):
                 return False
@@ -1442,6 +1451,35 @@ def hand_picked(name, b, last, info):
         for i in range(7):
             put1to0(b, 14 * PAGE + 16 + 116 + i, orig[116 + i], name)
         return {'family': 'admit-erase-tail-inrange', 'seed_end': end}
+    if name in ('f8-census-walk-anomaly', 'f8-pair-walk-anomaly'):
+        # L1-P3 C-emission cover: page 0 holds a valid len-0 tail over a
+        # follow-bit header whose length (4095) overruns the remaining
+        # chain, so the proof walk trips. NULL cursor keeps the tail and
+        # trips CENSUS_WALK (site 27); a set cursor drops the tail, the
+        # census is skipped, and the same trip lands PAIR_WALK (30).
+        hdr = bytes(b[0 * PAGE:0 * PAGE + 16])
+        b[0 * PAGE:1 * PAGE] = b'\xff' * PAGE
+        for i in range(16):
+            v = hdr[i]
+            if name == 'f8-census-walk-anomaly' and i in (4, 5):
+                v = 0xFF
+            put1to0(b, 0 * PAGE + i, v, name)
+        if name == 'f8-pair-walk-anomaly':
+            put1to0(b, 0 * PAGE + 4, 0x1E, name)
+            put1to0(b, 0 * PAGE + 5, 0x00, name)
+        bad = bytes((0x08, 0x63, 0x00, 0x3F, 0xFC, 0x02, 0x96))
+        _, tail_hdr = craft_item(2, 99, 0, b'')
+        blob = bad + tail_hdr
+        for i, v in enumerate(blob):
+            put1to0(b, 0 * PAGE + PGDATAOFS + i, v, name)
+        page = bytes(b[0 * PAGE:1 * PAGE])
+        live, anomaly = walk_live(page)
+        check(anomaly and len(live) == 1 and live[0]['hofs'] == 23,
+              'walk anomaly shape', case=name, live=live,
+              anomaly=anomaly)
+        check(crc_ok(page, live[0]), 'walk anomaly tail CRC', case=name)
+        return {'family': 'f8-walk-anomaly', 'site': 27
+                if name == 'f8-census-walk-anomaly' else 30}
     if name == 'tail-census-wrap-256':
         # L1-P1-1 red-first: 256 verbatim older twins of the tail ID wrap
         # the C uint8 olderTwin counter to 0; one trailing divergent copy
@@ -1562,10 +1600,12 @@ def hand_picked(name, b, last, info):
 
 
 def generated(name, b):
-    """Enumerated deterministic corpus v1. Every mutation is preserve-and-reject
-    by construction: torn headers break signature/version/state, topology pairs
-    exceed the single destination/source/ready budget, lone-ready has no
-    destination/source/data page, torn-erase leaves data under an erased header."""
+    """Enumerated deterministic corpus (enumerated-v2). Every mutation is
+    preserve-and-reject by construction: torn headers break
+    signature/version/state, topology pairs exceed the single
+    destination/source/ready budget, lone-ready has no
+    destination/source/data page, torn-erase leaves data under an erased
+    header."""
     if name.startswith('gen-torn-state-') or name.startswith('gen-torn-version-') or name.startswith('gen-torn-signature-'):
         pg = int(name.rsplit('-', 1)[1])
         off = {'state': 0, 'version': 2, 'signature': 3}[name.split('-')[2]]
@@ -1618,7 +1658,8 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'mixed-divergent-act-trio-twinned',
                 'cmp-erase-tail-singleton', 'cmp-erase-tail-unmarkable',
                 'cmp-erase-tail-exact', 'tail-census-wrap-256',
-                'erase-drained-first-live', 'erase-eoff-boundary-live']
+                'erase-drained-first-live', 'erase-eoff-boundary-live',
+                'f8-census-walk-anomaly', 'f8-pair-walk-anomaly']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -1681,6 +1722,8 @@ EXPECTED_TAG = {
     'tail-census-wrap-256': 'TOPO_ACT_CONFLICT',
     'erase-drained-first-live': 'CMP_ERASE_LIVE_END',
     'erase-eoff-boundary-live': 'CMP_ERASE_BELOW_END',
+    'f8-census-walk-anomaly': 'TOPO_ACT_CONFLICT',
+    'f8-pair-walk-anomaly': 'TOPO_ACT_CONFLICT',
     'multi-act-twins': 'ADMIT_RESUME_DIRECT',
     'multi-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
@@ -1773,7 +1816,15 @@ def verify(sdk, out):
 
             def measure_cost(cname, cimg):
                 """Q2: run the bare-init cost verb on a copy of cimg and prove
-                the measured startup reads sit under the analytic bound."""
+                the measured startup reads sit under the analytic bound.
+                L1-P3: the cap uses the PRE-image census but the verb runs
+                two inits, the second on the possibly mutated image.
+                First-init writes only remove live state (resume dedup
+                inactivates copies; tail marking writes a page state byte,
+                never a new live header), so the second init walks no more
+                than the first; reject images are additionally byte-proven
+                immutable. A future shape violating that monotonicity fails
+                closed here (measured over cap)."""
                 cp = out / (exe.name + '-costrun-' + cname + '.bin')
                 cp.write_bytes(cimg)
                 cost = invoke(cp, 'cost')
@@ -1807,6 +1858,7 @@ def verify(sdk, out):
                 # positionals; unknown verbs exit 2 after the bare inits).
                 arity = out / (exe.name + '-arity.bin')
                 arity.write_bytes(pristine)
+                arity_probes = []
                 for verb, args in (('fill', ()), ('cost', ('extra',)),
                                    ('latch', ('extra',)), ('bogus', ())):
                     q = subprocess.run(
@@ -1815,6 +1867,9 @@ def verify(sdk, out):
                         capture_output=True, timeout=INVOKE_TIMEOUT)
                     check(q.returncode == 2, 'probe arity contract broken',
                           lane=tag, verb=verb, args=args, exit=q.returncode)
+                    arity_probes.append({'verb': verb, 'args': list(args),
+                                         'exit': q.returncode})
+                lane['arity_probes'] = arity_probes
                 lane['blank_init'] = blank
                 lane['healthy'] = healthy
                 lane['healthy_sha256'] = before
@@ -1936,6 +1991,25 @@ def verify(sdk, out):
                           fault[0]['b'] == r['init_status'] and
                           fault[0]['c'] == 0, 'export9 FAULT record wrong',
                           lane=tag, case=name, export=exp)
+                    # L1-P3: the classifier rejects before scanPage
+                    # populates the handle, so the zeroed handle projects
+                    # fixed TOPOLOGY/SPACE/COUNTERS bytes on every reject
+                    # (pages 0: no per-page SPACE rows, just the summary).
+                    topo = [er for er in exp['records'] if er['event'] == 46]
+                    space = [er for er in exp['records'] if er['event'] == 47]
+                    ctrs = [er for er in exp['records'] if er['event'] == 48]
+                    check([(q['a'], q['b'], q['c']) for q in topo] ==
+                          [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                          'export9 TOPOLOGY bytes wrong', lane=tag, case=name,
+                          export=exp)
+                    check([(q['a'], q['b'], q['c']) for q in space] ==
+                          [(0xFFFF, 0, 0)],
+                          'export9 SPACE bytes wrong', lane=tag, case=name,
+                          export=exp)
+                    check([(q['a'], q['b'], q['c']) for q in ctrs] ==
+                          [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                          'export9 COUNTERS bytes wrong', lane=tag, case=name,
+                          export=exp)
                     lane['rejections'][name] = {**r, 'mutation': mutation,
                                                  'oracle_tag': otag,
                                                  'latch': got_latch,
@@ -2035,6 +2109,33 @@ def verify(sdk, out):
                 twin = bytearray(dense.read_bytes())
                 copy_page_1to0(twin, 0, 1, 'dense-twinned')
                 dense_cases.append(('dense-twinned', bytes(twin)))
+                # CH-P2: realistic populated unique-ID store (56 distinct
+                # live items of 64 bytes across two ACT pages). dense-*
+                # covers count with 1-byte payloads only; this case proves
+                # the per-image bound with realistic count AND size.
+                pop = bytearray(pristine)
+                for pg in (0, 1):
+                    pop[pg * PAGE:(pg + 1) * PAGE] = b'\xff' * PAGE
+                    base = pg * PAGE
+                    for i, v in enumerate((0x7C, 0x01, 0x0F, 0x96)):
+                        put1to0(pop, base + i, v, 'populated-realistic')
+                    pos = PGDATAOFS
+                    for n in range(28):
+                        data, hdr = craft_item(1, 200 + pg * 28 + n, 0,
+                                               bytes((0xA5,)) * 64)
+                        for i, v in enumerate(data + hdr):
+                            put1to0(pop, base + pos + i, v,
+                                    'populated-realistic')
+                        pos += len(data) + len(hdr)
+                    check(pos == PGDATAOFS + 28 * 71, 'populated size',
+                          case='populated-realistic', page=pg, end=pos)
+                    put1to0(pop, base + 4, pos & 0xFF, 'populated-realistic')
+                    put1to0(pop, base + 5, (pos >> 8) & 0xFF,
+                            'populated-realistic')
+                verdict, otag = oracle_decision(bytes(pop))
+                check(verdict == 'ADMIT', 'populated store must admit',
+                      lane=tag, oracle_tag=otag)
+                dense_cases.append(('populated-realistic', bytes(pop)))
             except Exception as exc:
                 lane['lane_failures'].append({'case': 'dense-build',
                                               'error': str(exc)[:2000]})
@@ -2059,7 +2160,7 @@ def verify(sdk, out):
     sanitizer_lanes = len([l for l in rows if l['sanitizer']])
     sanitizer_expected = sanitizer_lanes * len(REJECT_CASES) * 2
     admit_expected = lanes_built * len(ADMIT_CASES) * 2
-    cost_expected = lanes_built * (len(ADMIT_CASES) + 2)
+    cost_expected = lanes_built * (len(ADMIT_CASES) + 3)
     export9_expected = lanes_built * (len(REJECT_CASES) + len(ADMIT_CASES))
     cost_short = cost_done != cost_expected
     if cost_short:
@@ -2092,6 +2193,13 @@ def verify(sdk, out):
                if k not in stack_usage.get('t832_frames', {})]
     if missing:
         failures.append({'phase': 'stack-frame-missing', 'missing': missing})
+    # L2-P3: only the classify frame is capped, deliberately. Absolute
+    # .su bytes are gcc-version-sensitive, so capping every helper would
+    # false-red on toolchain bumps; the helpers are static fixed frames
+    # (no recursion, no VLA, no alloca: fixed byte arrays and bounded
+    # loops only), hence bounded structurally, while the classify frame
+    # carries the page vectors + locals and gets the 1KB cap. Presence
+    # of every required frame is asserted above; values are recorded.
     if stack_usage.get('classify') and stack_usage['classify']['bytes'] > 1024:
         failures.append({'phase': 'stack-frame',
                          'frames': stack_usage['t832_frames']})

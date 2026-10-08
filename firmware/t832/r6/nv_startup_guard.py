@@ -168,7 +168,7 @@ static uint8_t NVOCMP_startupReject(uint8_t st, uint8_t pg, uint8_t site, uint8_
   return st;
 }
 
-/* Suffix proof: true only when every live item strictly above eoff on page
+/* Suffix proof: true only when every live item at or above eoff on page
    epg has a verbatim twin on page fpg and both pages walk to a clean end.
    Below-end erase offsets are fresh partial-consumption frontiers (dst-full
    rounds stop mid-page) or stale/torn values; cleanPage hides everything
@@ -186,7 +186,12 @@ static bool NVOCMP_startupSuffixTwinned(uint8_t epg, uint16_t eoff, uint16_t end
     r = NVOCMP_startupWalkNext(&w, &h);
     if(r < 0) return false;
     if(r == 0) return true;
-    if(h.hofs > eoff)
+    /* L1-P1-2: the boundary header itself (hofs == eoff) is hidden by
+       the post-clean walk from eoff (it reads headers ending at or
+       below the offset), so it needs a twin too. Strict > skipped it:
+       a drained page's first header, or a len-0 header on a frontier,
+       was admitted untwinned and then destroyed. */
+    if(h.hofs >= eoff)
     {
       NVOCMP_startupWalk_t v;
       NVOCMP_itemHdr_t g;
@@ -467,7 +472,12 @@ static uint8_t NVOCMP_startupClassify(void)
          Admitted older sets: none, one non-twin, or twins-only. */
       uint8_t c;
       uint8_t older = 0;
-      uint8_t olderTwin = 0;
+      /* L1-P1-1: olderTwin must not wrap: 256 verbatim older twins
+         wrapped the uint8 to 0, letting a trailing divergent copy pass
+         as a singleton older set (mixed-set admission). uint16 cannot
+         wrap (at most 15 pages x 513 copies each). older trips at 2,
+         so it provably stays in range. */
+      uint16_t olderTwin = 0;
       for(c = 0; c < chkN; c++)
       {
         NVOCMP_startupWalk_t w;

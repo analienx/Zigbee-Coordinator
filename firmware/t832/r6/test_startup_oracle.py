@@ -480,6 +480,81 @@ class OracleCorpusTest(unittest.TestCase):
         img = image([end] + [page()] * 13 + [dst])
         self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
 
+    def test_oracle_erase_drained_first_live_rejected(self):
+        # L1-P1-2 (drained): one len-0 live item at hofs==PGDATAOFS on a
+        # drained end page. The post-clean page is fully erased, so the
+        # first header needs a twin exactly like any header above eoff;
+        # strict > skipped it. No twin on dst: reject.
+        edge = live_item(2, 99, 0, 0)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + padded())
+        end = page(0x7C, data=padded(edge))
+        img = image([end, dst] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img),
+                         ('REJECT', 'CMP_ERASE_LIVE_END'))
+
+    def test_oracle_erase_drained_first_live_twinned_admitted(self):
+        # L1-P1-2 anti-over-rejection: the same boundary header with a
+        # verbatim twin on dst still admits (the >= proof checks it and
+        # the twin survives the erase).
+        edge = live_item(2, 99, 0, 0)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + padded(edge))
+        end = page(0x7C, data=padded(edge))
+        img = image([end, dst] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+
+    def test_oracle_erase_eoff_boundary_live_rejected(self):
+        # L1-P1-2 (frontier): eoff=31 with a len-0 live header starting
+        # exactly at eoff (over a len-8 item). The post-clean walk from
+        # eoff hides it, so it needs a twin; strict > skipped it.
+        below = live_item(2, 99, 1, 8)
+        edge = live_item(2, 99, 0, 0)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1F, 0x00, 0x00, 0x96))
+               + padded())
+        end = page(0x7C, data=padded(below, edge))
+        img = image([end, dst] + [page()] * 13)
+        self.assertEqual(v.oracle_decision(img),
+                         ('REJECT', 'CMP_ERASE_BELOW_END'))
+
+    def test_oracle_erase_eoff_boundary_twinned_admitted(self):
+        # L1-P1-2 anti-over-rejection: the frontier boundary header with
+        # a verbatim twin admits. Range [0..1] (page 0 blank) so the
+        # tail-mark lands on erased page 3 instead of dst itself.
+        below = live_item(2, 99, 1, 8)
+        edge = live_item(2, 99, 0, 0)
+        dst = (bytes((0x78, 0x01, 0x0F, 0x96))
+               + bytes((0xFF, 0xFF, 0xFE, 0x96))
+               + bytes((0x10, 0x00, 0x00, 0x96))
+               + bytes((0x1F, 0x00, 0x01, 0x96))
+               + padded(edge))
+        end = page(0x7C, data=padded(below, edge))
+        img = image([page(), end, dst] + [page()] * 12)
+        self.assertEqual(v.oracle_decision(img), ('ADMIT', 'ADMIT_RECOVER_ERASE'))
+
+    def test_oracle_tail_census_wrap_rejected(self):
+        # L1-P1-1 oracle pin: 256 verbatim older twins plus one oldest
+        # divergent copy of the tail ID. Unbounded ints see the mixed
+        # set (TAIL_MULTI); the pre-fix C uint8 wrapped to 0 and
+        # admitted. The hosted corpus case proves C matches post-fix.
+        div = live_item(1, 33, 0, 8, fill=0xA5)
+        twin = live_item(1, 33, 0, 0)
+        stack = div + twin * 257
+        self.assertEqual(len(stack), 15 + 257 * 7)
+        act = page(0x7C, data=stack + b'\xff' * (PAGE - 16 - len(stack)))
+        img = image([act] + [page()] * 14)
+        self.assertEqual(v.oracle_decision(img),
+                         ('REJECT', 'TOPO_ACT_CONFLICT'))
+
 
 class StartupCostBoundTest(unittest.TestCase):
     # Q2: the analytic startup-read bound is pure policy math over a page

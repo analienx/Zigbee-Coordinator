@@ -44,7 +44,9 @@ class TrialBundleTest(unittest.TestCase):
                          'post_program_nv': files['post-program-nv.bin'],
                          'post_boot_nv': files['post-boot-nv.bin'],
                          'records': files['records.json']},
-               'ranges': {'expected_changed_pages': list(expected)}}
+               'ranges': {'expected_changed_pages': list(expected)},
+               'network_state': {'preserved': True,
+                                 'note': 'synthetic: bytes identical'}}
         if manifest:
             doc.update(manifest)
         (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
@@ -208,6 +210,167 @@ class TrialBundleTest(unittest.TestCase):
                     tempfile.TemporaryDirectory() as tmp:
                 result = c.check_bundle(self.bundle(tmp, manifest=override))
             self.assertFalse(result['ok'], override)
+
+    def test_duplicate_boot_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 0, 0), rec('BOOT'),
+                       rec('NV_RESULT', 7, 0, 0), rec('NV_RESULT', 9, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('multiple BOOT' in e['error']
+                            for e in result['errors']))
+
+    def test_boot_not_first_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('NV_RESULT', 9, 0, 0), rec('NV_RESULT', 7, 0, 0),
+                       rec('BOOT')]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('BOOT not first' in e['error']
+                            for e in result['errors']))
+
+    def test_a9_without_preceding_a7_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 9, 0, 0),
+                       rec('NV_RESULT', 7, 0, 0), rec('NV_RESULT', 9, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('preceding a7' in e['error']
+                            for e in result['errors']))
+
+    def test_a7_without_following_a9_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 0, 0), rec('NV_RESULT', 7, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('following a9' in e['error']
+                            for e in result['errors']))
+
+    def test_multi_poll_order_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 0, 0), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertTrue(result['ok'], result)
+
+    def test_malformed_record_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), None, rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('malformed' in e['error']
+                            for e in result['errors']))
+
+    def test_network_state_required_and_gated(self):
+        variants = [
+            {'network_state': {'preserved': False, 'note': 'loss seen'}},
+            {'network_state': {'preserved': 'yes', 'note': 'x'}},
+            {'network_state': {'preserved': True, 'note': '  '}},
+            {'network_state': 'compared-ok'},
+        ]
+        for override in variants:
+            with self.subTest(override=override), \
+                    tempfile.TemporaryDirectory() as tmp:
+                result = c.check_bundle(self.bundle(tmp, manifest=override))
+            self.assertFalse(result['ok'], override)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            del doc['network_state']
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+
+    def test_claim_slack_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp, manifest={'ranges':
+                               {'expected_changed_pages': [3, 4]}})
+            result = c.check_bundle(root)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['claim_slack_pages'], [4])
+
+    def test_checker_micro_branches_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            (root / 'manifest.json').unlink()
+            self.assertFalse(c.check_bundle(root)['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            (root / 'records.json').write_text(json.dumps({'x': 1}) + '\n')
+            doc = json.loads((root / 'manifest.json').read_text())
+            data = (root / 'records.json').read_bytes()
+            doc['files']['records']['sha256'] = hashlib.sha256(data).hexdigest()
+            doc['files']['records']['size'] = len(data)
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       {'kind_name': 'NV_RESULT', 'a': 9, 'b': 'x', 'c': 0}]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            del doc['files']['pre_nv']
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            doc['files']['pre_nv']['size'] += 1
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('size mismatch' in e['error']
+                            for e in result['errors']))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp, manifest={'ranges': {}})
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = {'operator': 's', 'tools': ['n'],
+                    'hex_sha256': '1' * 64, 'capture_window_s': 120}
+            del meta['tools']
+            root = self.bundle(tmp, manifest={'meta': meta})
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+
+    def test_files_shape_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp, manifest={'files': ['pre_nv']})
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('not an object' in e['error']
+                            for e in result['errors']))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            doc['files']['pre_nv'] = 'pre-nv.bin'
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            doc['files']['pre_nv']['file'] = 7
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            del doc['files']['pre_nv']['size']
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('size pin missing' in e['error']
+                            for e in result['errors']))
 
     def test_boot_allowlist_optional_but_gated(self):
         with tempfile.TemporaryDirectory() as tmp:

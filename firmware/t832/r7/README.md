@@ -102,11 +102,11 @@ differs from R6's exhausted five-page configuration. It does not identify whethe
 the management uploader or TI's original destructive scan/init path removed NV.
 Private snapshots and network keys remain outside this public repository.
 
-The actual pinned-driver gate now checks 81 rejecting cases across asserting and
-embedded-style nonfatal assertion lanes: 50 hand-picked cases (topologies,
+The actual pinned-driver gate now checks 86 rejecting cases across asserting and
+embedded-style nonfatal assertion lanes: 55 hand-picked cases (topologies,
 compact-header negatives, legacy fail-closed, mixed recovery, RDY cursor,
 multi-page erase range, duplicate PGCDST, divergent ACT twins and same-page duplicates, reserved header
-fields, erase-tail divergent pairs, tail trios, stale end offsets, FULL-scope pairs, XSRC-scope pairs, RDY data, mixed twin+divergent trios, unmarkable erase tails) plus 31 enumerated generated cases (valid-NOR torn header bytes,
+fields, erase-tail divergent pairs, tail trios, stale end offsets, FULL-scope pairs, XSRC-scope pairs, RDY data, mixed twin+divergent trios, unmarkable erase tails, tail-census wrap, drained/boundary first-headers, walk anomalies) plus 31 enumerated generated cases (valid-NOR torn header bytes,
 ambiguous destination/source/ready pairs, lone-ready, torn-erase remnants).
 Each must reject repeated init and a full extended-API sweep
 (create/update/delete/read/readCont/write/getItemLen/doNext/expectComp/
@@ -115,12 +115,12 @@ physical operations and identical full-image hashes. A dedicated adverse probe
 verb shows expectComp(nonzero) cannot reach the page walker after a rejected
 init; the whole sweep also runs under AddressSanitizer+
 UndefinedBehaviorSanitizer with no findings. ACT/FULL/XSRC live IDs must agree pairwise across and within ACT, FULL, and XSRC pages:
-every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy and no older twin alongside, which resume dedups (lab-proven by mutation cuts). Below-end erase offsets admit only with the suffix proof (every live item above the offset verbatim-twinned on dst), since cleanPage hides the suffix. Non-end range pages admit when blank or all-live-twinned on dst, and drained ends admit when blank or twinned, since cleanPage erases them (twins survive). Erase admission also requires the driver's XDST tail-mark to land on an erased page, or on a page cleanPage erases first (in-range), or init fails every boot. Missing recovery destinations return a
+every pair of live copies sharing an ID is proved verbatim (bounds, both CRCs, payload bytes) or fails closed, except divergent pairs on the live CRC-valid tail ID of a resume topology with at most one older copy and no older twin alongside, which resume dedups (lab-proven by mutation cuts). Below-end erase offsets admit only with the suffix proof (every live item at or above the offset verbatim-twinned on dst), since cleanPage hides the suffix including the boundary header itself. Non-end range pages admit when blank or all-live-twinned on dst, and drained ends admit when blank or fully twinned including the first header, since cleanPage erases them (twins survive). Erase admission also requires the driver's XDST tail-mark to land on an erased page, or on a page cleanPage erases first (in-range), or init fails every boot. Missing recovery destinations return a
 latched error instead of the upstream startup spin. Healthy reopen stays
 unchanged; truly blank initialization still succeeds. Existing exhaustive
 compaction/write gates apply. The 15,504 state-count families in the report are
 Python model combinatorics, not driver executions; execution evidence is the
-counted probe runs (648 reject, 64 admit, 324 sanitizer).
+counted probe runs (688 reject, 64 admit, 344 sanitizer, 376 export9, 44 cost).
 
 An original-state-only host recovery has now been designed with a retained genuine
 native NIB and saved associations; it does not require provisional formation.
@@ -139,7 +139,12 @@ the erased scan is at most 64 calls x 2048B; the boundary walk is at most
 513 calls x 7B; CopiesEqual(len) re-reads both payloads at
 2*ceil((len+4)/32) + 2*ceil(len/32) calls and 4*len+8 bytes. Every
 classifier walk is capped (512 steps, 64 slides); anomalies and early
-rejects only read less, so a clean-end census soundly bounds any image.
+rejects only read less, so a clean-end census soundly bounds the
+classifier's own reads on any image. The separate flat driver
+scan/resume allowance in the gate cap is a characterized envelope,
+not a derived bound: it holds with the per-case margins in the table
+below on every measured shape, and unmeasured-shape coverage plus
+target-time validation stay on the hardware checklist.
 
 Per-init classify ceiling for C chk pages (ACT/FULL/XSRC) with Htot live
 headers (Hmax max per page) and max payload Lmax: the 15-page header loop
@@ -151,9 +156,11 @@ each measured image's own census (q2_classify_bound in
 verify_startup_guard.py) and fails if two bare inits exceed twice the
 classify ceiling plus a flat driver scan/resume allowance. Measured cases:
 all 8 admit pre-images (including PGCDST erase shapes, which exercise
-PageTwinned/SuffixTwinned), one 220-item dense page, and its two-page
+PageTwinned/SuffixTwinned), one 220-item dense page, its two-page
 identical twin (which exercises the quadratic pairwise proof with
-byte-compare re-proofs on every live ID).
+byte-compare re-proofs on every live ID), and one realistic populated
+store (56 distinct 64-byte live items across two ACT pages: realistic
+count AND size, which the 1-byte dense payloads do not cover).
 
 Stack/RAM: the classify frame is capped at 1KB by host -fstack-usage
 (frames recorded in report.json; exact array accounting is 5 x 15B page
