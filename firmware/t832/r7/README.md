@@ -183,3 +183,52 @@ WalkInit 32, OnBoundary 64, Erased 96, CopiesEqual 128. Deepest guard
 nesting is 3 frames (classify + twin proof + compare, about 576B) plus
 driver callees; the gate fails if any expected frame is absent from the
 -fstack-usage report or classify exceeds 1KB.
+
+## R10 rejection diagnosis (Q3)
+
+Failure-path visibility before this change: the classifier runs inside
+initNv before scanPage populates pageInfo and before any gAction write,
+so on a reject the stage-8 capture copies a zeroed handle and
+init_action reads 0, which is also the encoding of a true NORMAL_INIT.
+A bare BADVERSION/FAILURE status could not say which page, field, or
+check rejected.
+
+Production caller trace (hosted grep over the pinned SDK + examples,
+runs 37697037107/37699136404/37700709109/37702282371): the ZNP startup
+entry calls zstack_user0Cfg.nvFps.initNV(NULL) at
+sdk/source/ti/zstack/startup/main.c:348 and ignores the return, then
+configures the stack task unconditionally; the OSAL wrapper
+osal_nv_init at sdk/source/ti/zstack/osal/osal_nv.c:103 likewise
+ignores it. Boot is therefore not gated on initNV status at either
+call site, so a rejected init still reaches the MT loop and the
+diagnosis record below can flow over the wire. Residual assumption:
+no later boot step asserts on NV readiness before MT answers; PR45's
+answering device (NORMAL_INIT, 467 NV transactions) supports but does
+not prove the reject-case path.
+
+Latch design: classify latches a 4-byte POD {status, page, site, raw}
+on each of its 41 reject paths (39 distinct sites, site 0 = none,
+page 0xFF = not page-scoped; raw carries the offending header byte
+or check index, never item IDs, payloads, or keys). The latch clears
+on every classify entry so a re-init never reports a stale cause, and
+a patch-application check fails unless exactly 41 latch sites are
+present. The stage-8 capture copies the latch into 4 new snapshot
+bytes (89 of the 128 static-asserted bytes) and the DIAG exporter
+emits it as NV_RESULT a9 with b = status/page and c = site/raw;
+zeros mean the classifier admitted, which is exactly what
+distinguishes ACTION_NOT_SELECTED with a latched cause from a true
+NORMAL_INIT. The record shape is documented in diag_schema.json and
+decodes through the existing generic incident codec; the numeric
+site table lives in verify_startup_guard.py and is order-locked
+against the C enum by a unit test.
+
+Proof (run 37699136404, also green on 37702282371): all 81 reject
+images x 4 lanes latch exactly the oracle-predicted (status, site,
+page, raw) through production init, and all 8 admit images latch
+zeros. The oracle mirrors the CRC-8/poly-0x97 check and the exact C
+traversal order (tail census, then pairwise walks, inner walks
+breaking at the first twin); a per-lane self-check validates the CRC
+mirror against the production-written seed item, so a mirror bug
+fails loudly instead of misattributing a cause. The P3 shapes
+(classifier admits, driver later fails ERROR_UNKNOWN) correctly
+expect latch zeros.
