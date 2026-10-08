@@ -1991,20 +1991,29 @@ def verify(sdk, out):
                           fault[0]['b'] == r['init_status'] and
                           fault[0]['c'] == 0, 'export9 FAULT record wrong',
                           lane=tag, case=name, export=exp)
-                    # L1-P3: the classifier rejects before scanPage
-                    # populates the handle, so the zeroed handle projects
-                    # fixed TOPOLOGY/SPACE/COUNTERS bytes on every reject
-                    # (pages 0: no per-page SPACE rows, just the summary).
+                    # L1-P3: TOPOLOGY/SPACE/COUNTERS projection on reject.
+                    # The handle is NOT zeroed (first pin attempt proved
+                    # the repo premise wrong on 37751262300): nvSize reads
+                    # 15, active/active_offset read their defaults, and
+                    # per-page offsets/states are image-dependent. So
+                    # TOPOLOGY is pinned exactly (constants + ready false
+                    # on every reject), COUNTERS exactly zero (no stage
+                    # 1/3/5 capture exists in this TU), and SPACE
+                    # structurally (15 indexed rows + summary; offsets,
+                    # states and the free count vary by image).
                     topo = [er for er in exp['records'] if er['event'] == 46]
                     space = [er for er in exp['records'] if er['event'] == 47]
                     ctrs = [er for er in exp['records'] if er['event'] == 48]
                     check([(q['a'], q['b'], q['c']) for q in topo] ==
-                          [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                          [(0, 15, 0), (1, 0, 0), (2, 255, 2048)],
                           'export9 TOPOLOGY bytes wrong', lane=tag, case=name,
                           export=exp)
-                    check([(q['a'], q['b'], q['c']) for q in space] ==
-                          [(0xFFFF, 0, 0)],
-                          'export9 SPACE bytes wrong', lane=tag, case=name,
+                    check(len(space) == 16 and
+                          all(q['a'] == i for i, q in enumerate(space[:15]))
+                          and space[15]['a'] == 0xFFFF and
+                          space[15]['c'] == 0 and
+                          0 <= space[15]['b'] <= 15,
+                          'export9 SPACE shape wrong', lane=tag, case=name,
                           export=exp)
                     check([(q['a'], q['b'], q['c']) for q in ctrs] ==
                           [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
