@@ -329,7 +329,8 @@ class HwQualTests(unittest.TestCase):
                     root = Bundle(tmp).write()
                     path = root / 'transcript.jsonl'
                     events = [json.loads(line) for line in path.read_text().splitlines()]
-                    events.insert(8, {'type': kind, 'phase': 'vendor-mid', **fields})
+                    phase = 'base' if kind == 'vendor_rollback' else 'vendor-mid'
+                    events.insert(8, {'type': kind, 'phase': phase, **fields})
                     for seq, event in enumerate(events, 1): event['seq'] = seq
                     path.write_text(''.join(json.dumps(e)+'\n' for e in events))
                     with self.assertRaisesRegex(Failed, 'counter observations require identity'):
