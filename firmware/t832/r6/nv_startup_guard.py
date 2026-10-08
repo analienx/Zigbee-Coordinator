@@ -97,9 +97,12 @@ static void NVOCMP_startupWalkInit(NVOCMP_startupWalk_t *w, uint8_t pg)
    tail bytes (erased gaps, torn writes) slide past bounded; every valid
    header steps down exactly, so the walk always terminates. Torn bytes are
    1->0 prefixes of the true bytes being programmed, so forging a valid
-   window that skips a live header needs a bit-precise tear (adversarial
-   fault injection, which this NOR guard is not built to resist); random
-   power-cut tears cannot forge one. The driver's own walks share this. */
+   window that skips a live header needs a bit-precise tear. Whether a
+   random power-cut tear can forge one is UNPROVEN: the lab cuts land on
+   whole-operation boundaries and the handcrafted negatives do not
+   establish exhaustive torn-write behavior. The driver's own walks
+   share this exposure. Physical-trial evidence is required before
+   claiming coverage here (see the r7 next-trial plan). */
 static int8_t NVOCMP_startupWalkNext(NVOCMP_startupWalk_t *w, NVOCMP_itemHdr_t *out)
 {
   for(;;)
@@ -375,7 +378,9 @@ static uint8_t NVOCMP_startupClassify(void)
          its earlier transfer recorded); torn-smaller cursors are not
          distinguishable from stale ones, but a torn cursor off every item
          boundary would misparse a header, so only boundaries are admitted.
-         Above the true end is impossible: 1->0 writes never grow a value. */
+         Above the true end fails closed here: neither stale cursors
+         (earlier transfers record smaller ends) nor complete writes
+         produce it, so an above-end cursor is a torn write. */
       uint16_t endTrue = NVOCMP_findOffset(pg, FLASH_PAGE_SIZE);
       if(cursor > endTrue) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CURSOR_ABOVE_END, (uint8_t)(cursor & 0xFF));
       if(cursor < endTrue && !NVOCMP_startupOnBoundary(pg, cursor, endTrue)) return NVOCMP_startupReject(NVINTF_BADVERSION, pg, NVOCMP_REJ_CURSOR_OFF_BOUNDARY, (uint8_t)(cursor & 0xFF));
