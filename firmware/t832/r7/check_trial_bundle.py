@@ -256,14 +256,21 @@ def check_records(blobs, errors, report):
     report['a7_count'] = len(a7)
     report['a9_count'] = len(a9)
 
+    first_a7 = None
     for n, r in enumerate(a7):
         action = r['b']
         if not 0 <= action < INIT_ACTIONS:
             fail(errors, 'a7 init action out of range', index=n, record=r)
-        elif n == 0:
+        pair = (r['b'], r['c'])
+        if first_a7 is None:
+            first_a7 = pair
             report['init_action'] = action
             report['first_failure'] = r['c']
+        elif pair != first_a7:
+            fail(errors, 'a7 changed across capture polls', index=n,
+                 expected=first_a7, got=pair)
 
+    first_a9 = None
     for n, r in enumerate(a9):
         b, c = r['b'], r['c']
         status, page = (b >> 8) & 0xFF, b & 0xFF
@@ -277,9 +284,14 @@ def check_records(blobs, errors, report):
         if site > MAX_SITE:
             fail(errors, 'a9 site out of range', index=n, site=site,
                  record=r)
-        if n == 0:
+        pair = (b, c)
+        if first_a9 is None:
+            first_a9 = pair
             report['latch'] = {'status': status, 'page': page,
                                'site': site, 'raw': raw}
+        elif pair != first_a9:
+            fail(errors, 'a9 changed across capture polls', index=n,
+                 expected=first_a9, got=pair)
 
 
 def check_bundle(bundle):

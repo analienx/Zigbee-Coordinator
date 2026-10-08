@@ -256,6 +256,22 @@ class TrialBundleTest(unittest.TestCase):
             result = c.check_bundle(self.bundle(tmp, records=records))
         self.assertTrue(result['ok'], result)
 
+    def test_multi_poll_values_must_stay_stable(self):
+        variants = [
+            [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+             rec('NV_RESULT', 9, 0, 0), rec('NV_RESULT', 7, 1, 0),
+             rec('NV_RESULT', 9, 0, 0)],
+            [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+             rec('NV_RESULT', 9, 0, 0), rec('NV_RESULT', 7, 0, 0),
+             rec('NV_RESULT', 9, 1, 0)],
+        ]
+        for records in variants:
+            with self.subTest(records=records), tempfile.TemporaryDirectory() as tmp:
+                result = c.check_bundle(self.bundle(tmp, records=records))
+            self.assertFalse(result['ok'])
+            self.assertTrue(any('changed across capture polls' in e['error']
+                                for e in result['errors']))
+
     def test_malformed_record_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             records = [rec('BOOT'), None, rec('NV_RESULT', 7, 0, 0),
@@ -429,7 +445,9 @@ class TrialBundleTest(unittest.TestCase):
 
     def test_unknown_or_non_u16_nv_result_subtype_rejected(self):
         bad = [
-            {'kind_name': 'NV_RESULT', 'a': 8, 'b': 0, 'c': 0},
+            {'kind_name': 'NV_RESULT', 'a': 10, 'b': 0, 'c': 0},
+            {'kind_name': 'NV_RESULT', 'a': 8, 'b': True, 'c': 0},
+            {'kind_name': 'NV_RESULT', 'a': 8, 'b': 0, 'c': '0'},
             {'kind_name': 'NV_RESULT', 'a': '7', 'b': 0, 'c': 0},
             {'kind_name': 'NV_RESULT', 'a': 7, 'b': -1, 'c': 0},
             {'kind_name': 'NV_RESULT', 'a': 9, 'b': 0, 'c': 65536},
@@ -440,6 +458,17 @@ class TrialBundleTest(unittest.TestCase):
                            rec('NV_RESULT', 9, 0, 0)]
                 result = c.check_bundle(self.bundle(tmp, records=records))
             self.assertFalse(result['ok'])
+
+    def test_production_generic_nv_stages_do_not_break_diagnosis_pairs(self):
+        # r6_nv_export.inc emits stage/request/status BEFORE a7 and a9.
+        # Generic stage8 is the normal completed-API snapshot, not an unknown
+        # subtype. Validate its fields while pairing only diagnosis records.
+        for stage in (0, 1, 2, 3, 4, 5, 6, 8):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                records = [rec('BOOT'), rec('NV_RESULT', stage, 116, 0),
+                           rec('NV_RESULT', 7, 0, 0), rec('NV_RESULT', 9, 0, 0)]
+                result = c.check_bundle(self.bundle(tmp, records=records))
+            self.assertTrue(result['ok'], result)
 
     def test_meta_tools_entries_must_be_non_empty_strings(self):
         for tools in ([''], ['   '], [1], ['ok', '']):

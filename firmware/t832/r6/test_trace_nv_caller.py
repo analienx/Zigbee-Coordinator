@@ -4,8 +4,10 @@ import unittest
 import trace_nv_caller as t
 
 
-def hit(path, match):
-    return {'file': path, 'line': 1, 'match': match, 'context': [match]}
+def hit(path, match, code=None):
+    return {'file': path, 'line': 1, 'match': match,
+            'code': match if code is None else code,
+            'context': [match]}
 
 
 class TraceNvCallerTest(unittest.TestCase):
@@ -33,13 +35,39 @@ class TraceNvCallerTest(unittest.TestCase):
         good = self.good_hits()
         for keep in (good[:1], good[1:]):
             with self.subTest(keep=keep[0]['file']):
-                with self.assertRaisesRegex(ValueError, 'required caller'):
+                with self.assertRaisesRegex(ValueError, 'required ignored-return caller'):
                     t.analyze_hits(keep)
 
     def test_generic_extra_call_does_not_replace_required_callers(self):
         hits = [hit('sdk/foo.c', 'thing.initNV(NULL);')] + self.good_hits()[:1]
-        with self.assertRaisesRegex(ValueError, 'required caller'):
+        with self.assertRaisesRegex(ValueError, 'required ignored-return caller'):
             t.analyze_hits(hits)
+
+    def test_required_call_must_be_standalone_ignored_return(self):
+        path = 'sdk/source/ti/zstack/startup/main.c'
+        bad_code = (
+            'if (zstack_user0Cfg.nvFps.initNV(NULL)) {',
+            'status = zstack_user0Cfg.nvFps.initNV(NULL);',
+            'return zstack_user0Cfg.nvFps.initNV(NULL);',
+        )
+        for code in bad_code:
+            with self.subTest(code=code):
+                hits = [hit(path, code)] + self.good_hits()[1:]
+                with self.assertRaisesRegex(ValueError, 'required ignored-return caller'):
+                    t.analyze_hits(hits)
+
+    def test_comments_and_strings_are_not_executable_calls(self):
+        lines = [
+            '/*',
+            'zstack_user0Cfg.nvFps.initNV(NULL);',
+            '*/',
+            '// zstack_user0Cfg.nvFps.initNV(NULL);',
+            '"zstack_user0Cfg.nvFps.initNV(NULL);"',
+            'zstack_user0Cfg.nvFps.initNV(NULL);',
+        ]
+        code = t.executable_code_lines(lines)
+        self.assertEqual([line.strip() for line in code[:-1]], ['', '', '', '', ''])
+        self.assertEqual(code[-1].strip(), 'zstack_user0Cfg.nvFps.initNV(NULL);')
 
 
 if __name__ == '__main__':

@@ -1,9 +1,9 @@
 """Q3: trace and pin the production NV-init caller chain on hosted CI.
 
 The pinned TI SDK and Z-Stack example trees are download-only checkouts.
-The gate records every relevant source hit, requires at least one real initNV
-call, and pins the two production Z-Stack callers whose ignored return value
-keeps boot progressing after a rejected NV init.
+The gate records every relevant source hit, requires at least one executable
+initNV call, and pins the two production Z-Stack callers as standalone
+ignored-return statements so boot progress cannot silently become status-gated.
 """
 import argparse
 import json
@@ -16,15 +16,16 @@ PATTERNS = (
 )
 SKIP_DIRS = {'.git', '.github', '__pycache__', 'node_modules'}
 TEXT_SUFFIXES = {'.c', '.h', '.cpp', '.hpp', '.md', '.txt', '.cfg', '.projectspec'}
+C_LIKE_SUFFIXES = {'.c', '.h', '.cpp', '.hpp'}
 MAX_EXCERPTS = 60
 CONTEXT = 8
 REQUIRED_CALLERS = (
     ('znp_startup',
      'source/ti/zstack/startup/main.c',
-     re.compile(r'zstack_user0Cfg\.nvFps\.initNV\s*\(\s*NULL\s*\)')),
+     re.compile(r'^zstack_user0Cfg\.nvFps\.initNV\s*\(\s*NULL\s*\)\s*;\s*$')),
     ('osal_nv',
      'source/ti/zstack/osal/osal_nv.c',
-     re.compile(r'pZStackCfg->nvFps\.initNV\s*\(\s*NULL\s*\)')),
+     re.compile(r'^pZStackCfg->nvFps\.initNV\s*\(\s*NULL\s*\)\s*;\s*$')),
 )
 
 
@@ -37,6 +38,55 @@ def iter_text_files(root):
         yield path
 
 
+def executable_code_lines(lines):
+    """Return a same-length C/C++ code view with comments/strings blanked.
+
+    The caller gate must not accept a required call merely because its text
+    survives in a comment or string literal. Newlines are already split, so
+    block-comment state is the only state carried between lines.
+    """
+    out = []
+    block = False
+    for line in lines:
+        buf = []
+        i = 0
+        quote = None
+        escaped = False
+        while i < len(line):
+            if block:
+                if line.startswith('*/', i):
+                    block = False
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if quote is not None:
+                ch = line[i]
+                if escaped:
+                    escaped = False
+                elif ch == '\\':
+                    escaped = True
+                elif ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if line.startswith('//', i):
+                break
+            if line.startswith('/*', i):
+                block = True
+                i += 2
+                continue
+            ch = line[i]
+            if ch in ('"', "'"):
+                quote = ch
+                i += 1
+                continue
+            buf.append(ch)
+            i += 1
+        out.append(''.join(buf))
+    return out
+
+
 def analyze_hits(hits):
     prod = [h for h in hits
             if 'common/nv/nvocmp.c' not in h['file'].replace('\\', '/')
@@ -45,8 +95,8 @@ def analyze_hits(hits):
         raise ValueError('Q3 trace found no production NV-init caller evidence')
     calls = [h for h in prod
              if re.search(r'(->|\.)initNV\s*\(|[^_a-zA-Z]initNV\s*\([^;]*$',
-                          h['match'])
-             and 'NVOCMP_initNvApi' not in h['match']]
+                          h.get('code', h['match']))
+             and 'NVOCMP_initNvApi' not in h.get('code', h['match'])]
     if not calls:
         raise ValueError('Q3 trace found production mentions but zero actual initNV calls')
 
@@ -54,9 +104,9 @@ def analyze_hits(hits):
     for label, suffix, pattern in REQUIRED_CALLERS:
         matched = [h for h in calls
                    if h['file'].replace('\\', '/').endswith(suffix)
-                   and pattern.search(h['match'])]
+                   and pattern.fullmatch(h.get('code', h['match']).strip())]
         if len(matched) != 1:
-            raise ValueError('Q3 required caller %s expected exactly once, got %d'
+            raise ValueError('Q3 required ignored-return caller %s expected exactly once, got %d'
                              % (label, len(matched)))
         required[label] = matched[0]
     return prod, calls, required
@@ -70,12 +120,15 @@ def collect_hits(roots):
                 lines = path.read_text(encoding='utf-8', errors='strict').splitlines()
             except (UnicodeError, OSError):
                 continue
-            for n, line in enumerate(lines, 1):
+            code_lines = (executable_code_lines(lines)
+                          if path.suffix.lower() in C_LIKE_SUFFIXES else lines)
+            for n, (line, code) in enumerate(zip(lines, code_lines), 1):
                 if any(p in line for p in PATTERNS):
                     lo = max(0, n - 1 - CONTEXT)
                     hi = min(len(lines), n + CONTEXT)
                     hits.append({'file': str(path.relative_to(root.parent)),
                                  'line': n, 'match': line.strip()[:160],
+                                 'code': code.strip()[:160],
                                  'context': lines[lo:hi]})
                     if len(hits) >= MAX_EXCERPTS * 4:
                         break

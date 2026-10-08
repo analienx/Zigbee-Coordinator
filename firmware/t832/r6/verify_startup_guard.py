@@ -22,6 +22,20 @@ from pathlib import Path
 from nv_recovery_fix import apply_fix
 
 HERE = Path(__file__).resolve().parent
+import sys
+sys.path.insert(0, str(HERE.parent / 'r7'))
+from check_trial_bundle import check_records
+
+
+def export_trial_errors(export):
+    # Feed the actual production exporter output to its downstream checker.
+    # BOOT is injected because this probe executes only the NV exporter, not
+    # firmware startup. All NV_RESULT values/order come from the C emitter.
+    records = [{'kind_name': 'BOOT'}] + [dict(r, kind_name='NV_RESULT')
+               for r in export['records'] if r['event'] == 49]
+    errors = []
+    check_records({'records': json.dumps(records).encode()}, errors, {})
+    return errors
 PAGE = 2048
 NVPAGES = 15
 PGDATAOFS = 16
@@ -1991,6 +2005,9 @@ def verify(sdk, out):
                     # b=(status<<8)|page, c=(site<<8)|raw.
                     exp = invoke(p, 'export9')
                     export9_done += 1
+                    check(not export_trial_errors(exp),
+                          'production export rejected by trial checker',
+                          lane=tag, case=name, errors=export_trial_errors(exp))
                     check(p.read_bytes() == raw, 'export9 verb mutated image',
                           lane=tag, case=name, export=exp)
                     check(exp['physical_operations'] == 0, 'export9 wrote',
@@ -2108,6 +2125,9 @@ def verify(sdk, out):
                     pre9 = p.read_bytes()
                     expa = invoke(p, 'export9')
                     export9_done += 1
+                    check(not export_trial_errors(expa),
+                          'admit production export rejected by trial checker',
+                          lane=tag, case=name, errors=export_trial_errors(expa))
                     check(p.read_bytes() == pre9,
                           'admit export9 mutated image', lane=tag, case=name,
                           export=expa)

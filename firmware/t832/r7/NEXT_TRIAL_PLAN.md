@@ -90,17 +90,23 @@ pre_nv, post_program_nv, post_boot_nv, records, ranges
 {expected_changed_pages: [...]} derived from the G3 uploader ranges,
 and network_state {preserved: bool, note: non-empty string} from
 runbook step 8.
-expected_changed_pages covers the PROGRAM diff (pre to post-program)
-only. Both page lists, when present, are unique integer page IDs 0..14.
-The boot diff (post-program to post-boot) is reported for operator review
-and is gated only when the manifest additionally claims
-ranges.boot_allowed_pages. The checker fails on any integrity violation
+expected_changed_pages is the G3-derived upper-bound allowlist for the
+PROGRAM diff (pre to post-program), not an assertion that every allowed
+NV page must change. Firmware programming happens outside this NV window,
+so an empty NV program diff is a valid and informative result: it means no
+observable uploader effect on NV. Claimed-but-unchanged pages remain visible
+as claim_slack_pages and must be reconciled with the G3 uploader log. Both
+page lists, when present, are unique integer page IDs 0..14. The boot diff
+(post-program to post-boot) is reported for operator review and is gated
+only when the manifest additionally claims ranges.boot_allowed_pages. The checker fails on any integrity violation
 (including file paths escaping the bundle or required roles aliasing one
 capture), any program-diff page outside the claimed set, any missing
 required record, any malformed/unknown NV_RESULT, any record disorder
 (multiple BOOTs i.e. a reset in the window, BOOT not first, or an
-NV_RESULT stream other than exact (a7,a9)* pairs), a missing network_state
-verdict, and preserved false (loss or inconclusive: the note says which).
+NV_RESULT stream other than exact stable (a7,a9)* pairs), a missing
+network_state verdict, and preserved false (loss or inconclusive: the note
+says which). Repeated polls must reproduce the same a7 action/failure and
+a9 rejection latch; a changing first-boot diagnosis fails the trial.
 
 ## 5. Pass/fail criteria
 

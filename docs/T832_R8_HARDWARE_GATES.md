@@ -12,7 +12,7 @@ path.
 | H2 | Sacrificial P10 DIAG runbook green | DIAG instrumentation path must prove identical recovery on silicon |
 | H3 | Inherited-page compatibility: real vendor NV items readable after BASE/DIAG boot | The lab populates synthetic families, not the vendor item schema |
 | H4 | Boot read/write/reboot behavior with synthetic state | Init/resume/compaction interplay on silicon, including cold power loss mid-compaction |
-| H5 | Security counters monotonic across every step | Counter slots live in vendor pages the lab does not reproduce |
+| H5 | Each TX and RX security counter independently non-decreasing across every step; exactly one sealed candidate flash per BASE/DIAG phase | Counter slots and operator sequencing live outside hosted firmware execution |
 | H6 | Radio operation (join, route, report) on the sacrificial unit | No radio exists in CI |
 | H7 | Rollback to vendor image restores exact vendor bytes | Byte equality must be observed on a real dump, not asserted from containers |
 | H8 | Household path only after H1-H7: verified restore/readback, cold backup, counters above highest emitted, rollback receipt | Household keys and network state never enter public CI by design |

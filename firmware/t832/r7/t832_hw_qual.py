@@ -219,7 +219,8 @@ def check_phase(events, phase):
     counters = [(e.get("tx_counter"), e.get("rx_counter")) for e in identities]
     if any(c is None or r is None for c, r in counters):
         raise Incomplete("phase %r identity lacks counters" % phase)
-    if any(b < a for a, b in zip(counters, counters[1:])):
+    if any((b[0] < a[0]) or (b[1] < a[1])
+           for a, b in zip(counters, counters[1:])):
         raise Failed("phase %r security counters decreased: %r" % (phase, counters))
     return {"phase": phase, "key_slot_sha256": keys.pop(),
             "counters": counters[0], "writes": len(writes)}
@@ -241,6 +242,9 @@ def verify(bundle, resal_reason=None, nvs_base=VENDOR_NVS_BASE, nvs_bytes=VENDOR
         flashes = [e for e in _phase_events(events, phase) if e["type"] == "flash"]
         if not flashes:
             raise Incomplete("phase %r never flashed its candidate" % phase)
+        if len(flashes) != 1:
+            raise Failed("phase %r must contain exactly one candidate flash, got %d"
+                         % (phase, len(flashes)))
         image = flashes[0].get("image_sha256")
         expect = seal["base_slzb_sha256" if phase == "base" else "diag_slzb_sha256"]
         if image != expect:

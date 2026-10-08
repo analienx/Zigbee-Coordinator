@@ -160,6 +160,26 @@ class HwQualTests(unittest.TestCase):
                 verify_small(root)
             self.assertIn('counters decreased', str(ctx.exception))
 
+    def test_counter_increase_cannot_mask_other_counter_decrease(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write(counters=((7, 10), (8, 0)))
+            with self.assertRaises(Failed) as ctx:
+                verify_small(root)
+            self.assertIn('counters decreased', str(ctx.exception))
+
+    def test_second_flash_in_phase_fails_even_if_same_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write()
+            seal = json.loads((Path(root) / 'seal.json').read_text())
+            path = Path(root) / 'transcript.jsonl'
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+            events.append({'seq': len(events) + 1, 'type': 'flash', 'phase': 'base',
+                           'image_sha256': seal['base_slzb_sha256']})
+            path.write_text(''.join(json.dumps(e) + '\n' for e in events))
+            with self.assertRaises(Failed) as ctx:
+                verify_small(root)
+            self.assertIn('exactly one candidate flash', str(ctx.exception))
+
     def test_key_change_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = Bundle(tmp)
