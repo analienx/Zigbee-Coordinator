@@ -297,6 +297,23 @@ def crc8(data, crc=0):
     return crc
 
 
+def craft_item(sysid, itemid, subid, payload):
+    """Build (data, header) bytes for a live HDRLE=0 item with a valid CRC:
+    the forward direction of parse_item/crc_ok, for corpus construction.
+    Field packing cross-checked against program_tail_singleton's vector."""
+    ln = len(payload)
+    check(0 <= ln <= 2048 - PGDATAOFS - 7, 'craft payload size', size=ln)
+    b0 = ((sysid & 0x3F) << 2) | ((itemid >> 8) & 0x03)
+    b1 = itemid & 0xFF
+    b2 = (subid >> 2) & 0xFF
+    b3 = (((subid & 0x03) << 6) | ((ln >> 6) & 0x3F)) & 0xFF
+    crc = crc8(bytes(payload) + bytes((b0, b1, b2, b3)) +
+               bytes((((ln & 0x3F) << 2),)))
+    b4 = (((ln & 0x3F) << 2) | ((crc >> 6) & 0x03)) & 0xFF
+    b5 = (((crc & 0x3F) << 2) | 0x02) & 0xFF
+    return bytes(payload), bytes((b0, b1, b2, b3, b4, b5, 0x96))
+
+
 def crc_ok(page, h):
     """NVOCMP_verifyCRC mirror (HDRLE=0): payload plus the first 4 header
     bytes, then the length final byte, must equal the stored CRC."""
@@ -1425,6 +1442,122 @@ def hand_picked(name, b, last, info):
         for i in range(7):
             put1to0(b, 14 * PAGE + 16 + 116 + i, orig[116 + i], name)
         return {'family': 'admit-erase-tail-inrange', 'seed_end': end}
+    if name == 'tail-census-wrap-256':
+        # L1-P1-1 red-first: 256 verbatim older twins of the tail ID wrap
+        # the C uint8 olderTwin counter to 0; one trailing divergent copy
+        # (visited last: oldest) then passes as a singleton older set.
+        # Oracle (unbounded ints) rejects TAIL_MULTI; pre-fix C admits.
+        # Page 0 is erased and rebuilt: NULL cursor (tail eligible),
+        # divergent len-8 at the bottom, 256 len-0 twins, len-0 tail on top.
+        hdr = bytes(b[0 * PAGE:0 * PAGE + 16])
+        b[0 * PAGE:1 * PAGE] = b'\xff' * PAGE
+        for i in range(16):
+            put1to0(b, 0 * PAGE + i, hdr[i] if i not in (4, 5) else 0xFF, name)
+        div_data, div_hdr = craft_item(1, 33, 0, b'\xa5' * 8)
+        _, twin_hdr = craft_item(1, 33, 0, b'')
+        blobs = [div_data + div_hdr] + [twin_hdr] * 257
+        pos = PGDATAOFS
+        for blob in blobs:
+            for i, v in enumerate(blob):
+                put1to0(b, 0 * PAGE + pos + i, v, name)
+            pos += len(blob)
+        check(pos == PGDATAOFS + 15 + 257 * 7, 'wrap stack size',
+              case=name, end=pos)
+        page = bytes(b[0 * PAGE:1 * PAGE])
+        live, anomaly = walk_live(page)
+        check(not anomaly and len(live) == 258, 'wrap stack walk',
+              case=name, count=len(live), anomaly=anomaly)
+        check(all(crc_ok(page, h) for h in live), 'wrap stack CRCs',
+              case=name)
+        img = bytes(b)
+        tail = live[0]
+        check(tail['hofs'] == pos - 7, 'wrap tail on top', case=name,
+              tail=tail)
+        check(sum(1 for h in live[1:-1]
+                  if copies_equal(img, 0, tail, 0, h)) == 256,
+              'wrap twins verbatim', case=name)
+        check(not copies_equal(img, 0, tail, 0, live[-1]),
+              'wrap oldest divergent', case=name, oldest=live[-1])
+        return {'family': 'tail-census-wrap', 'headers': 258}
+    if name == 'erase-drained-first-live':
+        # L1-P1-2 red-first (drained): end page 5 holds one len-0 live item
+        # at hofs==PGDATAOFS under a drained singleton range [5..5]; the
+        # strict h.hofs>eoff proof skips it though cleanPage erases the
+        # page. Oracle shares the bug pre-fix (admits); post-fix both must
+        # reject ERASE_END_NONTWINNED. Mirrors admit-erase-twinned-drained
+        # minus the dst twin, plus an untwinned first-header end page.
+        put1to0(b, 5 * PAGE + 0, 0x7C, name)
+        if b[5 * PAGE + 1] == 0xFF:
+            put1to0(b, 5 * PAGE + 1, 0x01, name)
+        if b[5 * PAGE + 2] == 0xFF:
+            put1to0(b, 5 * PAGE + 2, 0x0F, name)
+        if b[5 * PAGE + 3] == 0xFF:
+            put1to0(b, 5 * PAGE + 3, 0x96, name)
+        put1to0(b, 5 * PAGE + 4, 0x17, name)
+        put1to0(b, 5 * PAGE + 5, 0x00, name)
+        _, hdr = craft_item(2, 99, 0, b'')
+        for i, v in enumerate(hdr):
+            put1to0(b, 5 * PAGE + PGDATAOFS + i, v, name)
+        put1to0(b, 12 * PAGE + 0, 0x78, name)
+        base = 12 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x05, name)
+        put1to0(b, base + 12, 0x10, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x05, name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        page = bytes(b[5 * PAGE:6 * PAGE])
+        live, anomaly = walk_live(page)
+        check(not anomaly and len(live) == 1 and
+              live[0]['hofs'] == PGDATAOFS, 'drained first-header shape',
+              case=name, live=live, anomaly=anomaly)
+        check(crc_ok(page, live[0]), 'drained first-header CRC', case=name)
+        check(on_boundary(page, PGDATAOFS, find_end(page)),
+              'drained boundary lands', case=name)
+        return {'family': 'erase-drained-first-live'}
+    if name == 'erase-eoff-boundary-live':
+        # L1-P1-2 red-first (frontier): range [4..5] (page 4 blank) with
+        # eoff=31 on end page 5, where a len-0 live header starts exactly
+        # at eoff under a len-8 item. The strict proof skips hofs==eoff
+        # though the post-clean walk from eoff hides it; oracle shares
+        # the bug pre-fix. Post-fix: ERASE_SUFFIX_NONTWINNED.
+        put1to0(b, 5 * PAGE + 0, 0x7C, name)
+        if b[5 * PAGE + 1] == 0xFF:
+            put1to0(b, 5 * PAGE + 1, 0x01, name)
+        if b[5 * PAGE + 2] == 0xFF:
+            put1to0(b, 5 * PAGE + 2, 0x0F, name)
+        if b[5 * PAGE + 3] == 0xFF:
+            put1to0(b, 5 * PAGE + 3, 0x96, name)
+        put1to0(b, 5 * PAGE + 4, 0x26, name)
+        put1to0(b, 5 * PAGE + 5, 0x00, name)
+        below_data, below_hdr = craft_item(2, 99, 1, b'\xa5' * 8)
+        _, edge_hdr = craft_item(2, 99, 0, b'')
+        blob = below_data + below_hdr + edge_hdr
+        for i, v in enumerate(blob):
+            put1to0(b, 5 * PAGE + PGDATAOFS + i, v, name)
+        put1to0(b, 12 * PAGE + 0, 0x78, name)
+        base = 12 * PAGE
+        put1to0(b, base + 6, 0xFE, name)
+        put1to0(b, base + 8, 0x10, name)
+        put1to0(b, base + 9, 0x00, name)
+        put1to0(b, base + 10, 0x04, name)
+        put1to0(b, base + 12, 0x1F, name)
+        put1to0(b, base + 13, 0x00, name)
+        put1to0(b, base + 14, 0x05, name)
+        put1to0(b, 14 * PAGE + 0, 0x78, name)
+        page = bytes(b[5 * PAGE:6 * PAGE])
+        live, anomaly = walk_live(page)
+        check(not anomaly and sorted(h['hofs'] for h in live) == [24, 31],
+              'frontier header shape', case=name, live=live,
+              anomaly=anomaly)
+        check(all(crc_ok(page, h) for h in live), 'frontier CRCs',
+              case=name)
+        check(find_end(page) == 38 and
+              on_boundary(page, 31, find_end(page)),
+              'frontier boundary lands', case=name)
+        return {'family': 'erase-eoff-boundary-live'}
     return {'family': 'hand-picked'}
 
 
@@ -1484,7 +1617,8 @@ REJECT_CASES = ['signature', 'version', 'state', 'erased-header-with-data',
                 'mixed-divergent-xsrc-act', 'rdy-with-data',
                 'mixed-divergent-act-trio-twinned',
                 'cmp-erase-tail-singleton', 'cmp-erase-tail-unmarkable',
-                'cmp-erase-tail-exact']
+                'cmp-erase-tail-exact', 'tail-census-wrap-256',
+                'erase-drained-first-live', 'erase-eoff-boundary-live']
 for _pg in (0, 1, 7, 13, 14):
     for _f in ('state', 'version', 'signature'):
         REJECT_CASES.append('gen-torn-%s-%d' % (_f, _pg))
@@ -1544,6 +1678,9 @@ EXPECTED_TAG = {
     'cmp-erase-tail-singleton': 'CMP_ERASE_TAIL_STATE',
     'cmp-erase-tail-unmarkable': 'CMP_ERASE_TAIL_STATE',
     'cmp-erase-tail-exact': 'CMP_ERASE_TAIL_STATE',
+    'tail-census-wrap-256': 'TOPO_ACT_CONFLICT',
+    'erase-drained-first-live': 'CMP_ERASE_LIVE_END',
+    'erase-eoff-boundary-live': 'CMP_ERASE_BELOW_END',
     'multi-act-twins': 'ADMIT_RESUME_DIRECT',
     'multi-act-rdy': 'ADMIT_RESUME_DIRECT',
     'admit-full-nact-mark': 'ADMIT_RESUME_MARK',
