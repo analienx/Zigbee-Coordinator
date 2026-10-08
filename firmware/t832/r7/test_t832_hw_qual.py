@@ -125,6 +125,35 @@ def edit_events(root, edit):
 
 
 class HwQualTests(unittest.TestCase):
+    def test_post_vendor_identity_cannot_replace_cold_restart_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write()
+            def edit(events):
+                cold = next(e for e in events if e['type'] == 'cold_restart')
+                identities = [e for e in events if e['phase'] == 'base' and
+                              e['type'] == 'identity' and e['seq'] > cold['seq']]
+                for identity in identities: events.remove(identity)
+                rollback = next(e for e in events if e['type'] == 'vendor_rollback')
+                where = events.index(rollback) + 1
+                events[where:where] = identities
+            edit_events(root, edit)
+            with self.assertRaisesRegex(Incomplete, 'identity.*before compaction'):
+                verify_small(root)
+            self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_unscoped_flash_or_rollback_cannot_hide_an_extra_mutation(self):
+        for kind in ('flash', 'vendor_rollback'):
+            for phase in (None, 'vendor-mid'):
+                with self.subTest(kind=kind, phase=phase), tempfile.TemporaryDirectory() as tmp:
+                    root = Bundle(tmp).write()
+                    def edit(events):
+                        extra = dict(next(e for e in events if e['type'] == kind), phase=phase)
+                        events.append(extra)
+                    edit_events(root, edit)
+                    with self.assertRaisesRegex(Failed, 'flash/rollback requires a candidate phase'):
+                        verify_small(root)
+                    self.assertFalse((root / QUAL_SEAL).exists())
+
     def test_missing_one_counter_fails_without_a_seal(self):
         for field in ('tx_counter', 'rx_counter'):
             with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
