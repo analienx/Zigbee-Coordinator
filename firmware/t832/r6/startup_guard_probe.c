@@ -30,9 +30,16 @@ static void T832Diag_record(uint16_t ev, uint16_t a, uint16_t b, uint16_t c) {
         t832cap_b[t832cap_n] = b; t832cap_c[t832cap_n] = c; t832cap_n++;
     }
 }
-/* nv_r6_probe.inc is already in this TU via nvocmp.c (r6_observer appends
-   it); only the MT-side export file is included here, mirroring the
-   device integration where T832Diag_exportPoll calls T832R6Nv_poll. */
+/* This TU's nvocmp.c carries the startup-guard patch WITHOUT the R6
+   observer append (verify_startup_guard applies only apply_fix), so the
+   snapshot/capture definitions are included here exactly once. The
+   stage-7/8 auto-captures are therefore absent: export9's manual stage-8
+   capture is the snapshot write, mirroring the device call order where
+   init's stage-8 capture precedes the MT-side poll. If the observer is
+   ever applied to this flow, the duplicate definition fails the link
+   loudly instead of silently changing gate semantics. */
+#include "nv_r6_probe.h"
+#include "nv_r6_probe.inc"
 #include "r6_nv_export.inc"
 int main(int argc, char **argv) {
     if(argc < 2 || argc > 3) return 2;
