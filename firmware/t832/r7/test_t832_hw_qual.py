@@ -218,6 +218,24 @@ class HwQualTests(unittest.TestCase):
                 verify_small(root)
             self.assertIn('exactly one candidate flash', str(ctx.exception))
 
+    def test_neutral_write_needs_real_sha256_evidence(self):
+        for value in (None, '', 'x', True, 7, {'hash': 'missing'}):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                root = Bundle(tmp).write()
+                path = root / 'transcript.jsonl'
+                events = [json.loads(line) for line in path.read_text().splitlines()]
+                for event in events:
+                    if event['type'] == 'neutral_write':
+                        if value is None:
+                            event.pop('write_sha256');event.pop('readback_sha256')
+                        else:
+                            event['write_sha256'] = value
+                            event['readback_sha256'] = value
+                path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+                with self.assertRaisesRegex((Failed, Incomplete), 'SHA256'):
+                    verify_small(root)
+                self.assertFalse((root / QUAL_SEAL).exists())
+
     def test_key_change_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = Bundle(tmp)
