@@ -33,10 +33,14 @@ For phase in (BASE, DIAG):
 4. Cold restart (power cycle, not reset pin). Log `cold_restart`,
    then an `identity` event: ieee hash, key-slot hash, TX/RX counters.
 5. Trigger compaction; log `compact`, then a post-compact read proof
-   (`neutral_read` or `identity`).
+   (`neutral_read` with its readback SHA256 or `identity`).
 6. Flash the vendor rollback image; take the closing raw dump.
    Assert the vendor application bytes are restored exactly. Record this
    distinctly as `vendor_rollback`, rather than a second candidate `flash`.
+   The checker requires exactly one such event per phase, after the final
+   restart/write/compaction and a post-compaction read, with the pinned vendor
+   image hash. BASE must finish before DIAG starts. Closing dump bytes
+   independently prove that the vendor application was restored.
 
 ## Evidence bundle
 
@@ -53,5 +57,11 @@ types (`mass_erase`, `nvm_erase`, `bsl_erase`, `nv_format`,
 decrease, including BASE-to-DIAG and vendor-boundary identity observations.
 Log actual unsigned 32-bit TX/RX values; counter floors do not restart at
 phase boundaries. The key-slot hash must be constant across both phases.
+Every `identity` must include actual SHA256 IEEE and key-slot digests,
+constant across the entire transcript including vendor boundaries. Counter
+fields are permitted only on `identity` events; off-label fields fail rather
+than being silently ignored. Record vendor-boundary assertions as separate
+`identity` observations with a vendor phase label. `neutral_read` events
+require a valid readback SHA256 even outside the candidate phases.
 
 `python3 firmware/t832/r7/t832_hw_qual.py plan` prints the sequence.

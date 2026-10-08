@@ -95,6 +95,8 @@ class Bundle:
             events.append(self.event(type='identity', phase=phase,
                                      ieee_sha256=sha(b'ieee'), key_slot_sha256=sha(key),
                                      tx_counter=c1[0], rx_counter=c1[1]))
+            events.append(self.event(type='vendor_rollback', phase=phase,
+                                     image_sha256=seal['vendor_ref_sha256']))
         events.extend(extra)
         events.sort(key=lambda e: e['seq'])
         for i, e in enumerate(events, 1):
@@ -114,7 +116,90 @@ def verify_small(bundle):
                   vendor_ref_sha256=ref)
 
 
+def edit_events(root, edit):
+    path = root / 'transcript.jsonl'
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    edit(events)
+    for seq, event in enumerate(events, 1): event['seq'] = seq
+    path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+
+
 class HwQualTests(unittest.TestCase):
+    def test_missing_one_counter_fails_without_a_seal(self):
+        for field in ('tx_counter', 'rx_counter'):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Bundle(tmp).write()
+                edit_events(root, lambda events: events[2].pop(field))
+                with self.assertRaisesRegex(Incomplete, 'lacks counters'):
+                    verify_small(root)
+                self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_valid_digest_mismatch_and_nonhex_read_proofs_fail(self):
+        for kind, field, value, reason in (
+                ('neutral_write', 'readback_sha256', sha(b'wrong'), 'readback mismatch'),
+                ('neutral_write', 'write_sha256', 'g'*64, 'SHA256'),
+                ('neutral_write', 'write_sha256', 'a'*63, 'SHA256'),
+                ('neutral_read', 'readback_sha256', None, 'SHA256'),
+                ('neutral_read', 'readback_sha256', 'g'*64, 'SHA256')):
+            with self.subTest(kind=kind, value=value), tempfile.TemporaryDirectory() as tmp:
+                root = Bundle(tmp).write()
+                def edit(events):
+                    next(e for e in events if e['type'] == kind)[field] = value
+                edit_events(root, edit)
+                with self.assertRaisesRegex((Failed, Incomplete), reason):
+                    verify_small(root)
+                self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_uppercase_digest_evidence_is_equivalent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write()
+            def edit(events):
+                for e in events:
+                    for field in ('write_sha256', 'readback_sha256', 'ieee_sha256', 'key_slot_sha256'):
+                        if field in e: e[field] = e[field].upper()
+            edit_events(root, edit)
+            self.assertEqual(verify_small(root)['verdict'], 'PASS')
+
+    def test_identity_digests_must_be_real_and_stable_at_vendor_boundaries(self):
+        for field in ('ieee_sha256', 'key_slot_sha256'):
+            for value in (None, '', True, 7, 'g'*64, sha(b'changed')):
+                with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as tmp:
+                    root = Bundle(tmp).write()
+                    def edit(events):
+                        vendor = dict(events[7], phase='vendor-mid', **{field: value})
+                        events.insert(9, vendor)
+                    edit_events(root, edit)
+                    with self.assertRaises((Failed, Incomplete)):
+                        verify_small(root)
+                    self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_vendor_rollback_missing_duplicated_wrong_image_or_early_fails(self):
+        for mode in ('missing', 'duplicate', 'wrong-image', 'early'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Bundle(tmp).write()
+                def edit(events):
+                    rollback = next(e for e in events if e['type'] == 'vendor_rollback')
+                    if mode == 'missing': events.remove(rollback)
+                    elif mode == 'duplicate': events.append(dict(rollback))
+                    elif mode == 'wrong-image': rollback['image_sha256'] = sha(b'wrong')
+                    else:
+                        events.remove(rollback); events.insert(1, rollback)
+                edit_events(root, edit)
+                with self.assertRaises((Failed, Incomplete)):
+                    verify_small(root)
+                self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_interleaved_phases_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Bundle(tmp).write()
+            def edit(events):
+                diag = next(e for e in events if e['phase'] == 'diag')
+                events.remove(diag); events.insert(8, diag)
+            edit_events(root, edit)
+            with self.assertRaisesRegex(Failed, 'must not overlap'):
+                verify_small(root)
+            self.assertFalse((root / QUAL_SEAL).exists())
+
     def test_empty_bundle_fails_closed_without_seal(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Incomplete):
@@ -257,11 +342,10 @@ class HwQualTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             b = Bundle(tmp)
             root = b.write()
-            lines = (Path(root) / 'transcript.jsonl').read_text().splitlines()
-            last = json.loads(lines[-1])
-            last['key_slot_sha256'] = sha(b'other')
-            lines[-1] = json.dumps(last)
-            (Path(root) / 'transcript.jsonl').write_text('\n'.join(lines) + '\n')
+            def edit(events):
+                last = next(e for e in reversed(events) if e['type'] == 'identity')
+                last['key_slot_sha256'] = sha(b'other')
+            edit_events(root, edit)
             with self.assertRaises(Failed):
                 verify_small(root)
 
