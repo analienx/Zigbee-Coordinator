@@ -47,9 +47,13 @@ BASE8320041 and DIAG8320042 (PR45 used8320031/8320032).
 Recovery duplicate settling now verifies bounds, both CRCs and payload equality
 before inactivation. Hosted post-cut writes verify all saved records and their
 fresh-process persistence; a failed required write/recovery gate stops packaging.
-The path to the next working debug image does not require a spare board or the
-experimental hardware qualification checker. Use the established coordinator
-backup, one-shot flash, NV readback and existing-network recovery procedure.
+For the next R10 debug trial, follow [NEXT_TRIAL_PLAN.md](NEXT_TRIAL_PLAN.md).
+The older management-upload procedure auto-boots and cannot establish the
+required preboot NV boundary; a coordinator backup and post-boot NV readback
+alone are insufficient. Do not mechanically repin the PR45 flash helper.
+Held programming/readback, complete physical NV, uploader ranges and
+first-boot evidence remain prerequisites; hosted green does not authorize a
+household flash or establish hardware qualification.
 
 The configured persistent floor is 24,067 B; fourteen data pages provide
 28,448 B. A separate 2,048-byte append reserve is required. This does not claim

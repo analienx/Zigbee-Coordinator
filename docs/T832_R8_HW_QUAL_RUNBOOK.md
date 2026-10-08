@@ -32,6 +32,9 @@ For phase in (BASE, DIAG):
    log `neutral_write` with write and readback sha256 (must match).
 4. Cold restart (power cycle, not reset pin). Log `cold_restart`,
    then an `identity` event: ieee hash, key-slot hash, TX/RX counters.
+   This assertion must occur after the final cold restart and before the final
+   compaction while the candidate is running; a later vendor identity cannot
+   substitute for it.
 5. Trigger compaction; log `compact`, then a post-compact read proof
    (`neutral_read` with its readback SHA256 or `identity`).
 6. Flash the vendor rollback image; take the closing raw dump.
@@ -41,6 +44,8 @@ For phase in (BASE, DIAG):
    restart/write/compaction and a post-compaction read, with the pinned vendor
    image hash. BASE must finish before DIAG starts. Closing dump bytes
    independently prove that the vendor application was restored.
+   Every `flash` and `vendor_rollback` event must name `base` or `diag`;
+   unscoped mutation events are rejected, including extra candidate flashes.
 
 ## Evidence bundle
 

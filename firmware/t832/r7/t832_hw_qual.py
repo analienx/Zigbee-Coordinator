@@ -176,6 +176,8 @@ def check_transcript(bundle):
         if event["type"] in FORBIDDEN_EVENT_TYPES:
             raise Failed("forbidden destructive event in transcript: %r (seq %d)"
                          % (event["type"], event["seq"]))
+        if event["type"] in ("flash", "vendor_rollback") and event.get("phase") not in ("base", "diag"):
+            raise Failed("flash/rollback requires a candidate phase (seq %d)" % event["seq"])
         if event["type"] != "identity" and any(
                 field in event for field in ("tx_counter", "rx_counter")):
             raise Failed("counter observations require identity events (seq %d)"
@@ -257,8 +259,8 @@ def check_phase(events, phase):
             or not any(compacts[-1] < read < rollback_seq for read in later_reads)):
         raise Failed("phase %r vendor rollback must follow the post-compaction read" % phase)
     restarts = [e["seq"] for e in seq if e["type"] == "cold_restart"]
-    if not any(e["seq"] > restarts[-1] and e["type"] == "identity" for e in seq):
-        raise Incomplete("phase %r has no identity assertion after cold restart" % phase)
+    if not any(restarts[-1] < e["seq"] < compacts[-1] and e["type"] == "identity" for e in seq):
+        raise Incomplete("phase %r has no candidate identity after cold restart before compaction" % phase)
     identities = [e for e in seq if e["type"] == "identity"]
     keys = {_event_digest(e, "key_slot_sha256") for e in identities}
     if len(keys) != 1 or None in keys:
