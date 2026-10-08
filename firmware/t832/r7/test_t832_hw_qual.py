@@ -205,6 +205,22 @@ class HwQualTests(unittest.TestCase):
                     path.write_text(''.join(json.dumps(e)+'\n' for e in events))
                     with self.assertRaisesRegex(Failed, 'u32'):
                         verify_small(root)
+                    self.assertFalse((root / QUAL_SEAL).exists())
+
+    def test_counter_observations_cannot_hide_on_other_event_types(self):
+        for kind in ('neutral_read', 'vendor_rollback', 'unknown'):
+            for fields in ({'tx_counter': 0, 'rx_counter': 0},
+                           {'tx_counter': None}, {'rx_counter': '7'}):
+                with self.subTest(kind=kind, fields=fields), tempfile.TemporaryDirectory() as tmp:
+                    root = Bundle(tmp).write()
+                    path = root / 'transcript.jsonl'
+                    events = [json.loads(line) for line in path.read_text().splitlines()]
+                    events.insert(8, {'type': kind, 'phase': 'vendor-mid', **fields})
+                    for seq, event in enumerate(events, 1): event['seq'] = seq
+                    path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+                    with self.assertRaisesRegex(Failed, 'counter observations require identity'):
+                        verify_small(root)
+                    self.assertFalse((root / QUAL_SEAL).exists())
 
     def test_second_flash_in_phase_fails_even_if_same_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
