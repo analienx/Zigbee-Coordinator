@@ -5,8 +5,42 @@
 #ifndef ENABLE_SANITY_CHECK
 #error "startup guard probe requires ENABLE_SANITY_CHECK for full-surface sweep"
 #endif
+/* Q3 export-path execution harness (host only): minimal stubs so the
+   production MT-side export .inc compiles and runs in this TU. Event
+   IDs match firmware/t832/t832_incident.py EVENT_NAMES. The capture
+   snapshots, poll-time export gating, and a9 packing are production
+   code; DIAG transport and critical sections are stubs. */
+typedef struct { uint32_t w[4]; } T832DiagState;
+typedef struct { uint32_t w[4]; } T832R5State;
+typedef struct { uint32_t w[4]; } T832FatalLatch;
+#define T832_DIAG_EV_NV_FAULT 29
+#define T832_DIAG_EV_NV_TOPOLOGY 46
+#define T832_DIAG_EV_NV_SPACE 47
+#define T832_DIAG_EV_NV_COUNTERS 48
+#define T832_DIAG_EV_NV_RESULT 49
+static uint32_t OsalPort_enterCS(void) { return 0; }
+static void OsalPort_leaveCS(uint32_t key) { (void)key; }
+#define T832DIAG_CAP 96
+static uint16_t t832cap_ev[T832DIAG_CAP], t832cap_a[T832DIAG_CAP];
+static uint16_t t832cap_b[T832DIAG_CAP], t832cap_c[T832DIAG_CAP];
+static unsigned t832cap_n;
+static void T832Diag_record(uint16_t ev, uint16_t a, uint16_t b, uint16_t c) {
+    if(t832cap_n < T832DIAG_CAP) {
+        t832cap_ev[t832cap_n] = ev; t832cap_a[t832cap_n] = a;
+        t832cap_b[t832cap_n] = b; t832cap_c[t832cap_n] = c; t832cap_n++;
+    }
+}
+/* nv_r6_probe.inc is already in this TU via nvocmp.c (r6_observer appends
+   it); only the MT-side export file is included here, mirroring the
+   device integration where T832Diag_exportPoll calls T832R6Nv_poll. */
+#include "r6_nv_export.inc"
 int main(int argc, char **argv) {
     if(argc < 2 || argc > 3) return 2;
+    /* Q3 probe-contract tightening (R10 review F4): exactly the documented
+       arities are accepted; extra positionals previously passed silently. */
+    if(!strcmp(argv[1], "fill")) {
+        if(argc != 3) return 2;
+    } else if(argc != 2) return 2;
     NVINTF_nvFuncts_t api;
     NVINTF_itemID_t id = {NVINTF_SYSID_ZSTACK, 33, 0};
     uint8_t data[116], actual[116]; memset(data, 0xAA, sizeof(data));
@@ -98,6 +132,21 @@ int main(int argc, char **argv) {
            Zeros mean the classifier admitted on the final init. */
         printf("{\"init_status\":%u,\"reinit_status\":%u,\"rej_status\":%u,\"rej_page\":%u,\"rej_site\":%u,\"rej_raw\":%u,\"physical_operations\":%u}\n",
                first, again, t832R10Reject.status, t832R10Reject.page, t832R10Reject.site, t832R10Reject.raw, nv_lab_operations);
+        return 0;
+    } else if(!strcmp(argv[1], "export9")) {
+        /* Q3 export-path proof: simulate the device stage-8 capture call,
+           poll once, and print every captured DIAG record. The capture
+           snapshot, poll gating, and a9 packing are unmodified production
+           .inc code; only transport/CS are host stubs (see above). */
+        T832R6Nv_capture(8u, 0u, (uint16_t)NVOCMP_failW);
+        T832R6Nv_poll(0u);
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"physical_operations\":%u,\"records\":[",
+               first, again, nv_lab_operations);
+        for(unsigned i = 0; i < t832cap_n; i++)
+            printf("%s{\"event\":%u,\"a\":%u,\"b\":%u,\"c\":%u}",
+                   i ? "," : "", t832cap_ev[i], t832cap_a[i],
+                   t832cap_b[i], t832cap_c[i]);
+        printf("]}\n");
         return 0;
     } else if(!strcmp(argv[1], "cost")) {
         /* Q2 startup-cost oracle: two bare inits and nothing else, so the

@@ -12,9 +12,11 @@ import json
 from pathlib import Path
 
 SCHEMA = 'trial-bundle/1.0'
+PLAN_VERSION = '1.0.0'
 NV_IMAGE_SIZE = 15 * 2048
 PAGE = 2048
 REQUIRED_ROLES = ('pre_nv', 'post_program_nv', 'post_boot_nv', 'records')
+REQUIRED_META = ('operator', 'tools', 'hex_sha256', 'capture_window_s')
 MAX_SITE = 39
 INIT_ACTIONS = 7  # NVOCMP_NORMAL_INIT..NVOCMP_ERROR_UNKNOWN
 NVINTF_STATUS = {0: 'SUCCESS', 1: 'FAILURE', 12: 'BADVERSION'}
@@ -35,6 +37,31 @@ def load_manifest(bundle):
     if doc.get('schema') != SCHEMA:
         return None, [{'error': 'manifest schema mismatch',
                        'want': SCHEMA, 'got': doc.get('schema')}]
+    if doc.get('plan_version') != PLAN_VERSION:
+        return None, [{'error': 'plan version unsupported',
+                       'want': PLAN_VERSION, 'got': doc.get('plan_version')}]
+    sha = doc.get('candidate_sha', '')
+    if not isinstance(sha, str) or len(sha) != 40 or \
+            any(c not in '0123456789abcdef' for c in sha.lower()):
+        return None, [{'error': 'candidate_sha not 40-hex (TBD fails)',
+                       'got': doc.get('candidate_sha')}]
+    meta = doc.get('meta', {})
+    if not isinstance(meta, dict):
+        return None, [{'error': 'manifest meta not an object'}]
+    for key in REQUIRED_META:
+        if key not in meta:
+            return None, [{'error': 'manifest meta missing', 'key': key}]
+    if not isinstance(meta['operator'], str) or not meta['operator'].strip():
+        return None, [{'error': 'meta.operator empty'}]
+    if not isinstance(meta['tools'], list) or not meta['tools']:
+        return None, [{'error': 'meta.tools not a non-empty list'}]
+    hexsha = meta['hex_sha256']
+    if not isinstance(hexsha, str) or len(hexsha) != 64 or \
+            any(c not in '0123456789abcdef' for c in hexsha.lower()):
+        return None, [{'error': 'meta.hex_sha256 not 64-hex'}]
+    if not isinstance(meta['capture_window_s'], int) or \
+            meta['capture_window_s'] < 120:
+        return None, [{'error': 'meta.capture_window_s below 120 s'}]
     return doc, []
 
 
@@ -46,7 +73,15 @@ def check_files(bundle, doc, errors):
         if not spec:
             fail(errors, 'missing file role', role=role)
             continue
-        path = bundle / spec.get('file', '')
+        raw = spec.get('file', '')
+        path = bundle / raw
+        try:
+            inside = path.resolve().relative_to(bundle.resolve())
+        except (OSError, ValueError):
+            inside = None
+        if inside is None or str(inside).startswith('..'):
+            fail(errors, 'file path escapes bundle', role=role, file=raw)
+            continue
         if not path.is_file():
             fail(errors, 'file absent', role=role, file=spec.get('file'))
             continue
@@ -83,14 +118,32 @@ def check_images(blobs, doc, errors, report):
     boot_diff = changed_pages(blobs['post_program_nv'], blobs['post_boot_nv'])
     report['program_diff_pages'] = prog_diff
     report['boot_diff_pages'] = boot_diff
-    expected = doc.get('ranges', {}).get('expected_changed_pages')
+    ranges = doc.get('ranges', {})
+    if not isinstance(ranges, dict):
+        fail(errors, 'manifest ranges not an object')
+        return
+    expected = ranges.get('expected_changed_pages')
     if expected is None:
         fail(errors, 'manifest lacks ranges.expected_changed_pages')
+        return
+    if not isinstance(expected, list):
+        fail(errors, 'expected_changed_pages not a list')
         return
     unexpected = [pg for pg in prog_diff if pg not in expected]
     if unexpected:
         fail(errors, 'program diff outside claimed ranges',
              unexpected_pages=unexpected, expected=sorted(expected))
+    # Boot diff is reported for operator review; it is additionally
+    # gated only when the manifest claims a boot allowlist.
+    allowed = ranges.get('boot_allowed_pages')
+    if allowed is not None:
+        if not isinstance(allowed, list):
+            fail(errors, 'boot allowlist not a list', allowed=allowed)
+        else:
+            bad_boot = [pg for pg in boot_diff if pg not in allowed]
+            if bad_boot:
+                fail(errors, 'boot diff outside claimed allowlist',
+                     unexpected_pages=bad_boot, allowed=sorted(allowed))
 
 
 def check_records(blobs, errors, report):
@@ -113,28 +166,39 @@ def check_records(blobs, errors, report):
         fail(errors, 'missing NV_RESULT a7 (init action) record')
     if not a9:
         fail(errors, 'missing NV_RESULT a9 (rejection latch) record')
-    for r in a7[:1]:
+    for n, r in enumerate(a7):
         action = r.get('b')
         if not isinstance(action, int) or not 0 <= action < INIT_ACTIONS:
-            fail(errors, 'a7 init action out of range', record=r)
-        else:
+            fail(errors, 'a7 init action out of range', index=n, record=r)
+        elif n == 0:
             report['init_action'] = action
             report['first_failure'] = r.get('c')
-    for r in a9[:1]:
+        first_failure = r.get('c')
+        if not isinstance(first_failure, int) or \
+                not 0 <= first_failure <= 0xFFFF:
+            fail(errors, 'a7 first_failure not u16', index=n, record=r)
+    for n, r in enumerate(a9):
         b, c = r.get('b'), r.get('c')
         if not isinstance(b, int) or not isinstance(c, int):
-            fail(errors, 'a9 fields not integers', record=r)
+            fail(errors, 'a9 fields not integers', index=n, record=r)
+            continue
+        if not 0 <= b <= 0xFFFF or not 0 <= c <= 0xFFFF:
+            fail(errors, 'a9 fields not u16', index=n, record=r)
             continue
         status, page = (b >> 8) & 0xFF, b & 0xFF
         site, raw = (c >> 8) & 0xFF, c & 0xFF
         if status not in NVINTF_STATUS:
-            fail(errors, 'a9 status unknown', status=status, record=r)
+            fail(errors, 'a9 status unknown', index=n, status=status,
+                 record=r)
         if page != 0xFF and page > 14:
-            fail(errors, 'a9 page out of range', page=page, record=r)
+            fail(errors, 'a9 page out of range', index=n, page=page,
+                 record=r)
         if site > MAX_SITE:
-            fail(errors, 'a9 site out of range', site=site, record=r)
-        report['latch'] = {'status': status, 'page': page,
-                           'site': site, 'raw': raw}
+            fail(errors, 'a9 site out of range', index=n, site=site,
+                 record=r)
+        if n == 0:
+            report['latch'] = {'status': status, 'page': page,
+                               'site': site, 'raw': raw}
 
 
 def check_bundle(bundle):

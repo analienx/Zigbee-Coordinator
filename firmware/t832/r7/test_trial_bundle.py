@@ -38,6 +38,8 @@ class TrialBundleTest(unittest.TestCase):
                            'size': len(data)}
         doc = {'schema': c.SCHEMA, 'plan_version': '1.0.0',
                'candidate_sha': '0' * 40,
+               'meta': {'operator': 'synthetic', 'tools': ['none'],
+                        'hex_sha256': '1' * 64, 'capture_window_s': 120},
                'files': {'pre_nv': files['pre-nv.bin'],
                          'post_program_nv': files['post-program-nv.bin'],
                          'post_boot_nv': files['post-boot-nv.bin'],
@@ -137,6 +139,88 @@ class TrialBundleTest(unittest.TestCase):
                        rec('NV_RESULT', 9, 0, 0)]
             result = c.check_bundle(self.bundle(tmp, records=records))
         self.assertFalse(result['ok'])
+
+    def test_second_a9_bad_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 0, 0),
+                       rec('NV_RESULT', 9, (7 << 8) | 15, (40 << 8) | 99)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+
+    def test_second_a7_bad_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 7, 99, 0),
+                       rec('NV_RESULT', 9, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+
+    def test_a7_first_failure_not_u16_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 99999),
+                       rec('NV_RESULT', 9, 0, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('u16' in e['error'] for e in result['errors']))
+
+    def test_a9_not_u16_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+                       rec('NV_RESULT', 9, 65536, 0)]
+            result = c.check_bundle(self.bundle(tmp, records=records))
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('u16' in e['error'] for e in result['errors']))
+
+    def test_path_escape_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            outside = Path(tmp) / 'outside.bin'
+            outside.write_bytes(b'\xff' * c.NV_IMAGE_SIZE)
+            doc = json.loads((root / 'manifest.json').read_text())
+            doc['files']['pre_nv']['file'] = '../outside.bin'
+            doc['files']['pre_nv']['sha256'] = hashlib.sha256(
+                outside.read_bytes()).hexdigest()
+            doc['files']['pre_nv']['size'] = len(outside.read_bytes())
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('escapes' in e['error'] for e in result['errors']))
+
+    def test_meta_and_pins_enforced(self):
+        good_meta = {'operator': 's', 'tools': ['n'],
+                     'hex_sha256': '1' * 64, 'capture_window_s': 120}
+        variants = [
+            {'meta': {**good_meta, 'operator': ''}},
+            {'meta': {**good_meta, 'hex_sha256': 'zz'}},
+            {'meta': {**good_meta, 'capture_window_s': 30}},
+            {'meta': {**good_meta, 'tools': 'n'}},
+            {'meta': 'operator-name-string'},
+            {'ranges': 'expected-pages-string'},
+            {'ranges': {'expected_changed_pages': 3}},
+            {'ranges': {'expected_changed_pages': [3],
+                        'boot_allowed_pages': 0}},
+            {'candidate_sha': 'TBD'},
+            {'plan_version': '9.9.9'},
+        ]
+        for override in variants:
+            with self.subTest(override=override), \
+                    tempfile.TemporaryDirectory() as tmp:
+                result = c.check_bundle(self.bundle(tmp, manifest=override))
+            self.assertFalse(result['ok'], override)
+
+    def test_boot_allowlist_optional_but_gated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            doc['ranges']['boot_allowed_pages'] = [0]
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            self.assertTrue(c.check_bundle(root)['ok'])
+            doc['ranges']['boot_allowed_pages'] = [5]
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('allowlist' in e['error'] for e in result['errors']))
 
 
 if __name__ == '__main__':

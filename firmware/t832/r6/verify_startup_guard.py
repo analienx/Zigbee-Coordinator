@@ -1581,6 +1581,7 @@ def verify(sdk, out):
     rows = []
     failures = []
     reject_done = sanitizer_done = admit_done = cost_done = 0
+    export9_done = 0
     for embedded in (False, True):
         for sanitizer in (False, True):
             tag = ('embedded' if embedded else 'asserting') + ('-sanitizer' if sanitizer else '')
@@ -1664,6 +1665,19 @@ def verify(sdk, out):
                       healthy=healthy)
                 check(healthy['sanity_status'] == 0, 'healthy sanity not clean', lane=tag,
                       healthy=healthy)
+                # R10 review F4: the probe rejects undocumented arities
+                # with exit 2 (fill needs its count; nothing else takes
+                # positionals; unknown verbs exit 2 after the bare inits).
+                arity = out / (exe.name + '-arity.bin')
+                arity.write_bytes(pristine)
+                for verb, args in (('fill', ()), ('cost', ('extra',)),
+                                   ('latch', ('extra',)), ('bogus', ())):
+                    q = subprocess.run(
+                        [str(exe), verb, *args],
+                        env=dict(os.environ, NVLAB_IMAGE=str(arity)),
+                        capture_output=True, timeout=INVOKE_TIMEOUT)
+                    check(q.returncode == 2, 'probe arity contract broken',
+                          lane=tag, verb=verb, args=args, exit=q.returncode)
                 lane['blank_init'] = blank
                 lane['healthy'] = healthy
                 lane['healthy_sha256'] = before
@@ -1749,12 +1763,49 @@ def verify(sdk, out):
                     check(got_latch['init_status'] == r['init_status'],
                           'latch init disagrees with reject init', lane=tag,
                           case=name, latch=got_latch, result=r)
+                    # R10 review F-lens2-P2: execute the production a9 export
+                    # path (not just the latch globals) and pin every byte.
+                    # exp_latch is (status, site, page, raw); a9 packs
+                    # b=(status<<8)|page, c=(site<<8)|raw.
+                    exp = invoke(p, 'export9')
+                    export9_done += 1
+                    check(p.read_bytes() == raw, 'export9 verb mutated image',
+                          lane=tag, case=name, export=exp)
+                    check(exp['physical_operations'] == 0, 'export9 wrote',
+                          lane=tag, case=name, export=exp)
+                    check(exp['init_status'] == r['init_status'],
+                          'export9 init disagrees with reject init', lane=tag,
+                          case=name, export=exp, result=r)
+                    recs = [er for er in exp['records'] if er['event'] == 49]
+                    a8 = [er for er in recs if er['a'] == 8]
+                    a7 = [er for er in recs if er['a'] == 7]
+                    a9 = [er for er in recs if er['a'] == 9]
+                    check(len(a8) == 1 and len(a7) == 1 and len(a9) == 1,
+                          'export9 record census wrong', lane=tag, case=name,
+                          export=exp)
+                    check((a8[0]['b'], a8[0]['c']) == (0, r['init_status']),
+                          'export9 stage record wrong', lane=tag, case=name,
+                          export=exp)
+                    check((a7[0]['b'], a7[0]['c']) == (0, r['init_status']),
+                          'export9 a7 not NORMAL_INIT/first-failure',
+                          lane=tag, case=name, export=exp)
+                    check((a9[0]['b'], a9[0]['c']) ==
+                          ((exp_latch[0] << 8) | exp_latch[2],
+                           (exp_latch[1] << 8) | exp_latch[3]),
+                          'export9 a9 mispacks the latch', lane=tag, case=name,
+                          export=exp, expected=exp_latch)
+                    fault = [er for er in exp['records'] if er['event'] == 29]
+                    check(len(fault) == 1 and fault[0]['a'] == 8 and
+                          fault[0]['b'] == r['init_status'] and
+                          fault[0]['c'] == 0, 'export9 FAULT record wrong',
+                          lane=tag, case=name, export=exp)
                     lane['rejections'][name] = {**r, 'mutation': mutation,
                                                  'oracle_tag': otag,
                                                  'latch': got_latch,
                                                  'expected_latch': exp_latch,
                                                  'unchanged_sha256': hashlib.sha256(raw).hexdigest(),
-                                                 'adverse': adv}
+                                                 'adverse': adv,
+                                                 'export9': exp}
                 except Exception as exc:
                     after = p.read_bytes() if p is not None and p.is_file() else b''
                     lane['lane_failures'].append({'case': name, 'error': str(exc)[:2000],
@@ -1800,12 +1851,38 @@ def verify(sdk, out):
                            got_latch['rej_page'], got_latch['rej_raw']) == (0, 0, 0, 0),
                           'admit latched a rejection', lane=tag, case=name,
                           latch=got_latch)
+                    # Q3 export projection on the admit path: census plus the
+                    # all-zeros a9 (no hallucinated cause). The converged
+                    # image is byte-identical to the stability run's input,
+                    # so export9's inits must also write nothing.
+                    pre9 = p.read_bytes()
+                    expa = invoke(p, 'export9')
+                    export9_done += 1
+                    check(p.read_bytes() == pre9,
+                          'admit export9 mutated image', lane=tag, case=name,
+                          export=expa)
+                    check(expa['physical_operations'] == 0,
+                          'admit export9 wrote', lane=tag, case=name,
+                          export=expa)
+                    check(expa['init_status'] == 0,
+                          'export9 init disagrees on admit', lane=tag,
+                          case=name, export=expa)
+                    arecs = [er for er in expa['records'] if er['event'] == 49]
+                    aa9 = [er for er in arecs if er['a'] == 9]
+                    check(len([er for er in arecs if er['a'] == 8]) == 1 and
+                          len([er for er in arecs if er['a'] == 7]) == 1 and
+                          len(aa9) == 1, 'admit export9 census wrong',
+                          lane=tag, case=name, export=expa)
+                    check((aa9[0]['b'], aa9[0]['c']) == (0, 0),
+                          'admit export9 a9 nonzero', lane=tag, case=name,
+                          export=expa)
                     lane['admits'][name] = {**first, 'mutation': mutation,
                                             'oracle_tag': otag,
                                             'latch': got_latch,
                                             'mid_sha256': mid_sha,
                                             'stability': second,
-                                            'stability_operations': second['physical_operations']}
+                                            'stability_operations': second['physical_operations'],
+                                            'export9': expa}
                 except Exception as exc:
                     after = p.read_bytes() if p is not None and p.is_file() else b''
                     lane['lane_failures'].append({'case': name, 'error': str(exc)[:2000],
@@ -1846,6 +1923,7 @@ def verify(sdk, out):
     sanitizer_expected = sanitizer_lanes * len(REJECT_CASES) * 2
     admit_expected = lanes_built * len(ADMIT_CASES) * 2
     cost_expected = lanes_built * (len(ADMIT_CASES) + 2)
+    export9_expected = lanes_built * (len(REJECT_CASES) + len(ADMIT_CASES))
     cost_short = cost_done != cost_expected
     if cost_short:
         failures.append({'phase': 'cost-coverage', 'cost_done': cost_done,
@@ -1891,10 +1969,12 @@ def verify(sdk, out):
               'sanitizer_sweeps': sanitizer_done,
               'admit_runs': admit_done,
               'cost_runs': cost_done,
+              'export9_runs': export9_done,
               'reject_runs_expected': reject_expected,
               'sanitizer_runs_expected': sanitizer_expected,
               'admit_runs_expected': admit_expected,
               'cost_runs_expected': cost_expected,
+              'export9_runs_expected': export9_expected,
               'stack_usage': stack_usage,
               'corpus': {'version': CORPUS_VERSION, 'reject_names': REJECT_CASES,
                          'admit_names': ADMIT_CASES,
@@ -1909,7 +1989,8 @@ def verify(sdk, out):
     (out / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'ok': ok, 'rejection_cases': reject_done,
                       'sanitizer_sweeps': sanitizer_done, 'admit_runs': admit_done,
-                      'cost_runs': cost_done, 'failures': len(failures)}))
+                      'cost_runs': cost_done, 'export9_runs': export9_done,
+                      'failures': len(failures)}))
     check(ok, 'startup preservation gate failed; see report failures',
           failures=len(failures))
     check(reject_done == reject_expected, 'reject runs incomplete',
@@ -1918,6 +1999,8 @@ def verify(sdk, out):
           done=sanitizer_done, expected=sanitizer_expected)
     check(admit_done == admit_expected, 'admit runs incomplete',
           done=admit_done, expected=admit_expected)
+    check(export9_done == export9_expected, 'export9 runs incomplete',
+          done=export9_done, expected=export9_expected)
 
 
 if __name__ == '__main__':

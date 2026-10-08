@@ -72,13 +72,18 @@ assumption).
 
 ## 4. Bundle manifest
 
-manifest.json carries schema, plan_version, candidate_sha, operator
-and tool meta, files {role: {file, sha256, size}} for roles pre_nv,
+manifest.json carries schema, plan_version, candidate_sha (40 hex;
+TBD fails), meta {operator, tools, hex_sha256, capture_window_s >= 120},
+files {role: {file, sha256, size}} for roles pre_nv,
 post_program_nv, post_boot_nv, records, and ranges
-{expected_changed_pages: [...]} derived from the G3 uploader ranges
-plus the pages first-boot NV traffic is allowed to touch. The checker
-fails on any integrity violation, any program-diff page outside the
-claimed set, any missing required record, and any undecodable a7/a9.
+{expected_changed_pages: [...]} derived from the G3 uploader ranges.
+expected_changed_pages covers the PROGRAM diff (pre to post-program)
+only. The boot diff (post-program to post-boot) is reported for
+operator review and is gated only when the manifest additionally
+claims ranges.boot_allowed_pages. The checker fails on any integrity
+violation (including file paths escaping the bundle), any program-diff
+page outside the claimed set, any missing required record, and any
+undecodable a7/a9 record (all of them, not just the first).
 
 ## 5. Pass/fail criteria
 
