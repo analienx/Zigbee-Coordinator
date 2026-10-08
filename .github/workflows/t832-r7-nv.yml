@@ -98,6 +98,13 @@ jobs:
           mkdir -p build-evidence
           python3 repo/firmware/t832/r6/trace_nv_caller.py --sdk sdk --examples examples --out build-evidence/nv-caller-trace
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-r7-nv-caller-trace-${{ matrix.variant }}-${{ matrix.profile }}
+          path: build-evidence/nv-caller-trace/nv-caller-trace.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Apply minimal BASE or matched observational DIAG
         env:
           PROFILE: ${{ matrix.profile }}

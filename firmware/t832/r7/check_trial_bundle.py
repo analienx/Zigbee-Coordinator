@@ -55,8 +55,9 @@ def load_manifest(bundle):
             return None, [{'error': 'manifest meta missing', 'key': key}]
     if not isinstance(meta['operator'], str) or not meta['operator'].strip():
         return None, [{'error': 'meta.operator empty'}]
-    if not isinstance(meta['tools'], list) or not meta['tools']:
-        return None, [{'error': 'meta.tools not a non-empty list'}]
+    if not isinstance(meta['tools'], list) or not meta['tools'] or \
+            any(not isinstance(tool, str) or not tool.strip() for tool in meta['tools']):
+        return None, [{'error': 'meta.tools must be non-empty strings'}]
     hexsha = meta['hex_sha256']
     if not isinstance(hexsha, str) or len(hexsha) != 64 or \
             any(c not in '0123456789abcdef' for c in hexsha.lower()):
@@ -77,6 +78,8 @@ def load_manifest(bundle):
 def check_files(bundle, doc, errors):
     blobs = {}
     files = doc.get('files', {})
+    seen_paths = {}
+    bundle_root = bundle.resolve()
     if not isinstance(files, dict):
         fail(errors, 'manifest files not an object')
         return blobs
@@ -94,12 +97,19 @@ def check_files(bundle, doc, errors):
             continue
         path = bundle / raw
         try:
-            inside = path.resolve().relative_to(bundle.resolve())
+            resolved = path.resolve()
+            inside = resolved.relative_to(bundle_root)
         except (OSError, ValueError):
+            resolved = None
             inside = None
         if inside is None or str(inside).startswith('..'):
             fail(errors, 'file path escapes bundle', role=role, file=raw)
             continue
+        if resolved in seen_paths:
+            fail(errors, 'required file roles alias the same capture',
+                 role=role, other_role=seen_paths[resolved], file=raw)
+            continue
+        seen_paths[resolved] = role
         if not path.is_file():
             fail(errors, 'file absent', role=role, file=spec.get('file'))
             continue
@@ -126,6 +136,19 @@ def changed_pages(before, after):
             if before[pg * PAGE:(pg + 1) * PAGE] != after[pg * PAGE:(pg + 1) * PAGE]]
 
 
+def valid_page_list(value, label, errors):
+    if not isinstance(value, list):
+        fail(errors, label + ' not a list')
+        return False
+    if any(type(pg) is not int or not 0 <= pg < 15 for pg in value):
+        fail(errors, label + ' contains invalid page IDs', value=value)
+        return False
+    if len(value) != len(set(value)):
+        fail(errors, label + ' contains duplicate page IDs', value=value)
+        return False
+    return True
+
+
 def check_images(blobs, doc, errors, report):
     for role in ('pre_nv', 'post_program_nv', 'post_boot_nv'):
         if role in blobs and len(blobs[role]) != NV_IMAGE_SIZE:
@@ -146,8 +169,7 @@ def check_images(blobs, doc, errors, report):
     if expected is None:
         fail(errors, 'manifest lacks ranges.expected_changed_pages')
         return
-    if not isinstance(expected, list):
-        fail(errors, 'expected_changed_pages not a list')
+    if not valid_page_list(expected, 'expected_changed_pages', errors):
         return
     unexpected = [pg for pg in prog_diff if pg not in expected]
     if unexpected:
@@ -161,14 +183,16 @@ def check_images(blobs, doc, errors, report):
     # Boot diff is reported for operator review; it is additionally
     # gated only when the manifest claims a boot allowlist.
     allowed = ranges.get('boot_allowed_pages')
-    if allowed is not None:
-        if not isinstance(allowed, list):
-            fail(errors, 'boot allowlist not a list', allowed=allowed)
-        else:
-            bad_boot = [pg for pg in boot_diff if pg not in allowed]
-            if bad_boot:
-                fail(errors, 'boot diff outside claimed allowlist',
-                     unexpected_pages=bad_boot, allowed=sorted(allowed))
+    if allowed is not None and \
+            valid_page_list(allowed, 'boot_allowed_pages', errors):
+        bad_boot = [pg for pg in boot_diff if pg not in allowed]
+        if bad_boot:
+            fail(errors, 'boot diff outside claimed allowlist',
+                 unexpected_pages=bad_boot, allowed=sorted(allowed))
+
+
+def _u16(value):
+    return type(value) is int and 0 <= value <= 0xFFFF
 
 
 def check_records(blobs, errors, report):
@@ -180,11 +204,24 @@ def check_records(blobs, errors, report):
     if not isinstance(records, list):
         fail(errors, 'records not a list')
         return
+
+    seq = []
     for n, r in enumerate(records):
         if not isinstance(r, dict) or not isinstance(r.get('kind_name'), str):
             fail(errors, 'record malformed', index=n, record=r)
-    seq = [r for r in records if isinstance(r, dict) and
-           r.get('kind_name') in ('BOOT', 'NV_RESULT')]
+            continue
+        if r['kind_name'] == 'NV_RESULT':
+            a, b, c = r.get('a'), r.get('b'), r.get('c')
+            if not all(_u16(v) for v in (a, b, c)):
+                fail(errors, 'NV_RESULT a/b/c must be u16', index=n, record=r)
+                continue
+            if a not in (7, 9):
+                fail(errors, 'unknown NV_RESULT subtype', index=n, a=a,
+                     record=r)
+                continue
+        if r['kind_name'] in ('BOOT', 'NV_RESULT'):
+            seq.append(r)
+
     kinds = [r.get('kind_name') for r in seq]
     boots = [n for n, k in enumerate(kinds) if k == 'BOOT']
     if not boots:
@@ -195,51 +232,40 @@ def check_records(blobs, errors, report):
     elif boots[0] != 0:
         fail(errors, 'BOOT not first (out-of-order evidence)',
              position=boots[0])
+
     results = [r for r in seq if r.get('kind_name') == 'NV_RESULT']
-    a7 = [r for r in results if r.get('a') == 7]
-    a9 = [r for r in results if r.get('a') == 9]
-    if not a7:
+    codes = [r['a'] for r in results]
+    if not any(code == 7 for code in codes):
         fail(errors, 'missing NV_RESULT a7 (init action) record')
-    if not a9:
+    if not any(code == 9 for code in codes):
         fail(errors, 'missing NV_RESULT a9 (rejection latch) record')
-    # Per-poll emission is unconditionally a7-then-a9 (r6_nv_export.inc),
-    # so in concatenated polls every a9 has a preceding a7 and every a7
-    # has a following a9. A lone leading a9 is out-of-order; a trailing
-    # lone a7 is truncated (or its a9 was buried on the routine ring).
-    a7pos = [n for n, r in enumerate(seq)
-             if r.get('kind_name') == 'NV_RESULT' and r.get('a') == 7]
-    a9pos = [n for n, r in enumerate(seq)
-             if r.get('kind_name') == 'NV_RESULT' and r.get('a') == 9]
-    for p in a9pos:
-        if not any(q < p for q in a7pos):
-            fail(errors, 'a9 without preceding a7 (out-of-order)',
-                 position=p)
-    for q in a7pos:
-        if not any(p > q for p in a9pos):
-            fail(errors, 'a7 without following a9 (truncated evidence)',
-                 position=q)
+    if codes and codes[0] == 9:
+        fail(errors, 'a9 without preceding a7 (out-of-order)', position=0)
+    if codes and codes[-1] == 7:
+        fail(errors, 'a7 without following a9 (truncated evidence)',
+             position=len(codes) - 1)
+    if len(codes) % 2 or any(
+            code != (7 if i % 2 == 0 else 9)
+            for i, code in enumerate(codes)):
+        fail(errors, 'NV_RESULT sequence must be exact a7/a9 pairs',
+             sequence=codes)
+
+    a7 = [r for r in results if r['a'] == 7]
+    a9 = [r for r in results if r['a'] == 9]
     report['boot_count'] = len(boots)
-    report['a7_count'] = len(a7pos)
-    report['a9_count'] = len(a9pos)
+    report['a7_count'] = len(a7)
+    report['a9_count'] = len(a9)
+
     for n, r in enumerate(a7):
-        action = r.get('b')
-        if not isinstance(action, int) or not 0 <= action < INIT_ACTIONS:
+        action = r['b']
+        if not 0 <= action < INIT_ACTIONS:
             fail(errors, 'a7 init action out of range', index=n, record=r)
         elif n == 0:
             report['init_action'] = action
-            report['first_failure'] = r.get('c')
-        first_failure = r.get('c')
-        if not isinstance(first_failure, int) or \
-                not 0 <= first_failure <= 0xFFFF:
-            fail(errors, 'a7 first_failure not u16', index=n, record=r)
+            report['first_failure'] = r['c']
+
     for n, r in enumerate(a9):
-        b, c = r.get('b'), r.get('c')
-        if not isinstance(b, int) or not isinstance(c, int):
-            fail(errors, 'a9 fields not integers', index=n, record=r)
-            continue
-        if not 0 <= b <= 0xFFFF or not 0 <= c <= 0xFFFF:
-            fail(errors, 'a9 fields not u16', index=n, record=r)
-            continue
+        b, c = r['b'], r['c']
         status, page = (b >> 8) & 0xFF, b & 0xFF
         site, raw = (c >> 8) & 0xFF, c & 0xFF
         if status not in NVINTF_STATUS:

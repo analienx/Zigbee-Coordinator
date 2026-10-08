@@ -386,5 +386,69 @@ class TrialBundleTest(unittest.TestCase):
         self.assertTrue(any('allowlist' in e['error'] for e in result['errors']))
 
 
+    def test_nv_result_pairs_are_exactly_one_to_one(self):
+        bad_streams = [
+            [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+             rec('NV_RESULT', 7, 0, 0), rec('NV_RESULT', 9, 0, 0)],
+            [rec('BOOT'), rec('NV_RESULT', 7, 0, 0),
+             rec('NV_RESULT', 9, 0, 0), rec('NV_RESULT', 9, 0, 0)],
+        ]
+        for records in bad_streams:
+            with self.subTest(codes=[r.get('a') for r in records[1:]]), \
+                    tempfile.TemporaryDirectory() as tmp:
+                result = c.check_bundle(self.bundle(tmp, records=records))
+            self.assertFalse(result['ok'])
+            self.assertTrue(any('exact a7/a9 pairs' in e['error']
+                                for e in result['errors']))
+
+    def test_required_roles_cannot_alias_one_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.bundle(tmp)
+            doc = json.loads((root / 'manifest.json').read_text())
+            doc['files']['pre_nv'] = dict(doc['files']['post_program_nv'])
+            (root / 'manifest.json').write_text(json.dumps(doc) + '\n')
+            result = c.check_bundle(root)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('alias' in e['error'] for e in result['errors']))
+
+    def test_page_lists_require_unique_integer_ids_0_to_14(self):
+        variants = [
+            {'ranges': {'expected_changed_pages': [3, 3]}},
+            {'ranges': {'expected_changed_pages': [15]}},
+            {'ranges': {'expected_changed_pages': [True]}},
+            {'ranges': {'expected_changed_pages': [3],
+                        'boot_allowed_pages': [0, 0]}},
+            {'ranges': {'expected_changed_pages': [3],
+                        'boot_allowed_pages': [-1]}},
+        ]
+        for override in variants:
+            with self.subTest(override=override), \
+                    tempfile.TemporaryDirectory() as tmp:
+                result = c.check_bundle(self.bundle(tmp, manifest=override))
+            self.assertFalse(result['ok'], override)
+
+    def test_unknown_or_non_u16_nv_result_subtype_rejected(self):
+        bad = [
+            {'kind_name': 'NV_RESULT', 'a': 8, 'b': 0, 'c': 0},
+            {'kind_name': 'NV_RESULT', 'a': '7', 'b': 0, 'c': 0},
+            {'kind_name': 'NV_RESULT', 'a': 7, 'b': -1, 'c': 0},
+            {'kind_name': 'NV_RESULT', 'a': 9, 'b': 0, 'c': 65536},
+        ]
+        for record in bad:
+            with self.subTest(record=record), tempfile.TemporaryDirectory() as tmp:
+                records = [rec('BOOT'), record, rec('NV_RESULT', 7, 0, 0),
+                           rec('NV_RESULT', 9, 0, 0)]
+                result = c.check_bundle(self.bundle(tmp, records=records))
+            self.assertFalse(result['ok'])
+
+    def test_meta_tools_entries_must_be_non_empty_strings(self):
+        for tools in ([''], ['   '], [1], ['ok', '']):
+            with self.subTest(tools=tools), tempfile.TemporaryDirectory() as tmp:
+                meta = {'operator': 's', 'tools': tools,
+                        'hex_sha256': '1' * 64, 'capture_window_s': 120}
+                result = c.check_bundle(self.bundle(tmp, manifest={'meta': meta}))
+            self.assertFalse(result['ok'])
+
+
 if __name__ == '__main__':
     unittest.main()

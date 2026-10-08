@@ -83,23 +83,24 @@ assumption).
 ## 4. Bundle manifest
 
 manifest.json carries schema, plan_version, candidate_sha (40 hex;
-TBD fails), meta {operator, tools, hex_sha256, capture_window_s >= 120},
-files {role: {file, sha256, size}} for roles pre_nv,
-post_program_nv, post_boot_nv, records, ranges
+TBD fails), meta {operator, tools, hex_sha256, capture_window_s >= 120}
+where tools is a non-empty list of non-empty strings, files
+{role: {file, sha256, size}} for four distinct resolved capture files
+pre_nv, post_program_nv, post_boot_nv, records, ranges
 {expected_changed_pages: [...]} derived from the G3 uploader ranges,
 and network_state {preserved: bool, note: non-empty string} from
 runbook step 8.
 expected_changed_pages covers the PROGRAM diff (pre to post-program)
-only. The boot diff (post-program to post-boot) is reported for
-operator review and is gated only when the manifest additionally
-claims ranges.boot_allowed_pages. The checker fails on any integrity
-violation (including file paths escaping the bundle), any program-diff
-page outside the claimed set, any missing required record, any
-undecodable a7/a9 record (all of them, not just the first), any
-record disorder (multiple BOOTs i.e. a reset in the window, BOOT not
-first, an a9 without a preceding a7, a trailing a7 without its a9),
-any malformed record entry, a missing network_state verdict, and
-preserved false (loss or inconclusive: the note says which).
+only. Both page lists, when present, are unique integer page IDs 0..14.
+The boot diff (post-program to post-boot) is reported for operator review
+and is gated only when the manifest additionally claims
+ranges.boot_allowed_pages. The checker fails on any integrity violation
+(including file paths escaping the bundle or required roles aliasing one
+capture), any program-diff page outside the claimed set, any missing
+required record, any malformed/unknown NV_RESULT, any record disorder
+(multiple BOOTs i.e. a reset in the window, BOOT not first, or an
+NV_RESULT stream other than exact (a7,a9)* pairs), a missing network_state
+verdict, and preserved false (loss or inconclusive: the note says which).
 
 ## 5. Pass/fail criteria
 
@@ -141,8 +142,9 @@ preserved false (loss or inconclusive: the note says which).
 
 ## 7. Disposition mapping
 
-- OFFLINE_QUALIFIED (current): all hosted gates green on synthetic
-  data; Q2/Q3 closed; this plan + checker reviewed and versioned.
+- OFFLINE_QUALIFIED (seal outcome): all hosted gates green on synthetic
+  data at the exact sealed SHA; Q2/Q3 closed; this plan + checker reviewed
+  and versioned.
 - HARDWARE-QUALIFIED (future): this plan executed with checker exit 0
   on a complete pretrial physical image, pre/post diffs inside
   claimed ranges, and first-boot records consistent with the

@@ -186,12 +186,13 @@ records, the brief's realistic-store shape with realistic count AND
 size) sits 11x under at 155KB per init, so realistic startup reads
 stay near 100-200KB of internal-flash reads during initNV.
 
-Stack frames at -O0 (all static, no dynamic allocation): classify 320,
-PageTwinned 128, SuffixTwinned 128, ActConflict 96, WalkNext 32,
-WalkInit 32, OnBoundary 64, Erased 96, CopiesEqual 128. Deepest guard
-nesting is 3 frames (classify + twin proof + compare, about 576B) plus
-driver callees; the gate fails if any expected frame is absent from the
--fstack-usage report or classify exceeds 1KB.
+Stack frames at -O0 are all static with no dynamic allocation. The
+hosted gate requires Classify, Reject, PageTwinned, SuffixTwinned,
+ActConflict, WalkNext, WalkInit, OnBoundary, Erased and CopiesEqual to
+all appear in the -fstack-usage report, and fails if Classify exceeds
+1KB. The previously measured helper frames remain small; target-toolchain
+stack/latency remains a hardware qualification item rather than a host
+measurement claim.
 
 ## R10 rejection diagnosis (Q3)
 
@@ -209,9 +210,12 @@ entry calls zstack_user0Cfg.nvFps.initNV(NULL) at
 sdk/source/ti/zstack/startup/main.c:348 and ignores the return, then
 configures the stack task unconditionally; the OSAL wrapper
 osal_nv_init at sdk/source/ti/zstack/osal/osal_nv.c:103 likewise
-ignores it. Boot is therefore not gated on initNV status at either
-call site, so a rejected init still reaches the MT loop and the
-diagnosis record below can flow over the wire. Residual assumption:
+ignores it. The hosted trace gate fail-closes unless both normalized
+caller shapes are present exactly once, records those required matches
+in nv-caller-trace.json, and retains that JSON as a success artifact.
+Boot is therefore not gated on initNV status at either call site, so a
+rejected init still reaches the MT loop and the diagnosis record below
+can flow over the wire. Residual assumption:
 no later boot step asserts on NV readiness before MT answers; PR45's
 answering device (NORMAL_INIT, 467 NV transactions) supports but does
 not prove the reject-case path.

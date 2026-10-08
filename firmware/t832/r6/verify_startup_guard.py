@@ -200,11 +200,11 @@ def q2_parse_stack_su(text):
     return frames
 
 
-Q2_STACK_FRAMES = ('NVOCMP_startupClassify', 'NVOCMP_startupPageTwinned',
-                   'NVOCMP_startupSuffixTwinned', 'NVOCMP_startupActConflict',
-                   'NVOCMP_startupWalkNext', 'NVOCMP_startupWalkInit',
-                   'NVOCMP_startupOnBoundary', 'NVOCMP_startupErased',
-                   'NVOCMP_recoverCopiesEqual')
+Q2_STACK_FRAMES = ('NVOCMP_startupClassify', 'NVOCMP_startupReject',
+                   'NVOCMP_startupPageTwinned', 'NVOCMP_startupSuffixTwinned',
+                   'NVOCMP_startupActConflict', 'NVOCMP_startupWalkNext',
+                   'NVOCMP_startupWalkInit', 'NVOCMP_startupOnBoundary',
+                   'NVOCMP_startupErased', 'NVOCMP_recoverCopiesEqual')
 
 
 def q2_census(img):
