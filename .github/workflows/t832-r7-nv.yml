@@ -1,7 +1,7 @@
 name: T832 R7 vendor-layout NV regression
 on:
   push:
-    branches: [codex/t832-r7-vendor-nvs, codex/t832-r8-powercut-recovery, codex/t832-r9-minimal-debug]
+    branches: [codex/t832-r7-vendor-nvs, codex/t832-r8-powercut-recovery, codex/t832-r9-minimal-debug, codex/t832-r10-preserve-startup-nv]
     paths: ['firmware/t832/**', 'deploy/t832_preflash_audit.py', '.github/workflows/t832-r7-nv.yml']
   workflow_dispatch:
 permissions:
@@ -29,10 +29,12 @@ jobs:
           python3 -m unittest discover -s repo/firmware/t832/r7 -p 'test_*.py' -v
           python3 -m unittest discover -s repo/firmware/t832/r6 -p 'test_*.py' -v
           python3 repo/firmware/t832/r6/verify_corrupt_duplicate.py --sdk sdk --out nv-evidence-corrupt-copy
+          python3 repo/firmware/t832/r6/verify_startup_guard.py --sdk sdk --out nv-evidence-startup-guard
           python3 repo/firmware/t832/r6/verify_write_gate.py --sdk sdk --out nv-evidence-write-gate
           python3 repo/firmware/t832/r6/run_nv_lab.py --sdk sdk --out nv-evidence --profiles vendor-20240716
           cp nv-evidence-corrupt-copy/report.json nv-evidence/corrupt-copy-report.json
           cp nv-evidence-write-gate/report.json nv-evidence/write-gate-report.json
+          cp nv-evidence-startup-guard/report.json nv-evidence/startup-guard-report.json
           cp vendor-nvs-audit.json nv-evidence/vendor-nvs-audit.json
       - name: Preserve collector and recorder regressions
         run: |
@@ -46,6 +48,18 @@ jobs:
           name: t832-r7-nv-evidence
           path: nv-evidence
           if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: t832-r7-startup-guard-evidence
+          path: nv-evidence-startup-guard
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: t832-r7-write-gate-evidence
+          path: nv-evidence-write-gate
+          if-no-files-found: warn
 
   firmware:
     name: R7 ${{ matrix.variant }} / ${{ matrix.profile }}
@@ -77,6 +91,19 @@ jobs:
           repository: TexasInstruments/simplelink-zstack-examples
           ref: 87ff5b638b632050228a7504f35cf3b95581c278
           path: examples
+
+      - name: Trace production NV-init caller (Q3)
+        run: |
+          set -euo pipefail
+          mkdir -p build-evidence
+          python3 repo/firmware/t832/r6/trace_nv_caller.py --sdk sdk --examples examples --out build-evidence/nv-caller-trace
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-r7-nv-caller-trace-${{ matrix.variant }}-${{ matrix.profile }}
+          path: build-evidence/nv-caller-trace/nv-caller-trace.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Apply minimal BASE or matched observational DIAG
         env:

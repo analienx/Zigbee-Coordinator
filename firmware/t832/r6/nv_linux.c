@@ -9,6 +9,7 @@ static uint8_t flash[NVOCMP_NVPAGES*PAGE];
 static int fd=-1;
 static unsigned cut;
 unsigned nv_lab_operations;
+unsigned nv_lab_read_calls, nv_lab_read_bytes;
 static void bounds(uint8_t pg,uint16_t off,uint16_t len) {
     if(pg>=NVOCMP_NVPAGES || (unsigned)off+len>PAGE)abort();
 }
@@ -31,6 +32,7 @@ void NV_LINUX_init(void) {
 void NV_LINUX_save(void) {persist();}
 void NV_LINUX_read(uint8_t pg,uint16_t off,uint8_t *buf,uint16_t len) {
     bounds(pg,off,len);memcpy(buf,flash+(size_t)pg*PAGE+off,len);
+    nv_lab_read_calls++;nv_lab_read_bytes+=(unsigned)len;
 }
 int_fast16_t NV_LINUX_write(uint8_t pg,uint16_t off,uint8_t *buf,uint16_t len) {
     bounds(pg,off,len);uint8_t *dst=flash+(size_t)pg*PAGE+off;

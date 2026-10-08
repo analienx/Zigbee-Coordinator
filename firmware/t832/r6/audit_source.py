@@ -8,6 +8,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 from test_r5_pinned import function
 from nv_contract import budget
 from nv_recovery_fix import verify_fixed as verify_recovery_fixed
+from nv_startup_guard import verify_guard
 
 def pristine(sdk,path):return subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+path],text=True)
 def audit(a):
@@ -36,6 +37,7 @@ def audit(a):
     for path in ('source/ti/zstack/npi/npi_tl_uart.h','source/ti/zstack/stack/nwk/nwk_globals.c'):
         if (a.sdk/path).read_text()!=pristine(a.sdk,path):raise ValueError('unrequested queue/ISR capacity change '+path)
     recovery_fp=verify_recovery_fixed((a.sdk/'source/ti/common/nv/nvocmp.c').read_text())
+    startup_fp=verify_guard((a.sdk/'source/ti/common/nv/nvocmp.c').read_text())
     opts=(a.sdk/'source/ti/zstack/apps/znp/znp_cnf.opts').read_text()
     for forbidden in ('CONCENTRATOR','MAX_RTG','MAX_NEIGHBOR','NVOCMP_RECOVER_FROM_COMPACT_FAILURE'):
         if '-D'+forbidden in opts:raise ValueError('nonminimal R6 functional policy '+forbidden)
@@ -50,7 +52,7 @@ def audit(a):
     # trying to evaluate TI's NWK_MAX_ADDRESSES expression with Python eval).
     c=budget(a.profile);version=(a.sdk/'source/ti/zstack/mt/mt_version.c').read_text()
     if f'_Static_assert(NWK_MAX_ADDRESSES == {c["capacities"]["addresses"]}' not in version:raise ValueError('derived capacity compile assertion missing')
-    return {'pristine_callback_policy':True,'pristine_queue_and_isr_capacity':True,'nv_hotpath_pod_only':a.variant=='DIAG','nv_recovery_fix':recovery_fp,
+    return {'pristine_callback_policy':True,'pristine_queue_and_isr_capacity':True,'nv_hotpath_pod_only':a.variant=='DIAG','nv_recovery_fix':recovery_fp,'nv_startup_guard':startup_fp,
             'compiled_assertions_required':True,'profile':c,'variant':a.variant,'hardware_validated':False}
 
 if __name__=='__main__':

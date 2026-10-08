@@ -34,6 +34,10 @@ static void T832R6Nv_poll(uint32_t now)
     T832Diag_record(T832_DIAG_EV_NV_COUNTERS,2u,(uint16_t)s.compact_failures,(uint16_t)(s.compact_failures>>16));
     T832Diag_record(T832_DIAG_EV_NV_RESULT,s.stage,s.requested,s.status);
     T832Diag_record(T832_DIAG_EV_NV_RESULT,7u,s.init_action,s.first_failure);
+    /* Q3 rejection latch: b packs status/page, c packs site/raw. Zeros
+     * mean the classifier admitted (distinguishes ACTION_NOT_SELECTED
+     * with a latched cause from a true NORMAL_INIT). */
+    T832Diag_record(T832_DIAG_EV_NV_RESULT,9u,(uint16_t)(((uint16_t)s.rej_status<<8)|s.rej_page),(uint16_t)(((uint16_t)s.rej_site<<8)|s.rej_raw));
     /* The first NV failure uses the bounded critical ring and sticky fault
      * snapshot. Routine topology pressure cannot bury it. No hot-path calls. */
     if(s.first_failure)T832Diag_record(T832_DIAG_EV_NV_FAULT,8u,s.first_failure,s.first_failure_requested);

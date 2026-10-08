@@ -24,15 +24,28 @@ For phase in (BASE, DIAG):
 1. With the vendor image running, take raw dump `vendor-before`
    (`vendor-mid` before the DIAG phase). Record sha256 sidecars.
 2. Flash the sealed candidate image. Log a `flash` event with the
-   flashed image sha256 (must equal the seal).
+   flashed image sha256 (must equal the seal). Exactly one candidate flash
+   is permitted per phase. An interrupted attempt invalidates that bundle:
+   preserve it, stop to reconcile device state, and qualify a separate trial.
+   `--reseal` does not authorize another flash or erase.
 3. Neutral writes: create/update/readback/delete a synthetic NV item;
    log `neutral_write` with write and readback sha256 (must match).
 4. Cold restart (power cycle, not reset pin). Log `cold_restart`,
    then an `identity` event: ieee hash, key-slot hash, TX/RX counters.
+   This assertion must occur after the final cold restart and before the final
+   compaction while the candidate is running; a later vendor identity cannot
+   substitute for it.
 5. Trigger compaction; log `compact`, then a post-compact read proof
-   (`neutral_read` or `identity`).
+   (`neutral_read` with its readback SHA256 or `identity`).
 6. Flash the vendor rollback image; take the closing raw dump.
-   Assert the vendor application bytes are restored exactly.
+   Assert the vendor application bytes are restored exactly. Record this
+   distinctly as `vendor_rollback`, rather than a second candidate `flash`.
+   The checker requires exactly one such event per phase, after the final
+   restart/write/compaction and a post-compaction read, with the pinned vendor
+   image hash. BASE must finish before DIAG starts. Closing dump bytes
+   independently prove that the vendor application was restored.
+   Every `flash` and `vendor_rollback` event must name `base` or `diag`;
+   unscoped mutation events are rejected, including extra candidate flashes.
 
 ## Evidence bundle
 
@@ -46,6 +59,15 @@ with a reason). Exit 2 means evidence is missing (fail closed).
 Exit 1 means the evidence contradicts the claim. Forbidden transcript
 types (`mass_erase`, `nvm_erase`, `bsl_erase`, `nv_format`,
 `reset_loop`, `bdb_mode0_hide`) always fail. Counters must never
-decrease; the key-slot hash must be constant across both phases.
+decrease, including BASE-to-DIAG and vendor-boundary identity observations.
+Log actual unsigned 32-bit TX/RX values; counter floors do not restart at
+phase boundaries. The key-slot hash must be constant across both phases.
+Every `identity` must include actual SHA256 IEEE and key-slot digests,
+constant across the entire transcript including vendor boundaries. The schema's
+exact `tx_counter` and `rx_counter` fields are permitted only on `identity`
+events; off-label uses fail rather than being silently ignored. Other spellings
+are not counter evidence and cannot replace either required field. Record vendor-boundary assertions as separate
+`identity` observations with a vendor phase label. `neutral_read` events
+require a valid readback SHA256 even outside the candidate phases.
 
 `python3 firmware/t832/r7/t832_hw_qual.py plan` prints the sequence.

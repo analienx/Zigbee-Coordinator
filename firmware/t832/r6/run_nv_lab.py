@@ -18,7 +18,7 @@ def compile_lab(sdk,out,contract,pages=None,diagnostic=False):
     nv_source=out/'nvocmp.c';shutil.copy2(sdk/'source/ti/common/nv/nvocmp.c',nv_source)
     fix_edits=apply_recovery_fix(nv_source)
     fix_fingerprint=verify_recovery_fixed(nv_source.read_text())
-    if len(fix_edits)!=5 or fix_fingerprint['fix_id']!=RECOVERY_FIX_ID:raise ValueError('recovery fix not applied to lab source')
+    if len(fix_edits)!=14 or fix_fingerprint['fix_id']!=RECOVERY_FIX_ID:raise ValueError('recovery and startup fixes not applied to lab source')
     if diagnostic:
         from r6_observer import patch_nv
         patch_nv(nv_source)
