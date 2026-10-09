@@ -250,9 +250,10 @@ static int frame_kind_part(const uint8_t *data, uint8_t len, uint8_t want,
 }
 static void r11_wire_complete_diag(void)
 {
-    T832Diag_npiTxDequeue(0xFEu, 0x48u, 0x80u, 234u);
-    T832Diag_uartTxStart(234u);
-    T832Diag_uartWriteComplete(234u);
+    uint8_t len=host_frame_len[host_frame_count-1u];
+    T832Diag_npiTxDequeue(0xFEu, 0x48u, 0x80u, len);
+    T832Diag_uartTxStart(len);
+    T832Diag_uartWriteComplete(len);
     CHECK(t832Diag.diag_pending == 0u);
 }
 static void test_f4_groups(void)
@@ -284,16 +285,18 @@ static void test_f4_groups(void)
     sat = 0u;
     CHECK(T832R11_age10(0xFFFFFFFFu, 0u, 1u, &unk, &sat) == 0xFFFEu &&
           unk == 0u && sat == 1u);
-    /* Fairness reserve holds when nothing is overdue; overdue runtime
-     * breaks through (liveness on legacy-idle). NV already exported and
-     * startup unbuildable (generation 0) so only the streak gate decides. */
+    /* One legacy opportunity is reserved even when runtime is overdue.
+     * Idle legacy consumes only that opportunity, not all future exports. */
     t832R11Ext.ext_streak = 2u;
     t832R11Ext.last_nv_fault = t832R6Nv.first.fault_id;
     t832R11Ext.last_nv_ms = 100000u;
     t832R11Ext.last_startup_ms = 100000u;
     t832R11Ext.last_runtime_ms = 100000u;
     CHECK(T832R11Ext_tryExport(100000u, 100000u) == 0u);
+    CHECK(t832R11Ext.ext_streak == 0u);
+    t832R11Ext.ext_streak = 2u;
     t832R11Ext.last_runtime_ms = 0u;
+    CHECK(T832R11Ext_tryExport(100000u, 100000u) == 0u);
     CHECK(T832R11Ext_tryExport(100000u, 100000u) == 1u);
     t832R11Ext.ext_streak = 0u;
     t832Diag.sync_outstanding = 1u;
@@ -342,10 +345,15 @@ static void r11_scenario(void)
     CHECK(host_frame_count == 2u);
     CHECK(frame_kind_part(host_frame_data[1], host_frame_len[1], 52u, 1));
     r11_wire_complete_diag();
-    advance_ms(30000u);
+    /* Third opportunity is reserved for legacy before runtime becomes due. */
+    advance_ms(6000u);
     T832Diag_exportPoll();
     CHECK(host_frame_count == 3u);
-    CHECK(frame_kind_part(host_frame_data[2], host_frame_len[2], 53u, 2));
+    r11_wire_complete_diag();
+    advance_ms(30000u);
+    T832Diag_exportPoll();
+    CHECK(host_frame_count == 4u);
+    CHECK(frame_kind_part(host_frame_data[3], host_frame_len[3], 53u, 2));
     r11_wire_complete_diag();
     host_fail_alloc = 1;
     advance_ms(60000u);
@@ -353,7 +361,7 @@ static void r11_scenario(void)
         uint32_t lost_before = t832Diag.export_lost;
         uint32_t sched_before = t832R11Ext.base_sched;
         T832Diag_exportPoll();
-        CHECK(host_frame_count == 3u);
+        CHECK(host_frame_count == 4u);
         CHECK(t832Diag.export_lost == lost_before + 4u);
         CHECK(t832R11Ext.base_sched == sched_before);
         CHECK(t832Diag.last_export_ms == host_tick);
@@ -368,6 +376,32 @@ static void r11_scenario(void)
         CHECK(t832Diag.export_lost == lost_before + 8u);
     }
     host_fail_alloc = 0;
+}
+static void test_sustained_startup_liveness(void)
+{
+    uint32_t i, runtimes=0u, legacy=0u, previous=0u;
+    r11_fresh();
+    T832R11_enter(1u);
+    for(i=0u;i<30u;i++)
+    {
+        T832R11_enter(5u);
+        T832R11_exit(5u,(uint16_t)i,0xFFu,0xFFu,T832R11_VALID_STATUS);
+        T832Diag_record(T832_DIAG_EV_MT_COMMAND_DISPATCH,(uint16_t)i,0u,0u);
+        advance_ms(5000u);
+        T832Diag_exportPoll();
+        CHECK(host_frame_count == previous+1u);
+        if(host_frame_count == previous+1u)
+        {
+            uint32_t n=host_frame_count-1u;
+            if(frame_kind_part(host_frame_data[n],host_frame_len[n],53u,0u))runtimes++;
+            else if(!frame_kind_part(host_frame_data[n],host_frame_len[n],52u,0u))legacy++;
+            r11_wire_complete_diag();
+        }
+        previous=host_frame_count;
+    }
+    CHECK(runtimes>=4u);
+    CHECK(legacy>=9u);
+    CHECK(t832R11Ext.ext_streak<=2u);
 }
 static void r11_dump(const char *path)
 {
@@ -405,6 +439,7 @@ int main(int argc, char **argv)
     test_f2_pod();
     test_f3_startup();
     test_f4_groups();
+    test_sustained_startup_liveness();
     r11_scenario();
     if (failures) {
         printf("R11 HARNESS RESULT: FAIL (%d)\n", failures);

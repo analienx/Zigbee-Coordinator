@@ -53,13 +53,24 @@ def package(a):
         path=a.patch.parent/name
         if not path.is_file():raise ValueError('missing build provenance '+name)
         shutil.copy2(path,provenance/name)
+    if a.series=='R11':
+        extra=['toolchain-hashes.txt']
+        if a.variant=='DIAG':
+            extra+=['r11-payloads.hex','z2m-r11-roundtrip.log','z2m-r11-negative.log',
+                    'r11-decoded.jsonl','r11-negative-decoded.jsonl','r11-chain.txt',
+                    'herdsman-pin.txt','r11-sizeof-15.json','r11-sizeof-18.json']
+        for name in extra:
+            path=a.patch.parent/name
+            if not path.is_file():raise ValueError('missing R11 gate evidence '+name)
+            shutil.copy2(path,provenance/name)
     (provenance/'nv-contract.json').write_text(json.dumps(c,indent=2)+'\n')
     (provenance/'ccfg-gate.json').write_text(json.dumps(cfg,indent=2)+'\n')
     source=Path(__file__).resolve().parent.parent
     for name in ('t832_incident.py','t832_diag_decode.py','diag_schema.json'):
         shutil.copy2(source/name,a.out/name)
     shutil.copy2(source/'r6/decode_raw.py',a.out/'decode_raw.py')
-    shutil.copy2(source/('r7/README.md' if a.series=='R7' else 'r6/README.md'),a.out/'README.md')
+    readme='r6/R11_RUNBOOK.md' if a.series=='R11' else ('r7/README.md' if a.series=='R7' else 'r6/README.md')
+    shutil.copy2(source/readme,a.out/'README.md')
     lab=json.loads(a.lab.read_text())
     if a.series in ('R7','R11') and not lab.get('all_power_cut_recovery_passed'):
         raise ValueError('required recovery/write gate failed; candidate packaging refused')

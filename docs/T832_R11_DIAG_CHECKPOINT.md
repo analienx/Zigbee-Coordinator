@@ -131,6 +131,29 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   (i) variant-aware audit + exact BDB file vs pinned SDK, (ii) STEP B +
   challenger P0 re-triaged vs green firmware baseline, (iii) seal/CI-green
   at exact SHA, update PR47, R1 re-review. STOP and report if still red.
+
+## Repair round 2 verdict FAIL 2026-10-09 (parent ledger)
+
+- Verdicts: 3x FAIL + challenger FAIL, zero PASS, well-formed. Push budget
+  9/9 spent. HEAD 3fac4ce pushed = PR47 head; tree clean.
+- Green at 3fac4ce: nv-lab SUCCESS + BASE8320051 SUCCESS (CCS+package).
+  DIAG8320052 FAILURE is one deterministic line: DIAG allowlist permits
+  only mt/r11_startup.h copy while patch_startup copies the header into
+  4 dirs (mt/startup/zdo/bdb); r11_audit.py equally blind. Fix diagnosed,
+  unpushed. Downstream DIAG steps (run_r11_host/CCS/E1/B1 bundle) skipped:
+  zero evidence at final SHA. Push-3 C-test corrections hosted-unproven
+  (sequencing disputed, either way unproven at final SHA).
+- STEP B code fixes inspection-pass, hosted-proof missing. Challenger P0
+  (device transfer: fault_id>=4 bound, UNKNOWN/0/0 latch, wrap alias,
+  ring census) unaddressed; challenger NEW P1s: explicit-compact stale
+  inheritance (install_ctx=0), E1 oracle unsatisfiable for cold-boot
+  (needs dual-sequence oracle). Fairness breakthrough partially disputed.
+- Owner decision: converging (guard -> nv-lab+BASE -> one DIAG line +
+  proofs), not impasse. Grant FINAL repair round 3: max +3 pushes
+  (cumulative 12), changed inputs per two-signature rule: (1) allowlist
+  line + dead runtime + fairness breakthrough + 2 challenger P1s,
+  (2) real-boot-equivalent + hosted end-to-end proofs, (3) push/CI-green/
+  PR47/re-review. If still red: STOP, report BLOCKED, no further pushes.
 ## F1-F4+M5 implementation 2026-10-09 (sole writer)
 
 - Base: M0 a9b5e7a9 on PR46 head 904ef79; branch codex/t832-r11-diag; R11 slice only.
@@ -430,3 +453,24 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   chain), update draft PR47, R1 re-review. If CI red, diagnose and retry
   within budget; after two identical signatures change inputs; then STOP and
   report BLOCKED with logs.
+
+## Codex takeover, 2026-10-09
+
+User requested that Muse stop and Codex finish the candidate. Retained TUI PID
+18016 was stopped after exact process identity inspection; its active 82% native
+goal is historical, not a completion proof. Existing checkpoint work is preserved.
+
+Final source review found and fixed: unclassified startup headers; startup POD
+concurrency/current-field validity; explicit COMPACT/INIT context contamination;
+allocation-refusal attempt pacing; production group decoding; changing-startup
+starvation; legacy NV_RESULT status compatibility; R11 raw manifest admission;
+and missing downloadable parser evidence/runbook. Added hosted actual exporter,
+production CLI and manifest-bound raw decoder regressions. No public builds or
+tests were run locally. No live flash/reset/HA/MQTT/NV actions in this takeover.
+
+Hosted exact-SHA full validation is required for the final candidate. Prior
+34c296e nv-lab is green but its build cannot qualify a later SHA. Source reviews
+are limited to reviewed code; hardware validation and four offline full PASSes
+are not yet claimed. Hardware reset behavior, bridge-loss/soak and task cost
+remain pending. Old Muse retry budgets and pending next-step text above describe
+its historical stop, not Codex's current implementation authority.

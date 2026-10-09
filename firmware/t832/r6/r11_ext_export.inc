@@ -289,16 +289,12 @@ static uint8_t T832R11Ext_tryExport(uint64_t now64,uint32_t now)
     uint32_t f;
     uint32_t h=0u;
     uint8_t runtimeDue;
-    uint8_t nvRepeatDue;
-    uint8_t startupRepeatDue;
     f=T832R11_firstFault();
     runtimeDue=(uint8_t)((uint32_t)(now-t832R11Ext.last_runtime_ms)>=T832_R11_EXT_RUNTIME_MS);
-    nvRepeatDue=(uint8_t)(f&&((uint32_t)(now-t832R11Ext.last_nv_ms)>=T832_R11_EXT_REPEAT_MS));
-    startupRepeatDue=(uint8_t)((uint32_t)(now-t832R11Ext.last_startup_ms)>=T832_R11_EXT_REPEAT_MS);
-    /* Fairness liveness: after two extended frames reserve legacy, but an
-     * overdue runtime/60s repeat breaks through so legacy-idle (streak
-     * never reset by noteLegacyAccepted) cannot starve extended work. */
-    if(t832R11Ext.ext_streak>=2u&&!runtimeDue&&!nvRepeatDue&&!startupRepeatDue)return 0u;
+    /* Reserve one actual opportunity after two extensions, even if no legacy
+     * record is due. Reset on the opportunity, so idle legacy cannot deadlock
+     * extensions and changing startup cannot starve legacy indefinitely. */
+    if(t832R11Ext.ext_streak>=2u){t832R11Ext.ext_streak=0u;return 0u;}
     if(f&&f!=t832R11Ext.last_nv_fault)
     {
         if(!T832R11_buildNv(recs))return 0u;
@@ -314,7 +310,9 @@ static uint8_t T832R11Ext_tryExport(uint64_t now64,uint32_t now)
     {
         if(h==t832R11Ext.last_startup_hash)h=0u;
     }
-    if(h)
+    /* Give the initial startup snapshot priority, then keep runtime live even
+     * when repeated startup transitions change the hash on every poll. */
+    if(h&&(!runtimeDue||t832R11Ext.last_startup_hash==0xFFFFFFFFu))
     {
         if(T832R11_sendGroup(T832_DIAG_EV_STARTUP_V1,recs,now,now64))
         {

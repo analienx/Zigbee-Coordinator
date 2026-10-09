@@ -185,9 +185,11 @@ jobs:
           node herdsman_interop.cjs "$GITHUB_WORKSPACE/build-evidence/r11-payloads.hex" "$GITHUB_WORKSPACE/build-evidence/z2m-r11-roundtrip.log"
           node herdsman_interop.cjs --negatives "$GITHUB_WORKSPACE/build-evidence/z2m-r11-negative.log"
           cd "$GITHUB_WORKSPACE"
-          python3 repo/firmware/t832/r6/verify_r11_chain.py --log build-evidence/z2m-r11-roundtrip.log
-          python3 repo/firmware/t832/t832_diag_decode.py build-evidence/z2m-r11-roundtrip.log --output /tmp/r11-decoded.jsonl
-          python3 -c "import json; rows=[json.loads(l) for l in open('/tmp/r11-decoded.jsonl')]; assert any(r.get('record',{}).get('kind')==51 for r in rows), 'no NV51 decoded'; assert any(r.get('record',{}).get('kind')==53 for r in rows), 'no RUNTIME53 decoded'; print('decoder CLI OK:', len(rows), 'rows')"
+          python3 repo/firmware/t832/r6/verify_r11_chain.py --log build-evidence/z2m-r11-roundtrip.log | tee build-evidence/r11-chain.txt
+          python3 repo/firmware/t832/t832_diag_decode.py build-evidence/z2m-r11-roundtrip.log --output build-evidence/r11-decoded.jsonl
+          python3 -c "import json; rows=[json.loads(l) for l in open('build-evidence/r11-decoded.jsonl')]; assert any(r.get('r11_group',{}).get('kind')==51 for r in rows), 'no NV51 assembled'; assert any(r.get('r11_group',{}).get('kind')==53 for r in rows), 'no RUNTIME53 assembled'; assert not any(r.get('type')=='decode_error' for r in rows); print('decoder CLI OK:', len(rows), 'rows')"
+          python3 repo/firmware/t832/t832_diag_decode.py build-evidence/z2m-r11-negative.log --output build-evidence/r11-negative-decoded.jsonl
+          python3 -c "import json; rows=[json.loads(l) for l in open('build-evidence/r11-negative-decoded.jsonl')]; assert rows and all(r.get('type')=='decode_error' for r in rows), 'negative parser control accepted diagnostics or emitted no rejection'; print('negative parser controls rejected:',len(rows))"
       - name: Install CCS 12.8.0 SimpleLink toolchain
         shell: bash
         run: |

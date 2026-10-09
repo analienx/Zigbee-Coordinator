@@ -1,5 +1,7 @@
 """R11 extension-frame decoder tests (hosted CI only)."""
 import json
+import hashlib
+import shutil
 import struct
 import subprocess
 import sys
@@ -54,6 +56,30 @@ def decode_groups(payload):
 
 
 class R11Frames(unittest.TestCase):
+    def test_manifest_bound_r11_raw_decoder_entrypoint(self):
+        import decode_raw
+        text=pack_frame(recs52()).encode()
+        message=bytes([len(text)])+text
+        body=bytes([len(message),0x48,0x80])+message
+        fcs=0
+        for byte in body:fcs^=byte
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            names=['t832_incident.py','diag_schema.json']
+            for name in names:shutil.copy2(HERE.parent/name,root/name)
+            image='T832-R11-DIAG-vendor-20240716.hex'
+            (root/image).write_bytes(b':00000001FF\n');names.append(image)
+            doc={'variant':'T832-R11-DIAG-vendor-20240716',
+                 'repository_commit':'0904ef79'+'a'*32,'debug_build_id':0x904EF79,
+                 'artifacts':{name:{'bytes':len((root/name).read_bytes()),
+                    'sha256':hashlib.sha256((root/name).read_bytes()).hexdigest()} for name in names}}
+            manifest=root/'manifest.json';manifest.write_text(json.dumps(doc))
+            raw=root/'capture.private.bin';raw.write_bytes(b'\xfe'+body+bytes([fcs]))
+            decode_raw.decode(raw,manifest,root/'decoded')
+            rows=[json.loads(line) for line in (root/'decoded/decoded.jsonl').read_text().splitlines()]
+            self.assertTrue(rows[0]['expected_build'])
+            self.assertEqual(rows[0]['header']['r11_group']['generation'],1)
+
     def test_production_cli_assembles_and_rejects_malformed_groups(self):
         valid = pack_frame(recs51())
         mixed = recs51()
