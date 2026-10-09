@@ -1,5 +1,6 @@
 /* Native C regression checks for the offline-only 80-byte AUX recorder. */
 #include "r12_aux_trace.h"
+#include "r12_aux_boot.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -57,6 +58,11 @@ int main(void)
     a = record(2u, 0u); /* synchronous BDB call entry */
     assert(a.sequence == 1u && a.slot == 0u);
     check(&a);
+    assert(R12Aux_commit(aux, BUILD, ATTEMPT, EPOCH + 1u, 3u, 0u, 0u,
+                         0u, &view) == R12_AUX_UNACKNOWLEDGED_EPOCH);
+    assert(R12Aux_commit(aux, BUILD, ATTEMPT + 1u, EPOCH, 3u, 0u, 0u,
+                         0u, &view) == R12_AUX_UNACKNOWLEDGED_EPOCH);
+    checks++;
     b = record(3u, 1u); /* restored ZDO init exit */
     assert(b.sequence == 2u && b.slot == 1u);
     check(&b);
@@ -65,6 +71,22 @@ int main(void)
     check(&c);
     /* Simulated PIN_RESET: arrays are retained, C global locals reboot. */
     memcpy(saved, (const void *)aux, sizeof(saved));
+    {
+        R12AuxBootCopy boot = {0};
+        uint32_t exported[R12_AUX_EXPORT_WORDS] = {0};
+        assert(R12Aux_captureBeforeOverwrite(aux, BUILD, 1u, &boot)
+               == R12_AUX_OK);
+        assert(boot.captured == 1u);
+        assert(R12Aux_asExportWords(&boot, exported) == R12_AUX_OK);
+        assert(exported[0] == R12_AUX_EXPORT_MAGIC);
+        assert(exported[1] == BUILD && exported[2] == ATTEMPT);
+        assert(exported[4] == 3u && exported[7] == 1u);
+        assert(exported[9] == R12_AUX_LAYOUT_VERSION);
+        for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+            assert(aux[i] == saved[i]); /* boot snapshot read never writes */
+        }
+        checks++;
+    }
     assert(R12Aux_readLatest(aux, BUILD, &view) == R12_AUX_OK);
     assert(view.milestone == 4u && view.sequence == 3u);
     checks++;

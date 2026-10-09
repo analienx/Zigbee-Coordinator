@@ -31,7 +31,8 @@ jobs:
           ROOT=firmware/t832/r12
           gcc -std=c11 -Wall -Wextra -Werror -Wconversion -pedantic \
             -fsanitize=undefined -fno-omit-frame-pointer \
-            -I "$ROOT" "$ROOT/r12_aux_trace.c" "$ROOT/test_r12_aux_trace.c" \
+            -I "$ROOT" "$ROOT/r12_aux_trace.c" "$ROOT/r12_aux_boot.c" \
+            "$ROOT/test_r12_aux_trace.c" \
             -o /tmp/r12_aux_regression
           /tmp/r12_aux_regression | tee /tmp/r12-aux-regression.json
           python3 - <<'PYEOF'
@@ -53,7 +54,8 @@ jobs:
           test ! -f firmware/t832/r12/firmware-image.bin
           test ! -f firmware/t832/r12/r12_aux_target.c
           ! grep -rE -n 'FLASH_program|NVS_write|NVOCMP_(write|create)|startupFromApp\(' \
-            firmware/t832/r12/r12_aux_trace.c firmware/t832/r12/r12_aux_trace.h
+            firmware/t832/r12/r12_aux_trace.c firmware/t832/r12/r12_aux_trace.h \
+            firmware/t832/r12/r12_aux_boot.c firmware/t832/r12/r12_aux_boot.h
           echo "A0 only; no target memory address or deployment code"
 
   pinned-ti-source-gate:

@@ -172,6 +172,10 @@ R12AuxStatus R12Aux_commit(volatile uint32_t *window,
         slot = 0u;
         seq = 1u;
     } else if (status == R12_AUX_OK) {
+        /* Preserve a prior crash until explicitly captured and acknowledged. */
+        if (previous.attempt != attempt || previous.boot_epoch != boot_epoch) {
+            return R12_AUX_UNACKNOWLEDGED_EPOCH;
+        }
         slot = previous.slot ^ 1u;
         seq = previous.sequence + 1u;
         if (seq == 0u) {

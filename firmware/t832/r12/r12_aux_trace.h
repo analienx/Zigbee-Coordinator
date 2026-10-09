@@ -43,7 +43,8 @@ typedef enum {
     R12_AUX_BAD_ARGUMENT = 3,
     R12_AUX_FOREIGN_BUILD = 4,
     R12_AUX_VERIFY_FAILED = 5,
-    R12_AUX_AMBIGUOUS_SEQUENCE = 6
+    R12_AUX_AMBIGUOUS_SEQUENCE = 6,
+    R12_AUX_UNACKNOWLEDGED_EPOCH = 7
 } R12AuxStatus;
 
 /* Must be called before any R12 hooks overwrite the previous boot's slots. */

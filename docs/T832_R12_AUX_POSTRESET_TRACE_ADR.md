@@ -129,6 +129,10 @@ erasing/rebuilding an unprotected Zigbee network.
   the MMIO bridge. There is **no physical AUX address or target I/O** in
   these files; a caller must provide an independently qualified volatile
   window. No UART, flash, Zigbee NV, heap allocation or automatic reset.
+- `r12_aux_boot.{h,c}`: boot-before-overwrite reader copies a valid old
+  checkpoint into ordinary RAM **without writing to AUX** and serializes
+  ten numeric-only words for a later MT exporter. A real boot hook, clock
+  qualification and ZNP transport integration are still missing.
 - Each record carries build ID, attempt ID, boot epoch, monotonically
   increasing sequence, numeric site and phase, flags, status/context, CRC32.
   The reader rejects half-circle/duplicate sequence ambiguity and wrong
@@ -160,9 +164,9 @@ erasing/rebuilding an unprotected Zigbee network.
 
 **Remaining implementation gap:** qualify exact SCE/AUX SRAM ownership and
 power transitions in the linked P10 image; establish a reserved 80-byte
-window and earliest safe post-reset reader. Only then wire firmware startup
-hooks and boot-time MT export, produce a distinct R12-A0 image, and validate
-its signed/hash-pinned build. First hardware step after backup would be a
+window and safe boot-time invocation of the implemented snapshot reader.
+Only then wire firmware startup hooks and MT export, produce a distinct
+R12-A0 image, and validate its signed/hash-pinned build. First hardware step after backup would be a
 **reset-retention A0 smoke with no original-network startup**, not another
 blind R11 replay. Distinguish original 103 security key/address/counter
 checks from the independent diagnostic persistence check.
