@@ -415,6 +415,15 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   always failed first). Fixes in THIS turn (push 2/3): rename R11 helper to
   `r11_wire_complete_diag` + 3 call sites; point `--lab` and
   `--vendor-audit` at `nv-lab-evidence/nv-evidence/`.
+- Push 2/3 (0f40bfd) hosted result (run 37925205922): nv-lab SUCCESS, BASE
+  SUCCESS (BASE8320051 lane green incl CCS build + package), DIAG red on two
+  hosted test-expectation defects in `r11_host_test.c` (never executed before:
+  apply always failed first): (a) `delta16(21,0xFFFFFFF0)` expects 33, C
+  proves 37 (21-(-16)); (b) fairness-reserve CHECK expects tryExport==0 on
+  streak 2 with runtime 100000 vs last 0 (overdue) -- the new liveness bypass
+  correctly returns 1. Fixes in THIS turn (push 3/3, last of budget): expect
+  37; seed NV/startup/runtime-ms to `now` for the reserve CHECK (==0) and
+  reset `last_runtime_ms` to 0 for a liveness CHECK (==1).
 - Seal/push/CI: PENDING. This checkpoint + code fixes are local-only until
   pushed (budget 3 pushes, cumulative 9). Next: commit, push without force,
   watch exact-SHA hosted CI (nv-lab + BASE8320051/DIAG8320052 + real-parser

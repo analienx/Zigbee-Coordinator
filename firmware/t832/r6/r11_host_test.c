@@ -246,7 +246,7 @@ static void test_f4_groups(void)
     CHECK(recs[0].a == 0x1000u);
     CHECK(recs[1].a == 0x1001u && recs[1].b == 0x0102u && recs[1].c == 3u);
     CHECK(recs[2].b == 27u && recs[2].c == ((1u << 8) | 4u));
-    CHECK(T832R11_delta16(21u, 0xFFFFFFF0u, &sat) == 33u && sat == 0u);
+    CHECK(T832R11_delta16(21u, 0xFFFFFFF0u, &sat) == 37u && sat == 0u);
     sat = 0u;
     CHECK(T832R11_delta16(0xFFFFFFFFu, 0u, &sat) == 0xFFFEu && sat == 1u);
     unk = 0u;
@@ -256,8 +256,17 @@ static void test_f4_groups(void)
     sat = 0u;
     CHECK(T832R11_age10(0xFFFFFFFFu, 0u, 1u, &unk, &sat) == 0xFFFEu &&
           unk == 0u && sat == 1u);
+    /* Fairness reserve holds when nothing is overdue; overdue runtime
+     * breaks through (liveness on legacy-idle). NV already exported and
+     * startup unbuildable (generation 0) so only the streak gate decides. */
     t832R11Ext.ext_streak = 2u;
+    t832R11Ext.last_nv_fault = t832R6Nv.first.fault_id;
+    t832R11Ext.last_nv_ms = 100000u;
+    t832R11Ext.last_startup_ms = 100000u;
+    t832R11Ext.last_runtime_ms = 100000u;
     CHECK(T832R11Ext_tryExport(100000u, 100000u) == 0u);
+    t832R11Ext.last_runtime_ms = 0u;
+    CHECK(T832R11Ext_tryExport(100000u, 100000u) == 1u);
     t832R11Ext.ext_streak = 0u;
     t832Diag.sync_outstanding = 1u;
     t832Diag.transport_active = 1u;
