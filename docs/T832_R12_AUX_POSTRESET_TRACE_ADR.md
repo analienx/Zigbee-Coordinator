@@ -1,6 +1,6 @@
 # R12 ADR — firmware-only startup forensics using reset-retained AUX RAM
 
-**Status:** RESEARCH / PROPOSAL — **NOT IMPLEMENTED, NOT FLASHABLE, NOT AUTHORIZED FOR DEVICE ACTIONS**  
+**Status:** A0 HOST PROTOTYPE IMPLEMENTED AND TESTED — **NOT A FIRMWARE IMAGE; NOT FLASHABLE; LIVE AUX OWNERSHIP/RESET RETENTION UNPROVEN**
 **Date:** 2026-10-09 · **Owner:** Zigbee-Coordinator R12 candidate · **Incident:** [home-assistant-stack #73](https://github.com/analienx/home-assistant-stack/issues/73)  
 **Baseline:** shipped R11-DIAG `156fe563ba5e6eb3d15c56b21ec9aabfda882096`, revision `8320052`, binary SHA-256 `13d69fb126b0cad0e5f362d01b8fcb4d78d7a417c75eb36d6dbbaa38266ed36e`.
 
@@ -116,3 +116,58 @@ For the **first** R12 candidate, a successful diagnosis requires:
 - [HA incident #73](https://github.com/analienx/home-assistant-stack/issues/73#issuecomment-6089268857) for private evidence references and immutable R11 trial outcome.
 
 **Operational lock at writing:** P10 last inspected terminally silent after the second startup; Z2M stopped/error, watchdog off; original network not accepted. **No new device mutation authorized or performed by this document.**
+
+## R12-A0 host-only implementation checkpoint (9 October 2026)
+
+**Code exists; target integration and a flashable image do not.** This is an
+important distinction: the user authorized moving forward with R12, not
+erasing/rebuilding an unprotected Zigbee network.
+
+- `firmware/t832/r12/r12_aux_trace.{h,c}`: standalone **80-byte**,
+  two alternating 40-byte AUX-journal slots; eight data words, CRC32, and
+  commit magic written last. The writer reads back after each word to drain
+  the MMIO bridge. There is **no physical AUX address or target I/O** in
+  these files; a caller must provide an independently qualified volatile
+  window. No UART, flash, Zigbee NV, heap allocation or automatic reset.
+- Each record carries build ID, attempt ID, boot epoch, monotonically
+  increasing sequence, numeric site and phase, flags, status/context, CRC32.
+  The reader rejects half-circle/duplicate sequence ambiguity and wrong
+  build; the writer refuses to replace a record from a different attempt or
+  boot epoch before a separate acknowledgment/arming mechanism exists.
+  **No re-arm/clear protocol yet exists**, deliberately avoiding silent loss
+  of previous-crash evidence.
+- `test_r12_aux_trace.c`: real host C executable tests for clean slate,
+  sequential commit, preserved PIN_RESET simulation, torn alternate slot,
+  corrupted slot, erased power-loss simulation, unknown build,
+  cross-epoch/attempt clobber rejection, invalid parameters and wraparound.
+  These are software simulations, **not physical proof** of MR4U AUX survival.
+- `firmware/t832/r12/r12_source_audit.py`: source inspector pinned to TI
+  SDK `6499c3f...` and project seed `87ff5b6...`. A full local
+  sparse checkout of those exact commits was analyzed. **ZNP source and
+  ZNP SysConfig contain zero direct AUX-RAM usage references.** The
+  `PowerCC26X2` subsystem does manage AUX resources, so the audit
+  deliberately reports `AUX_OWNERSHIP_AND_RESET_UNPROVEN`.
+  No named AUX-RAM linker section in exact R11 MAP is **not proof** of
+  runtime exclusivity, clock availability or reset survival.
+- `test_r12_source_audit.py` includes negative cases: inserted ZNP AUX
+  reference is detected; wrong memory base/missing Power module/bad source
+  checkout are rejected; empty references never turn into GO automatically.
+- `.github/workflows/t832-r12-aux-a0.yml` compiles the C recorder with
+  `-Wall -Wextra -Werror -Wconversion -pedantic`, runs host regressions,
+  tests source-gate behavior, and performs an independently hosted pinned
+  TI source audit. It intentionally expects **blocked hardware status** and
+  does **not** publish any target firmware, flash script, or authorization.
+
+**Remaining implementation gap:** qualify exact SCE/AUX SRAM ownership and
+power transitions in the linked P10 image; establish a reserved 80-byte
+window and earliest safe post-reset reader. Only then wire firmware startup
+hooks and boot-time MT export, produce a distinct R12-A0 image, and validate
+its signed/hash-pinned build. First hardware step after backup would be a
+**reset-retention A0 smoke with no original-network startup**, not another
+blind R11 replay. Distinguish original 103 security key/address/counter
+checks from the independent diagnostic persistence check.
+
+**No flash, reset, network startup, NV modification or Zigbee2MQTT start was
+performed by the A0 implementation.** The installed radio remains on the
+last observed R11 diagnostic image and still unresponsive since the final
+operator-requested startup failure.

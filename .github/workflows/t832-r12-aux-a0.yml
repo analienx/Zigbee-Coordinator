@@ -43,6 +43,10 @@ jobs:
           assert obj['checks']>=12
           print('Host-only AUX recorder regression passed')
           PYEOF
+      - name: Adversarial source ownership tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s firmware/t832/r12 -p 'test_*.py' -v
       - name: Ensure instrument is not wired to live radio or NV
         run: |
           set -euo pipefail
