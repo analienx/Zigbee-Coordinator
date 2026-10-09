@@ -13,6 +13,23 @@ R11_TI_FILES = ('source/ti/zstack/startup/main.c',
 
 def audit_r11(a):
     mt = a.sdk / 'source/ti/zstack/mt'
+    variant = getattr(a, 'variant', 'DIAG')
+    if variant != 'DIAG':
+        # BASE never installs DIAG-only observer headers: assert absence
+        # and zero startup hooks (variant-aware audit; BASE stays pristine).
+        for name in R11_MT_FILES:
+            if (mt / name).exists():
+                raise ValueError('BASE must not install DIAG-only %s' % name)
+        for path in R11_TI_FILES:
+            diff = subprocess.check_output(
+                ['git', '-C', str(a.sdk), 'diff', '--', path], text=True)
+            for line in diff.splitlines():
+                if not line.startswith('+') or line.startswith('+++'):
+                    continue
+                if 'T832R11_' in line or 'r11_startup.h' in line:
+                    raise ValueError('BASE carries startup observer delta in %s: %s' % (path, line[1:].strip()[:80]))
+        return {'r11_observer_only': True, 'retention_bit_clear': True,
+                'variant': variant, 'r11_absent': True}
     for name in R11_MT_FILES:
         text = (mt / name).read_text()
         for forbidden in ('ClockP_', 'malloc(', 'printf(', 'NVOCMP_read(',

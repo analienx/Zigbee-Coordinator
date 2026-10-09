@@ -171,7 +171,8 @@ static void test_f3_startup(void)
     CHECK(t832R11Startup.dev_state == 9u);
     CHECK(t832R11Startup.nwk_state == 8u);
     CHECK(t832R11Startup.valid ==
-          (T832R11_VALID_DEV | T832R11_VALID_NWK));
+          (T832R11_VALID_STATUS | T832R11_VALID_DEV | T832R11_VALID_NWK |
+           T832R11_VALID_NLME | T832R11_NLME_RESTORED));
     r11_fresh();
     T832R11_enter(5u);
     CHECK((t832R11Startup.exit_mask & (1u << 4)) == 0u);

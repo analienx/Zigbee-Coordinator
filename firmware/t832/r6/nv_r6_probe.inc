@@ -27,6 +27,9 @@ static uint8_t T832R6Nv_meaningful(uint16_t stage,uint8_t api,uint16_t status)
     {
         if(status==0u)return 0u;
         if(status==NVINTF_EXIST||status==NVINTF_NOTFOUND)return 0u;
+        /* Narrowed: only explicit-compact no-work BADPARAM is benign --
+         * pinned TI nvocmp.c compactNvApi reports BADPARAM when no
+         * compaction was needed (:1242/:1247); all other BADPARAM latch. */
         if(api==T832R6NV_API_COMPACT&&status==NVINTF_BADPARAM)return 0u;
         return 1u;
     }

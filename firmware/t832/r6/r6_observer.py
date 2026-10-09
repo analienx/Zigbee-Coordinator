@@ -94,14 +94,19 @@ def patch_startup(sdk,ex):
         '        T832R11_exit(T832R11_SITE_MAIN_INIT,(uint16_t)t832r11InitStatus,T832R11_STATE_UNKNOWN,T832R11_STATE_UNKNOWN,T832R11_VALID_STATUS);\n'
         '    }',
         'r11.startup.site1_initnv')
-    ex.replace(bdb,'#include "bdb.h"','#include "bdb.h"\n#include "r11_startup.h"','r11.startup.bdb_include')
-    ex.replace(bdb,
+    # Exact BDB source file verified against pinned TI SDK
+    # (source/ti/zstack/stack/bdb/bdb.c carries '#include "bdb.h"' plus the
+    # ZDOInitDevice(0)==RESTORED and bdb_setNodeIsOnANetwork(FALSE) anchors;
+    # never pass the bdb directory to read_text).
+    bdb_c = bdb / 'bdb.c'
+    ex.replace(bdb_c,'#include "bdb.h"','#include "bdb.h"\n#include "r11_startup.h"','r11.startup.bdb_include')
+    ex.replace(bdb_c,
         '      if(ZDOInitDevice(0) == ZDO_INITDEV_RESTORED_NETWORK_STATE)\n      {\n',
         '      T832R11_enter(T832R11_SITE_BDB_RESTORED);\n'
         '      if(ZDOInitDevice(0) == ZDO_INITDEV_RESTORED_NETWORK_STATE)\n      {\n'
         '        T832R11_exit(T832R11_SITE_BDB_RESTORED,1u,T832R11_STATE_UNKNOWN,T832R11_STATE_UNKNOWN,T832R11_VALID_STATUS);\n',
         'r11.startup.site2_restored')
-    ex.replace(bdb,
+    ex.replace(bdb_c,
         '#endif\n        return;\n      }\n      bdb_setNodeIsOnANetwork(FALSE);',
         '#endif\n        return;\n      }\n'
         '      T832R11_exit(T832R11_SITE_BDB_RESTORED,0u,T832R11_STATE_UNKNOWN,T832R11_STATE_UNKNOWN,T832R11_VALID_STATUS);\n'

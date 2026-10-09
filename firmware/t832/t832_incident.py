@@ -222,6 +222,14 @@ def decode_r11_group(records):
     for r in records:
         if r["a"] & 0x0800:
             raise ValueError("r11-reserved-bit")
+    if kind in (51, 52):
+        for r in records:
+            if r["a"] != (0x1000 | (r["a"] & 0x3)):
+                raise ValueError("r11-flags-5152:" + hex(r["a"]))
+    else:
+        bases = set(r["a"] & ~0x3 for r in records)
+        if len(bases) != 1:
+            raise ValueError("r11-flags-53-nonuniform")
     ordered = sorted(records, key=lambda r: r["a"] & 0x3)
     p0, p1, p2, p3 = ordered
     if kind == 51:

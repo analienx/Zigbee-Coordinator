@@ -127,6 +127,17 @@ jobs:
           set -euo pipefail
           mkdir -p build-evidence
           python3 repo/firmware/t832/r6/trace_nv_caller.py --sdk sdk --examples examples --out build-evidence/nv-caller-trace
+      - name: Verify exact BDB source file on pinned SDK
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          ls sdk/source/ti/zstack/stack/bdb
+          test -f sdk/source/ti/zstack/stack/bdb/bdb.c
+          grep -n '#include "bdb.h"' sdk/source/ti/zstack/stack/bdb/bdb.c
+          grep -n 'ZDOInitDevice(0) == ZDO_INITDEV_RESTORED_NETWORK_STATE' sdk/source/ti/zstack/stack/bdb/bdb.c
+          grep -n 'bdb_setNodeIsOnANetwork(FALSE)' sdk/source/ti/zstack/stack/bdb/bdb.c
+          test ! -d sdk/source/ti/zstack/stack/bdb/bdb.c || { echo 'BDB path must be a file, never a directory'; exit 1; }
+          echo 'BDB exact-file proof OK: bdb.c carries all three anchors'
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

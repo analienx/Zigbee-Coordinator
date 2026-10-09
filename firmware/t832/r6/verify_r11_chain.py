@@ -37,7 +37,7 @@ def main():
     groups = {}
     for frame, records, payload in ext:
         if len(payload) != 7 + 226:
-            raise SystemExit('extension payload is not 234B: %d' % len(payload))
+            raise SystemExit('extension payload is not 233 chars (234B msg): %d' % len(payload))
         caps = int(frame['capability_bitmap'], 16)
         if not caps & (1 << 30):
             raise SystemExit('capability bit30 clear')

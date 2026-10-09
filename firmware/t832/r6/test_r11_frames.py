@@ -137,6 +137,25 @@ class R11Frames(unittest.TestCase):
         with self.assertRaises(ValueError):
             incident.decode_r11_group(decode_groups(pack_frame(recs)))
 
+    def test_strict_5152_flags_rejected(self):
+        for bad in (0x1400, 0x17F0, 0x1000 | (1 << 5)):
+            recs = recs51()
+            recs[0] = (51, bad, recs[0][2], recs[0][3])
+            with self.assertRaises(ValueError):
+                incident.decode_r11_group(decode_groups(pack_frame(recs)))
+            recs = recs52()
+            recs[2] = (52, 0x1002 | (1 << 6), recs[2][2], recs[2][3])
+            with self.assertRaises(ValueError):
+                incident.decode_r11_group(decode_groups(pack_frame(recs)))
+
+    def test_strict_53_uniform_flags(self):
+        recs = recs53(flags=0x1000 | (1 << 7))
+        recs[2] = (53, (0x1000 | (1 << 7)) | 2 | (1 << 5), recs[2][2], recs[2][3])
+        with self.assertRaises(ValueError):
+            incident.decode_r11_group(decode_groups(pack_frame(recs)))
+        out = incident.decode_r11_group(decode_groups(pack_frame(recs53())))
+        self.assertTrue(out['zstack_known'])
+
     def test_unknown_legacy_honest(self):
         _, records = incident.decode_frame_payload(
             pack_frame([(99, 1, 2, 3), (99, 1, 2, 3),

@@ -1,7 +1,9 @@
 /* T832 R11-DIAG atomic extension frames (F4) + startup POD export (F3).
  * MT task context only. No NV lock, flash reads or NV API calls.
- * Keeps schema-2 T832D2 header, 20-byte records, batch max 4, 240-byte
- * payload. New event kinds 51 NV_FIRST_V1, 52 STARTUP_V1, 53 RUNTIME_V1.
+ * Keeps schema-2 T832D2 header, 20-byte records, batch max 4: 233-char
+ * text payload (T832D2: + hex) vs 234B MT message (1 len byte + 233) vs
+ * 240B staging buffer. New event kinds 51 NV_FIRST_V1, 52 STARTUP_V1,
+ * 53 RUNTIME_V1.
  * Capability bit30 marks R11 extension frames; bit31 stays clear (no
  * retention claim: ordinary SRAM, cleared on boot).
  *
@@ -117,6 +119,8 @@ static uint8_t T832R11_buildStartup(T832DiagRecord *recs,uint32_t *hashOut)
     t=t832R11Startup;
     s1=t832R11Startup.sequence;
     if(s0!=s1)return 0u;
+    /* Boot-zero guard: never export generation-0/valid-0 STARTUP_V1. */
+    if(t.generation==0u||t.valid==0u)return 0u;
     *hashOut=T832R11_startupHash(&t);
     if(*hashOut==0u)return 0u;
     recs[0].a=0x1000u;
@@ -169,6 +173,37 @@ static uint8_t T832R11_buildRuntime(T832DiagRecord *recs,uint32_t now,
     recs[3].a=(uint16_t)(a|3u);
     return 1u;
 }
+/* Snapshot variant: all counters/bases/flags supplied by the caller's
+ * single committed snapshot under one critical section (no inner CS).
+ * Bases commit separately on MT acceptance only. */
+static uint8_t T832R11_buildRuntimeSnap(T832DiagRecord *recs,uint32_t now,
+    uint16_t seen,uint32_t sched,uint32_t work,uint32_t rx,uint32_t txc,
+    uint32_t wake,uint32_t zwm,uint8_t zwv,uint16_t pend,uint32_t oldest,
+    uint32_t b_sched,uint32_t b_work,uint32_t b_rx,uint32_t b_txc,
+    uint32_t b_wake)
+{
+    uint8_t sat=0u;
+    uint8_t unk=0u;
+    uint16_t a;
+    recs[0].b=T832R11_delta16(sched,b_sched,&sat);
+    recs[0].c=T832R11_delta16(work,b_work,&sat);
+    recs[1].b=T832R11_age10(now,zwm,zwv,&unk,&sat);
+    recs[1].c=T832R11_delta16(wake,b_wake,&sat);
+    recs[2].b=T832R11_delta16(rx,b_rx,&sat);
+    recs[2].c=T832R11_delta16(txc,b_txc,&sat);
+    if(pend>0xFFFEu){recs[3].b=0xFFFEu;sat=1u;}
+    else recs[3].b=pend;
+    if(pend)recs[3].c=T832R11_age10(now,oldest,1u,&unk,&sat);
+    else recs[3].c=0u;
+    a=(uint16_t)(0x1000u|(seen&0x01FCu));
+    if(sat)a|=(1u<<9);
+    if(unk)a|=(1u<<10);
+    recs[0].a=a;
+    recs[1].a=(uint16_t)(a|1u);
+    recs[2].a=(uint16_t)(a|2u);
+    recs[3].a=(uint16_t)(a|3u);
+    return 1u;
+}
 /* Serialize and send one FOUR-record group through the single existing MT
  * response path. Returns 1 on acceptance, 0 on MT build refusal (bases and
  * cadence preserved, loss counted). */
@@ -194,7 +229,8 @@ static uint8_t T832R11_sendGroup(uint8_t kind,T832DiagRecord *recs,
     *p++='T';*p++='8';*p++='D';*p++='1';
     *p++=T832_DIAG_SCHEMA_VERSION;
     *p++=1u;
-    T832Diag_put16(&p,(uint16_t)(++t832Diag.export_sequence));
+    /* Tentative sequence: committed only on MT acceptance (see below). */
+    T832Diag_put16(&p,(uint16_t)(t832Diag.export_sequence+1u));
     T832Diag_put16(&p,1u);
     T832Diag_put64(&p,now64);
     T832Diag_put32(&p,(uint32_t)T832_BUILD_ID);
@@ -212,15 +248,22 @@ static uint8_t T832R11_sendGroup(uint8_t kind,T832DiagRecord *recs,
     out[0]=strLen;
     t832Diag.staged_count=4u;
     t832Diag.build_failed=0u;
-    t832Diag.last_export_ms=now;
     MT_BuildAndSendZToolResponse(
         ((uint8_t)MT_RPC_CMD_AREQ|(uint8_t)MT_RPC_SYS_DBG),
         MT_DEBUG_MSG,outLen,out);
     if(t832Diag.build_failed)
     {
+        /* MT refused: preserve generation/cadence/delta bases and the
+         * export sequence; count loss only. Side-effects below run past
+         * the build_failed check on acceptance only. */
         t832Diag.diag_pending=0u;
         t832Diag.export_lost+=4u;
         T832Diag_record(T832_DIAG_EV_DIAG_LOSS,4u,1u,outLen);
+    }
+    else
+    {
+        t832Diag.export_sequence++;
+        t832Diag.last_export_ms=now;
     }
     t832Diag.staged_count=0u;
     return (uint8_t)(t832Diag.build_failed?0u:1u);
@@ -241,8 +284,17 @@ static uint8_t T832R11Ext_tryExport(uint64_t now64,uint32_t now)
     T832DiagRecord recs[4];
     uint32_t f;
     uint32_t h=0u;
-    if(t832R11Ext.ext_streak>=2u)return 0u;
+    uint8_t runtimeDue;
+    uint8_t nvRepeatDue;
+    uint8_t startupRepeatDue;
     f=T832R11_firstFault();
+    runtimeDue=(uint8_t)((uint32_t)(now-t832R11Ext.last_runtime_ms)>=T832_R11_EXT_RUNTIME_MS);
+    nvRepeatDue=(uint8_t)(f&&((uint32_t)(now-t832R11Ext.last_nv_ms)>=T832_R11_EXT_REPEAT_MS));
+    startupRepeatDue=(uint8_t)((uint32_t)(now-t832R11Ext.last_startup_ms)>=T832_R11_EXT_REPEAT_MS);
+    /* Fairness liveness: after two extended frames reserve legacy, but an
+     * overdue runtime/60s repeat breaks through so legacy-idle (streak
+     * never reset by noteLegacyAccepted) cannot starve extended work. */
+    if(t832R11Ext.ext_streak>=2u&&!runtimeDue&&!nvRepeatDue&&!startupRepeatDue)return 0u;
     if(f&&f!=t832R11Ext.last_nv_fault)
     {
         if(!T832R11_buildNv(recs))return 0u;
@@ -268,19 +320,35 @@ static uint8_t T832R11Ext_tryExport(uint64_t now64,uint32_t now)
         }
         return 1u;
     }
-    if((uint32_t)(now-t832R11Ext.last_runtime_ms)>=T832_R11_EXT_RUNTIME_MS)
+    if(runtimeDue)
     {
+        /* Single committed snapshot for runtime bases+deltas under one
+         * critical section: sample every counter/base/flag atomically,
+         * build from the snapshot with no inner CS, commit bases only on
+         * MT acceptance (NLME ordering preserved: bases never advance on
+         * refusal). */
         uint32_t key=OsalPort_enterCS();
         uint32_t sched=t832Diag.mt_schedule_count;
         uint32_t work=t832Diag.mt_work_count;
         uint32_t rx=t832Diag.rx_bytes;
         uint32_t txc=t832Diag.npi_tx_count;
         uint32_t wake=t832Diag.npi_wake_count;
+        uint32_t zwm=t832Diag.zstack_work_ms;
+        uint8_t zwv=t832Diag.zstack_work_valid;
+        uint16_t pend=t832Diag.normal_pending;
+        uint32_t oldest=t832Diag.oldest_pending_ms;
         uint16_t seen=t832R11Ext.seen;
+        uint32_t b_sched=t832R11Ext.base_sched;
+        uint32_t b_work=t832R11Ext.base_work;
+        uint32_t b_rx=t832R11Ext.base_rx;
+        uint32_t b_txc=t832R11Ext.base_txc;
+        uint32_t b_wake=t832R11Ext.base_wake;
         OsalPort_leaveCS(key);
-        T832R11_buildRuntime(recs,now,seen);
+        T832R11_buildRuntimeSnap(recs,now,seen,sched,work,rx,txc,wake,zwm,zwv,
+            pend,oldest,b_sched,b_work,b_rx,b_txc,b_wake);
         if(T832R11_sendGroup(T832_DIAG_EV_RUNTIME_V1,recs,now,now64))
         {
+            uint32_t k2=OsalPort_enterCS();
             t832R11Ext.base_sched=sched;
             t832R11Ext.base_work=work;
             t832R11Ext.base_rx=rx;
@@ -289,6 +357,7 @@ static uint8_t T832R11Ext_tryExport(uint64_t now64,uint32_t now)
             t832R11Ext.seen=0u;
             t832R11Ext.last_runtime_ms=now;
             t832R11Ext.ext_streak++;
+            OsalPort_leaveCS(k2);
         }
         return 1u;
     }

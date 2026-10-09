@@ -81,7 +81,9 @@ static inline void T832R11_exit(uint8_t site,uint16_t status,
     t832R11Startup.last_status=status;
     t832R11Startup.dev_state=dev_state;
     t832R11Startup.nwk_state=nwk_state;
-    t832R11Startup.valid=valid;
+    /* Valid-lifetime OR-accumulate (never wholesale assign): NLME bits set
+     * at site 4 must survive sites 5/6 (valid=0) through a full boot. */
+    t832R11Startup.valid|=(uint8_t)valid;
     t832R11Startup.sequence++;
 }
 static inline void T832R11_confirm(uint16_t status)
@@ -94,7 +96,7 @@ static inline void T832R11_confirm(uint16_t status)
     t832R11Startup.last_status=status;
     t832R11Startup.dev_state=T832R11_STATE_UNKNOWN;
     t832R11Startup.nwk_state=T832R11_STATE_UNKNOWN;
-    t832R11Startup.valid=T832R11_VALID_STATUS;
+    t832R11Startup.valid|=(uint8_t)T832R11_VALID_STATUS;
     t832R11Startup.sequence++;
 }
 static inline void T832R11_nlme(uint8_t restored)

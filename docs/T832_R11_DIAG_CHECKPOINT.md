@@ -104,6 +104,33 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
 - Next: sole-writer repair workflow (self-contained), recategorize 212
   guard cases first, fix P0/P1, hosted green incl BASE/DIAG + real-parser
   chain, update PR47, R1 re-review at final SHA.
+
+## Repair round 1 verdict FAIL 2026-10-09 (parent ledger)
+
+- Verdicts: 3x FAIL + challenger FAIL, zero PASS, no malformed reports.
+  Push budget 6/6 spent. Local 525fef7 unpushed (docs-only BLOCKED record,
+  zero hosted evidence); PR47 head still 72e7fd0.
+- STEP A: 212/212 stale-oracle direction agreed; strength PARTIAL
+  (single-source: no reviewer independently inspected report.json rows).
+  Green closers: 0/384 + nv-lab SUCCESS at 72e7fd0.
+- Firmware matrix at 72e7fd0 BLOCKED (unanimous P0): BASE FileNotFoundError
+  (audit not variant-aware: BASE never installs DIAG-only r11_startup.h);
+  DIAG IsADirectoryError (exact BDB source file unnamed, dir passed to
+  read_text). Fixes agreed sterile/two-line but unpushed. E1/B1 not run.
+- STEP B code fixes NOT IMPLEMENTED (checkpoint admits): valid-lifetime
+  assign, single snapshot, fairness liveness, MT-refusal order, boot-zero
+  guard, decoder strictness, BADPARAM scope, size labels, hosted
+  60s/5s/CREATE-27/wrap-sat/gate/anchor proofs, hw-qual re-audit.
+- Challenger-NEW P0: guard-green does not transfer to device (pinned
+  (0,1,1,1) needs generation==fault_id==1, true only in single-capture TU;
+  real boot latches fault_id>=4, cold-boot auto-compact latches
+  api=UNKNOWN/item=0/sub=0) + wrap aliasing + TU-vs-ring census gap.
+- Owner decision: NOT at impasse (fixes precisely diagnosed, push/CI path
+  works, goal requires hosted green + PR). Grant repair round 2: max +3
+  pushes (cumulative 9), changed inputs per two-signature rule, tight scope:
+  (i) variant-aware audit + exact BDB file vs pinned SDK, (ii) STEP B +
+  challenger P0 re-triaged vs green firmware baseline, (iii) seal/CI-green
+  at exact SHA, update PR47, R1 re-review. STOP and report if still red.
 ## F1-F4+M5 implementation 2026-10-09 (sole writer)
 
 - Base: M0 a9b5e7a9 on PR46 head 904ef79; branch codex/t832-r11-diag; R11 slice only.
@@ -341,5 +368,41 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   (BASE/DIAG artifacts, E1 chain, PR47 seal, R1 re-review). STEP B P1 code
   items from the survey (install order, valid lifetime, snapshot atomicity,
   fairness, decoder strictness, BADPARAM scope, size labels, 60s/5s/CREATE-27/
-  wrap-sat proofs, hw-qual re-audit) remain NOT IMPLEMENTED and should be
-  re-triaged against the then-green firmware baseline rather than fixed blind.
+  wrap-sat proofs, hw-qual re-audit) remain NOT IMPLEMENTED at 72e7fd0 and were
+  scoped for repair round 2 below.
+## R11 REPAIR ROUND 2 progress 2026-10-09 (sole writer, PUBLIC EDIT-ONLY)
+
+- Brief receipt: R11 slice `C:/Workspace/worktrees/zigbee-t832-r11-diag`,
+  branch `codex/t832-r11-diag`, base local 525fef7 (docs-only BLOCKED record
+  over pushed 72e7fd0 = PR47 head). File-tool root untouched; no contact
+  with counter-seal/minimal-debug/R8/private checkouts. No local run of repo
+  code; CI only via push.
+- Scope (i) IMPLEMENTED this turn: variant-aware `r11_audit.py` (BASE asserts
+  absence + zero startup hooks, DIAG asserts presence); exact BDB source file
+  `bdb.c` in `r6_observer.py` (never a directory); hosted BDB anchor proof
+  step in `t832-r11-diag.yml` pinned to SDK 6499c3f53fc5fb5806213be695450a7b43fbaf3d.
+- Scope (ii) PARTIAL this turn: valid-lifetime OR-accumulate + confirm OR in
+  `r11_startup.h` (NLME survives full boot; `r11_host_test.c` F3 expectation
+  updated to 0x1F); boot-zero guard in `T832R11_buildStartup`; MT-refusal
+  side-effects past `build_failed` in `T832R11_sendGroup`; fairness liveness
+  bypass for overdue runtime/60s repeat; single committed runtime snapshot
+  (`T832R11_buildRuntimeSnap` + commit-on-acceptance); decoder strictness in
+  `t832_incident.py` (exact 51/52, uniform 53, rejects 0x1400/0x17F0-style)
+  with new `test_r11_frames.py` cases; narrowed COMPACT BADPARAM comment
+  citing nvocmp.c:1242/:1247; size labels 233-char vs 234B vs 240B in
+  `r11_ext_export.inc` + `verify_r11_chain.py`.
+- Scope (ii)+(iii) GAPS (not implemented, no hosted proof): 60s-repeat and
+  downstream-loss end-to-end proofs beyond the existing MT-refusal scenario;
+  gate-conjunction and 5s-boundary proofs; CREATE-27 path; wrap/saturation
+  beyond existing delta/age unit checks; end-to-end patch-anchor assertions
+  through the real patch_nv ternary and real nvocmp/zd_app/bdb/main anchors;
+  r7 hw-qual re-audit at base SHA with log evidence; challenger P0 bounds
+  (real-boot fault_id>=4, cold-boot auto-compact UNKNOWN/0/0, wrap aliasing,
+  TU-lossless-96 vs bounded-ring census, F3 device transfer on a
+  real-boot-equivalent sequence).
+- Seal/push/CI: PENDING. This checkpoint + code fixes are local-only until
+  pushed (budget 3 pushes, cumulative 9). Next: commit, push without force,
+  watch exact-SHA hosted CI (nv-lab + BASE8320051/DIAG8320052 + real-parser
+  chain), update draft PR47, R1 re-review. If CI red, diagnose and retry
+  within budget; after two identical signatures change inputs; then STOP and
+  report BLOCKED with logs.
