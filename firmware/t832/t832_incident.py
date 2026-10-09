@@ -230,7 +230,6 @@ def decode_r11_group(records):
         return {"kind": kind, "kind_name": EVENT_NAMES[kind], "generation": (p0["b"] | (p0["c"] << 16)), "entry_mask": p1["b"], "exit_mask": p1["c"], "site": (p2["b"] >> 8) & 0xFF, "phase": p2["b"] & 0xFF, "status": p2["c"], "dev_state": (p3["b"] >> 8) & 0xFF, "nwk_state": p3["b"] & 0xFF, "valid": p3["c"]}
     flags = p0["a"]
     return {"kind": kind, "kind_name": EVENT_NAMES[kind], "seen_sync": bool(flags & (1 << 2)), "seen_transport": bool(flags & (1 << 3)), "seen_diag": bool(flags & (1 << 4)), "seen_normal_pending": bool(flags & (1 << 5)), "seen_txfull": bool(flags & (1 << 6)), "zstack_known": bool(flags & (1 << 7)), "uart_accepted_seen": bool(flags & (1 << 8)), "saturated": bool(flags & (1 << 9)), "unknown": bool(flags & (1 << 10)), "mt_schedule_delta": p0["b"], "mt_work_delta": p0["c"], "zstack_age_10ms": p1["b"], "npi_wake_delta": p1["c"], "uart_rx_byte_delta": p2["b"], "write_completion_delta": p2["c"], "normal_pending": p3["b"], "oldest_pending_age_10ms": p3["c"]}
-}
 
 DEFAULT_SOURCES = [
     "/addon_configs/45df7312_zigbee2mqtt/log",

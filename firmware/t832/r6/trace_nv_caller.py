@@ -115,6 +115,11 @@ def analyze_hits(hits):
     m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*zstack_user0Cfg', req['code'].strip())
     if m:
         temp = m.group(1)
+        def _reported(raw):
+            code = raw.split('//', 1)[0]
+            return 'T832R11_exit' in code and re.search(r'\b' + re.escape(temp) + r'\b', code)
+        if not any(_reported(raw) for raw in req['context']):
+            raise ValueError('Q3 observed initNV status lacks observer report: ' + temp)
         for raw in req['context']:
             code = raw.split('//', 1)[0]
             pat = r'\b' + re.escape(temp) + r'\b'
