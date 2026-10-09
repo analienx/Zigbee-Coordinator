@@ -96,3 +96,14 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   red-before-green negative control fails on original source (hosted).
 - Evidence: hosted exact-SHA CI on push (nv-lab + firmware BASE/DIAG matrix), draft PR
   base codex/t832-r10-preserve-startup-nv, no merge. Hardware: always PENDING.
+
+## Hosted CI BLOCKED 2026-10-09 (sole writer, push budget exhausted 3/3)
+- Final SHA: f1bf490, PR47 draft OPEN, base r10-preserve-startup-nv, no merge.
+- Green at final SHA: r7 vendor-contract (4), r7 trial-bundle (34), r6 suite (74).
+- Red: verify_startup_guard, 212 failures. Cause: its probe uses the real R11 capture
+  and export files, but its export9 checks still encode the old first-failure contract.
+- Fix direction, not applied, budget spent: teach the guard the R11 a7 and FAULT
+  semantics; keep all preservation checks byte-exact. Case list is a named gap.
+- Pre-existing out of scope: r7 hw-qual counter-seal regression on untouched files.
+- Not yet run, blocked behind the guard: nv-lab vendor run, red-first, regressions,
+  sizeof proof, BASE and DIAG firmware matrix, herdsman chain. HW always PENDING.
