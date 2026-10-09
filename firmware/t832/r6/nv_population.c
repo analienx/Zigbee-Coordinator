@@ -69,11 +69,13 @@ int main(int argc,char **argv) {
     if(!strcmp(argv[1],"observer-api")) {
         uint8_t bytes[20];payload(bytes,20,4,0,0);
         if(api.createItem(id(4,0),20,bytes)!=NVINTF_EXIST ||
-           t832R6Nv.status!=NVINTF_EXIST || t832R6Nv.requested!=20 || t832R6Nv.first_failure)exit(74);
+           t832R6Nv.status!=NVINTF_EXIST || t832R6Nv.requested!=20 || t832R6Nv.first.fault_id)exit(74);
+        if(t832R6Nv.current.api!=T832R6NV_API_CREATE || t832R6Nv.current.item_id!=4 ||
+           t832R6Nv.current.sub_id!=0 || t832R6Nv.current.system_id!=NVINTF_SYSID_ZSTACK)exit(174);
         if(api.deleteItem(id(12,0))!=NVINTF_NOTFOUND ||
-           t832R6Nv.status!=NVINTF_NOTFOUND || t832R6Nv.requested!=0 || t832R6Nv.first_failure)exit(75);
+           t832R6Nv.status!=NVINTF_NOTFOUND || t832R6Nv.requested!=0 || t832R6Nv.first.fault_id)exit(75);
         require(api.compactNV(0),"observer-compact",0);
-        if(t832R6Nv.status || t832R6Nv.requested!=0 || t832R6Nv.first_failure)exit(76);
+        if(t832R6Nv.status || t832R6Nv.requested!=0 || t832R6Nv.first.fault_id)exit(76);
         population(0,0,0);
         puts("{\"expected_non_success_not_fault\":true,\"api_request_metadata_verified\":true}");
         return 0;

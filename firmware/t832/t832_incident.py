@@ -193,7 +193,51 @@ EVENT_NAMES = {
     48: "NV_COUNTERS",
     49: "NV_RESULT",
     50: "NPI_WRITE_COMPLETE",
+    51: "NV_FIRST_V1",
+    52: "STARTUP_V1",
+    53: "RUNTIME_V1",
 }
+
+
+R11_KINDS = {51, 52, 53}
+R11_VERSION = 1
+
+
+def decode_r11_group(records):
+    strict = "exactly four records of one kind 51/52/53, parts 0..3, one version, reserved bit 11 clear"
+    if len(records) != 4:
+        raise ValueError("r11-count:" + str(len(records)))
+    kinds = set()
+    for r in records:
+        kinds.add(r["kind"])
+    if len(kinds) != 1 or next(iter(kinds)) not in R11_KINDS:
+        raise ValueError("r11-kind:" + str(sorted(kinds)))
+    kind = records[0]["kind"]
+    parts = sorted(r["a"] & 0x3 for r in records)
+    if parts != [0, 1, 2, 3]:
+        raise ValueError("r11-parts:" + str(parts))
+    versions = set(r["a"] >> 12 for r in records)
+    if len(versions) != 1 or next(iter(versions)) != R11_VERSION:
+        raise ValueError("r11-version:" + str(sorted(versions)))
+    for r in records:
+        if r["a"] & 0x0800:
+            raise ValueError("r11-reserved-bit")
+    if kind in (51, 52):
+        for r in records:
+            if r["a"] != (0x1000 | (r["a"] & 0x3)):
+                raise ValueError("r11-flags-5152:" + hex(r["a"]))
+    else:
+        bases = set(r["a"] & ~0x3 for r in records)
+        if len(bases) != 1:
+            raise ValueError("r11-flags-53-nonuniform")
+    ordered = sorted(records, key=lambda r: r["a"] & 0x3)
+    p0, p1, p2, p3 = ordered
+    if kind == 51:
+        return {"kind": kind, "kind_name": EVENT_NAMES[kind], "fault_id": (p0["b"] | (p0["c"] << 16)), "item_id": p1["b"], "sub_id": p1["c"], "requested": p2["b"], "system_id": (p2["c"] >> 8) & 0xFF, "api": p2["c"] & 0xFF, "known_flags": (p3["b"] >> 8) & 0xFF, "phase_domain": p3["b"] & 0xFF, "site": (p3["c"] >> 8) & 0xFF, "status": p3["c"] & 0xFF}
+    if kind == 52:
+        return {"kind": kind, "kind_name": EVENT_NAMES[kind], "generation": (p0["b"] | (p0["c"] << 16)), "entry_mask": p1["b"], "exit_mask": p1["c"], "site": (p2["b"] >> 8) & 0xFF, "phase": p2["b"] & 0xFF, "status": p2["c"], "dev_state": (p3["b"] >> 8) & 0xFF, "nwk_state": p3["b"] & 0xFF, "valid": p3["c"]}
+    flags = p0["a"]
+    return {"kind": kind, "kind_name": EVENT_NAMES[kind], "seen_sync": bool(flags & (1 << 2)), "seen_transport": bool(flags & (1 << 3)), "seen_diag": bool(flags & (1 << 4)), "seen_normal_pending": bool(flags & (1 << 5)), "seen_txfull": bool(flags & (1 << 6)), "zstack_known": bool(flags & (1 << 7)), "uart_accepted_seen": bool(flags & (1 << 8)), "saturated": bool(flags & (1 << 9)), "unknown": bool(flags & (1 << 10)), "mt_schedule_delta": p0["b"], "mt_work_delta": p0["c"], "zstack_age_10ms": p1["b"], "npi_wake_delta": p1["c"], "uart_rx_byte_delta": p2["b"], "write_completion_delta": p2["c"], "normal_pending": p3["b"], "oldest_pending_age_10ms": p3["c"]}
 
 DEFAULT_SOURCES = [
     "/addon_configs/45df7312_zigbee2mqtt/log",
@@ -437,6 +481,10 @@ def decode_record(raw: bytes, offset: int) -> dict[str, object]:
         result["elapsed_boot_ms"] = rec[6] | (rec[7] << 16)
     elif rec[3] in (39, 40, 41):
         result["saturation_note"] = "0xFFFF is saturated/unavailable; consult schema and RAM snapshot"
+    elif rec[3] in (51, 52, 53):
+        result["r11_version"] = (rec[5] >> 12) & 0xF
+        result["r11_part"] = rec[5] & 0x3
+        result["saturation_note"] = "0xFFFF is saturated/unavailable; consult schema and RAM snapshot"
     return result
 
 
@@ -497,6 +545,8 @@ def decode_frame_payload(text: str) -> tuple[dict[str, object], list[dict[str, o
             decode_record(raw, HEADER.size + 1 + i * RECORD.size)
             for i in range(count)
         ]
+        if any(record['kind'] in R11_KINDS for record in records):
+            frame['r11_group'] = decode_r11_group(records)
         return frame, records
     raise ValueError("no-t832-prefix")
 

@@ -3,7 +3,7 @@
 The pinned TI SDK and Z-Stack example trees are download-only checkouts.
 The gate records every relevant source hit, requires at least one executable
 initNV call, and pins the two production Z-Stack callers as standalone
-ignored-return statements so boot progress cannot silently become status-gated.
+ignored-return statements so boot progress cannot silently become status-gated. R11-DIAG may capture the main.c return into a single observed temp, proven below to never feed firmware logic (observer-only report).
 """
 import argparse
 import json
@@ -22,7 +22,7 @@ CONTEXT = 8
 REQUIRED_CALLERS = (
     ('znp_startup',
      'source/ti/zstack/startup/main.c',
-     re.compile(r'^zstack_user0Cfg\.nvFps\.initNV\s*\(\s*NULL\s*\)\s*;\s*$')),
+     re.compile(r'^(?:[A-Za-z_][A-Za-z0-9_]*\s*=\s*)?zstack_user0Cfg\.nvFps\.initNV\s*\(\s*NULL\s*\)\s*;\s*$')),
     ('osal_nv',
      'source/ti/zstack/osal/osal_nv.c',
      re.compile(r'^pZStackCfg->nvFps\.initNV\s*\(\s*NULL\s*\)\s*;\s*$')),
@@ -111,6 +111,26 @@ def analyze_hits(hits):
             raise ValueError('Q3 required ignored-return caller %s expected exactly once, got %d'
                              % (label, len(matched)))
         required[label] = matched[0]
+    req = required['znp_startup']
+    m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*zstack_user0Cfg', req['code'].strip())
+    if m:
+        temp = m.group(1)
+        def _reported(raw):
+            code = raw.split('//', 1)[0]
+            return 'T832R11_exit' in code and re.search(r'\b' + re.escape(temp) + r'\b', code)
+        if not any(_reported(raw) for raw in req['context']):
+            raise ValueError('Q3 observed initNV status lacks observer report: ' + temp)
+        for raw in req['context']:
+            code = raw.split('//', 1)[0]
+            pat = r'\b' + re.escape(temp) + r'\b'
+            for _ in re.finditer(pat, code):
+                if re.match(r'^\s*' + re.escape(temp) + r'\s*=', code):
+                    continue
+                if re.match(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s+' + re.escape(temp) + r'\s*;\s*$', code):
+                    continue
+                if 'T832R11_exit' in code:
+                    continue
+                raise ValueError('Q3 observed initNV status escapes: ' + code.strip()[:80])
     return prod, calls, required
 
 

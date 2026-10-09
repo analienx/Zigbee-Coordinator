@@ -1,7 +1,12 @@
 /* MT task context only. No NV lock, flash reads or NV API calls. */
 #include "nv_r6_probe.h"
+#include "r11_startup.h"
+_Static_assert(sizeof(T832R11Startup)==20u,"R11 startup target layout");
+_Static_assert(sizeof(T832R11ExtState)==44u,"R11 extension target layout");
+_Static_assert(sizeof(T832R6NvSnapshot)==((68u+3u*NVOCMP_NVPAGES+3u)&~3u),"R11 NV target layout");
 _Static_assert(sizeof(T832DiagState)+sizeof(T832R5State)+sizeof(T832FatalLatch)+
-               sizeof(T832R6NvSnapshot)+16u<=4096u,"All R6 diagnostic RAM remains within 4 KiB");
+               sizeof(T832R6NvSnapshot)+sizeof(T832R11Startup)+
+               sizeof(T832R11ExtState)+16u<=4096u,"All R11 diagnostic RAM remains within 4 KiB");
 static uint32_t t832R6NvLastSequence,t832R6NvLastMs;
 static void T832R6Nv_poll(uint32_t now)
 {
@@ -33,12 +38,14 @@ static void T832R6Nv_poll(uint32_t now)
     T832Diag_record(T832_DIAG_EV_NV_COUNTERS,1u,(uint16_t)s.compactions,(uint16_t)(s.compactions>>16));
     T832Diag_record(T832_DIAG_EV_NV_COUNTERS,2u,(uint16_t)s.compact_failures,(uint16_t)(s.compact_failures>>16));
     T832Diag_record(T832_DIAG_EV_NV_RESULT,s.stage,s.requested,s.status);
-    T832Diag_record(T832_DIAG_EV_NV_RESULT,7u,s.init_action,s.first_failure);
+    T832Diag_record(T832_DIAG_EV_NV_RESULT,7u,s.init_action,s.first.status);
     /* Q3 rejection latch: b packs status/page, c packs site/raw. Zeros
      * mean the classifier admitted (distinguishes ACTION_NOT_SELECTED
      * with a latched cause from a true NORMAL_INIT). */
     T832Diag_record(T832_DIAG_EV_NV_RESULT,9u,(uint16_t)(((uint16_t)s.rej_status<<8)|s.rej_page),(uint16_t)(((uint16_t)s.rej_site<<8)|s.rej_raw));
     /* The first NV failure uses the bounded critical ring and sticky fault
-     * snapshot. Routine topology pressure cannot bury it. No hot-path calls. */
-    if(s.first_failure)T832Diag_record(T832_DIAG_EV_NV_FAULT,8u,s.first_failure,s.first_failure_requested);
+     * snapshot. Routine topology pressure cannot bury it. No hot-path calls.
+     * fault_id 0 means no meaningful failure latched (a8 history before R11
+     * is ambiguous: healthy drained compactions also latched there). */
+    if(s.first.fault_id)T832Diag_record(T832_DIAG_EV_NV_FAULT,8u,s.first.status,s.first.requested);
 }

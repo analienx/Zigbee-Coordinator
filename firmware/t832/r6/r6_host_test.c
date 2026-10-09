@@ -14,7 +14,7 @@ int main(void)
     t832R6Nv.sequence=1;T832R6Nv_poll(1000);
     CHECK(t832Diag.record_sequence==before);
     t832R6Nv.pages=NVOCMP_NVPAGES;t832R6Nv.tail=NVOCMP_NVPAGES-1;
-    t832R6Nv.ready=1;t832R6Nv.requests=400;t832R6Nv.first_failure=5;t832R6Nv.first_failure_requested=1;
+    t832R6Nv.ready=1;t832R6Nv.requests=400;t832R6Nv.first.fault_id=7;t832R6Nv.first.status=5;t832R6Nv.first.requested=1;
     for(unsigned i=0;i<NVOCMP_NVPAGES;i++){t832R6Nv.states[i]=0x7E;t832R6Nv.offsets[i]=16;}
     t832R6Nv.sequence=2;t832Diag.sync_outstanding=1;
     advance_ms(1000);T832Diag_exportPoll();

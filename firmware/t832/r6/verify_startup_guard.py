@@ -2025,8 +2025,8 @@ def verify(sdk, out):
                     check((a8[0]['b'], a8[0]['c']) == (0, r['init_status']),
                           'export9 stage record wrong', lane=tag, case=name,
                           export=exp)
-                    check((a7[0]['b'], a7[0]['c']) == (0, r['init_status']),
-                          'export9 a7 not NORMAL_INIT/first-failure',
+                    check((a7[0]['b'], exp.get('generation'), exp.get('fault_id'), a7[0]['c'], exp.get('first_status'), exp.get('first_requested')) == (0, 1, 1, r['init_status'], r['init_status'], 0),
+                          'export9 R11 a7/first-fault bytes wrong',
                           lane=tag, case=name, export=exp)
                     check((a9[0]['b'], a9[0]['c']) ==
                           ((exp_latch[0] << 8) | exp_latch[2],
@@ -2139,12 +2139,16 @@ def verify(sdk, out):
                           case=name, export=expa)
                     arecs = [er for er in expa['records'] if er['event'] == 49]
                     aa9 = [er for er in arecs if er['a'] == 9]
+                    aa7 = [er for er in arecs if er['a'] == 7]
                     check(len([er for er in arecs if er['a'] == 8]) == 1 and
                           len([er for er in arecs if er['a'] == 7]) == 1 and
                           len(aa9) == 1, 'admit export9 census wrong',
                           lane=tag, case=name, export=expa)
                     check((aa9[0]['b'], aa9[0]['c']) == (0, 0),
                           'admit export9 a9 nonzero', lane=tag, case=name,
+                          export=expa)
+                    check((aa7[0]['b'], aa7[0]['c'], expa.get('fault_id')) == (0, 0, 0),
+                          'admit export9 a7 nonzero R11 fault latch', lane=tag, case=name,
                           export=expa)
                     lane['admits'][name] = {**first, 'mutation': mutation,
                                             'oracle_tag': otag,

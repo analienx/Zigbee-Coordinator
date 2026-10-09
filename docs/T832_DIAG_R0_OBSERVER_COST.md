@@ -63,3 +63,18 @@ Host cost: the collector is a 60 s file poll (default 16 MiB initial tail,
 State files are 0600/0700. Host-measured Python timings must not be presented
 as target CPU claims. Hardware cycle/hook timing remains unvalidated until
 bench measurement on the pinned toolchain and board.
+## R11-DIAG addendum (operation-aware NV context, startup POD, extension frames)
+
+Static RAM: NV POD grows by a net 24 B (First 16 B + Current 12 B replacing
+4 B of first-failure scalars); at the deployed 15-page vendor geometry the POD is
+116 B (124 B at 18 pages), within the 128 B cap. Startup POD is 20 B; extension
+state is 44 B. Combined diagnostic RAM stays within 4096 B by compile assertion;
+linker free SRAM floor stays 8192 B; FLASH_NV stays exactly 0x7800 at 0xF8800.
+
+Hot path: NV captures add bounded register-width POD stores under the existing NV
+serialization (no new locks, clock, allocation, flash, or NV reads). Startup sites add
+plain volatile POD writes beside existing statements (no branch/return changes).
+Export adds at most one 4-record (234 B payload) frame per eligible 5 s poll through
+the same limiter and gates; hex formatting stays on the export path only. Cadence:
+runtime every 30 s when eligible, firstNV/startup repeats at 60 s, legacy reserved
+after every two extended frames. No retention is claimed (bit31 clear).

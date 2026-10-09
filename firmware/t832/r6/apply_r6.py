@@ -57,9 +57,11 @@ def base(sdk,examples,profile):
             'transport_policy':'pristine TI write callback completion','sdk_commit':SDK,'examples_commit':EXAMPLES}
 
 def apply(sdk,examples,profile,variant,series='R6'):
-    if series not in ('R6','R7') or ((series=='R7') != (profile=='vendor-20240716')):
+    if series not in ('R6','R7','R11') or ((series in ('R7','R11')) != (profile=='vendor-20240716')):
         raise ValueError('series/profile mismatch')
-    base_revision,diag_revision=(8320041,8320042) if series=='R7' else (8320011,8320012)
+    if series=='R7':base_revision,diag_revision=(8320041,8320042)
+    elif series=='R11':base_revision,diag_revision=(8320051,8320052)
+    else:base_revision,diag_revision=(8320011,8320012)
     if variant=='DIAG':
         evidence=apply_diag(sdk,examples,HERE/'profiles.json',base_apply=lambda s,e,m:base(s,e,profile),
                             revision=diag_revision,pristine_transport=True)
@@ -77,7 +79,7 @@ def apply(sdk,examples,profile,variant,series='R6'):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--sdk',type=Path,required=True);p.add_argument('--examples',type=Path,required=True)
     p.add_argument('--profile',choices=['production-demand','capacity-400','vendor-20240716'],required=True);p.add_argument('--variant',choices=['BASE','DIAG'],required=True)
-    p.add_argument('--series',choices=['R6','R7'],default='R6')
+    p.add_argument('--series',choices=['R6','R7','R11'],default='R6')
     p.add_argument('--evidence',type=Path,required=True);a=p.parse_args()
     e=apply(a.sdk.resolve(),a.examples.resolve(),a.profile,a.variant,a.series)
     a.evidence.parent.mkdir(parents=True,exist_ok=True);a.evidence.write_text(json.dumps(e,indent=2)+'\n')

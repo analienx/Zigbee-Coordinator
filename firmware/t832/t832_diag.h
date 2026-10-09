@@ -39,6 +39,9 @@
 #define T832_DIAG_CAP_UART_EVENTS    (1u << 25)
 #define T832_DIAG_CAP_NWK_PRESSURE   (1u << 26)
 #define T832_DIAG_CAP_TASK_STATS     (1u << 27)
+/* Bit 30 marks R11 atomic extension frames (IDs 51..53). Bit 31 stays
+ * clear: no retention is claimed (ordinary SRAM, cleared on boot). */
+#define T832_DIAG_CAP_R11_EXT        (1u << 30)
 
 enum {
   T832_DIAG_EV_BOOT = 1,
@@ -85,7 +88,10 @@ enum {
   T832_DIAG_EV_NWK_PRESSURE,
   T832_DIAG_EV_TASK_STAT,
   T832_DIAG_EV_BOOT_TIMING,
-  T832_DIAG_EV_NWK_LIMIT
+  T832_DIAG_EV_NWK_LIMIT,
+  T832_DIAG_EV_NV_FIRST_V1 = 51,
+  T832_DIAG_EV_STARTUP_V1 = 52,
+  T832_DIAG_EV_RUNTIME_V1 = 53
 };
 
 _Static_assert(T832_DIAG_EV_NWK_LIMIT <= 63u,

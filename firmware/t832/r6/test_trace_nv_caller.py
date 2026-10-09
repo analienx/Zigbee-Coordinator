@@ -47,7 +47,6 @@ class TraceNvCallerTest(unittest.TestCase):
         path = 'sdk/source/ti/zstack/startup/main.c'
         bad_code = (
             'if (zstack_user0Cfg.nvFps.initNV(NULL)) {',
-            'status = zstack_user0Cfg.nvFps.initNV(NULL);',
             'return zstack_user0Cfg.nvFps.initNV(NULL);',
         )
         for code in bad_code:
@@ -55,6 +54,34 @@ class TraceNvCallerTest(unittest.TestCase):
                 hits = [hit(path, code)] + self.good_hits()[1:]
                 with self.assertRaisesRegex(ValueError, 'required ignored-return caller'):
                     t.analyze_hits(hits)
+
+    def observed_hit(self):
+        match = 't832r11InitStatus=zstack_user0Cfg.nvFps.initNV(NULL);'
+        h = hit('sdk/source/ti/zstack/startup/main.c', match)
+        h['context'] = [
+            'uint8_t t832r11InitStatus;',
+            'T832R11_enter(T832R11_SITE_MAIN_INIT);',
+            match,
+            'T832R11_exit(T832R11_SITE_MAIN_INIT,(uint16_t)t832r11InitStatus,T832R11_STATE_UNKNOWN,T832R11_STATE_UNKNOWN,T832R11_VALID_STATUS);',
+        ]
+        return h
+
+    def test_observed_assignment_without_report_fails(self):
+        hits = [hit('sdk/source/ti/zstack/startup/main.c',
+                    'status = zstack_user0Cfg.nvFps.initNV(NULL);')] + self.good_hits()[1:]
+        with self.assertRaisesRegex(ValueError, 'lacks observer report'):
+            t.analyze_hits(hits)
+
+    def test_observed_assignment_with_report_passes(self):
+        hits = [self.observed_hit()] + self.good_hits()[1:]
+        prod, calls, required = t.analyze_hits(hits)
+        self.assertEqual(set(required), {'znp_startup', 'osal_nv'})
+
+    def test_observed_status_escape_fails(self):
+        h = self.observed_hit()
+        h['context'] = h['context'] + ['if (t832r11InitStatus) {']
+        with self.assertRaisesRegex(ValueError, 'escapes'):
+            t.analyze_hits([h] + self.good_hits()[1:])
 
     def test_comments_and_strings_are_not_executable_calls(self):
         lines = [
