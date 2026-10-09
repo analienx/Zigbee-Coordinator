@@ -13,6 +13,7 @@ Offline only. No hardware, no flash, no HA/Z2M changes.
 import json
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,6 +53,34 @@ class MinContractTests(unittest.TestCase):
     def test_r10_absence(self):
         violations = patch_subject.check_no_r10_imports(MIN_ROOT)
         self.assertEqual(violations, [])
+
+    def test_r10_absence_bare_r6_dynamic_loads_flagged(self):
+        py_vectors = (
+            "import importlib\nimportlib.import_module('r6')\n",
+            "x = __import__('r6')\n",
+            "x = getattr(mod, 'r6')\n",
+            "from importlib import import_module\nimport_module('r' + '6')\n",
+        )
+        for src in py_vectors:
+            with self.subTest(src=src):
+                with tempfile.TemporaryDirectory() as d:
+                    (Path(d) / "evil.py").write_text(src, encoding="utf-8")
+                    self.assertTrue(
+                        patch_subject.check_no_r10_imports(Path(d)), src)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "evil.cjs").write_text(
+                "const x = require('r6');\n", encoding="utf-8")
+            self.assertTrue(patch_subject.check_no_r10_imports(Path(d)))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "evil.py").write_text("import r6\n", encoding="utf-8")
+            self.assertTrue(patch_subject.check_no_r10_imports(Path(d)))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "clean.py").write_text("x = 1\n", encoding="utf-8")
+            self.assertEqual(patch_subject.check_no_r10_imports(Path(d)), [])
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "doc.py").write_text(
+                "# import_module('r6')\nx = 1\n", encoding="utf-8")
+            self.assertEqual(patch_subject.check_no_r10_imports(Path(d)), [])
 
     def test_nv_index0_agreement(self):
         self.assertEqual(nv_subject.check_index0(), [])

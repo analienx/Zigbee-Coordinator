@@ -68,11 +68,14 @@ def check_no_r10_imports(tree: Path) -> list[str]:
     """Scan M1 tree for real R10 imports/calls. Returns violations.
 
     Only executable references count: import/from statements naming an R10
-    helper, an actual ``apply_r6.base(...)`` invocation, or a dynamic-loader
-    call (``import_module`` / ``__import__`` / ``getattr``) whose target
-    resolves to the forbidden token. Matching is fragment-insensitive: quotes,
-    plus signs, backticks, and whitespace are stripped before comparing, so
-    ``"apply_" + "r6"`` still counts. Docstring prose, comments, and string
+    helper (``apply_r6`` or bare ``r6``), an actual ``apply_r6.base(...)``
+    invocation, or a dynamic-loader call (``import_module`` / ``__import__`` /
+    ``getattr``, plus ``require`` in ``*.cjs``) whose target resolves to a
+    forbidden token (``apply_r6`` or word-boundary bare ``r6``). Matching is
+    fragment-insensitive: quotes, plus signs, backticks, and whitespace are
+    stripped before comparing, so ``"apply_" + "r6"``, ``import_module('r6')``,
+    ``__import__('r6')``, ``getattr(mod, 'r6')``, ``import_module('r' + '6')``,
+    and ``require('r6')`` all count. Docstring prose, comments, and string
     literals that merely NAME the forbidden token (including this scanner's
     own reference table) are not violations — ``*.py`` files are analyzed
     with the ``tokenize`` module and STRING/COMMENT tokens are excluded from
@@ -87,6 +90,11 @@ def check_no_r10_imports(tree: Path) -> list[str]:
     import_stmt = re.compile(r"^\s*(import|from)\s+.*(apply_r6|\br6\b)")
     call_expr = re.compile(r"apply_r6\s*\.\s*base\s*\(")
     frag_strip = re.compile(r"""['"`\s\+]""")
+    bare_r6 = re.compile(r"\br6\b")
+
+    def _has_forbidden(stripped: str) -> bool:
+        return "apply_r6" in stripped or bare_r6.search(stripped) is not None
+
     loader_names = ("import_module", "__import__", "getattr")
     skip_types = {tokenize.STRING, tokenize.COMMENT, tokenize.NL,
                   tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT,
@@ -116,13 +124,13 @@ def check_no_r10_imports(tree: Path) -> list[str]:
                 continue
             if any(loader in parts for loader in loader_names):
                 raw = raw_lines[lineno - 1] if 0 < lineno <= len(raw_lines) else code
-                if "apply_r6" in frag_strip.sub("", raw):
+                if _has_forbidden(frag_strip.sub("", raw)):
                     violations.append(f"{path}:{lineno}: {code.strip()}")
                     file_hits += 1
         if file_hits == 0:
             all_code = {tok for parts in code_lines.values() for tok in parts}
             if any(loader in all_code for loader in loader_names):
-                if "apply_r6" in frag_strip.sub("", text):
+                if _has_forbidden(frag_strip.sub("", text)):
                     violations.append(f"{path}: CROSS_LINE_FRAGMENT")
     for ext in ("*.cjs", "*.c", "*.h"):
         for path in sorted(tree.rglob(ext)):
@@ -132,10 +140,10 @@ def check_no_r10_imports(tree: Path) -> list[str]:
                 continue
             hit = False
             for lineno, line in enumerate(text.splitlines(), start=1):
-                if "apply_r6" in frag_strip.sub("", line):
+                if _has_forbidden(frag_strip.sub("", line)):
                     violations.append(f"{path}:{lineno}: {line.strip()}")
                     hit = True
-            if not hit and "apply_r6" in frag_strip.sub("", text):
+            if not hit and _has_forbidden(frag_strip.sub("", text)):
                 violations.append(f"{path}: CROSS_LINE_FRAGMENT")
     return violations
 
