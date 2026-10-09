@@ -110,19 +110,15 @@ class MinContractTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assertIn(f'"{entry}"', text)
 
-    def test_baud_single_source(self):
+    def test_baud_is_ti_source_assumption_not_verified_board_fact(self):
         contract = json.loads((MIN_ROOT / "board" / "mr4u_board_contract.json").read_text())
-        board_value = contract["fields"]["uart_transport"]["value"]
-        board_match = re.search(r"(\d+)\s*baud", board_value)
-        self.assertIsNotNone(board_match, board_value)
-        board_baud = int(board_match.group(1))
+        uart = contract["fields"]["uart_transport"]
+        self.assertEqual(uart["verdict"], "HARDWARE_BLOCKED")
+        self.assertIsNone(uart["value"])
         host_text = (MIN_ROOT / "host_contract.cjs").read_text(encoding="utf-8")
-        host_match = re.search(r"baud\s*:\s*(\d+)", host_text)
+        host_match = re.search(r"baud\\s*:\\s*(\\d+)", host_text)
         self.assertIsNotNone(host_match, host_text)
-        host_baud = int(host_match.group(1))
-        self.assertEqual(board_baud, 115200)
-        self.assertEqual(host_baud, 115200)
-        self.assertEqual(board_baud, host_baud)
+        self.assertEqual(int(host_match.group(1)), 115200)  # firmware design; NOT measured MR4U data path
 
     def test_board_contract_proven_vs_blocked(self):
         contract = json.loads((MIN_ROOT / "board" / "mr4u_board_contract.json").read_text())
