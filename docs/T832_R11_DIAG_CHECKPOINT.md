@@ -296,3 +296,50 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   downstream state (run_nv_lab vendor profile, red-first, regressions, sizeof,
   firmware BASE/DIAG matrix, parser chain -- none has ever run on R11). STEP B
   P1 code fixes + M5 seal/PR47 are scoped from that signal; see survey below.
+
+## R11 REPAIR Push-6 result + BLOCKED 2026-10-09 (sole writer, budget 6/6 spent)
+
+- Run 37915793186 @ 72e7fd0 (final budget push): **nv-lab job SUCCESS** --
+  full lane green for the first time on R11: verify_startup_guard
+  `{ok:true, failures:0}` over 384 export9 runs, verify_corrupt_duplicate,
+  verify_write_gate, run_nv_lab vendor-20240716, F1 red-first, collector/
+  recorder regressions, R11 sizeof proof. The mkdir fix worked; no
+  identical-signature retry was needed at any step (every push changed the
+  signature or the attached diagnosis).
+- Firmware matrix ran for the first time and BOTH variants FAILED on two
+  distinct sterile defects in never-executed R11 Python (hosted proof;
+  quoted `gh run view 37915793186 --log-failed`):
+  - BASE: `FileNotFoundError: sdk/source/ti/zstack/mt/r11_startup.h` via
+    `apply_r6.py:70 apply -> audit_source.py:63/56 -> r11_audit.py:17
+    audit_r11 -> read_text`. BASE never installs that header (the copy into
+    mt/ lives in DIAG-only `apply_observer`), yet the audit demands it
+    unconditionally. Fix direction (NEXT budget): variant-aware
+    `r11_audit.py` -- BASE asserts header absence + zero startup hooks;
+    DIAG asserts presence. Read `r11_audit.py` + `audit_source.py` fully
+    before editing.
+  - DIAG: `IsADirectoryError: .../stack/bdb` via `apply_r6.py:70 apply ->
+    r6_observer.py:215 apply_observer -> :97 patch_startup ->
+    apply_diag.py:55 replace -> read_text`. `patch_startup` passes the
+    `bdb` DIRECTORY (r6_observer.py:83) to all three site-2 `ex.replace`
+    calls (:97, :98-103, :104-109) instead of a source file. Fix direction:
+    name the exact BDB source file carrying `#include "bdb.h"` plus the
+    `ZDOInitDevice(0)==RESTORED` / `bdb_setNodeIsOnANetwork(FALSE)` anchors
+    (candidate `bdb.c` -- MUST verify hosted against the pinned SDK tree
+    before editing; add a listing step or read the tree in the fix push).
+- Green hosted evidence banked this turn: trace_nv_caller on BASE+DIAG
+  (patch-anchor prerequisites hold on pristine SDK); entire nv-lab lane.
+- Ledger map at final pushed SHA 72e7fd0: F1 red-first PASS (hosted);
+  F2 sizeof+immutable PASS (hosted); F3 boundaries PASS (guard 0/384);
+  F4 frames/decoder PASS at unit level (r6 74/74 + guard green), end-to-end
+  cadence proofs PENDING; B1 budgets/artifacts BLOCKED (firmware red);
+  E1 real-parser chain NOT RUN (blocked behind firmware); PR47 draft OPEN at
+  72e7fd0, base `codex/t832-r10-preserve-startup-nv`, no merge; R1 four
+  explicit PASS NOT claimed (reviewers' gate); H1 hardware PENDING always.
+- STOP state per brief (no pushes remain): this diagnosis is committed
+  LOCALLY ONLY (unpushed, PR47 head stays 72e7fd0). Next session with fresh
+  budget: apply the two firmware fixes above, push, and resume M5
+  (BASE/DIAG artifacts, E1 chain, PR47 seal, R1 re-review). STEP B P1 code
+  items from the survey (install order, valid lifetime, snapshot atomicity,
+  fairness, decoder strictness, BADPARAM scope, size labels, 60s/5s/CREATE-27/
+  wrap-sat proofs, hw-qual re-audit) remain NOT IMPLEMENTED and should be
+  re-triaged against the then-green firmware baseline rather than fixed blind.
