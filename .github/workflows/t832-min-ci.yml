@@ -1,4 +1,4 @@
-name: T832-MIN M1 CI (hosted-only T1-T5)
+name: T832-MIN source/static checks (not linked firmware)
 
 # NOT_PRODUCTION_QUALIFIED. Hosted-only gates: no flash, no hardware, no HA/Z2M.
 on:
@@ -152,3 +152,45 @@ jobs:
         run: python firmware/t832/min/pack.py --check
       - name: M1 contract unit test
         run: python -m unittest -v tests.test_t832_min_contract
+
+  ti-source-reality:
+    name: TI 8.32 and P10 example REAL anchored source patch
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          sparse-checkout: |
+            source/ti/zstack/apps/znp
+            source/ti/zstack/mt
+            source/ti/zstack/boards/cc13x4_cc26x4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          sparse-checkout: |
+            examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7
+      - name: Apply real source patch and verify exact upstream change set
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence evidence/source-delta.json
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 2
+          test "$(git -C examples diff --name-only | wc -l)" -eq 1
+          git -C sdk diff --check
+          git -C examples diff --check
+          git -C sdk diff --binary > evidence/source-sdk.patch
+          git -C examples diff --binary > evidence/source-example.patch
+          test -s evidence/source-sdk.patch && test -s evidence/source-example.patch
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-min-real-source-diff
+          path: evidence/
+          if-no-files-found: error
