@@ -243,3 +243,39 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   (60s-repeat/downstream-loss, gate conjunction, 5s boundary, CREATE-27,
   wrap/saturation); r7 hw-qual red re-audit (pre-existing at base SHA).
   M5 seal/push/CI + PR47 update pending final SHA.
+
+## R11 REPAIR STEP A close-out 2026-10-09 (sole writer, run 37913043735 @ 4d9202a)
+
+- Push #4 produced the identical failure signature WITH the per-case artifact
+  (forensic always-upload works): guard `{export9_runs:384, failures:212}` +
+  GateError; `nv-evidence-startup-guard/report.json` recovered hosted-side
+  (write-gate dir absent as expected: it runs after the guard).
+- Per-case table, all 212 rows inspected: error-prefix histogram 212/212
+  `export9 a7 not NORMAL_INIT/first-failure`; lane split 53x4; 53 distinct
+  cases each failing 4/4 lanes (deterministic, symmetric); 0 admit-case
+  failures (corpus 88 reject + 8 admit).
+- Byte proof from the error-embedded export JSON of every failing row:
+  ev49 a7==(0,1) vs pinned (0,init_status); init_status==12 (BADVERSION) in
+  all 212 rows; the same exports contain a8==(0,12), TOPOLOGY row0
+  (0,15,0), SPACE summary (65535,0,0), COUNTERS row2 (2,0,0), single FAULT
+  (8,12,0), exactly one a9. Passing reject rows (140 = 35x4) all carry
+  init_status==1, where R11 fault_id==1 coincides with the old pin.
+- Verdict: 212/212 STALE-ORACLE. The guard pins pre-R11
+  `first_failure=status`; R11 emits `fault_id=generation`, which is 1 in
+  this single-store TU (zero init captures + one manual stage-8 capture,
+  proven by source). GENUINE R11 preservation breakage: 0 rows.
+  Pre-export9 preservation checks passed 384/384 (image SHA, zero physical
+  ops, init/re-init stability, TI sanity bit, oracle tags, latch tuples);
+  trial-checker check passed 384/384, so NO checker change is needed.
+- a9 on failing rows: gate-unevaluated (post-a7) but correctness follows
+  from the PASSED latch-tuple check on the same run (rej_* == oracle latch)
+  plus the byte-identical a9 packing line pre/post R11. Remaining
+  gate-evaluation of #8-#12 on those rows closes with the green run.
+- Fix in THIS push (#5, two commits): probe export9 prints the first-fault
+  POD (`generation`, `fault_id`, `first_status`, `first_requested`);
+  verifier replaces the stale a7 check with the R11-pinned triple from the
+  STEP A doctrine (a7.b==0; generation==fault_id==1; a7.c==1 with
+  first_status==reject-verb init_status and first_requested==0); admit path
+  additionally pins a7==(0,0) with fault_id==0. FAULT/a8/a9/TOPOLOGY/SPACE/
+  COUNTERS/trial checks UNCHANGED (bytes already match). Zero firmware
+  behavior change. 1 push remains after this for STEP B/M5.
