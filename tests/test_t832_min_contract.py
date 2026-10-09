@@ -116,7 +116,7 @@ class MinContractTests(unittest.TestCase):
         self.assertEqual(uart["verdict"], "HARDWARE_BLOCKED")
         self.assertIsNone(uart["value"])
         host_text = (MIN_ROOT / "host_contract.cjs").read_text(encoding="utf-8")
-        host_match = re.search(r"baud\\s*:\\s*(\\d+)", host_text)
+        host_match = re.search(r"baud\s*:\s*(\d+)", host_text)
         self.assertIsNotNone(host_match, host_text)
         self.assertEqual(int(host_match.group(1)), 115200)  # firmware design; NOT measured MR4U data path
 
