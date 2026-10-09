@@ -75,6 +75,8 @@ static int valid_slot(const volatile uint32_t *p)
         && p[R12_ATTEMPT] != 0u
         && p[R12_BOOT] != 0u
         && p[R12_SEQUENCE] != 0u
+        && (p[R12_MARK] & 0xffffu) != 0u
+        && ((p[R12_MARK] >> 16u) & 0xffu) <= 2u
         && p[R12_CHECKSUM] == crc_volatile_slot(p);
 }
 

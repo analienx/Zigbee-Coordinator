@@ -160,6 +160,20 @@ int main(void)
     assert(R12Aux_readLatest(aux, BUILD, &view)
            == R12_AUX_AMBIGUOUS_SEQUENCE);
     checks++;
+
+    /* Reject impossible milestone phase despite a syntactically valid CRC. */
+    reset_blank();
+    (void)record(3u, 0u);
+    aux[6u] = (3u | (7u << 16u));
+    {
+        uint32_t words[8];
+        for (i = 0u; i < 8u; ++i) {
+            words[i] = aux[i];
+        }
+        aux[8u] = R12Aux_checksumWords(words, 8u);
+    }
+    assert(R12Aux_readLatest(aux, BUILD, &view) == R12_AUX_TORN);
+    checks++;
     printf("{\"ok\":true,\"checks\":%u,\"window_bytes\":80,"
            "\"writes_to_nv\":0,\"hardware_operations\":0}\n", checks);
     return 0;
