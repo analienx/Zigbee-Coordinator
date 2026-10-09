@@ -1,0 +1,34 @@
+{
+  "contract": "T832-MIN v4 M1 upstream lock",
+  "status": "NOT_PRODUCTION_QUALIFIED",
+  "note": "Offline pin record only. No firmware build, flash, or hardware qualified by this file. All verification runs on GitHub-hosted Actions at the exact candidate SHA.",
+  "ti_sdk": {
+    "release": "simplelink_cc26x2_sdk_8.32.00.07",
+    "commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+    "status": "PINNED_BY_M0_CHECKPOINT"
+  },
+  "p10_znp_example": {
+    "commit": "87ff5b638b632050228a7504f35cf3b95581c278",
+    "status": "PINNED_BY_M0_CHECKPOINT"
+  },
+  "toolchain": {
+    "xdctools": "3.62.01.15",
+    "xdctools_note": "Prior pipeline used .16; deviation documented per M0 checkpoint. TOOLCHAIN label applies.",
+    "ccs": "12.8",
+    "ti_clang": "3.2.2",
+    "sysconfig": "1.21.1",
+    "rtos": "TI-RTOS7 M33F"
+  },
+  "herdsman": {
+    "package": "zigbee-herdsman",
+    "version": "10.9.1",
+    "status": "ATTEMPTED_UNVERIFIED",
+    "note": "Exact-pin attempt per M1 brief. Historical snapshot '10.9.1' may mean herdsman, not Z2M. Hosted CI T1 resolves the exact published version via npm metadata; any mismatch fails the gate. No host, HA, or Z2M state is changed by this record."
+  },
+  "target": {
+    "board": "SMLIGHT SLZB-MR4U main Zigbee radio",
+    "chip": "TI CC2674P10",
+    "forbidden_touch": ["EFR32MG26", "production SONOFF", "live HA", "live Z2M"]
+  },
+  "no_secrets": true
+}

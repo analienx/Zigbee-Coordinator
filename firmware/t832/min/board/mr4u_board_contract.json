@@ -1,0 +1,34 @@
+{
+  "contract": "T832-MIN v4 M1 MR4U board contract",
+  "status": "NOT_PRODUCTION_QUALIFIED",
+  "note": "No real MR4U P10 pins are proven in this repo. Nothing here authorizes flash, hardware access, or production use.",
+  "target": {
+    "board": "SMLIGHT SLZB-MR4U",
+    "radio_index": 2,
+    "chip": "TI CC2674P10",
+    "must_not_touch": "EFR32MG26 (Radio 1)"
+  },
+  "fields": {
+    "target_device": {
+      "value": "CC2674P10",
+      "verdict": "PROVEN",
+      "evidence": "M0 checkpoint: isolated USB ZNP probe answers as TI ZNP on MR4U Radio 2 interface"
+    },
+    "rom_bsl": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
+    "clock_hf_xosc": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
+    "vdrr_rf_config": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
+    "uart_transport": {
+      "value": "115200 baud USB CDC (isolated probe only)",
+      "verdict": "PROVEN",
+      "evidence": "M0 checkpoint: read-only SYS_PING/SYS_VERSION answered at 115200"
+    },
+    "rf_pa_variant": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
+    "ccfg_delta": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
+    "pin_map": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null }
+  },
+  "rules": [
+    "Unknown real pins stay HARDWARE_BLOCKED; never copy Ebyte 20 dBm or faulty crystal deltas.",
+    "PROVEN requires hosted-CI evidence or M0-checkpoint isolated-probe evidence cited above.",
+    "Any HARDWARE_BLOCKED field blocks production qualification."
+  ]
+}
