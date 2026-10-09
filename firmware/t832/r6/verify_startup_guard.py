@@ -2025,7 +2025,7 @@ def verify(sdk, out):
                     check((a8[0]['b'], a8[0]['c']) == (0, r['init_status']),
                           'export9 stage record wrong', lane=tag, case=name,
                           export=exp)
-                    check((a7[0]['b'], exp.get('generation'), exp.get('fault_id'), a7[0]['c'], exp.get('first_status'), exp.get('first_requested')) == (0, 1, 1, 1, r['init_status'], 0),
+                    check((a7[0]['b'], exp.get('generation'), exp.get('fault_id'), a7[0]['c'], exp.get('first_status'), exp.get('first_requested')) == (0, 1, 1, r['init_status'], r['init_status'], 0),
                           'export9 R11 a7/first-fault bytes wrong',
                           lane=tag, case=name, export=exp)
                     check((a9[0]['b'], a9[0]['c']) ==
