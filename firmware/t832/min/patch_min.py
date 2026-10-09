@@ -6,8 +6,12 @@ throwaway directory (populated by hosted CI from the pinned upstream refs).
 Rules (enforced by tests + hosted CI T2):
   - Deterministic: patches apply in sorted order; manifest is sorted JSON with
     SHA-256 digests; running twice yields identical bytes.
-  - Exact anchors: every patch requires its anchor literal to occur EXACTLY ONCE
-    in the target file; otherwise the patcher fails closed.
+  - Anchors are interface-definition placeholders defined by M1 (not claims
+    about TI source text): every patch requires its placeholder literal to
+    occur EXACTLY ONCE in the staged target file; otherwise the patcher fails
+    closed. TI-side citation of each placeholder against the pinned TI refs
+    (TI SDK 6499c3f53fc5fb5806213be695450a7b43fbaf3d and P10 ZNP example
+    87ff5b638b632050228a7504f35cf3b95581c278) is pending TI-side confirmation.
   - Provenance: patches pristine TI source only. No R10 code is imported,
     vendored, or invoked. In particular this module never calls ``apply_r6.base``
     and never imports any ``r6``/``apply_r6``/R10 helper.
@@ -64,11 +68,16 @@ def check_no_r10_imports(tree: Path) -> list[str]:
     """Scan M1 tree for real R10 imports/calls. Returns violations.
 
     Only executable references count: import/from statements naming an R10
-    helper, or an actual ``apply_r6.base(...)`` invocation (token followed by
-    an open paren). Docstring prose, comments, and string literals that merely
-    NAME the forbidden token (including this scanner's own reference table)
-    are not violations — files are analyzed with the ``tokenize`` module and
-    STRING/COMMENT tokens are excluded before matching.
+    helper, an actual ``apply_r6.base(...)`` invocation, or a dynamic-loader
+    call (``import_module`` / ``__import__`` / ``getattr``) whose target
+    resolves to the forbidden token. Matching is fragment-insensitive: quotes,
+    plus signs, backticks, and whitespace are stripped before comparing, so
+    ``"apply_" + "r6"`` still counts. Docstring prose, comments, and string
+    literals that merely NAME the forbidden token (including this scanner's
+    own reference table) are not violations — ``*.py`` files are analyzed
+    with the ``tokenize`` module and STRING/COMMENT tokens are excluded from
+    the code view before matching, while ``*.cjs``/``*.c``/``*.h`` files are
+    scanned as raw text.
     """
     import io
     import re
@@ -77,6 +86,8 @@ def check_no_r10_imports(tree: Path) -> list[str]:
     violations: list[str] = []
     import_stmt = re.compile(r"^\s*(import|from)\s+.*(apply_r6|\br6\b)")
     call_expr = re.compile(r"apply_r6\s*\.\s*base\s*\(")
+    frag_strip = re.compile(r"""['"`\s\+]""")
+    loader_names = ("import_module", "__import__", "getattr")
     skip_types = {tokenize.STRING, tokenize.COMMENT, tokenize.NL,
                   tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT,
                   tokenize.ENDMARKER}
@@ -85,6 +96,7 @@ def check_no_r10_imports(tree: Path) -> list[str]:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
+        raw_lines = text.splitlines()
         try:
             toks = tokenize.generate_tokens(io.StringIO(text).readline)
             code_lines: dict[int, list[str]] = {}
@@ -95,10 +107,36 @@ def check_no_r10_imports(tree: Path) -> list[str]:
         except (tokenize.TokenError, IndentationError, SyntaxError):
             violations.append(f"{path}: UNPARSEABLE")
             continue
+        file_hits = 0
         for lineno, parts in sorted(code_lines.items()):
             code = " ".join(parts)
             if import_stmt.search(code) or call_expr.search(code):
                 violations.append(f"{path}:{lineno}: {code.strip()}")
+                file_hits += 1
+                continue
+            if any(loader in parts for loader in loader_names):
+                raw = raw_lines[lineno - 1] if 0 < lineno <= len(raw_lines) else code
+                if "apply_r6" in frag_strip.sub("", raw):
+                    violations.append(f"{path}:{lineno}: {code.strip()}")
+                    file_hits += 1
+        if file_hits == 0:
+            all_code = {tok for parts in code_lines.values() for tok in parts}
+            if any(loader in all_code for loader in loader_names):
+                if "apply_r6" in frag_strip.sub("", text):
+                    violations.append(f"{path}: CROSS_LINE_FRAGMENT")
+    for ext in ("*.cjs", "*.c", "*.h"):
+        for path in sorted(tree.rglob(ext)):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            hit = False
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if "apply_r6" in frag_strip.sub("", line):
+                    violations.append(f"{path}:{lineno}: {line.strip()}")
+                    hit = True
+            if not hit and "apply_r6" in frag_strip.sub("", text):
+                violations.append(f"{path}: CROSS_LINE_FRAGMENT")
     return violations
 
 

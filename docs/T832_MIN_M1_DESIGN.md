@@ -18,11 +18,9 @@ scope.
 - P10 ZNP example @ `87ff5b638b632050228a7504f35cf3b95581c278`.
 - Toolchain: XDCTools `3.62.01.15` (prior pipeline used `.16` — deviation
   recorded), CCS `12.8`, TI-Clang `3.2.2`, SysConfig `1.21.1`, TI-RTOS7 M33F.
-- Herdsman exact-pin attempt: `zigbee-herdsman 10.9.1`, status
-  `ATTEMPTED_UNVERIFIED`. Hosted CI T1 resolves the exact published version
-  via npm metadata; mismatch fails the gate. The historical "10.9.1" string
-  may name herdsman rather than Z2M — this file does not resolve that
-  ambiguity, the gate does.
+- Herdsman exact pin: `zigbee-herdsman 10.9.1`, status `GATED_EXACT`.
+  Hosted CI T1 gates exact (`npm view zigbee-herdsman@10.9.1 version` must
+  equal lock `10.9.1`, fail closed on mismatch or resolve failure).
 
 ## 3. Minimal patch classes (one image)
 
@@ -45,10 +43,15 @@ scope.
 4. **Groupcast/source APS**: source-correct only where proven; no 13-variant
    family is included.
 5. **Provenance** (`patch_min.py`, `diff_contract.py`): deterministic patcher
-   from pristine pinned TI source in throwaway hosted staging. Exact anchors
-   (each must occur exactly once) or fail closed. NO R10 imports, NO
-   `apply_r6.base` call — enforced by the contract test and CI T2. Full diff
-   allowlist (3 source files + generated manifest).
+   from pristine pinned TI source in throwaway hosted staging. Anchors are
+   interface-definition placeholders defined by M1, not claims about TI
+   source text — each placeholder must occur exactly once in the staged
+   target or the patcher fails closed. TI-side citation of each placeholder
+   against TI SDK `6499c3f53fc5fb5806213be695450a7b43fbaf3d` and P10 ZNP
+   example `87ff5b638b632050228a7504f35cf3b95581c278` is pending TI-side
+   confirmation. NO R10 imports, NO `apply_r6.base` call — enforced by the
+   contract test and CI T2. Full diff allowlist (3 source files + generated
+   manifest, every entry requires a non-empty reason).
 
 ## 4. Tooling
 

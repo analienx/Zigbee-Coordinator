@@ -33,6 +33,7 @@ REQUIRED_MT_ENTRIES = (
     "SYS/NV_WRITE",
     "ZDO/MGMT_LQI_REQ",
     "ZDO/MGMT_LQI_RSP",
+    "ZDO/NWK_ADDR_REQ",
     "AF/DATA_REQUEST",
     "AF/INCOMING_MSG",
     "NV/TCLK_LENGTH",
@@ -60,11 +61,39 @@ class MinContractTests(unittest.TestCase):
         self.assertEqual(nv_subject.check_no_overlap(), [])
         self.assertEqual(compiler_subject.check_no_overlap(), [])
 
+    def test_no_overlap_negative_injected(self):
+        # Pre-fix control: pre-fix nv_lab.check_no_overlap returned []
+        # unconditionally, so this injected-overlap case failed pre-fix (no
+        # error reported) and passes post-fix (overlap reported).
+        overlapping = [
+            {"name": "a", "base": 0x000000, "size": 2 * 1024 * 1024},
+            {"name": "b", "base": 1 * 1024 * 1024, "size": 2 * 1024 * 1024},
+        ]
+        nv_errors = nv_subject.check_no_overlap(overlapping)
+        self.assertTrue(any("OVERLAP" in e for e in nv_errors), nv_errors)
+        cc_errors = compiler_subject.check_no_overlap(overlapping)
+        self.assertTrue(any("OVERLAP" in e for e in cc_errors), cc_errors)
+
     def test_mt_dispatch_table_presence(self):
         text = (MIN_ROOT / "host_contract.cjs").read_text(encoding="utf-8")
+        self.assertEqual(len(REQUIRED_MT_ENTRIES), 12)
         for entry in REQUIRED_MT_ENTRIES:
             with self.subTest(entry=entry):
                 self.assertIn(f'"{entry}"', text)
+
+    def test_baud_single_source(self):
+        contract = json.loads((MIN_ROOT / "board" / "mr4u_board_contract.json").read_text())
+        board_value = contract["fields"]["uart_transport"]["value"]
+        board_match = re.search(r"(\d+)\s*baud", board_value)
+        self.assertIsNotNone(board_match, board_value)
+        board_baud = int(board_match.group(1))
+        host_text = (MIN_ROOT / "host_contract.cjs").read_text(encoding="utf-8")
+        host_match = re.search(r"baud\s*:\s*(\d+)", host_text)
+        self.assertIsNotNone(host_match, host_text)
+        host_baud = int(host_match.group(1))
+        self.assertEqual(board_baud, 115200)
+        self.assertEqual(host_baud, 115200)
+        self.assertEqual(board_baud, host_baud)
 
     def test_board_contract_proven_vs_blocked(self):
         contract = json.loads((MIN_ROOT / "board" / "mr4u_board_contract.json").read_text())
@@ -83,8 +112,8 @@ class MinContractTests(unittest.TestCase):
                          "87ff5b638b632050228a7504f35cf3b95581c278")
         tc = lock["toolchain"]
         self.assertEqual(
-            (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"]),
-            ("3.62.01.15", "12.8", "3.2.2", "1.21.1"),
+            (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"], tc["rtos"]),
+            ("3.62.01.15", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"),
         )
         self.assertIn("herdsman", lock)
         self.assertRegex(lock["herdsman"]["version"], r"^\d+\.\d+\.\d+")

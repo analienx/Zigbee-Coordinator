@@ -26,7 +26,11 @@ EXPECTED_TOOLCHAIN = {
     "ccs": "12.8",
     "ti_clang": "3.2.2",
     "sysconfig": "1.21.1",
+    "rtos": "TI-RTOS7 M33F",
 }
+
+# Keys ending in "_note" (e.g. lock "xdctools_note") are informational only and
+# never participate in the toolchain gate.
 
 # Genuine NV index0 agreement views. Values are the M1 planning geometry from
 # the M0 checkpoint (TI 5-page: base 0xFD800, extent 0x2800); each view must
@@ -54,6 +58,8 @@ def check_toolchain(lock: dict) -> list[str]:
     errors: list[str] = []
     tc = lock.get("toolchain", {})
     for key, expected in EXPECTED_TOOLCHAIN.items():
+        if key.endswith("_note"):
+            continue
         actual = tc.get(key)
         if actual != expected:
             errors.append(f"TOOLCHAIN_MISMATCH: {key}={actual!r} expected {expected!r}")
@@ -90,7 +96,9 @@ def run(lock_path: Path | None = None) -> dict:
     errors = check_toolchain(lock) + check_index0_agreement() + check_no_overlap()
     findings = [
         "TOOLCHAIN_RECONCILIATION_REQUIRED: seed CC2674R10 text + compiler-5 vs linker-2 NV pages;"
-        " index0 base agrees at 0xFD800, page-count delta tracked, not silently fixed."
+        " index0 base agrees at 0xFD800, page-count delta tracked, not silently fixed.",
+        "PAGES_CONFLICT_INFO: linker view reports 2 pages vs compiler/sysconfig/backend 5 pages;"
+        " index0 base agrees at 0xFD800; informational only, base gate unchanged.",
     ]
     if errors:
         return {"status": "FAIL", "qualifier": STATUS, "errors": errors, "findings": findings}

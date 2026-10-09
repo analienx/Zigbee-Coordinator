@@ -22,8 +22,8 @@
   "herdsman": {
     "package": "zigbee-herdsman",
     "version": "10.9.1",
-    "status": "ATTEMPTED_UNVERIFIED",
-    "note": "Exact-pin attempt per M1 brief. Historical snapshot '10.9.1' may mean herdsman, not Z2M. Hosted CI T1 resolves the exact published version via npm metadata; any mismatch fails the gate. No host, HA, or Z2M state is changed by this record."
+    "status": "GATED_EXACT",
+    "note": "Exact pin per M1 brief. Hosted CI T1 gates exact: npm view zigbee-herdsman@10.9.1 version must equal this lock version 10.9.1, fail closed on mismatch or resolve failure. No host, HA, or Z2M state is changed by this record."
   },
   "target": {
     "board": "SMLIGHT SLZB-MR4U main Zigbee radio",

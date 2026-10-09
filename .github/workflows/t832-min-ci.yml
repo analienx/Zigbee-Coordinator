@@ -25,17 +25,22 @@ jobs:
           assert lock["ti_sdk"]["commit"] == "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
           assert lock["p10_znp_example"]["commit"] == "87ff5b638b632050228a7504f35cf3b95581c278"
           tc = lock["toolchain"]
-          assert (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"]) == ("3.62.01.15", "12.8", "3.2.2", "1.21.1"), tc
+          assert (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"], tc["rtos"]) == ("3.62.01.15", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"), tc
           assert lock["herdsman"]["package"] == "zigbee-herdsman"
+          assert lock["herdsman"]["version"] == "10.9.1", lock["herdsman"]
+          assert lock["herdsman"]["status"] == "GATED_EXACT", lock["herdsman"]
           print("T1 pins OK; herdsman pin:", lock["herdsman"]["version"], lock["herdsman"]["status"])
           EOF
-      - name: Resolve Herdsman exact pin attempt via npm
+      - name: Gate Herdsman exact pin via npm (fail closed)
         run: |
-          npm view zigbee-herdsman version || echo "HERDSMAN_RESOLVE_ATTEMPTED_OFFLINE=1"
-          npm view zigbee-herdsman@10.9.1 version || echo "HERDSMAN_10_9_1_RESOLVE_ATTEMPTED=1"
+          LOCK_VER=$(python -c 'import json; print(json.load(open("firmware/t832/min/upstream.lock.json"))["herdsman"]["version"])')
+          test "$LOCK_VER" = "10.9.1"
+          PUB_VER=$(npm view "zigbee-herdsman@${LOCK_VER}" version)
+          test "$PUB_VER" = "$LOCK_VER"
+          echo "HERDSMAN_EXACT_GATED ${PUB_VER}"
       - name: Secrets scan (fail on key material)
         run: |
-          ! grep -rniE "network_key|link_key|passphrase|private_key|BEGIN .*PRIVATE" firmware/t832/min docs/T832_MIN_M1_DESIGN.md || (echo "SECRET_SCAN_FAIL" && exit 1)
+          ! grep -rniE "network_key|link_key|passphrase|private_key|BEGIN .*PRIVATE" firmware/t832/min tests docs .github/workflows || (echo "SECRET_SCAN_FAIL" && exit 1)
           echo "SECRET_SCAN_PASS"
 
   t2-patch:
@@ -52,6 +57,34 @@ jobs:
         run: python firmware/t832/min/patch_min.py --check-r10-absence
       - name: Diff allowlist
         run: python firmware/t832/min/diff_contract.py --allowlist
+      - name: Manifest allowlist PASS + evil-manifest negative FAIL
+        run: |
+          python - <<'EOF'
+          import sys
+          import tempfile
+          from pathlib import Path
+          sys.path.insert(0, "firmware/t832/min")
+          import diff_contract
+          import patch_min
+          with tempfile.TemporaryDirectory() as p, tempfile.TemporaryDirectory() as o:
+              pristine, out = Path(p), Path(o)
+              for rel, anchor, _repl, _reason in patch_min.PATCHES:
+                  target = pristine / rel
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_text(f"header\n{anchor}\nfooter\n", encoding="utf-8")
+              manifest = patch_min.apply_patches(pristine, out)
+          errors = diff_contract.check_manifest(manifest)
+          assert errors == [], errors
+          print(f"T2 manifest PASS files={len(manifest['patches'])}")
+          evil = {"patches": [dict(e) for e in manifest["patches"]] + [{"file": "evil.c", "reason": "evil"}]}
+          evil_errors = diff_contract.check_manifest(evil)
+          assert evil_errors, "evil manifest must FAIL"
+          print("T2 evil-manifest negative FAIL OK:", evil_errors)
+          empty_reason = {"patches": [dict(e, reason="") for e in manifest["patches"]]}
+          empty_errors = diff_contract.check_manifest(empty_reason)
+          assert empty_errors, "empty reason must FAIL"
+          print("T2 empty-reason negative FAIL OK:", empty_errors)
+          EOF
 
   t3-board:
     name: T3 board contract
@@ -91,7 +124,7 @@ jobs:
         run: python firmware/t832/min/verify_compiler.py
       - name: MT dispatch presence via node
         run: |
-          node -e 'const h=require("./firmware/t832/min/host_contract.cjs"); const need=["SYS/PING","SYS/VERSION","SYS/NV_LENGTH","SYS/NV_READ","SYS/NV_WRITE","ZDO/MGMT_LQI_REQ","ZDO/MGMT_LQI_RSP","AF/DATA_REQUEST","AF/INCOMING_MSG","NV/TCLK_LENGTH","UTIL/GET_DEVICE_INFO"]; for (const k of need){ if(!h.MT_DISPATCH[k]){ console.error("MISSING "+k); process.exit(1);} } console.log("T4 MT dispatch OK entries="+Object.keys(h.MT_DISPATCH).length);'
+          node -e 'const h=require("./firmware/t832/min/host_contract.cjs"); const need=["SYS/PING","SYS/VERSION","SYS/NV_LENGTH","SYS/NV_READ","SYS/NV_WRITE","ZDO/MGMT_LQI_REQ","ZDO/MGMT_LQI_RSP","ZDO/NWK_ADDR_REQ","AF/DATA_REQUEST","AF/INCOMING_MSG","NV/TCLK_LENGTH","UTIL/GET_DEVICE_INFO"]; if(need.length!==12){console.error("MT need list must be 12");process.exit(1);} for (const k of need){ if(!h.MT_DISPATCH[k]){ console.error("MISSING "+k); process.exit(1);} } if(Object.keys(h.MT_DISPATCH).length!==12){console.error("MT dispatch table must hold 12 entries");process.exit(1);} console.log("T4 MT dispatch OK entries="+Object.keys(h.MT_DISPATCH).length);'
 
   t5-host-pack-test:
     name: T5 host contract, pack, unit test
@@ -104,8 +137,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Host contract selftest
-        run: node firmware/t832/min/host_contract.cjs
+      - name: Host contract selftest (12 MT entries)
+        run: |
+          node firmware/t832/min/host_contract.cjs
+          node -e 'const h=require("./firmware/t832/min/host_contract.cjs"); const r=h.selftest(); if(r.entries!==12){console.error("MT entries must be 12, got "+r.entries);process.exit(1);} console.log("T5 MT entries=12 OK");'
       - name: Pack manifest check
         run: python firmware/t832/min/pack.py --check
       - name: M1 contract unit test

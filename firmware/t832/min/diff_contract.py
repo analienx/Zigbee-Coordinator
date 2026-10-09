@@ -43,9 +43,10 @@ def check_manifest(manifest: dict) -> list[str]:
         if entry is None:
             errors.append(f"NOT_ALLOWLISTED: {patch.get('file')}")
             continue
-        if patch.get("reason") and entry["class"] not in str(patch.get("reason")):
-            # Reason text must at least name the concern area; soft check.
-            pass
+        reason = patch.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"EMPTY_REASON: {patch.get('file')}")
+            continue
     manifest_files = {p.get("file") for p in manifest.get("patches", [])}
     required = {e["file"] for e in ALLOWLIST if e["anchor"] is not None}
     missing = required - manifest_files

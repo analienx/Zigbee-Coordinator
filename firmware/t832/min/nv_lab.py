@@ -47,15 +47,16 @@ def check_index0() -> list[str]:
     return []
 
 
-def check_no_overlap() -> list[str]:
+def check_no_overlap(regions: list[dict] | None = None) -> list[str]:
+    regions = regions if regions is not None else REGIONS
     errors: list[str] = []
-    spans = [(r["name"], r["base"], r["base"] + r["size"]) for r in REGIONS]
+    spans = [(r["name"], r["base"], r["base"] + r["size"]) for r in regions]
     for i in range(len(spans)):
         for j in range(i + 1, len(spans)):
             a, b = spans[i], spans[j]
             if a[1] < b[2] and b[1] < a[2]:
                 errors.append(f"OVERLAP: {a[0]} overlaps {b[0]}")
-    return []
+    return errors
 
 
 def self_check() -> dict:
