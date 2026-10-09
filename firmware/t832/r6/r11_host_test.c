@@ -220,7 +220,7 @@ static int frame_kind_part(const uint8_t *data, uint8_t len, uint8_t want,
     (void)off;
     return 1;
 }
-static void wire_complete_diag(void)
+static void r11_wire_complete_diag(void)
 {
     T832Diag_npiTxDequeue(0xFEu, 0x48u, 0x80u, 234u);
     T832Diag_uartTxStart(234u);
@@ -299,17 +299,17 @@ static void r11_scenario(void)
     T832Diag_exportPoll();
     CHECK(host_frame_count == 1u);
     CHECK(frame_kind_part(host_frame_data[0], host_frame_len[0], 51u, 0));
-    wire_complete_diag();
+    r11_wire_complete_diag();
     advance_ms(6000u);
     T832Diag_exportPoll();
     CHECK(host_frame_count == 2u);
     CHECK(frame_kind_part(host_frame_data[1], host_frame_len[1], 52u, 1));
-    wire_complete_diag();
+    r11_wire_complete_diag();
     advance_ms(30000u);
     T832Diag_exportPoll();
     CHECK(host_frame_count == 3u);
     CHECK(frame_kind_part(host_frame_data[2], host_frame_len[2], 53u, 2));
-    wire_complete_diag();
+    r11_wire_complete_diag();
     host_fail_alloc = 1;
     advance_ms(60000u);
     {

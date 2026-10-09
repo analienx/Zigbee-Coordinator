@@ -400,6 +400,21 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   (real-boot fault_id>=4, cold-boot auto-compact UNKNOWN/0/0, wrap aliasing,
   TU-lossless-96 vs bounded-ring census, F3 device transfer on a
   real-boot-equivalent sequence).
+- Push 1/3 (ec02c6b) hosted result (run 37922851165): nv-lab SUCCESS
+  (guard green + new strict-decoder unit tests pass); sterile (i) bugs GONE --
+  BASE audit passed to CCS build, DIAG apply passed to host test. Two new
+  next-layer sterile defects diagnosed from hosted logs (different
+  signatures, no identical-signature retry): DIAG `run_r11_host` gcc
+  `conflicting types for wire_complete_diag` (pre-existing duplicate static:
+  host harness defines `wire_complete_diag(uint32_t)` and `r11_host_test.c`
+  defined `wire_complete_diag(void)` in the same TU; never compiled before
+  because apply always failed first); BASE package `FileNotFoundError:
+  nv-lab-evidence/nv-lab-report.json` (pre-existing workflow path bug: the
+  downloaded artifact nests `nv-evidence/` one level deeper than the
+  `--lab`/`--vendor-audit` args assumed; never reached before because audit
+  always failed first). Fixes in THIS turn (push 2/3): rename R11 helper to
+  `r11_wire_complete_diag` + 3 call sites; point `--lab` and
+  `--vendor-audit` at `nv-lab-evidence/nv-evidence/`.
 - Seal/push/CI: PENDING. This checkpoint + code fixes are local-only until
   pushed (budget 3 pushes, cumulative 9). Next: commit, push without force,
   watch exact-SHA hosted CI (nv-lab + BASE8320051/DIAG8320052 + real-parser
