@@ -160,8 +160,9 @@ int main(int argc, char **argv) {
            on reject and checks presence only on admit. */
         T832R6Nv_capture(8u, 0u, (uint16_t)NVOCMP_failW);
         T832R6Nv_poll(0u);
-        printf("{\"init_status\":%u,\"reinit_status\":%u,\"physical_operations\":%u,\"records\":[",
-               first, again, nv_lab_operations);
+        printf("{\"init_status\":%u,\"reinit_status\":%u,\"physical_operations\":%u,\"generation\":%u,\"fault_id\":%u,\"first_status\":%u,\"first_requested\":%u,\"records\":[",
+               first, again, nv_lab_operations, t832R6Nv.current.generation,
+               t832R6Nv.first.fault_id, t832R6Nv.first.status, t832R6Nv.first.requested);
         for(unsigned i = 0; i < t832cap_n; i++)
             printf("%s{\"event\":%u,\"a\":%u,\"b\":%u,\"c\":%u}",
                    i ? "," : "", t832cap_ev[i], t832cap_a[i],
