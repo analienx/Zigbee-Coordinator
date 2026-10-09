@@ -8,7 +8,7 @@ Actions at the exact candidate SHA (project lane: `github_actions`).
 
 One minimal T832-MIN firmware candidate for the SMLIGHT SLZB-MR4U main Zigbee
 TI CC2674P10 radio (Radio 2). The EFR32MG26 (Radio 1) MUST NOT be touched.
-M1 defines the candidate; M2 gates it with hosted-only T1–T5 checks. Stop at
+M1 currently defines contract scaffolding; M2 mock-only T1–T5 checks do not build a TI ZNP image. See real hosted CCS linker workflow and its exact-SHA result before OFFLINE_BUILD_READY. Stop at
 OFFLINE_BUILD_READY or BLOCKED. Production qualification is explicitly out of
 scope.
 
@@ -24,9 +24,9 @@ scope.
 
 ## 3. Minimal patch classes (one image)
 
-1. **Board static correctness** (`board/mr4u_board_contract.json`): only
-   `target_device=CC2674P10` and `uart_transport=115200 USB CDC` are PROVEN
-   (isolated-probe evidence, M0 checkpoint). ROM-BSL, HF XOSC, VDDR/RF,
+1. **Board static correctness** (`board/mr4u_board_contract.json`): `target_device=CC2674P10` is hardware-documented, but the current DATA UART
+   transport, pin map and RF/clock/CCFG details are NOT independently proven by
+   this MIN session. Earlier M0's isolated-probe claim lacked a traceable receipt. ROM-BSL, HF XOSC, VDDR/RF,
    CCFG delta, PA variant, and the full pin map are HARDWARE_BLOCKED. Unknown
    pins are never filled from Ebyte 20 dBm data or faulty crystal deltas.
 2. **Host ABI minimum** (`host_contract.cjs`): ZNP version behavior + MT SYS,
@@ -44,8 +44,7 @@ scope.
    family is included.
 5. **Provenance** (`patch_min.py`, `diff_contract.py`): deterministic patcher
    from pristine pinned TI source in throwaway hosted staging. Anchors are
-   interface-definition placeholders defined by M1, not claims about TI
-   source text — each placeholder must occur exactly once in the staged
+   synthetic interface-definition placeholders defined by M1, NOT present in TI source and NOT an actual firmware patch. The separate build_min_real.py uses anchored actual pinned TI source — each placeholder must occur exactly once in the staged
    target or the patcher fails closed. TI-side citation of each placeholder
    against TI SDK `6499c3f53fc5fb5806213be695450a7b43fbaf3d` and P10 ZNP
    example `87ff5b638b632050228a7504f35cf3b95581c278` is pending TI-side
