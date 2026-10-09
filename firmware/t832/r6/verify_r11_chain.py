@@ -64,7 +64,8 @@ def main():
         raise SystemExit('RUNTIME53 unknown-age mismatch: %s' % rt)
     if rt['mt_schedule_delta'] != 1 or rt['uart_rx_byte_delta'] != 100:
         raise SystemExit('RUNTIME53 delta mismatch: %s' % rt)
-    if rt['npi_wake_delta'] != 1 or rt['write_completion_delta'] != 2:
+    # NV, startup and the reserved legacy frame completed before runtime.
+    if rt['npi_wake_delta'] != 1 or rt['write_completion_delta'] != 3:
         raise SystemExit('RUNTIME53 counter mismatch: %s' % rt)
     print('R11 CHAIN PASS: C exporter -> herdsman 10.9.1 -> strict decoder')
     return 0
