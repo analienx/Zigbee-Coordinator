@@ -271,6 +271,19 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   from the PASSED latch-tuple check on the same run (rej_* == oracle latch)
   plus the byte-identical a9 packing line pre/post R11. Remaining
   gate-evaluation of #8-#12 on those rows closes with the green run.
+- Push #5 result (run 37915257052 @ c30ef6c): GUARD GREEN --
+  `verify_startup_guard` prints `{ok:true, rejection_cases:704,
+  sanitizer_sweeps:352, admit_runs:64, cost_runs:44, export9_runs:384,
+  failures:0}`. The R11 a7 doctrine is proven hosted-side: all 384 export9
+  runs pass, including gate-evaluation of a9/FAULT/TOPOLOGY/SPACE/COUNTERS
+  on the 53 BADVERSION cases (G2 closed by green, not by argument).
+  `verify_corrupt_duplicate` and `verify_write_gate` also passed (step
+  reached `run_nv_lab`). New sterile failure, different signature:
+  `run_nv_lab.py --out nv-evidence` dies with FileExistsError because the
+  workflow step pre-creates `nv-evidence` via `mkdir -p` while the script
+  requires `exist_ok=False`. Latent R11-workflow bug (run_nv_lab never ran
+  on this branch: the guard always failed first). Fix in THIS push (#6,
+  last of budget): delete the pre-create line; `run_nv_lab.py` owns the dir.
 - Fix in THIS push (#5, two commits): probe export9 prints the first-fault
   POD (`generation`, `fault_id`, `first_status`, `first_requested`);
   verifier replaces the stale a7 check with the R11-pinned triple from the
@@ -278,4 +291,8 @@ Hardware: PENDING always. NO flash/merge/live radio/HA/Z2M/network changes.
   first_status==reject-verb init_status and first_requested==0); admit path
   additionally pins a7==(0,0) with fault_id==0. FAULT/a8/a9/TOPOLOGY/SPACE/
   COUNTERS/trial checks UNCHANGED (bytes already match). Zero firmware
-  behavior change. 1 push remains after this for STEP B/M5.
+  behavior change. Shipped as c30ef6c (run 37915257052: guard green, 0 failures).
+  THIS push (#6, last of budget): mkdir-collision fix only, to reveal the true
+  downstream state (run_nv_lab vendor profile, red-first, regressions, sizeof,
+  firmware BASE/DIAG matrix, parser chain -- none has ever run on R11). STEP B
+  P1 code fixes + M5 seal/PR47 are scoped from that signal; see survey below.
