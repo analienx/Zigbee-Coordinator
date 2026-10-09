@@ -28,7 +28,7 @@ jobs:
           test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
           python3 -m pip install --quiet capstone==5.0.6
           python3 repo/firmware/t832/r7/vendor_nvs_audit.py --out vendor-nvs-audit.json
-          mkdir -p nv-evidence
+          # nv-evidence is created by run_nv_lab.py (exist_ok=False); do not pre-create.
           # R11 scope: vendor-contract and trial-bundle suites only. hw-qual is the
           # R10 counter-seal lane with a pre-existing regression (identical failure on
           # untouched r7 files and on other branches); it imports nothing R11 changed.
