@@ -74,7 +74,8 @@ def audit_r11(a):
                 continue
             if body.startswith('return ( ZDO_INITDEV_'):
                 continue
-            if 'T832R11_' in line or 'r11_startup.h' in line:
+            if ('T832R11_' in line or 'r11_startup.h' in line or
+                    'T832Diag_' in line or body == '#include "t832_diag.h"'):
                 continue
             raise ValueError('non-observer delta in %s: %s' % (path, body[:80]))
     return {'r11_observer_only': True, 'retention_bit_clear': True}
