@@ -63,6 +63,13 @@ def audit_r11(a):
             if not line.startswith('+') or line.startswith('+++'):
                 continue
             body = line[1:].strip()
+            if path == R11_TI_FILES[0] and body in (
+                    'uint8_t t832r11InitStatus;',
+                    't832r11InitStatus=zstack_user0Cfg.nvFps.initNV(NULL);'):
+                continue
+            if path == R11_TI_FILES[1] and body == 'nvStat = NV_ITEM_UNINIT;':
+                # Existing else assignment, re-braced solely to observe NLME.
+                continue
             if body in ('{', '}'):
                 continue
             if body.startswith('return ( ZDO_INITDEV_'):

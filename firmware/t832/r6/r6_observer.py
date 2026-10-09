@@ -58,7 +58,11 @@ def patch_nv(nv):
         api=API_OF[name]
         if name=='NVOCMP_initNvApi':
             index=old.rindex('return(NVOCMP_failW);')
-            new=old[:index]+f'T832R6Nv_captureCtx(8u,{api}u,T832R6NV_SITE_API_BOUNDARY,0u,0u,0u,0u,NVOCMP_failW,(T832R6NV_DOMAIN_NVINTF<<4u)|8u,{KNOWN_COMPACT});\n    '+old[index:]
+            new=old[:index]+f'T832R6Nv_captureCtx(8u,{api}u,T832R6NV_SITE_API_BOUNDARY,0u,0u,0u,0u,NVOCMP_failW,(T832R6NV_DOMAIN_NVINTF<<4u)|8u,T832R6NV_KNOWN_API|T832R6NV_KNOWN_SITE|T832R6NV_KNOWN_STATUS);\n    '+old[index:]
+            anchor='        NVOCMP_initNv(&NVOCMP_nvHandle);'
+            if new.count(anchor)!=1:raise ValueError('INIT context anchor mismatch')
+            new=new.replace(anchor,
+                '        T832R6Nv_captureCtx(0u,T832R6NV_API_INIT,T832R6NV_SITE_UNKNOWN,0u,0u,0u,0u,0u,(T832R6NV_DOMAIN_INIT<<4u),T832R6NV_KNOWN_API);\n'+anchor)
         else:
             if old.count('NVOCMP_UNLOCK(err);')!=1:raise ValueError('API unlock mismatch '+name)
             if name=='NVOCMP_compactNvApi':
@@ -70,6 +74,13 @@ def patch_nv(nv):
                 ctx=(f'T832R6Nv_captureCtx(8u,{api}u,T832R6NV_SITE_API_BOUNDARY,id.itemID,id.subID,id.systemID,(uint16_t)len,err,'
                      f'(T832R6NV_DOMAIN_NVINTF<<4u)|8u,{KNOWN_ALL});\n    ')
             new=old.replace('NVOCMP_UNLOCK(err);',ctx+'NVOCMP_UNLOCK(err);')
+            if name=='NVOCMP_compactNvApi':
+                anchor='    NVOCMP_LOCK();\n    NVOCMP_ALERT(false, "API Compaction Request.")'
+                if new.count(anchor)!=1:raise ValueError('COMPACT context anchor mismatch')
+                new=new.replace(anchor,
+                    '    NVOCMP_LOCK();\n'
+                    '    T832R6Nv_captureCtx(0u,T832R6NV_API_COMPACT,T832R6NV_SITE_UNKNOWN,0u,0u,0u,minAvail,0u,(T832R6NV_DOMAIN_NVINTF<<4u),T832R6NV_KNOWN_API|T832R6NV_KNOWN_REQUESTED);\n'
+                    '    NVOCMP_ALERT(false, "API Compaction Request.")')
         ex.replace(nv,old,new,'r11.nv.final_boundary.'+name)
     ex.append(nv,'#include "nv_r6_probe.inc"','r6.nv.pod_implementation')
     return ex.edits

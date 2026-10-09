@@ -21,7 +21,7 @@
  * eligible opportunity is reserved for legacy telemetry (fairness). */
 #include "nv_r6_probe.h"
 #include "r11_startup.h"
-T832R11Startup t832R11Startup = {0u,0u,0u,0u,0xFFFFu,0u,0u,0xFFu,0xFFu,0u,0u};
+volatile T832R11Startup t832R11Startup = {0u,0u,0u,0u,0xFFFFu,0u,0u,0xFFu,0xFFu,0u,0u};
 #define T832_R11_EXT_RUNTIME_MS 30000u
 #define T832_R11_EXT_REPEAT_MS 60000u
 T832R11ExtState t832R11Ext = {0u,0u,0xFFFFFFFFu,0u,0u,0u,0u,0u,0u,0u,0u,0u};
@@ -113,14 +113,16 @@ static uint32_t T832R11_startupHash(T832R11Startup *t)
 static uint8_t T832R11_buildStartup(T832DiagRecord *recs,uint32_t *hashOut)
 {
     T832R11Startup t;
+    uint32_t key=OsalPort_enterCS();
     uint32_t s0=t832R11Startup.sequence;
     uint32_t s1;
-    if(s0&1u)return 0u;
+    if(s0&1u){OsalPort_leaveCS(key);return 0u;}
     t=t832R11Startup;
     s1=t832R11Startup.sequence;
+    OsalPort_leaveCS(key);
     if(s0!=s1)return 0u;
-    /* Boot-zero guard: never export generation-0/valid-0 STARTUP_V1. */
-    if(t.generation==0u||t.valid==0u)return 0u;
+    /* Entered-only observations are useful when a boundary never returns. */
+    if(t.generation==0u||t.entry_mask==0u)return 0u;
     *hashOut=T832R11_startupHash(&t);
     if(*hashOut==0u)return 0u;
     recs[0].a=0x1000u;
@@ -248,6 +250,9 @@ static uint8_t T832R11_sendGroup(uint8_t kind,T832DiagRecord *recs,
     out[0]=strLen;
     t832Diag.staged_count=4u;
     t832Diag.build_failed=0u;
+    /* Throttle attempts as the legacy path does, including allocation refusal.
+     * Snapshot cadence and counter bases still advance only on acceptance. */
+    t832Diag.last_export_ms=now;
     MT_BuildAndSendZToolResponse(
         ((uint8_t)MT_RPC_CMD_AREQ|(uint8_t)MT_RPC_SYS_DBG),
         MT_DEBUG_MSG,outLen,out);
@@ -263,7 +268,6 @@ static uint8_t T832R11_sendGroup(uint8_t kind,T832DiagRecord *recs,
     else
     {
         t832Diag.export_sequence++;
-        t832Diag.last_export_ms=now;
     }
     t832Diag.staged_count=0u;
     return (uint8_t)(t832Diag.build_failed?0u:1u);

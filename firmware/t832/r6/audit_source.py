@@ -22,6 +22,8 @@ def audit(a):
         allowed|={'source/ti/zstack/startup/main.c','source/ti/zstack/stack/api/zstacktask.c','source/ti/zstack/stack/zdo/zd_app.c','source/ti/zstack/stack/bdb/bdb.c',
                   'kernel/tirtos7/packages/ti/sysbios/runtime/Error.c','kernel/tirtos7/packages/ti/sysbios/runtime/t832_fatal.h',
                   'kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/Hwi.c','kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/t832_fatal.h'}
+        allowed|={path+'/r11_startup.h' for path in (
+            'source/ti/zstack/startup','source/ti/zstack/stack/zdo','source/ti/zstack/stack/bdb')}
     changed=set(subprocess.check_output(['git','-C',str(a.sdk),'diff','--name-only'],text=True).splitlines())
     changed|=set(subprocess.check_output(['git','-C',str(a.sdk),'ls-files','--others','--exclude-standard'],text=True).splitlines())
     if changed!=allowed:raise ValueError('unclassified or missing SDK delta '+str(sorted(changed^allowed)))

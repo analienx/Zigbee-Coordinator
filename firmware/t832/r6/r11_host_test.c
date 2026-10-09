@@ -34,7 +34,7 @@ static void r11_fresh(void)
 {
     fresh(9u);
     memset((void *)&t832R6Nv, 0, sizeof(t832R6Nv));
-    memset(&t832R11Startup, 0, sizeof(t832R11Startup));
+    memset((void *)&t832R11Startup, 0, sizeof(t832R11Startup));
     t832R11Startup.last_status = 0xFFFFu;
     t832R11Startup.dev_state = 0xFFu;
     t832R11Startup.nwk_state = 0xFFu;
@@ -65,6 +65,20 @@ static void test_f1_compact_domain(void)
     CHECK(t832R6Nv.first.status == 0x10u);
     CHECK(t832R6Nv.first.requested == 27u);
     CHECK(t832R6Nv.first.site == T832R6NV_SITE_COMPACT_INNER);
+    /* Explicit compaction must not borrow the previous successful write item. */
+    r11_fresh();
+    T832R6Nv_captureCtx(8u, T832R6NV_API_WRITE, T832R6NV_SITE_API_BOUNDARY,
+        9u, 2u, 1u, 27u, 0u, 8u, 0x7Fu);
+    T832R6Nv_captureCtx(0u, T832R6NV_API_COMPACT, T832R6NV_SITE_UNKNOWN,
+        0u, 0u, 0u, 100u, 0u, 0u,
+        T832R6NV_KNOWN_API | T832R6NV_KNOWN_REQUESTED);
+    T832R6Nv_capture(1u, 27u, 0u);
+    T832R6Nv_capture(3u, 27u, 0x10u);
+    CHECK(t832R6Nv.first.api == T832R6NV_API_COMPACT);
+    CHECK(t832R6Nv.first.item_id == 0u && t832R6Nv.first.sub_id == 0u);
+    CHECK((t832R6Nv.first.known_flags & (T832R6NV_KNOWN_ITEM |
+        T832R6NV_KNOWN_SYS | T832R6NV_KNOWN_SUB)) == 0u);
+    CHECK(t832R6Nv.first.requested == 27u);
     CHECK(t832R6Nv.first.phase_domain == ((T832R6NV_DOMAIN_COMPACT << 4) | 3u));
     f = t832R6Nv.first.fault_id;
     T832R6Nv_captureCtx(8u, T832R6NV_API_WRITE, T832R6NV_SITE_API_BOUNDARY,
@@ -142,6 +156,8 @@ static void test_f2_pod(void)
 }
 static void test_f3_startup(void)
 {
+    T832DiagRecord recs[4];
+    uint32_t hash;
     r11_fresh();
     CHECK(t832R11Startup.last_status == 0xFFFFu);
     CHECK(t832R11Startup.dev_state == 0xFFu);
@@ -157,6 +173,8 @@ static void test_f3_startup(void)
     T832R11_exit(4u, 0u, 0xFFu, 0xFFu,
                  T832R11_VALID_STATUS | T832R11_VALID_NLME | T832R11_NLME_RESTORED);
     T832R11_enter(5u);
+    CHECK(t832R11Startup.last_status == T832R11_STATUS_UNKNOWN);
+    CHECK((t832R11Startup.valid & T832R11_VALID_STATUS) == 0u);
     T832R11_exit(5u, 0xFFFFu, 0xFFu, 0xFFu, 0u);
     T832R11_enter(6u);
     T832R11_exit(6u, 0xFFFFu, 0xFFu, 0xFFu, 0u);
@@ -171,9 +189,19 @@ static void test_f3_startup(void)
     CHECK(t832R11Startup.dev_state == 9u);
     CHECK(t832R11Startup.nwk_state == 8u);
     CHECK(t832R11Startup.valid ==
-          (T832R11_VALID_STATUS | T832R11_VALID_DEV | T832R11_VALID_NWK |
+          (T832R11_VALID_DEV | T832R11_VALID_NWK |
            T832R11_VALID_NLME | T832R11_NLME_RESTORED));
     r11_fresh();
+    CHECK(T832R11_buildStartup(recs, &hash) == 0u);
+    T832R11_enter(1u);
+    /* A reached boundary with no return is evidence, even with unknown fields. */
+    CHECK(T832R11_buildStartup(recs, &hash) == 1u);
+    CHECK(recs[1].b == 1u && recs[1].c == 0u);
+    CHECK(recs[3].c == 0u);
+    t832R11Startup.sequence++;
+    CHECK(T832R11_buildStartup(recs, &hash) == 0u);
+    CHECK(host_cs_depth == 0);
+    t832R11Startup.sequence++;
     T832R11_enter(5u);
     CHECK((t832R11Startup.exit_mask & (1u << 4)) == 0u);
     CHECK((t832Diag.capabilities & (1u << 30)) != 0u);
@@ -328,6 +356,16 @@ static void r11_scenario(void)
         CHECK(host_frame_count == 3u);
         CHECK(t832Diag.export_lost == lost_before + 4u);
         CHECK(t832R11Ext.base_sched == sched_before);
+        CHECK(t832Diag.last_export_ms == host_tick);
+        T832Diag_exportPoll();
+        CHECK(t832Diag.export_lost == lost_before + 4u);
+        advance_ms(T832_DIAG_EXPORT_MIN_MS - 1u);
+        T832Diag_exportPoll();
+        CHECK(t832Diag.export_lost == lost_before + 4u);
+        advance_ms(1u);
+        host_fail_alloc = 1;
+        T832Diag_exportPoll();
+        CHECK(t832Diag.export_lost == lost_before + 8u);
     }
     host_fail_alloc = 0;
 }
