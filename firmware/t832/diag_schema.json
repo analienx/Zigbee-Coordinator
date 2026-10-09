@@ -173,7 +173,10 @@
     "47": "NV_SPACE",
     "48": "NV_COUNTERS",
     "49": "NV_RESULT",
-    "50": "NPI_WRITE_COMPLETE"
+    "50": "NPI_WRITE_COMPLETE",
+    "51": "NV_FIRST_V1",
+    "52": "STARTUP_V1",
+    "53": "RUNTIME_V1"
   },
   "event_semantics": {
     "HEALTH": "live-built, sequence 0; a=MT schedules since last accepted health baseline (saturated, nonzero under scheduling), b=MT actual-work age ms, c=NPI transport-work age ms",
@@ -282,5 +285,16 @@
     "PIPELINE": "With capability28, stages9/10 are unbound and unavailable. TX events count separately.",
     "timestamps": "NV record timestamps mark deferred sampling, not the original NV API instant.",
     "NV_FAULT": "a8 is the sticky first NV failure: b raw status,c request bytes at that first failure; exported from POD to the critical ring. Topology records are last API boundary, not first-failure topology."
+  },
+  "r11_semantics": {
+    "NV_FAULT:a8": "sticky first MEANINGFUL NV failure under the R11 classifier: b raw status, c request bytes of the latching capture. Pre-R11 history is AMBIGUOUS because drained-compaction progress latched there too. Never claim storage failure or cross-reset causation from the triple alone.",
+    "NV_FIRST_V1": "atomic 4-record group, kind 51, a 0x1000 plus part. p0 b/c fault_id low/high32 with 0 invalid and committed last; p1 b item_id c sub_id; p2 b requested c system-then-api byte pair with api 0 unknown 1 INIT 2 CREATE 3 UPDATE 4 WRITE 5 DELETE 6 explicit COMPACT; p3 b known-then-phase byte pair with domain high nibble 0 NVINTF 1 COMPACT 2 INIT 15 unknown and stage low nibble, c site-then-status byte pair with site 0 unknown 1 compact-inner 2 add-inner 3 api-boundary 4 init-action. known bits 0 api 1 item 2 site 3 status 4 requested 5 sys 6 sub 7 reserved 0. Emitted once when first committed, repeated at 60 s; absent while fault_id is 0.",
+    "STARTUP_V1": "atomic 4-record group, kind 52, a 0x1000 plus part. p0 b/c generation low/high32; p1 b entry mask c exit mask with bit site-minus-1 for sites 1..8; p2 b site-then-phase byte pair with phase 0 entry 1 exit 2 confirm, c raw status or 0xFFFF unknown; p3 b devState-then-nwkState byte pair with 0xFF unknown each, c valid bits 0 status 1 dev 2 nwk 3 NLME valid 4 NLME restored. devState is the DEV-state enum and nwkState the NIB nwkState enum, never conflated. Export timestamp is sampling time, never event time. A missing exit is an observation gap only. Emitted when changed, repeated at 60 s.",
+    "RUNTIME_V1": "atomic 4-record group, kind 53, every 30 s when transport eligible. Field a holds version bits 12..15 set to 1, part bits 0..1, bit2 sync seen, bit3 transport seen, bit4 diag seen, bit5 normal-pending seen, bit6 tx-shadow-full seen, bit7 ZStack known, bit8 uart-accepted seen, bit9 value saturated, bit10 value unknown, bit11 reserved 0. p0 b/c MT schedule and work count deltas; p1 b genuine ZStack age and c NPI wake count delta; p2 b UART rx BYTE delta and c driver write-completion delta; p3 b normal pending depth and c oldest pending age. Ages in 10 ms units with 0xFFFF unknown and 0xFFFE saturated. Deltas are wrap-safe u32 with saturation; bases and blockage flags advance or reset only on accepted groups.",
+    "timestamps": "Extension record timestamps mark deferred group sampling, not original event instants.",
+    "retention": "No retention claimed: capability bit31 clear, ordinary SRAM cleared on boot, no noinit section, no SCE writes."
+  },
+  "r11_capabilities": {
+    "30": "Atomic R11 extension frames 51..53 sharing the 5 s limiter and all export gates"
   }
 }

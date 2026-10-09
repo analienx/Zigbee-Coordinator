@@ -9,6 +9,7 @@ from test_r5_pinned import function
 from nv_contract import budget
 from nv_recovery_fix import verify_fixed as verify_recovery_fixed
 from nv_startup_guard import verify_guard
+from r11_audit import audit_r11
 
 def pristine(sdk,path):return subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+path],text=True)
 def audit(a):
@@ -16,9 +17,9 @@ def audit(a):
              'source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd'}
     if a.variant=='DIAG':
         allowed|={'source/ti/common/nv/'+n for n in ('nvocmp.c','nv_r6_probe.h','nv_r6_probe.inc')}
-        allowed|={'source/ti/zstack/mt/'+n for n in ('mt.c','mt.h','mt_debug.c','mt_task.c','mt_zdo.c','t832_diag.h','t832_diag_impl.inc','t832_diag_r5.inc','t832_diag_nwk.inc','t832_fatal.h','nv_r6_probe.h','r6_nv_export.inc')}
+        allowed|={'source/ti/zstack/mt/'+n for n in ('mt.c','mt.h','mt_debug.c','mt_task.c','mt_zdo.c','t832_diag.h','t832_diag_impl.inc','t832_diag_r5.inc','t832_diag_nwk.inc','t832_fatal.h','nv_r6_probe.h','r6_nv_export.inc','r11_startup.h','r11_ext_export.inc')}
         allowed|={'source/ti/zstack/npi/'+n for n in ('npi_task.c','npi_client_mt.c','npi_tl_uart.c')}
-        allowed|={'source/ti/zstack/startup/main.c','source/ti/zstack/stack/api/zstacktask.c',
+        allowed|={'source/ti/zstack/startup/main.c','source/ti/zstack/stack/api/zstacktask.c','source/ti/zstack/stack/zdo/zd_app.c','source/ti/zstack/stack/bdb/bdb.c',
                   'kernel/tirtos7/packages/ti/sysbios/runtime/Error.c','kernel/tirtos7/packages/ti/sysbios/runtime/t832_fatal.h',
                   'kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/Hwi.c','kernel/tirtos7/packages/ti/sysbios/family/arm/v8m/t832_fatal.h'}
     changed=set(subprocess.check_output(['git','-C',str(a.sdk),'diff','--name-only'],text=True).splitlines())
@@ -52,6 +53,7 @@ def audit(a):
     # trying to evaluate TI's NWK_MAX_ADDRESSES expression with Python eval).
     c=budget(a.profile);version=(a.sdk/'source/ti/zstack/mt/mt_version.c').read_text()
     if f'_Static_assert(NWK_MAX_ADDRESSES == {c["capacities"]["addresses"]}' not in version:raise ValueError('derived capacity compile assertion missing')
+    audit_r11(a)
     return {'pristine_callback_policy':True,'pristine_queue_and_isr_capacity':True,'nv_hotpath_pod_only':a.variant=='DIAG','nv_recovery_fix':recovery_fp,'nv_startup_guard':startup_fp,
             'compiled_assertions_required':True,'profile':c,'variant':a.variant,'hardware_validated':False}
 
