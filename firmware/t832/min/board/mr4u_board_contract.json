@@ -1,30 +1,55 @@
 {
   "contract": "T832-MIN v4 M1 MR4U board contract",
   "status": "NOT_PRODUCTION_QUALIFIED",
-  "note": "No real MR4U P10 pins are proven in this repo. Nothing here authorizes flash, hardware access, or production use.",
+  "note": "No radio ports/probes/hardware were touched for this candidate. Never infer current transport from earlier recovery.",
   "target": {
     "board": "SMLIGHT SLZB-MR4U",
-    "radio_index": 2,
     "chip": "TI CC2674P10",
-    "must_not_touch": "EFR32MG26 (Radio 1)"
+    "must_not_touch": "EFR32MG26 (Radio 1)",
+    "management_radio_index": 1,
+    "role": "TI CC2674P10 / ZNP, management index1 in #73; distinguish USB if02 naming from management index"
   },
   "fields": {
     "target_device": {
       "value": "CC2674P10",
       "verdict": "PROVEN",
-      "evidence": "M0 checkpoint: isolated USB ZNP probe answers as TI ZNP on MR4U Radio 2 interface"
+      "evidence": "SMLIGHT MR4U documented hardware and home-assistant-stack #73 CC2674P10/index1; not a new direct chip probe"
     },
-    "rom_bsl": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
-    "clock_hf_xosc": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
-    "vdrr_rf_config": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
+    "rom_bsl": {
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": null
+    },
+    "clock_hf_xosc": {
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": null
+    },
+    "vdrr_rf_config": {
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": null
+    },
     "uart_transport": {
-      "value": "115200 baud USB CDC (isolated probe only)",
-      "verdict": "PROVEN",
-      "evidence": "M0 checkpoint: read-only SYS_PING/SYS_VERSION answered at 115200"
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": "Current Z2M DATA transport ambiguous: local README USB-if02 vs #73 Ethernet mode0 recovery; no recent independently captured port receipt"
     },
-    "rf_pa_variant": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
-    "ccfg_delta": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null },
-    "pin_map": { "value": null, "verdict": "HARDWARE_BLOCKED", "evidence": null }
+    "rf_pa_variant": {
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": null
+    },
+    "ccfg_delta": {
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": null
+    },
+    "pin_map": {
+      "value": null,
+      "verdict": "HARDWARE_BLOCKED",
+      "evidence": null
+    }
   },
   "rules": [
     "Unknown real pins stay HARDWARE_BLOCKED; never copy Ebyte 20 dBm or faulty crystal deltas.",
