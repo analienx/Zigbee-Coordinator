@@ -545,6 +545,8 @@ def decode_frame_payload(text: str) -> tuple[dict[str, object], list[dict[str, o
             decode_record(raw, HEADER.size + 1 + i * RECORD.size)
             for i in range(count)
         ]
+        if any(record['kind'] in R11_KINDS for record in records):
+            frame['r11_group'] = decode_r11_group(records)
         return frame, records
     raise ValueError("no-t832-prefix")
 

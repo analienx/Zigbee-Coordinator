@@ -1,7 +1,9 @@
 """R11 extension-frame decoder tests (hosted CI only)."""
 import json
 import struct
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,6 +54,26 @@ def decode_groups(payload):
 
 
 class R11Frames(unittest.TestCase):
+    def test_production_cli_assembles_and_rejects_malformed_groups(self):
+        valid = pack_frame(recs51())
+        mixed = recs51()
+        mixed[0] = (29, 1, 2, 3)
+        duplicate = recs51()
+        duplicate[3] = duplicate[0]
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'capture.log'
+            log.write_text('\n'.join((valid, pack_frame(recs51()[:3]),
+                pack_frame(mixed), pack_frame(duplicate)))+'\n')
+            result = subprocess.run([sys.executable,
+                str(HERE.parent / 't832_diag_decode.py'), str(log)],
+                capture_output=True, text=True, check=True)
+            rows = [json.loads(line) for line in result.stdout.splitlines()]
+        accepted = [row for row in rows if row['type'] == 't832_diag']
+        self.assertEqual(len(accepted), 4)
+        self.assertTrue(all(row['r11_group']['fault_id'] == 0x01020304
+                            for row in accepted))
+        self.assertEqual(sum(row['type'] == 'decode_error' for row in rows), 3)
+
     def test_schema_and_names(self):
         schema = json.loads((HERE.parent / 'diag_schema.json').read_text())
         self.assertEqual(schema['event_kinds']['51'], 'NV_FIRST_V1')
