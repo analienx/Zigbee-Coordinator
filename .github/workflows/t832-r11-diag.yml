@@ -83,7 +83,12 @@ jobs:
         if: always()
         with:
           name: t832-r11-nv-evidence
-          path: nv-evidence
+          path: |
+            nv-evidence
+            nv-evidence-startup-guard
+            nv-evidence-corrupt-copy
+            nv-evidence-write-gate
+            vendor-nvs-audit.json
           if-no-files-found: error
 
   firmware:
