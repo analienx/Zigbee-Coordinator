@@ -80,18 +80,18 @@ class RuntimeProfileTests(unittest.TestCase):
 
     def test_actual_32k_linked_osal_heap_accepted(self):
         m = Path(self.temp.name) / "heap.map"
-        m.write_text("                  200014a8    00008000     osal_port.o (.bss.heapmgrHeapStore)\\n")
+        m.write_text("                  200014a8    00008000     osal_port.o (.bss.heapmgrHeapStore)\n")
         self.assertEqual(h.heap_store_bytes(m), 32768)
 
     def test_old_6k_linked_osal_heap_is_rejected(self):
         m = Path(self.temp.name) / "heap.map"
-        m.write_text("                  200014a8    00001800     osal_port.o (.bss.heapmgrHeapStore)\\n")
+        m.write_text("                  200014a8    00001800     osal_port.o (.bss.heapmgrHeapStore)\n")
         with self.assertRaisesRegex(ValueError, "LINKED_OSAL_HEAP_CAPACITY_MISMATCH"):
             h.heap_store_bytes(m)
 
     def test_missing_heap_symbol_is_rejected(self):
         m = Path(self.temp.name) / "heap.map"
-        m.write_text("SRAM 20000000 00040000 00010000 00030000\\n")
+        m.write_text("SRAM 20000000 00040000 00010000 00030000\n")
         with self.assertRaisesRegex(ValueError, "LINKED_OSAL_HEAP_SYMBOL_MISSING"):
             h.heap_store_bytes(m)
 
