@@ -1,0 +1,258 @@
+# R12: one-shot diagnostic test, with reflash and restore fallback
+
+**Operator decision (2026-10-10):** do not build a complex persistent ACK/re-arm
+protocol for R12. R12 is a disposable forensic build, not a lifetime
+coordinator firmware. Use **a separately checked recovery image and a sealed
+restore backup** to recover or to run a later diagnostic iteration.
+
+## Existing recovery evidence (rechecked offline)
+
+- Immutable private R11 recovery plan hash:
+  `73332b6d52641083fddd1bd99678da491d9090d552835430ad2d4b0d5cb8201a`.
+- Sealed original backup JSON SHA256:
+  `bd95f00eb3ce1f7794f9c6406c5b4fd96a0c6aa0ef5cdbaa7a29d25d3f6083b8`.
+- Independent read-only `p10_network_recovery.validate_backup(backup, 0, 2500)`
+  confirms **103 devices, 103 link keys, 103 address associations** and safe
+  2,500-count counter margin. The same backup was previously used for a
+  recorded successful 630-NV-write restore, with a separate full 103-key
+  readback and network counter floor verified before the last failure.
+- Sealed R11 plan is **blocked**, terminal after prior `startupFromApp`.
+  The radio is not known to have become responsive since the latest failure.
+- The backup has **not been refreshed following the latest failed startup**;
+  do not claim it was. Keeping or restoring the keys is not equivalent to
+  guaranteeing that this problematic network will initialize successfully.
+
+## Minimal release/test checklist
+
+1. Freeze and hash the final R12 build; check actual native TI compile/link,
+   CCFG DIO15/BSL, exact 15×2KB NVS geometry, no NV records in image, security
+   backup integrity, original network identity and counter floors. Record
+   local/remote firmware/backup locations and a known working reset/flash
+   transport. The candidate must remain marked DIAGNOSTIC/DO-NOT-FLASH in CI.
+2. One **controlled test epoch** only: deploy R12 under the user-authorized
+   recovery procedure; verify healthy basic ZNP without starting the existing
+   network. Do not use an automated Zigbee2MQTT watchdog that could repeatedly
+   trigger startup. The R12 first-boot storage may contain unrelated AUX bytes:
+   after the first verified safe access it initializes a fresh unowned
+   80-byte journal. No manual changing of NVS/keys.
+3. For the *A0 evidence retention check*, record a known harmless checkpoint,
+   issue exactly one **radio-only reset** through SLZB (not full power-off),
+   verify boot and retrieve kind54 previous-epoch evidence before another
+   startup. If no previous-epoch record returns, result is **inconclusive**;
+   stop this method rather than retrying startup blind.
+4. **No ACK/re-arm implementation is required** for this one-shot diagnostic.
+   If A0 consumes the record and a new A1 startup diagnosis is needed,
+   reflashing an independently verified replacement image may reset the
+   diagnostic lifecycle. This must be treated as a **new** sealed attempt,
+   not a no-cost retry of R11 or R12. Reflash might clear AUX retention;
+   always archive the currently emitted diagnostic evidence first.
+5. In the separately admitted A1 experiment, check full 103-key/address
+   counters, allow **one** restored Zigbee startup, record kind54 after a
+   subsequent radio-only reset if it hangs. On failure, recover via the
+   known-good radio image and restore the original network security/NV
+   from the immutable backup. Confirm independently after restoration;
+   no automatic re-pair or trust-center identity change.
+
+## Risk explicitly accepted vs. risk that still needs checking
+
+**Accepted as a pragmatic one-shot test limitation:** no ACK/re-arm API, one
+image/reflash per experiment, no automatic reboot, and no need to support
+future production updates of this debug firmware.
+
+**Still mandatory before live flash:** prove the P10 is reachable through a
+known BSL/recovery path (not just SLZB API success); inspect actual image
+hash/layout and copied backup restore capability; be clear the proposed AUX
+memory region `0x400E0FB0..0x400E0FFF` may be occupied or unclocked and an
+early access could fault the CPU. This is a safety/risk disclosure rather
+than a demand for new hardware or an impossible guarantee. It may be tested
+using a controlled hardware A0 trial, provided the restored-network
+fallback is reproducible and the operator accepts that risk.
+
+**Recovery claim boundary:** reflashing can often recover the radio and its
+NVS can be restored from an intact backup. It **cannot guarantee** that
+restoring this network will eliminate the already reproduced
+`startupFromApp` lockup. Report recovered ZNP, recovered keys and network
+routing acceptance as **three distinct outcomes**.
+
+**Current action:** procedural simplification/documentation only. **No
+radio reset, startup, flash, NV change or Z2M start executed.** The current
+CI artifact is an authenticated compile candidate, not a live-accepted build.
+
+## A0 actual on-device radio-reset retention acceptance — PASS (2026-10-10)
+
+**This supersedes earlier "not yet deployed" wording in this historical runbook.**
+
+- Operator independently issued **one Zigbee-radio-only restart through the
+  SLZB interface**, not a board power cycle, after an exact R12-DIAG flash
+  `8320062` to the MR4U P10, performed with `eraseNVM=0`. R12 source
+  image SHA256 `69a89dac042a3d7407129ba9bb64cee482b8c26756815ac78abef375034b26ea`.
+- Post-reset read-only inspection: exact CC2674P10 radio index 1, stable
+  **SYS ping 3/3** and version 1/1, valid ZNP frames, Zigbee2MQTT still
+  stopped/error and watchdog disabled.
+- Independent **TCP passive receive-only capture** began
+  `2026-10-10T04:43:05.123232Z`; **zero socket writes, zero SREQs, zero
+  NV reads/writes, zero Zigbee start calls**. By
+  `2026-10-10T04:43:31.697442Z`, observed 6 ZNP checksum-valid frames
+  (0 checksum errors), 6 valid T832D2 frames, one prior R11 kind53 runtime
+  group and **one R12 kind54 `R12_RETENTION_V1`** group.
+- Kind54 decoder fields: retained **attempt `0xA0120001`**,
+  previous boot epoch **`0x20261010`**, retained sequence **2**,
+  **site1 / phase1**, i.e. `main.initNV` **exit** on the preceding boot,
+  context 0; current boot reset-source **1 = PIN_RESET**. Exported firmware
+  build ID `1889887295` (`0x70a5643f`).
+- Private evidence is stored on Zephyrus:
+  `C:\Workspace\.analienx\sonoff-private\recovery\p10-r12-singleflash-20261010\one-shot-attempt\retention-passive-after-operator-reset.json`;
+  **SHA256 `63bf260afd108f96ead587ed424c5ab2e13f7cf7065f8f7d5dab17bb90ff7938`**,
+  1,467 bytes, no network secrets or IEEE associations in the receipt.
+- **Conclusion:** A0 demonstrates that R12's exact AUX-retained checkpoint
+  survived the **operator-used physical radio reset** and could be exported
+  via normal ZNP afterward. This *resolves the reset-survival question
+  for this specific hardware, firmware and reset path*. It does not prove
+  universal reset/power-loss retention, general AUX ownership or operation
+  under other power states.
+- The checkpoint is only site1/initNV exit: **it does not localize the
+  original `startupFromApp` hang yet**. No A1 restored-network startup
+  was sent.
+
+**Important separate NIB problem from the post-flash read-only attempt:**
+native NV item 33 (NIB) was missing/inaccessible and a Zigbee2MQTT backup
+read returned "adapter not commissioned". This was **not** a failed
+103-link-key comparison; the verifier stopped before that stage, with zero
+NV mutations. Consequently no Zigbee2MQTT startup or mesh acceptance is
+claimed. The previously validated immutable backup still contains 103
+device identities, 103 link keys, 103 address associations and counter
+floors; these do not by themselves prove that another restoration will
+successfully initialize the full network.
+
+**Next A1 guard:** do not call `startupFromApp` with the currently
+preserved A0 R12 record: the one-shot recorder intentionally disables new
+writes after detecting a valid previous-epoch record. Archive evidence
+first, then deliberately start a *new* recorder epoch under a separate
+sealed restore/recovery operation. **Simply flashing the same R12 image
+does not guarantee AUX is rearmed**, because AUX RAM may survive a radio
+reset. Confirm a genuine AUX-clearing cold power transition or a separately
+verified replacement diagnostic build/procedure; protect the original
+network security backup and retain `eraseNVM=0` until restoration is
+specifically authorized. A1 must still be a single startup with post-reset
+kind54 capture if it fails.
+
+**This was the only radio restart used for A0.** No further reset, flash,
+network startup or NV restore was triggered by the assistant afterward.
+
+## A1 preparation — 2026-10-10, after A0 PASS; waiting for genuine cold power
+
+**User authorized proceeding with A1**, but **no A1 network/NV mutation has
+been made**. We verified the current MR4U P10 still returns 3/3 SYS pings,
+has Z2M stopped and watchdog disabled, and its A0 event54 is archived.
+
+The active R12 image revision **8320062** retains the valid previous A0
+record in AUX, so further **Zigbee-radio-only resets cannot re-arm it**.
+Its boot path intentionally disables writes when a prior-epoch record is
+present. An immediate `startupFromApp` would be diagnostically useless.
+An experimental auto-rearm code change was **abandoned**; the existing
+verified R12 firmware and security recovery code remain unchanged, and
+the working tree was returned to its last committed state.
+
+**Minimal hardware-free approach:** physically remove **all** power to
+the entire MR4U (PoE and/or USB, whichever actually supplies it), then
+reconnect once. This must be a genuine full power interruption, not
+`Zigbee restart` or an SLZB software reset. TI documents that the
+AUX-retained memory is not guaranteed after full power loss. The existing
+R12 first-boot path then treats an empty AUX journal as virgin and records
+a new first boot. **Do not issue any network startup during the cycle.**
+
+Before A1 startup:
+1. Verify firmware rev8320062, 3/3 SYS ping, MR4U radio index1, stopped
+   Z2M and watchdog off after true cold power.
+2. Verify the sealed original backup SHA256
+   `bd95f00eb3ce1f7794f9c6406c5b4fd96a0c6aa0ef5cdbaa7a29d25d3f6083b8`
+   and 103 link keys / 103 address associations; preserve archived A0
+   JSON SHA256
+   `63bf260afd108f96ead587ed424c5ab2e13f7cf7065f8f7d5dab17bb90ff7938`.
+3. Native NV item33/NIB was absent after R12 flash. A simple `verify`
+   failed because adapter was *not commissioned*, not because 103 keys
+   were compared and failed. Do not blindly run an existing-network
+   startup with missing NIB; first inspect whether native restoration
+   prerequisites, address-manager/security-table capacities, and the
+   original NIB native snapshot are available. The old worker's
+   `restore-retained-native` requires a PRESENT retained NIB and is
+   **not valid when item33 length is zero**. Its separate
+   `restore-native` branch requires NIB=0 plus sufficient existing
+   security/address-manager tables; verify this before any mutation.
+4. Only if a proven 103-key/counter-aware restore path fully succeeds
+   and an independent readback accepts original identity/NIB and all
+   associations, authorize ONE `startupFromApp`, with sealed evidence.
+   On timeout do NOT retry: one subsequent radio-only reset should
+   expose the new A1 kind54 startup checkpoint, if re-arming truly worked.
+5. Keep recovery of ZNP, restored NV, and functioning mesh separate.
+
+**A1 startup has not been issued.** A proper full-power interruption
+requires access to the MR4U power feed; the available SLZB software
+`Zigbee restart` demonstrably *preserves* AUX and cannot substitute.
+
+## A1 operator power-cycle follow-up: NOT REARMED (10 October 2026)
+
+The user reported completing the earlier requested full MR4U power
+interruption. **Do not second-guess that report**: we cannot independently
+observe whether both power feeds were physically removed or what subsequent
+SLZB host reset sequencing occurred.
+
+**Actual read-only measurements after reported power cycle:**
+
+- MR4U CC2674P10 remains healthy at firmware revision `8320062`, **3/3
+  SYS pings** plus SYS_VERSION, HA Zigbee2MQTT stopped/error and watchdog off;
+  recovery journal unlocked.
+- Exact ZNP `SYS_OSAL_NV_LENGTH` command 0x13 on the live radio, read only:
+  item1 (coordinator identity) **8 bytes**, item3 startup option **1 byte**,
+  item33 **NIB=0 bytes**, item35 **address manager=0 bytes**, item85
+  network flag **1 byte**, item96 configured **0 bytes**. The bytes of the
+  flags were not read by this length-only probe. These are *not*
+  complete live key/counter comparisons.
+- A separate passive, receive-only socket capture (no ZNP SREQs, NV access,
+  reset, network startup, or writes) observed **7 valid T832D2 messages**,
+  0 checksum failures, including one `R12_RETENTION_V1` kind54 at
+  `2026-10-10T05:43:08.158973Z`. Event records previous *A0* attempt
+  `0xA0120001`, epoch `0x20261010`, seq **1**, site1/phase0
+  (`main.initNV` entry), current reset cause **1 = PIN_RESET**.
+  Private evidence:
+  `C:\Workspace\.analienx\sonoff-private\recovery\p10-r12-singleflash-20261010\one-shot-attempt\a1-post-cold-readonly-passive.json`,
+  SHA256
+  `4acf7cdc77e31b80c57079bb35e9e35ab39ecfef588aa507b0f78406289898d9`.
+- Exact pinned TI CC2674P10 `SysCtrlResetSourceGet` header and reset
+  register constants confirm `RSTSRC_PWR_ON=0`, `RSTSRC_PIN_RESET=1`.
+  SLZB host could assert its PIN reset as part of board boot; pin reset
+  alone does **not** prove the full board was never powered down.
+- **Critical discrepancy:** the earlier A0 radio-reset witness was seq2
+  site1/phase1 (`main.initNV` exit); this post-power witness is seq1
+  site1/phase0 (`main.initNV` entry). We do **not** know why the retained
+  slot history changed. It is unsafe to relabel this as new A1 telemetry,
+  or assume the previous A0 recorder has been cleared. A1 startup
+  therefore remains **BLOCKED**, not even one-shot-safe yet.
+- Sealed backup reverified **103 devices/103 link keys/103 required address
+  associations**, 2,500 counter margin; existing recovery backup is still
+  not a new post-failure live capture.
+
+**Recovery-implementation finding:** with both NIB33 and address manager35
+absent, the maintained `restore-native` worker's requirement for already
+allocated security/address tables cannot be assumed. The maintained
+`restore-tables` stage requires a **present, byte-for-byte verified
+116-byte native NIB**, which we lack on the current radio. Previous incident
+history records a separate NIB-first and table-continuation procedure,
+but its one-shot receipts are incident-specific and cannot be replayed or
+silently transplanted to this R12 state. `restore-retained-native` also
+has different preconditions. No restore worker was invoked.
+
+**Next viable technical step:** prepare a new, distinctly sealed A1
+diagnostic epoch that explicitly recognizes the archived A0 slot and
+transitions to a new recorder without losing old evidence, and a
+separately qualified missing-NIB plus address/security-table restoration
+chain. Run all offline source/negative tests, pin exact R12 firmware and
+original backup hashes, then recheck hardware gates before a
+single controlled startup. Alternatively, prioritizing service recovery
+means rollback to the previously proven vendor/backup path, without
+claiming that this resolves the original restored-network hang.
+
+**Actions in this follow-up:** read-only SYS, length-only NV inspection,
+receive-only T832D2 capture, offline source/backup examination. **Zero
+flash, reset, NIB provisioning, security-table writes, network startup,
+or Z2M launch.**

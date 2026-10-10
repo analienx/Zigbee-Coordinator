@@ -176,7 +176,8 @@
     "50": "NPI_WRITE_COMPLETE",
     "51": "NV_FIRST_V1",
     "52": "STARTUP_V1",
-    "53": "RUNTIME_V1"
+    "53": "RUNTIME_V1",
+    "54": "R12_RETENTION_V1"
   },
   "event_semantics": {
     "HEALTH": "live-built, sequence 0; a=MT schedules since last accepted health baseline (saturated, nonzero under scheduling), b=MT actual-work age ms, c=NPI transport-work age ms",
@@ -296,5 +297,16 @@
   },
   "r11_capabilities": {
     "30": "Atomic R11 extension frames 51..53 sharing the 5 s limiter and all export gates"
+  },
+  "r12_semantics": {
+    "R12_RETENTION_V1": {
+      "parts": "Four kind=54 records, version=1, part IDs 0..3 in a T832D2 packet",
+      "part0": "attempt ID lo/hi",
+      "part1": "previous boot epoch lo/hi",
+      "part2": "retained slot sequence lo/hi",
+      "part3": "b=site_low8|phase_high8; c=current reset-source low8|bounded NLME context high8",
+      "meaning": "Retained record from previous boot exported after radio reset. Does NOT prove physical retention, root-cause identity, or network acceptance.",
+      "scope": "No Zigbee security keys, IEEE addresses, or context payloads"
+    }
   }
 }

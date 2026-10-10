@@ -1,0 +1,111 @@
+name: T832 R12 AUX A0 (host prototype, NOT flashable)
+
+on:
+  push:
+    branches: [codex/t832-r12-aux-analysis]
+    paths:
+      - "firmware/t832/r12/**"
+      - "docs/T832_R12_AUX_POSTRESET_TRACE_ADR.md"
+      - ".github/workflows/t832-r12-aux-a0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t832-r12-aux-a0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-recorder:
+    name: Pure C recorder regression — ZERO radio writes
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - name: Verify host-only C protocol and interrupted writes
+        run: |
+          set -euo pipefail
+          ROOT=firmware/t832/r12
+          gcc -std=c11 -Wall -Wextra -Werror -Wconversion -pedantic \
+            -fsanitize=undefined -fno-omit-frame-pointer \
+            -I "$ROOT" "$ROOT/r12_aux_trace.c" "$ROOT/r12_aux_boot.c" \
+            "$ROOT/test_r12_aux_trace.c" \
+            -o /tmp/r12_aux_regression
+          /tmp/r12_aux_regression | tee /tmp/r12-aux-regression.json
+          python3 - <<'PYEOF'
+          import json
+          obj=json.load(open('/tmp/r12-aux-regression.json'))
+          assert obj['ok'] is True
+          assert obj['window_bytes']==80
+          assert obj['writes_to_nv']==obj['hardware_operations']==0
+          assert obj['checks']>=12
+          print('Host-only AUX recorder regression passed')
+          PYEOF
+      - name: Adversarial source ownership tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s firmware/t832/r12 -p 'test_*.py' -v
+      - name: Ensure instrument is not wired to live radio or NV
+        run: |
+          set -euo pipefail
+          test ! -f firmware/t832/r12/firmware-image.bin
+          test ! -f firmware/t832/r12/r12_aux_target.c
+          ! grep -rE -n 'FLASH_program|NVS_write|NVOCMP_(write|create)|startupFromApp\(' \
+            firmware/t832/r12/r12_aux_trace.c firmware/t832/r12/r12_aux_trace.h \
+            firmware/t832/r12/r12_aux_boot.c firmware/t832/r12/r12_aux_boot.h
+          echo "A0 only; no target memory address or deployment code"
+
+  pinned-ti-source-gate:
+    name: Pinned TI source audit (runtime ownership NOT yet proven)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          fetch-depth: 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          sparse-checkout: |
+            source/ti/zstack
+            source/ti/drivers
+            source/ti/common
+            source/ti/devices/cc13x4_cc26x4/inc
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          sparse-checkout: examples/rtos/LP_EM_CC2674P10/zstack/znp
+      - name: Verify exact TI ownership signals and fail-closed status
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 repo/firmware/t832/r12/r12_source_audit.py \
+            --sdk sdk --examples examples --out evidence/r12-aux-source-audit.json
+          python3 - <<'PYEOF'
+          import json
+          evidence=json.load(open('evidence/r12-aux-source-audit.json'))
+          assert evidence['sdk_sha']=='6499c3f53fc5fb5806213be695450a7b43fbaf3d'
+          assert evidence['examples_sha']=='87ff5b638b632050228a7504f35cf3b95581c278'
+          assert evidence['znp_direct_aux']['matching_lines']==0
+          assert evidence['znp_project_direct_aux']['matching_lines']==0
+          assert evidence['power_driver_uses_aux_subsystem'] is True
+          assert evidence['unused_bounded_80_byte_aux_window_proven'] is False
+          assert evidence['actual_slzb_radio_reset_retention_proven'] is False
+          assert evidence['status']=='AUX_OWNERSHIP_AND_RESET_UNPROVEN'
+          print('Pinned TI source audit PASSED; hardware write permission remains BLOCKED')
+          PYEOF
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: t832-r12-aux-a0-source-evidence
+          path: evidence/r12-aux-source-audit.json
+          if-no-files-found: warn
+          retention-days: 30
