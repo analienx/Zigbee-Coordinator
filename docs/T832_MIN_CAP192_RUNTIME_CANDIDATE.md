@@ -30,6 +30,7 @@ Authority: [production profile #42](https://github.com/analienx/Zigbee-Coordinat
 | NWK scheduled queue | 5 | **8** | exact patched TI source |
 | NWK confirmed queue | 5 | **8** | exact patched TI source |
 | NWK total buffer pool | 12 | **24** | exact patched TI source |
+| OSAL heap manager | 6,144 bytes (verified on original candidate linked map) | **32,768 bytes** | linked `osal_port.o (.bss.heapmgrHeapStore)` size |
 | Distinguishable ZNP SYS_VERSION | 20261010 | **2026101001** | pinned Herdsman ABI + actual 9-byte version |
 
 Reason for change: on the *prior physical candidate* after a fresh power-up, the control plane remained responsive, while outbound messaging registered 144 status-16 SREQ rejections and 98 confirmed transport failures (38 MAC status 26, 60 NWK status 205); incoming messages were clustered among four source addresses. The new settings address candidate congestion/route-table pressure **hypotheses**. They do not establish that any single limit caused the faults.
@@ -38,7 +39,7 @@ Reason for change: on the *prior physical candidate* after a fresh power-up, the
 
 Single TI SDK 8.32.00.07 pinned source patcher; no new R10 SDK imports, alternate firmware family or self-hosted builder. The patch applies new `znp_cnf.opts` overrides, real `znp.syscfg` routing settings, and four `nwk_globals.c` constants. Expected SDK delta increases from 7 to 8 source files; TI example delta remains 2. CI fails if exact anchors, diff allowlists, generated macros or code revisions differ.
 
-Hosted CI must produce actual CCS/ZNP OUT, MAP, Intel HEX and source-delta evidence, verify SRAM **unallocated** headroom >=64 KiB, and validate the imported compiler option file against the modified source. Note: SRAM unallocated according to linker is **not** free runtime heap; actual OSAL/heap usage, stack high-water and route/queue occupancy still require runtime instrumentation. Do not blindly enlarge limits again.
+Hosted CI must produce actual CCS/ZNP OUT, MAP, Intel HEX and source-delta evidence, verify SRAM **unallocated** headroom >=128 KiB after allocation of the actual 32 KiB OSAL heap, and validate the imported compiler option file against the modified source. Note: SRAM unallocated according to linker is **not** free runtime heap; actual OSAL/heap usage, stack high-water and route/queue occupancy still require runtime instrumentation. Do not blindly enlarge limits again.
 
 ## Gates before any hardware use
 
@@ -49,3 +50,7 @@ Hosted CI must produce actual CCS/ZNP OUT, MAP, Intel HEX and source-delta evide
 5. Only after safely validated sacrificial lab operation, perform staged 60+ router and >=150-device soak/capacity tests where feasible, with measured resource occupancy and safe operator go/no-go. Never claim a production PASS from one source-level test.
 
 No firmware packaging/deployment with new credentials, no Zigbee reset/re-pair, no HA service change, no network counter reset. Local identity/backups and real Zigbee security contents stay private.
+
+## Critical review amendment (linked map evidence)
+
+The first real linker image **passed**, but review of its exact `.map` found `osal_port.o (.bss.heapmgrHeapStore)` of `0x1800=6144` bytes. The unused linker SRAM was ~208 KiB, which emphatically **did not mean** the OSAL allocator could consume that unused space. This is a plausible route/AF allocation starvation mechanism and makes the first binary unsuitable as the preferred CAP192 candidate. Increase **only the pinned TI P10 project option** `-DHEAPMGR_SIZE=6144` to `-DHEAPMGR_SIZE=32768`; require real linker symbol `0x8000` and >=128 KiB unallocated SRAM. Retain `HEAPMGR_CONFIG=0`. The other 192/96/128/64/24 sizing targets and NV geometry remain unchanged. No physical heap high-water / fragmentation measurement exists; test on spare before any deployment.
