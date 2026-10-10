@@ -11,7 +11,8 @@ from pathlib import Path
 
 FLASH_END = 0x100000
 NVS_BEGIN = 0xFD800
-CCFG_BEGIN = 0xFFF78
+CCFG_BEGIN = 0x50000000
+CCFG_END = 0x50000800
 REVISION = 20261010
 H_STD = "src/adapter/z-stack/znp/definition.ts"
 
@@ -89,15 +90,19 @@ def hex_spans(path: Path) -> dict:
         if typ == 0:
             start = upper + address
             stop = start + count
-            if (address + count > 0x10000 or start < 0 or stop > FLASH_END):
-                raise ValueError(f"HEX record crosses flash/64 KiB boundary at {lineno}")
-            if stop > NVS_BEGIN and start < CCFG_BEGIN:
+            if address + count > 0x10000 or start < 0:
+                raise ValueError(f"HEX record crosses 64 KiB window at {lineno}")
+            in_main = 0 <= start < FLASH_END and stop <= FLASH_END
+            in_ccfg = CCFG_BEGIN <= start < CCFG_END and stop <= CCFG_END
+            if not (in_main or in_ccfg):
+                raise ValueError(f"HEX writes outside main flash and separate CC26x4 CCFG at {lineno}: {start:#x}-{stop:#x}")
+            if in_main and stop > NVS_BEGIN:
                 raise ValueError(f"HEX writes NVS data at {lineno}: {start:#x}-{stop:#x}")
             for pos in range(start, stop):
                 if pos in occupied:
                     raise ValueError(f"HEX duplicate flash byte at {pos:#x}")
                 occupied.add(pos)
-                if CCFG_BEGIN <= pos < FLASH_END:
+                if in_ccfg:
                     ccfglocs.add(pos)
             records += 1
         elif typ == 4:
@@ -130,7 +135,7 @@ def hex_spans(path: Path) -> dict:
 def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
            sdk_linker: Path) -> dict:
     rows = memory_map(map_file)
-    if not {"FLASH", "FLASH_NV", "SRAM"}.issubset(rows):
+    if not {"FLASH", "FLASH_NV", "SRAM", "CCFG"}.issubset(rows):
         raise ValueError(f"missing real TI linker memory rows: {sorted(rows)}")
     nv = rows["FLASH_NV"]
     if nv["origin"] != NVS_BEGIN or nv["length"] != FLASH_END - NVS_BEGIN:
@@ -138,6 +143,9 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
     flash = rows["FLASH"]
     if flash["origin"] != 0 or flash["length"] != NVS_BEGIN:
         raise ValueError(f"linked application FLASH span mismatch: {flash}")
+    ccfg = rows["CCFG"]
+    if ccfg["origin"] != CCFG_BEGIN or ccfg["length"] != CCFG_END - CCFG_BEGIN:
+        raise ValueError(f"CC26x4 CCFG must be outside main flash: {ccfg}")
     if rows["SRAM"]["unused"] < 8192:
         raise ValueError(f"less than 8 KiB unallocated SRAM: {rows['SRAM']}")
     proj = projectspec.read_text(encoding="utf-8")
@@ -154,9 +162,10 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
         raise ValueError("P10 SysConfig NV region differs from verified map")
     evidence = hex_spans(hex_file)
     return {"status": "PASS_REAL_LINK_GEOMETRY",
-            "linked_memory": {k: rows[k] for k in ("FLASH", "FLASH_NV", "SRAM")},
+            "linked_memory": {k: rows[k] for k in ("FLASH", "FLASH_NV", "SRAM", "CCFG")},
             "hex": evidence, "flash_authorized": False,
-            "warning": ("Link/NVS/CCFG address separation only. The true generated "
+            "warning": ("CC26x4 separate CCFG address region validated; NVS occupies " 
+                        "entire upper five pages in main flash. The true generated "
                         "NVS driver configuration, physical pinmap, ROM BSL, oscillator, "
                         "PA and flash erase/write effects still require verification.")}
 
