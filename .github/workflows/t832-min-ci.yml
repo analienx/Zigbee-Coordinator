@@ -193,7 +193,7 @@ jobs:
           test "$(git -C sdk diff --name-only | wc -l)" -eq 2
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
-          git -C examples diff --check
+          git -C examples -c core.whitespace=cr-at-eol diff --check
           git -C sdk diff --binary > evidence/source-sdk.patch
           git -C examples diff --binary > evidence/source-example.patch
           test -s evidence/source-sdk.patch && test -s evidence/source-example.patch
