@@ -53,7 +53,7 @@ def apply(sdk, examples, evidence):
     # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
     # Pin and encode a four-byte build revision and confirm via CI on real TI
     # source and the pinned Herdsman protocol definition, not a host mock.
-    revision = 2026101001
+    revision = 2026101002
     original_version = (
         "const uint8_t MTVersionString[] = {\n"
         "                                   2,  /* Transport protocol revision */\n"
@@ -76,6 +76,11 @@ def apply(sdk, examples, evidence):
     replace_exact(sdk, version, original_version, patched_version, changes)
     project = ("examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/"
         "znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec")
+    # The old real CCS image linked only a 0x1800 / 6144-byte OSAL heap
+    # despite >200KiB unallocated SRAM. Give the target network a bounded
+    # 32KiB allocation and prove its actual .bss symbol in the linker map.
+    replace_exact(examples, project,
+        "-DHEAPMGR_SIZE=6144", "-DHEAPMGR_SIZE=32768", changes)
     # The TI project has DISTINCT compiler -D and linker --define settings.
     # The NVOCMP driver is compiled with -D, so changing only the linker
     # leaves real NV storage at five pages despite a thirteen-page map.
@@ -214,12 +219,13 @@ def apply(sdk, examples, evidence):
         "capacity_profile": "13page_192TC_96NWK_route128_src128_neighbor64_nwkbuf24_OFFLINE",
         "intended_tc_slots": 192, "intended_nwk_device_list": 96,
         "intended_address_manager": 298,
+        "intended_osal_heap_bytes": 32768,
         "runtime_budget": {"routing_table": 128, "source_route_entries": 128,
             "direct_neighbors": 64, "route_requests": 16,
             "source_route_hops": 16, "address_conflicts": 8,
             "nwk_buffers_waiting": 16, "nwk_buffers_scheduled": 8,
             "nwk_buffers_confirmed": 8, "nwk_buffers_total": 24},
-        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 2026101001, "payload_bytes": 9},
+        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 2026101002, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
@@ -227,7 +233,7 @@ def apply(sdk, examples, evidence):
             "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
-            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101001)",
+            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101002)",
         ],
         "flash_authorized": False, "hardware_qualified": False,
     }
