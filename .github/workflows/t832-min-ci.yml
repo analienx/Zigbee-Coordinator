@@ -177,11 +177,19 @@ jobs:
           path: examples
           sparse-checkout: |
             examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Koenkk/zigbee-herdsman
+          ref: 0968f979d558874b17396c96b66382d4236bbdcd # v10.9.1
+          path: herdsman
+          sparse-checkout: |
+            src/adapter/z-stack/znp/definition.ts
       - name: Apply real source patch and verify exact upstream change set
         run: |
           set -euo pipefail
           mkdir -p evidence
           python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence evidence/source-delta.json
+          python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out evidence/host-wire-contract.json
           test "$(git -C sdk diff --name-only | wc -l)" -eq 2
           test "$(git -C examples diff --name-only | wc -l)" -eq 1
           git -C sdk diff --check
