@@ -31,7 +31,7 @@ Authority: [production profile #42](https://github.com/analienx/Zigbee-Coordinat
 | NWK confirmed queue | 5 | **8** | exact patched TI source |
 | NWK total buffer pool | 12 | **24** | exact patched TI source |
 | OSAL heap manager | 6,144 bytes (verified on original candidate linked map) | **32,768 bytes** | linked `osal_port.o (.bss.heapmgrHeapStore)` size |
-| Distinguishable ZNP SYS_VERSION | 20261010 | **2026101001** | pinned Herdsman ABI + actual 9-byte version |
+| Distinguishable ZNP SYS_VERSION | 20261010 | **2026101002** | pinned Herdsman ABI + actual 9-byte version |
 
 Reason for change: on the *prior physical candidate* after a fresh power-up, the control plane remained responsive, while outbound messaging registered 144 status-16 SREQ rejections and 98 confirmed transport failures (38 MAC status 26, 60 NWK status 205); incoming messages were clustered among four source addresses. The new settings address candidate congestion/route-table pressure **hypotheses**. They do not establish that any single limit caused the faults.
 
