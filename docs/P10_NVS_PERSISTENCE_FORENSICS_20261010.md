@@ -169,3 +169,83 @@ startup command, or NV restoration is approved by this document.
 and address-manager35 absent, Zigbee2MQTT stopped. Original and
 postrestore 103-association backups sealed; **no live changes in
 this investigation.**
+
+## 7. Actual publicly distributed SLZB-OS `v3.4.1.dev1` binaries (offline strings)
+
+Forensic acquisition used only the public vendor download server,
+`https://updates.smlight.tech/firmware/slzb06x/core/`. Two distinct
+versions of the same announced release were downloaded into a separate
+**local scratch** folder on Zephyrus; they were **not flashed, uploaded to
+GitHub, or applied to the device**:
+
+| Public image | Bytes | SHA256 |
+|---|---:|---|
+| `slzb-os-v3.4.1.dev1-ota.bin` | 2,849,440 | `2967e91cdc7f0a8e21814757adfed0f71ce4e53585753ee193fab4e8c4894334` |
+| `slzb-os-u-v3.4.1.dev1-ota.bin` | 4,274,640 | `63a40e962ec3ef5851e848c40e4522b9dc7b97336ea68e1a57bd583fba81a508` |
+
+**Both** independently contain one instance each of these exact ASCII
+marker strings: `eraseNVM`, `ZB_FW_done`, `Flash erase error!`,
+`CCFG erase error!`, plus `/api2` and `/fileUpload` HTTP route
+identifiers. In the **plain** binary, the `eraseNVM` marker at file
+offset 92,808 is adjacent to `fwVer`, `fwType`, `fwCh`, and
+`zbChipIdx`; the `ZB_FW_done` marker is next to flash/CCFG erase error
+strings. The U variant contains the same markers. This confirms the
+distributed bridge firmware *includes* flash-erase-handling and the
+exact `eraseNVM` parameter **but not how it branches on zero/one**.
+The `ha_info` OS version is known, but the actual OTA image variant for
+this MR4U was not established from an on-chip binary hash; these
+findings apply to both candidate vendor images, without claiming
+byte-for-byte equivalence to the currently installed ESP image.
+
+**Explicit negative conclusion:** static strings *do not* prove
+`BANK_ERASE` was issued, which pages were cleared, or whether GET
+versus POST changed the flag semantics. Those must be established by
+actual updater source, BSL transcript or preboot raw flash acquisition.
+
+## 8. Raw page analyzer prepared offline (zero hardware operations)
+
+New tool `firmware/t832/r12/nvs_raw_forensics.py` handles **exactly
+30,720-byte** private raw dumps from P10 `0x000F8800..0x000FFFFF`.
+It identifies 15 × 2048-byte TI NVOCMP flash pages. The exact pinned
+SDK `nvocmp.c` defines header state in byte0, cycle byte1,
+format version (`byte2 >> 2`), signature byte3
+(`NVOCMP_SIGNATURE=0x96`, version `0x03`). Valid states:
+0xFF (inactive), 0xFE (transfer destination), 0x7E (ready),
+0x7C (active), 0x78 (full), 0x70 (transfer source).
+
+Command modes (offline only):
+
+```
+python firmware/t832/r12/nvs_raw_forensics.py --snapshot PRIVATE_CURRENT_NV.bin
+
+python firmware/t832/r12/nvs_raw_forensics.py \
+  --before PRIVATE_BEFORE.bin \
+  --post-program-preboot PRIVATE_AFTER_PROGRAM_BEFORE_APP_BOOT.bin \
+  --after-boot PRIVATE_AFTER_FIRST_APP_BOOT.bin
+```
+
+The tool loads files **only**; it has no network/serial/BSL interface
+and never writes data. It rejects incorrect file sizes or symlinks.
+Output is per-page validity/counts, overall SHA256 and changed-page
+status — never raw keys, item IDs or device identities. All full binary
+snapshots must stay in the restricted local private directory and must
+never be committed or pasted into issue comments. A first-boot header
+erase is only attributed to the *stage* in which bytes changed; it is
+not proof of an individual erase opcode. A single postboot snapshot
+cannot attribute the source of loss.
+
+**Automated synthetic tests:** nine passed for correct page format,
+signature/version corruption, precise length, full erase before app,
+erase only after boot, unchanged snapshot, partial write, and redaction
+of a deliberately embedded fake secret. Six earlier static-image
+contract tests also pass. Host-only CI automatically runs tests through
+the existing `test_*.py` glob.
+
+**Still outstanding:** the ROM-BSL *read-only* acquisition transport
+and first-boot hold have **not** been proven on the production MR4U.
+The production module has **not** been put in BSL mode or reset during
+this investigation. The public `smlight-cc-flasher` read command uses
+4-byte memory requests, but entering BSL via its host controls
+**can reset the radio**. Never invoke it against production as a
+casual read without an explicit, separately approved reset/forensic
+ownership gate and a verified no-erase/no-download command transcript.
