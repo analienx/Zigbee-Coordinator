@@ -138,3 +138,54 @@ kind54 capture if it fails.
 
 **This was the only radio restart used for A0.** No further reset, flash,
 network startup or NV restore was triggered by the assistant afterward.
+
+## A1 preparation — 2026-10-10, after A0 PASS; waiting for genuine cold power
+
+**User authorized proceeding with A1**, but **no A1 network/NV mutation has
+been made**. We verified the current MR4U P10 still returns 3/3 SYS pings,
+has Z2M stopped and watchdog disabled, and its A0 event54 is archived.
+
+The active R12 image revision **8320062** retains the valid previous A0
+record in AUX, so further **Zigbee-radio-only resets cannot re-arm it**.
+Its boot path intentionally disables writes when a prior-epoch record is
+present. An immediate `startupFromApp` would be diagnostically useless.
+An experimental auto-rearm code change was **abandoned**; the existing
+verified R12 firmware and security recovery code remain unchanged, and
+the working tree was returned to its last committed state.
+
+**Minimal hardware-free approach:** physically remove **all** power to
+the entire MR4U (PoE and/or USB, whichever actually supplies it), then
+reconnect once. This must be a genuine full power interruption, not
+`Zigbee restart` or an SLZB software reset. TI documents that the
+AUX-retained memory is not guaranteed after full power loss. The existing
+R12 first-boot path then treats an empty AUX journal as virgin and records
+a new first boot. **Do not issue any network startup during the cycle.**
+
+Before A1 startup:
+1. Verify firmware rev8320062, 3/3 SYS ping, MR4U radio index1, stopped
+   Z2M and watchdog off after true cold power.
+2. Verify the sealed original backup SHA256
+   `bd95f00eb3ce1f7794f9c6406c5b4fd96a0c6aa0ef5cdbaa7a29d25d3f6083b8`
+   and 103 link keys / 103 address associations; preserve archived A0
+   JSON SHA256
+   `63bf260afd108f96ead587ed424c5ab2e13f7cf7065f8f7d5dab17bb90ff7938`.
+3. Native NV item33/NIB was absent after R12 flash. A simple `verify`
+   failed because adapter was *not commissioned*, not because 103 keys
+   were compared and failed. Do not blindly run an existing-network
+   startup with missing NIB; first inspect whether native restoration
+   prerequisites, address-manager/security-table capacities, and the
+   original NIB native snapshot are available. The old worker's
+   `restore-retained-native` requires a PRESENT retained NIB and is
+   **not valid when item33 length is zero**. Its separate
+   `restore-native` branch requires NIB=0 plus sufficient existing
+   security/address-manager tables; verify this before any mutation.
+4. Only if a proven 103-key/counter-aware restore path fully succeeds
+   and an independent readback accepts original identity/NIB and all
+   associations, authorize ONE `startupFromApp`, with sealed evidence.
+   On timeout do NOT retry: one subsequent radio-only reset should
+   expose the new A1 kind54 startup checkpoint, if re-arming truly worked.
+5. Keep recovery of ZNP, restored NV, and functioning mesh separate.
+
+**A1 startup has not been issued.** A proper full-power interruption
+requires access to the MR4U power feed; the available SLZB software
+`Zigbee restart` demonstrably *preserves* AUX and cannot substitute.
