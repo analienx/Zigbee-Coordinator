@@ -72,9 +72,13 @@ static uint8_t T832R12_tryExport(uint64_t now64, uint32_t now)
     sitephase = (uint16_t)(
          (t832R12Previous.retained.milestone & 0xffu)
          | ((uint16_t)t832R12Previous.retained.phase << 8u));
+    /* The only context currently encoded is NLME restored(1)/failed(0).
+     * No Zigbee addresses, key data, or NIB contents enter the frame.
+     * Site/phase + context is more diagnostic than unused reserved flags.
+     */
     reset_flags = (uint16_t)(
          (t832R12Previous.current_reset_cause & 0xffu)
-         | ((uint16_t)t832R12Previous.retained.flags << 8u));
+         | ((uint16_t)(t832R12Previous.retained.context & 0xffu) << 8u));
     recs[0].a=0x1000u;
     recs[0].b=(uint16_t)attempt;
     recs[0].c=(uint16_t)(attempt>>16u);

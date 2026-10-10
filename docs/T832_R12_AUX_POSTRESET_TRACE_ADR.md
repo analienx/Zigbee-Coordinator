@@ -1,6 +1,6 @@
 # R12 ADR — firmware-only startup forensics using reset-retained AUX RAM
 
-**Status:** A0 HOST PROTOTYPE IMPLEMENTED AND TESTED — **NOT A FIRMWARE IMAGE; NOT FLASHABLE; LIVE AUX OWNERSHIP/RESET RETENTION UNPROVEN**
+**Status:** R12 TARGET SOURCE INTEGRATED / HOST TESTED; NATIVE TI BUILD UNDER VERIFICATION — **LIVE AUX OWNERSHIP/RESET RETENTION UNPROVEN; NOT APPROVED FOR FLASH**
 **Date:** 2026-10-09 · **Owner:** Zigbee-Coordinator R12 candidate · **Incident:** [home-assistant-stack #73](https://github.com/analienx/home-assistant-stack/issues/73)  
 **Baseline:** shipped R11-DIAG `156fe563ba5e6eb3d15c56b21ec9aabfda882096`, revision `8320052`, binary SHA-256 `13d69fb126b0cad0e5f362d01b8fcb4d78d7a417c75eb36d6dbbaa38266ed36e`.
 
@@ -175,3 +175,43 @@ checks from the independent diagnostic persistence check.
 performed by the A0 implementation.** The installed radio remains on the
 last observed R11 diagnostic image and still unresponsive since the final
 operator-requested startup failure.
+
+## R12 on-target source implementation (10 October 2026)
+
+The section above records the historical A0 host-prototype checkpoint.
+**R12 source integration is now implemented** on an isolated branch, but
+**the live radio has NOT been flashed or hardware-qualified**.
+
+- `r12/r12_integrate.py` is an exact-anchor, post-R11 source patch against
+  pinned TI SDK 8.32.00.07 and the vendor-profile R11 DIAG baseline.
+  Integrates the original eight R11 startup sites with AUX checkpoints,
+  adds an MT→BDB inline call boundary (site 10), and immediately before/after
+  `NLME_RestoreFromNV` (site 9). No changes to functional Zigbee branches,
+  NVOCMP, NVS geometry, existing association limits or CCFG recovery DIO.
+- `r12/r12_target_impl.inc` preserves old-boot AUX evidence in normal RAM
+  before R11 startup hooks write new milestones; old accepted evidence blocks
+  new writes. For a virgin window with no R12 magic it can initialize the
+  80-byte window after separate **physical ownership qualification**. A
+  corrupted existing R12 marker is never implicitly erased.
+- After an operator-controlled SLZB radio-only restart, the current healthy
+  MT task can export the prior attempt in a bounded, existing T832D2
+  four-record DEBUG frame, **event kind 54**. It includes attempt, previous
+  boot epoch, sequence, last site/phase, bounded NLME context and actual
+  current reset source. The R12 decoder rejects unknown/invalid/mixed
+  groups while leaving R11 events 51–53 intact.
+- The new firmware revision is **8320062**. Full pinned native target build
+  and R11 baseline laboratory/CCFG/vendor-NV packaging gates are in
+  `.github/workflows/t832-r12-target-build.yml`. Its output must be
+  treated as a **non-flash-authorized diagnostic candidate** even if compiled
+  successfully.
+- The separate [R12 code-review record](T832_R12_TARGET_CODE_REVIEW.md)
+  identifies all reviewed bugs and non-negotiable hardware gates. Native
+  compiler/linker evidence, real memory ownership and actual radio reset
+  retention remain independently necessary; GitHub host tests are not a
+  substitute.
+- The user has no external SWD/cJTAG probe. Do NOT ask for one, flash R12,
+  reset the current radio, or start the original network on the basis of
+  source/CI tests alone. Restore-safe physical testing needs a fresh
+  operator-controlled gate and independent key/counter verification.
+
+**No P10 device operation was performed while implementing this R12 source.**

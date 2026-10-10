@@ -17,11 +17,11 @@ def frame(parts):
     data=hdr+bytes([len(parts)])+body
     return "T832D2:"+data.hex().upper()
 
-def sample(site=9, phase=0, cause=1):
+def sample(site=9, phase=0, cause=1, context=0):
     return [(54,0x1000,0x0001,0xA012),
             (54,0x1001,0x1010,0x2026),
             (54,0x1002,0x0003,0x0000),
-            (54,0x1003,site|(phase<<8),cause)]
+            (54,0x1003,site|(phase<<8),cause|(context<<8))]
 
 class R12Frames(unittest.TestCase):
     def test_previous_reset_checkpoint_captured(self):
@@ -30,10 +30,20 @@ class R12Frames(unittest.TestCase):
         self.assertEqual(out["site"],9)
         self.assertEqual(out["phase"],0)
         self.assertEqual(out["sequence"],3)
+        self.assertEqual(out["bounded_context"],0)
         self.assertEqual(out["current_boot_reset_cause"],1)
         self.assertEqual(out["attempt_id"],0xA0120001)
         self.assertFalse(out["network_acceptance"])
         self.assertEqual(len(parts),4)
+
+    def test_nlme_result_context(self):
+        hdr,_=incident.decode_frame_payload(
+            frame(sample(site=9,phase=1,context=1)))
+        result=hdr["r12_group"]
+        self.assertEqual(result["bounded_context"],1)
+        self.assertEqual(result["phase"],1)
+        with self.assertRaises(ValueError):
+            incident.decode_frame_payload(frame(sample(context=255)))
 
     def test_bad_part_or_mixed_r11_rejected(self):
         for bad in (

@@ -22,13 +22,15 @@ def decode_r12_group(records):
     site = marker & 0xff
     phase = (marker >> 8) & 0xff
     cause = reset_flags & 0xff
-    flags = (reset_flags >> 8) & 0xff
+    context = (reset_flags >> 8) & 0xff
     if attempt == 0 or epoch == 0 or sequence == 0:
         raise ValueError("r12-zero-identity")
     if site not in range(1, 11) or phase > 2:
         raise ValueError("r12-invalid-checkpoint")
     if cause not in (0, 1, 2, 4, 5, 6, 7, 8, 9):
         raise ValueError("r12-invalid-reset-cause")
+    if context > 1:
+        raise ValueError("r12-unexpected-context")
     return {
         "event": "R12_RETENTION_V1",
         "version": 1,
@@ -38,8 +40,8 @@ def decode_r12_group(records):
         "site": site,
         "phase": phase,
         "current_boot_reset_cause": cause,
-        "flags": flags,
-        "checkpoint_context_not_exported": True,
+        "bounded_context": context,
+        "context_is_bounded_one_byte": True,
         "evidence_status": "retained-format-coherent; physical reset retention not independently proven",
         "network_acceptance": False,
     }

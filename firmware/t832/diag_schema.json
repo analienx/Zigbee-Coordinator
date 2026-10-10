@@ -304,7 +304,7 @@
       "part0": "attempt ID lo/hi",
       "part1": "previous boot epoch lo/hi",
       "part2": "retained slot sequence lo/hi",
-      "part3": "b=site_low8|phase_high8; c=current reset-source low8|flags high8",
+      "part3": "b=site_low8|phase_high8; c=current reset-source low8|bounded NLME context high8",
       "meaning": "Retained record from previous boot exported after radio reset. Does NOT prove physical retention, root-cause identity, or network acceptance.",
       "scope": "No Zigbee security keys, IEEE addresses, or context payloads"
     }
