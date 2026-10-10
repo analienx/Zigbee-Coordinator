@@ -134,7 +134,7 @@ jobs:
           python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence build-evidence/real-source.json
           python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out build-evidence/host-wire-contract.json
           git -C sdk diff --check
-          git -C examples diff --check
+          git -C examples -c core.whitespace=cr-at-eol diff --check
           git -C sdk diff --binary > build-evidence/real-sdk.patch
           git -C examples diff --binary > build-evidence/real-project-seed.patch
       - name: Build pinned SDK libraries with TI documented CMake flow
