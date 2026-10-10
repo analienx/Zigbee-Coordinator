@@ -81,6 +81,11 @@ class GuardedBsl:
     """Transport must support .sendall and .recv. No GPIO/API reset methods."""
     def __init__(self,transport):
         self.sock=transport
+        # The upstream SMLIGHT ROM flasher disables TCP Nagle because BSL
+        # exchanges thousands of tiny 4-byte MEMORY_READ/status packets.
+        # No device or management setting is changed by this socket option.
+        if hasattr(transport,"setsockopt"):
+            transport.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
         self.commands=[]
         self.reads=0
 

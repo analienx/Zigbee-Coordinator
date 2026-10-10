@@ -47,6 +47,18 @@ class FakeBslSocket:
 
 
 class SafeProtocolTests(unittest.TestCase):
+    def test_tcp_nodelay_set_on_real_socket_like_transport(self):
+        class OptFake(FakeBslSocket):
+            def __init__(self):
+                super().__init__()
+                self.socket_options=[]
+            def setsockopt(self,level,opt,value):
+                self.socket_options.append((level,opt,value))
+        fake=OptFake()
+        m.GuardedBsl(fake)
+        self.assertEqual(fake.socket_options,[(m.socket.IPPROTO_TCP,
+                                               m.socket.TCP_NODELAY,1)])
+
     def test_plan_never_connects_to_network(self):
         with patch.object(m.socket,"create_connection",side_effect=AssertionError("network used")):
             with io.StringIO() as stream, redirect_stdout(stream):
