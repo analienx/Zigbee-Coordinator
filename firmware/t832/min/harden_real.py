@@ -137,7 +137,7 @@ def actual_capacity(header: Path) -> dict[str, int]:
     text = header.read_text(encoding="utf-8")
     out = {}
     for name, target in (("ZDSECMGR_TC_DEVICE_MAX", 112), ("NWK_MAX_DEVICE_LIST", 75)):
-        values = re.findall(r"^\\s*#define\\s+" + name + r"\\s+(\\d+)\\s*$", text, re.M)
+        values = re.findall(r"^\s*#define\s+" + name + r"\s+(\d+)\s*$", text, re.M)
         if len(values) != 1 or int(values[0]) != target:
             raise ValueError(
                 f"EFFECTIVE_CAPACITY_MISMATCH: generated {name}={values} expected {target}; "
