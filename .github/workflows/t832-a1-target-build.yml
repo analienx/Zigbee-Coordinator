@@ -1,13 +1,13 @@
-name: T832 R12 integrated diagnostic firmware candidate (NO FLASH)
+name: T832 R12 A1 fresh epoch native candidate (NO FLASH)
 on:
   push:
-    branches: [codex/t832-r12-aux-analysis]
-    paths: ['firmware/t832/**', '.github/workflows/t832-r12-target-build.yml']
+    branches: [codex/t832-a1-diagnostic]
+    paths: ['firmware/t832/**', '.github/workflows/t832-a1-target-build.yml']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: t832-r12-target-${{ github.ref }}
+  group: t832-a1-target-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   nv-lab:
@@ -448,7 +448,7 @@ jobs:
           R12_AUDIT_BUNDLE=bundle python3 -m unittest discover -s repo/firmware/t832/r12 -p test_r12_artifact_audit.py -v
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: t832-r12-CANDIDATE-DO-NOT-FLASH-${{ matrix.variant }}-${{ matrix.profile }}
+          name: t832-r12-A1-CANDIDATE-DO-NOT-FLASH-${{ matrix.variant }}-${{ matrix.profile }}
           path: bundle/
           if-no-files-found: error
           retention-days: 30

@@ -12,13 +12,14 @@ import json
 import re
 from pathlib import Path
 
-REVISION = 8320062
-STEM = "T832-R12-DIAG-vendor-20240716"
+REVISION = 8320063
+STEM = "T832-R12-A1-DIAG-vendor-20240716"
 AUX_START = 0x400E0FB0
 AUX_END = 0x400E1000
 REQUIRED_LINK = (
     "T832R12_boot", "T832R12_mark", "R12Aux_commit",
     "R12Aux_initializeVirgin", "R12Aux_readLatest",
+    "R12Aux_transitionArchivedA0",
     "R12Aux_captureBeforeOverwrite", "R12Aux_checksumWords",
 )
 REQUIRED_GATES = ("ccfg-gate.json", "vendor-layout-proof.json", "r12-source-integration.json",
@@ -67,6 +68,7 @@ def audit(bundle: Path) -> dict:
            and r12.get("boot_reader_enabled") is True
            and r12.get("critical_startup_aux_hooks_enabled") is True
            and r12.get("retained_event_kind") == 54
+           and r12.get("a1_one_shot_transition_from") == 8320062
            and all(r12.get(field) is False for field in (
                "aux_address_is_exclusive", "pin_reset_retention_verified",
                "firmware_hardware_validated", "flash_authorized")),

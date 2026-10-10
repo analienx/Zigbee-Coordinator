@@ -1,19 +1,19 @@
-name: T832 R12 AUX A0 (host prototype, NOT flashable)
+name: T832 R12 A1 one-shot recorder host regression (NO RADIO)
 
 on:
   push:
-    branches: [codex/t832-r12-aux-analysis]
+    branches: [codex/t832-a1-diagnostic]
     paths:
       - "firmware/t832/r12/**"
       - "docs/T832_R12_AUX_POSTRESET_TRACE_ADR.md"
-      - ".github/workflows/t832-r12-aux-a0.yml"
+      - ".github/workflows/t832-a1-host.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: t832-r12-aux-a0-${{ github.ref }}
+  group: t832-a1-host-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -105,7 +105,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: t832-r12-aux-a0-source-evidence
+          name: t832-a1-host-source-evidence
           path: evidence/r12-aux-source-audit.json
           if-no-files-found: warn
           retention-days: 30

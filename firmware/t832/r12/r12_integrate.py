@@ -119,7 +119,7 @@ def install(sdk: Path) -> dict:
     # R12 must be distinctly identified from the diagnostic R11 image:
     # preserve the custom product marker, bump only exact 4 revision bytes.
     ver=mt/"mt_version.c"
-    ex.replace(ver,"8320052u >>","8320062u >>",
+    ex.replace(ver,"8320052u >>","8320063u >>",
                "r12.firmware_revision",count=4)
     return {
       "schema":"r12-integrated-source-candidate-v1",
@@ -128,7 +128,7 @@ def install(sdk: Path) -> dict:
       "security_contract":"unchanged R11 NV/network restore policy",
       "aux_address_qualification":"UNPROVEN -- DO NOT FLASH",
       "radio_reset_retention_qualification":"UNPROVEN -- DO NOT FLASH",
-      "r12_revision":8320062
+      "r12_revision":8320063
     }
 
 
@@ -142,6 +142,6 @@ if __name__=="__main__":
         args.evidence.parent.mkdir(parents=True,exist_ok=True)
         args.evidence.write_text(json.dumps(result,indent=2))
     print(json.dumps({"status":"SOURCE_PATCHED_DEPLOYMENT_BLOCKED",
-                      "r12_revision":8320062,
+                      "r12_revision":8320063,
                       "edit_count":len(result["r12"]),
                       "aux_ownership":result["aux_address_qualification"]}))

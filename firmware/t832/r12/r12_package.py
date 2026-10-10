@@ -30,7 +30,7 @@ def main():
     if not r12_source.is_file():
         raise ValueError("no exact R12 integrated source proof")
     proof=json.loads(r12_source.read_text())
-    if (proof.get("r12_revision") != 8320062
+    if (proof.get("r12_revision") != 8320063
             or len(proof.get("r12",[]))!=8
             or proof.get("aux_address_qualification")!="UNPROVEN -- DO NOT FLASH"):
         raise ValueError("R12 patch manifest unknown/incomplete")
@@ -53,8 +53,8 @@ def main():
     if r11_manifest["sys_version_revision"]!=8320052:
         raise ValueError("unexpected R11 package gate")
     manifest=r11_manifest.copy()
-    manifest["variant"]="T832-R12-DIAG-vendor-20240716"
-    manifest["sys_version_revision"]=8320062
+    manifest["variant"]="T832-R12-A1-DIAG-vendor-20240716"
+    manifest["sys_version_revision"]=8320063
     manifest["R12"]={
         "source_proof":"provenance/r12-source-integration.json",
         "target_integrated":True,
@@ -65,6 +65,9 @@ def main():
         "boot_reader_enabled":True,
         "critical_startup_aux_hooks_enabled":True,
         "retained_event_kind":54,
+        "a1_one_shot_transition_from":8320062,
+        "a1_prior_attempt":"0xA0120001",
+        "a1_new_attempt":"0xA0120002",
         "network_mutation_review":"R11 baseline path preserved"
     }
     # Original R11-gated container bytes represent R12 firmware, not R11.
@@ -73,7 +76,7 @@ def main():
     oldname="T832-R11-DIAG-vendor-20240716"
     for p in list(candidate.iterdir()):
         if p.is_file() and p.name.startswith(oldname):
-            p.rename(candidate/p.name.replace(oldname,"T832-R12-DIAG-vendor-20240716",1))
+            p.rename(candidate/p.name.replace(oldname,"T832-R12-A1-DIAG-vendor-20240716",1))
     shutil.copy2(r12_source,candidate/"provenance"/r12_source.name)
     (candidate/"r12").mkdir()
     shutil.copy2(Path(__file__).resolve().parent/"r12_decode.py",
@@ -93,7 +96,7 @@ def main():
         and f.name!="SHA256SUMS"))
     print(json.dumps({"r12":True,"nonflashable":True,
                       "linked_hooks":True,"nv_gates_reused":True,
-                      "bundle":str(candidate),"revision":8320062}))
+                      "bundle":str(candidate),"revision":8320063}))
 
 if __name__=="__main__":
     main()

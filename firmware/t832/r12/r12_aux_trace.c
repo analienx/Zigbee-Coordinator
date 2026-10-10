@@ -174,6 +174,70 @@ R12AuxStatus R12Aux_initializeVirgin(volatile uint32_t *window,
     return status == R12_AUX_EMPTY ? R12_AUX_OK : R12_AUX_VERIFY_FAILED;
 }
 
+/* A1-specific one-shot transition from captured R12/A0 to R12/A1.
+ * Only two precisely identified A0 journal states (seq1 entry, seq2 exit)
+ * are accepted. Any other old/foreign/corrupt slot prevents erasure.
+ * The A0 receipt was separately archived on Zephyrus and checksum pinned.
+ */
+R12AuxStatus R12Aux_transitionArchivedA0(volatile uint32_t *window)
+{
+    unsigned int i;
+    unsigned int valid_count = 0u;
+    uint32_t sequence_mask = 0u;
+    R12AuxRecord previous;
+    if (window == NULL) return R12_AUX_BAD_ARGUMENT;
+    if (R12Aux_readLatest(window, UINT32_C(8320062), &previous)
+            != R12_AUX_OK) return R12_AUX_UNACKNOWLEDGED_EPOCH;
+    if (previous.attempt != UINT32_C(0xA0120001) ||
+        previous.boot_epoch != UINT32_C(0x20261010) ||
+        previous.build != UINT32_C(8320062)) {
+        return R12_AUX_UNACKNOWLEDGED_EPOCH;
+    }
+    for (i = 0u; i < R12_AUX_NUM_SLOTS; ++i) {
+        const volatile uint32_t *p =
+            window + ((size_t)i * R12_AUX_SLOT_WORDS);
+        /* A failed write may leave an uncommitted alternate slot:
+         * do not erase possible crash evidence with recognizable sentinels.
+         */
+        if (!valid_slot(p)) {
+            if (populated(p)) return R12_AUX_UNACKNOWLEDGED_EPOCH;
+            continue;
+        }
+        if (p[R12_BUILD] != UINT32_C(8320062) ||
+            p[R12_ATTEMPT] != UINT32_C(0xA0120001) ||
+            p[R12_BOOT] != UINT32_C(0x20261010) ||
+            p[R12_CONTEXT] != 0u ||
+            ((p[R12_MARK] >> 24u) & 0xffu) != 0u) {
+            return R12_AUX_UNACKNOWLEDGED_EPOCH;
+        }
+        /* Exactly site1 entry with seq1 in slot0, and/or
+         * site1 exit with seq2 in slot1. Reject all later checkpoints.
+         */
+        if (i == 0u) {
+            if (p[R12_SEQUENCE] != 1u ||
+                (p[R12_MARK] & UINT32_C(0x00ffffff)) != UINT32_C(1)) {
+                return R12_AUX_UNACKNOWLEDGED_EPOCH;
+            }
+            sequence_mask |= 1u;
+        } else {
+            if (p[R12_SEQUENCE] != 2u ||
+                (p[R12_MARK] & UINT32_C(0x00ffffff)) != UINT32_C(0x10001)) {
+                return R12_AUX_UNACKNOWLEDGED_EPOCH;
+            }
+            sequence_mask |= 2u;
+        }
+        ++valid_count;
+    }
+    if (valid_count == 0u || valid_count > 2u || sequence_mask == 0u) {
+        return R12_AUX_UNACKNOWLEDGED_EPOCH;
+    }
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        store_word(&window[i], 0u);
+    }
+    return R12Aux_readLatest(window, UINT32_C(8320063), &previous)
+        == R12_AUX_EMPTY ? R12_AUX_OK : R12_AUX_VERIFY_FAILED;
+}
+
 R12AuxStatus R12Aux_commit(volatile uint32_t *window,
                            uint32_t expected_build,
                            uint32_t attempt,

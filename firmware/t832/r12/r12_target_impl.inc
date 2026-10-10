@@ -8,6 +8,7 @@
 static R12AuxBootCopy t832R12Previous = {0};
 static uint8_t t832R12WriteEnabled = 0u;
 static uint32_t t832R12LastExport = 0u;
+static uint8_t t832R12ArmEventSent = 0u;
 
 static volatile uint32_t *T832R12_window(void)
 {
@@ -21,9 +22,20 @@ static volatile uint32_t *T832R12_window(void)
 void T832R12_boot(uint32_t reset_cause)
 {
     t832R12WriteEnabled = 0u;
+    t832R12ArmEventSent = 0u;
     t832R12Previous.captured = 0u;
     t832R12Previous.status = R12Aux_captureBeforeOverwrite(
         T832R12_window(), T832_R12_VERSION, reset_cause, &t832R12Previous);
+    if (t832R12Previous.status == R12_AUX_FOREIGN_BUILD) {
+        /* Only a valid, archived A0 journal may be consumed by A1.
+         * No other firmware, arbitrary sequence or torn journal is erased.
+         */
+        if (R12Aux_transitionArchivedA0(T832R12_window()) == R12_AUX_OK) {
+            t832R12Previous.status = R12_AUX_EMPTY;
+            t832R12WriteEnabled = 1u;
+        }
+        return; /* refuse all other foreign-build states */
+    }
     if (t832R12Previous.status == R12_AUX_EMPTY ||
         t832R12Previous.status == R12_AUX_TORN) {
         /* On the first qualified R12 boot, the AUX window may still contain
@@ -61,8 +73,31 @@ static uint8_t T832R12_tryExport(uint64_t now64, uint32_t now)
     T832DiagRecord recs[4] = {{0}};
     uint32_t attempt, epoch, seq;
     uint16_t sitephase, reset_flags;
+    /* Export a distinct one-time A1 readiness witness while the network
+     * is still stopped, BEFORE any authorized startup. The record is only
+     * published if boot instrumentation has successfully committed.
+     * Kind55 is NOT a network-commissioned claim.
+     */
     if (t832R12Previous.captured != 1u ||
-        t832R12Previous.status != R12_AUX_OK) return 0u;
+        t832R12Previous.status != R12_AUX_OK) {
+        if (!t832R12WriteEnabled || t832R12ArmEventSent) return 0u;
+        recs[0].a=0x1100u;
+        recs[0].b=(uint16_t)T832_R12_VERSION;
+        recs[0].c=(uint16_t)(T832_R12_VERSION>>16u);
+        recs[1].a=0x1101u;
+        recs[1].b=(uint16_t)T832_R12_ATTEMPT_ID;
+        recs[1].c=(uint16_t)(T832_R12_ATTEMPT_ID>>16u);
+        recs[2].a=0x1102u;
+        recs[2].b=(uint16_t)T832_R12_BOOT_EPOCH;
+        recs[2].c=(uint16_t)(T832_R12_BOOT_EPOCH>>16u);
+        recs[3].a=0x1103u;
+        recs[3].b=1u; /* A1 armed/first boot checkpoint committed */
+        recs[3].c=(uint16_t)t832R12Previous.current_reset_cause;
+        if (T832R11_sendGroup(55u,recs,now,now64)) {
+            t832R12ArmEventSent=1u;
+        }
+        return 1u;
+    }
     if (t832R12LastExport &&
         (uint32_t)(now-t832R12LastExport) < 60000u) return 0u;
 
