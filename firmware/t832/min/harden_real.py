@@ -200,6 +200,20 @@ def runtime_profile(generated_header: Path, imported_opts: Path, globals_c: Path
     }
 
 
+def heap_store_bytes(map_file: Path) -> int:
+    """Require the actual linked ZStack OSAL heap, not just a -D option."""
+    text = map_file.read_text(encoding="utf-8", errors="replace")
+    matches = re.findall(
+        r"^\s*[0-9a-fA-F]{8}\s+([0-9a-fA-F]{8})\s+osal_port\.o \(\.bss\.heapmgrHeapStore\)\s*$",
+        text, re.M)
+    if len(matches) != 1:
+        raise ValueError(f"LINKED_OSAL_HEAP_SYMBOL_MISSING_OR_DUPLICATED: {matches}")
+    actual = int(matches[0], 16)
+    if actual != 32768:
+        raise ValueError(f"LINKED_OSAL_HEAP_CAPACITY_MISMATCH: {actual} != 32768")
+    return actual
+
+
 def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
            sdk_linker: Path, generated_header: Path,
            imported_opts: Path, globals_c: Path) -> dict:
@@ -215,10 +229,11 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
     ccfg = rows["CCFG"]
     if ccfg["origin"] != CCFG_BEGIN or ccfg["length"] != CCFG_END - CCFG_BEGIN:
         raise ValueError(f"CC26x4 CCFG must be outside main flash: {ccfg}")
-    if rows["SRAM"]["unused"] < 65536:
-        raise ValueError(f"less than 64 KiB unallocated linker SRAM; runtime heap still unproven: {rows['SRAM']}")
+    if rows["SRAM"]["unused"] < 131072:
+        raise ValueError(f"less than 128 KiB unallocated linker SRAM: {rows['SRAM']}")
+    heap_bytes = heap_store_bytes(map_file)
     proj = projectspec.read_text(encoding="utf-8")
-    for item in ("-DNVOCMP_NVPAGES=13", "--define=NVOCMP_NVPAGES=13"):
+    for item in ("-DNVOCMP_NVPAGES=13", "--define=NVOCMP_NVPAGES=13", "-DHEAPMGR_SIZE=32768"):
         if proj.count(item) != 1:
             raise ValueError(f"effective project NV compiler/linker option missing: {item}")
     link = sdk_linker.read_text(encoding="utf-8")
@@ -235,6 +250,7 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
     return {"status": "PASS_REAL_LINK_GEOMETRY", "capacity": capacity,
             "capacity_profile": "THIRTEEN_PAGE_192TC_96NWK_ROUTE128_SRC128_Q24_OFFLINE",
             "runtime_resources": resources,
+            "linked_osal_heap_bytes": heap_bytes,
             "linked_memory": {k: rows[k] for k in ("FLASH", "FLASH_NV", "SRAM", "CCFG")},
             "hex": evidence, "flash_authorized": False,
             "warning": ("CC26x4 separate CCFG address region validated; NVS occupies " 
