@@ -73,23 +73,33 @@ def apply(sdk, examples, evidence):
     project = ("examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/"
         "znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec")
     replace_exact(examples, project,
-        "--define=NVOCMP_NVPAGES=2", "--define=NVOCMP_NVPAGES=5", changes)
+        "--define=NVOCMP_NVPAGES=2", "--define=NVOCMP_NVPAGES=13", changes)
     # Real P10 seed SysConfig defaults to TC=40 and direct device list=20.
     # Both are below this network's observed 103 Trust Center records.
-    # Five-page (112/75) is the existing DIAGNOSTIC profile in issue #42,
-    # NOT the future 192/96/13-page production/migration profile.
+    # The 5-page (112/75) diagnostic image booted but commissioning timed out
+    # waiting for persistent NIB. PR #41 showed five-page NV fails under larger
+    # child table workloads. Use issue #42 production 13-page/192/96 profile.
     syscfg_rel = "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg"
     replace_exact(examples, syscfg_rel,
         "zstack.deviceTypeReadOnly = true;",
         "zstack.deviceTypeReadOnly = true;\r\n"
-        "zstack.network.nwkMaxDeviceList = 75;\r\n"
-        "zstack.network.zdsecmgrTcDeviceMax = 112;", changes)
+        "zstack.network.nwkMaxDeviceList = 96;\r\n"
+        "zstack.network.zdsecmgrTcDeviceMax = 192;", changes)
+    # The pin's upstream P10 SysConfig declares a 5-page region; expand the
+    # physical NVS backing region to match the now-effective 13-page macro.
+    # Each CC2674 P10 page is 0x800, so 13 pages occupy [0xF9800,0x100000).
+    replace_exact(examples, syscfg_rel,
+        "NVS1.internalFlash.regionBase = 0xFD800;",
+        "NVS1.internalFlash.regionBase = 0xF9800;", changes)
+    replace_exact(examples, syscfg_rel,
+        "NVS1.internalFlash.regionSize = 0x2800;",
+        "NVS1.internalFlash.regionSize = 0x6800;", changes)
     linker = sdk / "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     syscfg = examples / "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg"
     if "#define NVOCMP_NVPAGES          5" not in linker.read_text():
         raise ValueError("SDK linker NV page count is not five")
     sc = syscfg.read_text()
-    if "NVS1.internalFlash.regionBase = 0xFD800;" not in sc or "NVS1.internalFlash.regionSize = 0x2800;" not in sc:
+    if "NVS1.internalFlash.regionBase = 0xF9800;" not in sc or "NVS1.internalFlash.regionSize = 0x6800;" not in sc:
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
@@ -98,14 +108,14 @@ def apply(sdk, examples, evidence):
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
         "changed": changes, "source_files_changed": len(changes),
-        "nv_pages": 5, "nvs_region": "0xFD800-0x100000",
-        "capacity_profile": "5page_diagnostic_not_production",
-        "intended_tc_slots": 112, "intended_nwk_device_list": 75,
+        "nv_pages": 13, "nvs_region": "0xF9800-0x100000",
+        "capacity_profile": "13page_192TC_96NWK_recovery_candidate",
+        "intended_tc_slots": 192, "intended_nwk_device_list": 96,
         "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 20261010, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
-            "Diagnostic-only ZStack SysConfig effective TC slots=112, NWK device list=75",
+            "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=20261010)",
         ],
         "flash_authorized": False, "hardware_qualified": False,

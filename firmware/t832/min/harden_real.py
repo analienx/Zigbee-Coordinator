@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 FLASH_END = 0x100000
-NVS_BEGIN = 0xFD800
+NVS_BEGIN = 0xF9800
 CCFG_BEGIN = 0x50000000
 CCFG_END = 0x50000800
 REVISION = 20261010
@@ -136,12 +136,12 @@ def actual_capacity(header: Path) -> dict[str, int]:
     """Read generated TI SysConfig C header, not our planning fixture."""
     text = header.read_text(encoding="utf-8")
     out = {}
-    for name, target in (("ZDSECMGR_TC_DEVICE_MAX", 112), ("NWK_MAX_DEVICE_LIST", 75)):
+    for name, target in (("ZDSECMGR_TC_DEVICE_MAX", 192), ("NWK_MAX_DEVICE_LIST", 96)):
         values = re.findall(r"^\s*#define\s+" + name + r"\s+(\d+)\s*$", text, re.M)
         if len(values) != 1 or int(values[0]) != target:
             raise ValueError(
                 f"EFFECTIVE_CAPACITY_MISMATCH: generated {name}={values} expected {target}; "
-                "original TI defaults TC=40/NWK=20 cannot host the 103-key network"
+                "compiled TC and NWK capacity must match 13page 192/96 recovery profile"
             )
         out[name] = int(values[0])
     return out
@@ -164,25 +164,25 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
     if rows["SRAM"]["unused"] < 8192:
         raise ValueError(f"less than 8 KiB unallocated SRAM: {rows['SRAM']}")
     proj = projectspec.read_text(encoding="utf-8")
-    for item in ("-DNVOCMP_NVPAGES=5", "--define=NVOCMP_NVPAGES=5"):
+    for item in ("-DNVOCMP_NVPAGES=13", "--define=NVOCMP_NVPAGES=13"):
         if proj.count(item) != 1:
             raise ValueError(f"effective project NV compiler/linker option missing: {item}")
     link = sdk_linker.read_text(encoding="utf-8")
     if link.count("#define NVOCMP_NVPAGES          5") != 1:
         raise ValueError("SDK linker NV page count is not 5")
     cfg = syscfg.read_text(encoding="utf-8")
-    if cfg.count("NVS1.internalFlash.regionBase = 0xFD800;") != 1 or (
-        cfg.count("NVS1.internalFlash.regionSize = 0x2800;") != 1
+    if cfg.count("NVS1.internalFlash.regionBase = 0xF9800;") != 1 or (
+        cfg.count("NVS1.internalFlash.regionSize = 0x6800;") != 1
     ):
         raise ValueError("P10 SysConfig NV region differs from verified map")
     capacity = actual_capacity(generated_header)
     evidence = hex_spans(hex_file)
     return {"status": "PASS_REAL_LINK_GEOMETRY", "capacity": capacity,
-            "capacity_profile": "FIVE_PAGE_DIAGNOSTIC_NOT_PRODUCTION",
+            "capacity_profile": "THIRTEEN_PAGE_192TC_96NWK_RESTORE_TRIAL",
             "linked_memory": {k: rows[k] for k in ("FLASH", "FLASH_NV", "SRAM", "CCFG")},
             "hex": evidence, "flash_authorized": False,
             "warning": ("CC26x4 separate CCFG address region validated; NVS occupies " 
-                        "entire upper five pages in main flash. The true generated "
+                        "entire upper thirteen pages in main flash. The true generated "
                         "NVS driver configuration, physical pinmap, ROM BSL, oscillator, "
                         "PA and flash erase/write effects still require verification.")}
 

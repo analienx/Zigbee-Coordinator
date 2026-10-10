@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse, copy, hashlib, json, os, re, shlex, sys, zipfile
 from pathlib import Path
 
-DEPLOY = Path(r"C:\Workspace\repos\Zigbee-Coordinator\deploy")
+DEPLOY = Path(__file__).resolve().parent
 sys.path.insert(0, str(DEPLOY))
 from p10_data_bundle import verify as verify_bundle, load_ha, addon_info
 from p10_ha_state import addon_quiescent
@@ -187,11 +187,16 @@ def main() -> None:
         sftp_write_new(sftp, REMOTE_ROOT + "/input/restore.js", SCRIPT.read_bytes())
         sftp_write_new(sftp, REMOTE_ROOT + "/input/plan.json", plan_raw)
 
-        _, out, err = client.exec_command("docker inspect app_45df7312_zigbee2mqtt --format '{{.Config.Image}}'", timeout=10)
-        image = out.read().decode().strip()
+        # Supervisor error can remove the add-on's container entirely.
+        # Validate the exact cached Herdsman runtime image, not a container
+        # that may no longer exist after a Zigbee2MQTT crash.
+        _, out, err = client.exec_command(
+            "docker image inspect --format '{{.Id}}' " + IMAGE, timeout=15
+        )
+        image_id = out.read().decode().strip()
         _ = err.read()
-        if out.channel.recv_exit_status() != 0 or image != IMAGE:
-            raise RuntimeError("unexpected Zigbee2MQTT image")
+        if out.channel.recv_exit_status() != 0 or not image_id.startswith("sha256:"):
+            raise RuntimeError("Pinned local Zigbee2MQTT runtime image unavailable")
 
         _, out, err = client.exec_command("docker ps --format '{{.Names}}'", timeout=10)
         running = out.read().decode().splitlines()
@@ -260,11 +265,31 @@ if __name__ == "__main__":
     p.add_argument("--counter-jump", type=lambda v: int(v, 0), default=0x10000000)
     p.add_argument("--min-network-counter", type=int)
     p.add_argument("--min-link-tx-counter", type=int)
+    p.add_argument("--use-historical-counter-floor-on-blank-radio", action="store_true",
+                   help="For proven blank NIB only: use last verified Oct 6 NWK floor plus backup per-device TX floors; enforce 0x10000000 jump. NOT proof of latest live counters.")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--approval", default="")
     PARAMS = p.parse_args()
     try:
         configure(PARAMS)
+        if PARAMS.use_historical_counter_floor_on_blank_radio:
+            if PARAMS.min_network_counter is not None or PARAMS.min_link_tx_counter is not None:
+                raise ValueError("Historical fallback cannot mix with supposed live floors")
+            if PARAMS.counter_jump < 0x10000000:
+                raise ValueError("Historical fallback needs at least 0x10000000 counter margin")
+            with zipfile.ZipFile(BUNDLE) as archive:
+                saved = json.loads(archive.read("data/coordinator_backup.json"))
+            if len([e for e in saved.get("devices", []) if e.get("link_key")]) != 103:
+                raise ValueError("Historical fallback requires all 103 device keys")
+            # Last real radio read-back from Oct 6 restore receipt, NOT Oct 10 live.
+            PARAMS.min_network_counter = max(saved["network_key"]["frame_counter"], 349847756)
+            PARAMS.min_link_tx_counter = max(
+                e["link_key"]["tx_counter"] for e in saved["devices"] if e.get("link_key")
+            )
+            print(json.dumps({"counter_floor_source":"HISTORICAL_OCT6_RADIO_AND_COLD_BACKUP",
+                              "independent_current_floor_proven":False,
+                              "counter_jump":PARAMS.counter_jump,
+                              "requires_truly_blank_NIB":True}, sort_keys=True))
         if not PARAMS.execute:
             print(json.dumps(plan_only(PARAMS), indent=2, sort_keys=True))
         else:

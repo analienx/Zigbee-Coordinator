@@ -65,15 +65,15 @@ class RealImageAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             h.hex_spans(self.write_hex(x))
 
-    def test_effective_112_75_diagnostic_profile_from_generated_header(self):
+    def test_effective_192_96_13page_restore_profile_from_generated_header(self):
         root = tempfile.TemporaryDirectory()
         self.addCleanup(root.cleanup)
         p = Path(root.name) / "ti_zstack_config.h"
-        p.write_text("#define NWK_MAX_DEVICE_LIST           75\n"
-                     "#define ZDSECMGR_TC_DEVICE_MAX        112\n")
+        p.write_text("#define NWK_MAX_DEVICE_LIST           96\n"
+                     "#define ZDSECMGR_TC_DEVICE_MAX        192\n")
         self.assertEqual(
             h.actual_capacity(p),
-            {"ZDSECMGR_TC_DEVICE_MAX": 112, "NWK_MAX_DEVICE_LIST": 75},
+            {"ZDSECMGR_TC_DEVICE_MAX": 192, "NWK_MAX_DEVICE_LIST": 96},
         )
 
     def test_original_ti_40_key_default_fails_actual_capacity_gate(self):
@@ -90,12 +90,12 @@ class RealImageAuditTests(unittest.TestCase):
         self.addCleanup(root.cleanup)
         p = Path(root.name) / "firmware.map"
         p.write_text("some mention FLASH_NV in prose\n"
-                     "FLASH_NV 000FD800 00002800 00000000 00002800 RWX\n"
-                     "FLASH 00000000 000FD800 000C0000 0003D800 RX\n"
+                     "FLASH_NV 000F9800 00006800 00000000 00006800 RWX\n"
+                     "FLASH 00000000 000F9800 000C0000 00039800 RX\n"
                      "SRAM 20000000 00040000 00020000 00020000 RW\n")
         rows = h.memory_map(p)
-        self.assertEqual(rows["FLASH_NV"]["origin"], 0xFD800)
-        self.assertEqual(rows["FLASH_NV"]["length"], 0x2800)
+        self.assertEqual(rows["FLASH_NV"]["origin"], 0xF9800)
+        self.assertEqual(rows["FLASH_NV"]["length"], 0x6800)
         self.assertEqual(rows["SRAM"]["unused"], 0x20000)
 
 

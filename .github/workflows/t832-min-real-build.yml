@@ -283,14 +283,14 @@ jobs:
           manifest={"source_sha":os.environ["GITHUB_SHA"],"sdk_sha":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
             "example_sha":"87ff5b638b632050228a7504f35cf3b95581c278",
             "toolchain":{"ccs":"12.8.0.00012","ti_clang":"3.2.2.LTS","sysconfig":"1.21.1.3772","xdctools":"3.62.01.16"},
-            "status":"LINKED_OFFLINE_UNQUALIFIED","capacity_profile":"5page_112TC_75NWK_diagnostic",
+            "status":"LINKED_OFFLINE_UNQUALIFIED","capacity_profile":"13page_192TC_96NWK_restore_candidate",
             "hardware_validated":False,"flash_authorized":False,
-            "not_proven":["MR4U RF/pinmap/oscillator/CCFG physical safety","ZNP host behavior","NVOCMP 103-key physical write/restore, 192-slot production layout","backup/restore","live reliability"],
+            "not_proven":["MR4U RF/pinmap/oscillator/CCFG physical safety","ZNP host behavior","NVOCMP 103-key physical write/restore and flash endurance","backup/restore","live reliability"],
             "artifacts":files}
           (out/"MANIFEST.json").write_text(json.dumps(manifest,indent=2,sort_keys=True)+"\n")
           print(json.dumps(manifest,indent=2))
           PY
-      - name: Audit actual TI linker rows, resolved five-page NVS and strict image bounds
+      - name: Audit actual TI linker rows, resolved thirteen-page NVS and strict image bounds
         shell: bash
         run: |
           set -euo pipefail
