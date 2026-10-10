@@ -44,9 +44,32 @@ def apply(sdk, examples, evidence):
         "-DMT_SYS_KEY_MANAGEMENT=1\n"
         "-DMULTICAST_ENABLED=FALSE\n", changes)
     version = "source/ti/zstack/mt/mt_version.c"
-    replace_exact(sdk, version,
-        "                                   0,  /* Product ID */",
-        "                                   1,  /* Product ID: ZStack3x0 host ABI; behavioral change */", changes)
+    # Herdsman v10.9.1 SYS/VERSION SREQ declares a exactly nine
+    # response bytes (5 header fields + uint32 LE revision). TI ships only
+    # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
+    # Pin and encode a four-byte build revision and confirm via CI on real TI
+    # source and the pinned Herdsman protocol definition, not a host mock.
+    revision = 20261010
+    original_version = (
+        "const uint8_t MTVersionString[] = {\\n"
+        "                                   2,  /* Transport protocol revision */\\n"
+        "                                   0,  /* Product ID */\\n"
+        "                                   2,  /* Software major release number */\\n"
+        "                                   7,  /* Software minor release number */\\n"
+        "                                   1,  /* Software maintenance release number */\\n"
+        "                                 };"
+    )
+    patched_version = (
+        "const uint8_t MTVersionString[] = {\\n"
+        "                                   2,  /* Transport protocol revision */\\n"
+        "                                   1,  /* Product ID: ZStack3x0 host ABI; behavioral change */\\n"
+        "                                   2,  /* Software major release number */\\n"
+        "                                   7,  /* Software minor release number */\\n"
+        "                                   1,  /* Software maintenance release number */\\n"
+        + "".join(f"                                   {(revision >> (8*i)) & 255},  /* firmware revision LE byte {i} */\\n" for i in range(4))
+        + "                                 };"
+    )
+    replace_exact(sdk, version, original_version, patched_version, changes)
     project = ("examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/"
         "znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec")
     replace_exact(examples, project,
@@ -66,10 +89,11 @@ def apply(sdk, examples, evidence):
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
         "changed": changes, "source_files_changed": len(changes),
         "nv_pages": 5, "nvs_region": "0xFD800-0x100000",
+        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 20261010, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
-            "ZStack3x0 reported product = 1",
+            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=20261010)",
         ],
         "flash_authorized": False, "hardware_qualified": False,
     }
