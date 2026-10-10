@@ -98,9 +98,18 @@ class GuardedBsl:
         self.commands.append(cmd)
 
     def wait_ack(self):
-        # BSL ACK/NACK are 0x00 0xCC and 0x00 0x33, not ZNP frames.
-        token=self.exact(2)
-        if token!=ACK:raise BslProtocolError("BSL_ACK_MISSING_OR_NACK")
+        # Match SMLIGHT's upstream CommandInterface._wait_for_ack: the TCP
+        # bridge can prepend stale UART bytes before ROM's 00 CC/00 33.
+        # Bound scanning to 64 bytes (and the transport's short timeout).
+        # Do not print, preserve or interpret any stray UART payload.
+        window=bytearray()
+        for _ in range(64):
+            window.extend(self.exact(1))
+            if len(window)>2:del window[:-2]
+            if bytes(window)==ACK:return
+            if bytes(window)==NACK:
+                raise BslProtocolError("BSL_NACK")
+        raise BslProtocolError("BSL_ACK_NOT_SEEN_WITHIN_64_BYTES")
 
     def read_packet(self):
         header=self.exact(2)

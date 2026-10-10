@@ -104,6 +104,38 @@ class SafeProtocolTests(unittest.TestCase):
         fake.queue+=bytes((6,0x00,1,2,3,4)) # invalid checksum
         with self.assertRaisesRegex(m.BslProtocolError,"CHECKSUM"):
             transport.read_packet()
+    def test_upstream_style_stray_bytes_before_bsl_ack(self):
+        class Noisy(FakeBslSocket):
+            def sendall(self,data):
+                super().sendall(data)
+                if data==b"\x55\x55":
+                    self.queue[:0]=b"\xfe\x03\x01\x02"
+        fake=Noisy(fragment=1)
+        r=m.GuardedBsl(fake)
+        self.assertTrue(r.begin()["correct_chip_family"])
+        self.assertTrue(all(x==b"\x55\x55" or x[2] in m._ALLOWED
+                            for x in fake.sent))
+    def test_bsl_nack_rejected_after_noise(self):
+        class Reject(FakeBslSocket):
+            def sendall(self,data):
+                if data==b"\x55\x55":
+                    self.sent.append(data)
+                    self.queue+=b"\xfe\x02"+m.NACK
+                    return
+                super().sendall(data)
+        with self.assertRaisesRegex(m.BslProtocolError,"BSL_NACK"):
+            m.GuardedBsl(Reject(fragment=1)).begin()
+    def test_bounded_noise_without_ack_refused(self):
+        class NoResponse(FakeBslSocket):
+            def sendall(self,data):
+                if data==b"\x55\x55":
+                    self.sent.append(data)
+                    self.queue+=b"\x42"*64
+                    return
+                super().sendall(data)
+        with self.assertRaisesRegex(m.BslProtocolError,"64_BYTES"):
+            m.GuardedBsl(NoResponse(fragment=1)).begin()
+
     def test_short_reply_rejected(self):
         fake=FakeBslSocket()
         transport=m.GuardedBsl(fake)
