@@ -3,7 +3,9 @@
  * Minimum host ABI for modern Z2M / Herdsman ZNP version behavior plus the
  * necessary MT SYS, ZDO, AF and NV/security semantics. No unsupported feature
  * is counterfeited: MULTICAST_ENABLED stays FALSE per Koenkk docs, and
- * product=0 is handled explicitly. No host, HA, or Z2M state is changed by
+ * the historical product=0 contract was an early planning mock. ACTUAL linked
+ * firmware changes to product=1 with a 9-byte (including revision UINT32 LE)
+ * SYS_VERSION response; see build_min_real.py + harden_real.py. No host, HA, or Z2M state is changed by
  * this module; it is a static dispatch/ABI table for hosted CI only.
  */
 "use strict";
@@ -29,7 +31,10 @@ const MT_DISPATCH = {
 };
 
 const ABI = {
-  productZero: "handled-explicitly",
+  actualFirmwareProduct: 1,
+  actualFirmwareRevision: 20261010,
+  sysVersionResponseBytes: 9,
+  contractType: "PLANNING_MOCK_NOT_A_ZNP_RUNTIME",
   multicastEnabled: false,
   transportRev: 2,
   baud: 115200,
@@ -39,6 +44,7 @@ function selftest() {
   const required = Object.keys(MT_DISPATCH);
   if (required.length < 12) throw new Error("MT dispatch table incomplete");
   if (ABI.multicastEnabled !== false) throw new Error("MULTICAST must stay FALSE");
+  if (ABI.actualFirmwareProduct !== 1 || ABI.sysVersionResponseBytes !== 9) throw new Error("REAL ABI fixture drift");
   return { status: "PASS_SELFTEST", qualifier: "NOT_PRODUCTION_QUALIFIED", entries: required.length };
 }
 
