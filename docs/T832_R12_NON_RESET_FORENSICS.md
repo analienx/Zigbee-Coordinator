@@ -9,6 +9,32 @@ Owner: `analienx/Zigbee-Coordinator` branch `codex/t832-r12-forensics`,
 based on exact shipped R11 source `156fe563ba5e6eb3d15c56b21ec9aabfda882096`.
 Cross-system incident: `analienx/home-assistant-stack#73`.
 
+## 2026-10-10 postboot NVS investigation (separate from non-resetting R11 POD capture)
+
+A later, separately authorized **ROM BSL read-only** session on A1 rev
+**8320063** successfully acquired the entire physical 30 KiB NVOCMP
+region. The radio was subsequently returned to ZNP; this BSL procedure
+**did involve an intentional radio mode transition and reset**, and is
+**NOT** evidence of any qualifying cJTAG/SWD access described below.
+
+See [P10_NVOCMP_POSTBOOT_CRC_20261010.md](P10_NVOCMP_POSTBOOT_CRC_20261010.md)
+for the complete snapshot hash, verified **867/867** TI CRC-8 records,
+exact SDK legacy item-ID/subID mapping and an occupancy-safe inventory.
+All 15 page headers are valid, but the A1 postboot state has **no legacy
+NIB item, no address-manager entries and no populated TCLK device slots**.
+The R12 rev **8320062** pre-A1-flash restoration receipt independently
+verified **103 trust-center associations and 103 address rows** immediately
+before the A1 firmware transition, at which the uploader requested
+`eraseNVM=0`. Data loss can be bounded to the intervening
+flash/boot/postflash interval, but **whether programming or first boot
+modified the originally populated entries is NOT established**.
+
+The original R11 rev 8320052 startup hang remains unsolved.
+The cJTAG/SWD hardware access qualification is **still BLOCKED**.
+This investigation performed **no new BSL, flash, reset, NV mutation,
+ZDO startup, Z2M restart or secret extraction**; it only analyzed the
+previously sealed postboot snapshot offline.
+
 ## 1. Observation vs. hypotheses
 
 The exact deployed R11 diagnostic firmware, rev 8320052, SHA256

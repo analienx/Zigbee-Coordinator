@@ -6,6 +6,7 @@ on:
     paths:
       - 'firmware/t832/r12/**'
       - 'docs/T832_R12_NON_RESET_FORENSICS.md'
+      - 'docs/P10_NVOCMP_POSTBOOT_CRC_20261010.md'
       - '.github/workflows/t832-r12-swd-offline.yml'
   workflow_dispatch:
 
@@ -19,14 +20,14 @@ concurrency:
 
 jobs:
   offline-readiness:
-    name: Offline parser and exact-R11 provenance
+    name: Offline startup POD / NVOCMP CRC parsers and R11 provenance
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
-      - name: Offline synthetic and adversarial parser tests
+      - name: Offline synthetic and adversarial parser tests including NVOCMP CRC and ID map
         run: |
           set -euo pipefail
           python3 -m unittest discover -s firmware/t832/r12 -p 'test_*.py' -v
