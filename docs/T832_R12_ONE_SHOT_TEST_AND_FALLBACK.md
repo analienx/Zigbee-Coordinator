@@ -189,3 +189,70 @@ Before A1 startup:
 **A1 startup has not been issued.** A proper full-power interruption
 requires access to the MR4U power feed; the available SLZB software
 `Zigbee restart` demonstrably *preserves* AUX and cannot substitute.
+
+## A1 operator power-cycle follow-up: NOT REARMED (10 October 2026)
+
+The user reported completing the earlier requested full MR4U power
+interruption. **Do not second-guess that report**: we cannot independently
+observe whether both power feeds were physically removed or what subsequent
+SLZB host reset sequencing occurred.
+
+**Actual read-only measurements after reported power cycle:**
+
+- MR4U CC2674P10 remains healthy at firmware revision `8320062`, **3/3
+  SYS pings** plus SYS_VERSION, HA Zigbee2MQTT stopped/error and watchdog off;
+  recovery journal unlocked.
+- Exact ZNP `SYS_OSAL_NV_LENGTH` command 0x13 on the live radio, read only:
+  item1 (coordinator identity) **8 bytes**, item3 startup option **1 byte**,
+  item33 **NIB=0 bytes**, item35 **address manager=0 bytes**, item85
+  network flag **1 byte**, item96 configured **0 bytes**. The bytes of the
+  flags were not read by this length-only probe. These are *not*
+  complete live key/counter comparisons.
+- A separate passive, receive-only socket capture (no ZNP SREQs, NV access,
+  reset, network startup, or writes) observed **7 valid T832D2 messages**,
+  0 checksum failures, including one `R12_RETENTION_V1` kind54 at
+  `2026-10-10T05:43:08.158973Z`. Event records previous *A0* attempt
+  `0xA0120001`, epoch `0x20261010`, seq **1**, site1/phase0
+  (`main.initNV` entry), current reset cause **1 = PIN_RESET**.
+  Private evidence:
+  `C:\Workspace\.analienx\sonoff-private\recovery\p10-r12-singleflash-20261010\one-shot-attempt\a1-post-cold-readonly-passive.json`,
+  SHA256
+  `4acf7cdc77e31b80c57079bb35e9e35ab39ecfef588aa507b0f78406289898d9`.
+- Exact pinned TI CC2674P10 `SysCtrlResetSourceGet` header and reset
+  register constants confirm `RSTSRC_PWR_ON=0`, `RSTSRC_PIN_RESET=1`.
+  SLZB host could assert its PIN reset as part of board boot; pin reset
+  alone does **not** prove the full board was never powered down.
+- **Critical discrepancy:** the earlier A0 radio-reset witness was seq2
+  site1/phase1 (`main.initNV` exit); this post-power witness is seq1
+  site1/phase0 (`main.initNV` entry). We do **not** know why the retained
+  slot history changed. It is unsafe to relabel this as new A1 telemetry,
+  or assume the previous A0 recorder has been cleared. A1 startup
+  therefore remains **BLOCKED**, not even one-shot-safe yet.
+- Sealed backup reverified **103 devices/103 link keys/103 required address
+  associations**, 2,500 counter margin; existing recovery backup is still
+  not a new post-failure live capture.
+
+**Recovery-implementation finding:** with both NIB33 and address manager35
+absent, the maintained `restore-native` worker's requirement for already
+allocated security/address tables cannot be assumed. The maintained
+`restore-tables` stage requires a **present, byte-for-byte verified
+116-byte native NIB**, which we lack on the current radio. Previous incident
+history records a separate NIB-first and table-continuation procedure,
+but its one-shot receipts are incident-specific and cannot be replayed or
+silently transplanted to this R12 state. `restore-retained-native` also
+has different preconditions. No restore worker was invoked.
+
+**Next viable technical step:** prepare a new, distinctly sealed A1
+diagnostic epoch that explicitly recognizes the archived A0 slot and
+transitions to a new recorder without losing old evidence, and a
+separately qualified missing-NIB plus address/security-table restoration
+chain. Run all offline source/negative tests, pin exact R12 firmware and
+original backup hashes, then recheck hardware gates before a
+single controlled startup. Alternatively, prioritizing service recovery
+means rollback to the previously proven vendor/backup path, without
+claiming that this resolves the original restored-network hang.
+
+**Actions in this follow-up:** read-only SYS, length-only NV inspection,
+receive-only T832D2 capture, offline source/backup examination. **Zero
+flash, reset, NIB provisioning, security-table writes, network startup,
+or Z2M launch.**
