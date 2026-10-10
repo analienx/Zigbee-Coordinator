@@ -25,7 +25,7 @@ jobs:
           assert lock["ti_sdk"]["commit"] == "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
           assert lock["p10_znp_example"]["commit"] == "87ff5b638b632050228a7504f35cf3b95581c278"
           tc = lock["toolchain"]
-          assert (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"], tc["rtos"]) == ("3.62.01.15", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"), tc
+          assert (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"], tc["rtos"]) == ("3.62.01.16", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"), tc
           assert lock["herdsman"]["package"] == "zigbee-herdsman"
           assert lock["herdsman"]["version"] == "10.9.1", lock["herdsman"]
           assert lock["herdsman"]["status"] == "GATED_EXACT", lock["herdsman"]
