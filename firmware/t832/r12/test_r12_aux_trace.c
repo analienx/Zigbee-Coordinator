@@ -211,6 +211,64 @@ int main(void)
     }
     assert(R12Aux_readLatest(aux, BUILD, &view) == R12_AUX_TORN);
     checks++;
+    /* Exact R12 A0 witness can be transitioned once into new A1 epoch. */
+    reset_blank();
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120001), UINT32_C(0x20261010),
+                          1u, 0u, 0u, 0u, &view) == R12_AUX_OK);
+    assert(R12Aux_transitionArchivedA0(aux) == R12_AUX_OK);
+    assert(R12Aux_readLatest(aux, UINT32_C(8320063), &view) == R12_AUX_EMPTY);
+    assert(R12Aux_transitionArchivedA0(aux) == R12_AUX_UNACKNOWLEDGED_EPOCH);
+    checks++;
+
+    reset_blank();
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120001), UINT32_C(0x20261010),
+                          1u, 0u, 0u, 0u, &view) == R12_AUX_OK);
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120001), UINT32_C(0x20261010),
+                          1u, 1u, 0u, 0u, &view) == R12_AUX_OK);
+    assert(R12Aux_transitionArchivedA0(aux) == R12_AUX_OK);
+    assert(R12Aux_commit(aux, UINT32_C(8320063),
+                          UINT32_C(0xA0120002), UINT32_C(0x20261011),
+                          1u, 0u, 0u, 0u, &view) == R12_AUX_OK);
+    assert(view.sequence == 1u);
+    checks++;
+
+    /* Wrong last checkpoint must never be erased, even if CRC is correct. */
+    reset_blank();
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120001), UINT32_C(0x20261010),
+                          2u, 0u, 0u, 0u, &view) == R12_AUX_OK);
+    memcpy(saved,(const void *)aux,sizeof(saved));
+    assert(R12Aux_transitionArchivedA0(aux) == R12_AUX_UNACKNOWLEDGED_EPOCH);
+    assert(memcmp(saved,(const void *)aux,sizeof(saved)) == 0);
+    checks++;
+
+    /* A foreign A0 attempt, including an unexpected epoch, is protected. */
+    reset_blank();
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120003), UINT32_C(0x20261010),
+                          1u, 0u, 0u, 0u, &view) == R12_AUX_OK);
+    memcpy(saved,(const void *)aux,sizeof(saved));
+    assert(R12Aux_transitionArchivedA0(aux) == R12_AUX_UNACKNOWLEDGED_EPOCH);
+    assert(memcmp(saved,(const void *)aux,sizeof(saved)) == 0);
+    checks++;
+
+    /* CRC-torn one slot cannot be silently acknowledged and wiped. */
+    reset_blank();
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120001), UINT32_C(0x20261010),
+                          1u, 0u, 0u, 0u, &view) == R12_AUX_OK);
+    assert(R12Aux_commit(aux, UINT32_C(8320062),
+                          UINT32_C(0xA0120001), UINT32_C(0x20261010),
+                          1u, 1u, 0u, 0u, &view) == R12_AUX_OK);
+    aux[10u+8u]^=1u; /* damaged CRC with retained marker */
+    memcpy(saved,(const void *)aux,sizeof(saved));
+    assert(R12Aux_transitionArchivedA0(aux) == R12_AUX_UNACKNOWLEDGED_EPOCH);
+    assert(memcmp(saved,(const void *)aux,sizeof(saved)) == 0);
+    checks++;
+
     printf("{\"ok\":true,\"checks\":%u,\"window_bytes\":80,"
            "\"writes_to_nv\":0,\"hardware_operations\":0}\n", checks);
     return 0;

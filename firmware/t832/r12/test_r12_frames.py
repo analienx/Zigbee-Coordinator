@@ -66,6 +66,30 @@ class R12Frames(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     incident.decode_frame_payload(frame(bad))
 
+
+    def test_a1_armed_requires_exact_revision_and_attempt(self):
+        good=[(55,0x1100,8320063 & 65535,8320063 >> 16),
+              (55,0x1101,0x0002,0xA012),
+              (55,0x1102,0x1011,0x2026),
+              (55,0x1103,1,1)]
+        out,_=incident.decode_frame_payload(frame(good))
+        self.assertIn("a1_arm_group",out)
+        arm=out["a1_arm_group"]
+        self.assertEqual(arm["firmware_revision"],8320063)
+        self.assertEqual(arm["attempt_id"],0xA0120002)
+        self.assertFalse(arm["network_restoration_verified"])
+        bad_cases=[
+            good[:3],good[:3]+[(55,0x1103,0,1)],
+            good[:2]+[(54,*good[2][1:])]+good[3:],
+            [(55,0x1100,8320062 & 65535,8320062>>16)]+good[1:],
+            good[:1]+[(55,0x1101,3,0xA012)]+good[2:],
+            good[:3]+[(55,0x1103,1,12)],
+        ]
+        for parts in bad_cases:
+            with self.subTest(parts=parts):
+                with self.assertRaises(ValueError):
+                    incident.decode_frame_payload(frame(parts))
+
     def test_legacy_53_keeps_its_own_decoder(self):
         old=[(53,0x1000,1,2),(53,0x1001,3,4),
              (53,0x1002,5,6),(53,0x1003,7,8)]

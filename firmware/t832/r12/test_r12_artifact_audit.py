@@ -37,7 +37,7 @@ class NativeArtifactTests(unittest.TestCase):
         self.assertTrue(report["ccfg_and_nvs_geometry_verified"])
 
     def test_binary_byte_corruption_denied(self):
-        image = self.root / "T832-R12-DIAG-vendor-20240716.slzb.bin"
+        image = self.root / "T832-R12-A1-DIAG-vendor-20240716.slzb.bin"
         raw = bytearray(image.read_bytes())
         raw[1234] ^= 0x01
         image.write_bytes(raw)
@@ -63,7 +63,7 @@ class NativeArtifactTests(unittest.TestCase):
     def test_manifest_internal_sha_mutation_denied(self):
         manifest = self.root / "T832-BUILD-MANIFEST.json"
         value = json.loads(manifest.read_text())
-        key = "T832-R12-DIAG-vendor-20240716.out"
+        key = "T832-R12-A1-DIAG-vendor-20240716.out"
         value["artifacts"][key]["sha256"] = "0"*64
         manifest.write_text(json.dumps(value))
         with self.assertRaisesRegex(AuditFailure, "bundle hash/size"):

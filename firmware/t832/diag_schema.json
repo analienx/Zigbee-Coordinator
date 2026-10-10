@@ -177,7 +177,8 @@
     "51": "NV_FIRST_V1",
     "52": "STARTUP_V1",
     "53": "RUNTIME_V1",
-    "54": "R12_RETENTION_V1"
+    "54": "R12_RETENTION_V1",
+    "55": "R12_A1_ARMED"
   },
   "event_semantics": {
     "HEALTH": "live-built, sequence 0; a=MT schedules since last accepted health baseline (saturated, nonzero under scheduling), b=MT actual-work age ms, c=NPI transport-work age ms",
@@ -307,6 +308,13 @@
       "part3": "b=site_low8|phase_high8; c=current reset-source low8|bounded NLME context high8",
       "meaning": "Retained record from previous boot exported after radio reset. Does NOT prove physical retention, root-cause identity, or network acceptance.",
       "scope": "No Zigbee security keys, IEEE addresses, or context payloads"
+    },
+    "R12_A1_ARMED": {
+      "parts": "four kind55 records with IDs 0x1100..0x1103",
+      "release_gate": "one-time arm witness with exact 8320063/attempt/epoch",
+      "network_ready": false,
+      "restoration_verified": false,
+      "position": "must capture after A1 flash and prior to A1 startup"
     }
   }
 }

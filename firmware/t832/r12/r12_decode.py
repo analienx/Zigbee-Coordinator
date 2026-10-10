@@ -45,3 +45,23 @@ def decode_r12_group(records):
         "evidence_status": "retained-format-coherent; physical reset retention not independently proven",
         "network_acceptance": False,
     }
+
+
+
+def decode_a1_arm_group(records):
+    if len(records)!=4 or {x["kind"] for x in records}!={55}:
+        raise ValueError("a1-arm-count-kind")
+    rs=sorted(records,key=lambda x:x["a"])
+    if [r["a"] for r in rs]!=[0x1100,0x1101,0x1102,0x1103]:
+        raise ValueError("a1-arm-marker-ids")
+    if any(r["repeat_count"]!=1 or r["sequence"]!=0 for r in rs):
+        raise ValueError("a1-arm-frame-identity")
+    words=[r["b"]|(r["c"]<<16) for r in rs]
+    if words[:3]!=[8320063,0xA0120002,0x20261011]:
+        raise ValueError("wrong A1 image identity")
+    if rs[3]["b"]!=1 or rs[3]["c"]>9:
+        raise ValueError("A1 not ready")
+    return {"event":"R12_A1_ARMED","firmware_revision":8320063,
+            "attempt_id":0xA0120002,"boot_epoch":0x20261011,
+            "reset_cause":rs[3]["c"],"network_started":False,
+            "network_restoration_verified":False}

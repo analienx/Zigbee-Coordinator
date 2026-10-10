@@ -54,6 +54,12 @@ typedef enum {
 R12AuxStatus R12Aux_initializeVirgin(volatile uint32_t *window,
                                       uint32_t expected_build);
 
+/* One-time A1 transition: only an independently archived A0 witness from
+ * the exact prior attempt/build is eligible. Reject mixed/torn/foreign
+ * records; perform no NVS, network or UART operations.
+ */
+R12AuxStatus R12Aux_transitionArchivedA0(volatile uint32_t *window);
+
 /* Must be called before any R12 hooks overwrite the previous boot's slots. */
 R12AuxStatus R12Aux_readLatest(const volatile uint32_t *window,
                                uint32_t expected_build,
