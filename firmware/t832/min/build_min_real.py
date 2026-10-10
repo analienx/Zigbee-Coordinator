@@ -115,6 +115,61 @@ def apply(sdk, examples, evidence):
         "      NLME_UpdateNV( NWK_NV_NIB_ENABLE );\n"
         "#endif\n"
         "      ZDApp_ChangeState( DEV_ZB_COORD );", changes)
+    # ZNP transport hardening for the observed post-BDB state9 SYS starvation.
+    # TI UART2 write callback indicates FIFO accepted bytes, not that they
+    # exited the TX pin. Release NPI TX buffer on EVENT_TX_FINISHED instead.
+    uart = "source/ti/zstack/npi/npi_tl_uart.c"
+    replace_exact(sdk, uart,
+        "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status);",
+        "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status);\n"
+        "static void NPITLUART_txFinished(UART2_Handle handle, uint32_t event, uint32_t data, void *userArg);", changes)
+    replace_exact(sdk, uart,
+        "    params.writeCallback = NPITLUART_writeCallBack;",
+        "    params.writeCallback = NPITLUART_writeCallBack;\n"
+        "#if (NPI_FLOW_CTRL == 0)\n"
+        "    params.eventMask |= UART2_EVENT_TX_FINISHED;\n"
+        "    params.eventCallback = NPITLUART_txFinished;\n"
+        "#endif", changes)
+    replace_exact(sdk, uart,
+        "#else\n"
+        "    if ( npiTransmitCB )\n"
+        "    {\n"
+        "        npiTransmitCB(0,TransportTxLen);\n"
+        "    }\n"
+        "#endif // NPI_FLOW_CTRL = 1",
+        "#else\n"
+        "    // Do not release the TX buffer when data merely enters UART FIFO.\n"
+        "    // UART2_EVENT_TX_FINISHED handles the actual on-wire completion.\n"
+        "#endif // NPI_FLOW_CTRL = 1", changes)
+    replace_exact(sdk, uart,
+        "static void NPITLUART_readCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n"
+        "{",
+        "#if (NPI_FLOW_CTRL == 0)\n"
+        "static void NPITLUART_txFinished(UART2_Handle handle, uint32_t event, uint32_t data, void *userArg)\n"
+        "{\n"
+        "    if (event == UART2_EVENT_TX_FINISHED)\n"
+        "    {\n"
+        "        uint32_t key = OsalPort_enterCS();\n"
+        "        if (TransportTxLen && npiTransmitCB)\n"
+        "        {\n"
+        "            uint16_t completed = TransportTxLen;\n"
+        "            TransportTxLen = 0;\n"
+        "            npiTransmitCB(0, completed);\n"
+        "        }\n"
+        "        OsalPort_leaveCS(key);\n"
+        "    }\n"
+        "}\n"
+        "#endif\n\n"
+        "static void NPITLUART_readCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n"
+        "{", changes)
+    # Make host traffic bursts less likely to hit the upstream hard-locking
+    # NPITask_transportRXCallBack overflow path with no flow control.
+    uart_header = "source/ti/zstack/npi/npi_tl_uart.h"
+    replace_exact(sdk, uart_header, "#define UART_ISR_BUF_SIZE 32",
+                  "#define UART_ISR_BUF_SIZE 128", changes)
+    npi_config = "source/ti/zstack/npi/npi_config.h"
+    replace_exact(sdk, npi_config, "#define NPI_TL_BUF_SIZE         270",
+                  "#define NPI_TL_BUF_SIZE         1080", changes)
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
     # --define, which left FLASH at 0xFD800 and broke 13-page flashBuf0.
@@ -130,7 +185,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -144,6 +199,7 @@ def apply(sdk, examples, evidence):
             "APS multicast group destination behavior",
             "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
             "Commit coordinator NIB synchronously before state9 callback",
+            "UART2 physical TX completion event and larger NPI RX buffers",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=20261010)",
         ],
         "flash_authorized": False, "hardware_qualified": False,
