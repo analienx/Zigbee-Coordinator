@@ -8,7 +8,7 @@ Actions at the exact candidate SHA (project lane: `github_actions`).
 
 One minimal T832-MIN firmware candidate for the SMLIGHT SLZB-MR4U main Zigbee
 TI CC2674P10 radio (Radio 2). The EFR32MG26 (Radio 1) MUST NOT be touched.
-M1 currently defines contract scaffolding; M2 mock-only T1–T5 checks do not build a TI ZNP image. See real hosted CCS linker workflow and its exact-SHA result before OFFLINE_BUILD_READY. Stop at
+M1 contains older planning/mock contracts. The separate build_min_real.py applies exact genuine TI source deltas and t832-min-real-build.yml compiles/links a real firmware image; harden_real.py verifies actual ABI and linked layout. Green mock/static T1-T5 checks are never sufficient by themselves. Stop at
 OFFLINE_BUILD_READY or BLOCKED. Production qualification is explicitly out of
 scope.
 
@@ -16,8 +16,7 @@ scope.
 
 - TI SDK 8.32.00.07 @ `6499c3f53fc5fb5806213be695450a7b43fbaf3d`.
 - P10 ZNP example @ `87ff5b638b632050228a7504f35cf3b95581c278`.
-- Toolchain: XDCTools `3.62.01.15` (prior pipeline used `.16` — deviation
-  recorded), CCS `12.8`, TI-Clang `3.2.2`, SysConfig `1.21.1`, TI-RTOS7 M33F.
+- Toolchain: XDCTools `3.62.01.16` (actual CCS hosted toolchain, linked-build proof; earlier planning `.15` corrected), CCS `12.8`, TI-Clang `3.2.2`, SysConfig `1.21.1`, TI-RTOS7 M33F.
 - Herdsman exact pin: `zigbee-herdsman 10.9.1`, status `GATED_EXACT`.
   Hosted CI T1 gates exact (`npm view zigbee-herdsman@10.9.1 version` must
   equal lock `10.9.1`, fail closed on mismatch or resolve failure).
@@ -31,14 +30,12 @@ scope.
    pins are never filled from Ebyte 20 dBm data or faulty crystal deltas.
 2. **Host ABI minimum** (`host_contract.cjs`): ZNP version behavior + MT SYS,
    ZDO, AF, NV/security dispatch entries. MULTICAST_ENABLED stays FALSE per
-   Koenkk docs; the Koenkk patch is not imported. `product=0` is handled
-   explicitly, never counterfeited.
+   Koenkk docs; the Koenkk patch is not imported. `product=1` is emitted in the actual compiled firmware with a real 32-bit little-endian `revision`; pinned Herdsman 10.9.1 requires 9-byte SYS_VERSION. The earlier 5-byte candidate was incompatible and is superseded.
 3. **NV integrity** (`nv_lab.py`, `verify_compiler.py`): genuine
    compiler/linker/SysConfig/backend index0 agreement at base `0xFD800`, no
    app/NVS/CCFG overlap, factory identity + bootloader preserved, no
    destructive NV auto-format/recovery. Known seed conflict (CC2674R10 text,
-   compiler-5 vs linker-2 pages) is a TOOLCHAIN-labeled finding, not a silent
-   fix. Vendor 15-page `0xF8800/0x7800` geometry is deferred (GEOM15): physical
+   compiler-5 vs seed-linker-2 pages) is fixed in real source to five pages and must be verified in the actual map. Vendor 15-page `0xF8800/0x7800` geometry is deferred (GEOM15): physical
    extent alone proves nothing.
 4. **Groupcast/source APS**: source-correct only where proven; no 13-variant
    family is included.
