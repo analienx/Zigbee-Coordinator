@@ -139,8 +139,10 @@ def verify(path: Path) -> dict:
         manifest = json.loads(archive.read(MANIFEST_NAME))
         if manifest.get('format') != 'p10-z2m-data-bundle-v1' or manifest.get('mode') not in ('hot','cold'):
             raise ValueError('Unknown or malformed private bundle manifest')
-        if manifest['mode'] == 'cold' and manifest.get('app_stopped_throughout_capture') is not True:
-            raise ValueError('Cold bundle lacks independently observed stopped-addon states')
+        cold_quiescent = (manifest.get('app_quiescent_throughout_capture') is True or
+                          manifest.get('app_stopped_throughout_capture') is True)
+        if manifest['mode'] == 'cold' and not cold_quiescent:
+            raise ValueError('Cold bundle lacks independently observed quiescent-addon states')
         files = manifest['files']
         if not isinstance(files, dict) or not REQUIRED <= {n.removeprefix('data/') for n in files}:
             raise ValueError('Bundle does not include required recovery files')
@@ -159,7 +161,7 @@ def verify(path: Path) -> dict:
         blobs = {n: archive.read('data/' + n) for n in REQUIRED}
         preflight(blobs)  # Reject malformed device database/backup, without requiring cross-stack success.
         return {'integrity_pass': True, 'mode': manifest['mode'],
-                'cold_consistent': manifest['mode'] == 'cold' and manifest.get('app_stopped_throughout_capture') is True,
+                'cold_consistent': manifest['mode'] == 'cold' and cold_quiescent,
                 'application_file_count': sum(n.startswith('data/') for n in files),
                 'symlink_dependencies_present': bool(manifest.get('symlink_count', 0)),
                 'symlink_count': manifest.get('symlink_count', 0),
@@ -175,8 +177,10 @@ def capture(out: Path, mode: str) -> dict:
     client = load_ha()
     try:
         info = addon_info(client)
-        if mode == 'cold' and info.get('state') != 'stopped':
-            raise RuntimeError('Cold capture requires the Zigbee2MQTT add-on to be stopped first')
+        initial_quiescent = None
+        if mode == 'cold':
+            from p10_ha_state import addon_quiescent
+            initial_quiescent = addon_quiescent(client, info)
         sftp = client.open_sftp()
         root = find_data_root(sftp)
         files, links = walk(sftp, root)
@@ -196,15 +200,19 @@ def capture(out: Path, mode: str) -> dict:
                 linkdata = json.dumps(links, sort_keys=True).encode()
                 archive.writestr(SYMLINKS_NAME, linkdata)
                 records[SYMLINKS_NAME] = {'bytes': len(linkdata), 'sha256': sha(linkdata)}
-            if mode == 'cold' and addon_info(client).get('state') != 'stopped':
-                raise RuntimeError('Add-on restarted during cold capture: reject this bundle')
+            final_quiescent = None
+            if mode == 'cold':
+                final_quiescent = addon_quiescent(client, addon_info(client))
             manifest = {'format': 'p10-z2m-data-bundle-v1', 'mode': mode,
                         'captured_utc': datetime.now(timezone.utc).isoformat(),
                         'source_addon_state': info['state'], 'files': records,
                         'excluded_top_level_log_folders': sorted(SKIP_TOPLEVEL),
                         'symlink_count': len(links),
                         'addon_environment_overrides_independently_verified': False,
-                        'app_stopped_throughout_capture': mode == 'cold'}
+                        'app_stopped_throughout_capture': mode == 'cold' and info.get('state') == 'stopped',
+                        'app_quiescent_throughout_capture': mode == 'cold' and
+                            initial_quiescent is not None and final_quiescent is not None,
+                        'source_addon_supervisor_state': info.get('state')}
             archive.writestr(MANIFEST_NAME, json.dumps(manifest, sort_keys=True))
         checked = verify(out)
         return checked | {'private_bundle_created': True, 'private_bundle_path': str(out)}

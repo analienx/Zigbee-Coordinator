@@ -1,0 +1,206 @@
+name: T832-MIN source/static checks (not linked firmware)
+
+# NOT_PRODUCTION_QUALIFIED. Hosted-only gates: no flash, no hardware, no HA/Z2M.
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/t832-min-v4-m0m2
+
+permissions:
+  contents: read
+
+jobs:
+  t1-pins:
+    name: T1 pins and provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate upstream lock pins
+        run: |
+          python - <<'EOF'
+          import json
+          lock = json.load(open("firmware/t832/min/upstream.lock.json"))
+          assert lock["status"] == "NOT_PRODUCTION_QUALIFIED"
+          assert lock["ti_sdk"]["commit"] == "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          assert lock["p10_znp_example"]["commit"] == "87ff5b638b632050228a7504f35cf3b95581c278"
+          tc = lock["toolchain"]
+          assert (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"], tc["rtos"]) == ("3.62.01.16", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"), tc
+          assert lock["herdsman"]["package"] == "zigbee-herdsman"
+          assert lock["herdsman"]["version"] == "10.9.1", lock["herdsman"]
+          assert lock["herdsman"]["status"] == "GATED_EXACT", lock["herdsman"]
+          print("T1 pins OK; herdsman pin:", lock["herdsman"]["version"], lock["herdsman"]["status"])
+          EOF
+      - name: Gate Herdsman exact pin via npm (fail closed)
+        run: |
+          LOCK_VER=$(python -c 'import json; print(json.load(open("firmware/t832/min/upstream.lock.json"))["herdsman"]["version"])')
+          test "$LOCK_VER" = "10.9.1"
+          PUB_VER=$(npm view "zigbee-herdsman@${LOCK_VER}" version)
+          test "$PUB_VER" = "$LOCK_VER"
+          echo "HERDSMAN_EXACT_GATED ${PUB_VER}"
+      - name: Secrets scan (fail on key material)
+        run: |
+          # Widened scope: firmware/t832/min, tests, docs, .github/workflows.
+          # Precision refinements (documented): \b word boundaries so prose
+          # plurals/derivatives (link_keys, private_*_demand) do not trip the
+          # gate; [_]/[p]/[ ] self-avoidance so this step's own pattern line
+          # is not scanned; and a dummy-fixture filter so DUMMY/FAKE/NONREAL
+          # test vectors and frame_counter fixture statements pass, while
+          # real key material still fails the gate.
+          ! grep -rniE "network[_]key\b|link[_]key\b|pass[p]hrase|private[_]key\b|BEGIN[ ].*PRIVATE" firmware/t832/min tests docs .github/workflows | grep -viE "DUMMY|FAKE|NONREAL|TEST_ONLY|frame_counter" || (echo "SECRET_SCAN_FAIL" && exit 1)
+          echo "SECRET_SCAN_PASS"
+
+  t2-patch:
+    name: T2 patch determinism and R10-absence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Patcher selftest (determinism + fail-closed anchors)
+        run: python firmware/t832/min/patch_min.py --selftest
+      - name: R10-absence gate
+        run: python firmware/t832/min/patch_min.py --check-r10-absence
+      - name: Diff allowlist
+        run: python firmware/t832/min/diff_contract.py --allowlist
+      - name: Manifest allowlist PASS + evil-manifest negative FAIL
+        run: |
+          python - <<'EOF'
+          import sys
+          import tempfile
+          from pathlib import Path
+          sys.path.insert(0, "firmware/t832/min")
+          import diff_contract
+          import patch_min
+          with tempfile.TemporaryDirectory() as p, tempfile.TemporaryDirectory() as o:
+              pristine, out = Path(p), Path(o)
+              for rel, anchor, _repl, _reason in patch_min.PATCHES:
+                  target = pristine / rel
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_text(f"header\n{anchor}\nfooter\n", encoding="utf-8")
+              manifest = patch_min.apply_patches(pristine, out)
+          errors = diff_contract.check_manifest(manifest)
+          assert errors == [], errors
+          print(f"T2 manifest PASS files={len(manifest['patches'])}")
+          evil = {"patches": [dict(e) for e in manifest["patches"]] + [{"file": "evil.c", "reason": "evil"}]}
+          evil_errors = diff_contract.check_manifest(evil)
+          assert evil_errors, "evil manifest must FAIL"
+          print("T2 evil-manifest negative FAIL OK:", evil_errors)
+          empty_reason = {"patches": [dict(e, reason="") for e in manifest["patches"]]}
+          empty_errors = diff_contract.check_manifest(empty_reason)
+          assert empty_errors, "empty reason must FAIL"
+          print("T2 empty-reason negative FAIL OK:", empty_errors)
+          EOF
+
+  t3-board:
+    name: T3 board contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: PROVEN vs HARDWARE_BLOCKED validation
+        run: |
+          python - <<'EOF'
+          import json
+          c = json.load(open("firmware/t832/min/board/mr4u_board_contract.json"))
+          assert c["status"] == "NOT_PRODUCTION_QUALIFIED"
+          f = c["fields"]
+          assert f["target_device"]["verdict"] == "PROVEN"
+          for k in ("rom_bsl", "clock_hf_xosc", "vdrr_rf_config", "rf_pa_variant", "ccfg_delta", "pin_map"):
+              assert f[k]["verdict"] == "HARDWARE_BLOCKED", k
+          print("T3 board contract OK")
+          EOF
+
+  t4-nv-mt:
+    name: T4 NV integrity and MT dispatch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: NV lab self-check
+        run: python firmware/t832/min/nv_lab.py --self-check
+      - name: Compiler verifier (static)
+        run: python firmware/t832/min/verify_compiler.py
+      - name: MT dispatch presence via node
+        run: |
+          node -e 'const h=require("./firmware/t832/min/host_contract.cjs"); const need=["SYS/PING","SYS/VERSION","SYS/NV_LENGTH","SYS/NV_READ","SYS/NV_WRITE","ZDO/MGMT_LQI_REQ","ZDO/MGMT_LQI_RSP","ZDO/NWK_ADDR_REQ","AF/DATA_REQUEST","AF/INCOMING_MSG","NV/TCLK_LENGTH","UTIL/GET_DEVICE_INFO"]; if(need.length!==12){console.error("MT need list must be 12");process.exit(1);} for (const k of need){ if(!h.MT_DISPATCH[k]){ console.error("MISSING "+k); process.exit(1);} } if(Object.keys(h.MT_DISPATCH).length!==12){console.error("MT dispatch table must hold 12 entries");process.exit(1);} console.log("T4 MT dispatch OK entries="+Object.keys(h.MT_DISPATCH).length);'
+
+  t5-host-pack-test:
+    name: T5 host contract, pack, unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Host contract selftest (12 MT entries)
+        run: |
+          node firmware/t832/min/host_contract.cjs
+          node -e 'const h=require("./firmware/t832/min/host_contract.cjs"); const r=h.selftest(); if(r.entries!==12){console.error("MT entries must be 12, got "+r.entries);process.exit(1);} console.log("T5 MT entries=12 OK");'
+      - name: Pack manifest check
+        run: python firmware/t832/min/pack.py --check
+      - name: M1 contract unit test
+        run: python -m unittest -v tests.test_t832_min_contract tests.test_t832_min_real_hardening
+
+  ti-source-reality:
+    name: TI 8.32 and P10 example REAL anchored source patch
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          sparse-checkout: |
+            source/ti/zstack/apps/znp
+            source/ti/zstack/mt
+            source/ti/zstack/stack/zdo
+            source/ti/zstack/npi
+            source/ti/zstack/boards/cc13x4_cc26x4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          sparse-checkout: |
+            examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Koenkk/zigbee-herdsman
+          ref: 0968f979d558874b17396c96b66382d4236bbdcd # v10.9.1
+          path: herdsman
+          sparse-checkout: |
+            src/adapter/z-stack/znp/definition.ts
+      - name: Apply real source patch and verify exact upstream change set
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence evidence/source-delta.json
+          python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out evidence/host-wire-contract.json
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 7
+          test "$(git -C examples diff --name-only | wc -l)" -eq 2
+          git -C sdk diff --check
+          git -C examples -c core.whitespace=cr-at-eol diff --check
+          git -C sdk diff --binary > evidence/source-sdk.patch
+          git -C examples diff --binary > evidence/source-example.patch
+          test -s evidence/source-sdk.patch && test -s evidence/source-example.patch
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: t832-min-real-source-diff
+          path: evidence/
+          if-no-files-found: error

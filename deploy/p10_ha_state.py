@@ -1,8 +1,7 @@
-"""Fail-closed Home Assistant Zigbee2MQTT inactivity check for USB handoff.
+"""Conservatively prove the Zigbee2MQTT add-on cannot own the P10 radio.
 
-Supervisor may report ``error`` after an unplug/crash even when the add-on's
-container has exited. Both Supervisor state and Docker's actual container state
-must confirm quiescence before a serial probe, config write or new start.
+Both a stopped container and a verified *absent* crashed add-on container
+are quiescent; any ambiguity fails closed.
 """
 from __future__ import annotations
 from p10_data_bundle import addon_info, ADDON
@@ -13,13 +12,22 @@ def addon_quiescent(client, info: dict | None = None) -> dict:
     state = details.get('state')
     if state not in ('stopped', 'error'):
         raise RuntimeError('Zigbee2MQTT Supervisor state is not stopped or error')
-    command = "docker inspect --format '{{.State.Running}}' app_" + ADDON
-    _, output, _ = client.exec_command(command, timeout=15)
-    raw = output.read().decode('utf-8', errors='replace').strip()
-    if output.channel.recv_exit_status() != 0 or raw not in ('true', 'false'):
-        raise RuntimeError('Cannot verify actual Zigbee2MQTT container state; refusing handoff')
-    if raw != 'false':
-        raise RuntimeError('Zigbee2MQTT container is running; refusing serial access')
+    name = 'app_' + ADDON
+    _, output, _ = client.exec_command("docker inspect --format '{{.State.Running}}' " + name, timeout=15)
+    raw = output.read().decode('utf-8', 'replace').strip()
+    status = output.channel.recv_exit_status()
+    if status == 0 and raw == 'false':
+        reason = 'stopped_container'
+    elif status != 0 and state == 'error':
+        # A crashed add-on can have no container at all. Require independent
+        # Docker enumeration to prove no app with this slug is present.
+        _, listed, _ = client.exec_command("docker ps -a --format '{{.Names}}'", timeout=15)
+        names = listed.read().decode('utf-8', 'replace').splitlines()
+        if listed.channel.recv_exit_status() != 0 or name in names or any('zigbee2mqtt' in n.lower() for n in names):
+            raise RuntimeError('Container absent/duplicate state cannot be verified')
+        reason = 'error_addon_no_docker_container'
+    else:
+        raise RuntimeError('Zigbee2MQTT is running or Docker state cannot be verified')
     return {'addon_quiescent': True, 'supervisor_state': state,
-            'addon_container_running': False,
+            'addon_container_running': False, 'quiescence_evidence': reason,
             'crash_state_recovered_for_handoff': state == 'error'}

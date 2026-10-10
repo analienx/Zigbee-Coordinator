@@ -1,0 +1,39 @@
+{
+  "contract": "T832-MIN v4 M1 upstream lock",
+  "status": "NOT_PRODUCTION_QUALIFIED",
+  "note": "Pins and intended source contracts. Actual linked firmware proof is in t832-min-real-build.yml / exact Actions run; source-only CI is not firmware qualification.",
+  "ti_sdk": {
+    "release": "lpf2-8.32.00.07",
+    "commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+    "status": "PINNED_BY_M0_CHECKPOINT"
+  },
+  "p10_znp_example": {
+    "commit": "87ff5b638b632050228a7504f35cf3b95581c278",
+    "status": "PINNED_BY_M0_CHECKPOINT"
+  },
+  "toolchain": {
+    "xdctools": "3.62.01.16",
+    "xdctools_note": "Actual GitHub-hosted CCS 12.8 installed and successfully linked TI Clang 3.2.2 with XDCTools 3.62.01.16; legacy planning .15 is not the effective toolchain.",
+    "ccs": "12.8",
+    "ti_clang": "3.2.2",
+    "sysconfig": "1.21.1",
+    "rtos": "TI-RTOS7 M33F"
+  },
+  "herdsman": {
+    "package": "zigbee-herdsman",
+    "version": "10.9.1",
+    "status": "GATED_EXACT",
+    "note": "Exact pin per M1 brief. Hosted CI T1 gates exact: npm view zigbee-herdsman@10.9.1 version must equal this lock version 10.9.1, fail closed on mismatch or resolve failure. No host, HA, or Z2M state is changed by this record."
+  },
+  "target": {
+    "board": "SMLIGHT SLZB-MR4U main Zigbee radio",
+    "chip": "TI CC2674P10",
+    "forbidden_touch": [
+      "EFR32MG26",
+      "production SONOFF",
+      "live HA",
+      "live Z2M"
+    ]
+  },
+  "no_secrets": true
+}

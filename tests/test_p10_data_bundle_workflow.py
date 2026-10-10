@@ -75,7 +75,7 @@ class BundleTests(unittest.TestCase):
              patch.object(bundle, 'load_ha', return_value=fake), \
              patch.object(bundle, 'addon_info', return_value={'state':'started'}):
             with tempfile.TemporaryDirectory() as tmp:
-                with self.assertRaisesRegex(RuntimeError, 'stopped first'):
+                with self.assertRaisesRegex(RuntimeError, 'not stopped or error'):
                     bundle.capture(Path(tmp)/'fresh.zip', 'cold')
 
     def test_log_folder_does_not_exclude_nonlog_custom_data(self):
