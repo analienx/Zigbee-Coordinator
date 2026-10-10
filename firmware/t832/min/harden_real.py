@@ -179,8 +179,8 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
         if proj.count(item) != 1:
             raise ValueError(f"effective project NV compiler/linker option missing: {item}")
     link = sdk_linker.read_text(encoding="utf-8")
-    if link.count("#define NVOCMP_NVPAGES          5") != 1:
-        raise ValueError("SDK linker NV page count is not 5")
+    if link.count("#define NVOCMP_NVPAGES          13") != 1:
+        raise ValueError("SDK linker NV page count is not 13")
     cfg = syscfg.read_text(encoding="utf-8")
     if cfg.count("NVS1.internalFlash.regionBase = 0xF9800;") != 1 or (
         cfg.count("NVS1.internalFlash.regionSize = 0x6800;") != 1

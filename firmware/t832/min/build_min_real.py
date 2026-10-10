@@ -115,16 +115,22 @@ def apply(sdk, examples, evidence):
         "      NLME_UpdateNV( NWK_NV_NIB_ENABLE );\n"
         "#endif\n"
         "      ZDApp_ChangeState( DEV_ZB_COORD );", changes)
-    linker = sdk / "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
+    linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
+    # SDK linker script hard-defines five pages independently of project
+    # --define, which left FLASH at 0xFD800 and broke 13-page flashBuf0.
+    replace_exact(sdk, linker_rel,
+        "#define NVOCMP_NVPAGES          5",
+        "#define NVOCMP_NVPAGES          13", changes)
+    linker = sdk / linker_rel
     syscfg = examples / "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg"
-    if "#define NVOCMP_NVPAGES          5" not in linker.read_text():
-        raise ValueError("SDK linker NV page count is not five")
+    if "#define NVOCMP_NVPAGES          13" not in linker.read_text():
+        raise ValueError("SDK linker NV page count is not thirteen")
     sc = syscfg.read_text()
     if "NVS1.internalFlash.regionBase = 0xF9800;" not in sc or "NVS1.internalFlash.regionSize = 0x6800;" not in sc:
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,

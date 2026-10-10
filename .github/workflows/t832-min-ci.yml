@@ -191,7 +191,7 @@ jobs:
           mkdir -p evidence
           python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence evidence/source-delta.json
           python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out evidence/host-wire-contract.json
-          test "$(git -C sdk diff --name-only | wc -l)" -eq 3
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 4
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
           git -C examples -c core.whitespace=cr-at-eol diff --check
