@@ -44,29 +44,29 @@ def apply(sdk, examples, evidence):
         "-DMT_SYS_KEY_MANAGEMENT=1\n"
         "-DMULTICAST_ENABLED=FALSE\n", changes)
     version = "source/ti/zstack/mt/mt_version.c"
-    # Herdsman v10.9.1 SYS/VERSION SREQ declares a exactly nine
+    # Herdsman v10.9.1 SYS/VERSION SREQ declares exactly nine
     # response bytes (5 header fields + uint32 LE revision). TI ships only
     # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
     # Pin and encode a four-byte build revision and confirm via CI on real TI
     # source and the pinned Herdsman protocol definition, not a host mock.
     revision = 20261010
     original_version = (
-        "const uint8_t MTVersionString[] = {\\n"
-        "                                   2,  /* Transport protocol revision */\\n"
-        "                                   0,  /* Product ID */\\n"
-        "                                   2,  /* Software major release number */\\n"
-        "                                   7,  /* Software minor release number */\\n"
-        "                                   1,  /* Software maintenance release number */\\n"
+        "const uint8_t MTVersionString[] = {\n"
+        "                                   2,  /* Transport protocol revision */\n"
+        "                                   0,  /* Product ID */\n"
+        "                                   2,  /* Software major release number */\n"
+        "                                   7,  /* Software minor release number */\n"
+        "                                   1,  /* Software maintenance release number */\n"
         "                                 };"
     )
     patched_version = (
-        "const uint8_t MTVersionString[] = {\\n"
-        "                                   2,  /* Transport protocol revision */\\n"
-        "                                   1,  /* Product ID: ZStack3x0 host ABI; behavioral change */\\n"
-        "                                   2,  /* Software major release number */\\n"
-        "                                   7,  /* Software minor release number */\\n"
-        "                                   1,  /* Software maintenance release number */\\n"
-        + "".join(f"                                   {(revision >> (8*i)) & 255},  /* firmware revision LE byte {i} */\\n" for i in range(4))
+        "const uint8_t MTVersionString[] = {\n"
+        "                                   2,  /* Transport protocol revision */\n"
+        "                                   1,  /* Product ID: ZStack3x0 host ABI; behavioral change */\n"
+        "                                   2,  /* Software major release number */\n"
+        "                                   7,  /* Software minor release number */\n"
+        "                                   1,  /* Software maintenance release number */\n"
+        + "".join(f"                                   {(revision >> (8*i)) & 255},  /* firmware revision LE byte {i} */\n" for i in range(4))
         + "                                 };"
     )
     replace_exact(sdk, version, original_version, patched_version, changes)
