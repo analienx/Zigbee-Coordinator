@@ -18,7 +18,7 @@ STATUS = "NOT_PRODUCTION_QUALIFIED"
 # Planning geometry (M0 checkpoint): TI 5-page NV, base 0xFD800 extent 0x2800.
 NV_BASE = 0xFD800
 NV_SIZE = 0x2800
-NV_PAGE_SIZE = 0x1000
+NV_PAGE_SIZE = 0x800
 
 # M0-observed TCLK planning data: 400 x 20-byte slots, sysid 1 / itemid 4.
 TCLK = {"sysid": 1, "itemid": 4, "slots": 400, "slot_bytes": 20}
@@ -40,7 +40,7 @@ PRESERVATION_RULES = [
 
 
 def check_index0() -> list[str]:
-    # Genuine agreement: every view states the same index0 page base.
+    # Simulated agreement: constants repeat one hard-coded base. Real linked proof is separate.
     views = {"compiler": NV_BASE, "linker": NV_BASE, "sysconfig": NV_BASE, "backend": NV_BASE}
     if len(set(views.values())) != 1:
         return [f"INDEX0_DISAGREE: {views}"]
@@ -61,6 +61,8 @@ def check_no_overlap(regions: list[dict] | None = None) -> list[str]:
 
 def self_check() -> dict:
     errors = check_index0() + check_no_overlap()
+    if NV_SIZE != 5 * NV_PAGE_SIZE:
+        errors.append("NV_PAGE_COUNT_INCONSISTENT: expected 5 x 0x800 = 0x2800")
     if errors:
         return {"status": "FAIL", "qualifier": STATUS, "errors": errors}
     return {
@@ -68,6 +70,8 @@ def self_check() -> dict:
         "qualifier": STATUS,
         "nv_base": hex(NV_BASE),
         "nv_size": hex(NV_SIZE),
+        "nv_pages": NV_SIZE // NV_PAGE_SIZE,
+        "evidence_class": "STATIC_PLANNING_MODEL_NOT_REAL_NVOCMP",
         "tclk": TCLK,
         "preservation": PRESERVATION_RULES,
     }
