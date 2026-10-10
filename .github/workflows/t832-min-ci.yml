@@ -170,6 +170,7 @@ jobs:
             source/ti/zstack/apps/znp
             source/ti/zstack/mt
             source/ti/zstack/stack/zdo
+            source/ti/zstack/npi
             source/ti/zstack/boards/cc13x4_cc26x4
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
