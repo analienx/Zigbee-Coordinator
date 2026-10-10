@@ -77,3 +77,64 @@ routing acceptance as **three distinct outcomes**.
 **Current action:** procedural simplification/documentation only. **No
 radio reset, startup, flash, NV change or Z2M start executed.** The current
 CI artifact is an authenticated compile candidate, not a live-accepted build.
+
+## A0 actual on-device radio-reset retention acceptance — PASS (2026-10-10)
+
+**This supersedes earlier "not yet deployed" wording in this historical runbook.**
+
+- Operator independently issued **one Zigbee-radio-only restart through the
+  SLZB interface**, not a board power cycle, after an exact R12-DIAG flash
+  `8320062` to the MR4U P10, performed with `eraseNVM=0`. R12 source
+  image SHA256 `69a89dac042a3d7407129ba9bb64cee482b8c26756815ac78abef375034b26ea`.
+- Post-reset read-only inspection: exact CC2674P10 radio index 1, stable
+  **SYS ping 3/3** and version 1/1, valid ZNP frames, Zigbee2MQTT still
+  stopped/error and watchdog disabled.
+- Independent **TCP passive receive-only capture** began
+  `2026-10-10T04:43:05.123232Z`; **zero socket writes, zero SREQs, zero
+  NV reads/writes, zero Zigbee start calls**. By
+  `2026-10-10T04:43:31.697442Z`, observed 6 ZNP checksum-valid frames
+  (0 checksum errors), 6 valid T832D2 frames, one prior R11 kind53 runtime
+  group and **one R12 kind54 `R12_RETENTION_V1`** group.
+- Kind54 decoder fields: retained **attempt `0xA0120001`**,
+  previous boot epoch **`0x20261010`**, retained sequence **2**,
+  **site1 / phase1**, i.e. `main.initNV` **exit** on the preceding boot,
+  context 0; current boot reset-source **1 = PIN_RESET**. Exported firmware
+  build ID `1889887295` (`0x70a5643f`).
+- Private evidence is stored on Zephyrus:
+  `C:\Workspace\.analienx\sonoff-private\recovery\p10-r12-singleflash-20261010\one-shot-attempt\retention-passive-after-operator-reset.json`;
+  **SHA256 `63bf260afd108f96ead587ed424c5ab2e13f7cf7065f8f7d5dab17bb90ff7938`**,
+  1,467 bytes, no network secrets or IEEE associations in the receipt.
+- **Conclusion:** A0 demonstrates that R12's exact AUX-retained checkpoint
+  survived the **operator-used physical radio reset** and could be exported
+  via normal ZNP afterward. This *resolves the reset-survival question
+  for this specific hardware, firmware and reset path*. It does not prove
+  universal reset/power-loss retention, general AUX ownership or operation
+  under other power states.
+- The checkpoint is only site1/initNV exit: **it does not localize the
+  original `startupFromApp` hang yet**. No A1 restored-network startup
+  was sent.
+
+**Important separate NIB problem from the post-flash read-only attempt:**
+native NV item 33 (NIB) was missing/inaccessible and a Zigbee2MQTT backup
+read returned "adapter not commissioned". This was **not** a failed
+103-link-key comparison; the verifier stopped before that stage, with zero
+NV mutations. Consequently no Zigbee2MQTT startup or mesh acceptance is
+claimed. The previously validated immutable backup still contains 103
+device identities, 103 link keys, 103 address associations and counter
+floors; these do not by themselves prove that another restoration will
+successfully initialize the full network.
+
+**Next A1 guard:** do not call `startupFromApp` with the currently
+preserved A0 R12 record: the one-shot recorder intentionally disables new
+writes after detecting a valid previous-epoch record. Archive evidence
+first, then deliberately start a *new* recorder epoch under a separate
+sealed restore/recovery operation. **Simply flashing the same R12 image
+does not guarantee AUX is rearmed**, because AUX RAM may survive a radio
+reset. Confirm a genuine AUX-clearing cold power transition or a separately
+verified replacement diagnostic build/procedure; protect the original
+network security backup and retain `eraseNVM=0` until restoration is
+specifically authorized. A1 must still be a single startup with post-reset
+kind54 capture if it fails.
+
+**This was the only radio restart used for A0.** No further reset, flash,
+network startup or NV restore was triggered by the assistant afterward.
