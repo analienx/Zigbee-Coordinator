@@ -93,3 +93,17 @@ the actual source diff and CI artifacts, not this narrative alone.
 independent AUX ownership/power/reset survival and network-preserving live A0
 acceptance. Build success cannot override this status. No radio mutation was
 performed during this review.
+
+## Compiler-bound symbol hardening (additional review)
+
+An exact-anchor source patch dry run initially verified code placement without
+compiling the generated R11 header. An independent identifier check exposed
+**three incorrect phase identifiers** in the R12 `r11_startup.h` bridge:
+`T832_R11_PHASE_ENTRY/EXIT/CONFIRM` were not R11's actual
+`T832R11_PHASE_ENTRY/EXIT/CONFIRM`. The bridge was corrected before any
+device build was accepted. The new `test_r12_integrate.py` reads the real,
+pinned R11 header and asserts all bridge identifiers exist among R11 macros;
+it also tests rejection of double patching and changed anchors.
+
+This confirms why **source-injection PASS is not compile PASS**.
+The native CCS build still has to verify linkage and correct device behavior.

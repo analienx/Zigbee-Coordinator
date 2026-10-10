@@ -24,9 +24,9 @@ def patch_r11_header(src: str) -> str:
     src = src.replace('#include <stdint.h>\n',
                       '#include <stdint.h>\n#include "r12_target.h"\n', 1)
     functions = {
-        "T832R11_enter": ("site", "T832_R11_PHASE_ENTRY"),
-        "T832R11_exit": ("site", "T832_R11_PHASE_EXIT"),
-        "T832R11_confirm": ("T832R11_SITE_FORM_CONFIRM", "T832_R11_PHASE_CONFIRM"),
+        "T832R11_enter": ("site", "T832R11_PHASE_ENTRY"),
+        "T832R11_exit": ("site", "T832R11_PHASE_EXIT"),
+        "T832R11_confirm": ("T832R11_SITE_FORM_CONFIRM", "T832R11_PHASE_CONFIRM"),
     }
     for name, (site, phase) in functions.items():
         m = re.search(r"static inline void "+name+r"\([^)]*\)\s*\{", src)
