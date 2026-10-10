@@ -24,8 +24,18 @@ void T832R12_boot(uint32_t reset_cause)
     t832R12Previous.captured = 0u;
     t832R12Previous.status = R12Aux_captureBeforeOverwrite(
         T832R12_window(), T832_R12_VERSION, reset_cause, &t832R12Previous);
-    if (t832R12Previous.status == R12_AUX_EMPTY) {
-        t832R12WriteEnabled = 1u;
+    if (t832R12Previous.status == R12_AUX_EMPTY ||
+        t832R12Previous.status == R12_AUX_TORN) {
+        /* On the first qualified R12 boot, the AUX window may still contain
+         * unrelated bytes from an earlier firmware. Never format if either
+         * R12 magic is present: that could erase a damaged crash record.
+         * The physical window exclusivity gate MUST pass before flashing.
+         */
+        if (R12Aux_initializeVirgin(T832R12_window(),
+                                    T832_R12_VERSION) == R12_AUX_OK) {
+            t832R12Previous.status = R12_AUX_EMPTY;
+            t832R12WriteEnabled = 1u;
+        }
     }
 }
 

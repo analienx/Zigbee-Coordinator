@@ -47,6 +47,13 @@ typedef enum {
     R12_AUX_UNACKNOWLEDGED_EPOCH = 7
 } R12AuxStatus;
 
+/* First qualified R12 boot only: formats an unrecognized AUX window only
+ * when neither slot contains R12 magic. Any old R12 marker or foreign
+ * coherent record is preserved. Requires independent physical ownership.
+ */
+R12AuxStatus R12Aux_initializeVirgin(volatile uint32_t *window,
+                                      uint32_t expected_build);
+
 /* Must be called before any R12 hooks overwrite the previous boot's slots. */
 R12AuxStatus R12Aux_readLatest(const volatile uint32_t *window,
                                uint32_t expected_build,

@@ -53,6 +53,27 @@ int main(void)
     assert(R12_AUX_NUM_SLOTS * R12_AUX_SLOT_BYTES == 80u);
     assert(R12_AUX_SLOT_WORDS == 10u);
 
+    /* First R12 image may see opaque bytes from an older firmware. */
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        aux[i] = UINT32_C(0x5a5aa5a5);
+    }
+    assert(R12Aux_readLatest(aux, BUILD, &view) == R12_AUX_TORN);
+    assert(R12Aux_initializeVirgin(aux, BUILD) == R12_AUX_OK);
+    assert(R12Aux_readLatest(aux, BUILD, &view) == R12_AUX_EMPTY);
+    (void)record(1u, 0u);
+    memcpy(saved, (const void *)aux, sizeof(saved));
+    assert(R12Aux_initializeVirgin(aux, BUILD) == R12_AUX_TORN);
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        assert(aux[i] == saved[i]); /* preserve any existing R12 magic */
+    }
+    aux[8u] ^= 1u; /* corrupt old R12 slot, retained magic survives */
+    memcpy(saved, (const void *)aux, sizeof(saved));
+    assert(R12Aux_initializeVirgin(aux, BUILD) == R12_AUX_TORN);
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        assert(aux[i] == saved[i]); /* never erase damaged R12 evidence */
+    }
+    checks++;
+
     reset_blank();
     assert(R12Aux_readLatest(aux, BUILD, &view) == R12_AUX_EMPTY);
     a = record(2u, 0u); /* synchronous BDB call entry */

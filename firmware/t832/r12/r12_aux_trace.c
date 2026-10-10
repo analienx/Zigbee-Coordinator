@@ -139,6 +139,31 @@ static void store_word(volatile uint32_t *p, uint32_t value)
     (void)p[0];
 }
 
+R12AuxStatus R12Aux_initializeVirgin(volatile uint32_t *window,
+                                      uint32_t expected_build)
+{
+    R12AuxRecord old;
+    R12AuxStatus status;
+    unsigned int i;
+    if (window == NULL || expected_build == 0u) {
+        return R12_AUX_BAD_ARGUMENT;
+    }
+    /* Never destroy an old R12 record, even if its CRC was interrupted. */
+    if (window[R12_MAGIC] == R12_AUX_MAGIC ||
+        window[R12_AUX_SLOT_WORDS + R12_MAGIC] == R12_AUX_MAGIC) {
+        return R12_AUX_TORN;
+    }
+    status = R12Aux_readLatest(window, expected_build, &old);
+    if (status != R12_AUX_EMPTY && status != R12_AUX_TORN) {
+        return status; /* foreign build and coherent old record both blocked */
+    }
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        store_word(&window[i], 0u);
+    }
+    status = R12Aux_readLatest(window, expected_build, &old);
+    return status == R12_AUX_EMPTY ? R12_AUX_OK : R12_AUX_VERIFY_FAILED;
+}
+
 R12AuxStatus R12Aux_commit(volatile uint32_t *window,
                            uint32_t expected_build,
                            uint32_t attempt,
