@@ -116,6 +116,14 @@ jobs:
           ref: 87ff5b638b632050228a7504f35cf3b95581c278
           path: examples
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Koenkk/zigbee-herdsman
+          ref: 0968f979d558874b17396c96b66382d4236bbdcd # v10.9.1
+          path: herdsman
+          sparse-checkout: |
+            src/adapter/z-stack/znp/definition.ts
+
       - name: Apply one documented real TI source delta (not synthetic)
         run: |
           set -euo pipefail
@@ -124,6 +132,7 @@ jobs:
           test "$(git -C examples rev-parse HEAD)" = "87ff5b638b632050228a7504f35cf3b95581c278"
           mkdir -p build-evidence
           python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence build-evidence/real-source.json
+          python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out build-evidence/host-wire-contract.json
           git -C sdk diff --check
           git -C examples diff --check
           git -C sdk diff --binary > build-evidence/real-sdk.patch
@@ -259,6 +268,7 @@ jobs:
           "$TIARMOBJCOPY" "$OUT" --output-target ihex bundle/T832-MIN.hex
           test -s bundle/T832-MIN.hex
           cp build-evidence/real-source.json bundle/source-delta.json
+          cp build-evidence/host-wire-contract.json bundle/
           cp build-evidence/real-sdk.patch bundle/
           cp build-evidence/real-project-seed.patch bundle/
           cp build-evidence/ccs-build.log bundle/
@@ -294,6 +304,16 @@ jobs:
           (out/"MANIFEST.json").write_text(json.dumps(manifest,indent=2,sort_keys=True)+"\n")
           print(json.dumps(manifest,indent=2))
           PY
+      - name: Audit actual TI linker rows, resolved five-page NVS and strict image bounds
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/t832/min/harden_real.py linked \
+            --map "$MAP" --hex bundle/T832-MIN.hex \
+            --projectspec examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec \
+            --syscfg examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg \
+            --linker sdk/source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd \
+            --out bundle/linked-geometry.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: t832-min-real-znp-NOT-FLASHABLE
