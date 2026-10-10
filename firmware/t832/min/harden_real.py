@@ -168,7 +168,7 @@ def runtime_profile(generated_header: Path, imported_opts: Path, globals_c: Path
     for name, value in (("MAX_RTG_ENTRIES", 128),
                         ("MAX_RREQ_ENTRIES", 16),
                         ("NWK_MAX_BINDING_ENTRIES", 4)):
-        found = re.findall(r"^\\s*#define\\s+" + name + r"\\s+(\\d+)\\s*$", text, re.M)
+        found = re.findall(r"^\s*#define\s+" + name + r"\s+(\d+)\s*$", text, re.M)
         if len(found) != 1 or int(found[0]) != value:
             raise ValueError(f"EFFECTIVE_ROUTING_CAPACITY_MISMATCH: {name}={found}, expected {value}")
         generated[name] = value
@@ -185,7 +185,7 @@ def runtime_profile(generated_header: Path, imported_opts: Path, globals_c: Path
                         ("NWK_MAX_DATABUFS_SCHEDULED", 8),
                         ("NWK_MAX_DATABUFS_CONFIRMED", 8),
                         ("NWK_MAX_DATABUFS_TOTAL", 24)):
-        found = re.findall(r"^\\s*#define\\s+" + name + r"\\s+(\\d+)\\b", globals_text, re.M)
+        found = re.findall(r"^\s*#define\s+" + name + r"\s+(\d+)\b", globals_text, re.M)
         if len(found) != 1 or int(found[0]) != value:
             raise ValueError(f"EFFECTIVE_NWK_BUFFER_MISMATCH: {name}={found}, expected {value}")
     return {
