@@ -138,7 +138,7 @@ class MinContractTests(unittest.TestCase):
         tc = lock["toolchain"]
         self.assertEqual(
             (tc["xdctools"], tc["ccs"], tc["ti_clang"], tc["sysconfig"], tc["rtos"]),
-            ("3.62.01.15", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"),
+            ("3.62.01.16", "12.8", "3.2.2", "1.21.1", "TI-RTOS7 M33F"),
         )
         self.assertIn("herdsman", lock)
         self.assertRegex(lock["herdsman"]["version"], r"^\d+\.\d+\.\d+")
