@@ -23,12 +23,12 @@ NV_PAGE_SIZE = 0x800
 # M0-observed TCLK planning data: 400 x 20-byte slots, sysid 1 / itemid 4.
 TCLK = {"sysid": 1, "itemid": 4, "slots": 400, "slot_bytes": 20}
 
-# CCFG tail (final 0x88 bytes) is carved out of the NV planning extent so that
-# app / nvs-data / ccfg are pairwise disjoint.
+# CC26x4 CCFG is a separate 0x800-byte region at 0x50000000, NOT the
+# final 0x88 bytes of 1MiB main flash. All five 0x800 NV pages are reserved.
 REGIONS = [
-    {"name": "app", "base": 0x00000, "size": 0xF7000},
-    {"name": "nvs", "base": NV_BASE, "size": NV_SIZE - 0x88},
-    {"name": "ccfg", "base": NV_BASE + NV_SIZE - 0x88, "size": 0x88},
+    {"name": "app", "base": 0x00000, "size": NV_BASE},
+    {"name": "nvs", "base": NV_BASE, "size": NV_SIZE},
+    {"name": "ccfg", "base": 0x50000000, "size": 0x800},
 ]
 
 PRESERVATION_RULES = [
