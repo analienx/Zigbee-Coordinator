@@ -132,8 +132,23 @@ def hex_spans(path: Path) -> dict:
             "ccfg_bytes": len(ccfglocs), "ccfg_address_min": hex(min(ccfglocs))}
 
 
+def actual_capacity(header: Path) -> dict[str, int]:
+    """Read generated TI SysConfig C header, not our planning fixture."""
+    text = header.read_text(encoding="utf-8")
+    out = {}
+    for name, target in (("ZDSECMGR_TC_DEVICE_MAX", 112), ("NWK_MAX_DEVICE_LIST", 75)):
+        values = re.findall(r"^\\s*#define\\s+" + name + r"\\s+(\\d+)\\s*$", text, re.M)
+        if len(values) != 1 or int(values[0]) != target:
+            raise ValueError(
+                f"EFFECTIVE_CAPACITY_MISMATCH: generated {name}={values} expected {target}; "
+                "original TI defaults TC=40/NWK=20 cannot host the 103-key network"
+            )
+        out[name] = int(values[0])
+    return out
+
+
 def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
-           sdk_linker: Path) -> dict:
+           sdk_linker: Path, generated_header: Path) -> dict:
     rows = memory_map(map_file)
     if not {"FLASH", "FLASH_NV", "SRAM", "CCFG"}.issubset(rows):
         raise ValueError(f"missing real TI linker memory rows: {sorted(rows)}")
@@ -160,8 +175,10 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
         cfg.count("NVS1.internalFlash.regionSize = 0x2800;") != 1
     ):
         raise ValueError("P10 SysConfig NV region differs from verified map")
+    capacity = actual_capacity(generated_header)
     evidence = hex_spans(hex_file)
-    return {"status": "PASS_REAL_LINK_GEOMETRY",
+    return {"status": "PASS_REAL_LINK_GEOMETRY", "capacity": capacity,
+            "capacity_profile": "FIVE_PAGE_DIAGNOSTIC_NOT_PRODUCTION",
             "linked_memory": {k: rows[k] for k in ("FLASH", "FLASH_NV", "SRAM", "CCFG")},
             "hex": evidence, "flash_authorized": False,
             "warning": ("CC26x4 separate CCFG address region validated; NVS occupies " 
@@ -180,6 +197,7 @@ def main() -> int:
     p.add_argument("--projectspec", type=Path)
     p.add_argument("--syscfg", type=Path)
     p.add_argument("--linker", type=Path)
+    p.add_argument("--header", type=Path)
     p.add_argument("--out", type=Path)
     a = p.parse_args()
     if a.mode == "source":
@@ -187,9 +205,9 @@ def main() -> int:
             p.error("source requires --sdk and --herdsman")
         result = check_version(a.sdk, a.herdsman)
     else:
-        if not all((a.map, a.hex, a.projectspec, a.syscfg, a.linker)):
-            p.error("linked requires --map --hex --projectspec --syscfg --linker")
-        result = linked(a.map, a.hex, a.projectspec, a.syscfg, a.linker)
+        if not all((a.map, a.hex, a.projectspec, a.syscfg, a.linker, a.header)):
+            p.error("linked requires --map --hex --projectspec --syscfg --linker --header")
+        result = linked(a.map, a.hex, a.projectspec, a.syscfg, a.linker, a.header)
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
