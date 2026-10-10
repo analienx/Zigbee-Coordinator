@@ -276,30 +276,16 @@ jobs:
           import hashlib,json,os
           from pathlib import Path
           out=Path("bundle")
-          # Only the physical NVS data pages are reserved; final 0x88 bytes
-          # of uppermost flash may hold the generated CCFG block.
-          base=0; bad=[]
-          for line in (out/"T832-MIN.hex").read_text().splitlines():
-              if not line.startswith(":"): raise SystemExit("non-Intel HEX record")
-              raw=bytes.fromhex(line[1:])
-              n,lo,hi,typ=raw[:4]
-              payload=raw[4:4+n]
-              if len(raw)!=n+5 or sum(raw)&255: raise SystemExit("invalid Intel HEX checksum/length")
-              if typ==4:
-                  if n!=2: raise SystemExit("bad ELA")
-                  base=int.from_bytes(payload,"big")<<16
-              elif typ==0:
-                  start=base+(lo<<8)+hi
-                  if any(0xFD800<=a<0xFFF78 for a in range(start,start+n)):
-                      bad.append(hex(start))
-              elif typ==1: break
-          if bad: raise SystemExit("linked HEX overlaps live NVS "+repr(bad[:8]))
+          # The canonical strict Intel HEX/NVS/CCFG audit runs in the next
+          # mandatory job step before the artifact can be published. Do not
+          # repeat the old incorrect assumption that CCFG occupies an NV tail.
           files={p.name:{"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"bytes":p.stat().st_size} for p in out.iterdir() if p.is_file()}
           manifest={"source_sha":os.environ["GITHUB_SHA"],"sdk_sha":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
             "example_sha":"87ff5b638b632050228a7504f35cf3b95581c278",
             "toolchain":{"ccs":"12.8.0.00012","ti_clang":"3.2.2.LTS","sysconfig":"1.21.1.3772","xdctools":"3.62.01.16"},
-            "status":"LINKED_OFFLINE_UNQUALIFIED","hardware_validated":False,"flash_authorized":False,
-            "not_proven":["MR4U RF/pinmap/oscillator/CCFG physical safety","ZNP host behavior","NVS persistence","103/192 key capacity","backup/restore","live reliability"],
+            "status":"LINKED_OFFLINE_UNQUALIFIED","capacity_profile":"5page_112TC_75NWK_diagnostic",
+            "hardware_validated":False,"flash_authorized":False,
+            "not_proven":["MR4U RF/pinmap/oscillator/CCFG physical safety","ZNP host behavior","NVOCMP 103-key physical write/restore, 192-slot production layout","backup/restore","live reliability"],
             "artifacts":files}
           (out/"MANIFEST.json").write_text(json.dumps(manifest,indent=2,sort_keys=True)+"\n")
           print(json.dumps(manifest,indent=2))
@@ -313,6 +299,7 @@ jobs:
             --projectspec examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec \
             --syscfg examples/examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg \
             --linker sdk/source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd \
+            --header "$GENH" \
             --out bundle/linked-geometry.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
