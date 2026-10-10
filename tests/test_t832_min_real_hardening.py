@@ -30,8 +30,8 @@ class RealImageAuditTests(unittest.TestCase):
         return [
             record(0, 4, b"\x00\x00"),
             record(0, 0, b"\x01\x02\x03"),
-            record(0, 4, b"\x00\x0F"),
-            record(0xFF78, 0, b"\x55\xAA\x33\xCC"),
+            record(0, 4, b"\x50\x00"),
+            record(0x0000, 0, b"\x55\xAA\x33\xCC"),
             record(0, 1),
         ]
 
@@ -42,6 +42,7 @@ class RealImageAuditTests(unittest.TestCase):
 
     def test_nv_data_range_write_rejected(self):
         x = self.valid()
+        x.insert(-1, record(0, 4, b"\x00\x0F"))
         x.insert(-1, record(0xD800, 0, b"\x11"))
         with self.assertRaisesRegex(ValueError, "NVS data"):
             h.hex_spans(self.write_hex(x))
