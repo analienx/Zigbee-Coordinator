@@ -1,0 +1,66 @@
+name: P10 BSL read-only forensic guard (HOST ONLY, NO RADIO)
+
+on:
+  push:
+    branches: [codex/p10-bsl-readonly-forensics]
+    paths:
+      - "firmware/t832/r12/p10_bsl_readonly.py"
+      - "firmware/t832/r12/test_p10_bsl_readonly.py"
+      - "firmware/t832/r12/nvs_raw_forensics.py"
+      - "firmware/t832/r12/test_nvs_raw_forensics.py"
+      - "docs/P10_BSL_READONLY_QUALIFICATION_20261010.md"
+      - ".github/workflows/p10-bsl-readonly-host.yml"
+  pull_request:
+    paths:
+      - "firmware/t832/r12/p10_bsl_readonly.py"
+      - "firmware/t832/r12/test_p10_bsl_readonly.py"
+      - ".github/workflows/p10-bsl-readonly-host.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-only:
+    name: Synthetic BSL + NVS analysis — no radio
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Prove offline planning mode (must never connect)
+        run: |
+          set -euo pipefail
+          python firmware/t832/r12/p10_bsl_readonly.py > /tmp/bsl-plan.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/bsl-plan.json'))
+          assert p['mode']=='OFFLINE_PLAN_NO_NETWORK_ACCESS'
+          assert p['target_port']==7638 and p['nvs_size']==30720
+          assert p['hardware_mutations']==0 and p['reset_performed'] is False
+          assert p['live_bsl_activation_authorized'] is False
+          print('No-radio plan PASS')
+          PY
+      - name: Simulated ROM BSL forbids erase, reset and other-radio access
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s firmware/t832/r12 -p 'test_p10_bsl_readonly.py' -v
+          python -m unittest discover -s firmware/t832/r12 -p 'test_nvs_raw_forensics.py' -v
+          python -m unittest discover -s firmware/t832/r12 -p 'test_compare_nvs_evidence.py' -v
+      - name: Syntax and static access check
+        run: |
+          set -euo pipefail
+          python -m py_compile firmware/t832/r12/p10_bsl_readonly.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('firmware/t832/r12/p10_bsl_readonly.py').read_text()
+          assert 'CMD_RESET =' not in p
+          assert 'def enter_bsl' not in p
+          assert 'def erase' not in p
+          assert 'api2?action' not in p
+          assert 'startupFromApp' not in p
+          assert '0x2C' not in p.replace('0x2C,','') or 'BANK_ERASE' in p
+          print('Static no-entry/no-erase guard PASS')
+          PY
