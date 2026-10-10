@@ -44,13 +44,12 @@ NV_INDEX0_VIEWS = {
 }
 
 # Flash regions used for the no-overlap check (M1 planning geometry).
-# The NV planning extent is 0xFD800/0x2800 per the M0 checkpoint; the CCFG tail
-# (final 0x88 bytes) is carved out of that extent, so nv_data ends where ccfg
-# begins. Regions must be pairwise disjoint.
+# The CC2674P10/CC26x4 CCFG lives OUTSIDE 1MiB main flash at
+# 0x50000000/0x800. All 5 x 0x800 main-flash NV pages are reserved.
 REGIONS = [
-    {"name": "app", "base": 0x00000, "size": 0xF7000},
-    {"name": "nv_data", "base": 0xFD800, "size": 0x2800 - 0x88},
-    {"name": "ccfg", "base": 0xFD800 + 0x2800 - 0x88, "size": 0x88},
+    {"name": "app", "base": 0x00000, "size": 0xFD800},
+    {"name": "nv_data", "base": 0xFD800, "size": 0x2800},
+    {"name": "ccfg", "base": 0x50000000, "size": 0x800},
 ]
 
 
