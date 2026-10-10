@@ -46,6 +46,17 @@ def check_version(sdk: Path, herdsman: Path) -> dict:
     ]
     if fields != wanted:
         raise ValueError(f"Herdsman SYS_VERSION field layout changed: {fields}")
+    zdapp_source = (sdk / "source/ti/zstack/stack/zdo/zd_app.c").read_text(encoding="utf-8")
+    wanted_block = (
+        "ZDApp_NwkWriteNVRequest();\n"
+        "#if defined ( NV_RESTORE )\n"
+        "      // Commit coordinator NIB synchronously before ZDO state=9.\n"
+        "      NLME_UpdateNV( NWK_NV_NIB_ENABLE );\n"
+        "#endif\n"
+        "      ZDApp_ChangeState( DEV_ZB_COORD );"
+    )
+    if zdapp_source.count(wanted_block) != 1:
+        raise ValueError("actual TI source missing synchronous NIB commit before ZDO state=9")
     return {"status": "PASS_TI_SOURCE_WIRE_ABI", "payload_length": len(actual),
             "payload": actual, "revision": REVISION,
             "herdsman_sys_version_layout": fields, "hardware_verified": False}

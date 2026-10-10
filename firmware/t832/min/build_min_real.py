@@ -94,6 +94,22 @@ def apply(sdk, examples, evidence):
     replace_exact(examples, syscfg_rel,
         "NVS1.internalFlash.regionSize = 0x2800;",
         "NVS1.internalFlash.regionSize = 0x6800;", changes)
+    # On the actual T832-MIN P10 field trial Herdsman 10.9.1 observed ZDO
+    # coordinator state 9, then polled NIB for 30s and found no settled NIB.
+    # Force the synchronous NIB NV commit before announcing state 9, rather
+    # than relying exclusively on a deferred AddrMgrWriteNVRequest.
+    zdapp = "source/ti/zstack/stack/zdo/zd_app.c"
+    replace_exact(sdk, zdapp,
+        "      //save NIB to NV before child joins if NV_RESTORE is defined\n"
+        "      ZDApp_NwkWriteNVRequest();\n"
+        "      ZDApp_ChangeState( DEV_ZB_COORD );",
+        "      //save NIB to NV before child joins if NV_RESTORE is defined\n"
+        "      ZDApp_NwkWriteNVRequest();\n"
+        "#if defined ( NV_RESTORE )\n"
+        "      // Commit coordinator NIB synchronously before ZDO state=9.\n"
+        "      NLME_UpdateNV( NWK_NV_NIB_ENABLE );\n"
+        "#endif\n"
+        "      ZDApp_ChangeState( DEV_ZB_COORD );", changes)
     linker = sdk / "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     syscfg = examples / "examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/znp.syscfg"
     if "#define NVOCMP_NVPAGES          5" not in linker.read_text():
@@ -103,7 +119,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -116,6 +132,7 @@ def apply(sdk, examples, evidence):
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
             "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
+            "Commit coordinator NIB synchronously before state9 callback",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=20261010)",
         ],
         "flash_authorized": False, "hardware_qualified": False,
