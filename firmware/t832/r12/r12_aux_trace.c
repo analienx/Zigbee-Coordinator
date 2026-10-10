@@ -148,10 +148,20 @@ R12AuxStatus R12Aux_initializeVirgin(volatile uint32_t *window,
     if (window == NULL || expected_build == 0u) {
         return R12_AUX_BAD_ARGUMENT;
     }
-    /* Never destroy an old R12 record, even if its CRC was interrupted. */
-    if (window[R12_MAGIC] == R12_AUX_MAGIC ||
-        window[R12_AUX_SLOT_WORDS + R12_MAGIC] == R12_AUX_MAGIC) {
-        return R12_AUX_TORN;
+    /* Never format a recognizable R12 record, even if its magic OR
+     * checksum was corrupted. A retained commit/version sentinel in EITHER
+     * slot is sufficient to refuse destructive first-boot initialization.
+     * This cannot prove that arbitrary old AUX contents are unowned;
+     * physical AUX exclusivity remains a separate mandatory gate.
+     */
+    for (i = 0u; i < R12_AUX_NUM_SLOTS; ++i) {
+        const volatile uint32_t *slot =
+            window + ((size_t)i * R12_AUX_SLOT_WORDS);
+        if (slot[R12_MAGIC] == R12_AUX_MAGIC ||
+            slot[R12_COMMITTED] == R12_AUX_COMMIT ||
+            slot[R12_VERSION_SIZE] == R12_AUX_VERSION_SIZE) {
+            return R12_AUX_TORN;
+        }
     }
     status = R12Aux_readLatest(window, expected_build, &old);
     if (status != R12_AUX_EMPTY && status != R12_AUX_TORN) {

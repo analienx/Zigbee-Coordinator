@@ -107,3 +107,32 @@ it also tests rejection of double patching and changed anchors.
 
 This confirms why **source-injection PASS is not compile PASS**.
 The native CCS build still has to verify linkage and correct device behavior.
+
+## Independent release-gate review: October 10, 2026
+
+The real native TI CCS build completed successfully in [Actions 38021548156](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38021548156): `nv-lab` and the actual DIAG ZNP firmware job **both succeeded**. The generated flash candidate is **207100 bytes**, revision **8320062**, image SHA256 **`f6fa447f96722f70802afed43d5cd8778b241c214bc2a98a4110c5b7f567be9a`**, from source commit `ea2a2c8231a99be55c4178eccc7a43079ee2a88b`.
+
+I downloaded the authentic non-flashable artifact and conducted independent checks on the **actual emitted ELF/map, CCFG, NV and bundle**, not merely the source script:
+
+- All **35** manifest-listed artifact file hashes/sizes matched; the separate SHA256SUMS file matched its entries.
+- Linked symbols `T832R12_boot`, `T832R12_mark`, `R12Aux_commit`, `R12Aux_readLatest`, `R12Aux_initializeVirgin`, `R12Aux_captureBeforeOverwrite`, `R12Aux_checksumWords` all present in the actual linker map.
+- CCFG startup vector valid and vendor-compatible DIO15 BSL enabled. Linked candidate NVS boundary `1017856..1048576`, 15 x 2KB pages; no NV image records; candidate binary excludes NVS storage. This is an *artifact-layout* guarantee, not proof the MR4U's DIO15 routing matches SLZB-06P10.
+- Security/provenance: candidate manifest `flash_authorized=false`, `hardware_validated=false`, `R12.aux_address_is_exclusive=false`, `R12.pin_reset_retention_verified=false` — preserved verbatim.
+- `r12_artifact_audit.py` implements a **second verifier, separate from the R11-derived packager**. `test_r12_artifact_audit.py` exercises corrupted image bytes, wrong revision, forged flash approval, and altered manifest hashes using independent copies of the real artifact. The native CI now runs this audit after packaging and before uploading a candidate; on success it **still** reports `COMPILED_BINARY_AUTHENTICATED_HARDWARE_BLOCKED`.
+
+### Further defects identified and fixed
+
+- **High: overaggressive virgin AUX initialization.** Before this review, `R12Aux_initializeVirgin` refused erasure only when the R12 *magic* word was intact. A prior record with corrupted magic but intact commit/version sentinels could be misclassified as virgin and erased. The fix checks **magic, commit and layout version in both slots** before formatting; host negative cases corrupt magic, CRC and commit separately and assert the exact 80 bytes remain unchanged. A totally obliterated record remains indistinguishable from arbitrary preexisting data and is explicitly not guaranteed.
+- **High / unresolved: no host-acknowledged re-arm protocol.** After the first successful A0 retention smoke, the next boot finds a committed previous-epoch record and deliberately disables further writes. This preserves evidence but means **the same image cannot advance directly to an A1 restored-network startup experiment**. No authorization-safe erase/rearm SREQ is implemented. Do not treat this as a mere future convenience; it is a release-blocking test-lifecycle gap. A protocol must bind acknowledgment to the exact record image/build/attempt/sequence and require explicit owner-gated admission before re-arming, with regression tests for replay, mismatch and crash during clear.
+- **Critical / unresolved: physical AUX ownership and clocks.** The linked code explicitly accesses `0x400E0FB0..0x400E0FFF` after `Board_initGeneral()`. Source scans cannot prove those 80 bytes are unused or their AUX bus is operational that early; a faulty MMIO access could hang or corrupt runtime. TI's CC2674P10 datasheet says AUX RAM isn't zeroed on system reset, but TI's AUX-as-RAM documentation warns that certain objects can crash an application and that back-to-back AUX bus writes can stall the application CPU. [TI guide](https://dev.ti.com/tirex/content/simplelink_cc13xx_cc26xx_sdk_8_32_00_07/docs/proprietary-rf/proprietary-rf-users-guide/memory/aux-as-ram.html). **Hardware bench proof remains mandatory**.
+- **High / unresolved: actual SLZB radio reset behavior.** None of the CI tests confirm that the MR4U reset preserves the AUX power domain/80-byte journal. A successful compiled image is not a real retention test.
+
+### Final release decision
+
+**Source and native binary verification: PASS.
+Hardware acceptance: BLOCKED.
+Release/flash authorization: DENIED until the critical/high items are resolved and independently verified.**
+
+This does not imply the existing 103 Zigbee security associations are lost. Conversely, correct NV readback and verified image layout do not prove the rebuilt original network will start or preserve all runtime security invariants.
+
+During this independent review no P10 radio flash, reset, startup, NV write or Zigbee2MQTT start was performed. The current P10 remains on R11 and the network remains offline after the previous operator-authorized startup test.

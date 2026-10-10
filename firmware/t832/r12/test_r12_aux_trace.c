@@ -72,6 +72,22 @@ int main(void)
     for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
         assert(aux[i] == saved[i]); /* never erase damaged R12 evidence */
     }
+    /* Corrupt the old R12 magic too: valid commit/version sentinels must
+     * still prevent formatting of an interrupted crash record.
+     */
+    aux[0u] ^= 1u;
+    memcpy(saved, (const void *)aux, sizeof(saved));
+    assert(R12Aux_initializeVirgin(aux, BUILD) == R12_AUX_TORN);
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        assert(aux[i] == saved[i]);
+    }
+    /* Even with the commit word corrupted, version is a final sentinel. */
+    aux[9u] ^= 1u;
+    memcpy(saved, (const void *)aux, sizeof(saved));
+    assert(R12Aux_initializeVirgin(aux, BUILD) == R12_AUX_TORN);
+    for (i = 0u; i < R12_AUX_WINDOW_WORDS; ++i) {
+        assert(aux[i] == saved[i]);
+    }
     checks++;
 
     reset_blank();
