@@ -65,6 +65,26 @@ class RealImageAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             h.hex_spans(self.write_hex(x))
 
+    def test_effective_112_75_diagnostic_profile_from_generated_header(self):
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        p = Path(root.name) / "ti_zstack_config.h"
+        p.write_text("#define NWK_MAX_DEVICE_LIST           75\n"
+                     "#define ZDSECMGR_TC_DEVICE_MAX        112\n")
+        self.assertEqual(
+            h.actual_capacity(p),
+            {"ZDSECMGR_TC_DEVICE_MAX": 112, "NWK_MAX_DEVICE_LIST": 75},
+        )
+
+    def test_original_ti_40_key_default_fails_actual_capacity_gate(self):
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        p = Path(root.name) / "ti_zstack_config.h"
+        p.write_text("#define NWK_MAX_DEVICE_LIST           20\n"
+                     "#define ZDSECMGR_TC_DEVICE_MAX        40\n")
+        with self.assertRaisesRegex(ValueError, "EFFECTIVE_CAPACITY_MISMATCH"):
+            h.actual_capacity(p)
+
     def test_map_parser_requires_actual_numeric_row_not_keyword(self):
         root = tempfile.TemporaryDirectory()
         self.addCleanup(root.cleanup)
