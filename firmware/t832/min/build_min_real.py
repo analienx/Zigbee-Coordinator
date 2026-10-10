@@ -42,14 +42,18 @@ def apply(sdk, examples, evidence):
         "-DMT_APP_CNF_FUNC\n\n"
         "-DFEATURE_NVEXID=1\n"
         "-DMT_SYS_KEY_MANAGEMENT=1\n"
-        "-DMULTICAST_ENABLED=FALSE\n", changes)
+        "-DMULTICAST_ENABLED=FALSE\n"
+        "-DMAX_RTG_SRC_ENTRIES=128\n"
+        "-DMAX_NEIGHBOR_ENTRIES=64\n"
+        "-DMAX_SOURCE_ROUTE=16\n"
+        "-DCONFLICTED_ADDR_TABLE_SIZE=8\n", changes)
     version = "source/ti/zstack/mt/mt_version.c"
     # Herdsman v10.9.1 SYS/VERSION SREQ declares exactly nine
     # response bytes (5 header fields + uint32 LE revision). TI ships only
     # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
     # Pin and encode a four-byte build revision and confirm via CI on real TI
     # source and the pinned Herdsman protocol definition, not a host mock.
-    revision = 20261010
+    revision = 2026101001
     original_version = (
         "const uint8_t MTVersionString[] = {\n"
         "                                   2,  /* Transport protocol revision */\n"
@@ -89,7 +93,23 @@ def apply(sdk, examples, evidence):
         "zstack.deviceTypeReadOnly = true;",
         "zstack.deviceTypeReadOnly = true;\r\n"
         "zstack.network.nwkMaxDeviceList = 96;\r\n"
-        "zstack.network.zdsecmgrTcDeviceMax = 192;", changes)
+        "zstack.network.zdsecmgrTcDeviceMax = 192;\r\n"
+        "zstack.advanced.tableSize.routingTableSize = 128;\r\n"
+        "zstack.advanced.routing.maxRouteReqEntries = 16;", changes)
+    # The NV layout is unchanged from the 192/96 production-capacity proposal.
+    # AF status 16, MAC status 26 and NWK_NO_ROUTE 205 prompted this
+    # resource-budget trial; root cause is not yet established.
+    nwk_globals = "source/ti/zstack/stack/nwk/nwk_globals.c"
+    replace_exact(sdk, nwk_globals,
+        "#define NWK_MAX_DATABUFS_WAITING    8     // Waiting to be sent to MAC\n"
+        "#define NWK_MAX_DATABUFS_SCHEDULED  5     // Timed messages to be sent\n"
+        "#define NWK_MAX_DATABUFS_CONFIRMED  5     // Held after MAC confirms\n"
+        "#define NWK_MAX_DATABUFS_TOTAL      12    // Total number of buffers",
+        "#define NWK_MAX_DATABUFS_WAITING    16    // Waiting to be sent to MAC\n"
+        "#define NWK_MAX_DATABUFS_SCHEDULED  8     // Timed messages to be sent\n"
+        "#define NWK_MAX_DATABUFS_CONFIRMED  8     // Held after MAC confirms\n"
+        "#define NWK_MAX_DATABUFS_TOTAL      24    // Total number of buffers", changes)
+
     # The pin's upstream P10 SysConfig declares a 5-page region; expand the
     # physical NVS backing region to match the now-effective 13-page macro.
     # Each CC2674 P10 page is 0x800, so 13 pages occupy [0xF9800,0x100000).
@@ -185,19 +205,26 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
         "changed": changes, "source_files_changed": len(changes),
         "nv_pages": 13, "nvs_region": "0xF9800-0x100000",
-        "capacity_profile": "13page_192TC_96NWK_recovery_candidate",
+        "capacity_profile": "13page_192TC_96NWK_route128_src128_neighbor64_nwkbuf24_OFFLINE",
         "intended_tc_slots": 192, "intended_nwk_device_list": 96,
+        "intended_address_manager": 298,
+        "runtime_budget": {"routing_table": 128, "source_route_entries": 128,
+            "direct_neighbors": 64, "route_requests": 16,
+            "source_route_hops": 16, "address_conflicts": 8,
+            "nwk_buffers_waiting": 16, "nwk_buffers_scheduled": 8,
+            "nwk_buffers_confirmed": 8, "nwk_buffers_total": 24},
         "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 20261010, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
             "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
+            "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=20261010)",
