@@ -11,12 +11,47 @@ Disposition: **LINKED_OFFLINE_UNQUALIFIED**; `flash_authorized=false`.
 4. **P1 deceptive proof classes:** The historical `patch_min.py`, `host_contract.cjs`, `nv_lab.py`, `verify_compiler.py` remain static models/tests, **not** TI linked firmware or true NVOCMP/SYS/AF driver tests. Actual pinned TI source, Herdsman ABI and linker/HEX are validated in the separate real-build workflow.
 5. **Focused regression only:** six bounded hosted cases: valid separated CCFG/main flash; invalid NVS write, checksum, missing CCFG, duplicated bytes and fake map row. No broad CI/instrumentation matrix or new firmware variant.
 
+## 2026-10-10 final adversarial pass — P0 effective Trust Center capacity
+
+**A THIRD critical defect was discovered in the previously green real build:**
+The actual generated `ti_zstack_config.h` downloaded from successful final-SHA run 38020951045 contained
+`#define ZDSECMGR_TC_DEVICE_MAX 40` and `#define NWK_MAX_DEVICE_LIST 20`.
+These are real TI SysConfig output values, NOT inferred planning defaults. TI 8.32
+`zstack_network.syscfg.js` describes the TC setting as the count of unique TC
+link keys; 40 cannot accommodate the recovered network's **103 link-key records**.
+
+The canonical production target remains [#42](https://github.com/analienx/Zigbee-Coordinator/issues/42):
+192 TC slots / 96 device list / 13×0x800 NV pages, **but this requires separately
+authorized M4 layout migration and real NV persistence/compaction validation**.
+M0–M2 now takes only the existing five-page **DIAGNOSTIC** profile:
+`zstack.network.zdsecmgrTcDeviceMax = 112`;
+`zstack.network.nwkMaxDeviceList = 75`; keeps `NVOCMP_NVPAGES=5`.
+The real pinned P10 TI `znp.syscfg` is patched, not a mock constant or the
+generic compiler MAC `MAX_DEVICE_TABLE_ENTRIES` (whose effect on Zigbee tables
+is not assumed). `harden_real.py linked` FAILS if generated
+`ti_zstack_config.h` does not prove exact 112/75. Hosted regression
+explicitly rejects the original 40/20 header. Existing upstream CRLF is
+preserved, with `git -c core.whitespace=cr-at-eol diff --check`.
+
+**Crucial limitation:** 112 TC slots are only **nine slots above current 103**,
+and compilation cannot show there is enough real 10 KiB NV free/compaction space,
+nor guarantee safe table migration from a smaller/larger previous image. The
+five-page profile is **NOT PRODUCTION CAPACITY** and still needs disposable-board
+NV write/read/restart/compaction proof. Do NOT restore the household 103-key
+network to this unproven diagnostic candidate.
+
+The previously successful run 38020951045 and HEX SHA `0ad379...` had **TC=40**.
+They are now **SUPERSEDED**, even though their previous source ABI, linker and
+CCFG audits passed. A new genuine CCS image must pass exact generated 112/75
+macros and a final commit-SHA provenance check before another offline image
+can be accepted. **Never flash any artifact from this PR to the recovered P10.**
+
 ## Real hosted evidence, two exact commits
 
-**Real CCS linked image at build SHA `98c1d8f9de665bf3bf1f9bddf1f4bc4334f512d8`:**
+**Historical, now SUPERSEDED (TC=40/NWK=20) CCS linked image at build SHA `98c1d8f9de665bf3bf1f9bddf1f4bc4334f512d8`:**
 https://github.com/analienx/Zigbee-Coordinator/actions/runs/38020449131
 
-**Download offline-only artifact:**
+**Superseded offline-only artifact (not for use):**
 https://github.com/analienx/Zigbee-Coordinator/actions/runs/38020449131/artifacts/11657782443
 
 - Pinned SDK 8.32.00.07 git SHA `6499c3f53fc5fb5806213be695450a7b43fbaf3d`; example SHA `87ff5b638b632050228a7504f35cf3b95581c278`.
