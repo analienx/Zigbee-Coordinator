@@ -151,7 +151,7 @@ jobs:
       - name: Pack manifest check
         run: python firmware/t832/min/pack.py --check
       - name: M1 contract unit test
-        run: python -m unittest -v tests.test_t832_min_contract
+        run: python -m unittest -v tests.test_t832_min_contract tests.test_t832_min_real_hardening
 
   ti-source-reality:
     name: TI 8.32 and P10 example REAL anchored source patch
