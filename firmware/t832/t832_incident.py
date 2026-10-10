@@ -196,6 +196,7 @@ EVENT_NAMES = {
     51: "NV_FIRST_V1",
     52: "STARTUP_V1",
     53: "RUNTIME_V1",
+    54: "R12_RETENTION_V1",
 }
 
 
@@ -547,6 +548,9 @@ def decode_frame_payload(text: str) -> tuple[dict[str, object], list[dict[str, o
         ]
         if any(record['kind'] in R11_KINDS for record in records):
             frame['r11_group'] = decode_r11_group(records)
+        elif any(record['kind'] == 54 for record in records):
+            from r12.r12_decode import decode_r12_group
+            frame['r12_group'] = decode_r12_group(records)
         return frame, records
     raise ValueError("no-t832-prefix")
 
