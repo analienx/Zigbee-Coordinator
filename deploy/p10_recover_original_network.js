@@ -20,6 +20,7 @@ const {ZnpAdapterManager}=load('adapter/z-stack/adapter/manager.js');
 const {fromUnifiedBackup,toUnifiedBackup}=load('utils/backup.js');
 const parsed=fromUnifiedBackup(working),znp=new Znp(plan.endpoint,115200,false),pause=Symbol('paused');
 let phase='opening',formationCount=0,manager;
+const nibSamples=[];
 const originalRequest=znp.request.bind(znp);
 znp.request=async function(sub,command,payload,...rest){
   assert.notEqual(command,'startupFromApp','startupFromApp prohibited during restore');
@@ -47,6 +48,18 @@ const save=(name,value)=>fs.writeFileSync(path.join(out,name),JSON.stringify(val
     manager=new ZnpAdapterManager({},znp,{backupPath:'/input/working.json',version:1,
       networkOptions:parsed.networkOptions,adapterOptions:{},greenPowerGroup:0x0b84});
     await manager.nv.init(); manager.nwkOptions=parsed.networkOptions;
+    // The previous physical 5-page build reached state 9 but its NIB never
+    // became usable. Capture only boolean NIB readiness, no network secrets.
+    const originalNvRead = manager.nv.readItem.bind(manager.nv);
+    manager.nv.readItem = async function(id, ...args) {
+      const result = await originalNvRead(id, ...args);
+      if (Number(id) === 33 && nibSamples.length < 15) {
+        nibSamples.push({present: Boolean(result),
+          panAssigned: result?.nwkPanId !== undefined && result.nwkPanId !== 65535,
+          channelAssigned: Boolean(result?.nwkLogicalChannel)});
+      }
+      return result;
+    };
     manager.beginStartup=async()=>{
       phase='verify_before_startup';
       const actual=toUnifiedBackup(await manager.backup.createBackup(original.devices.map(x=>'0x'+x.ieee_address)));
@@ -89,6 +102,7 @@ const save=(name,value)=>fs.writeFileSync(path.join(out,name),JSON.stringify(val
     throw new Error('pause hook not reached');
   }catch(e){
     if(e!==pause){
+      save('commissioning-nib-readiness.private.json',{phase,formationCount,nibSamples});
       save('failed.private.json',{phase,error:String(e),stack:e?.stack});
       console.log(JSON.stringify({ok:false,failed_phase:phase,error_type:e?.constructor?.name||'Error'}));
       process.exitCode=1;

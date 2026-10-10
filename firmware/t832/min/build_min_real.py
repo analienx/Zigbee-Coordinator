@@ -72,6 +72,11 @@ def apply(sdk, examples, evidence):
     replace_exact(sdk, version, original_version, patched_version, changes)
     project = ("examples/rtos/LP_EM_CC2674P10/zstack/znp/tirtos7/ticlang/"
         "znp_LP_EM_CC2674P10_tirtos7_ticlang.projectspec")
+    # The TI project has DISTINCT compiler -D and linker --define settings.
+    # The NVOCMP driver is compiled with -D, so changing only the linker
+    # leaves real NV storage at five pages despite a thirteen-page map.
+    replace_exact(examples, project,
+        "-DNVOCMP_NVPAGES=5", "-DNVOCMP_NVPAGES=13", changes)
     replace_exact(examples, project,
         "--define=NVOCMP_NVPAGES=2", "--define=NVOCMP_NVPAGES=13", changes)
     # Real P10 seed SysConfig defaults to TC=40 and direct device list=20.
