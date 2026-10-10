@@ -31,7 +31,9 @@ class NativeArtifactTests(unittest.TestCase):
         self.assertEqual(report["status"],
                          "COMPILED_BINARY_AUTHENTICATED_HARDWARE_BLOCKED")
         self.assertFalse(report["approved_to_flash"])
-        self.assertGreaterEqual(len(report["critical_unresolved"]), 3)
+        self.assertGreaterEqual(len(report["critical_unresolved"]), 2)
+        self.assertEqual(report["acknowledged_rearm_protocol"],
+                         "NOT_REQUIRED_FOR_ONE_SHOT")
         self.assertTrue(report["ccfg_and_nvs_geometry_verified"])
 
     def test_binary_byte_corruption_denied(self):

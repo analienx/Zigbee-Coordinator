@@ -148,12 +148,12 @@ def audit(bundle: Path) -> dict:
         "aux_window": f"0x{AUX_START:08X}-0x{AUX_END-1:08X}",
         "physical_aux_ownership": "UNPROVEN",
         "physical_reset_retention": "UNPROVEN",
-        "acknowledged_rearm_protocol": "MISSING",
+        "acknowledged_rearm_protocol": "NOT_REQUIRED_FOR_ONE_SHOT",
+        "diagnostic_reuse_requires_new_sealed_image_epoch": True,
         "approved_to_flash": False,
         "critical_unresolved": [
             "Live AUX bus clock/memory ownership unknown; an early MMIO access may fault or corrupt another subsystem",
-            "Radio-only restart AUX retention not verified on MR4U hardware",
-            "No safe host-acknowledged rearm: A0 test record prevents a later A1 startup trial"
+            "Radio-only restart AUX retention not verified on MR4U hardware"
         ],
     }
 
