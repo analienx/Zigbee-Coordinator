@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - codex/t832-min-v4-m0m2
+      - codex/t832-min-cap192-routing-20261010
 
 permissions:
   contents: read
@@ -151,7 +152,7 @@ jobs:
       - name: Pack manifest check
         run: python firmware/t832/min/pack.py --check
       - name: M1 contract unit test
-        run: python -m unittest -v tests.test_t832_min_contract tests.test_t832_min_real_hardening
+        run: python -m unittest -v tests.test_t832_min_contract tests.test_t832_min_real_hardening tests.test_t832_min_runtime_profile
 
   ti-source-reality:
     name: TI 8.32 and P10 example REAL anchored source patch
@@ -170,6 +171,7 @@ jobs:
             source/ti/zstack/apps/znp
             source/ti/zstack/mt
             source/ti/zstack/stack/zdo
+            source/ti/zstack/stack/nwk
             source/ti/zstack/npi
             source/ti/zstack/boards/cc13x4_cc26x4
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -192,7 +194,7 @@ jobs:
           mkdir -p evidence
           python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence evidence/source-delta.json
           python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out evidence/host-wire-contract.json
-          test "$(git -C sdk diff --name-only | wc -l)" -eq 7
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 8
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
           git -C examples -c core.whitespace=cr-at-eol diff --check

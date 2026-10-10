@@ -13,7 +13,7 @@ FLASH_END = 0x100000
 NVS_BEGIN = 0xF9800
 CCFG_BEGIN = 0x50000000
 CCFG_END = 0x50000800
-REVISION = 20261010
+REVISION = 2026101002
 H_STD = "src/adapter/z-stack/znp/definition.ts"
 
 
@@ -158,8 +158,65 @@ def actual_capacity(header: Path) -> dict[str, int]:
     return out
 
 
+def runtime_profile(generated_header: Path, imported_opts: Path, globals_c: Path) -> dict:
+    """Fail closed on effective generated/compiled routing resource intent.
+
+    This is a compile-artifact assertion, not a physical 192-device test.
+    """
+    text = generated_header.read_text(encoding="utf-8")
+    generated = {}
+    for name, value in (("MAX_RTG_ENTRIES", 128),
+                        ("MAX_RREQ_ENTRIES", 16),
+                        ("NWK_MAX_BINDING_ENTRIES", 4)):
+        found = re.findall(r"^\s*#define\s+" + name + r"\s+(\d+)\s*$", text, re.M)
+        if len(found) != 1 or int(found[0]) != value:
+            raise ValueError(f"EFFECTIVE_ROUTING_CAPACITY_MISMATCH: {name}={found}, expected {value}")
+        generated[name] = value
+    opts = imported_opts.read_text(encoding="utf-8")
+    for name, value in (("MAX_RTG_SRC_ENTRIES", 128),
+                        ("MAX_NEIGHBOR_ENTRIES", 64),
+                        ("MAX_SOURCE_ROUTE", 16),
+                        ("CONFLICTED_ADDR_TABLE_SIZE", 8)):
+        count = len(re.findall(r"^-D" + name + "=" + str(value) + r"$", opts, re.M))
+        if count != 1:
+            raise ValueError(f"EFFECTIVE_COMPILER_OPTION_MISMATCH: {name}={value}, count={count}")
+    globals_text = globals_c.read_text(encoding="utf-8")
+    for name, value in (("NWK_MAX_DATABUFS_WAITING", 16),
+                        ("NWK_MAX_DATABUFS_SCHEDULED", 8),
+                        ("NWK_MAX_DATABUFS_CONFIRMED", 8),
+                        ("NWK_MAX_DATABUFS_TOTAL", 24)):
+        found = re.findall(r"^\s*#define\s+" + name + r"\s+(\d+)\b", globals_text, re.M)
+        if len(found) != 1 or int(found[0]) != value:
+            raise ValueError(f"EFFECTIVE_NWK_BUFFER_MISMATCH: {name}={found}, expected {value}")
+    return {
+        "generated": generated,
+        "compiler_options": {"MAX_RTG_SRC_ENTRIES": 128,
+                             "MAX_NEIGHBOR_ENTRIES": 64,
+                             "MAX_SOURCE_ROUTE": 16,
+                             "CONFLICTED_ADDR_TABLE_SIZE": 8},
+        "nwk_buffers": {"waiting": 16, "scheduled": 8, "confirmed": 8, "total": 24},
+        "address_manager_theoretical": 96 + 1 + 4 + 5 + 192,
+        "physical_network_tested": False,
+    }
+
+
+def heap_store_bytes(map_file: Path) -> int:
+    """Require the actual linked ZStack OSAL heap, not just a -D option."""
+    text = map_file.read_text(encoding="utf-8", errors="replace")
+    matches = re.findall(
+        r"^\s*[0-9a-fA-F]{8}\s+([0-9a-fA-F]{8})\s+osal_port\.o \(\.bss\.heapmgrHeapStore\)\s*$",
+        text, re.M)
+    if len(matches) != 1:
+        raise ValueError(f"LINKED_OSAL_HEAP_SYMBOL_MISSING_OR_DUPLICATED: {matches}")
+    actual = int(matches[0], 16)
+    if actual != 32768:
+        raise ValueError(f"LINKED_OSAL_HEAP_CAPACITY_MISMATCH: {actual} != 32768")
+    return actual
+
+
 def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
-           sdk_linker: Path, generated_header: Path) -> dict:
+           sdk_linker: Path, generated_header: Path,
+           imported_opts: Path, globals_c: Path) -> dict:
     rows = memory_map(map_file)
     if not {"FLASH", "FLASH_NV", "SRAM", "CCFG"}.issubset(rows):
         raise ValueError(f"missing real TI linker memory rows: {sorted(rows)}")
@@ -172,10 +229,11 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
     ccfg = rows["CCFG"]
     if ccfg["origin"] != CCFG_BEGIN or ccfg["length"] != CCFG_END - CCFG_BEGIN:
         raise ValueError(f"CC26x4 CCFG must be outside main flash: {ccfg}")
-    if rows["SRAM"]["unused"] < 8192:
-        raise ValueError(f"less than 8 KiB unallocated SRAM: {rows['SRAM']}")
+    if rows["SRAM"]["unused"] < 131072:
+        raise ValueError(f"less than 128 KiB unallocated linker SRAM: {rows['SRAM']}")
+    heap_bytes = heap_store_bytes(map_file)
     proj = projectspec.read_text(encoding="utf-8")
-    for item in ("-DNVOCMP_NVPAGES=13", "--define=NVOCMP_NVPAGES=13"):
+    for item in ("-DNVOCMP_NVPAGES=13", "--define=NVOCMP_NVPAGES=13", "-DHEAPMGR_SIZE=32768"):
         if proj.count(item) != 1:
             raise ValueError(f"effective project NV compiler/linker option missing: {item}")
     link = sdk_linker.read_text(encoding="utf-8")
@@ -187,9 +245,12 @@ def linked(map_file: Path, hex_file: Path, projectspec: Path, syscfg: Path,
     ):
         raise ValueError("P10 SysConfig NV region differs from verified map")
     capacity = actual_capacity(generated_header)
+    resources = runtime_profile(generated_header, imported_opts, globals_c)
     evidence = hex_spans(hex_file)
     return {"status": "PASS_REAL_LINK_GEOMETRY", "capacity": capacity,
-            "capacity_profile": "THIRTEEN_PAGE_192TC_96NWK_RESTORE_TRIAL",
+            "capacity_profile": "THIRTEEN_PAGE_192TC_96NWK_ROUTE128_SRC128_Q24_OFFLINE",
+            "runtime_resources": resources,
+            "linked_osal_heap_bytes": heap_bytes,
             "linked_memory": {k: rows[k] for k in ("FLASH", "FLASH_NV", "SRAM", "CCFG")},
             "hex": evidence, "flash_authorized": False,
             "warning": ("CC26x4 separate CCFG address region validated; NVS occupies " 
@@ -209,6 +270,8 @@ def main() -> int:
     p.add_argument("--syscfg", type=Path)
     p.add_argument("--linker", type=Path)
     p.add_argument("--header", type=Path)
+    p.add_argument("--opts", type=Path)
+    p.add_argument("--nwk-globals", type=Path)
     p.add_argument("--out", type=Path)
     a = p.parse_args()
     if a.mode == "source":
@@ -216,9 +279,9 @@ def main() -> int:
             p.error("source requires --sdk and --herdsman")
         result = check_version(a.sdk, a.herdsman)
     else:
-        if not all((a.map, a.hex, a.projectspec, a.syscfg, a.linker, a.header)):
+        if not all((a.map, a.hex, a.projectspec, a.syscfg, a.linker, a.header, a.opts, a.nwk_globals)):
             p.error("linked requires --map --hex --projectspec --syscfg --linker --header")
-        result = linked(a.map, a.hex, a.projectspec, a.syscfg, a.linker, a.header)
+        result = linked(a.map, a.hex, a.projectspec, a.syscfg, a.linker, a.header, a.opts, a.nwk_globals)
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
