@@ -219,7 +219,7 @@ def apply(sdk, examples, evidence):
             "source_route_hops": 16, "address_conflicts": 8,
             "nwk_buffers_waiting": 16, "nwk_buffers_scheduled": 8,
             "nwk_buffers_confirmed": 8, "nwk_buffers_total": 24},
-        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 20261010, "payload_bytes": 9},
+        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 2026101001, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
@@ -227,7 +227,7 @@ def apply(sdk, examples, evidence):
             "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
-            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=20261010)",
+            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101001)",
         ],
         "flash_authorized": False, "hardware_qualified": False,
     }
