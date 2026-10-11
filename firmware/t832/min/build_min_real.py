@@ -54,7 +54,7 @@ def apply(sdk, examples, evidence):
     # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
     # Pin and encode a four-byte build revision and confirm via CI on real TI
     # source and the pinned Herdsman protocol definition, not a host mock.
-    revision = 2026101002
+    revision = 2026101101
     original_version = (
         "const uint8_t MTVersionString[] = {\n"
         "                                   2,  /* Transport protocol revision */\n"
