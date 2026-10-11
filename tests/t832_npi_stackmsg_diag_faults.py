@@ -123,9 +123,19 @@ int main(void){
   NPITask_sendToHost(newFrame(0x61));
   CHECK(srsp&&!areq&&srsp->rejectCount==0);
   cleanQueue(&srsp);npiSrspQueueDepth=0;
+  // A failed direct-send queue-record allocation must leave no allocations.
+  allocs=0;fail_at=2;
+  NPITask_sendToHost(newFrame(0x61));
+  CHECK(!srsp&&!areq&&live==0);
+  fail_at=0;allocs=0;
+  // ECHO callback observes the packet, but the queue still owns framed copy.
+  incomingTXReroute=ECHO;incomingTXEventAppCBFunc=callback;
+  NPITask_processStackMsg(newFrame(0x61));
+  CHECK(callbacks==1&&srsp&&!areq);
+  cleanQueue(&srsp);npiSrspQueueDepth=0;
   incomingTXReroute=INTERCEPT;incomingTXEventAppCBFunc=callback;
   NPITask_processStackMsg(newFrame(0x61));
-  CHECK(callbacks==1&&!srsp&&!areq&&live==0);
+  CHECK(callbacks==2&&!srsp&&!areq&&live==0);
   incomingTXEventAppCBFunc=NULL;incomingTXReroute=NONE;
 
   // Wire diagnostics include only aggregated counters in deterministic LE.
