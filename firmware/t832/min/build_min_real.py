@@ -251,6 +251,12 @@ def apply(sdk, examples, evidence):
         "\n"
         "    OsalPort_msgDeallocate(pMsg->pBuf);",
         "          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );\n"
+        "          if (msgStatus != OsalPort_SUCCESS)\n"
+        "          {\n"
+        "            // Failed send retains caller ownership; free payload and wrapper.\n"
+        "            OsalPort_free(pOsalMsg->msg);\n"
+        "            OsalPort_msgDeallocate((uint8_t *)pOsalMsg);\n"
+        "          }\n"
         "        }\n"
         "        else\n"
         "        {\n"
@@ -291,6 +297,19 @@ def apply(sdk, examples, evidence):
         "// -----------------------------------------------------------------------------\n"
         "//! \\brief      RX Callback provided to Transport Layer for RX Event", changes)
 
+
+    # MT SRSP allocation failure still drops the response (no zero-alloc
+    # recovery yet); but an invalid NPI task must not leak the SRSP message.
+    client_mt = "source/ti/zstack/npi/npi_client_mt.c"
+    replace_exact(sdk, client_mt,
+        "        // Send the message\n"
+        "        OsalPort_msgSend(npiTaskID, pRspMsg);\n",
+        "        // The receiver owns the message only if OSAL enqueue succeeded.\n"
+        "        if (OsalPort_msgSend(npiTaskID, pRspMsg) != OsalPort_SUCCESS)\n"
+        "        {\n"
+        "            OsalPort_msgDeallocate(pRspMsg);\n"
+        "        }\n", changes)
+
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
     # --define, which left FLASH at 0xFD800 and broke 13-page flashBuf0.
@@ -306,7 +325,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -327,7 +346,8 @@ def apply(sdk, examples, evidence):
             "APS multicast group destination behavior",
             "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
             "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
-            "NPI ownership fix: frame ingress, outbound queue creation and stack-message payload failure paths",
+            "NPI ownership fix: frame ingress, outbound queue creation and stack-message payload/send failure paths",
+            "MT SRSP ownership correction after rejected NPI queue send",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101002)",
