@@ -51,6 +51,12 @@ static mtOSALSerialData_t *pending_stack;
 static uint8_t *pending_mt;
 static int npiSemHandle, MTServiceTaskID=1, npiTaskID=2;
 static void *npiRxQueue=(void *)1, *npiTxQueue=(void *)2;
+// This legacy ownership harness selects the original FIFO fallback.
+#define NPI_UNPI_CMD0_INDEX 2u
+#define MTRPC_CMD_TYPE_MASK 0xE0
+#define MTRPC_CMD_SRSP 0x60
+static void *npiSrspTxQueue=NULL;
+static volatile uint32_t npiSrspQueueDepth,npiSrspQueueHighWater;
 static uint32_t npiServiceTaskEvents;
 enum { NPITASK_FRAME_RX_EVENT=4, NPITASK_TX_READY_EVENT=16 };
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"fail line %d: %s\n", __LINE__, #x); exit(7); } } while (0)
