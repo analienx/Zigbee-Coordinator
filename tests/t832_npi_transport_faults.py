@@ -43,6 +43,7 @@ static NPI_QueueRec *queued_srsp;
 static void *npiTxQueue=(void *)1;
 static void *npiSrspTxQueue=(void *)3;
 static volatile uint32_t npiSrspQueueDepth;
+static volatile uint32_t npiAsyncQueueDepth,npiSrspTxAccepted,npiAsyncTxAccepted;
 static uint8_t npiSrspBurst;
 static void *npiTxRetryHandle=(void *)2;
 static volatile uint8_t npiTxRetryPending;
@@ -84,7 +85,7 @@ static void enqueue_test(void) {
     queued->npiMsg->pBuf=alloc(12);
     queued->npiMsg->pBufSize=12;
     for(int i=0;i<12;i++)queued->npiMsg->pBuf[i]=expected_data[i];
-    queue_count++;
+    queue_count++;npiAsyncQueueDepth++;
 }
 static void enqueue_srsp_test(void) {
     CHECK(queued_srsp==NULL);
@@ -101,7 +102,7 @@ static void reset_case(void) {
     npiTxActive=FALSE;npiTxBufLen=0;msgFrag=NULL;msgFragLen=0;
     npiTxRetryPending=0;timer_starts=0;sem_posts=0;
     uart_accept=0;npiTxImmediateRejects=0;npiTxRejectedDrops=0;
-    npiSrspQueueDepth=0;npiSrspBurst=0;
+    npiSrspQueueDepth=0;npiSrspBurst=0;npiAsyncQueueDepth=0;npiSrspTxAccepted=0;npiAsyncTxAccepted=0;
     for(int i=0;i<12;i++)expected_data[i]=(uint8_t)(i+23);
 }
 """
