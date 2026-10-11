@@ -11,6 +11,7 @@ on:
       - fix/t832-npi-tx-recovery-20261011
       - fix/t832-npi-srsp-fairness-20261011
       - fix/t832-npi-telemetry-stackmsg-20261011
+      - fix/t832-af-status-rx-overflow-20261011
 
 permissions:
   contents: read
@@ -201,8 +202,9 @@ jobs:
           python3 repo/tests/t832_npi_ownership_faults.py --sdk sdk
           python3 repo/tests/t832_npi_transport_faults.py --sdk sdk
           python3 repo/tests/t832_npi_stackmsg_diag_faults.py --sdk sdk
+          python3 repo/tests/t832_npi_af_status_faults.py --sdk sdk
           python3 repo/firmware/t832/min/npi_diag_decode.py --selftest
-          test "$(git -C sdk diff --name-only | wc -l)" -eq 13
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 14
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
           git -C examples -c core.whitespace=cr-at-eol diff --check
