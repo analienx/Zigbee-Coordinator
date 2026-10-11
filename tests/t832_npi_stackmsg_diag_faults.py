@@ -164,6 +164,13 @@ def main():
     p.add_argument("--sdk",type=Path,required=True)
     a=p.parse_args()
     src=(a.sdk/"source/ti/zstack/npi/npi_task.c").read_text()
+    loop=function(src,"static void NPITask_process(void)\n")
+    # On accepted UART write, suspend TX_READY until the physical TX_DONE.
+    assert "if (npiTxRetryPending || NPITL_checkNpiBusy())" in loop
+    assert "npiServiceTaskEvents &= ~NPITASK_TX_READY_EVENT;" in loop
+    tx_done=loop[loop.index("if(npiServiceTaskEvents & NPITASK_TRANSPORT_TX_DONE_EVENT)"):]
+    assert "npiSrspTxQueue" in tx_done and "npiTxQueue" in tx_done
+    assert "npiServiceTaskEvents |= NPITASK_TX_READY_EVENT;" in tx_done
     m=(a.sdk/"source/ti/zstack/mt/mt_sys.c").read_text()
     h=(a.sdk/"source/ti/zstack/npi/npi_task.h").read_text()
     start=h.index("typedef struct NPITask_DiagSnapshot_s {")
