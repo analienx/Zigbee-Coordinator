@@ -23,6 +23,7 @@ typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
 #define NPI_FLOW_CTRL 0
 #define NPI_MAX_FRAG_SIZE 1080
 #define NPI_TX_RETRY_MAX 3
+#define NPI_SRSP_BURST_LIMIT 4u
 #define NPITASK_TX_READY_EVENT 0x10
 #define TRUE 1
 #define FALSE 0
@@ -37,7 +38,11 @@ static int uart_accept;
 static int alloc_live, timer_starts, sem_posts, queue_count;
 static uint8_t expected_data[12];
 static NPI_QueueRec *queued;
+static NPI_QueueRec *queued_srsp;
 static void *npiTxQueue=(void *)1;
+static void *npiSrspTxQueue=(void *)3;
+static volatile uint32_t npiSrspQueueDepth;
+static uint8_t npiSrspBurst;
 static void *npiTxRetryHandle=(void *)2;
 static volatile uint8_t npiTxRetryPending;
 static uint8_t npiTxRetryAttempts;
@@ -52,15 +57,23 @@ static void OsalPort_leaveCS(uint32_t v){(void)v;}
 static int NPITL_checkNpiBusy(void){return npiTxActive!=0;}
 static uint16 transportWrite(uint16 n){return uart_accept ? n : 0;}
 #define SRDY_ENABLE() ((void)0)
+static int Queue_empty(void *handle) {
+    CHECK(handle==npiTxQueue||handle==npiSrspTxQueue);
+    return handle==npiTxQueue ? queued==NULL : queued_srsp==NULL;
+}
 static void *Queue_dequeue(void *handle) {
-    CHECK(handle==npiTxQueue);
-    NPI_QueueRec *p=queued;queued=NULL;
+    CHECK(handle==npiTxQueue||handle==npiSrspTxQueue);
+    NPI_QueueRec *p;
+    if(handle==npiTxQueue) {p=queued;queued=NULL;}
+    else {p=queued_srsp;queued_srsp=NULL;}
     if(p)queue_count--;
     return p;
 }
 static void Queue_putHead(void *handle, Queue_Elem *elem){
-    CHECK(handle==npiTxQueue&&queued==NULL);
-    queued=(NPI_QueueRec *)elem;queue_count++;
+    CHECK(handle==npiTxQueue||handle==npiSrspTxQueue);
+    if(handle==npiTxQueue) {CHECK(queued==NULL);queued=(NPI_QueueRec *)elem;}
+    else {CHECK(queued_srsp==NULL);queued_srsp=(NPI_QueueRec *)elem;}
+    queue_count++;
 }
 static void ClockP_start(void *handle){CHECK(handle==npiTxRetryHandle);timer_starts++;}
 static void Semaphore_post(int handle){(void)handle;sem_posts++;}
@@ -73,11 +86,22 @@ static void enqueue_test(void) {
     for(int i=0;i<12;i++)queued->npiMsg->pBuf[i]=expected_data[i];
     queue_count++;
 }
+static void enqueue_srsp_test(void) {
+    CHECK(queued_srsp==NULL);
+    queued_srsp=alloc(sizeof(*queued_srsp));
+    queued_srsp->npiMsg=alloc(sizeof(*queued_srsp->npiMsg));
+    queued_srsp->npiMsg->pBuf=alloc(12);
+    queued_srsp->npiMsg->pBufSize=12;
+    memset(queued_srsp->npiMsg->pBuf,0xA5,12);
+    npiSrspQueueDepth++;
+    queue_count++;
+}
 static void reset_case(void) {
-    CHECK(queued==NULL&&queue_count==0&&alloc_live==0);
+    CHECK(queued==NULL&&queued_srsp==NULL&&queue_count==0&&alloc_live==0);
     npiTxActive=FALSE;npiTxBufLen=0;msgFrag=NULL;msgFragLen=0;
     npiTxRetryPending=0;npiTxRetryAttempts=0;timer_starts=0;sem_posts=0;
     uart_accept=0;npiTxImmediateRejects=0;npiTxRejectedDrops=0;
+    npiSrspQueueDepth=0;npiSrspBurst=0;
     for(int i=0;i<12;i++)expected_data[i]=(uint8_t)(i+23);
 }
 """
@@ -122,8 +146,39 @@ int main(void){
     CHECK(queued==NULL&&alloc_live==0&&npiTxActive==TRUE);
     CHECK(npiTxRejectedDrops==0);
     npiTxActive=FALSE;
+
+    // Both queues occupied: SRSP is first, AREQ must still be serviced next.
+    reset_case();uart_accept=1;enqueue_test();enqueue_srsp_test();
+    NPITask_ProcessTXQ();
+    CHECK(queued_srsp==NULL&&queued!=NULL&&npiSrspQueueDepth==0);
+    CHECK(npiSrspBurst==1&&npiTxBuf[0]==0xA5);
+    npiTxActive=FALSE;
+    NPITask_ProcessTXQ();
+    CHECK(queued==NULL&&alloc_live==0&&npiSrspBurst==0);
+    npiTxActive=FALSE;
+
+    // Fairness budget exhausted: queued AREQ wins over new SRSP.
+    reset_case();uart_accept=1;enqueue_test();enqueue_srsp_test();
+    npiSrspBurst=NPI_SRSP_BURST_LIMIT;
+    NPITask_ProcessTXQ();
+    CHECK(queued==NULL&&queued_srsp!=NULL);
+    CHECK(npiSrspBurst==0&&npiTxBuf[0]==expected_data[0]);
+    npiTxActive=FALSE;
+    NPITask_ProcessTXQ();
+    CHECK(queued_srsp==NULL&&npiSrspQueueDepth==0&&alloc_live==0);
+    npiTxActive=FALSE;
+
+    // Rejected SRSP must remain on the SRSP queue, not become AREQ.
+    reset_case();enqueue_srsp_test();
+    NPITask_ProcessTXQ();
+    CHECK(queued_srsp!=NULL&&queued==NULL&&npiSrspQueueDepth==1);
+    CHECK(npiTxRetryPending&&npiTxActive==FALSE);
+    NPITask_txRetryClockCB(0);uart_accept=1;
+    NPITask_ProcessTXQ();
+    CHECK(queued_srsp==NULL&&npiSrspQueueDepth==0&&alloc_live==0);
+    npiTxActive=FALSE;
   }
-  puts("PASS actual TI NPI TX: 256 cycles of rejection, deferral, recovery, and bounded drop");
+  puts("PASS actual TI NPI: 256 cycles UART recovery, SRSP fairness and ownership");
   return 0;
 }
 """
