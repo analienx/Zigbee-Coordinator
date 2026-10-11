@@ -3,7 +3,7 @@
 Overflow invalidates the current UART batch, buffered ring data and any partial
 UNPI parser frame. Do NOT stitch corrupted partial bytes back into host commands.
 """
-from npi_srsp_fairness_patch import replace_in_function
+from npi_scoped_patcher import replace_in_path_function
 
 TASK="source/ti/zstack/npi/npi_task.c"
 RXBUF="source/ti/zstack/npi/npi_rxbuf.c"
@@ -37,7 +37,7 @@ def apply(sdk, replace_exact, changes):
         "extern void NPIFrame_resetOnOverflow(void);\n",changes)
     # NPI parser owns pMsg only while assembling it. After handing the
     # completed message to the callback, pMsg is not ours to free.
-    replace_in_function(sdk,"void NPIFrame_collectFrameData(void)\n{",[
+    replace_in_path_function(sdk,FRAME,"void NPIFrame_collectFrameData(void)\n{",[
         ("                state = NPIFRAMEMT_SOP_STATE;\n"
          "\n"
          "                break;\n",
@@ -64,7 +64,7 @@ void NPIFrame_resetOnOverflow(void)
     tempDataLen = 0;
 }
 ''',changes)
-    replace_in_function(sdk,"static void NPITask_transportRXCallBack(int size)\n{",[
+    replace_in_path_function(sdk,TASK,"static void NPITask_transportRXCallBack(int size)\n{",[
         ("    // Check for overflow of RxBuf:\n"
          "    // If the buffer has overflowed there is no way to safely recover. All\n"
          "    // received bytes can be packet fragments so if a packet fragment is lost\n"
@@ -108,7 +108,7 @@ void NPIFrame_resetOnOverflow(void)
          "        Semaphore_post(npiSemHandle);\n"
          "    }\n")
     ],changes)
-    replace_in_function(sdk,"static void NPITask_process(void)\n{",[
+    replace_in_path_function(sdk,TASK,"static void NPITask_process(void)\n{",[
         ("                NPIFrame_collectFrameData();\n",
          "                if (npiRxOverflowPending)\n"
          "                {\n"
