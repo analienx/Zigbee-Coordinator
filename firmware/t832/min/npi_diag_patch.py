@@ -19,7 +19,8 @@ FIELDS = (
     "srspAllocFailed", "srspEnqueueFailed", "rxFrameFailed",
     "srspQueueFallback",
     "afDirectAccepted", "afDirectBufferFull", "afDirectMemFailed", "afDirectOther",
-    "afSourceAccepted", "afSourceBufferFull", "afConfirmCcaFailed", "afConfirmOtherFailed"
+    "afSourceAccepted", "afSourceBufferFull", "afConfirmCcaFailed", "afConfirmOtherFailed",
+    "rxOverflowEvents", "rxOverflowDiscardedBytes"
 )
 
 def append(sdk, path, tail, changes):
@@ -123,7 +124,8 @@ def apply(sdk, replace_exact, changes):
         "npiSrspAllocFailed", "npiSrspEnqueueFailed", "npiRxFrameFailed",
         "npiSrspQueueFallback",
         "npiAfDirectAccepted", "npiAfDirectBufferFull", "npiAfDirectMemFailed", "npiAfDirectOther",
-        "npiAfSourceAccepted", "npiAfSourceBufferFull", "npiAfConfirmCcaFailed", "npiAfConfirmOtherFailed"
+        "npiAfSourceAccepted", "npiAfSourceBufferFull", "npiAfConfirmCcaFailed", "npiAfConfirmOtherFailed",
+        "npiRxOverflowEvents", "npiRxOverflowDiscardedBytes"
     )
     for name, source in zip(FIELDS, sources):
         snapshot.append("    dst->"+name+" = "+source+";")
@@ -168,7 +170,7 @@ def apply(sdk, replace_exact, changes):
         "    return;\n",changes)
 
     # Dedicated vendor MT SYS command 0xF0, read-only: version 2, flags,
-    # then 23 uint32 LE counters. No credential, keys, address or radio state.
+    # then 25 uint32 LE counters. No credential, keys, address or radio state.
     replace_exact(sdk,SYS,
         '#include "mt_sys.h"\n',
         '#include "mt_sys.h"\n#include "npi_task.h"\n'
