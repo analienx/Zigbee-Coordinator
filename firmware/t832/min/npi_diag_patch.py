@@ -17,7 +17,9 @@ FIELDS = (
     "txImmediateRejects", "txRejectedDrops",
     "stackFrameFailed", "stackQueueFailed",
     "srspAllocFailed", "srspEnqueueFailed", "rxFrameFailed",
-    "srspQueueFallback"
+    "srspQueueFallback",
+    "afDirectAccepted", "afDirectBufferFull", "afDirectMemFailed", "afDirectOther",
+    "afSourceAccepted", "afSourceBufferFull", "afConfirmCcaFailed", "afConfirmOtherFailed"
 )
 
 def append(sdk, path, tail, changes):
@@ -119,7 +121,9 @@ def apply(sdk, replace_exact, changes):
         "npiTxImmediateRejects", "npiTxRejectedDrops",
         "npiStackFrameFailed", "npiStackQueueFailed",
         "npiSrspAllocFailed", "npiSrspEnqueueFailed", "npiRxFrameFailed",
-        "npiSrspQueueFallback"
+        "npiSrspQueueFallback",
+        "npiAfDirectAccepted", "npiAfDirectBufferFull", "npiAfDirectMemFailed", "npiAfDirectOther",
+        "npiAfSourceAccepted", "npiAfSourceBufferFull", "npiAfConfirmCcaFailed", "npiAfConfirmOtherFailed"
     )
     for name, source in zip(FIELDS, sources):
         snapshot.append("    dst->"+name+" = "+source+";")
@@ -163,8 +167,8 @@ def apply(sdk, replace_exact, changes):
         "\n"
         "    return;\n",changes)
 
-    # Dedicated vendor MT SYS command 0xF0, read-only: version 1, flags,
-    # then 15 uint32 LE counters. No credential, keys, address or radio state.
+    # Dedicated vendor MT SYS command 0xF0, read-only: version 2, flags,
+    # then 23 uint32 LE counters. No credential, keys, address or radio state.
     replace_exact(sdk,SYS,
         '#include "mt_sys.h"\n',
         '#include "mt_sys.h"\n#include "npi_task.h"\n'
@@ -191,7 +195,7 @@ def apply(sdk, replace_exact, changes):
         "{",
         "    NPITask_DiagSnapshot s;",
         "    NPITask_getDiagSnapshot(&s);",
-        "    uint8_t reply[2 + "+str(len(FIELDS))+" * 4] = {1u, s.flags};",
+        "    uint8_t reply[2 + "+str(len(FIELDS))+" * 4] = {2u, s.flags};",
         "    const uint32_t value[] = {"+", ".join("s."+x for x in FIELDS)+"};",
         "    for (uint8_t i = 0; i < "+str(len(FIELDS))+"u; ++i)",
         "    {",
