@@ -1,7 +1,7 @@
 name: T832-MIN real TI ZNP linker (OFFLINE / NOT_FLASHABLE)
 on:
   push:
-    branches: [codex/t832-min-v4-m0m2, codex/t832-min-cap192-routing-20261010, fix/t832-npi-allocation-ownership-20261011, fix/t832-npi-tx-recovery-20261011]
+    branches: [codex/t832-min-v4-m0m2, codex/t832-min-cap192-routing-20261010, fix/t832-npi-allocation-ownership-20261011, fix/t832-npi-tx-recovery-20261011, fix/t832-npi-srsp-fairness-20261011]
     paths:
       - ".github/workflows/t832-min-real-build.yml"
       - "firmware/t832/min/**"
