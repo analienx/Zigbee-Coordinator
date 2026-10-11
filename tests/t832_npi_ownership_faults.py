@@ -46,7 +46,8 @@ static int outstanding, malloc_calls, msg_calls, fail_malloc_at, fail_msg_at;
 static int queued_rx, queued_tx, sem_posts, stack_sends;
 static NPI_QueueRec *pending_queue;
 static mtOSALSerialData_t *pending_stack;
-static int npiSemHandle, npiRxQueue, npiTxQueue, MTServiceTaskID;
+static int npiSemHandle, MTServiceTaskID;
+static void *npiRxQueue=(void *)1, *npiTxQueue=(void *)2;
 static uint32_t npiServiceTaskEvents;
 enum { NPITASK_FRAME_RX_EVENT=4, NPITASK_TX_READY_EVENT=16 };
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"fail line %d: %s\n", __LINE__, #x); exit(7); } } while (0)
@@ -69,11 +70,11 @@ void OsalPort_free(void *p) { CHECK(p); CHECK(outstanding>0); outstanding--; fre
 void OsalPort_msgDeallocate(void *p) { OsalPort_free(p); }
 uint32_t OsalPort_enterCS(void) { return 0; }
 void OsalPort_leaveCS(uint32_t key) { (void)key; }
-void Semaphore_post(void *sem) { (void)sem; sem_posts++; }
+void Semaphore_post(int sem) { (void)sem; sem_posts++; }
 void Queue_enqueue(void *q, Queue_Elem *elem) {
     CHECK(pending_queue == NULL);
     pending_queue=(NPI_QueueRec *)elem;
-    if(q == &npiRxQueue) queued_rx++; else if(q == &npiTxQueue) queued_tx++;
+    if(q == npiRxQueue) queued_rx++; else if(q == npiTxQueue) queued_tx++;
     else CHECK(0);
 }
 int OsalPort_msgSend(int dest, byte *msg) {
