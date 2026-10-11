@@ -38,6 +38,15 @@ def apply(sdk, replace_exact, changes):
     # NPI parser owns pMsg only while assembling it. After handing the
     # completed message to the callback, pMsg is not ours to free.
     replace_in_path_function(sdk,FRAME,"void NPIFrame_collectFrameData(void)\n{",[
+        ("                        incomingFrameCBFunc(MTRPC_FRAME_HDR_SZ + LEN_Token, pMsg, msgType);\n"
+         "                    }\n",
+         "                        incomingFrameCBFunc(MTRPC_FRAME_HDR_SZ + LEN_Token, pMsg, msgType);\n"
+         "                    }\n"
+         "                    else\n"
+         "                    {\n"
+         "                        // No registered consumer: frame remains ours.\n"
+         "                        OsalPort_msgDeallocate(pMsg);\n"
+         "                    }\n"),
         ("                state = NPIFRAMEMT_SOP_STATE;\n"
          "\n"
          "                break;\n",
