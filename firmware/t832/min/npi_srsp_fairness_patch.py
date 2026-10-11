@@ -64,34 +64,26 @@ def apply(sdk, replace_exact, changes):
 
     # Both entry points produce the same on-wire UNPI frames and use the same
     # queue ownership contract; modify their valid ASYNC enqueue branch only.
-    enqueue_old = (
-        "                Queue_enqueue(npiTxQueue, &recPtr->_elem);\n"
-        "                npiServiceTaskEvents |= NPITASK_TX_READY_EVENT;\n"
-        "                Semaphore_post(npiSemHandle);"
-    )
+    enqueue_old = "Queue_enqueue(npiTxQueue, &recPtr->_elem);"
     enqueue_new = (
-        "                // The ZNP host expects SRSP promptly even during AREQ floods.\n"
-        "                if (npiSrspTxQueue != NULL &&\n"
-        "                    pNPIMsg->pBufSize > NPI_UNPI_CMD0_INDEX &&\n"
-        "                    (pNPIMsg->pBuf[NPI_UNPI_CMD0_INDEX] &\n"
-        "                     MTRPC_CMD_TYPE_MASK) == MTRPC_CMD_SRSP)\n"
-        "                {\n"
-        "                    Queue_enqueue(npiSrspTxQueue, &recPtr->_elem);\n"
-        "                    ++npiSrspQueueDepth;\n"
-        "                    if (npiSrspQueueDepth > npiSrspQueueHighWater)\n"
-        "                        npiSrspQueueHighWater = npiSrspQueueDepth;\n"
-        "                }\n"
-        "                else\n"
-        "                {\n"
-        "                    Queue_enqueue(npiTxQueue, &recPtr->_elem);\n"
-        "                }\n"
-        "                npiServiceTaskEvents |= NPITASK_TX_READY_EVENT;\n"
-        "                Semaphore_post(npiSemHandle);"
+        "// Prioritize MT SRSP replies over unsolicited AREQ bursts.\n"
+        "                    if (npiSrspTxQueue != NULL &&\n"
+        "                        pNPIMsg->pBufSize > NPI_UNPI_CMD0_INDEX &&\n"
+        "                        (pNPIMsg->pBuf[NPI_UNPI_CMD0_INDEX] &\n"
+        "                         MTRPC_CMD_TYPE_MASK) == MTRPC_CMD_SRSP)\n"
+        "                    {\n"
+        "                        Queue_enqueue(npiSrspTxQueue, &recPtr->_elem);\n"
+        "                        ++npiSrspQueueDepth;\n"
+        "                        if (npiSrspQueueDepth > npiSrspQueueHighWater)\n"
+        "                            npiSrspQueueHighWater = npiSrspQueueDepth;\n"
+        "                    }\n"
+        "                    else\n"
+        "                    {\n"
+        "                        Queue_enqueue(npiTxQueue, &recPtr->_elem);\n"
+        "                    }"
     )
-    # The sendToHost path indentation differs, and may be used by other apps.
     replace_in_function(sdk, "static void NPITask_processStackMsg(uint8_t *pMsg)\n{",
-                        [(enqueue_old.replace("                ", "                    "),
-                          enqueue_new.replace("                ", "                    "))], changes)
+                        [(enqueue_old, enqueue_new)], changes)
     replace_in_function(sdk, "void NPITask_sendToHost(uint8_t *pMsg)\n{",
                         [(enqueue_old, enqueue_new)], changes)
 
