@@ -15,6 +15,7 @@ from npi_srsp_fairness_patch import apply as apply_srsp_fairness
 from npi_diag_patch import apply as apply_npi_diag
 from npi_tx_nonspin_patch import apply as apply_nonspin
 from npi_af_status_patch import apply as apply_af_status
+from npi_rx_overflow_patch import apply as apply_rx_overflow
 
 SDK_SHA = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
 EXAMPLES_SHA = "87ff5b638b632050228a7504f35cf3b95581c278"
@@ -321,6 +322,7 @@ def apply(sdk, examples, evidence):
     _, npi_task_header, sys_diag, _ = apply_npi_diag(sdk, replace_exact, changes)
     apply_nonspin(sdk, replace_exact, changes)
     _, _, mt_af_diag = apply_af_status(sdk, replace_exact, changes)
+    _, rxbuf_file, rxbuf_header, frame_file, frame_header = apply_rx_overflow(sdk, replace_exact, changes)
 
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
@@ -337,7 +339,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt, transport_tl, npi_task_header, sys_diag, mt_af_diag]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt, transport_tl, npi_task_header, sys_diag, mt_af_diag, rxbuf_file, rxbuf_header, frame_file, frame_header]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -362,7 +364,8 @@ def apply(sdk, examples, evidence):
             "MT SRSP ownership correction after rejected NPI queue send",
             "NPI non-flow-control synchronous UART reject recovery with bounded TX backoff",
             "FIFO host SRSP prioritization with four-response fairness budget and lab counters",
-            "Read-only MT SYS F0 NPI/stack diagnostic v2 (23 counters including AF return and CCA failures)",
+            "Read-only MT SYS F0 NPI/stack diagnostic v2 (25 counters including AF/CCA and RX overflow)",
+            "RX overflow discard and UNPI parser reset replaces infinite trap",
             "NPI pending TX defers to physical UART TX_DONE or one-shot retry event, no busy-spin",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
