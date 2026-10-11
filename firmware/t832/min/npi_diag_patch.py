@@ -147,16 +147,20 @@ def apply(sdk, replace_exact, changes):
         '#include "npi_client.h"\n',
         '#include "npi_client.h"\n#include "npi_task.h"\n',changes)
     replace_exact(sdk,CLIENT,
-        "            OsalPort_msgDeallocate(pRspMsg);\n"
-        "        }\n",
+        "            OsalPort_msgDeallocate(pRspMsg);\n",
         "            NPITask_noteSrspEnqueueFailure();\n"
-        "            OsalPort_msgDeallocate(pRspMsg);\n"
-        "        }\n"
+        "            OsalPort_msgDeallocate(pRspMsg);\n",changes)
+    replace_exact(sdk,CLIENT,
+        "    }\n"
+        "\n"
+        "    return;\n",
         "    }\n"
         "    else\n"
         "    {\n"
         "        NPITask_noteSrspAllocFailure();\n"
-        "    }\n",changes)
+        "    }\n"
+        "\n"
+        "    return;\n",changes)
 
     # Dedicated vendor MT SYS command 0xF0, read-only: version 1, flags,
     # then 15 uint32 LE counters. No credential, keys, address or radio state.
