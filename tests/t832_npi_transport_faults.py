@@ -18,6 +18,7 @@ PREFIX = r"""
 typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef struct { int dummy; } Queue_Elem;
+typedef void *Queue_Handle;
 typedef struct { uint8_t *pBuf; uint16 pBufSize; } NPIMSG_msg_t;
 typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
 #define NPI_FLOW_CTRL 0
