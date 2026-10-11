@@ -10,6 +10,7 @@ on:
       - fix/t832-npi-allocation-ownership-20261011
       - fix/t832-npi-tx-recovery-20261011
       - fix/t832-npi-srsp-fairness-20261011
+      - fix/t832-npi-telemetry-stackmsg-20261011
 
 permissions:
   contents: read
@@ -199,7 +200,7 @@ jobs:
           python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out evidence/host-wire-contract.json
           python3 repo/tests/t832_npi_ownership_faults.py --sdk sdk
           python3 repo/tests/t832_npi_transport_faults.py --sdk sdk
-          test "$(git -C sdk diff --name-only | wc -l)" -eq 11
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 13
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
           git -C examples -c core.whitespace=cr-at-eol diff --check
