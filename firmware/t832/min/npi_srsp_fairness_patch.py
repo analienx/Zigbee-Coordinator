@@ -14,7 +14,7 @@ def replace_in_function(sdk, signature, pairs, changes):
     if original.count(signature) != 1:
         raise ValueError("NPI function definition not unique: " + signature[:45])
     start = original.index(signature)
-    brace = original.index("{", start + len(signature))
+    brace = original.index("{", start)  # signature includes the opening brace
     level = 0
     stop = None
     for i in range(brace, len(original)):
