@@ -36,6 +36,8 @@ typedef uint8_t uint8;
 typedef uint8_t byte;
 typedef int NPIMSG_Type;
 enum { NPIMSG_Type_ASYNC=1, NPIMSG_Type_SYNCRSP=2 };
+#define MT_RPC_CMD_TYPE_MASK 0xE0
+#define MT_RPC_CMD_SRSP 0x60
 typedef struct { uint8_t event; } osal_hdr_t;
 typedef struct { osal_hdr_t hdr; uint8_t *msg; } mtOSALSerialData_t;
 typedef struct { uint8_t *pBuf; uint16_t pBufSize; NPIMSG_Type msgType; } NPIMSG_msg_t;
@@ -53,8 +55,8 @@ static int npiSemHandle, MTServiceTaskID=1, npiTaskID=2;
 static void *npiRxQueue=(void *)1, *npiTxQueue=(void *)2;
 // This legacy ownership harness selects the original FIFO fallback.
 #define NPI_UNPI_CMD0_INDEX 2u
-#define MTRPC_CMD_TYPE_MASK 0xE0
-#define MTRPC_CMD_SRSP 0x60
+#define MT_RPC_CMD_TYPE_MASK 0xE0
+#define MT_RPC_CMD_SRSP 0x60
 static void *npiSrspTxQueue=NULL;
 static volatile uint32_t npiSrspQueueDepth,npiSrspQueueHighWater;
 static uint32_t npiServiceTaskEvents;
