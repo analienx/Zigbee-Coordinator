@@ -208,9 +208,9 @@ def main() -> None:
     bodies=[function(src,h) for h in names]
     mt=(args.sdk / "source/ti/zstack/npi/npi_client_mt.c").read_text()
     bodies.append(function(mt,
-        "void MT_BuildAndSendZToolResponse(uint8_t cmdType, uint8_t cmdId,\\n"
-        "                                  uint8_t dataLen, uint8_t *pData)\\n".replace("\\\\n", "\\n")))
-    c=PREFIX+"\\n\\n".join(bodies)+TESTS
+        "void MT_BuildAndSendZToolResponse(uint8_t cmdType, uint8_t cmdId,\n"
+        "                                  uint8_t dataLen, uint8_t *pData)\n"))
+    c=PREFIX+"\n\n".join(bodies)+TESTS
     with tempfile.TemporaryDirectory() as tmp:
         root=Path(tmp)
         (root / "faults.c").write_text(c)
