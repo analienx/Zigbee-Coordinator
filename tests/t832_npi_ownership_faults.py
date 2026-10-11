@@ -40,7 +40,7 @@ typedef struct { uint8_t event; } osal_hdr_t;
 typedef struct { osal_hdr_t hdr; uint8_t *msg; } mtOSALSerialData_t;
 typedef struct { uint8_t *pBuf; uint16_t pBufSize; NPIMSG_Type msgType; } NPIMSG_msg_t;
 typedef struct { int value; } Queue_Elem;
-typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
+typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; uint8_t rejectCount; } NPI_QueueRec;
 enum { CMD_SERIAL_MSG=11, MT_RPC_FRAME_HDR_SZ=3, MT_RPC_POS_LEN=0,
        MTRPC_FRAME_HDR_SZ=3, MTRPC_POS_LEN=0, MTRPC_POS_CMD0=1, MTRPC_POS_CMD1=2,
        OsalPort_SUCCESS=0 };
