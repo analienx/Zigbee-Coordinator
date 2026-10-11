@@ -134,6 +134,10 @@ static NPIMSG_msg_t *make_input(void) {
 
 TESTS = r"""
 int main(void) {
+    // Repeated allocation failures must not produce cumulative OSAL heap loss.
+    for (int round=0; round<512; round++) {
+    queued_rx=queued_tx=mt_sends=stack_sends=sem_posts=0;
+    CHECK(outstanding==0 && pending_queue==NULL && pending_stack==NULL && pending_mt==NULL);
     // RX complete frame callback: both independent wrapper allocation failures.
     for(int fail=1; fail<=2; fail++) {
         reset_failures(); fail_malloc_at=fail;
@@ -161,6 +165,9 @@ int main(void) {
     NPITask_sendToHost(tracked_alloc(8));
     CHECK(outstanding==0 && pending_queue==NULL);
     next_frame_type=NPIMSG_Type_ASYNC;
+    reset_failures();
+    NPITask_incomingFrameCB(8, tracked_alloc(8), 99);
+    CHECK(outstanding==0 && pending_queue==NULL);
 
     // Incoming host -> stack: fail wrapper allocation, fail second (payload)
     // allocation, then success. All paths release incoming frame & container.
@@ -188,7 +195,8 @@ int main(void) {
     MT_BuildAndSendZToolResponse(3,4,2,data);
     CHECK(mt_sends==1 && pending_mt!=NULL && pending_mt[0]==2 && pending_mt[3]==4);
     clean_mt(); CHECK(outstanding==0);
-    puts("PASS patched TI NPI allocation failure/send-reject paths; zero leaked allocations");
+    }
+    puts("PASS real patched TI NPI: 512 cycles of allocation failures/send rejects; zero leaks");
     return 0;
 }
 """
