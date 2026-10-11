@@ -90,10 +90,10 @@ def apply(sdk, replace_exact, changes):
     )
     # The sendToHost path indentation differs, and may be used by other apps.
     replace_in_function(sdk, "static void NPITask_processStackMsg(uint8_t *pMsg)\n{",
-                        [(enqueue_old, enqueue_new)], changes)
+                        [(enqueue_old.replace("                ", "                    "),
+                          enqueue_new.replace("                ", "                    "))], changes)
     replace_in_function(sdk, "void NPITask_sendToHost(uint8_t *pMsg)\n{",
-                        [(enqueue_old.replace("                ", "                "),
-                          enqueue_new)], changes)
+                        [(enqueue_old, enqueue_new)], changes)
 
     replace_in_function(sdk, "static void NPITask_process(void)\n{", [
         ("if ((!Queue_empty(npiTxQueue)) && !npiTxRetryPending &&",
