@@ -79,7 +79,7 @@ def apply(sdk, replace_exact, changes):
         "                    if (npiSrspTxQueue != NULL &&\n"
         "                        pNPIMsg->pBufSize > NPI_UNPI_CMD0_INDEX &&\n"
         "                        (pNPIMsg->pBuf[NPI_UNPI_CMD0_INDEX] &\n"
-        "                         MTRPC_CMD_TYPE_MASK) == MTRPC_CMD_SRSP)\n"
+        "                         MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SRSP)\n"
         "                    {\n"
         "                        Queue_enqueue(npiSrspTxQueue, &recPtr->_elem);\n"
         "                        ++npiSrspQueueDepth;\n"
