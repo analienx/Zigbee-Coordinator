@@ -195,6 +195,96 @@ def apply(sdk, examples, evidence):
     npi_config = "source/ti/zstack/npi/npi_config.h"
     replace_exact(sdk, npi_config, "#define NPI_TL_BUF_SIZE         270",
                   "#define NPI_TL_BUF_SIZE         1080", changes)
+
+    # Fix three independent ownership losses in pinned TI NPI under allocation
+    # pressure. Each incoming buffer belongs to exactly one caller until a
+    # successful enqueue/OsalPort_msgSend transfers ownership.
+    npi_task = "source/ti/zstack/npi/npi_task.c"
+    replace_exact(sdk, npi_task,
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_leaveCS(key);\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "// Utility functions",
+        "        }\n"
+        "        else\n"
+        "        {\n"
+        "            // Unsupported message type: release both objects before returning.\n"
+        "            OsalPort_msgDeallocate(pNPIMsg->pBuf);\n"
+        "            OsalPort_free(pNPIMsg);\n"
+        "            OsalPort_free(recPtr);\n"
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        // Framing and queue-record allocation may fail independently.\n"
+        "        if (pNPIMsg != NULL)\n"
+        "        {\n"
+        "            OsalPort_msgDeallocate(pNPIMsg->pBuf);\n"
+        "            OsalPort_free(pNPIMsg);\n"
+        "        }\n"
+        "        if (recPtr != NULL)\n"
+        "        {\n"
+        "            OsalPort_free(recPtr);\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_leaveCS(key);\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "// Utility functions", changes)
+    replace_exact(sdk, npi_task,
+        "          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );\n"
+        "        }\n"
+        "\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_msgDeallocate(pMsg->pBuf);",
+        "          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );\n"
+        "        }\n"
+        "        else\n"
+        "        {\n"
+        "          // Payload allocation failed; message wrapper was never enqueued.\n"
+        "          OsalPort_msgDeallocate((uint8_t *)pOsalMsg);\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_msgDeallocate(pMsg->pBuf);", changes)
+    replace_exact(sdk, npi_task,
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "//! \\brief      RX Callback provided to Transport Layer for RX Event",
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        // The frame callback owns pFrame even when either wrapper fails.\n"
+        "        OsalPort_msgDeallocate(pFrame);\n"
+        "        if (npiMsgPtr != NULL)\n"
+        "        {\n"
+        "            OsalPort_free(npiMsgPtr);\n"
+        "        }\n"
+        "        if (recPtr != NULL)\n"
+        "        {\n"
+        "            OsalPort_free(recPtr);\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "//! \\brief      RX Callback provided to Transport Layer for RX Event", changes)
+
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
     # --define, which left FLASH at 0xFD800 and broke 13-page flashBuf0.
@@ -210,7 +300,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -231,6 +321,7 @@ def apply(sdk, examples, evidence):
             "APS multicast group destination behavior",
             "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
             "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
+            "NPI ownership fix: frame ingress, outbound queue creation and stack-message payload failure paths",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101002)",
