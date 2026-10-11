@@ -90,6 +90,8 @@ def main():
     assert "npiRxOverflowPending = 0;" in loop
     parser=function(f,"void NPIFrame_collectFrameData(void)\n")
     assert "pMsg = NULL; // Ownership transferred or freed at FCS." in parser
+    assert "// No registered consumer: frame remains ours." in parser
+    assert "OsalPort_msgDeallocate(pMsg);" in parser
     bodies=[
         function(n,"static void NPITask_transportRXCallBack(int size)\n"),
         function(f,"void NPIFrame_resetOnOverflow(void)\n"),
