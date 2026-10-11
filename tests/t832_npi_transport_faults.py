@@ -20,7 +20,7 @@ typedef uint16_t uint16;
 typedef struct { int dummy; } Queue_Elem;
 typedef void *Queue_Handle;
 typedef struct { uint8_t *pBuf; uint16 pBufSize; } NPIMSG_msg_t;
-typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
+typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; uint8_t rejectCount; } NPI_QueueRec;
 #define NPI_FLOW_CTRL 0
 #define NPI_MAX_FRAG_SIZE 1080
 #define NPI_TX_RETRY_MAX 3
@@ -46,7 +46,6 @@ static volatile uint32_t npiSrspQueueDepth;
 static uint8_t npiSrspBurst;
 static void *npiTxRetryHandle=(void *)2;
 static volatile uint8_t npiTxRetryPending;
-static uint8_t npiTxRetryAttempts;
 static volatile uint32_t npiTxImmediateRejects, npiTxRejectedDrops;
 static uint32_t npiServiceTaskEvents;
 static int npiSemHandle;
@@ -100,7 +99,7 @@ static void enqueue_srsp_test(void) {
 static void reset_case(void) {
     CHECK(queued==NULL&&queued_srsp==NULL&&queue_count==0&&alloc_live==0);
     npiTxActive=FALSE;npiTxBufLen=0;msgFrag=NULL;msgFragLen=0;
-    npiTxRetryPending=0;npiTxRetryAttempts=0;timer_starts=0;sem_posts=0;
+    npiTxRetryPending=0;timer_starts=0;sem_posts=0;
     uart_accept=0;npiTxImmediateRejects=0;npiTxRejectedDrops=0;
     npiSrspQueueDepth=0;npiSrspBurst=0;
     for(int i=0;i<12;i++)expected_data[i]=(uint8_t)(i+23);
@@ -111,7 +110,7 @@ int main(void){
   for(int pass=0;pass<256;pass++) {
     reset_case();enqueue_test();
     NPITask_ProcessTXQ();
-    CHECK(queued!=NULL&&queue_count==1&&alloc_live==3);
+    CHECK(queued!=NULL&&queued->rejectCount==1&&queue_count==1&&alloc_live==3);
     CHECK(npiTxActive==FALSE&&npiTxRetryPending==1);
     CHECK(npiTxImmediateRejects==1&&timer_starts==1);
     // Timer re-arms the deferred event. A successful write consumes ownership.
@@ -121,7 +120,7 @@ int main(void){
     NPITask_ProcessTXQ();
     CHECK(queued==NULL&&queue_count==0&&alloc_live==0);
     CHECK(npiTxActive==TRUE&&!memcmp(npiTxBuf,expected_data,12));
-    CHECK(npiTxRetryAttempts==0&&npiTxRejectedDrops==0);
+    CHECK(npiTxRejectedDrops==0);
     // Completion is asynchronous; mock it before next test case.
     npiTxActive=FALSE;
 
@@ -135,7 +134,7 @@ int main(void){
     }
     CHECK(queued==NULL&&queue_count==0&&alloc_live==0);
     CHECK(npiTxImmediateRejects==4&&npiTxRejectedDrops==1&&timer_starts==3);
-    CHECK(npiTxRetryAttempts==0);
+    CHECK(queued==NULL&&queued_srsp==NULL);
     // Inactive reset never leaves the old NPI busy latch set.
     reset_case();uart_accept=0;
     uint8_t large[1081]={0};
@@ -172,7 +171,7 @@ int main(void){
     // Rejected SRSP must remain on the SRSP queue, not become AREQ.
     reset_case();enqueue_srsp_test();
     NPITask_ProcessTXQ();
-    CHECK(queued_srsp!=NULL&&queued==NULL&&npiSrspQueueDepth==1);
+    CHECK(queued_srsp!=NULL&&queued_srsp->rejectCount==1&&queued==NULL&&npiSrspQueueDepth==1);
     CHECK(npiTxRetryPending&&npiTxActive==FALSE);
     NPITask_txRetryClockCB(0);uart_accept=1;
     NPITask_ProcessTXQ();
