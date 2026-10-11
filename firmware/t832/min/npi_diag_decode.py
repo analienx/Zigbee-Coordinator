@@ -14,9 +14,11 @@ FIELDS = (
     "tx_immediate_rejects", "tx_rejected_drops",
     "stack_frame_failures", "stack_queue_failures",
     "srsp_allocation_failures", "srsp_enqueue_failures",
-    "rx_frame_failures", "srsp_queue_fallbacks"
+    "rx_frame_failures", "srsp_queue_fallbacks",
+    "af_direct_accepted", "af_direct_buffer_full", "af_direct_memory_failure", "af_direct_other",
+    "af_source_accepted", "af_source_buffer_full", "af_confirm_cca_failure", "af_confirm_other_failure"
 )
-VERSION = 1
+VERSION = 2
 SIZE = 2 + len(FIELDS) * 4
 
 def decode(data: bytes) -> dict:
@@ -61,7 +63,7 @@ def selftest() -> None:
 def main() -> None:
     p=argparse.ArgumentParser(description=__doc__)
     m=p.add_mutually_exclusive_group(required=True)
-    m.add_argument("--payload-hex", help="62 payload bytes ONLY, without UNPI framing")
+    m.add_argument("--payload-hex", help="94 payload bytes ONLY, without UNPI framing")
     m.add_argument("--selftest", action="store_true")
     a=p.parse_args()
     if a.selftest:
