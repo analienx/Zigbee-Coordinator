@@ -25,13 +25,14 @@ def decode(data: bytes) -> dict:
     if data[0] != VERSION:
         raise ValueError(f"NPI_DIAG_VERSION_UNSUPPORTED_{data[0]}")
     flags = data[1]
-    if flags & ~0x03:
+    if flags & ~0x07:
         raise ValueError("NPI_DIAG_UNKNOWN_FLAGS")
     values = struct.unpack_from("<" + "I" * len(FIELDS), data, 2)
     return {
         "version": VERSION,
         "srsp_priority_queue_enabled": bool(flags & 1),
         "uart_retry_pending": bool(flags & 2),
+        "uart_transport_busy": bool(flags & 4),
         "counters": dict(zip(FIELDS, values)),
         "interpretation": "UART accepted is NOT UART on-wire completion or Zigbee delivery",
     }
