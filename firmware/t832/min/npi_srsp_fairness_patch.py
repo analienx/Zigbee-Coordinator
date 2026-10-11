@@ -119,7 +119,13 @@ def apply(sdk, replace_exact, changes):
          "                        (npiSrspTxQueue != NULL && !Queue_empty(npiSrspTxQueue)))\n")
     ], changes)
     replace_in_function(sdk, "static void NPITask_ProcessTXQ(void)\n{",
-                        [("npiTxRetryAttempts", "recPtr->rejectCount")], changes)
+                        [("npiTxRetryAttempts < NPI_TX_RETRY_MAX",
+                          "recPtr->rejectCount < NPI_TX_RETRY_MAX"),
+                         ("++npiTxRetryAttempts;", "++recPtr->rejectCount;"),
+                         ("                npiTxRetryAttempts = 0;\n",
+                          "                // Terminal refusal: free this record below.\n"),
+                         ("            npiTxRetryAttempts = 0;\n",
+                          "            // Accepted write consumes this record below.\n")], changes)
     replace_in_function(sdk, "static void NPITask_ProcessTXQ(void)\n{", [
         ("    recPtr = Queue_dequeue(npiTxQueue);\n",
          "    Queue_Handle selectedQueue = npiTxQueue;\n"
