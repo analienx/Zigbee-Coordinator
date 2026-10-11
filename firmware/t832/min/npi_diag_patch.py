@@ -125,7 +125,8 @@ def apply(sdk, replace_exact, changes):
         snapshot.append("    dst->"+name+" = "+source+";")
     snapshot += [
         "    dst->flags = (uint8_t)((npiSrspTxQueue != NULL ? 1u : 0u) |",
-        "                           (npiTxRetryPending ? 2u : 0u));",
+        "                           (npiTxRetryPending ? 2u : 0u) |",
+        "                           (NPITL_checkNpiBusy() ? 4u : 0u));",
         "    OsalPort_leaveCS(key);",
         "}",
         "void NPITask_noteSrspAllocFailure(void)",
