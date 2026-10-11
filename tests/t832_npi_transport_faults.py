@@ -168,6 +168,24 @@ int main(void){
     CHECK(queued_srsp==NULL&&npiSrspQueueDepth==0&&alloc_live==0);
     npiTxActive=FALSE;
 
+    // A successful unrelated SRSP must NOT reset an AREQ's retry budget.
+    reset_case();enqueue_test();uart_accept=0;
+    NPITask_ProcessTXQ();
+    CHECK(queued && queued->rejectCount==1);
+    NPITask_txRetryClockCB(0);
+    uart_accept=1;enqueue_srsp_test();
+    NPITask_ProcessTXQ();
+    CHECK(queued && queued->rejectCount==1 && queued_srsp==NULL);
+    npiTxActive=FALSE;uart_accept=0;
+    NPITask_ProcessTXQ();
+    CHECK(queued && queued->rejectCount==2);
+    NPITask_txRetryClockCB(0);
+    NPITask_ProcessTXQ();
+    CHECK(queued && queued->rejectCount==3);
+    NPITask_txRetryClockCB(0);
+    NPITask_ProcessTXQ();
+    CHECK(queued==NULL && npiTxRejectedDrops==1 && alloc_live==0);
+
     // Rejected SRSP must remain on the SRSP queue, not become AREQ.
     reset_case();enqueue_srsp_test();
     NPITask_ProcessTXQ();
