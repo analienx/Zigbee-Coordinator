@@ -39,6 +39,7 @@ static volatile uint32_t npiSrspEnqueued,npiSrspTxAccepted,npiAsyncTxAccepted,np
 static volatile uint32_t npiStackFrameFailed,npiStackQueueFailed,npiSrspAllocFailed,npiSrspEnqueueFailed,npiRxFrameFailed;
 static volatile uint32_t npiAfDirectAccepted,npiAfDirectBufferFull,npiAfDirectMemFailed,npiAfDirectOther;
 static volatile uint32_t npiAfSourceAccepted,npiAfSourceBufferFull,npiAfConfirmCcaFailed,npiAfConfirmOtherFailed;
+static volatile uint32_t npiRxOverflowEvents,npiRxOverflowDiscardedBytes;
 static volatile uint8_t npiTxRetryPending;
 static int uart_mock_busy;
 static int NPITL_checkNpiBusy(void){return uart_mock_busy;}
@@ -146,7 +147,7 @@ int main(void){
   NPITask_noteSrspAllocFailure();
   NPITask_noteSrspEnqueueFailure();
   MT_SysBseedNpiDiag();
-  CHECK(diagCmd==BSEED_MT_SYS_NPI_DIAG&&diagRsp[0]==2&&diagLen==94);
+  CHECK(diagCmd==BSEED_MT_SYS_NPI_DIAG&&diagRsp[0]==2&&diagLen==102);
   CHECK((diagRsp[1]&1u)==1u);
   CHECK(unpack(0)==0&&unpack(1)>0);
   CHECK(unpack(4)==npiSrspEnqueued);
@@ -157,6 +158,8 @@ int main(void){
   CHECK(unpack(16)==npiAfDirectBufferFull);
   CHECK(unpack(20)==npiAfSourceBufferFull);
   CHECK(unpack(21)==npiAfConfirmCcaFailed);
+  CHECK(unpack(23)==npiRxOverflowEvents);
+  CHECK(unpack(24)==npiRxOverflowDiscardedBytes);
   CHECK(live==0);
  }
  puts("PASS patched TI stack-message ownership/SRSP split/diag 128 cycles");
