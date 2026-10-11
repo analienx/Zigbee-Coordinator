@@ -50,11 +50,12 @@ int main(void) {
   NPITask_transportRXCallBack(75);
   CHECK(npiRxOverflowPending==1);
   CHECK(tl_available==0 && rx_seen==0 && sem_posts==1);
-  CHECK(npiRxOverflowDiscardedBytes==(uint32_t)(i+1)*75);
+  CHECK(npiRxOverflowDiscardedBytes==(uint32_t)(i*92+75));
   // The next ISR callback before task recovery is also discarded.
   tl_available=17;available=500;
   NPITask_transportRXCallBack(17);
   CHECK(tl_available==0&&rx_seen==0&&npiRxOverflowPending==1);
+  CHECK(npiRxOverflowDiscardedBytes==(uint32_t)(i+1)*92);
   // In NPI task: discard old buffer and parser ownership, then clear flag.
   NPIFrame_resetOnOverflow();
   NPIRxBuf_DiscardAll();
