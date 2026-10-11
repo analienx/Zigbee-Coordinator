@@ -62,6 +62,10 @@ int main(void) {
   npiRxOverflowPending=0;
   CHECK(live==0&&pMsg==NULL&&state==NPIFRAMEMT_SOP_STATE);
   CHECK(RxBufHead==RxBufTail&&LEN_Token==0&&tempDataLen==0);
+  // UART read timeout / empty callback is not an overflow event.
+  uint32_t overflows=npiRxOverflowEvents;
+  NPITask_transportRXCallBack(0);
+  CHECK(npiRxOverflowEvents==overflows && npiRxOverflowPending==0);
   tl_available=10;
   NPITask_transportRXCallBack(10);
   CHECK(rx_seen==10 && npiRxOverflowPending==0);
