@@ -9,6 +9,7 @@ on:
       - codex/t832-min-cap192-routing-20261010
       - fix/t832-npi-allocation-ownership-20261011
       - fix/t832-npi-tx-recovery-20261011
+      - fix/t832-npi-srsp-fairness-20261011
 
 permissions:
   contents: read
