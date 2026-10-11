@@ -58,6 +58,10 @@ static void *npiRxQueue=(void *)1, *npiTxQueue=(void *)2;
 static void *npiSrspTxQueue=NULL;
 static volatile uint32_t npiSrspQueueDepth,npiSrspQueueHighWater;
 static uint32_t npiServiceTaskEvents;
+static volatile uint32_t npiSrspEnqueued,npiAsyncQueueDepth,npiAsyncQueueHighWater,npiRxFrameFailed;
+static volatile uint32_t npiSrspAllocFailed,npiSrspEnqueueFailed;
+void NPITask_noteSrspAllocFailure(void){++npiSrspAllocFailed;}
+void NPITask_noteSrspEnqueueFailure(void){++npiSrspEnqueueFailed;}
 enum { NPITASK_FRAME_RX_EVENT=4, NPITASK_TX_READY_EVENT=16 };
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"fail line %d: %s\n", __LINE__, #x); exit(7); } } while (0)
 
