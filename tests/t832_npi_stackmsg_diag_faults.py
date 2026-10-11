@@ -79,7 +79,7 @@ static uint8_t *newFrame(uint8_t cmd0){
 static void cleanQueue(NPI_QueueRec **p){
     if(*p){OsalPort_msgDeallocate((*p)->npiMsg->pBuf);OsalPort_free((*p)->npiMsg);OsalPort_free(*p);*p=NULL;}
 }
-static uint8_t diagRsp[100],diagLen,diagCmd;
+static uint8_t diagRsp[128],diagLen,diagCmd;
 static void MT_BuildAndSendZToolResponse(uint8_t type,uint8_t cmd,uint8_t len,uint8_t *data){
     CHECK(type==MT_SRSP_SYS);CHECK(len<=sizeof(diagRsp));
     diagLen=len;diagCmd=cmd;memcpy(diagRsp,data,len);
