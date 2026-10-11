@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 from npi_tx_recovery_patch import apply as apply_tx_recovery
 from npi_srsp_fairness_patch import apply as apply_srsp_fairness
+from npi_diag_patch import apply as apply_npi_diag
 
 SDK_SHA = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
 EXAMPLES_SHA = "87ff5b638b632050228a7504f35cf3b95581c278"
@@ -55,7 +56,7 @@ def apply(sdk, examples, evidence):
     # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
     # Pin and encode a four-byte build revision and confirm via CI on real TI
     # source and the pinned Herdsman protocol definition, not a host mock.
-    revision = 2026101102
+    revision = 2026101103
     original_version = (
         "const uint8_t MTVersionString[] = {\n"
         "                                   2,  /* Transport protocol revision */\n"
@@ -315,6 +316,7 @@ def apply(sdk, examples, evidence):
     # Bounded UART immediate-rejection recovery is separate from leak cleanup.
     transport_tl, _ = apply_tx_recovery(sdk, replace_exact, changes)
     apply_srsp_fairness(sdk, replace_exact, changes)
+    _, npi_task_header, sys_diag, _ = apply_npi_diag(sdk, replace_exact, changes)
 
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
@@ -331,7 +333,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt, transport_tl]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt, transport_tl, npi_task_header, sys_diag]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -346,7 +348,7 @@ def apply(sdk, examples, evidence):
             "source_route_hops": 16, "address_conflicts": 8,
             "nwk_buffers_waiting": 16, "nwk_buffers_scheduled": 8,
             "nwk_buffers_confirmed": 8, "nwk_buffers_total": 24},
-        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 2026101002, "payload_bytes": 9},
+        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": revision, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
@@ -356,9 +358,10 @@ def apply(sdk, examples, evidence):
             "MT SRSP ownership correction after rejected NPI queue send",
             "NPI non-flow-control synchronous UART reject recovery with bounded TX backoff",
             "FIFO host SRSP prioritization with four-response fairness budget and lab counters",
+            "Read-only MT SYS F0 NPI/stack diagnostic v1 (15 counters and state flags)",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
-            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101002)",
+            f"ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision={revision})",
         ],
         "flash_authorized": False, "hardware_qualified": False,
     }
