@@ -53,7 +53,7 @@ def selftest() -> None:
     assert out["counters"]["srsp_enqueued"]==0xA1B2C3D4
     assert out["srsp_priority_queue_enabled"] is True
     assert decode(parse_hex(data.hex())) == out
-    for bad in [data[:-1], bytes([2])+data[1:], data[:1]+bytes([0x80])+data[2:]]:
+    for bad in [data[:-1], bytes([VERSION+1])+data[1:], data[:1]+bytes([0x80])+data[2:]]:
         try:
             decode(bad)
             raise AssertionError("invalid payload accepted")
