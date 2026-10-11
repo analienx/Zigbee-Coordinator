@@ -201,6 +201,7 @@ jobs:
           python3 repo/tests/t832_npi_ownership_faults.py --sdk sdk
           python3 repo/tests/t832_npi_transport_faults.py --sdk sdk
           python3 repo/tests/t832_npi_stackmsg_diag_faults.py --sdk sdk
+          python3 repo/firmware/t832/min/npi_diag_decode.py --selftest
           test "$(git -C sdk diff --name-only | wc -l)" -eq 13
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
