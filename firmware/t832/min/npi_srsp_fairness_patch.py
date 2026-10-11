@@ -142,11 +142,11 @@ def apply(sdk, replace_exact, changes):
         ("Queue_putHead(npiTxQueue, &recPtr->_elem);",
          "Queue_putHead(selectedQueue, &recPtr->_elem);\n"
          "                if (selectedSrsp) ++npiSrspQueueDepth;"),
-        ("            npiTxRetryAttempts = 0;\n"
+        ("            // Accepted write consumes this record below.\n"
          "        }\n"
          "\n"
          "        if (recPtr != NULL)",
-         "            npiTxRetryAttempts = 0;\n"
+         "            // Accepted write consumes this record below.\n"
          "            if (selectedSrsp)\n"
          "            {\n"
          "                if (npiSrspBurst < NPI_SRSP_BURST_LIMIT)\n"
