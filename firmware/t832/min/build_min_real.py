@@ -13,6 +13,7 @@ from pathlib import Path
 from npi_tx_recovery_patch import apply as apply_tx_recovery
 from npi_srsp_fairness_patch import apply as apply_srsp_fairness
 from npi_diag_patch import apply as apply_npi_diag
+from npi_tx_nonspin_patch import apply as apply_nonspin
 
 SDK_SHA = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
 EXAMPLES_SHA = "87ff5b638b632050228a7504f35cf3b95581c278"
@@ -317,6 +318,7 @@ def apply(sdk, examples, evidence):
     transport_tl, _ = apply_tx_recovery(sdk, replace_exact, changes)
     apply_srsp_fairness(sdk, replace_exact, changes)
     _, npi_task_header, sys_diag, _ = apply_npi_diag(sdk, replace_exact, changes)
+    apply_nonspin(sdk, replace_exact, changes)
 
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
@@ -359,6 +361,7 @@ def apply(sdk, examples, evidence):
             "NPI non-flow-control synchronous UART reject recovery with bounded TX backoff",
             "FIFO host SRSP prioritization with four-response fairness budget and lab counters",
             "Read-only MT SYS F0 NPI/stack diagnostic v1 (15 counters and state flags)",
+            "NPI pending TX defers to physical UART TX_DONE or one-shot retry event, no busy-spin",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
             f"ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision={revision})",
