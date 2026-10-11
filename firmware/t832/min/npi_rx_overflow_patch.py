@@ -77,9 +77,12 @@ void NPIFrame_resetOnOverflow(void)
          "    // When using NPI_FLOW_CTRL make sure to increase NPI_TL_BUF_SIZE\n"
          "    // to suit the NPI frame length that is expected to be received.\n"
          "    if ( size < NPIRxBuf_GetRxBufAvail() )\n",
+         "    // Empty callbacks are expected; do not classify a UART timeout as\n"
+         "    // overflow or discard a partially assembled valid frame.\n"
+         "    if (size <= 0) return;\n"
          "    // No flow control: overflow invalidates every partial fragment.\n"
          "    // While recovery is pending, discard subsequent callbacks as well.\n"
-         "    if (!npiRxOverflowPending && size > 0 &&\n"
+         "    if (!npiRxOverflowPending &&\n"
          "        (uint32_t)size < (uint32_t)NPIRxBuf_GetRxBufAvail())\n"),
         ("    else\n"
          "    {\n"
