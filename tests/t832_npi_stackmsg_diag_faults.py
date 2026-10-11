@@ -38,6 +38,8 @@ static volatile uint32_t npiSrspQueueDepth,npiSrspQueueHighWater,npiSrspQueueFal
 static volatile uint32_t npiSrspEnqueued,npiSrspTxAccepted,npiAsyncTxAccepted,npiTxImmediateRejects,npiTxRejectedDrops;
 static volatile uint32_t npiStackFrameFailed,npiStackQueueFailed,npiSrspAllocFailed,npiSrspEnqueueFailed,npiRxFrameFailed;
 static volatile uint8_t npiTxRetryPending;
+static int uart_mock_busy;
+static int NPITL_checkNpiBusy(void){return uart_mock_busy;}
 static int npiSrspBurst;
 static uint32_t npiServiceTaskEvents;
 static int npiSemHandle,live,allocs,fail_at,fail_frame;
