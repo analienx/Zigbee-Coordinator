@@ -41,12 +41,15 @@ typedef struct { osal_hdr_t hdr; uint8_t *msg; } mtOSALSerialData_t;
 typedef struct { uint8_t *pBuf; uint16_t pBufSize; NPIMSG_Type msgType; } NPIMSG_msg_t;
 typedef struct { int value; } Queue_Elem;
 typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
-enum { CMD_SERIAL_MSG=11, MT_RPC_FRAME_HDR_SZ=3, MT_RPC_POS_LEN=0 };
+enum { CMD_SERIAL_MSG=11, MT_RPC_FRAME_HDR_SZ=3, MT_RPC_POS_LEN=0,
+       MTRPC_FRAME_HDR_SZ=3, MTRPC_POS_LEN=0, MTRPC_POS_CMD0=1, MTRPC_POS_CMD1=2,
+       OsalPort_SUCCESS=0 };
 static int outstanding, malloc_calls, msg_calls, fail_malloc_at, fail_msg_at;
-static int queued_rx, queued_tx, sem_posts, stack_sends;
+static int queued_rx, queued_tx, sem_posts, stack_sends, mt_sends, reject_send;
 static NPI_QueueRec *pending_queue;
 static mtOSALSerialData_t *pending_stack;
-static int npiSemHandle, MTServiceTaskID;
+static uint8_t *pending_mt;
+static int npiSemHandle, MTServiceTaskID=1, npiTaskID=2;
 static void *npiRxQueue=(void *)1, *npiTxQueue=(void *)2;
 static uint32_t npiServiceTaskEvents;
 enum { NPITASK_FRAME_RX_EVENT=4, NPITASK_TX_READY_EVENT=16 };
@@ -78,8 +81,14 @@ void Queue_enqueue(void *q, Queue_Elem *elem) {
     else CHECK(0);
 }
 int OsalPort_msgSend(int dest, byte *msg) {
-    (void)dest; CHECK(pending_stack == NULL);
-    pending_stack=(mtOSALSerialData_t *)msg; stack_sends++;
+    if (reject_send) return 3;
+    if (dest == MTServiceTaskID) {
+        CHECK(pending_stack == NULL);
+        pending_stack=(mtOSALSerialData_t *)msg; stack_sends++;
+    } else if (dest == npiTaskID) {
+        CHECK(pending_mt == NULL);
+        pending_mt=msg; mt_sends++;
+    } else CHECK(0);
     return 0;
 }
 static NPIMSG_Type next_frame_type = NPIMSG_Type_ASYNC;
@@ -104,6 +113,9 @@ static void clean_queue(void) {
         OsalPort_free(pending_queue);
         pending_queue=NULL;
     }
+}
+static void clean_mt(void) {
+    if (pending_mt) { OsalPort_msgDeallocate(pending_mt); pending_mt=NULL; }
 }
 static void clean_stack(void) {
     if(pending_stack) {
@@ -152,18 +164,31 @@ int main(void) {
 
     // Incoming host -> stack: fail wrapper allocation, fail second (payload)
     // allocation, then success. All paths release incoming frame & container.
-    for(int mode=1; mode<=3; mode++) {
+    for(int mode=1; mode<=4; mode++) {
         reset_failures();
         NPIMSG_msg_t *input=make_input();
         if(mode==1) fail_msg_at=1;
         if(mode==2) fail_malloc_at=1;
+        if(mode==4) reject_send=1;
         int ok=NPITask_sendBufToStack(input);
-        if(mode<3) CHECK(ok==0 && stack_sends==0);
-        else CHECK(ok==0 && stack_sends==1 && pending_stack!=NULL);
-        clean_stack(); stack_sends=0;
+        if(mode==3) CHECK(ok==0 && stack_sends==1 && pending_stack!=NULL);
+        else CHECK(stack_sends==0);
+        clean_stack(); stack_sends=0; reject_send=0;
         CHECK(outstanding==0);
     }
-    puts("PASS actual TI NPI ownership fault injection: 9 paths, no leaks");
+    // MT response: allocation drop, rejected send, then successful enqueue.
+    uint8_t data[2]={4,5};
+    reset_failures(); fail_msg_at=1;
+    MT_BuildAndSendZToolResponse(3,4,2,data);
+    CHECK(outstanding==0 && pending_mt==NULL);
+    reset_failures(); reject_send=1;
+    MT_BuildAndSendZToolResponse(3,4,2,data);
+    CHECK(outstanding==0 && pending_mt==NULL);
+    reject_send=0;
+    MT_BuildAndSendZToolResponse(3,4,2,data);
+    CHECK(mt_sends==1 && pending_mt!=NULL && pending_mt[0]==2 && pending_mt[3]==4);
+    clean_mt(); CHECK(outstanding==0);
+    puts("PASS patched TI NPI allocation failure/send-reject paths; zero leaked allocations");
     return 0;
 }
 """
@@ -181,7 +206,11 @@ def main() -> None:
         "                                    NPIMSG_Type msgType)\n",
     )
     bodies=[function(src,h) for h in names]
-    c=PREFIX+"\n\n".join(bodies)+TESTS
+    mt=(args.sdk / "source/ti/zstack/npi/npi_client_mt.c").read_text()
+    bodies.append(function(mt,
+        "void MT_BuildAndSendZToolResponse(uint8_t cmdType, uint8_t cmdId,\\n"
+        "                                  uint8_t dataLen, uint8_t *pData)\\n".replace("\\\\n", "\\n")))
+    c=PREFIX+"\\n\\n".join(bodies)+TESTS
     with tempfile.TemporaryDirectory() as tmp:
         root=Path(tmp)
         (root / "faults.c").write_text(c)
