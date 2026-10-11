@@ -41,6 +41,15 @@ def replace_in_function(sdk, signature, pairs, changes):
 
 def apply(sdk, replace_exact, changes):
     replace_exact(sdk, TASK,
+        "    NPIMSG_msg_t *npiMsg;\n"
+        "} NPI_QueueRec;",
+        "    NPIMSG_msg_t *npiMsg;\n"
+        "    uint8_t rejectCount;  // Per-frame immediate-write rejection budget.\n"
+        "} NPI_QueueRec;", changes)
+    replace_exact(sdk, TASK,
+        "static uint8_t npiTxRetryAttempts = 0;\n",
+        "", changes)
+    replace_exact(sdk, TASK,
         "#define NPI_TX_RETRY_US 50000u\n",
         "#define NPI_TX_RETRY_US 50000u\n"
         "#define NPI_SRSP_BURST_LIMIT 4u\n"
@@ -87,6 +96,16 @@ def apply(sdk, replace_exact, changes):
     replace_in_function(sdk, "void NPITask_sendToHost(uint8_t *pMsg)\n{",
                         [(enqueue_old, enqueue_new)], changes)
 
+    replace_in_function(sdk, "static void NPITask_incomingFrameCB(uint8_t frameSize, uint8_t *pFrame,\n                                    NPIMSG_Type msgType)\n{",
+                        [("recPtr->npiMsg = npiMsgPtr;",
+                          "recPtr->npiMsg = npiMsgPtr;\n        recPtr->rejectCount = 0;")], changes)
+    replace_in_function(sdk, "static void NPITask_processStackMsg(uint8_t *pMsg)\n{",
+                        [("recPtr->npiMsg = pNPIMsg;",
+                          "recPtr->npiMsg = pNPIMsg;\n            recPtr->rejectCount = 0;")], changes)
+    replace_in_function(sdk, "void NPITask_sendToHost(uint8_t *pMsg)\n{",
+                        [("recPtr->npiMsg = pNPIMsg;",
+                          "recPtr->npiMsg = pNPIMsg;\n        recPtr->rejectCount = 0;")], changes)
+
     replace_in_function(sdk, "static void NPITask_process(void)\n{", [
         ("if ((!Queue_empty(npiTxQueue)) && !npiTxRetryPending &&",
          "if ((!Queue_empty(npiTxQueue) ||\n"
@@ -99,6 +118,8 @@ def apply(sdk, replace_exact, changes):
          "if (!Queue_empty(npiTxQueue) ||\n"
          "                        (npiSrspTxQueue != NULL && !Queue_empty(npiSrspTxQueue)))\n")
     ], changes)
+    replace_in_function(sdk, "static void NPITask_ProcessTXQ(void)\n{",
+                        [("npiTxRetryAttempts", "recPtr->rejectCount")], changes)
     replace_in_function(sdk, "static void NPITask_ProcessTXQ(void)\n{", [
         ("    recPtr = Queue_dequeue(npiTxQueue);\n",
          "    Queue_Handle selectedQueue = npiTxQueue;\n"
