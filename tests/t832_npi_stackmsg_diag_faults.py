@@ -20,8 +20,8 @@ typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef int NPIMSG_Type;
 #define NPIMSG_Type_ASYNC 1
-#define MTRPC_CMD_TYPE_MASK 0xE0
-#define MTRPC_CMD_SRSP 0x60
+#define MT_RPC_CMD_TYPE_MASK 0xE0
+#define MT_RPC_CMD_SRSP 0x60
 #define NPI_UNPI_CMD0_INDEX 2u
 #define NPI_SRSP_BURST_LIMIT 4u
 #define NPITASK_TX_READY_EVENT 0x10
