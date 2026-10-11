@@ -10,6 +10,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from npi_tx_recovery_patch import apply as apply_tx_recovery
 
 SDK_SHA = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
 EXAMPLES_SHA = "87ff5b638b632050228a7504f35cf3b95581c278"
@@ -310,6 +311,9 @@ def apply(sdk, examples, evidence):
         "            OsalPort_msgDeallocate(pRspMsg);\n"
         "        }\n", changes)
 
+    # Bounded UART immediate-rejection recovery is separate from leak cleanup.
+    transport_tl, _ = apply_tx_recovery(sdk, replace_exact, changes)
+
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
     # --define, which left FLASH at 0xFD800 and broke 13-page flashBuf0.
@@ -325,7 +329,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt, transport_tl]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -348,6 +352,7 @@ def apply(sdk, examples, evidence):
             "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
             "NPI ownership fix: frame ingress, outbound queue creation and stack-message payload/send failure paths",
             "MT SRSP ownership correction after rejected NPI queue send",
+            "NPI non-flow-control synchronous UART reject recovery with bounded TX backoff",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
             "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101002)",
