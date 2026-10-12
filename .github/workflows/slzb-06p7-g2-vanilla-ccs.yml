@@ -73,6 +73,8 @@ jobs:
           python3 firmware/slzb-06p7/ti832/g3/nv5_layout.py --selftest
           python3 -m py_compile firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py
           python3 firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/nv5_effective.py
+          python3 firmware/slzb-06p7/ti832/g3/nv5_effective.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
     needs: [source-tests, classify_delta]
@@ -525,6 +527,11 @@ jobs:
             --hex g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.hex \
             --map g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.map \
             --out g3-nv5/NV5-NATIVE-ELF-HEX-MAP-AUDIT.json
+          python3 repo/firmware/slzb-06p7/ti832/g3/nv5_effective.py \
+            --generated g3-nv5/generated-ti_drivers_config.c \
+            --compiler-log g3-nv5/ccs-native-build.log \
+            --linked-proof g3-nv5/NV5-NATIVE-ELF-HEX-MAP-AUDIT.json \
+            --out g3-nv5/NV5-EFFECTIVE-DRIVER-AUDIT.json
           python3 - <<'PY'
           import hashlib,json
           from pathlib import Path
@@ -532,6 +539,10 @@ jobs:
           d=json.loads((root/"NV5-NATIVE-ELF-HEX-MAP-AUDIT.json").read_text())
           m=json.loads((root/"NV5-CANDIDATE-SOURCE-MANIFEST.json").read_text())
           assert d["status"]=="NV5_NATIVE_ELF_HEX_LINKER_GEOMETRY_PASS"
+          effective=json.loads((root/"NV5-EFFECTIVE-DRIVER-AUDIT.json").read_text())
+          assert effective["status"]=="G3_NV5_EFFECTIVE_NVOCMP_AND_NVS_DRIVER_PASS"
+          assert effective["compiled_driver"]["nvocmp_c_compiled_with_pages"]==5
+          assert effective["generated_internal_nvs"]["internal_driver_region_size_bytes"]==40960
           assert d["nv_reserved_bytes"]==40960 and d["nv_image_loaded_bytes"]==0
           assert d["nv_region_start"]=="0xa4000"
           assert d["flash_authorized"] is False
