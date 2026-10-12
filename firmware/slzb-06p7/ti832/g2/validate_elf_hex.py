@@ -216,7 +216,7 @@ def selftest() -> None:
     bad = bytearray(elf); bad[150] ^= 1; cases.append((bytes(bad), hex_text))
     bad = bytearray(elf); bad[18] = 62; cases.append((bytes(bad), hex_text))
     bad = bytearray(elf); bad[24] &= 0xfe; cases.append((bytes(bad), hex_text))
-    bad = bytearray(elf); struct.pack_into("<I", bad, 52 + 3 * 32 - 16, 0); cases.append((bytes(bad), hex_text))
+    bad = bytearray(elf); struct.pack_into("<I", bad, 52 + 16, 0); cases.append((bytes(bad), hex_text))
     bad = bytearray(elf); struct.pack_into("<I", bad, 52 + 2 * 32 + 16, 2); cases.append((bytes(bad), hex_text))
     cases.append((elf, hex_text.rsplit("\n",1)[0]))
     for idx, pair in enumerate(cases):
