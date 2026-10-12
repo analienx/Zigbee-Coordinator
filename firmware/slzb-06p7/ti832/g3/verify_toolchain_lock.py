@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 LOCK=Path(__file__).with_name("toolchain-lock.json")
+EXPECTED_KIND={"ccs":"WEB_BOOTSTRAP_MAY_FETCH_ADDITIONAL_COMPONENTS","sysconfig":"LINUX_SETUP_BINARY"}
 EXPECTED={
     "ccs":("12.8.0.00012","CCS12.8.0.00012_web_linux-x64.tar.gz",
            "3b56d5d07a47132408a116f01cc01587c88e78de7372e9623754f035e1c9d550",
@@ -39,8 +40,8 @@ def audit_lock(obj:dict)->None:
                 "DIGEST_FORMAT_"+name)
         require(a["url"].startswith("https://"+domain+"/") and
                 a["url"].endswith("/"+filename),"VENDOR_URL_"+name)
-        require(a["kind"] and "BOOTSTRAP" in obj["packages"]["ccs"]["kind"],
-                "DOWNSTREAM_BOOTSTRAP_BOUNDARY")
+        require(a["kind"]==EXPECTED_KIND[name],"PACKAGE_KIND_DRIFT_"+name)
+    require("BOOTSTRAP" in obj["packages"]["ccs"]["kind"],"DOWNSTREAM_BOOTSTRAP_BOUNDARY")
 
 def audit_download(lock:dict, name:str, path:Path)->str:
     audit_lock(lock)
@@ -62,6 +63,7 @@ def selftest()->None:
         lambda x:x.update(hardware_flash_authorized=True),
         lambda x:x["packages"].pop("ccs"),
         lambda x:x["packages"]["ccs"].update(kind="TRUSTED_STATIC_FILE"),
+        lambda x:x["packages"]["sysconfig"].update(kind="TRUSTED_STATIC_FILE"),
         lambda x:x.update(provenance_limit="Vendor signed and independently verified"),
     ]
     for i,fn in enumerate(failures):

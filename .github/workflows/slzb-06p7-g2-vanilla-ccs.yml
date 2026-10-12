@@ -8,6 +8,7 @@ on:
       - '.github/workflows/slzb-06p7-g2-vanilla-ccs.yml'
       - 'firmware/slzb-06p7/ti832/g2/**'
       - 'firmware/slzb-06p7/ti832/g3/**'
+      - 'firmware/slzb-06p7/ti832/g4/**'
       - 'firmware/slzb-06p7/ti832/board/**'
   workflow_dispatch:
 permissions:
@@ -28,8 +29,13 @@ jobs:
         id: check
         shell: bash
         env:
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.event.after }}
+          # pull_request/workflow_dispatch payloads have no top-level
+          # before/after (push-only fields); use the PR base/head SHAs so
+          # the delta gate compares real commits instead of always
+          # failing open on empty strings. workflow_dispatch stays empty
+          # and therefore fail-open (native build required).
+          BEFORE: ${{ github.event.pull_request.base.sha }}
+          AFTER: ${{ github.event.pull_request.head.sha }}
           ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
@@ -75,6 +81,8 @@ jobs:
           python3 firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py --selftest
           python3 -m py_compile firmware/slzb-06p7/ti832/g3/nv5_effective.py
           python3 firmware/slzb-06p7/ti832/g3/nv5_effective.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g4/cap192_capacity.py
+          python3 firmware/slzb-06p7/ti832/g4/cap192_capacity.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
     needs: [source-tests, classify_delta]
@@ -533,6 +541,19 @@ jobs:
             --linked-proof g3-nv5/NV5-NATIVE-ELF-HEX-MAP-AUDIT.json \
             --out g3-nv5/NV5-EFFECTIVE-DRIVER-AUDIT.json
           python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "repo/firmware/slzb-06p7/ti832/g2")
+          from validate_elf_hex import read_hex
+          g2 = read_hex(Path("bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.hex").read_text(encoding="ascii"))
+          nv5 = read_hex(Path("g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.hex").read_text(encoding="ascii"))
+          lo, hi = 0xAFFA8, 0xB0000
+          a = {k: v for k, v in g2.items() if lo <= k < hi}
+          b = {k: v for k, v in nv5.items() if lo <= k < hi}
+          assert len(a) == 88 and a == b, "NV5_CCFG_BYTES_DIFFER_FROM_G2"
+          print("PASS NV5 CCFG 88 bytes identical to G2 vanilla")
+          PY
+          python3 - <<'PY'
           import hashlib,json
           from pathlib import Path
           root=Path("g3-nv5")
@@ -568,6 +589,83 @@ jobs:
             g3-nv5/*.hex
             g3-nv5/*.map
             g3-nv5/generated-ti_drivers_config.c
+          retention-days: 30
+          if-no-files-found: error
+      - name: Prepare isolated CAP192 capacity candidate (on NV5 tree)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p g4-cap
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py \
+            --examples examples --out g4-cap/staged \
+            > g4-cap/source-audit.log
+          python3 - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          g = Path("g4-cap/staged")
+          manifest = json.loads((g / "CAP192-CANDIDATE-SOURCE-MANIFEST.json").read_text())
+          assert manifest["qualification"] == "G4_CAP192_CAPACITY_TI_LAUNCHPAD_PROTOTYPE_NOT_FLASHABLE"
+          assert manifest["targets"] == {"tc_device_max": 192, "nwk_device_list": 96,
+                                         "routing_table": 128, "route_req_entries": 16}
+          assert manifest["runtime_qualified"] is False
+          staged = g / "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg"
+          assert staged.is_file(), staged
+          # Combined NV5+CAP192 invariant: the NV5 syscfg geometry must
+          # survive the capacity overlay (2x 0xA000, NV base 0xA4000).
+          body = staged.read_text()
+          assert body.count("regionSize = 0xA000;") == 2, "NV5_GEOMETRY_LOST"
+          assert "regionBase = 0xA4000;" in body, "NV5_BASE_LOST"
+          dest = Path("examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
+          shutil.copy2(staged, dest)
+          PY
+          cp g4-cap/staged/CAP192-CANDIDATE-SOURCE-MANIFEST.json g4-cap/
+          printf '%s\n' 'CAP192_CAPACITY_PROTOTYPE_NOT_FLASHABLE' \
+              'RUNTIME_AND_NV_PERSISTENCE_NOT_QUALIFIED' > g4-cap/NOT_FLASHABLE.txt
+      - name: Native CCS build CAP192 capacity candidate and audit effective header
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ccs-workspace-cap
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-cap" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" \
+            2>&1 | tee g4-cap/ccs-init.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-cap" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$SPEC" -ccs.overwrite \
+            2>&1 | tee g4-cap/ccs-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-cap" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee g4-cap/ccs-native-build.log
+          if grep -E 'error:|^ERROR:' g4-cap/ccs-native-build.log; then
+             echo "::error::CAP192 candidate compile/link error"
+             exit 1
+          fi
+          OUTC=$(find ccs-workspace-cap -type f -name '*.out' -print -quit)
+          MAPC=$(find ccs-workspace-cap -type f -name '*.map' -print -quit)
+          test -s "$OUTC" && test -s "$MAPC"
+          GENH=$(find ccs-workspace-cap -type f -name ti_zstack_config.h -print -quit)
+          test -s "$GENH"
+          cp "$GENH" g4-cap/generated-ti_zstack_config.h
+          grep -nE 'ZDSECMGR|NWK_MAX|MAX_RTG|ROUTE|RREQ' "$GENH" \
+            | tee g4-cap/effective-capacity-grep.txt || true
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py \
+            --generated "$GENH" | tee g4-cap/CAPACITY-EFFECTIVE-AUDIT.json
+      - name: Publish non-flashable CAP192 capacity compiler proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: P7-G4-CAP192-CAPACITY-PROTOTYPE-NOT-FLASHABLE
+          path: |
+            g4-cap/*.json
+            g4-cap/*.txt
+            g4-cap/*.log
+            g4-cap/generated-ti_zstack_config.h
           retention-days: 30
           if-no-files-found: error
       - name: Preserve troubleshooting evidence without releasing unqualified binaries

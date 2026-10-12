@@ -17,6 +17,7 @@ from pathlib import Path
 PREFIXES=(
     "firmware/slzb-06p7/ti832/g2/",
     "firmware/slzb-06p7/ti832/g3/",
+    "firmware/slzb-06p7/ti832/g4/",
     "firmware/slzb-06p7/ti832/board/",
     "firmware/slzb-06p7/ti832/phase0/",
 )
@@ -74,6 +75,7 @@ def selftest()->None:
         (["coordinators/slzb-06p7/README.md"],"pull_request","synchronize",sample_sha,after,True,False),
         (["firmware/slzb-06p7/ti832/g2/verify_vanilla.py"],"pull_request","synchronize",sample_sha,after,True,True),
         (["firmware/slzb-06p7/ti832/g3/ci_delta_gate.py"],"pull_request","synchronize",sample_sha,after,True,True),
+        (["firmware/slzb-06p7/ti832/g4/cap192_capacity.py"],"pull_request","synchronize",sample_sha,after,True,True),
         ([".github/workflows/slzb-06p7-g2-vanilla-ccs.yml"],"pull_request","synchronize",sample_sha,after,True,True),
         (["docs/a.md","firmware/slzb-06p7/ti832/board/board-contract.json"],"pull_request","synchronize",sample_sha,after,True,True),
         (["docs/a.md"],"pull_request","opened",sample_sha,after,True,True),
@@ -87,7 +89,51 @@ def selftest()->None:
         actual=required_for_delta(paths,event,action,a,b,git_ok)
         if actual != expected:
             raise AssertionError(f"CI_DELTA_CASE_{i}_MISCLASSIFIED")
-    print("PASS G3 event-delta native build classifier: 12 safe/skip cases")
+    # inspect() is the production entry point (workflow calls --out): cover
+    # its fail-open branches that required_for_delta() cases never reach.
+    empty = inspect(Path("."), "", "b"*40, "pull_request", "synchronize")
+    assert empty == {"native_required": True,
+                     "reason": "non_sync_or_unproven_comparison",
+                     "paths": []}, empty
+    same = inspect(Path("."), "a"*40, "a"*40, "pull_request", "synchronize")
+    assert same["native_required"] is True and same["paths"] == [], same
+    opened = inspect(Path("."), "a"*40, "b"*40, "pull_request", "opened")
+    assert opened["native_required"] is True, opened
+    # Drive inspect() through a real temp git repo: docs-only delta must
+    # skip, native delta must build, unknown SHAs must fail open.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td)
+        def git(*a):
+            subprocess.run(["git", "-C", td, *a], check=True,
+                           capture_output=True, text=True)
+        git("init", "-q")
+        git("config", "user.email", "selftest@example.invalid")
+        git("config", "user.name", "selftest")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "a.md").write_text("one\n")
+        git("add", "-A"); git("commit", "-qm", "base")
+        import subprocess as _sp
+        base = _sp.run(["git", "-C", td, "rev-parse", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+        (repo / "docs" / "a.md").write_text("two\n")
+        git("add", "-A"); git("commit", "-qm", "docs")
+        head = _sp.run(["git", "-C", td, "rev-parse", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+        d = inspect(repo, base, head, "pull_request", "synchronize")
+        assert d["native_required"] is False and d["paths"], d
+        (repo / "firmware").mkdir(parents=True, exist_ok=True)
+        target = repo / "firmware/slzb-06p7/ti832/g3/ci_delta_gate.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n")
+        git("add", "-A"); git("commit", "-qm", "native")
+        head2 = _sp.run(["git", "-C", td, "rev-parse", "HEAD"],
+                        capture_output=True, text=True).stdout.strip()
+        d = inspect(repo, head, head2, "pull_request", "synchronize")
+        assert d["native_required"] is True, d
+        d = inspect(repo, "0"*40, head2, "pull_request", "synchronize")
+        assert d["native_required"] is True, d
+    print("PASS G3 event-delta native build classifier: 13 safe/skip cases + 3 inspect fail-open cases + temp-repo inspect branches")
 
 def main()->None:
     p=argparse.ArgumentParser()

@@ -63,11 +63,18 @@ jobs:
           root=Path("nv5-stress")
           log=(root/"driver-test.log").read_text()
           assert log.count("PASS_PINNED_TI_NVOCMP_REAL_DRIVER")==10
+          import re as _re
+          recs=[int(x) for x in _re.findall(r"records=(\d+)", log)]
+          assert len(recs)==10 and len(set(recs))==1, recs
+          record_count=recs[0]
+          # Independent pin from CAP192 targets (192+96+298+1), not derived
+          # from the harness table: shrinking kinds[] must fail here.
+          assert record_count==587, record_count
           result={
             "status":"TI8.32_NVOCMP_REAL_C_HOST_STRESS_PASS",
             "compiled_original_sdk":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
-            "nv_pages":5,"flash_page_bytes":8192,"synthetic_records":587,
-            "churn_epochs":2,"explicit_compactions":2,"cold_reload_steps":9,
+            "nv_pages":5,"flash_page_bytes":8192,"synthetic_records":record_count,
+            "churn_epochs":2,"explicit_compactions":2,"process_invocations":10,"cold_reloads_after_create":9,
             "simulator_hardware_accurate":False,
             "power_loss_fault_injection_pass":False,
             "production_security_counter_qualified":False,
@@ -129,6 +136,11 @@ jobs:
           log=(root/"fault-results.log").read_text()
           assert log.count("PASS_NV5_PARTIAL_WRITE_FAULT")==6
           assert log.count("PASS_PINNED_TI_NVOCMP_REAL_DRIVER")==30
+          import re as _re
+          recs=[int(x) for x in _re.findall(r"records=(\d+)", log)]
+          assert len(recs)==30 and len(set(recs))==1, recs
+          record_count=recs[0]
+          assert record_count==587, record_count
           result={
             "status":"TI8.32_NVOCMP_PARTIAL_WRITE_INTERRUPTION_HOST_PASS",
             "real_sdk_source":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
@@ -136,8 +148,8 @@ jobs:
             "fault_indices":[1,2,10,50,250,580],
             "all_record_versions_valid_after_restart":True,
             "all_records_healed_and_compacted_after_restart":True,
-            "tested_record_count":587,
-            "faulted_sector_erase_tested":False,
+            "tested_record_count":record_count,
+            "faulted_sector_erase_tested":"see ERASE-VERDICT.json (prefix model only)",
             "real_power_cut_hardware_tested":False,
             "zigbee_security_counter_semantics_qualified":False,
             "flash_authorized":False,
@@ -145,6 +157,103 @@ jobs:
           }
           (root/"PARTIAL-WRITE-VERDICT.json").write_text(
             json.dumps(result,indent=2,sort_keys=True)+"\n")
+          PY
+      - name: Erase and compaction interruption tests (prefix torn-erase model)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export P7_NV_FILE="$GITHUB_WORKSPACE/nv5-stress/faults/flash.img"
+          : > nv5-stress/faults/erase-results.log
+          # clean-baseline.img holds epoch-0 data; compact verifies its epoch
+          # first, so build an epoch-1 baseline before faulting compactNV.
+          cp nv5-stress/faults/clean-baseline.img "$P7_NV_FILE"
+          ./nv5-stress/ti_nv5_driver_host churn 1 \
+            > nv5-stress/faults/epoch1-churn.log 2>&1
+          cp "$P7_NV_FILE" nv5-stress/faults/epoch1-baseline.img
+          for number in 1 2 3; do
+            cp nv5-stress/faults/epoch1-baseline.img "$P7_NV_FILE"
+            set +e
+            P7_FAULT_OP=erase P7_FAULT_AFTER="$number" \
+              ./nv5-stress/ti_nv5_driver_host compact 1 \
+              > nv5-stress/faults/erase-interrupted.log 2>&1
+            CODE=$?
+            set -e
+            if test "$CODE" -ne 77; then
+              echo "ERASE_FAULT_FAILED_TO_TRIGGER number=$number exit=$CODE"
+              cat nv5-stress/faults/erase-interrupted.log
+              exit 1
+            fi
+            grep -F 'P7_EXPECTED_SIMULATED_POWER_LOSS op=erase' \
+              nv5-stress/faults/erase-interrupted.log
+            # After a torn compaction erase, every record must still read
+            # back as the complete epoch-1 version; then re-compact cleanly.
+            ./nv5-stress/ti_nv5_driver_host verify 1 \
+              >> nv5-stress/faults/erase-results.log 2>&1
+            ./nv5-stress/ti_nv5_driver_host compact 1 \
+              >> nv5-stress/faults/erase-results.log 2>&1
+            ./nv5-stress/ti_nv5_driver_host verify 1 \
+              >> nv5-stress/faults/erase-results.log 2>&1
+            printf 'PASS_NV5_ERASE_FAULT index=%s\n' "$number" \
+              | tee -a nv5-stress/faults/erase-results.log
+          done
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path("nv5-stress/faults")
+          log=(root/"erase-results.log").read_text()
+          assert log.count("PASS_NV5_ERASE_FAULT")==3
+          result={
+            "status":"TI8.32_NVOCMP_ERASE_INTERRUPTION_HOST_PASS",
+            "real_sdk_source":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+            "fault_type":"kill host process halfway through sector erase during compactNV (linear prefix model only)",
+            "fault_indices":[1,2,3],
+            "torn_erase_geometries_tested":["linear-prefix-half-sector"],
+            "suffix_or_interleaved_torn_erase_tested":False,
+            "real_power_cut_hardware_tested":False,
+            "flash_authorized":False,
+            "synthetic_results_sha256":hashlib.sha256(log.encode()).hexdigest(),
+          }
+          (root/"ERASE-VERDICT.json").write_text(
+            json.dumps(result,indent=2,sort_keys=True)+"\n")
+          PY
+      - name: Garbage and stale-page initial-state probe (evidence only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export P7_NV_FILE="$GITHUB_WORKSPACE/nv5-stress/faults/garbage.img"
+          python3 - <<'PY'
+          import random
+          rng = random.Random(20261012)
+          data = bytes(rng.randrange(256) for _ in range(40960))
+          open("nv5-stress/faults/garbage.img", "wb").write(data)
+          PY
+          set +e
+          ./nv5-stress/ti_nv5_driver_host fill 0 \
+            > nv5-stress/faults/garbage-fill.log 2>&1
+          CODE=$?
+          set -e
+          echo "garbage init/fill exit=$CODE" | tee nv5-stress/faults/garbage-outcome.txt
+          cat nv5-stress/faults/garbage-fill.log >> nv5-stress/faults/garbage-outcome.txt
+          # Only driver-controlled outcomes are acceptable evidence; a crash
+          # signal, backend fatal (90) or fault-injection exit (77) fails.
+          case "$CODE" in
+            0|4|5) echo "GARBAGE_PROBE_RECORDED exit=$CODE" ;;
+            *) echo "GARBAGE_PROBE_UNCONTROLLED exit=$CODE"; exit 1 ;;
+          esac
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          log = Path("nv5-stress/faults/garbage-fill.log").read_text(errors="replace")
+          accepted = "PASS_PINNED_TI_NVOCMP_REAL_DRIVER" in log
+          result = {
+            "status": "GARBAGE_INITIAL_STATE_PROBE_RECORDED",
+            "garbage_image_accepted_by_init": accepted,
+            "stale_old_layout_adoption_qualified": False,
+            "note": "Deterministic pseudo-random 40KiB initial image; outcome recorded, never claimed as migration or recovery proof.",
+            "flash_authorized": False,
+          }
+          Path("nv5-stress/faults/GARBAGE-VERDICT.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n")
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -155,5 +264,9 @@ jobs:
             nv5-stress/NOT_FLASHABLE.txt
             nv5-stress/faults/PARTIAL-WRITE-VERDICT.json
             nv5-stress/faults/fault-results.log
+            nv5-stress/faults/ERASE-VERDICT.json
+            nv5-stress/faults/erase-results.log
+            nv5-stress/faults/GARBAGE-VERDICT.json
+            nv5-stress/faults/garbage-outcome.txt
           retention-days: 30
           if-no-files-found: error
