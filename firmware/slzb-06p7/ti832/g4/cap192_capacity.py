@@ -125,7 +125,8 @@ def selftest() -> None:
         "#define MAX_RREQ_ENTRIES              16",
     ]))
     must(audit_generated(good)["targets"] == TARGETS, "GENERATED_POSITIVE")
-    for bad in ("// #define ZDSECMGR_TC_DEVICE_MAX 192\n" + good,
+    for bad in (good.replace("#define ZDSECMGR_TC_DEVICE_MAX        192",
+                              "// #define ZDSECMGR_TC_DEVICE_MAX 192"),
                 good + "\n#define ZDSECMGR_TC_DEVICE_MAX 50\n",
                 good.replace("#define MAX_RREQ_ENTRIES", "#define XMAX_RREQ_ENTRIES")):
         try:
