@@ -1,0 +1,25 @@
+{
+  "schema": "p7-ti832-vendor-archive-sha256-lock-v1",
+  "recorded_from": "https://dr-download.ti.com (version-pinned vendor HTTPS URLs)",
+  "observed_at": "2026-10-12T14:09:06Z",
+  "observed_in_ci": "https://github.com/analienx/Zigbee-Coordinator/actions/runs/38259941096",
+  "provenance_limit": "SHA256 values were measured on the exact downloaded TI archives in a real CI run, not independently matched to TI's publicly published checksum string; web installer still fetches components dynamically.",
+  "trust_policy": "Fail closed on any archive digest drift; do not silently update pins; CCS compiled ELF/HEX golden hashes provide additional reproducibility proof.",
+  "packages": {
+    "ccs": {
+      "version": "12.8.0.00012",
+      "filename": "CCS12.8.0.00012_web_linux-x64.tar.gz",
+      "sha256": "3b56d5d07a47132408a116f01cc01587c88e78de7372e9623754f035e1c9d550",
+      "url": "https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/CCS12.8.0.00012_web_linux-x64.tar.gz",
+      "kind": "WEB_BOOTSTRAP_MAY_FETCH_ADDITIONAL_COMPONENTS"
+    },
+    "sysconfig": {
+      "version": "1.21.1.3772",
+      "filename": "sysconfig-1.21.1_3772-setup.run",
+      "sha256": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
+      "url": "https://software-dl.ti.com/ccs/esd/sysconfig/sysconfig-1.21.1_3772-setup.run",
+      "kind": "LINUX_SETUP_BINARY"
+    }
+  },
+  "hardware_flash_authorized": false
+}
