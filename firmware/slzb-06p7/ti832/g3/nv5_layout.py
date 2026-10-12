@@ -166,8 +166,14 @@ def generate(sdk:Path,examples:Path,out:Path)->dict:
         must(src[name]!=dst[name],"UNMODIFIED_"+name)
     # Caller-supplied output folder must be distinct from authoritative trees.
     out_real=out.resolve()
-    must(not(out_real==sdk.resolve() or out_real==examples.resolve() or
-        sdk.resolve() in out_real.parents or examples.resolve() in out_real.parents),
+    sdk_real, ex_real = sdk.resolve(), examples.resolve()
+    probes = [(out / "sdk" / SDK_LINK).resolve(),
+              (out / "examples" / EXAMPLE_SYSCFG).resolve(),
+              (out / "examples" / EXAMPLE_PROJSPEC).resolve()]
+    must(not(out_real==sdk_real or out_real==ex_real or
+        sdk_real in out_real.parents or ex_real in out_real.parents)
+        and all(sdk_real not in q.parents and ex_real not in q.parents
+                for q in probes),
         "REFUSE_TO_MODIFY_PINNED_INPUT_SOURCE")
     for name,(file,_) in entries.items():
         base=sdk if name=="sdk_linker" else examples
