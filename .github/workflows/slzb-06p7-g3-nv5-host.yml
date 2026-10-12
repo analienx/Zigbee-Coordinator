@@ -1,0 +1,92 @@
+name: SLZB-06P7 G3 native TI NVOCMP five-sector host stress (NO DEVICE)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7-g3-nv5-host.yml'
+      - 'tests/p7-nv5-host/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  genuine-sdk-nvocmp-posix:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - name: Build UNMODIFIED TI8.32 NVOCMP C with strict five-page POSIX NOR mock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          mkdir -p nv5-stress
+          gcc -std=gnu11 -O2 -g -Wall -Wextra -D_GNU_SOURCE \
+            -DNV_LINUX -DNVOCMP_POSIX_MUTEX -DNVOCMP_NVPAGES=5 \
+            -Irepo/tests/p7-nv5-host -Isdk/source -Isdk/source/ti/common/nv \
+            sdk/source/ti/common/nv/nvocmp.c \
+            sdk/source/ti/common/nv/crc.c \
+            repo/tests/p7-nv5-host/nv_linux.c \
+            repo/tests/p7-nv5-host/nv5_stress.c \
+            -pthread -o nv5-stress/ti_nv5_driver_host
+          test -x nv5-stress/ti_nv5_driver_host
+          git -C sdk diff --exit-code HEAD
+      - name: Exercise actual NVOCMP storage and compaction through cold reloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          export P7_NV_FILE="$GITHUB_WORKSPACE/nv5-stress/flash-synthetic-40KiB.bin"
+          test ! -e "$P7_NV_FILE"
+          {
+            ./nv5-stress/ti_nv5_driver_host fill 0
+            ./nv5-stress/ti_nv5_driver_host verify 0
+            ./nv5-stress/ti_nv5_driver_host churn 1
+            ./nv5-stress/ti_nv5_driver_host verify 1
+            ./nv5-stress/ti_nv5_driver_host compact 1
+            ./nv5-stress/ti_nv5_driver_host verify 1
+            ./nv5-stress/ti_nv5_driver_host churn 2
+            ./nv5-stress/ti_nv5_driver_host verify 2
+            ./nv5-stress/ti_nv5_driver_host compact 2
+            ./nv5-stress/ti_nv5_driver_host verify 2
+          } 2>&1 | tee nv5-stress/driver-test.log
+          test "$(stat -c%s "$P7_NV_FILE")" = "40960"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path("nv5-stress")
+          log=(root/"driver-test.log").read_text()
+          assert log.count("PASS_PINNED_TI_NVOCMP_REAL_DRIVER")==10
+          result={
+            "status":"TI8.32_NVOCMP_REAL_C_HOST_STRESS_PASS",
+            "compiled_original_sdk":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+            "nv_pages":5,"flash_page_bytes":8192,"synthetic_records":587,
+            "churn_epochs":2,"explicit_compactions":2,"cold_reload_steps":9,
+            "simulator_hardware_accurate":False,
+            "power_loss_fault_injection_pass":False,
+            "production_security_counter_qualified":False,
+            "real_smlight_board_qualified":False,
+            "flash_authorized":False,
+            "synthetic_storage_sha256":hashlib.sha256((root/"flash-synthetic-40KiB.bin").read_bytes()).hexdigest(),
+            "host_compilation_and_test_log_sha256":hashlib.sha256(log.encode()).hexdigest()
+          }
+          (root/"STRESS-VERDICT.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
+          PY
+          # The synthetic flash file is not a firmware image or backup.
+          printf '%s\n' 'NO_HARDWARE_USED' 'NO_REAL_ZIGBEE_KEYS' \
+            'G3_REAL_TI_NVOCMP_POSIX_SIMULATION_ONLY' > nv5-stress/NOT_FLASHABLE.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: P7-G3-REAL-TI-NVOCMP-HOST-STRESS-NO-FIRMWARE
+          path: |
+            nv5-stress/STRESS-VERDICT.json
+            nv5-stress/driver-test.log
+            nv5-stress/NOT_FLASHABLE.txt
+          retention-days: 30
+          if-no-files-found: error
