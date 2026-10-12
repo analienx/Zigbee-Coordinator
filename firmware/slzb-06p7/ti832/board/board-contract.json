@@ -1,0 +1,418 @@
+{
+  "schema": "p7-board-contract-v1",
+  "date": "2026-10-12",
+  "scope": "ORIGINAL_SLZB_06P7_ONLY",
+  "authority": {
+    "main": "analienx/Zigbee-Coordinator",
+    "development_branch": "feat/slzb-06p7-ti832-p10-parity",
+    "ti_sdk_sha": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+    "ti_examples_sha": "87ff5b638b632050228a7504f35cf3b95581c278",
+    "p10_reference_sha": "b273044f17c88fbde26d9e9b946ab559a1d1b675"
+  },
+  "g1_static_status": "SOURCE_PROFILE_ANALYZED",
+  "g1_physical_status": "BLOCKED_NO_IDENTIFIED_UNIT_OR_VENDOR_CCFG",
+  "safe_actions": [
+    "read public sources",
+    "offline static analysis",
+    "passive metadata inventory",
+    "source tests"
+  ],
+  "forbidden_actions": [
+    "RF transmit",
+    "coordinator serial probe without owner",
+    "flash",
+    "erase",
+    "reset",
+    "power-cycle",
+    "network join/rejoin",
+    "alter CC cfg",
+    "start/stop HA or Zigbee2MQTT",
+    "expose network key or original NVS"
+  ],
+  "sources": [
+    {
+      "id": "TI_P7_DATASHEET",
+      "url": "https://www.ti.com/product/CC2652P7",
+      "scope": "Texas Instruments CC2652P7 chip specs (48MHz, 704KiB flash, 144KiB SRAM + 8KiB cache, 2.4GHz PA 20dBm)"
+    },
+    {
+      "id": "SMLIGHT_ORIGINAL",
+      "url": "https://smlight.tech/product/slzb-06p7/",
+      "scope": "SMLIGHT original SLZB-06p7 model CC2652P7 ESP32 LAN8720 CP2102 and antennas"
+    },
+    {
+      "id": "SMLIGHT_U",
+      "url": "https://smlight.tech/products/slzb-06p7u",
+      "scope": "Different later SLZB-06P7U host ESP32-S3 W5500; not equivalent board"
+    },
+    {
+      "id": "TI_P7_PROJECT",
+      "url": "https://github.com/TexasInstruments/simplelink-zstack-examples/blob/87ff5b638b632050228a7504f35cf3b95581c278/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec",
+      "scope": "TI CC1352P7 LaunchPad CCS ZNP project; not device-specific SLZB product"
+    },
+    {
+      "id": "TI_P7_SYSCFG",
+      "url": "https://github.com/TexasInstruments/simplelink-zstack-examples/blob/87ff5b638b632050228a7504f35cf3b95581c278/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg",
+      "scope": "P7 ZNP SysConfig board binding, two NV sectors and LaunchPad peripherals"
+    },
+    {
+      "id": "TI_P7_LINK",
+      "url": "https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk/blob/6499c3f53fc5fb5806213be695450a7b43fbaf3d/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd",
+      "scope": "P7 linker: app 0..0xAA000, NV two 8KiB, final 8KiB CCFG sector, SRAM 0x24000"
+    },
+    {
+      "id": "TI_P7_CCFG",
+      "url": "https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk/blob/6499c3f53fc5fb5806213be695450a7b43fbaf3d/source/ti/devices/cc13x2x7_cc26x2x7/startup_files/ccfg.c",
+      "scope": "TI CCFG defaults disable ROM BSL, backdoor disabled and pin 0xFF unless explicitly set"
+    },
+    {
+      "id": "KOENKK_P7_SUPPORT",
+      "url": "https://github.com/Koenkk/zigbee2mqtt.io/blob/master/docs/guide/adapters/zstack.md",
+      "scope": "Zigbee2MQTT maps SLZB-06p7 to CC1352P7 coordinator image family"
+    },
+    {
+      "id": "KOENKK_P7_FW",
+      "url": "https://github.com/Koenkk/Z-Stack-firmware/blob/master/coordinator/Z-Stack_3.x.0/COMPILE.md",
+      "scope": "Published P7 ZNP build uses LP_CC1352P7_4 example, SDK 8.30.01.01 for 20250321"
+    },
+    {
+      "id": "KOENKK_ROM_BSL",
+      "url": "https://github.com/smlight-tech/smlight-cc-flasher",
+      "scope": "SMLIGHT CC BSL: configured by CCFG BL_CONFIG and ERASE_CONF; wrong backdoor can lock software recovery"
+    },
+    {
+      "id": "SMLIGHT_ESPHOME",
+      "url": "https://github.com/smlight-dev/slzb-06-fw-esphome/blob/main/configs/zb-bt.yaml",
+      "scope": "Open ESPHome example uses ESP32 rx GPIO5/tx GPIO17, 115200 baud, TCP 6638; NOT proof of native firmware P7 radio DIO wiring"
+    },
+    {
+      "id": "SMLIGHT_MANUAL_LEGACY",
+      "url": "https://github.com/smlight-dev/slzb-06-manual/blob/main/docs/guide/flashing-and-updating/updating-cc2652p.md",
+      "scope": "Manual for older CC2652P SLZB-06 not P7: ROM BSL must stay enabled; BSL control via web UI but not direct P7 pin evidence"
+    },
+    {
+      "id": "TI_2652P7_ORIGINAL_RF",
+      "url": "https://www.ti.com/lit/ds/symlink/cc2652p7.pdf",
+      "scope": "CC2652P7 RF and CCFG register/datasheet source"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "B01",
+      "group": "identity",
+      "value": "SMLIGHT SLZB-06P7 (non-U) with TI CC2652P7",
+      "state": "DOCUMENTED_PRODUCT",
+      "refs": [
+        "SMLIGHT_ORIGINAL",
+        "TI_P7_DATASHEET"
+      ],
+      "gate": "Confirm actual unit marking and SLZB-OS-reported model and revision without radio reset; never substitute 06P7U or legacy 06."
+    },
+    {
+      "id": "B02",
+      "group": "silicon",
+      "value": {
+        "cpu": "ARM Cortex-M4F",
+        "flash_bytes": 720896,
+        "ram_main_parity_bytes": 147456,
+        "ram_cache_bytes": 8192,
+        "max_tx_dbm": 20
+      },
+      "state": "DOCUMENTED_SILICON",
+      "refs": [
+        "TI_P7_DATASHEET"
+      ],
+      "gate": "Inspect read-only vendor silicon ID/FGC1 when fixture available; do not assume same physical board pin routing."
+    },
+    {
+      "id": "B03",
+      "group": "host",
+      "value": {
+        "esp": "ESP32 (original product)",
+        "ethernet": "LAN8720",
+        "usb_serial": "CP2102/CP2102N class; exact fitted part revision unverified",
+        "uart_bridge_modes": [
+          "TCP",
+          "USB"
+        ],
+        "default_tcp_port": 6638
+      },
+      "state": "DOCUMENTED_PRODUCT",
+      "refs": [
+        "SMLIGHT_ORIGINAL",
+        "SMLIGHT_ESPHOME"
+      ],
+      "gate": "Identify exact original PCB vs revised P7 and route; 06P7U uses ESP32-S3/W5500."
+    },
+    {
+      "id": "B04",
+      "group": "host",
+      "value": {
+        "esphome_example_esp_rx_gpio": 5,
+        "esphome_example_esp_tx_gpio": 17,
+        "esphome_example_baud": 115200,
+        "esphome_example_tcp_port": 6638
+      },
+      "state": "REFERENCE_NOT_BOARD_PROOF",
+      "refs": [
+        "SMLIGHT_ESPHOME"
+      ],
+      "gate": "Never infer CC2652P7 DIO TX/RX from ESP32 GPIO numbers or use ESPHome YAML as verified stock SLZB-OS wiring."
+    },
+    {
+      "id": "B05",
+      "group": "ccfg",
+      "value": {
+        "stock_ti_bootloader_enable_default": "0x00",
+        "stock_ti_backdoor_enable_default": "0xFF",
+        "stock_ti_backdoor_pin": "0xFF",
+        "observed_slzb_ccfg": null
+      },
+      "state": "REFERENCE_NOT_BOARD_PROOF",
+      "refs": [
+        "TI_P7_CCFG",
+        "KOENKK_ROM_BSL"
+      ],
+      "gate": "Extract read-only authentic original P7 CCFG or verified matching vendor image; decoder must validate BSL-enable, pin and level before any firmware artifact can be flashable."
+    },
+    {
+      "id": "B06",
+      "group": "ccfg",
+      "value": {
+        "slzb_bsl_backdoor_dio": null,
+        "slzb_bsl_active_level": null,
+        "slzb_reset_control_path": null,
+        "slzb_bsl_uart_tx_dio": null,
+        "slzb_bsl_uart_rx_dio": null
+      },
+      "state": "HARDWARE_BLOCKED",
+      "refs": [
+        "KOENKK_ROM_BSL",
+        "SMLIGHT_ORIGINAL"
+      ],
+      "gate": "Obtain exact PCB revision schematics, vendor source or safe vendor flash readout; no guessed DIO_15 from legacy SLZB-06."
+    },
+    {
+      "id": "B07",
+      "group": "uart",
+      "value": {
+        "slzb_radio_uart_tx_dio": null,
+        "slzb_radio_uart_rx_dio": null,
+        "slzb_rts_dio": null,
+        "slzb_cts_dio": null,
+        "hardware_flow_control": null
+      },
+      "state": "HARDWARE_BLOCKED",
+      "refs": [
+        "TI_P7_SYSCFG",
+        "SMLIGHT_ESPHOME"
+      ],
+      "gate": "Identify board-level radio nets; test bridge UART flow control on isolated fixture after separate approval."
+    },
+    {
+      "id": "B08",
+      "group": "rf",
+      "value": {
+        "radio": "2.4GHz IEEE802.15.4 internal +20dBm PA capable",
+        "antenna_gain_dbi_claim": 5,
+        "rf_switch_dios": null,
+        "front_end_modifiers": null,
+        "confirmed_rf_table": null
+      },
+      "state": "REFERENCE_NOT_BOARD_PROOF",
+      "refs": [
+        "TI_P7_DATASHEET",
+        "SMLIGHT_ORIGINAL",
+        "TI_P7_SYSCFG"
+      ],
+      "gate": "Prove genuine SMLIGHT RF frontend and board-specific high-PA settings/power table from schematics or vendor image; hold RF transmit disabled."
+    },
+    {
+      "id": "B09",
+      "group": "rf",
+      "value": {
+        "regulatory_limit_confirmed": false,
+        "allowed_transmit_power_dbm": null
+      },
+      "state": "HARDWARE_BLOCKED",
+      "refs": [
+        "TI_P7_DATASHEET",
+        "SMLIGHT_ORIGINAL"
+      ],
+      "gate": "Antenna gain and jurisdiction limit require conducted/EIRP calculation and compliant configuration. Do not default to +20 dBm."
+    },
+    {
+      "id": "B10",
+      "group": "nvs",
+      "value": {
+        "flash_main_start": 0,
+        "flash_total_bytes": 720896,
+        "app_end_exclusive": 696320,
+        "nv_start": 696320,
+        "nv_end_exclusive": 712704,
+        "last_sector_start": 712704,
+        "flash_end_exclusive": 720896,
+        "nv_sector_bytes": 8192,
+        "nv_sector_count": 2
+      },
+      "state": "PINNED_TI_REFERENCE",
+      "refs": [
+        "TI_P7_LINK",
+        "TI_P7_SYSCFG"
+      ],
+      "gate": "Phase G2 must check generated linker/SysConfig; real device NV extent MAY differ from pristine TI. No deployed-region claim or NV erase."
+    },
+    {
+      "id": "B11",
+      "group": "nvs",
+      "value": {
+        "user_p7_actual_existing_nvs_start": null,
+        "user_p7_actual_existing_nvs_end": null,
+        "user_p7_original_ccfg_digest": null,
+        "user_p7_legacy_key_count": null
+      },
+      "state": "HARDWARE_BLOCKED",
+      "refs": [
+        "TI_P7_LINK",
+        "KOENKK_P7_SUPPORT"
+      ],
+      "gate": "Read-only original P7 provenance and image before migration design; preserve keys and persistent counters. Never upload security data to repo."
+    },
+    {
+      "id": "B12",
+      "group": "board",
+      "value": {
+        "reference_project": "LP_CC1352P7_4",
+        "projects_device_id": "Cortex M.CC1352P7",
+        "stock_nv_pages": 2,
+        "stock_heapmgr_config": "0x80",
+        "stock_heapmgr_size": "0x00"
+      },
+      "state": "PINNED_TI_REFERENCE",
+      "refs": [
+        "TI_P7_PROJECT",
+        "TI_P7_SYSCFG"
+      ],
+      "gate": "G2 compile pristine reference first, then explicitly adapt to 06P7; assert effective M4 libraries, generated RF/CCFG/UART and memory."
+    },
+    {
+      "id": "B13",
+      "group": "board",
+      "value": {
+        "ti_reference_launchpad_leds_buttons": true,
+        "ti_reference_external_spi_flash": true,
+        "real_slzb_external_nvs_present": null
+      },
+      "state": "REFERENCE_NOT_BOARD_PROOF",
+      "refs": [
+        "TI_P7_SYSCFG"
+      ],
+      "gate": "Eliminate/disable unused XDS110, LED, button, MX25R8035F SPI and external NVS dependencies after validating actual SMLIGHT board."
+    },
+    {
+      "id": "B14",
+      "group": "ccfg",
+      "value": {
+        "stock_linker_last_sector": [
+          712704,
+          720896
+        ],
+        "ccfg_storage": "P7 final main flash sector (not P10 separate CCFG memory)"
+      },
+      "state": "PINNED_TI_REFERENCE",
+      "refs": [
+        "TI_P7_LINK",
+        "TI_P7_DATASHEET"
+      ],
+      "gate": "Preserve radio original CCFG and BSL; image audit must explicitly analyze .ccfg at end and erase-unit risk."
+    },
+    {
+      "id": "B15",
+      "group": "radio_fw",
+      "value": {
+        "known_family": "CC1352P7_coordinator",
+        "link": "https://github.com/Koenkk/Z-Stack-firmware/releases/download/Z-Stack_3.x.0_coordinator_20250321/CC1352P7_coordinator_20250321.zip",
+        "installed_slzb_p7_vendor_version": null
+      },
+      "state": "DOCUMENTED_COMPATIBILITY",
+      "refs": [
+        "KOENKK_P7_SUPPORT",
+        "KOENKK_P7_FW"
+      ],
+      "gate": "Known publicly listed family is reference; not proof installed firmware/CCFG/board mapping or qualification of TI832 port."
+    },
+    {
+      "id": "B16",
+      "group": "recovery",
+      "value": {
+        "smlight_web_bsl_support_documented_for_older_06": true,
+        "p7_flashing_or_bank_erase_authorized": false
+      },
+      "state": "REFERENCE_NOT_BOARD_PROOF",
+      "refs": [
+        "SMLIGHT_MANUAL_LEGACY",
+        "KOENKK_ROM_BSL"
+      ],
+      "gate": "Trace exact 06P7 manufacturer uploader and erase commands on sacrificial fixture; never accept eraseNVM=0 as proof of preservation."
+    },
+    {
+      "id": "B17",
+      "group": "variant",
+      "value": {
+        "forbidden_variant_confusion": [
+          "SLZB-06 legacy CC2652P",
+          "SLZB-06P7U ESP32-S3 W5500",
+          "SLZB-06P10 CC2674P10",
+          "SLZB-MR4U multi-radio"
+        ]
+      },
+      "state": "DOCUMENTED_PRODUCT",
+      "refs": [
+        "SMLIGHT_ORIGINAL",
+        "SMLIGHT_U"
+      ],
+      "gate": "No automatic fallback to a similarly named SMLIGHT model or P10 pinmap."
+    },
+    {
+      "id": "B18",
+      "group": "operational",
+      "value": {
+        "phase": "G1_STATIC_BOARD_PROFILE",
+        "actual_p7_device_seen": false,
+        "actual_board_revision_verified": false,
+        "silicon_id_read": false,
+        "original_fw_read": false,
+        "serial_commissioning_tested": false,
+        "firmware_built": false,
+        "flash_authorized": false,
+        "network_changes_authorized": false
+      },
+      "state": "HARDWARE_BLOCKED",
+      "refs": [
+        "TI_P7_PROJECT",
+        "SMLIGHT_ORIGINAL"
+      ],
+      "gate": "Hardware G1 gate remains BLOCKED until provenance of exact unit, read-only board/CCFG/RF evidence and recovery strategy; G2 pristine build is separate."
+    }
+  ],
+  "constraints": {
+    "no_launchpad_gpio_assumption": true,
+    "no_p10_ccfg_mapping": true,
+    "no_automatic_legacy_06_alias": true,
+    "no_rf_tx_assumption": true,
+    "lock_original_ccfg_before_flash": true,
+    "ccfg_sector_erase_risk_must_be_modelled": true,
+    "no_phy_probe_without_device_owner": true
+  },
+  "handoff": {
+    "next_phase": "G2 pristine P7 TI 8.32 compiler baseline without flash",
+    "remaining_hardware_tasks": [
+      "Prove connected unit identity and board revision using read-only evidence",
+      "Compare authentic existing firmware CCFG with candidate image before any flash",
+      "Identify actual CC2652P7 UART DIO TX/RX and control signals",
+      "Prove ROM bootloader recovery path and host wiring",
+      "Audit RF board netlist/PA path and power budget",
+      "Verify original NVS extents, backups, restore risk privately"
+    ]
+  }
+}
