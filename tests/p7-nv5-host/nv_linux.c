@@ -57,6 +57,28 @@ void NV_LINUX_read(uint8_t page,uint16_t offset,uint8_t *dst,uint16_t length) {
     size_t addr=location(page,offset,length);
     memcpy(dst,flash_bytes+addr,length);
 }
+/* Deterministic host-only abrupt process termination after exactly N-th
+ * underlying NV operation. Persist one partial flash transaction before
+ * _exit(77). Never run against physical flash or real network state.
+ */
+static int inject_at(const char *operation,uint64_t ordinal) {
+    const char *kind=getenv("P7_FAULT_OP"), *at=getenv("P7_FAULT_AFTER");
+    if(!kind && !at) return 0;
+    if(!kind || !at || !*kind || !*at) fatal("INCOMPLETE_FAULT_CONFIG");
+    char *end;
+    errno=0;
+    unsigned long n=strtoul(at,&end,10);
+    if(errno || !end || *end || n==0 || n>1000000u) fatal("BAD_FAULT_INDEX");
+    if(strcmp(kind,"write") && strcmp(kind,"erase")) fatal("BAD_FAULT_MODE");
+    return strcmp(kind,operation)==0 && ordinal==(uint64_t)n;
+}
+static void crash_after_partial(const char *operation,uint64_t ordinal) {
+    persist();
+    fprintf(stderr,"P7_EXPECTED_SIMULATED_POWER_LOSS op=%s operation=%llu\n",
+            operation,(unsigned long long)ordinal);
+    fflush(stderr);
+    _exit(77);
+}
 int_fast16_t NV_LINUX_write(uint8_t pg,uint16_t off,uint8_t *src,uint16_t len) {
     size_t addr=location(pg,off,len);
     for(size_t i=0;i<len;i++) {
@@ -66,14 +88,24 @@ int_fast16_t NV_LINUX_write(uint8_t pg,uint16_t off,uint8_t *src,uint16_t len) {
                     addr+i,flash_bytes[addr+i],src[i]);
             return -1;
         }
-        flash_bytes[addr+i] &= src[i];
     }
+    if(inject_at("write",writes+1)) {
+        /* Half the bytes of one NVS write may have been programmed. */
+        size_t n=len>1 ? len/2 : len;
+        for(size_t i=0;i<n;i++) flash_bytes[addr+i]&=src[i];
+        crash_after_partial("write",writes+1);
+    }
+    for(size_t i=0;i<len;i++) flash_bytes[addr+i]&=src[i];
     writes++;
     persist();
     return 0;
 }
 int_fast16_t NV_LINUX_erase(uint8_t pg) {
     size_t addr=location(pg,0,P7_SECTOR_SIZE);
+    if(inject_at("erase",erases+1)) {
+        memset(flash_bytes+addr,0xFF,P7_SECTOR_SIZE/2);
+        crash_after_partial("erase",erases+1);
+    }
     memset(flash_bytes+addr,0xFF,P7_SECTOR_SIZE);
     erases++;
     persist();
