@@ -51,7 +51,7 @@ def inspect(repo:Path,before:str,after:str,event:str,action:str)->dict:
     try:
         p=subprocess.run(
             ["git","-C",str(repo),"diff","--name-only","--no-ext-diff",
-             "--diff-filter=ACDMRT",before,after],
+             "--diff-filter=ACDMRT","--no-renames",before,after],
             capture_output=True,text=True,check=False,timeout=20)
     except (OSError,subprocess.TimeoutExpired):
         return {"native_required":True,"reason":"git_unavailable","paths":[]}
