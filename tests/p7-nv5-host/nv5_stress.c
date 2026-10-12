@@ -109,6 +109,14 @@ int main(int argc,char **argv){
          * survive, never a partial/CRC-bad item. This is not an atomic
          * Zigbee *transaction* and does not prove monotonic counters. */
         verify_all((unsigned)epoch-1,(unsigned)epoch);
+    } else if(strcmp(argv[1],"heal")==0) {
+        must(epoch>0,"HEAL_REQUIRES_NONZERO");
+        /* Recovery from an interrupted update is not an atomic 587-entry
+         * transaction: each item must be individually old OR new. Rewrite
+         * all to new epoch, compact, and verify after another cold start. */
+        verify_all((unsigned)epoch-1,(unsigned)epoch);
+        update_all((unsigned)epoch);
+        verify_all((unsigned)epoch,(unsigned)-1);
     } else if(strcmp(argv[1],"compact")==0) {
         verify_all((unsigned)epoch,(unsigned)-1);
         status=fns.compactNV(0);
