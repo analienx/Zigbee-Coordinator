@@ -29,8 +29,11 @@ def must(test: bool, message: str) -> None:
 def symbol_address(data: str, symbol: str) -> int:
     anchor = "GLOBAL SYMBOLS: SORTED ALPHABETICALLY BY Name"
     must(anchor in data, "NO_GLOBAL_SYMBOL_SECTION")
-    text = data.split(anchor, 1)[1]
-    # Stop at subsequent symbol table or report sections if present.
+    # TI ARM Clang repeats every global symbol in a second address-sorted
+    # table. Restrict lookups to the first alphabetic symbol table only.
+    text = data.split(anchor, 1)[1].split(
+        "GLOBAL SYMBOLS: SORTED BY Symbol Address", 1)[0]
+    # Stop at subsequent symbol tables so duplicate listings do not fail G3.
     pattern = re.compile(
         r"^\s*([0-9A-Fa-f]{8})\s+" + re.escape(symbol) +
         r"\s*$", re.MULTILINE)
