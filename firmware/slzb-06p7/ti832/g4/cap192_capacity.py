@@ -31,10 +31,10 @@ REFERENCE_EXAMPLE_COMMIT = "87ff5b638b632050228a7504f35cf3b95581c278"
 # Macros the generated ti_zstack_config.h is expected to carry once SysConfig
 # honours the overlay. Any one spelling per target is accepted; none = fail.
 GENERATED_PATTERNS = {
-    "tc_device_max": r"ZDSECMGR_TC_DEVICE_MAX\D{0,4}192\b",
-    "nwk_device_list": r"NWK_MAX_DEVICE_LIST\D{0,4}96\b",
-    "routing_table": r"MAX_RTG_ENTRIES\D{0,4}128\b",
-    "route_req_entries": r"MAX_ROUTE_REQ_ENTRIES\D{0,4}16\b",
+    "tc_device_max": r"ZDSECMGR_TC_DEVICE_MAX[ \t]+192\b",
+    "nwk_device_list": r"NWK_MAX_DEVICE_LIST[ \t]+96\b",
+    "routing_table": r"MAX_RTG_ENTRIES[ \t]+128\b",
+    "route_req_entries": r"(?:MAX_ROUTE_REQ_ENTRIES|MAX_RREQ_ENTRIES|NWK_MAX_RREQ)[ \t]+16\b",
 }
 
 
@@ -114,10 +114,10 @@ def selftest() -> None:
             continue
         raise AssertionError(f"CAP192_NEGATIVE_CONTROL_{i}_ACCEPTED")
     good = ("\n".join([
-        "#define ZDSECMGR_TC_DEVICE_MAX 192",
-        "#define NWK_MAX_DEVICE_LIST 96",
-        "#define MAX_RTG_ENTRIES 128",
-        "#define MAX_ROUTE_REQ_ENTRIES 16",
+        "#define ZDSECMGR_TC_DEVICE_MAX        192",
+        "#define NWK_MAX_DEVICE_LIST           96",
+        "#define MAX_RTG_ENTRIES               128",
+        "#define MAX_RREQ_ENTRIES              16",
     ]))
     must(audit_generated(good)["targets"] == TARGETS, "GENERATED_POSITIVE")
     m = candidate_manifest({"a": b"x"}, {"a": b"y"})

@@ -641,7 +641,7 @@ jobs:
           GENH=$(find ccs-workspace-cap -type f -name ti_zstack_config.h -print -quit)
           test -s "$GENH"
           cp "$GENH" g4-cap/generated-ti_zstack_config.h
-          grep -nE 'ZDSECMGR_TC_DEVICE_MAX|NWK_MAX_DEVICE_LIST|MAX_RTG|ROUTE_REQ' "$GENH" \
+          grep -nE 'ZDSECMGR|NWK_MAX|MAX_RTG|ROUTE|RREQ' "$GENH" \
             | tee g4-cap/effective-capacity-grep.txt || true
           python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py \
             --generated "$GENH" | tee g4-cap/CAPACITY-EFFECTIVE-AUDIT.json
