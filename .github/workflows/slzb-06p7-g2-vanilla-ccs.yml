@@ -304,6 +304,89 @@ jobs:
           path: bundle/
           retention-days: 30
           if-no-files-found: error
+      # The immutable vanilla G2 reference is uploaded ABOVE this optional
+      # diagnostic candidate. These sources and artifacts are kept separate.
+      - name: Apply isolated UART pointer-type candidate overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p g3-candidate
+          SRC=sdk/source/ti/zstack/npi/npi_tl.c
+          cp "$SRC" g3-candidate/original-npi_tl.c
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          python3 repo/firmware/slzb-06p7/ti832/g3/fix_uart_pointer_types.py \
+            --input g3-candidate/original-npi_tl.c --output "$SRC" \
+            | tee g3-candidate/source-digests.log
+          python3 - <<'PY'
+          from pathlib import Path
+          a=Path("g3-candidate/original-npi_tl.c").read_text()
+          b=Path("sdk/source/ti/zstack/npi/npi_tl.c").read_text()
+          for name in ("npiRxBuf","npiTxBuf"):
+              src=f"static Char {name}[NPI_TL_BUF_SIZE];"
+              dst=f"static uint8_t {name}[NPI_TL_BUF_SIZE];"
+              assert a.count(src)==1 and b.count(dst)==1
+              a=a.replace(src,dst)
+          assert a==b, "UNEXPECTED_SDK_SOURCE_PATCH"
+          PY
+          test "$(git -C sdk diff --name-only HEAD | wc -l)" -eq 1
+          test "$(git -C sdk diff --name-only HEAD)" = "source/ti/zstack/npi/npi_tl.c"
+      - name: Rebuild isolated UART candidate with genuine CCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee g3-candidate/ccs-candidate-build.log
+          if grep -E 'npi_tl.c:.*warning:.*pointer-sign' g3-candidate/ccs-candidate-build.log; then
+             echo "::error::NPI transport pointer warning remains"
+             exit 1
+          fi
+          if grep -E 'error:|^ERROR:' g3-candidate/ccs-candidate-build.log; then
+             echo "::error::G3 UART candidate compile error"
+             exit 1
+          fi
+          test -s "$P7_OUT" && test -s "$P7_MAP"
+          OBJCOPY="$(dirname "$TIARMCLANG")/tiarmobjcopy"
+          "$OBJCOPY" "$P7_OUT" --output-target ihex \
+            g3-candidate/UART-TYPE-CANDIDATE-NOT-FLASHABLE.hex
+          python3 repo/firmware/slzb-06p7/ti832/g2/validate_elf_hex.py \
+            --elf "$P7_OUT" \
+            --hex g3-candidate/UART-TYPE-CANDIDATE-NOT-FLASHABLE.hex \
+            --out g3-candidate/ELF-HEX-CANDIDATE-BINDING.json
+          # Source type fix must not change any programmed code or configuration.
+          ACTUAL=$(sha256sum g3-candidate/UART-TYPE-CANDIDATE-NOT-FLASHABLE.hex | cut -d' ' -f1)
+          test "$ACTUAL" = "5b19e5a3cac13349b30188bc1e5dcf78f544019516b43181f4cf126aeb47de13"
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path("g3-candidate")
+          bind=json.loads((root/"ELF-HEX-CANDIDATE-BINDING.json").read_text())
+          assert bind["exact_programmed_addresses_and_values"]==176484
+          assert bind["flash_authorized"] is False
+          outfile=Path("ccs-workspace/znp_LP_CC1352P7_4_tirtos7_ticlang/default/znp_LP_CC1352P7_4_tirtos7_ticlang.out")
+          result={"status":"NPI_UART_TYPE_CANDIDATE_REBUILT",
+            "target":"TI_CC1352P7_LAUNCHPAD_NOT_SMLIGHT",
+            "only_modified_source":"source/ti/zstack/npi/npi_tl.c",
+            "two_unsigned_byte_buffer_types":True,
+            "pointer_sign_warnings_removed":True,
+            "hex_identical_to_vanilla":True,
+            "runtime_qualified":False,"hardware_qualified":False,"flash_authorized":False,
+            "candidate_elf_sha256":hashlib.sha256(outfile.read_bytes()).hexdigest(),
+            "candidate_hex_sha256":hashlib.sha256((root/"UART-TYPE-CANDIDATE-NOT-FLASHABLE.hex").read_bytes()).hexdigest()}
+          (root/"CANDIDATE-AUDIT.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
+          PY
+          printf '%s\n' 'G3_CANDIDATE_NOT_FLASHABLE' 'UNVERIFIED_SMLIGHT_BOARD' \
+            'STOCK_G2_REFERENCE_PRESERVED' > g3-candidate/NOT_FLASHABLE.txt
+      - name: Upload candidate only after successful independent native build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-g3-UART-TYPE-CANDIDATE-NOT-FLASHABLE
+          path: g3-candidate/
+          retention-days: 30
+          if-no-files-found: error
       - name: Preserve troubleshooting evidence without releasing unqualified binaries
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
