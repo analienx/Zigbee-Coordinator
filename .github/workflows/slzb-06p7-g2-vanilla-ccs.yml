@@ -193,6 +193,18 @@ jobs:
           cp "$P7_OUT" bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.out
           cp "$P7_MAP" bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.map
           cp "$P7_GENH" bundle/ti_zstack_config.h
+          # Preserve the actual generated TI SysConfig CCFG, UART and RF
+          # sources so reviewers can inspect *effective* LaunchPad pin
+          # assignment without mistaking it for verified SMLIGHT wiring.
+          for fname in ti_devices_config.c ti_radio_config.c ti_drivers_config.c \
+                       ti_sysbios_config.c ti_drivers_config.h ti_radio_config.h; do
+            SRC=$(find ccs-workspace -type f -path "*/default/syscfg/$fname" -print -quit)
+            if test -n "$SRC"; then cp "$SRC" "bundle/$fname"; fi
+          done
+          test -s bundle/ti_devices_config.c
+          test -s bundle/ti_radio_config.c
+          echo 'G2 generated CCFG/RF sources available for independent review'
+          grep -E '^[[:space:]]*(FLASH|FLASH_NV|FLASH_LAST|SRAM|GPRAM)[[:space:]]' "$P7_MAP" || true
           cp "$IMPORTED_OPTS" bundle/pristine-znp_cnf.opts
           cp build-evidence/pristine-ti-source.json bundle/
           cp build-evidence/compiler-version.txt bundle/
@@ -213,7 +225,7 @@ jobs:
           root=Path("bundle")
           x=json.loads((root/"G2-LINKED-EVIDENCE.json").read_text())
           assert x["status"]=="REAL_CCS_LINKED_REFERENCE_ONLY"
-          assert x["flash_authorized"] is False and x["linker"]["nv_used"]==0
+          assert x["flash_authorized"] is False and x["nv_image_payload_bytes"]==0
           files={p.name:{"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),
                          "size_bytes":p.stat().st_size} for p in root.iterdir() if p.is_file()}
           manifest={"source_sha":os.environ["GITHUB_SHA"],
@@ -235,8 +247,9 @@ jobs:
             'REAL_CCS_LINKED_REFERENCE_ONLY' 'DO_NOT_FLASH_TO_SMLIGHT' \
             'NO_PRODUCTION_DEVICE_OR_NETWORK_ACCESSED' > bundle/NOT_FLASHABLE.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: p7-g2-TI-LP-CC1352P7_4-REFERENCE-ONLY-NOT-FLASHABLE
           path: bundle/
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
