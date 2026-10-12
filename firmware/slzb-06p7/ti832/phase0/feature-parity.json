@@ -660,7 +660,45 @@
     "P10 NV inaccessible after no-erase flash; physical erase versus index loss unresolved #53",
     "Original-network security counters and backup are private, not part of this public G0",
     "P10 CAP192 RF/bridge soak unperformed; no P7 hardware evidence",
-    "Zephyrus public P10 repo/worktree locations observed read-only; uncommitted source diff and Git status not verified; GitHub evidence frozen",
+    "Zephyrus checked selected tracked worktrees read-only: R11, R12 and A1 clean; older MIN-v4 has three modified deployment/CI files; primary experimental checkout has older modified/untracked utilities. No newer local runtime firmware source superseding published PR #60 was established. Untracked primary contents were not audited line by line.",
     "ZNP SYS F0 command 0xF0 potential vendor collision on P7 not yet checked"
-  ]
+  ],
+  "local_provenance": {
+    "source": "read-only RDC git status and worktree list on ZephyrusG16",
+    "production_or_radio_operations": false,
+    "primary_checkout": {
+      "branch": "exp/mr4u-p10-ti832-kctrl-r0",
+      "head": "47a1a032bde46f1a0de4a9102e7337813d8f0f68",
+      "has_tracked_modified": true,
+      "has_untracked": true
+    },
+    "checked_worktrees": [
+      {
+        "branch": "codex/t832-r11-diag",
+        "head": "156fe563ba5e6eb3d15c56b21ec9aabfda882096",
+        "tracked_clean": true
+      },
+      {
+        "branch": "codex/t832-r12-aux-analysis",
+        "head": "94e5091618617b8a0bea9f98e066b346fa5a1b49",
+        "tracked_clean": true
+      },
+      {
+        "branch": "codex/t832-a1-diagnostic",
+        "head": "c6dcca59b7012bb92b40d10747bf7fe7b38f2ebc",
+        "tracked_clean": true
+      },
+      {
+        "branch": "codex/t832-min-v4-m0m2",
+        "head": "8f00a0c779cad38900a1262582c2f31009e4399d",
+        "tracked_clean": false,
+        "modified_paths": [
+          ".github/workflows/t832-min-ci.yml",
+          "deploy/p10_flash_min_once.py",
+          "deploy/p10_package_min_slzb.py"
+        ]
+      }
+    ],
+    "limits": "Git status does not prove no untracked new firmware features in all other worktrees; no unpublished file contents copied to this public repo."
+  }
 }
