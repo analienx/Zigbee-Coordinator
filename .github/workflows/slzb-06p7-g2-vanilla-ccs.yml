@@ -610,6 +610,11 @@ jobs:
           assert manifest["runtime_qualified"] is False
           staged = g / "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg"
           assert staged.is_file(), staged
+          # Combined NV5+CAP192 invariant: the NV5 syscfg geometry must
+          # survive the capacity overlay (2x 0xA000, NV base 0xA4000).
+          body = staged.read_text()
+          assert body.count("regionSize = 0xA000;") == 2, "NV5_GEOMETRY_LOST"
+          assert "regionBase = 0xA4000;" in body, "NV5_BASE_LOST"
           dest = Path("examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
           shutil.copy2(staged, dest)
           PY
@@ -638,6 +643,13 @@ jobs:
             -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang \
             -ccs.configuration default \
             2>&1 | tee g4-cap/ccs-native-build.log
+          if grep -E 'error:|^ERROR:' g4-cap/ccs-native-build.log; then
+             echo "::error::CAP192 candidate compile/link error"
+             exit 1
+          fi
+          OUTC=$(find ccs-workspace-cap -type f -name '*.out' -print -quit)
+          MAPC=$(find ccs-workspace-cap -type f -name '*.map' -print -quit)
+          test -s "$OUTC" && test -s "$MAPC"
           GENH=$(find ccs-workspace-cap -type f -name ti_zstack_config.h -print -quit)
           test -s "$GENH"
           cp "$GENH" g4-cap/generated-ti_zstack_config.h

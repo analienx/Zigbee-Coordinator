@@ -17,6 +17,7 @@ from pathlib import Path
 PREFIXES=(
     "firmware/slzb-06p7/ti832/g2/",
     "firmware/slzb-06p7/ti832/g3/",
+    "firmware/slzb-06p7/ti832/g4/",
     "firmware/slzb-06p7/ti832/board/",
     "firmware/slzb-06p7/ti832/phase0/",
 )
@@ -74,6 +75,7 @@ def selftest()->None:
         (["coordinators/slzb-06p7/README.md"],"pull_request","synchronize",sample_sha,after,True,False),
         (["firmware/slzb-06p7/ti832/g2/verify_vanilla.py"],"pull_request","synchronize",sample_sha,after,True,True),
         (["firmware/slzb-06p7/ti832/g3/ci_delta_gate.py"],"pull_request","synchronize",sample_sha,after,True,True),
+        (["firmware/slzb-06p7/ti832/g4/cap192_capacity.py"],"pull_request","synchronize",sample_sha,after,True,True),
         ([".github/workflows/slzb-06p7-g2-vanilla-ccs.yml"],"pull_request","synchronize",sample_sha,after,True,True),
         (["docs/a.md","firmware/slzb-06p7/ti832/board/board-contract.json"],"pull_request","synchronize",sample_sha,after,True,True),
         (["docs/a.md"],"pull_request","opened",sample_sha,after,True,True),
@@ -131,7 +133,7 @@ def selftest()->None:
         assert d["native_required"] is True, d
         d = inspect(repo, "0"*40, head2, "pull_request", "synchronize")
         assert d["native_required"] is True, d
-    print("PASS G3 event-delta native build classifier: 12 safe/skip cases + 3 inspect fail-open cases + temp-repo inspect branches")
+    print("PASS G3 event-delta native build classifier: 13 safe/skip cases + 3 inspect fail-open cases + temp-repo inspect branches")
 
 def main()->None:
     p=argparse.ArgumentParser()

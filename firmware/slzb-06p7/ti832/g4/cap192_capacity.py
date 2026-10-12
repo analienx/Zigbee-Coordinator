@@ -34,7 +34,7 @@ GENERATED_PATTERNS = {
     "tc_device_max": r"ZDSECMGR_TC_DEVICE_MAX[ \t]+192\b",
     "nwk_device_list": r"NWK_MAX_DEVICE_LIST[ \t]+96\b",
     "routing_table": r"MAX_RTG_ENTRIES[ \t]+128\b",
-    "route_req_entries": r"(?:MAX_ROUTE_REQ_ENTRIES|MAX_RREQ_ENTRIES|NWK_MAX_RREQ)[ \t]+16\b",
+    "route_req_entries": r"MAX_RREQ_ENTRIES[ \t]+16\b",
 }
 
 
@@ -52,9 +52,14 @@ def patch_syscfg(old: str) -> str:
 
 
 def audit_generated(text: str) -> dict:
+    # Exactly one uncommented #define per target macro: comments, prefixed
+    # spellings and duplicate/conflicting defines must not satisfy the audit.
     found = {}
     for key, pattern in GENERATED_PATTERNS.items():
-        found[key] = bool(re.search(pattern, text))
+        macro = pattern.split("[")[0]
+        defines = re.findall(r"(?m)^[ \t]*#[ \t]*define[ \t]+" + pattern, text)
+        all_defs = re.findall(r"(?m)^[ \t]*#[ \t]*define[ \t]+" + macro + r"\b", text)
+        found[key] = len(defines) == 1 and len(all_defs) == 1
     must(all(found.values()),
          "GENERATED_CAPACITY_NOT_EFFECTIVE_" +
          ",".join(k for k, v in found.items() if not v))
@@ -120,6 +125,36 @@ def selftest() -> None:
         "#define MAX_RREQ_ENTRIES              16",
     ]))
     must(audit_generated(good)["targets"] == TARGETS, "GENERATED_POSITIVE")
+    for bad in ("// #define ZDSECMGR_TC_DEVICE_MAX 192\n" + good,
+                good + "\n#define ZDSECMGR_TC_DEVICE_MAX 50\n",
+                good.replace("#define MAX_RREQ_ENTRIES", "#define XMAX_RREQ_ENTRIES")):
+        try:
+            audit_generated(bad)
+        except ValueError:
+            continue
+        raise AssertionError("GENERATED_COMMENT_OR_DUPLICATE_ACCEPTED")
+    # generate() staging layout + isolation guard (workflow consumes this).
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        ex = base / "examples"
+        syscfg = ex / EXAMPLE_SYSCFG
+        syscfg.parent.mkdir(parents=True)
+        syscfg.write_text("// hdr\n" + ANCHOR + "\n")
+        out = base / "staged"
+        report = generate(ex, out)
+        staged = out / "examples" / EXAMPLE_SYSCFG
+        must(staged.is_file(), "GENERATE_STAGING_LAYOUT")
+        must("zdsecmgrTcDeviceMax = 192" in staged.read_text(), "GENERATE_CONTENT")
+        must((out / "CAP192-CANDIDATE-SOURCE-MANIFEST.json").is_file(),
+             "GENERATE_MANIFEST_MISSING")
+        must(report["targets"] == TARGETS, "GENERATE_REPORT")
+        try:
+            generate(ex, ex / "inside")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("GENERATE_ISOLATION_GUARD_ACCEPTED")
     m = candidate_manifest({"a": b"x"}, {"a": b"y"})
     must(m["qualification"] == CANDIDATE and m["runtime_qualified"] is False,
          "MANIFEST_OVERCLAIM")
