@@ -260,7 +260,7 @@ def selftest()->None:
             ("FLASH_LAST",LAST_BEGIN,0x2000,0x58),
             ("SRAM",0x20000000,0x24000,0x4500),
             ("GPRAM",0x11000000,0x2000,0)])
-        +"\n.ccfg\n"
+    map_text += "\n.ccfg\n"
     require(verify_map(map_text)["nv_used"]==0,"SELFTEST_POS_MAP")
     hx="\n".join([record(4,(0).to_bytes(2,"big")),record(0,b"\x01\x02",0x100),
                   record(4,(0xA).to_bytes(2,"big")),
