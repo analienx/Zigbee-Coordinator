@@ -7,6 +7,11 @@ on:
     branches:
       - codex/t832-min-v4-m0m2
       - codex/t832-min-cap192-routing-20261010
+      - fix/t832-npi-allocation-ownership-20261011
+      - fix/t832-npi-tx-recovery-20261011
+      - fix/t832-npi-srsp-fairness-20261011
+      - fix/t832-npi-telemetry-stackmsg-20261011
+      - fix/t832-af-status-rx-overflow-20261011
 
 permissions:
   contents: read
@@ -194,7 +199,14 @@ jobs:
           mkdir -p evidence
           python3 repo/firmware/t832/min/build_min_real.py --sdk sdk --examples examples --evidence evidence/source-delta.json
           python3 repo/firmware/t832/min/harden_real.py source --sdk sdk --herdsman herdsman --out evidence/host-wire-contract.json
-          test "$(git -C sdk diff --name-only | wc -l)" -eq 8
+          python3 repo/tests/t832_npi_ownership_faults.py --sdk sdk
+          python3 repo/tests/t832_npi_transport_faults.py --sdk sdk
+          python3 repo/tests/t832_npi_stackmsg_diag_faults.py --sdk sdk
+          python3 repo/tests/t832_npi_af_status_faults.py --sdk sdk
+          python3 repo/tests/t832_npi_rx_overflow_faults.py --sdk sdk
+          python3 repo/firmware/t832/min/npi_diag_decode.py --selftest
+          python3 repo/tests/test_t832_nv_sector_plan.py
+          test "$(git -C sdk diff --name-only | wc -l)" -eq 18
           test "$(git -C examples diff --name-only | wc -l)" -eq 2
           git -C sdk diff --check
           git -C examples -c core.whitespace=cr-at-eol diff --check

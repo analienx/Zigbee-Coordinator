@@ -1,7 +1,7 @@
 name: T832-MIN real TI ZNP linker (OFFLINE / NOT_FLASHABLE)
 on:
   push:
-    branches: [codex/t832-min-v4-m0m2, codex/t832-min-cap192-routing-20261010]
+    branches: [codex/t832-min-v4-m0m2, codex/t832-min-cap192-routing-20261010, fix/t832-npi-allocation-ownership-20261011, fix/t832-npi-tx-recovery-20261011, fix/t832-npi-srsp-fairness-20261011, fix/t832-npi-telemetry-stackmsg-20261011, fix/t832-af-status-rx-overflow-20261011]
     paths:
       - ".github/workflows/t832-min-real-build.yml"
       - "firmware/t832/min/**"
@@ -303,6 +303,24 @@ jobs:
             --opts "$OPTS" \
             --nwk-globals sdk/source/ti/zstack/stack/nwk/nwk_globals.c \
             --out bundle/linked-geometry.json
+          python3 - <<'PYSAFE'
+          import json
+          from pathlib import Path
+          geometry=json.loads(Path("bundle/linked-geometry.json").read_text())
+          policy=geometry["hex"]["nv_sector_policy"]
+          nv=int(policy["protected_nv_start"],16)
+          sector=policy["sector_size_bytes"]
+          addresses=[int(a,16) for a in policy["app_sector_erase_start_addresses"]]
+          assert policy["bank_erase_permitted"] is False
+          assert policy["ccfg_erase_permitted"] is False
+          assert policy["flash_authorized"] is False
+          assert policy["operation"]=="OFFLINE_PLAN_ONLY_NEVER_EXECUTE"
+          assert sector==2048 and len(addresses)==policy["app_sector_count"]
+          assert len(addresses)>0 and all(p%sector==0 and 0<=p<p+sector<=nv for p in addresses)
+          assert addresses==sorted(set(addresses))
+          print(f"PASS OFFLINE SECTOR POLICY: {len(addresses)} main-flash app pages, "
+                "bank erase forbidden, CCFG separate, NV excluded; does NOT authorize flashing")
+          PYSAFE
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: t832-min-real-znp-NOT-FLASHABLE

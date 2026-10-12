@@ -13,7 +13,7 @@ FLASH_END = 0x100000
 NVS_BEGIN = 0xF9800
 CCFG_BEGIN = 0x50000000
 CCFG_END = 0x50000800
-REVISION = 2026101002
+REVISION = 2026101104
 H_STD = "src/adapter/z-stack/znp/definition.ts"
 
 
@@ -83,6 +83,7 @@ def hex_spans(path: Path) -> dict:
     records = 0
     ccfglocs = set()
     occupied = set()
+    app_erase_pages = set()
     for lineno, line in enumerate(path.read_text(encoding="ascii").splitlines(), 1):
         if eof:
             raise ValueError(f"Intel HEX data after EOF at line {lineno}")
@@ -115,6 +116,8 @@ def hex_spans(path: Path) -> dict:
                 occupied.add(pos)
                 if in_ccfg:
                     ccfglocs.add(pos)
+                elif in_main:
+                    app_erase_pages.add((pos // 2048) * 2048)
             records += 1
         elif typ == 4:
             if address != 0 or count != 2:
@@ -139,8 +142,25 @@ def hex_spans(path: Path) -> dict:
     # presence and separation only; backdoor/boot config is NOT yet proved.
     if not ccfglocs:
         raise ValueError("CCFG address range absent from linked HEX")
+    # Sector list is strictly an OFFLINE image boundary plan; never flash.
+    # Full bank erase can destroy NV even when HEX excludes the protected tail.
+    if not app_erase_pages or max(app_erase_pages) + 2048 > NVS_BEGIN:
+        raise ValueError("application sector erase plan would overlap protected NV")
     return {"data_records": records, "total_bytes": len(occupied),
-            "ccfg_bytes": len(ccfglocs), "ccfg_address_min": hex(min(ccfglocs))}
+            "ccfg_bytes": len(ccfglocs), "ccfg_address_min": hex(min(ccfglocs)),
+            "nv_sector_policy": {
+                "operation": "OFFLINE_PLAN_ONLY_NEVER_EXECUTE",
+                "bank_erase_permitted": False,
+                "sector_size_bytes": 2048,
+                "app_sector_erase_start_addresses": [hex(x) for x in sorted(app_erase_pages)],
+                "app_sector_count": len(app_erase_pages),
+                "protected_nv_start": hex(NVS_BEGIN),
+                "protected_nv_end_exclusive": hex(FLASH_END),
+                "ccfg_in_image": True,
+                "ccfg_erase_permitted": False,
+                "flash_authorized": False,
+                "limitations": "Plan cannot prove ROM BSL behavior, CCFG compatibility, or physical NV preservation."
+            }}
 
 
 def actual_capacity(header: Path) -> dict[str, int]:

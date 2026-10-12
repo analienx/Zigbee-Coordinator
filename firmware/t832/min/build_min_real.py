@@ -10,6 +10,12 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from npi_tx_recovery_patch import apply as apply_tx_recovery
+from npi_srsp_fairness_patch import apply as apply_srsp_fairness
+from npi_diag_patch import apply as apply_npi_diag
+from npi_tx_nonspin_patch import apply as apply_nonspin
+from npi_af_status_patch import apply as apply_af_status
+from npi_rx_overflow_patch import apply as apply_rx_overflow
 
 SDK_SHA = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
 EXAMPLES_SHA = "87ff5b638b632050228a7504f35cf3b95581c278"
@@ -53,7 +59,7 @@ def apply(sdk, examples, evidence):
     # five bytes; simply changing product 0 -> 1 leaves an INVALID response.
     # Pin and encode a four-byte build revision and confirm via CI on real TI
     # source and the pinned Herdsman protocol definition, not a host mock.
-    revision = 2026101002
+    revision = 2026101104
     original_version = (
         "const uint8_t MTVersionString[] = {\n"
         "                                   2,  /* Transport protocol revision */\n"
@@ -195,6 +201,129 @@ def apply(sdk, examples, evidence):
     npi_config = "source/ti/zstack/npi/npi_config.h"
     replace_exact(sdk, npi_config, "#define NPI_TL_BUF_SIZE         270",
                   "#define NPI_TL_BUF_SIZE         1080", changes)
+
+    # Fix three independent ownership losses in pinned TI NPI under allocation
+    # pressure. Each incoming buffer belongs to exactly one caller until a
+    # successful enqueue/OsalPort_msgSend transfers ownership.
+    npi_task = "source/ti/zstack/npi/npi_task.c"
+    replace_exact(sdk, npi_task,
+        "            default:\n"
+        "            {\n"
+        "                //error\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_leaveCS(key);\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "// Utility functions",
+        "            default:\n"
+        "            {\n"
+        "                // Unsupported framed message must release both objects.\n"
+        "                OsalPort_msgDeallocate(pNPIMsg->pBuf);\n"
+        "                OsalPort_free(pNPIMsg);\n"
+        "                OsalPort_free(recPtr);\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        // Framing and queue-record allocation can fail independently.\n"
+        "        if (pNPIMsg != NULL)\n"
+        "        {\n"
+        "            OsalPort_msgDeallocate(pNPIMsg->pBuf);\n"
+        "            OsalPort_free(pNPIMsg);\n"
+        "        }\n"
+        "        if (recPtr != NULL)\n"
+        "        {\n"
+        "            OsalPort_free(recPtr);\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_leaveCS(key);\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "// Utility functions", changes)
+    replace_exact(sdk, npi_task,
+        "          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );\n"
+        "        }\n"
+        "\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_msgDeallocate(pMsg->pBuf);",
+        "          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );\n"
+        "          if (msgStatus != OsalPort_SUCCESS)\n"
+        "          {\n"
+        "            // Failed send retains caller ownership; free payload and wrapper.\n"
+        "            OsalPort_free(pOsalMsg->msg);\n"
+        "            OsalPort_msgDeallocate((uint8_t *)pOsalMsg);\n"
+        "          }\n"
+        "        }\n"
+        "        else\n"
+        "        {\n"
+        "          // Payload allocation failed; message wrapper was never enqueued.\n"
+        "          OsalPort_msgDeallocate((uint8_t *)pOsalMsg);\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    OsalPort_msgDeallocate(pMsg->pBuf);", changes)
+    replace_exact(sdk, npi_task,
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "//! \\brief      RX Callback provided to Transport Layer for RX Event",
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        // The frame callback owns pFrame even when either wrapper fails.\n"
+        "        OsalPort_msgDeallocate(pFrame);\n"
+        "        if (npiMsgPtr != NULL)\n"
+        "        {\n"
+        "            OsalPort_free(npiMsgPtr);\n"
+        "        }\n"
+        "        if (recPtr != NULL)\n"
+        "        {\n"
+        "            OsalPort_free(recPtr);\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "// -----------------------------------------------------------------------------\n"
+        "//! \\brief      RX Callback provided to Transport Layer for RX Event", changes)
+
+
+    # MT SRSP allocation failure still drops the response (no zero-alloc
+    # recovery yet); but an invalid NPI task must not leak the SRSP message.
+    client_mt = "source/ti/zstack/npi/npi_client_mt.c"
+    replace_exact(sdk, client_mt,
+        "        // Send the message\n"
+        "        OsalPort_msgSend(npiTaskID, pRspMsg);\n",
+        "        // The receiver owns the message only if OSAL enqueue succeeded.\n"
+        "        if (OsalPort_msgSend(npiTaskID, pRspMsg) != OsalPort_SUCCESS)\n"
+        "        {\n"
+        "            OsalPort_msgDeallocate(pRspMsg);\n"
+        "        }\n", changes)
+
+    # Bounded UART immediate-rejection recovery is separate from leak cleanup.
+    transport_tl, _ = apply_tx_recovery(sdk, replace_exact, changes)
+    apply_srsp_fairness(sdk, replace_exact, changes)
+    _, npi_task_header, sys_diag, _ = apply_npi_diag(sdk, replace_exact, changes)
+    apply_nonspin(sdk, replace_exact, changes)
+    _, _, mt_af_diag = apply_af_status(sdk, replace_exact, changes)
+    _, rxbuf_file, rxbuf_header, frame_file, frame_header = apply_rx_overflow(sdk, replace_exact, changes)
+
     linker_rel = "source/ti/zstack/boards/cc13x4_cc26x4/cc13x4_cc26x4_tirtos7_ticlang.cmd"
     # SDK linker script hard-defines five pages independently of project
     # --define, which left FLASH at 0xFD800 and broke 13-page flashBuf0.
@@ -210,7 +339,7 @@ def apply(sdk, examples, evidence):
         raise ValueError("P10 NVS SysConfig extent mismatch")
     actual_sdk = subprocess.check_output(["git", "-C", str(sdk), "diff", "--name-only"], text=True).splitlines()
     actual_examples = subprocess.check_output(["git", "-C", str(examples), "diff", "--name-only"], text=True).splitlines()
-    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals]) or actual_examples != sorted([project, syscfg_rel]):
+    if actual_sdk != sorted([opts, version, zdapp, linker_rel, uart, uart_header, npi_config, nwk_globals, npi_task, client_mt, transport_tl, npi_task_header, sys_diag, mt_af_diag, rxbuf_file, rxbuf_header, frame_file, frame_header]) or actual_examples != sorted([project, syscfg_rel]):
         raise ValueError(f"unexpected source diff sdk={actual_sdk} examples={actual_examples}")
     result = {
         "qualifier": STATUS, "sdk_sha": SDK_SHA, "examples_sha": EXAMPLES_SHA,
@@ -225,15 +354,22 @@ def apply(sdk, examples, evidence):
             "source_route_hops": 16, "address_conflicts": 8,
             "nwk_buffers_waiting": 16, "nwk_buffers_scheduled": 8,
             "nwk_buffers_confirmed": 8, "nwk_buffers_total": 24},
-        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": 2026101002, "payload_bytes": 9},
+        "sys_version": {"transportrev": 2, "product": 1, "majorrel": 2, "minorrel": 7, "maintrel": 1, "revision": revision, "payload_bytes": 9},
         "behavioral_changes": [
             "MT SYS extended NV + key management availability",
             "APS multicast group destination behavior",
             "Restoration NV budget: effective TC slots=192, NWK device list=96; 13 pages",
             "Runtime routing resource budget: 128 route, 128 source-route, 64 neighbor, 16 discovery, 24 NWK buffers (unproven)",
+            "NPI ownership fix: frame ingress, outbound queue creation and stack-message payload/send failure paths",
+            "MT SRSP ownership correction after rejected NPI queue send",
+            "NPI non-flow-control synchronous UART reject recovery with bounded TX backoff",
+            "FIFO host SRSP prioritization with four-response fairness budget and lab counters",
+            "Read-only MT SYS F0 NPI/stack diagnostic v2 (25 counters including AF/CCA and RX overflow)",
+            "RX overflow discard and UNPI parser reset replaces infinite trap",
+            "NPI pending TX defers to physical UART TX_DONE or one-shot retry event, no busy-spin",
             "Commit coordinator NIB synchronously before state9 callback",
             "UART2 physical TX completion event and larger NPI RX buffers",
-            "ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision=2026101002)",
+            f"ZStack3x0 product=1 and full 9-byte SYS_VERSION response (uint32 LE revision={revision})",
         ],
         "flash_authorized": False, "hardware_qualified": False,
     }
