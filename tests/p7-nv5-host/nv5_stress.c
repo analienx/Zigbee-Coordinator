@@ -129,7 +129,8 @@ int main(int argc,char **argv){
         verify_all((unsigned)epoch,(unsigned)-1);
     } else {must(0,"UNKNOWN_COMMAND");}
     /* The printed count is derived, never a literal: shrinking kinds[]
-     * must shrink the report, and mutation counts must match the op. */
+     * must shrink the report. note_count is a consistency cross-check
+     * only; verify_all() re-reading every record is the real oracle. */
     if(strcmp(argv[1],"fill")==0)
         must(note_count==(int)total_records(),"FILL_COUNT_MISMATCH");
     if(strcmp(argv[1],"churn")==0 || strcmp(argv[1],"heal")==0)

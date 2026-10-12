@@ -28,8 +28,13 @@ jobs:
         id: check
         shell: bash
         env:
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.event.after }}
+          # pull_request/workflow_dispatch payloads have no top-level
+          # before/after (push-only fields); use the PR base/head SHAs so
+          # the delta gate compares real commits instead of always
+          # failing open on empty strings. workflow_dispatch stays empty
+          # and therefore fail-open (native build required).
+          BEFORE: ${{ github.event.pull_request.base.sha }}
+          AFTER: ${{ github.event.pull_request.head.sha }}
           ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail

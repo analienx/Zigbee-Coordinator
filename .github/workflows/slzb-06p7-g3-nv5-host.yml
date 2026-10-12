@@ -63,10 +63,14 @@ jobs:
           root=Path("nv5-stress")
           log=(root/"driver-test.log").read_text()
           assert log.count("PASS_PINNED_TI_NVOCMP_REAL_DRIVER")==10
+          import re as _re
+          recs=[int(x) for x in _re.findall(r"records=(\d+)", log)]
+          assert len(recs)==10 and len(set(recs))==1, recs
+          record_count=recs[0]
           result={
             "status":"TI8.32_NVOCMP_REAL_C_HOST_STRESS_PASS",
             "compiled_original_sdk":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
-            "nv_pages":5,"flash_page_bytes":8192,"synthetic_records":587,
+            "nv_pages":5,"flash_page_bytes":8192,"synthetic_records":record_count,
             "churn_epochs":2,"explicit_compactions":2,"process_invocations":10,"cold_reloads_after_create":9,
             "simulator_hardware_accurate":False,
             "power_loss_fault_injection_pass":False,
@@ -129,6 +133,10 @@ jobs:
           log=(root/"fault-results.log").read_text()
           assert log.count("PASS_NV5_PARTIAL_WRITE_FAULT")==6
           assert log.count("PASS_PINNED_TI_NVOCMP_REAL_DRIVER")==30
+          import re as _re
+          recs=[int(x) for x in _re.findall(r"records=(\d+)", log)]
+          assert len(recs)==30 and len(set(recs))==1, recs
+          record_count=recs[0]
           result={
             "status":"TI8.32_NVOCMP_PARTIAL_WRITE_INTERRUPTION_HOST_PASS",
             "real_sdk_source":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
@@ -136,7 +144,7 @@ jobs:
             "fault_indices":[1,2,10,50,250,580],
             "all_record_versions_valid_after_restart":True,
             "all_records_healed_and_compacted_after_restart":True,
-            "tested_record_count":587,
+            "tested_record_count":record_count,
             "faulted_sector_erase_tested":"see ERASE-VERDICT.json (prefix model only)",
             "real_power_cut_hardware_tested":False,
             "zigbee_security_counter_semantics_qualified":False,

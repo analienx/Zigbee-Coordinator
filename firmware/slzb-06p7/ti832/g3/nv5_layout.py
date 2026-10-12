@@ -201,6 +201,8 @@ def selftest()->None:
     must(v.count("regionSize = 0xA000;")==2,"POSITIVE_SYSCFG")
     must(v.count("regionSize = 0x4000;")==1,"FALLBACK_CHANGED")
     must("2674" in v and SYSCFG_SCOPE.startswith("LP_CC1352P7_4"),"SYSCFG_SCOPE_LOST")
+    _m=candidate_manifest({"a":b"x"},{"a":b"y"})
+    must(_m["syscfg_scope"]==SYSCFG_SCOPE,"MANIFEST_SCOPE_NOT_EMITTED")
     examples=[
         lambda:patch_linker(l.replace("0xAA000","0xAB000",1)),
         lambda:patch_linker(l.replace("FLASH_LAST_SIZE         0x2000",
