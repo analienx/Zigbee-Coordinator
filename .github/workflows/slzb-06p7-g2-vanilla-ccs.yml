@@ -1,0 +1,242 @@
+name: SLZB-06P7 G2 real vanilla TI CCS ZNP (REFERENCE ONLY)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7-g2-vanilla-ccs.yml'
+      - 'firmware/slzb-06p7/ti832/g2/**'
+      - 'firmware/slzb-06p7/ti832/board/**'
+  push:
+    branches: [feat/slzb-06p7-ti832-p10-parity]
+    paths:
+      - '.github/workflows/slzb-06p7-g2-vanilla-ccs.yml'
+      - 'firmware/slzb-06p7/ti832/g2/**'
+      - 'firmware/slzb-06p7/ti832/board/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: G2 source-only negative tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile firmware/slzb-06p7/ti832/g2/verify_vanilla.py
+          python3 firmware/slzb-06p7/ti832/g2/verify_vanilla.py selftest
+          python3 firmware/slzb-06p7/ti832/board/verify_g1.py --selftest
+  native-ti-ccs:
+    name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
+    needs: source-tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          persist-credentials: false
+      - name: Freeze pristine TI source BEFORE build or import
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-evidence
+          test "$(git -C repo rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 repo/firmware/slzb-06p7/ti832/g2/verify_vanilla.py preflight \
+            --sdk sdk --examples examples --out build-evidence/pristine-ti-source.json
+          git -C sdk diff --exit-code HEAD
+          git -C examples diff --exit-code HEAD
+      - name: Install actual CCS12.8 vendor toolchain and SysConfig 1.21.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl tar xz-utils cmake \
+            libc6-i386 libusb-0.1-4 libncurses5 libtinfo5 \
+            libx11-6 libxext6 libxrender1 libxtst6 libxi6 libxt6 libxinerama1 \
+            libgtk2.0-0 libnss3 xvfb
+          mkdir -p "$HOME/ti/downloads"
+          cd "$HOME/ti/downloads"
+          FILE=CCS12.8.0.00012_web_linux-x64.tar.gz
+          curl -fL --retry 5 --retry-delay 2 -o "$FILE" \
+            "https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/$FILE"
+          tar xzf "$FILE"
+          SETUP=$(find . -maxdepth 3 -type f -name ccs_setup_12.8.0.00012.run -print -quit)
+          test -n "$SETUP"
+          chmod +x "$SETUP"
+          "$SETUP" --mode unattended --enable-components PF_WCONN --prefix "$HOME/ti/ccs1280"
+          FILE=sysconfig-1.21.1_3772-setup.run
+          curl -fL --retry 5 --retry-delay 2 -o "$FILE" \
+            "https://software-dl.ti.com/ccs/esd/sysconfig/$FILE"
+          chmod +x "$FILE"
+          "./$FILE" --mode unattended --prefix "$HOME/ti/sysconfig_1.21.1"
+      - name: Pin actual compiler versions and activate SysConfig 1.21.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMCLANG=$(find "$HOME/ti/ccs1280" -type f -name tiarmclang -perm -u+x -print -quit)
+          SYSCONFIG=$(find "$HOME/ti/sysconfig_1.21.1" -type f -name sysconfig_cli.sh -print -quit)
+          XDC=$(find "$HOME/ti/ccs1280" -type d -name xdctools_3_62_01_16_core -print -quit)
+          CCS_ECLIPSE=$(find "$HOME/ti/ccs1280" -type f -name eclipse -path '*/eclipse/eclipse' -perm -u+x -print -quit)
+          test -x "$TIARMCLANG" && test -x "$SYSCONFIG" && test -d "$XDC" && test -x "$CCS_ECLIPSE"
+          "$TIARMCLANG" --version | tee build-evidence/compiler-version.txt
+          grep -F '3.2.2.LTS' build-evidence/compiler-version.txt
+          BUNDLED=$(find "$HOME/ti/ccs1280" -maxdepth 5 -type d -name sysconfig_1.21.0 -print -quit)
+          test -d "$BUNDLED"
+          mv "$BUNDLED" "$BUNDLED.orig-1.21.0"
+          ln -s "$HOME/ti/sysconfig_1.21.1" "$BUNDLED"
+          test "$(readlink "$BUNDLED")" = "$HOME/ti/sysconfig_1.21.1"
+          {
+            echo "TIARMCLANG=$TIARMCLANG"
+            echo "SYSCONFIG=$SYSCONFIG"
+            echo "XDC=$XDC"
+            echo "CCS_ECLIPSE=$CCS_ECLIPSE"
+          } >> "$GITHUB_ENV"
+      - name: Build genuine P7 ARM-M4F SDK libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TICLANG_ARMCOMPILER="$(dirname "$(dirname "$TIARMCLANG")")"
+          export XDC_INSTALL_DIR="$XDC"
+          export SYSCONFIG_TOOL="$SYSCONFIG"
+          export GCC_ARMCOMPILER=
+          export IAR_ARMCOMPILER=
+          cmake -G "Unix Makefiles" -S sdk -B sdk/build/ticlang --log-level=VERBOSE
+          cmake --build sdk/build/ticlang \
+            --target tirtos7_m4f drivers_cc13x2x7 display_cc13x2x7 \
+                     driverlib_cc13x2x7_cc26x2x7 spiffs_m4f_cc26xx \
+            -j 2 2>&1 | tee build-evidence/p7-sdk-libs-build.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil,sys
+          sdk=Path("sdk")
+          built=[p for p in (sdk/"build/ticlang").rglob("*")
+                 if p.is_file() and p.suffix in (".a",".lib")]
+          wanted={
+            "sysbios.a":"kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m4f/sysbios.a",
+            "drivers_cc13x2x7.a":"source/ti/drivers/lib/ticlang/m4f/drivers_cc13x2x7.a",
+            "display_cc13x2x7.a":"source/ti/display/lib/ticlang/m4f/display_cc13x2x7.a",
+            "driverlib.lib":"source/ti/devices/cc13x2x7_cc26x2x7/driverlib/bin/ticlang/driverlib.lib",
+            "spiffs_cc26xx.a":"source/third_party/spiffs/lib/ticlang/m4f/spiffs_cc26xx.a"
+          }
+          for name,rel in wanted.items():
+            matches=[p for p in built if p.name==name]
+            if len(matches)!=1:
+              sys.exit("G2_LIBRARY_NOT_UNIQUE "+name+": "+repr(matches))
+            src=matches[0]
+            if src.stat().st_size<100: sys.exit("G2_LIBRARY_EMPTY "+name)
+            dst=sdk/rel
+            dst.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(src,dst)
+            print("G2_NATIVE_LIBRARY",name,src.stat().st_size,rel)
+          PY
+      - name: Register SDK and import pristine P7 TI LaunchPad project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ccs-workspace
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" \
+            2>&1 | tee build-evidence/ccs-register.log
+          PROJECTSPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          test -s "$PROJECTSPEC"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$PROJECTSPEC" -ccs.overwrite \
+            2>&1 | tee build-evidence/ccs-project-import.log
+          OPTS=$(find ccs-workspace -type f -path '*/Stack/Config/znp_cnf.opts' -print)
+          test "$(printf '%s\n' "$OPTS" | sed '/^$/d' | wc -l)" -eq 1
+          test "$(sha256sum "$OPTS" | cut -d ' ' -f1)" = \
+               "$(sha256sum sdk/source/ti/zstack/apps/znp/znp_cnf.opts | cut -d ' ' -f1)"
+          echo "IMPORTED_OPTS=$OPTS" >> "$GITHUB_ENV"
+      - name: Real TI CCS ARM-M4F ZNP compiler and linker
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee build-evidence/ccs-build.log
+          OUT=$(find ccs-workspace -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace -type f -name '*.map' -print -quit)
+          GENH=$(find ccs-workspace -type f -name ti_zstack_config.h -print -quit)
+          test -n "$OUT" && test -n "$MAP" && test -n "$GENH"
+          test -s "$OUT" && test -s "$MAP" && test -s "$GENH"
+          {
+            echo "P7_OUT=$OUT"
+            echo "P7_MAP=$MAP"
+            echo "P7_GENH=$GENH"
+          } >> "$GITHUB_ENV"
+      - name: Audit actual ELF, Intel HEX, memory and protected last flash sector
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle
+          cp "$P7_OUT" bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.out
+          cp "$P7_MAP" bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.map
+          cp "$P7_GENH" bundle/ti_zstack_config.h
+          cp "$IMPORTED_OPTS" bundle/pristine-znp_cnf.opts
+          cp build-evidence/pristine-ti-source.json bundle/
+          cp build-evidence/compiler-version.txt bundle/
+          cp build-evidence/ccs-build.log bundle/
+          TIARMOBJCOPY="$(dirname "$TIARMCLANG")/tiarmobjcopy"
+          test -x "$TIARMOBJCOPY"
+          "$TIARMOBJCOPY" "$P7_OUT" --output-target ihex \
+            bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.hex
+          python3 repo/firmware/slzb-06p7/ti832/g2/verify_vanilla.py linked \
+            --sdk sdk --examples examples --out "$P7_OUT" --map "$P7_MAP" \
+            --hex bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.hex \
+            --header "$P7_GENH" --opts "$IMPORTED_OPTS" \
+            --source-evidence build-evidence/pristine-ti-source.json \
+            --evidence bundle/G2-LINKED-EVIDENCE.json
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path("bundle")
+          x=json.loads((root/"G2-LINKED-EVIDENCE.json").read_text())
+          assert x["status"]=="REAL_CCS_LINKED_REFERENCE_ONLY"
+          assert x["flash_authorized"] is False and x["linker"]["nv_used"]==0
+          files={p.name:{"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),
+                         "size_bytes":p.stat().st_size} for p in root.iterdir() if p.is_file()}
+          manifest={"source_sha":os.environ["GITHUB_SHA"],
+            "sdk_sha":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+            "examples_sha":"87ff5b638b632050228a7504f35cf3b95581c278",
+            "qualification":"REFERENCE_ONLY_NOT_FLASHABLE",
+            "flash_authorized":False,"hardware_qualified":False,
+            "actual_slzb_ccfg_verified":False,"original_pinmap_verified":False,
+            "artifacts":files}
+          (root/"MANIFEST.json").write_text(json.dumps(manifest,indent=2,sort_keys=True)+"\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+            f.write("## Actual P7 CCS linked reference: NOT FLASHABLE\n\n")
+            f.write(f"- Flash used: {x['linker']['flash_used']} bytes\n")
+            f.write(f"- SRAM used: {x['linker']['sram_used']} bytes\n")
+            f.write(f"- CCFG-linked bytes: {x['linker']['ccfg_sector_used']}\n")
+            f.write("- SLZB-06P7 board pinout and CCFG: unverified.\n")
+          PY
+          printf '%s\n' \
+            'REAL_CCS_LINKED_REFERENCE_ONLY' 'DO_NOT_FLASH_TO_SMLIGHT' \
+            'NO_PRODUCTION_DEVICE_OR_NETWORK_ACCESSED' > bundle/NOT_FLASHABLE.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-g2-TI-LP-CC1352P7_4-REFERENCE-ONLY-NOT-FLASHABLE
+          path: bundle/
+          retention-days: 30
+          if-no-files-found: error
