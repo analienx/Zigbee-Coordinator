@@ -31,6 +31,10 @@ jobs:
           python3 -m py_compile firmware/slzb-06p7/ti832/g2/validate_elf_hex.py
           python3 firmware/slzb-06p7/ti832/g2/validate_elf_hex.py --selftest
           python3 firmware/slzb-06p7/ti832/board/verify_g1.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/analyze_memory.py
+          python3 firmware/slzb-06p7/ti832/g3/analyze_memory.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/fix_uart_pointer_types.py
+          python3 firmware/slzb-06p7/ti832/g3/fix_uart_pointer_types.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
     needs: source-tests
@@ -88,6 +92,11 @@ jobs:
             "https://software-dl.ti.com/ccs/esd/sysconfig/$FILE"
           chmod +x "$FILE"
           "./$FILE" --mode unattended --prefix "$HOME/ti/sysconfig_1.21.1"
+          # Installer bytes are observed before any future checksum pinning.
+          # This is NOT an independent TI-published checksum validation.
+          sha256sum CCS12.8.0.00012_web_linux-x64.tar.gz \
+                    sysconfig-1.21.1_3772-setup.run | \
+            tee "$GITHUB_WORKSPACE/build-evidence/vendor-installer-sha256.txt"
       - name: Pin actual compiler versions and activate SysConfig 1.21.1
         shell: bash
         run: |
@@ -214,6 +223,7 @@ jobs:
           cp build-evidence/pristine-ti-source.json bundle/
           cp build-evidence/compiler-version.txt bundle/
           cp build-evidence/ccs-build.log bundle/
+          cp build-evidence/vendor-installer-sha256.txt bundle/
           TIARMOBJCOPY="$(dirname "$TIARMCLANG")/tiarmobjcopy"
           test -x "$TIARMOBJCOPY"
           "$TIARMOBJCOPY" "$P7_OUT" --output-target ihex \
@@ -231,6 +241,8 @@ jobs:
             --elf "$P7_OUT" \
             --hex bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.hex \
             --out bundle/ELF-HEX-BINDING.json
+          python3 repo/firmware/slzb-06p7/ti832/g3/analyze_memory.py \
+            --map "$P7_MAP" --out bundle/G3-STATIC-MEMORY-EVIDENCE.json
           python3 - <<'PY'
           import hashlib,json,os
           from pathlib import Path
@@ -280,6 +292,7 @@ jobs:
           assert m["qualification"]=="REFERENCE_ONLY_NOT_FLASHABLE"
           assert len(m["artifacts"])>=16
           assert "ELF-HEX-BINDING.json" in m["artifacts"]
+          assert "G3-STATIC-MEMORY-EVIDENCE.json" in m["artifacts"]
           assert "G2-LINKED-EVIDENCE.json" in m["artifacts"]
           x=json.loads((p/"ELF-HEX-BINDING.json").read_text())
           assert x["status"]=="ELF_HEX_EXACT_PROGRAM_BYTES_MATCH"
