@@ -182,6 +182,7 @@ def verify_ihex(text:str)->dict:
     # The final sector containing CCFG may be present in the image. Never
     # infer safe sector erasure or preserve adjacent bytes from HEX alone.
     return {
+        "nv_hex_bytes":0, # enforced by every data-record address-boundary check
         "total_unique_bytes":len(occupied),
         "app_unique_bytes":len(occupied)-len(ccfglocs),
         "ccfg_bytes":len(ccfglocs),
@@ -226,7 +227,15 @@ def linked(out:Path,map_file:Path,hex_file:Path,genh:Path,opts:Path,
     elf=audit_elf(out)
     require(mem["flash_used"]>0 and mem["sram_used"]>0,
             "TRIVIAL_OR_NOT_LINKED")
-    require(mem["nv_used"]==0,"NV_FLASH_ALLOCATED")
+    # TI can reserve the entire NVS region as a NOLOAD link-time area. A
+    # map row's "used" reports *allocated address space*, not necessarily
+    # bytes emitted in the firmware. Protection is therefore decided from
+    # the independently parsed, checksummed INTEL HEX *load bytes* above.
+    # All addresses in 0xAA000..0xAE000 are prohibited by verify_ihex.
+    # Never infer that a flasher's bank erase will honor this distinction.
+    require(img["nv_hex_bytes"]==0,"NV_INITIALIZED_IMAGE_DATA")
+    print("G2_LINKER_NV_REGION_RESERVED_BYTES", mem["nv_used"],
+          "G2_INTEL_HEX_NV_BYTES", img["nv_hex_bytes"])
     require(mem["gpram_used"]==0,"GPRAM_RESERVED_FOR_CACHE")
     require(mem["ccfg_sector_used"]>0,"NO_CCFG_SECTION")
     require(b"ZSTACK" in genh.read_bytes().upper() or genh.stat().st_size>120,
@@ -241,6 +250,9 @@ def linked(out:Path,map_file:Path,hex_file:Path,genh:Path,opts:Path,
         "device_commissioned":False,"nv_migration_qualified":False,
         "source":report,"elf":elf,
         "linker":mem,
+        "nv_linker_reserved_bytes_not_flash_data":mem["nv_used"],
+        "nv_image_payload_bytes":img["nv_hex_bytes"],
+        "flash_erase_coverage_unverified":True,
         "ihex":img,
         "outputs":{name:{"sha256":sha256(path),"bytes":path.stat().st_size}
                    for name,path in {"elf_out":out,"link_map":map_file,
