@@ -1,0 +1,93 @@
+{
+  "schema": "slzb-06p7-hardware-evidence-v1",
+  "date": "2026-10-12",
+  "model": "ORIGINAL_SLZB_06P7_NON_U",
+  "silicon_claim": "CC2652P7",
+  "scope": "READ_ONLY_EVIDENCE_REQUEST_NOT_HARDWARE_QUALIFICATION",
+  "authority": "firmware/slzb-06p7/ti832/board/board-contract.json",
+  "provenance": {
+    "physical_unit_seen": false,
+    "physical_unit_identifier_published": false,
+    "board_revision": null,
+    "board_schematic_verified": false,
+    "vendor_image_digest": null,
+    "vendor_ccfg_snapshot_digest": null,
+    "credible_sources": []
+  },
+  "gate": {
+    "hardware_qualified": false,
+    "flash_authorized": false,
+    "rf_transmit_authorized": false,
+    "nv_erase_authorized": false,
+    "network_migration_authorized": false,
+    "safe_rollback_verified": false
+  },
+  "observations": [
+    {
+      "id": "H1",
+      "label": "Original 06P7 unit / PCB version",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Identify exact PCB revision from physical label or manufacturer BOM; no personal serial or MAC in public evidence"
+    },
+    {
+      "id": "H2",
+      "label": "Radio silicon identity",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Prove CC2652P7 device and BSL-capable silicon on isolated spare or signed BOM; no resetting live coordinator"
+    },
+    {
+      "id": "H3",
+      "label": "Original CCFG and BSL access",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Privately preserve read-only original 8KiB sector/firmware and SHA; publicly show only verified CCFG control flags / checksum"
+    },
+    {
+      "id": "H4",
+      "label": "Host ESP / CC2652P7 UART netlist and control",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Verify chip-side TX RX RTS CTS RESET backdoor DIO and active polarity; TI LaunchPad GPIO are not proof"
+    },
+    {
+      "id": "H5",
+      "label": "RF PA, antenna and regional EIRP",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Verify RF switch/PA path and TI CC2652P7 output power/EIRP from board-specific evidence"
+    },
+    {
+      "id": "H6",
+      "label": "Original NV persistent sector geometry",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Private sanitized read-only sector map and safe restore proof; do not publish Zigbee keys, IEEE, counters"
+    },
+    {
+      "id": "H7",
+      "label": "Isolated restore / no-erase toolchain proof",
+      "state": "BLOCKED",
+      "digest": null,
+      "method": null,
+      "scope": "Verify uploader erase commands, boot recovery and restore using expendable board only after separate explicit authorization"
+    }
+  ],
+  "forbidden_assumptions": [
+    "CC1352P7 TI LaunchPad equals SLZB-06P7 PCB",
+    "CC2674P10 memory map applies to CC2652P7",
+    "ESP32 GPIO equals radio DIO pin",
+    "a vendor firmware file proves physical fitted PCB",
+    "coordinator backup implies flash sector readback",
+    "reference HEX containing no NV bytes implies safe bank erase"
+  ],
+  "conclusion": "HARDWARE_GATES_BLOCKED_NO_PROVEN_AUTHENTIC_UNIT",
+  "confidentiality": "Never commit raw flash, CCFG, Zigbee keys, IEEE identifiers, coordinator backups or unredacted photos."
+}
