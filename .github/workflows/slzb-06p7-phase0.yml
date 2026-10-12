@@ -1,0 +1,26 @@
+name: SLZB-06P7 G0 frozen source inventory (offline)
+on:
+  push:
+    branches:
+      - feat/slzb-06p7-ti832-p10-parity
+    paths:
+      - 'firmware/slzb-06p7/ti832/phase0/**'
+      - '.github/workflows/slzb-06p7-phase0.yml'
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7/ti832/phase0/**'
+      - '.github/workflows/slzb-06p7-phase0.yml'
+permissions:
+  contents: read
+jobs:
+  audit:
+    name: Inventory / negative controls (no build or flash)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2 SHA pinned by repository precedent
+      - name: Validate frozen manifest and ten negative controls
+        run: python3 firmware/slzb-06p7/ti832/phase0/validate_inventory.py --selftest
+      - name: Show non-hardware evidence boundary
+        run: |
+          printf '%s\n' 'SOURCE_INVENTORY_ONLY' 'NO_P7_COMPILE' 'NO_HARDWARE_ACCESS' 'NO_FLASH' 'NO_NETWORK_OPERATIONS'
