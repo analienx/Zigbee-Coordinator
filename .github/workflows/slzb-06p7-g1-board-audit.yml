@@ -1,0 +1,56 @@
+name: SLZB-06P7 G1 pinned TI board source audit (offline)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7/ti832/board/**'
+      - '.github/workflows/slzb-06p7-g1-board-audit.yml'
+  push:
+    branches:
+      - feat/slzb-06p7-ti832-p10-parity
+    paths:
+      - 'firmware/slzb-06p7/ti832/board/**'
+      - '.github/workflows/slzb-06p7-g1-board-audit.yml'
+permissions:
+  contents: read
+jobs:
+  board-source-audit:
+    name: G1 source pins / 12 negative cases / no flashing
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+          sparse-checkout: |
+            source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd
+            source/ti/devices/cc13x2x7_cc26x2x7/startup_files/ccfg.c
+          sparse-checkout-cone-mode: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          persist-credentials: false
+          sparse-checkout: |
+            examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7
+          sparse-checkout-cone-mode: false
+      - name: Verify exact pinned source, memory/CCFG, board dependencies and fail-closed contract
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/slzb-06p7/ti832/board/verify_g1.py \
+            --sdk sdk --examples examples --selftest
+      - name: Evidence boundary
+        run: |
+          echo 'G1_STATIC_PROFILE=SOURCE_VERIFIED'
+          echo 'G1_HARDWARE_PROFILE=BLOCKED'
+          echo 'P7_FIRMWARE_BUILT=NO'
+          echo 'P7_FLASH_AUTHORIZED=NO'
+          echo 'COORDINATOR_OR_NETWORK_TOUCHED=NO'
+          echo 'G2_COMPILER_GATE=NOT_STARTED'
