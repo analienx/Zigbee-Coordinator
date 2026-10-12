@@ -12,10 +12,40 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: slzb-p7-g2-reference-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
+  classify_delta:
+    name: Decide if real native CCS rebuild is warranted
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      requires_native: ${{ steps.check.outputs.requires_native }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fail-safe source delta analysis
+        id: check
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          set -euo pipefail
+          python3 firmware/slzb-06p7/ti832/g3/ci_delta_gate.py \
+            --repo . --before "$BEFORE" --after "$AFTER" \
+            --event "$GITHUB_EVENT_NAME" --action "$ACTION" \
+            --out "$RUNNER_TEMP/p7-delta.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          d=json.loads((Path(os.environ["RUNNER_TEMP"])/"p7-delta.json").read_text())
+          need="true" if d["native_required"] else "false"
+          with open(os.environ["GITHUB_OUTPUT"],"a") as f:
+              f.write(f"requires_native={need}\n")
+          print("P7_NATIVE_REBUILD",need,d["reason"])
+          PY
   source-tests:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
@@ -37,9 +67,15 @@ jobs:
           python3 firmware/slzb-06p7/ti832/g3/validate_hardware_gate.py --selftest
           python3 -m py_compile firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py
           python3 firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/ci_delta_gate.py
+          python3 firmware/slzb-06p7/ti832/g3/ci_delta_gate.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
-    needs: source-tests
+    needs: [source-tests, classify_delta]
+    if: needs.classify_delta.outputs.requires_native == 'true'
+    concurrency:
+      group: slzb-p7-g2-native-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
