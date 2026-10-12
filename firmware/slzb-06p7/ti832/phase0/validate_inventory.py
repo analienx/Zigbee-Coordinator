@@ -63,6 +63,12 @@ def check(doc: dict) -> None:
         assert re.fullmatch(r"[0-9a-f]{40}", item["sha"]), ref
     for ref in ("ti_sdk", "ti_examples"):
         assert re.fullmatch(r"[0-9a-f]{40}", authority[ref]["sha"]), ref
+    assert authority["zigbee_herdsman"]["version"] == "10.9.1"
+    assert authority["zigbee_herdsman"]["sha"] == "0968f979d558874b17396c96b66382d4236bbdcd"
+    assert authority["toolchain"]["ccs"] == "12.8.0.00012"
+    assert authority["toolchain"]["ti_arm_clang"] == "3.2.2.LTS"
+    assert authority["toolchain"]["sysconfig"] == "1.21.1.3772"
+    assert authority["toolchain"]["xdctools"] == "3.62.01.16"
     assert authority["CAP192"]["sha"] == "b273044f17c88fbde26d9e9b946ab559a1d1b675"
     files = doc["cap192_source_delta"]
     assert len(files["sdk_modified"]) == files["counts"]["sdk"] == 18
