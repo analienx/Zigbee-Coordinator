@@ -57,7 +57,20 @@
       "sha": "87ff5b638b632050228a7504f35cf3b95581c278"
     },
     "p7_ti_example": "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec",
-    "p7_linker": "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"
+    "p7_linker": "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd",
+    "zigbee_herdsman": {
+      "repo": "Koenkk/zigbee-herdsman",
+      "version": "10.9.1",
+      "sha": "0968f979d558874b17396c96b66382d4236bbdcd"
+    },
+    "toolchain": {
+      "ccs": "12.8.0.00012",
+      "ti_arm_clang": "3.2.2.LTS",
+      "sysconfig": "1.21.1.3772",
+      "xdctools": "3.62.01.16",
+      "host": "GitHub-hosted Ubuntu",
+      "proof": "firmware/t832/min upstream CI; P7 has not built"
+    }
   },
   "cap192_source_delta": {
     "sdk_modified": [
@@ -647,7 +660,7 @@
     "P10 NV inaccessible after no-erase flash; physical erase versus index loss unresolved #53",
     "Original-network security counters and backup are private, not part of this public G0",
     "P10 CAP192 RF/bridge soak unperformed; no P7 hardware evidence",
-    "Unpublished local Zephyrus P10 worktree delta not independently inspected; GitHub evidence frozen",
+    "Zephyrus public P10 repo/worktree locations observed read-only; uncommitted source diff and Git status not verified; GitHub evidence frozen",
     "ZNP SYS F0 command 0xF0 potential vendor collision on P7 not yet checked"
   ]
 }
