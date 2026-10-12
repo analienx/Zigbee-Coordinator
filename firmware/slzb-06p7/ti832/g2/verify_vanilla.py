@@ -25,6 +25,10 @@ APP_END, NV_BEGIN, NV_END, LAST_BEGIN, FLASH_END = (
 )
 ERASE_BYTES = 8192
 SAFE_MODE = "REFERENCE_ONLY_NOT_FLASHABLE"
+# Verified byte-identical across two independent CCS 12.8 P7 reference builds.
+# G2 is immutable; any output drift requires a reviewed baseline revision.
+BASE_ELF_SHA256 = "90b44e59af383d79dd90ae63a8d00013a07017343611a34afb52dcb587c04d24"
+BASE_HEX_SHA256 = "5b19e5a3cac13349b30188bc1e5dcf78f544019516b43181f4cf126aeb47de13"
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -206,6 +210,17 @@ def audit_elf(path:Path)->dict:
     require(struct.unpack_from("<H",b,18)[0]==40,"ELF_NOT_ARM")
     return {"elf32":True,"little_endian":True,"machine":"ARM","sha256":sha256(path)}
 
+def validate_memory_consistency(mem:dict,img:dict)->None:
+    # Linker usage is not allowed to drift away from initialized image bytes.
+    require(mem["flash_used"] == img["app_unique_bytes"],
+            "MAP_APP_FLASH_VS_HEX_PAYLOAD_MISMATCH")
+    require(mem["ccfg_sector_used"] == img["ccfg_bytes"],
+            "MAP_CCFG_VS_HEX_PAYLOAD_MISMATCH")
+    require(mem["nv_used"] == NV_END - NV_BEGIN,
+            "STOCK_P7_NV_RESERVATION_MISSING_OR_RESIZED")
+    require(img["nv_hex_bytes"] == 0, "NVS_INITIALIZED_DATA_PRESENT")
+
+
 def linked(out:Path,map_file:Path,hex_file:Path,genh:Path,opts:Path,
            sdk:Path,examples:Path,source_evidence:Path,dest:Path)->None:
     report=json.loads(source_evidence.read_text(encoding="utf-8"))
@@ -226,6 +241,9 @@ def linked(out:Path,map_file:Path,hex_file:Path,genh:Path,opts:Path,
     mem=verify_map(map_file.read_text(encoding="utf-8",errors="replace"))
     img=verify_ihex(hex_file.read_text(encoding="ascii"))
     elf=audit_elf(out)
+    validate_memory_consistency(mem,img)
+    require(sha256(out) == BASE_ELF_SHA256,"VANILLA_P7_ELF_SHA256_DRIFT")
+    require(sha256(hex_file) == BASE_HEX_SHA256,"VANILLA_P7_HEX_SHA256_DRIFT")
     require(mem["flash_used"]>0 and mem["sram_used"]>0,
             "TRIVIAL_OR_NOT_LINKED")
     # TI can reserve the entire NVS region as a NOLOAD link-time area. A
@@ -284,6 +302,25 @@ def selftest()->None:
                   record(4,(0xA).to_bytes(2,"big")),
                   record(0,b"\xA0\xB0",0xEFA0),record(1)])
     require(verify_ihex(hx)["ccfg_bytes"]==2,"SELFTEST_POS_HEX")
+    validate_memory_consistency(
+        {"flash_used":2,"ccfg_sector_used":2,"nv_used":NV_END-NV_BEGIN},
+        {"app_unique_bytes":2,"ccfg_bytes":2,"nv_hex_bytes":0})
+    for broken_mem,broken_hex in [
+        ({"flash_used":3,"ccfg_sector_used":2,"nv_used":NV_END-NV_BEGIN},
+         {"app_unique_bytes":2,"ccfg_bytes":2,"nv_hex_bytes":0}),
+        ({"flash_used":2,"ccfg_sector_used":3,"nv_used":NV_END-NV_BEGIN},
+         {"app_unique_bytes":2,"ccfg_bytes":2,"nv_hex_bytes":0}),
+        ({"flash_used":2,"ccfg_sector_used":2,"nv_used":0},
+         {"app_unique_bytes":2,"ccfg_bytes":2,"nv_hex_bytes":0}),
+        ({"flash_used":2,"ccfg_sector_used":2,"nv_used":NV_END-NV_BEGIN},
+         {"app_unique_bytes":2,"ccfg_bytes":2,"nv_hex_bytes":1}),
+    ]:
+        try:
+            validate_memory_consistency(broken_mem,broken_hex)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("MAP_IMAGE_CROSS_CHECK_MUTATION_WAS_ACCEPTED")
     tests=[
         lambda:verify_ihex(hx.replace(":020100000102FA",":020100000102FF")),
         lambda:verify_ihex(hx+"\n"+record(0,b"\x01",0x10)),
