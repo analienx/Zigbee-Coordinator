@@ -591,6 +591,71 @@ jobs:
             g3-nv5/generated-ti_drivers_config.c
           retention-days: 30
           if-no-files-found: error
+      - name: Prepare isolated CAP192 capacity candidate (on NV5 tree)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p g4-cap
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py \
+            --examples examples --out g4-cap/staged \
+            > g4-cap/source-audit.log
+          python3 - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          g = Path("g4-cap/staged")
+          manifest = json.loads((g / "CAP192-CANDIDATE-SOURCE-MANIFEST.json").read_text())
+          assert manifest["qualification"] == "G4_CAP192_CAPACITY_TI_LAUNCHPAD_PROTOTYPE_NOT_FLASHABLE"
+          assert manifest["targets"] == {"tc_device_max": 192, "nwk_device_list": 96,
+                                         "routing_table": 128, "route_req_entries": 16}
+          assert manifest["runtime_qualified"] is False
+          staged = g / "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg"
+          assert staged.is_file(), staged
+          dest = Path("examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
+          shutil.copy2(staged, dest)
+          PY
+          cp g4-cap/staged/CAP192-CANDIDATE-SOURCE-MANIFEST.json g4-cap/
+          printf '%s\n' 'CAP192_CAPACITY_PROTOTYPE_NOT_FLASHABLE' \
+              'RUNTIME_AND_NV_PERSISTENCE_NOT_QUALIFIED' > g4-cap/NOT_FLASHABLE.txt
+      - name: Native CCS build CAP192 capacity candidate and audit effective header
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ccs-workspace-cap
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-cap" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" \
+            2>&1 | tee g4-cap/ccs-init.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-cap" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$SPEC" -ccs.overwrite \
+            2>&1 | tee g4-cap/ccs-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-cap" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee g4-cap/ccs-native-build.log
+          GENH=$(find ccs-workspace-cap -type f -name ti_zstack_config.h -print -quit)
+          test -s "$GENH"
+          cp "$GENH" g4-cap/generated-ti_zstack_config.h
+          grep -nE 'ZDSECMGR_TC_DEVICE_MAX|NWK_MAX_DEVICE_LIST|MAX_RTG|ROUTE_REQ' "$GENH" \
+            | tee g4-cap/effective-capacity-grep.txt || true
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py \
+            --generated "$GENH" | tee g4-cap/CAPACITY-EFFECTIVE-AUDIT.json
+      - name: Publish non-flashable CAP192 capacity compiler proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: P7-G4-CAP192-CAPACITY-PROTOTYPE-NOT-FLASHABLE
+          path: |
+            g4-cap/*.json
+            g4-cap/*.txt
+            g4-cap/*.log
+            g4-cap/generated-ti_zstack_config.h
+          retention-days: 30
+          if-no-files-found: error
       - name: Preserve troubleshooting evidence without releasing unqualified binaries
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
