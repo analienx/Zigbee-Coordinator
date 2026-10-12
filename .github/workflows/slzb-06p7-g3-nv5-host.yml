@@ -81,6 +81,71 @@ jobs:
           # The synthetic flash file is not a firmware image or backup.
           printf '%s\n' 'NO_HARDWARE_USED' 'NO_REAL_ZIGBEE_KEYS' \
             'G3_REAL_TI_NVOCMP_POSIX_SIMULATION_ONLY' > nv5-stress/NOT_FLASHABLE.txt
+      - name: Deterministic half-written-NOR interruption and recovery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p nv5-stress/faults
+          export P7_NV_FILE="$GITHUB_WORKSPACE/nv5-stress/faults/flash.img"
+          ./nv5-stress/ti_nv5_driver_host fill 0 \
+            > nv5-stress/faults/initial-fill.log 2>&1
+          cp "$P7_NV_FILE" nv5-stress/faults/clean-baseline.img
+          : > nv5-stress/faults/fault-results.log
+          for number in 1 2 10 50 250 580; do
+            cp nv5-stress/faults/clean-baseline.img "$P7_NV_FILE"
+            set +e
+            P7_FAULT_OP=write P7_FAULT_AFTER="$number" \
+              ./nv5-stress/ti_nv5_driver_host churn 1 \
+              > nv5-stress/faults/interrupted.log 2>&1
+            CODE=$?
+            set -e
+            if test "$CODE" -ne 77; then
+              echo "FAULT_FAILED_TO_TRIGGER number=$number exit=$CODE"
+              cat nv5-stress/faults/interrupted.log
+              exit 1
+            fi
+            grep -F 'P7_EXPECTED_SIMULATED_POWER_LOSS op=write' \
+              nv5-stress/faults/interrupted.log
+            # Independent processes reload the persisted 40KiB region.
+            # Valid records must be complete old/new versions, then repair
+            # all to one epoch and verify compaction across cold restarts.
+            ./nv5-stress/ti_nv5_driver_host recover 1 \
+              >> nv5-stress/faults/fault-results.log 2>&1
+            ./nv5-stress/ti_nv5_driver_host heal 1 \
+              >> nv5-stress/faults/fault-results.log 2>&1
+            ./nv5-stress/ti_nv5_driver_host verify 1 \
+              >> nv5-stress/faults/fault-results.log 2>&1
+            ./nv5-stress/ti_nv5_driver_host compact 1 \
+              >> nv5-stress/faults/fault-results.log 2>&1
+            ./nv5-stress/ti_nv5_driver_host verify 1 \
+              >> nv5-stress/faults/fault-results.log 2>&1
+            printf 'PASS_NV5_PARTIAL_WRITE_FAULT index=%s\n' "$number" \
+              | tee -a nv5-stress/faults/fault-results.log
+          done
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path("nv5-stress/faults")
+          log=(root/"fault-results.log").read_text()
+          assert log.count("PASS_NV5_PARTIAL_WRITE_FAULT")==6
+          assert log.count("PASS_PINNED_TI_NVOCMP_REAL_DRIVER")==30
+          result={
+            "status":"TI8.32_NVOCMP_PARTIAL_WRITE_INTERRUPTION_HOST_PASS",
+            "real_sdk_source":"6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+            "fault_type":"kill host process halfway through NVS NOR write",
+            "fault_indices":[1,2,10,50,250,580],
+            "all_record_versions_valid_after_restart":True,
+            "all_records_healed_and_compacted_after_restart":True,
+            "tested_record_count":587,
+            "faulted_sector_erase_tested":False,
+            "real_power_cut_hardware_tested":False,
+            "zigbee_security_counter_semantics_qualified":False,
+            "flash_authorized":False,
+            "synthetic_results_sha256":hashlib.sha256(log.encode()).hexdigest(),
+          }
+          (root/"PARTIAL-WRITE-VERDICT.json").write_text(
+            json.dumps(result,indent=2,sort_keys=True)+"\n")
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: P7-G3-REAL-TI-NVOCMP-HOST-STRESS-NO-FIRMWARE
@@ -88,5 +153,7 @@ jobs:
             nv5-stress/STRESS-VERDICT.json
             nv5-stress/driver-test.log
             nv5-stress/NOT_FLASHABLE.txt
+            nv5-stress/faults/PARTIAL-WRITE-VERDICT.json
+            nv5-stress/faults/fault-results.log
           retention-days: 30
           if-no-files-found: error
