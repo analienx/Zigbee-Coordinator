@@ -6,13 +6,25 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
 typedef void *NVS_Handle;
 typedef struct {
     size_t sectorSize;
     size_t regionSize;
 } NVS_Attrs;
 #define NVS_HANDLE ((NVS_Handle)(uintptr_t)0x1)
-#define NVOCMP_FLASHACCESS(err) ((void)(err))
+/* TI's NVOCMP macro invocations OMIT the trailing semicolon.
+ * The actual pinned NV_LINUX branch defines ASSERT1 via NVOCMP_ASSERT,
+ * but does not itself define NVOCMP_ASSERT or NVOCMP_ALERT.
+ * Supply valid host-only diagnostics with terminators. */
+#define NVOCMP_ASSERT(cond,message) do { \
+    if(!(cond)) {fprintf(stderr,"HOST_NV_ASSERT %s\n",(message));abort();} \
+} while(0);
+#define NVOCMP_ALERT(cond,message) do { \
+    if(!(cond)) fprintf(stderr,"HOST_NV_ALERT %s\n",(message)); \
+} while(0);
+#define NVOCMP_FLASHACCESS(err) do { (void)(err); } while(0);
 #define P7_SECTORS 5
 #define P7_SECTOR_SIZE 8192u
 #define P7_FLASH_SIZE (P7_SECTORS * P7_SECTOR_SIZE)
