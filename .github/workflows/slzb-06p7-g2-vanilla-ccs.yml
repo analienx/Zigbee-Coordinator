@@ -33,6 +33,8 @@ jobs:
           python3 firmware/slzb-06p7/ti832/g3/analyze_memory.py --selftest
           python3 -m py_compile firmware/slzb-06p7/ti832/g3/fix_uart_pointer_types.py
           python3 firmware/slzb-06p7/ti832/g3/fix_uart_pointer_types.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/validate_hardware_gate.py
+          python3 firmware/slzb-06p7/ti832/g3/validate_hardware_gate.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
     needs: source-tests
