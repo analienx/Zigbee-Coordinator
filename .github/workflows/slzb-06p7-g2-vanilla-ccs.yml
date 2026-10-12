@@ -35,6 +35,8 @@ jobs:
           python3 firmware/slzb-06p7/ti832/g3/fix_uart_pointer_types.py --selftest
           python3 -m py_compile firmware/slzb-06p7/ti832/g3/validate_hardware_gate.py
           python3 firmware/slzb-06p7/ti832/g3/validate_hardware_gate.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py
+          python3 firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
     needs: source-tests
@@ -82,6 +84,8 @@ jobs:
           FILE=CCS12.8.0.00012_web_linux-x64.tar.gz
           curl -fL --retry 5 --retry-delay 2 -o "$FILE" \
             "https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/$FILE"
+          python3 "$GITHUB_WORKSPACE/repo/firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py" \
+            --name ccs --download "$PWD/$FILE"
           tar xzf "$FILE"
           SETUP=$(find . -maxdepth 3 -type f -name ccs_setup_12.8.0.00012.run -print -quit)
           test -n "$SETUP"
@@ -90,6 +94,8 @@ jobs:
           FILE=sysconfig-1.21.1_3772-setup.run
           curl -fL --retry 5 --retry-delay 2 -o "$FILE" \
             "https://software-dl.ti.com/ccs/esd/sysconfig/$FILE"
+          python3 "$GITHUB_WORKSPACE/repo/firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py" \
+            --name sysconfig --download "$PWD/$FILE"
           chmod +x "$FILE"
           "./$FILE" --mode unattended --prefix "$HOME/ti/sysconfig_1.21.1"
           # Installer bytes are observed before any future checksum pinning.
