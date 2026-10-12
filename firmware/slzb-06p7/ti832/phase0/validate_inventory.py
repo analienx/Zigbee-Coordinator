@@ -70,6 +70,16 @@ def check(doc: dict) -> None:
     assert authority["toolchain"]["sysconfig"] == "1.21.1.3772"
     assert authority["toolchain"]["xdctools"] == "3.62.01.16"
     assert authority["CAP192"]["sha"] == "b273044f17c88fbde26d9e9b946ab559a1d1b675"
+    # Frozen lineage pins: any silent re-pointing of upstream authority fails.
+    assert authority["ti_sdk"]["sha"] == "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+    assert authority["ti_examples"]["sha"] == "87ff5b638b632050228a7504f35cf3b95581c278"
+    assert authority["R7"]["sha"] == "3d8129daa97522ee53514e3872ad9f0b73710055"
+    assert authority["R8"]["sha"] == "eb850bf83c7f7a62c7d15f498cfd702c561c3980"
+    assert authority["R9"]["sha"] == "07a24feffca876a219b986c7a17615a8869947bb"
+    assert authority["R10"]["sha"] == "904ef7911b21bd3cd4534354f3285f9b21d9ed3d"
+    assert authority["R11"]["sha"] == "156fe563ba5e6eb3d15c56b21ec9aabfda882096"
+    assert authority["R12"]["sha"] == "94e5091618617b8a0bea9f98e066b346fa5a1b49"
+    assert authority["A1"]["sha"] == "c6dcca59b7012bb92b40d10747bf7fe7b38f2ebc"
     files = doc["cap192_source_delta"]
     assert len(files["sdk_modified"]) == files["counts"]["sdk"] == 18
     assert len(files["example_modified"]) == files["counts"]["examples"] == 2
@@ -111,6 +121,7 @@ def selftest(doc: dict) -> None:
         lambda d: d["features"][0].update(acceptance=""),
         lambda d: d["features"][0].update(disposition="SKIP"),
         lambda d: d["authority"]["CAP192"].update(sha="unfrozen"),
+        lambda d: d["authority"]["ti_sdk"].update(sha="0"*40),
         lambda d: d["controls"].update(flash_authorized=True),
         lambda d: d["features"][0].update(p7_implemented=True),
         lambda d: d["host_protocol"]["mt_sys_f0"]["counters"].pop(),

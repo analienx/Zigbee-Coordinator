@@ -533,6 +533,19 @@ jobs:
             --linked-proof g3-nv5/NV5-NATIVE-ELF-HEX-MAP-AUDIT.json \
             --out g3-nv5/NV5-EFFECTIVE-DRIVER-AUDIT.json
           python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "repo/firmware/slzb-06p7/ti832/g2")
+          from validate_elf_hex import read_hex
+          g2 = read_hex(Path("bundle/TI-LP-CC1352P7_4-REFERENCE-NOT-FLASHABLE.hex").read_text(encoding="ascii"))
+          nv5 = read_hex(Path("g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.hex").read_text(encoding="ascii"))
+          lo, hi = 0xAFFA8, 0xB0000
+          a = {k: v for k, v in g2.items() if lo <= k < hi}
+          b = {k: v for k, v in nv5.items() if lo <= k < hi}
+          assert len(a) == 88 and a == b, "NV5_CCFG_BYTES_DIFFER_FROM_G2"
+          print("PASS NV5 CCFG 88 bytes identical to G2 vanilla")
+          PY
+          python3 - <<'PY'
           import hashlib,json
           from pathlib import Path
           root=Path("g3-nv5")

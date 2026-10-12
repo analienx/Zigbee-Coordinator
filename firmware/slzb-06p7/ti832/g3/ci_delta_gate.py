@@ -87,7 +87,17 @@ def selftest()->None:
         actual=required_for_delta(paths,event,action,a,b,git_ok)
         if actual != expected:
             raise AssertionError(f"CI_DELTA_CASE_{i}_MISCLASSIFIED")
-    print("PASS G3 event-delta native build classifier: 12 safe/skip cases")
+    # inspect() is the production entry point (workflow calls --out): cover
+    # its fail-open branches that required_for_delta() cases never reach.
+    empty = inspect(Path("."), "", "b"*40, "pull_request", "synchronize")
+    assert empty == {"native_required": True,
+                     "reason": "non_sync_or_unproven_comparison",
+                     "paths": []}, empty
+    same = inspect(Path("."), "a"*40, "a"*40, "pull_request", "synchronize")
+    assert same["native_required"] is True and same["paths"] == [], same
+    opened = inspect(Path("."), "a"*40, "b"*40, "pull_request", "opened")
+    assert opened["native_required"] is True, opened
+    print("PASS G3 event-delta native build classifier: 12 safe/skip cases + 3 inspect fail-open cases")
 
 def main()->None:
     p=argparse.ArgumentParser()

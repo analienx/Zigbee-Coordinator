@@ -106,6 +106,8 @@ def analyze(text: str) -> dict:
         "runtime_heap_fragmentation_measured":False,
         "nv_compaction_and_power_loss_tested":False,
         "security_counter_persistence_tested":False,
+        "reference_elf_sha256_pin":EXPECTED_REFERENCE_ELF_SHA256,
+        "reference_elf_hash_verified_by_this_tool":False,
         "cap192_runtime_qualified":False,
         "hardware_qualified":False,
         "flash_authorized":False,
@@ -144,6 +146,8 @@ def selftest() -> None:
     must(result["heap_link_address_span_bytes"] == 121808, "HEAP_SIZE_WRONG")
     must(result["stack_reserved_bytes"] == 1024, "STACK_SIZE_WRONG")
     must(len(result["hypothetical_ram_scenarios"])==9, "RAM_SCENARIO_COUNT")
+    must(result["reference_elf_sha256_pin"]==EXPECTED_REFERENCE_ELF_SHA256, "ELF_PIN_NOT_REPORTED")
+    must(result["reference_elf_hash_verified_by_this_tool"] is False, "ELF_PIN_OVERCLAIM")
     mutations = [
         test.replace("20006030  heapStart", "20023D00  heapStart"),
         test.replace("20023c00  heapEnd", "20026000  heapEnd"),

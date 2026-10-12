@@ -31,6 +31,7 @@ TRUST_CENTER_KEYS=192
 NWK_LIST=96
 NWK_ADDRESSES=298
 CANDIDATE="G3_NV5_TI_LAUNCHPAD_PROTOTYPE_NOT_FLASHABLE"
+SYSCFG_SCOPE="LP_CC1352P7_4_P7_ARM_ONLY_NON_P7_ARMS_UNPATCHED"
 SDK_LINK="source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"
 EXAMPLE_SYSCFG="examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg"
 EXAMPLE_PROJSPEC=("examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/"
@@ -71,6 +72,11 @@ def patch_projectspec(old:str)->str:
     return b
 
 def patch_syscfg(old:str)->str:
+    # Scope is fail-closed: only the LP_CC1352P7_4 initial + P7 arms are
+    # patched. The trailing 2674/fallback arm deliberately keeps 0x4000;
+    # consuming this file for any non-P7 deviceName without re-running
+    # nv5_effective.check_generated_config would silently diverge (NVS
+    # 2 pages vs NVOCMP 5 pages). SYSCFG_SCOPE records that boundary.
     # There are three regionSize=0x4000 occurrences in the original:
     # initial default, P7-specific branch, and fallback for older silicon.
     # Only the initial default and P7 branch must change; do NOT touch the
@@ -128,7 +134,7 @@ def candidate_manifest(inputs:dict[str,bytes],outputs:dict[str,bytes])->dict:
         "nv_migration_authorized":False,"coordinator_restore_verified":False,
         "source_sdk_commit":REFERENCE_TI_SDK_COMMIT,
         "source_examples_commit":REFERENCE_EXAMPLE_COMMIT,
-        "nv_pages":PAGES,"erase_sector_bytes":SECTOR,
+        "nv_pages":PAGES,"erase_sector_bytes":SECTOR,"syscfg_scope":SYSCFG_SCOPE,
         "app_region":{"base":"0x00000","end_exclusive":hex(APP_END),"bytes":APP_END},
         "nv_region":{"base":hex(NV_BASE),"end_exclusive":hex(CCFG_SECTOR_BASE),
                      "bytes":NV_BYTES,"storage_page_count":PAGES-1,
@@ -194,6 +200,7 @@ def selftest()->None:
     v=patch_syscfg(syscfg)
     must(v.count("regionSize = 0xA000;")==2,"POSITIVE_SYSCFG")
     must(v.count("regionSize = 0x4000;")==1,"FALLBACK_CHANGED")
+    must("2674" in v and SYSCFG_SCOPE.startswith("LP_CC1352P7_4"),"SYSCFG_SCOPE_LOST")
     examples=[
         lambda:patch_linker(l.replace("0xAA000","0xAB000",1)),
         lambda:patch_linker(l.replace("FLASH_LAST_SIZE         0x2000",

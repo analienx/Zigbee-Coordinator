@@ -20,6 +20,11 @@ static const Kind kinds[]={
 };
 static NVINTF_nvFuncts_t fns;
 static int note_count=0;
+static unsigned total_records(void){
+    unsigned n=0;
+    for(unsigned g=0;g<sizeof(kinds)/sizeof(kinds[0]);g++) n+=kinds[g].count;
+    return n;
+}
 static void fail(const char *step,unsigned group,unsigned index,int status){
     fprintf(stderr,"NV5_REAL_DRIVER_FAILURE %s group=%u item=%u status=%d\n",
             step,group,index,status);
@@ -111,7 +116,7 @@ int main(int argc,char **argv){
         verify_all((unsigned)epoch-1,(unsigned)epoch);
     } else if(strcmp(argv[1],"heal")==0) {
         must(epoch>0,"HEAL_REQUIRES_NONZERO");
-        /* Recovery from an interrupted update is not an atomic 587-entry
+        /* Recovery from an interrupted update is not an atomic N-entry
          * transaction: each item must be individually old OR new. Rewrite
          * all to new epoch, compact, and verify after another cold start. */
         verify_all((unsigned)epoch-1,(unsigned)epoch);
@@ -123,8 +128,15 @@ int main(int argc,char **argv){
         if(status!=NVINTF_SUCCESS)fail("FORCED_COMPACT",0,0,status);
         verify_all((unsigned)epoch,(unsigned)-1);
     } else {must(0,"UNKNOWN_COMMAND");}
+    /* The printed count is derived, never a literal: shrinking kinds[]
+     * must shrink the report, and mutation counts must match the op. */
+    if(strcmp(argv[1],"fill")==0)
+        must(note_count==(int)total_records(),"FILL_COUNT_MISMATCH");
+    if(strcmp(argv[1],"churn")==0 || strcmp(argv[1],"heal")==0)
+        must(note_count==(int)total_records(),"UPDATE_COUNT_MISMATCH");
     fprintf(stdout,"PASS_PINNED_TI_NVOCMP_REAL_DRIVER op=%s epoch=%lu "
-            "records=587 mutations=%d free=%lu pages=5 byte_range=40960\n",
-            argv[1],epoch,note_count,(unsigned long)fns.getFreeNV());
+            "records=%u mutations=%d free=%lu pages=5 byte_range=40960\n",
+            argv[1],epoch,total_records(),note_count,
+            (unsigned long)fns.getFreeNV());
     return 0;
 }
