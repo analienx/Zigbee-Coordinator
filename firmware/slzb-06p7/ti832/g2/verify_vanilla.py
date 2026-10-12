@@ -12,7 +12,6 @@ import json
 import re
 import struct
 import subprocess
-import tempfile
 from pathlib import Path
 import sys
 
@@ -221,6 +220,8 @@ def linked(out:Path,map_file:Path,hex_file:Path,genh:Path,opts:Path,
             "LINKER_SOURCE_CHANGED")
     require(sha256(opts)==report["files"]["sdk_znp_options"]["sha256"],
             "IMPORTED_OPTIONS_CHANGED")
+    require(sha256(sdk/TI_CCFG)==report["files"]["sdk_ccfg_default"]["sha256"],
+            "SDK_CCFG_SOURCE_CHANGED")
     require(genh.is_file() and genh.stat().st_size>10,"MISSING_GENERATED_STACK_HEADER")
     mem=verify_map(map_file.read_text(encoding="utf-8",errors="replace"))
     img=verify_ihex(hex_file.read_text(encoding="ascii"))
@@ -238,8 +239,10 @@ def linked(out:Path,map_file:Path,hex_file:Path,genh:Path,opts:Path,
           "G2_INTEL_HEX_NV_BYTES", img["nv_hex_bytes"])
     require(mem["gpram_used"]==0,"GPRAM_RESERVED_FOR_CACHE")
     require(mem["ccfg_sector_used"]>0,"NO_CCFG_SECTION")
-    require(b"ZSTACK" in genh.read_bytes().upper() or genh.stat().st_size>120,
-            "STACK_GENERATED_HEADER_EMPTY")
+    header_text=genh.read_text(encoding="utf-8")
+    for required in ("TI_ZSTACK_CONFIG_H", "DEFAULT_CHANLIST", "ZDAPP_CONFIG_PAN_ID",
+                     "MAX_RREQ_ENTRIES", "ROUTE_EXPIRY_TIME"):
+        require(required in header_text, "ZSTACK_GENERATED_HEADER_INCOMPLETE_"+required)
     result={
         "status":"REAL_CCS_LINKED_REFERENCE_ONLY",
         "qualification":SAFE_MODE,
@@ -274,6 +277,9 @@ def selftest()->None:
             ("GPRAM",0x11000000,0x2000,0)])
     map_text += "\n.ccfg\n"
     require(verify_map(map_text)["nv_used"]==0,"SELFTEST_POS_MAP")
+    reserved=map_text.replace("00000000 00004000", "00004000 00000000")
+    require(verify_map(reserved)["nv_used"]==NV_END-NV_BEGIN,
+            "SELFTEST_NVS_UNINITIALIZED_ALLOCATION")
     hx="\n".join([record(4,(0).to_bytes(2,"big")),record(0,b"\x01\x02",0x100),
                   record(4,(0xA).to_bytes(2,"big")),
                   record(0,b"\xA0\xB0",0xEFA0),record(1)])
@@ -296,10 +302,7 @@ def selftest()->None:
         lambda:verify_map(map_text.replace("FLASH_NV", "NVS")),
         lambda:verify_map(map_text.replace(".ccfg", ".noccfg")),
         lambda:verify_map(map_text.replace("00000000 000AA000","00000000 000A8000")),
-        lambda:verify_map(map_text.replace("001F?","")),
     ]
-    # Require only mutations actually changing the fixture.
-    tests=tests[:-1]
     for n,fn in enumerate(tests):
         try:
             fn()
