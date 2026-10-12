@@ -20,6 +20,8 @@ No private keys, frame counters, live coordinator credentials or raw network bac
 | [TI F2 SDK](https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk) | `6499c3f53fc5fb5806213be695450a7b43fbaf3d` | Pinned C/RTOS source |
 | [TI Z-Stack examples](https://github.com/TexasInstruments/simplelink-zstack-examples) | `87ff5b638b632050228a7504f35cf3b95581c278` | P10 and LP_CC1352P7_4 reference projects |
 
+Exact host/toolchain lock recorded from the PR #60 real-build workflow: **CCS 12.8.0.00012**, **TI ARM Clang 3.2.2.LTS**, **SysConfig 1.21.1.3772**, **XDCTools 3.62.01.16**; pinned **zigbee-herdsman 10.9.1** at commit `0968f979d558874b17396c96b66382d4236bbdcd`. The upstream workflow redirects CCS-bundled SysConfig 1.21.0 to its required 1.21.1 standalone install. These are **P10 source-build authority**, not a proven P7 compiler result.
+
 Source ownership: `feature-parity.json` is the *normative feature ledger*; this page is the explanatory analysis. A reference code SHA is **not** a hash of a firmware binary. Firmware revision `2026101104` identifies the P10 CAP192 source candidate, not any installed P7 firmware.
 
 ## Scope and method (Phase 0 G0)
@@ -99,7 +101,7 @@ These are source/mock native tests and strict image audits. Exact-head real CCS 
 4. **P7 CC2652P7 board** details (PCB/PA RF switch/UART/BSL/ESP revisions) were not verified in G0. The TI `LP_CC1352P7_4` is a compiler target baseline only.
 5. **P7 192-key NV capacity**, driver max sector count, RAM budget, GPRAM/cache safety and same-layout restore have no test evidence yet.
 6. **R12 retained AUX** requires physical ownership/clock/reset proof on any hardware; no direct address transfer.
-7. **Local unpublished P10 files/worktrees:** GitHub was inspected; Zephyrus local source was not independently inventoried because its execution router previously required an explicit project ownership selection. A local uncommitted delta is **not** silently treated as the frozen authority.
+7. **Local unpublished P10 files/worktrees:** read-only RDC confirmed Zephyrus has `C:\\Workspace\\repos\\Zigbee-Coordinator` (primary HEAD currently `exp/mr4u-p10-ti832-kctrl-r0`) and separate `zigbee-t832-min-v4-m0m2`, `zigbee-t832-r11-diag` and `zigbee-t832-a1-diagnostic` worktree metadata. This establishes local checkout existence, **not** a clean Git working tree or absence of unpublished commits/diffs; shell Git status was blocked by the runner ownership router. A local uncommitted delta is **not** silently treated as the frozen authority.
 
 Also, source reviews uncovered a still-open SRSP allocation failure: when OSAL cannot allocate a response, the present P10 has no allocation-free response fallback. This is a *documented functional limitation*, not a solved feature. All such limitations remain in the parity/hardening backlog.
 
