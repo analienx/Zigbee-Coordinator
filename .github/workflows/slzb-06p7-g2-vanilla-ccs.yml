@@ -1,19 +1,22 @@
 name: SLZB-06P7 G2 real vanilla TI CCS ZNP (REFERENCE ONLY)
+# Draft PR uses same-head push checks; pull_request path filters against an
+# accumulated PR diff and re-ran 10+ minute CCS installs on docs-only commits.
+# No main release gate depends on this draft-only workflow. Dispatch manually
+# if revalidation is needed without relevant source changes.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/slzb-06p7-g2-vanilla-ccs.yml'
-      - 'firmware/slzb-06p7/ti832/g2/**'
-      - 'firmware/slzb-06p7/ti832/board/**'
   push:
     branches: [feat/slzb-06p7-ti832-p10-parity]
     paths:
       - '.github/workflows/slzb-06p7-g2-vanilla-ccs.yml'
       - 'firmware/slzb-06p7/ti832/g2/**'
+      - 'firmware/slzb-06p7/ti832/g3/**'
       - 'firmware/slzb-06p7/ti832/board/**'
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: slzb-p7-g2-reference-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   source-tests:
     runs-on: ubuntu-22.04
