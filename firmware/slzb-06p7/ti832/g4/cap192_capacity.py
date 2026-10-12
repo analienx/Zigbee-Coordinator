@@ -29,7 +29,7 @@ CANDIDATE = "G4_CAP192_CAPACITY_TI_LAUNCHPAD_PROTOTYPE_NOT_FLASHABLE"
 EXAMPLE_SYSCFG = ("examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
 REFERENCE_EXAMPLE_COMMIT = "87ff5b638b632050228a7504f35cf3b95581c278"
 # Macros the generated ti_zstack_config.h is expected to carry once SysConfig
-# honours the overlay. Any one spelling per target is accepted; none = fail.
+# honours the overlay. Exactly one spelling per target is accepted; none = fail.
 GENERATED_PATTERNS = {
     "tc_device_max": r"ZDSECMGR_TC_DEVICE_MAX[ \t]+192\b",
     "nwk_device_list": r"NWK_MAX_DEVICE_LIST[ \t]+96\b",
@@ -88,7 +88,10 @@ def generate(examples: Path, out: Path) -> dict:
     dst = patch_syscfg(src.decode("utf-8")).encode("utf-8")
     must(src != dst, "UNMODIFIED_example_syscfg")
     out_real = out.resolve()
-    must(examples.resolve() not in out_real.parents and out_real != examples.resolve(),
+    ex_real = examples.resolve()
+    target_probe = (out / "examples" / EXAMPLE_SYSCFG).resolve()
+    must(ex_real not in out_real.parents and out_real != ex_real
+         and ex_real not in target_probe.parents,
          "REFUSE_TO_MODIFY_PINNED_INPUT_SOURCE")
     target = out / "examples" / EXAMPLE_SYSCFG
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -150,12 +153,14 @@ def selftest() -> None:
         must((out / "CAP192-CANDIDATE-SOURCE-MANIFEST.json").is_file(),
              "GENERATE_MANIFEST_MISSING")
         must(report["targets"] == TARGETS, "GENERATE_REPORT")
-        try:
-            generate(ex, ex / "inside")
-        except ValueError:
-            pass
-        else:
+        for bad_out in (ex / "inside", ex.parent):
+            try:
+                generate(ex, bad_out)
+            except ValueError:
+                continue
             raise AssertionError("GENERATE_ISOLATION_GUARD_ACCEPTED")
+        must("zdsecmgrTcDeviceMax" not in syscfg.read_text(),
+             "GENERATE_MUTATED_PINNED_INPUT")
     m = candidate_manifest({"a": b"x"}, {"a": b"y"})
     must(m["qualification"] == CANDIDATE and m["runtime_qualified"] is False,
          "MANIFEST_OVERCLAIM")
