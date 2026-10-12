@@ -69,6 +69,10 @@ jobs:
           python3 firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py --selftest
           python3 -m py_compile firmware/slzb-06p7/ti832/g3/ci_delta_gate.py
           python3 firmware/slzb-06p7/ti832/g3/ci_delta_gate.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/nv5_layout.py
+          python3 firmware/slzb-06p7/ti832/g3/nv5_layout.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py
+          python3 firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py --selftest
   native-ti-ccs:
     name: Actual CCS 12.8 P7 vanilla ARM-M4F ELF/HEX/MAP
     needs: [source-tests, classify_delta]
@@ -427,6 +431,132 @@ jobs:
         with:
           name: p7-g3-UART-TYPE-CANDIDATE-NOT-FLASHABLE
           path: g3-candidate/
+          retention-days: 30
+          if-no-files-found: error
+      # The following is a separate, non-flashable *G3 capacity prototype*:
+      # it changes the NV base to 0xA4000. It must NEVER be used with an
+      # existing coordinator network or original 2-page NV without proven
+      # migration and intact security counters.
+      - name: Prepare isolated P7 five-page NV layout candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p g3-nv5
+          # Restore UART source after the already-sealed warning-fix artifact.
+          # Thus NV5 changes *only* the 3 expected geometry inputs.
+          cp g3-candidate/original-npi_tl.c sdk/source/ti/zstack/npi/npi_tl.c
+          git -C sdk diff --exit-code HEAD -- source/ti/zstack/npi/npi_tl.c
+          python3 repo/firmware/slzb-06p7/ti832/g3/nv5_layout.py \
+            --sdk sdk --examples examples --out g3-nv5/staged \
+            > g3-nv5/source-audit.log
+          python3 - <<'PY'
+          import json,shutil
+          from pathlib import Path
+          g=Path("g3-nv5/staged")
+          manifest=json.loads((g/"NV5-CANDIDATE-SOURCE-MANIFEST.json").read_text())
+          assert manifest["qualification"]=="G3_NV5_TI_LAUNCHPAD_PROTOTYPE_NOT_FLASHABLE"
+          assert manifest["nv_pages"]==5
+          allowed={
+            "sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd",
+            "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg",
+            "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec",
+          }
+          actual={p.as_posix() for p in g.rglob("*") if p.is_file() and p.name!="NV5-CANDIDATE-SOURCE-MANIFEST.json"}
+          assert actual=={str(Path("g3-nv5/staged")/a) for a in allowed},(actual,allowed)
+          for entry in sorted(actual):
+              src=Path(entry)
+              relative=src.relative_to(g)
+              dest=Path(str(relative))
+              assert dest.exists(),dest
+              shutil.copy2(src,dest)
+          PY
+          test "$(git -C sdk diff --name-only HEAD)" = \
+             "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"
+          git -C examples diff --name-only HEAD | sort > g3-nv5/source-diff-names.txt
+          diff -u <(printf '%s\n' \
+            'examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec' \
+            'examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg' | sort) \
+            g3-nv5/source-diff-names.txt
+          cp g3-nv5/staged/NV5-CANDIDATE-SOURCE-MANIFEST.json g3-nv5/
+          printf '%s\n' 'NV_BASE_MOVED_FROM_0xAA000_TO_0xA4000' \
+              'DO_NOT_FLASH_OR_MIGRATE_EXISTING_NETWORK' \
+              'CCFG_AND_SECURITY_RESTORE_NOT_VERIFIED' > g3-nv5/NOT_FLASHABLE.txt
+
+      - name: Native CCS import and build P7 NVOCMP five-sector prototype
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ccs-workspace-nv5
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-nv5" \
+            -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" \
+            2>&1 | tee g3-nv5/ccs-init.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          grep -F -- '-DNVOCMP_NVPAGES=5' "$SPEC"
+          grep -F -- '--define=NVOCMP_NVPAGES=5' "$SPEC"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-nv5" \
+            -application com.ti.ccstudio.apps.projectCreate \
+            -ccs.projectSpec "$SPEC" -ccs.overwrite \
+            2>&1 | tee g3-nv5/ccs-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash \
+            -data "$GITHUB_WORKSPACE/ccs-workspace-nv5" \
+            -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang \
+            -ccs.configuration default \
+            2>&1 | tee g3-nv5/ccs-native-build.log
+          OUT=$(find ccs-workspace-nv5 -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace-nv5 -type f -name '*.map' -print -quit)
+          HEADER=$(find ccs-workspace-nv5 -type f -name ti_drivers_config.c -print -quit)
+          test -s "$OUT" && test -s "$MAP" && test -s "$HEADER"
+          cp "$OUT" g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.out
+          cp "$MAP" g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.map
+          cp "$HEADER" g3-nv5/generated-ti_drivers_config.c
+          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" \
+            --output-target ihex g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.hex
+
+      - name: Audit five-sector NV prototype ELF, HEX, linker and source parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py \
+            --elf g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.out \
+            --hex g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.hex \
+            --map g3-nv5/P7-NV5-PROTOTYPE-NOT-FLASHABLE.map \
+            --out g3-nv5/NV5-NATIVE-ELF-HEX-MAP-AUDIT.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path("g3-nv5")
+          d=json.loads((root/"NV5-NATIVE-ELF-HEX-MAP-AUDIT.json").read_text())
+          m=json.loads((root/"NV5-CANDIDATE-SOURCE-MANIFEST.json").read_text())
+          assert d["status"]=="NV5_NATIVE_ELF_HEX_LINKER_GEOMETRY_PASS"
+          assert d["nv_reserved_bytes"]==40960 and d["nv_image_loaded_bytes"]==0
+          assert d["nv_region_start"]=="0xa4000"
+          assert d["flash_authorized"] is False
+          assert m["old_network_nv_not_directly_interchangeable"] is True
+          artifacts={p.name:{"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),
+                             "size_bytes":p.stat().st_size}
+                     for p in root.iterdir() if p.is_file()}
+          (root/"SEALED-NV5-MANIFEST.json").write_text(
+            json.dumps({"qualification":"G3_NV5_TI_LAUNCHPAD_PROTOTYPE_NOT_FLASHABLE",
+                        "runtime_qualified":False,"original_network_migration_verified":False,
+                        "flash_authorized":False,"files":artifacts},
+                        indent=2,sort_keys=True)+"\n")
+          PY
+      - name: Publish non-flashable NV5 compiler proof only when audited
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: P7-G3-NV5-CCS-PROTOTYPE-NOT-FLASHABLE
+          path: |
+            g3-nv5/*.json
+            g3-nv5/*.txt
+            g3-nv5/*.log
+            g3-nv5/*.out
+            g3-nv5/*.hex
+            g3-nv5/*.map
+            g3-nv5/generated-ti_drivers_config.c
           retention-days: 30
           if-no-files-found: error
       - name: Preserve troubleshooting evidence without releasing unqualified binaries
