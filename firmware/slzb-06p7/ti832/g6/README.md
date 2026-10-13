@@ -101,6 +101,17 @@ proofs, not original SMLIGHT board or runtime qualification.
 Both tracks compare against pristine stock BASE: the CAP192 delta includes
 capacity/NV5 and G6 changes together, rather than isolating the G6-only cost.
 
+Candidate HEX production exports every initialized ELF32 `PT_LOAD` byte at its
+physical address, including linker padding; it never invents `NOLOAD` bytes or
+filters NV/SRAM loads. Stock G6's TI objcopy and CCS exporters omitted four zero
+bytes between `.text` and `.rodata` even though they belonged to the initialized
+load segment. The converter fixes production without changing the independent
+G2/G3 audits, linker layout or executable. Hosted producer regressions cover
+initialized padding, 64K boundaries, gaps, uninitialized tails, duplicate loads,
+malformed input and forbidden initialized NV/SRAM that the audit must reject.
+Vendor exports remain diagnostic-only; published candidate metadata identifies
+the ELF-load producer and records exact source/output hashes.
+
 ## Pinned authorities
 
 * [TI SDK 8.32](https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk/tree/6499c3f53fc5fb5806213be695450a7b43fbaf3d)
