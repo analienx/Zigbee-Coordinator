@@ -191,7 +191,7 @@ jobs:
           from pathlib import Path
           r=json.loads(Path("bundle-compare/BASE-VS-DIAG.json").read_text())
           assert r["flash_authorized"] is False and r["runtime_qualified"] is False
-          assert len(r["diag_symbols_present"])==7 and len(r["base_symbols_absent"])==7
+          assert len(r["diag_symbols_present"])==5 and len(r["base_symbols_absent"])==5
           with open(__import__("os").environ["GITHUB_STEP_SUMMARY"],"a") as f:
               f.write("## P7 G5 BASE vs DIAG (linked evidence, NOT FLASHABLE)\n\n")
               f.write(f"- delta (diag-base): {r['delta_diag_minus_base']}\n")

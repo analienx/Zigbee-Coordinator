@@ -21,6 +21,14 @@ volatile p7_diag_state_t p7_diag_state;
 p7_diag_event_t p7_diag_ring[P7_DIAG_RING];
 volatile uint32_t p7_diag_contention_dropped;
 void (*p7_diag_preempt_hook)(void);
+/* Keep the seal/snapshot API linked even while the MT endpoint is
+ * disabled, so BASE-vs-DIAG linked evidence covers the full chain. */
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((used))
+#endif
+static void *const p7_diag_keepalive[] = {
+  (void *)p7_diag_seal_retained, (void *)p7_diag_snapshot,
+  (void *)p7_diag_init_preserving, (void *)p7_diag_crc16 };
 static uint32_t next_seq;
 static _Atomic uint32_t write_seq;
 static _Atomic uint32_t writer_owned;

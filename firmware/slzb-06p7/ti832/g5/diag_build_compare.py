@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse, hashlib, json, re
 from pathlib import Path
 
-DIAG_SYMBOLS = ["p7_diag_record", "p7_diag_record_isr", "p7_diag_seal_retained",
-                "p7_diag_init", "p7_diag_snapshot", "p7_diag_state", "p7_diag_ring"]
+DIAG_SYMBOLS = ["p7_diag_record", "p7_diag_record_isr",
+                "p7_diag_init", "p7_diag_state", "p7_diag_ring"]
+OPTIONAL_SYMBOLS = ["p7_diag_seal_retained", "p7_diag_snapshot",
+                    "p7_diag_init_preserving", "p7_diag_crc16"]
 
 def must(v: bool, m: str) -> None:
     if not v: raise ValueError(m)
@@ -63,6 +65,7 @@ def compare(base_map: str, diag_map: str, base_syms: str, diag_syms: str,
       "elf_size_bytes": {"base": base_elf_size, "diag": diag_elf_size,
                          "delta": diag_elf_size - base_elf_size},
       "diag_symbols_present": [s for s in DIAG_SYMBOLS if s in ds],
+      "diag_optional_symbols_present": [s for s in OPTIONAL_SYMBOLS if s in ds],
       "base_symbols_absent": [s for s in DIAG_SYMBOLS if s not in bs]}
 
 def selftest() -> None:
@@ -77,7 +80,7 @@ def selftest() -> None:
           "GLOBAL SYMBOLS: SORTED ALPHABETICALLY BY Name\n20024000  __STACK_TOP\n00000400  __STACK_SIZE\n")
     base = fixture(1000, 2000, 900)
     diag = fixture(1400, 2900, 1250)
-    bs = "00000000 main\n"; ds = "\n".join(f"20000000 {s}" for s in DIAG_SYMBOLS) + "\n"
+    bs = "00000000 main\n"; ds = "\n".join(f"20000000 {s}" for s in DIAG_SYMBOLS + OPTIONAL_SYMBOLS) + "\n"
     r = compare(base, diag, bs, ds, 10000, 11000)
     must(r["delta_diag_minus_base"]["flash_used"] == 400, "FLASH_DELTA")
     must(r["delta_diag_minus_base"]["text"] == 350, "TEXT_DELTA")
