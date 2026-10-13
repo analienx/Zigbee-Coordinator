@@ -255,7 +255,7 @@ jobs:
           Path("nv5-stress/faults/GARBAGE-VERDICT.json").write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n")
           PY
-      - name: Realistic mix near-full compaction, restart and CRC negatives (host only)
+      - name: Realistic 587-record mix compaction, restart and CRC negatives (host only)
         shell: bash
         run: |
           set -euo pipefail
@@ -277,7 +277,7 @@ jobs:
           log=(Path("nv5-stress/faults/cycle.log").read_text()+Path("nv5-stress/faults/crc.log").read_text())
           r={"status":"NV5_REALISTIC_MIX_HOST_PASS_NON_HARDWARE","records":587,
              "mix":"192x27B TC + 96x23B NWK + 298x19B addr + 2300B misc (G3 accounting)",
-             "near_full_compaction_cycles":3,"cold_restarts_verified":5,
+             "compaction_cycles":3,"cold_restarts_verified":5,
              "crc_corruption_negative":"controlled driver failure, clean image re-verified",
              "torn_write_erase_prefix":"covered by PARTIAL-WRITE/ERASE verdicts in this workflow",
              "hardware_qualified":False,"flash_authorized":False,

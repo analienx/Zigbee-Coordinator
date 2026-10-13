@@ -62,7 +62,11 @@ def decode(raw: bytes) -> dict:
             boot_reset=b["kind"]=="BOOT_ENTER"
             tick_wrap=a["tick"]>0xFF000000 and b["tick"]<0x01000000
             if not (boot_reset or tick_wrap): raise ValueError("TICK_REGRESSION")
-    if events and not any(e["seq"]==0xFFFFFFFF for e in events):
+    if events and any(e["seq"]==0xFFFFFFFF for e in events):
+        # Wrap window: seq reached MAX, so the saturating total counter
+        # must be pinned at MAX; dropped is not reconstructible post-wrap.
+        if total!=0xFFFFFFFF: raise ValueError("TOTAL_MISMATCH_WRAP")
+    elif events:
         # Unconditional (non-wrap window): snapshot always ends at the last
         # record, so total == last seq and dropped == evictions beyond ring.
         if total!=events[-1]["seq"]: raise ValueError("TOTAL_MISMATCH")

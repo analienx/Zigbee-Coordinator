@@ -123,7 +123,7 @@ int main(int argc,char **argv){
         update_all((unsigned)epoch);
         verify_all((unsigned)epoch,(unsigned)-1);
     } else if(strcmp(argv[1],"cycle")==0) {
-        /* Realistic near-full stress: 587-record mix (192x27B TC,
+        /* Realistic 587-record stress: 587-record mix (192x27B TC,
          * 96x23B NWK, 298x19B addr, 2300B misc per G3 accounting) in
          * 4x8KiB storage pages; repeated update+compact forces
          * compaction under load. Host simulation only, non-hardware. */

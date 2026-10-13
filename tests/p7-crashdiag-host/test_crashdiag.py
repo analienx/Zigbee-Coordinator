@@ -62,6 +62,9 @@ def test_decoder_strictness():
         try: d.decode(d.encode([(10,0,1,0),(11,1,1,0)],**kw))
         except ValueError: continue
         raise AssertionError(f"total/dropped bypass {kw}")
+    try: d.decode(d.encode([(0xFFFFFFFF,0,1,0),(1,1,1,0)],total=42,dropped=777))
+    except ValueError: pass
+    else: raise AssertionError("wrap total bypass accepted")
     ok=d.decode(d.encode([(69,0,1,0),(70,1,1,0)],total=70,dropped=6,isr_dropped=5))
     assert ok["isr_dropped"]==5 and ok["dropped"]==6
     boot=d.decode(d.encode([(5,500,3,0),(6,0,1,0),(7,0,16,0xFFFF)],total=7))
