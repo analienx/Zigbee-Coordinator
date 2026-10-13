@@ -210,7 +210,7 @@ jobs:
           cp "$OUT" bundle-diag/DIAG-NOT-FLASHABLE.out; cp "$MAP" bundle-diag/DIAG-NOT-FLASHABLE.map
           "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-diag/DIAG-symbols.txt || true
           "$(dirname "$TIARMCLANG")/tiarmobjdump" -d "$OUT" > bundle-diag/DIAG-disassembly.txt || true
-          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-diag/DIAG-OBJCOPY-NOT-FLASHABLE.hex
+          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex diag-staged/DIAG-OBJCOPY-NOT-FLASHABLE.hex
           # The actual CCS project emits TI vendor HEX. Keep the objcopy output
           # separate for diagnosis, never silently change the strict byte audit.
           HEXF=$(find ccs-workspace-diag -type f -name '*.hex' -print -quit)
