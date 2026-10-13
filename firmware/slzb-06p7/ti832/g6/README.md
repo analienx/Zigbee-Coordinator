@@ -16,6 +16,10 @@ local tests/builds, NV reads, flash, migration, or mainline merge is authorized.
   Two pre-BIOS boot records stay zero: they do not measure pre-kernel startup.
   Clock origin is BIOS per boot. A reboot-unique identity is **unknown**, encoded
   as zero with an explicit unknown flag; no unproven retained RAM or NV writes.
+  G6 kind 24 `SRSP_SEND_ATTEMPTED` timestamps return from the void MT send helper:
+  it does not claim queue acceptance. Its argument is the ZDO return value, not
+  the send result. Actual `NPI_Q_ACCEPT` events occur separately and are not
+  correlated to an individual response. Legacy G5 kind 10 remains unchanged.
 * A2/F08: UART2 write completion remains `UART_FIFO_LOADED`. A separate
   `UART2_Params.eventCallback/eventMask` subscription records
   `UART2_EVENT_TX_FINISHED` using the pinned driver's EOT path. It can describe
@@ -30,6 +34,7 @@ local tests/builds, NV reads, flash, migration, or mainline merge is authorized.
 * A4/F10: outbound partial-allocation and unsupported-enqueue ownership,
   ingress partial allocations, inbound payload-allocation and rejected
   `OsalPort_msgSend` all release only allocations still owned by the caller.
+  The MT response helper also releases its response buffer on rejected send.
   TI's rejected send does not deallocate the message. Successful queue/message
   delivery transfers ownership; no successful-path duplicate free is added.
 * A4/F15: the RX overflow callback discards its transport batch in O(1), latches

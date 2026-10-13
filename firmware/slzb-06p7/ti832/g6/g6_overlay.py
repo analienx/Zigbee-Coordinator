@@ -18,6 +18,7 @@ UART="source/ti/zstack/npi/npi_tl_uart.c"
 RX="source/ti/zstack/npi/npi_rxbuf.c"
 TL="source/ti/zstack/npi/npi_tl.c"
 SYS="source/ti/zstack/mt/mt_sys.c"
+CLIENT="source/ti/zstack/npi/npi_client_mt.c"
 INC='#include "p7_g6.h" /* P7G6 */\n'
 
 def replace(text, anchor, value, label):
@@ -47,6 +48,9 @@ def patch(texts):
         expected=sum(len(re.findall(r'p7_diag_record(?:_isr)?\(',p[2])) for p in diag.PATCHES if p[0]==rel)
         if n!=expected: raise ValueError(f"TIMEBASE_COUNT_{rel}:{n}!={expected}")
         out[rel]=t
+    zdo="source/ti/zstack/mt/mt_zdo.c"
+    out[zdo]=replace(out[zdo],"p7_g6_record(P7D_SRSP_QUEUED,",
+        "p7_g6_record(P7_G6_SRSP_SEND_ATTEMPTED,","srsp_truthful_attempt")
 
     # F10: frameMsg consumes the incoming buffer even on failure. Own each
     # resulting allocation exactly once until it has actually been enqueued.
@@ -83,6 +87,10 @@ def patch(texts):
     new+="        if (recPtr != NULL) OsalPort_free(recPtr);\n"
     new+="    } /* P7G6:F10 ingress partial allocation */\n}"
     out[TASK]=replace(out[TASK],old,new,"incoming_alloc")
+    out[CLIENT]=replace(out[CLIENT],"        OsalPort_msgSend(npiTaskID, pRspMsg);",
+        "        if (OsalPort_msgSend(npiTaskID, pRspMsg) != 0) {\n"
+        "            OsalPort_msgDeallocate(pRspMsg);\n"
+        "        } /* P7G6:F10 rejected MT response retains ownership */","client_rejection")
 
     # F15: drop the entire lost batch in O(1), latch task-side resynchronization.
     # While latched every incoming batch is discarded. Parser/free is task-only.
@@ -159,7 +167,7 @@ def clock_recorder(source):
 '''
 
 def apply(sdk, examples, output):
-    paths=sorted({p[0] for p in diag.PATCHES}|{RX,TL,SYS})
+    paths=sorted({p[0] for p in diag.PATCHES}|{RX,TL,SYS,CLIENT})
     original={p:(sdk/p).read_text() for p in paths}
     patched=patch(original) # all exact anchors validated before writes
     spec=examples/diag.PROJECTSPEC

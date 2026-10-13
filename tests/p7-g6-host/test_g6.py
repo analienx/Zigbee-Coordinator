@@ -49,7 +49,7 @@ typedef struct { int _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
 typedef void (*npiIncomingFrameCBack_t)(uint8_t,uint8_t *,NPIMSG_Type);
 typedef struct { struct { uint8_t event; } hdr; uint8_t *msg; } mtOSALSerialData_t;
 static void *live[128]; static unsigned blocks,alloc_calls,fail_at;
-static int send_status; static NPI_QueueRec *queued;
+static int send_status, raw_send; static uint8_t npiTaskID; static NPI_QueueRec *queued;
 static uint32_t npiServiceTaskEvents; static uint16_t TRANSPORT_RX_ISR_EVENT_FLAG;
 static int npiSemHandle, npiTxQueue, npiSyncTxQueue, npiRxQueue, MTServiceTaskID;
 static uint8_t npiRxBuf[NPI_TL_BUF_SIZE]; static uint16_t npiRxBufHead,npiRxBufTail;
@@ -81,7 +81,10 @@ static void OsalPort_leaveCS(uint32_t k) {
 static void Semaphore_post(int h) { (void)h; }
 static void Queue_enqueue(int q,int *elem) { (void)q; queued=(NPI_QueueRec*)elem; }
 static uint8_t OsalPort_msgSend(int id,byte *p) {
-    (void)id; if (!send_status) { mtOSALSerialData_t *m=(void*)p; release(m->msg); release(m); }
+    (void)id; if (!send_status) {
+        if(raw_send) release(p);
+        else { mtOSALSerialData_t *m=(void*)p; release(m->msg); release(m); }
+    }
     return send_status;
 }
 static void batch(const uint8_t *p,unsigned n) { assert(n<=NPI_TL_BUF_SIZE); memcpy(npiRxBuf,p,n); npiRxBufHead=0; npiRxBufTail=n; }
@@ -105,11 +108,18 @@ int main(int argc,char **argv) {
                 alloc_calls=0; fail_at=f; uint8_t st=NPITask_sendBufToStack(m); fail_at=0;
                 assert(blocks==0); assert(st==((f<=2 || send_status)?1:0));
             }
-        } else {
+        } else if(strcmp(argv[1],"ingress")==0) {
             for(unsigned f=1;f<=3;f++) {
                 uint8_t *frame=alloc(6); alloc_calls=0; fail_at=f; queued=NULL;
                 NPITask_incomingFrameCB(6,frame,NPIMSG_Type_ASYNC); fail_at=0;
                 if(queued) { release(queued->npiMsg->pBuf); release(queued->npiMsg); release(queued); }
+                assert(blocks==0);
+            }
+        } else {
+            raw_send=1;
+            for(unsigned f=1;f<=2;f++) for(send_status=0;send_status<=1;send_status++) {
+                uint8_t payload[2]={1,0}; alloc_calls=0; fail_at=f;
+                MT_BuildAndSendZToolResponse(0x61,0xf0,2,payload); fail_at=0;
                 assert(blocks==0);
             }
         }
@@ -215,7 +225,7 @@ int main(void) {
      * publishing an out-of-order timestamp, with the drop explicitly exported. */
     p7_diag_init(1,0,0); fake_ticks=100; p7_diag_preempt_hook=race_hook;
     p7_g6_record(P7D_MT_RX,0); p7_diag_preempt_hook=NULL;
-    fake_ticks=102; p7_g6_record(P7D_SRSP_QUEUED,0);
+    fake_ticks=102; p7_g6_record(P7_G6_SRSP_SEND_ATTEMPTED,0);
     assert(p7_diag_contention_dropped==1); print_hex("POST_RACE_HEX");
     puts("PASS actual SYS endpoint framing, length/version/operation/type, UART event"); return 0;
 }
@@ -224,7 +234,7 @@ int main(void) {
 def strip_includes(s): return re.sub(r'^#include[^\n]*\n','',s,flags=re.M)
 
 def run_suite(sdk,output):
-    paths=sorted({p[0] for p in g.diag.PATCHES}|{g.RX,g.TL,g.SYS})
+    paths=sorted({p[0] for p in g.diag.PATCHES}|{g.RX,g.TL,g.SYS,g.CLIENT})
     old={p:(sdk/p).read_text() for p in paths}
     config=(sdk/"source/ti/zstack/npi/npi_config.h").read_text()
     sizes=re.findall(r'^#define\s+NPI_TL_BUF_SIZE\s+(\d+)\s*$',config,re.M)
@@ -250,6 +260,7 @@ def run_suite(sdk,output):
             # frameMsg calls FCS helper; preserve the genuine helper body too.
             body=g.function(t[g.FRAME],"npiframe_calcMTFCS")+"\n"+body
             body+=g.function(t[g.TASK],"NPITask_sendToHost")+"\n"+g.function(t[g.TASK],"NPITask_sendBufToStack")+"\n"
+            body+=g.function(t[g.CLIENT],"MT_BuildAndSendZToolResponse")+"\n"
             vectors=ALLOC_MAIN
             if version=="pre":
                 # The named pre-stack negative must hit its leaking payload
@@ -258,7 +269,7 @@ def run_suite(sdk,output):
                     "for(unsigned f=2;f<=2;f++) for(send_status=0;")
             body+=g.function(t[g.TASK],"NPITask_incomingFrameCB")+"\n"+vectors
             exe=build(version+"_alloc","#define MT_SOF 0xfe\n"+body)
-            for case in ("send","stack","ingress"):
+            for case in ("send","stack","ingress","client"):
                 r=subprocess.run([str(exe),case],capture_output=True,text=True)
                 if (r.returncode==0)!=(version=="post"): raise AssertionError((version,case,r.stdout,r.stderr))
                 (output/(version+"_"+case+".log")).write_text(r.stdout+r.stderr)

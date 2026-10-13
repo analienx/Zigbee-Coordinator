@@ -37,7 +37,7 @@ def timing_report(envelope, *, same_boot):
         if e["kind"]=="BOOT_ENTER": starts.clear()
         k=e["kind"]
         if k in ("MT_RX","ZDO_INIT_ENTER"): starts[k]=e["tick"]
-        pairs={"SRSP_QUEUED":"MT_RX","ZDO_INIT_EXIT":"ZDO_INIT_ENTER"}
+        pairs={"SRSP_SEND_ATTEMPTED":"MT_RX","ZDO_INIT_EXIT":"ZDO_INIT_ENTER"}
         if k in pairs and pairs[k] in starts:
             durations[pairs[k]+"_to_"+k]=elapsed_ms(starts.pop(pairs[k]),e["tick"],envelope["tick_period_us"],same_boot=same_boot)
     out["stage_durations_ms"]=durations
@@ -56,9 +56,9 @@ def selftest():
     assert g5.classify({"queue_high_water":158,"queue_current":0})=="NOT_STUCK_HIGHWATER_ONLY"
     assert g5.classify({"diag_rtt_ms":147})==g5.classify({"diag_rtt_ms":1545})=="UNKNOWN_RTT_ONLY"
     env={"tick_period_us":1000,"snapshot":{"events":[{"kind":"MT_RX","tick":0xffffff00},
-        {"kind":"SRSP_QUEUED","tick":0x10},{"kind":"UART_FIFO_LOADED","tick":0x20}]}}
+        {"kind":"SRSP_SEND_ATTEMPTED","tick":0x10},{"kind":"UART_FIFO_LOADED","tick":0x20}]}}
     r=timing_report(env,same_boot=True)
-    assert r["stage_durations_ms"]["MT_RX_to_SRSP_QUEUED"]==272
+    assert r["stage_durations_ms"]["MT_RX_to_SRSP_SEND_ATTEMPTED"]==272
     assert r["physical_tx"]=="UNKNOWN" and r["host_reception"]=="UNKNOWN"
     env["snapshot"]["isr_dropped"]=1
     assert timing_report(env,same_boot=True)["stage_durations_ms"]=={}
