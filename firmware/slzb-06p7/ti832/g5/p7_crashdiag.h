@@ -38,6 +38,7 @@
 #define P7_CRASHDIAG_H
 #include <stdint.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #define P7_DIAG_SCHEMA 1u
 #define P7_DIAG_RING 64u
 #define P7_DIAG_HDR 28u
@@ -51,7 +52,12 @@ enum p7_diag_kind {
   P7D_UART_TX_FINISHED=12, P7D_UART_REJECTED=13, P7D_QUEUE_DEPTH=14,
   P7D_FAULT=15, P7D_RESET_SOURCE=16,
   P7D_ZDO_DISPATCH=17, P7D_NPI_Q_ACCEPT=18, P7D_NPI_Q_REJECT=19,
-  P7D_PARSE_ERR=20, P7D_FCS_ERR=21, P7D_OVERFLOW=22
+  P7D_PARSE_ERR=20, P7D_FCS_ERR=21, P7D_OVERFLOW=22,
+  /* UART2 write callback fired = bytes accepted into the HW FIFO
+   * (TI SDK 8.32 UART2 docs), NOT physical TX-pin completion. Only a
+   * subscribed UART2_EVENT_TX_FINISHED event may record kind 12;
+   * until that integration exists, wire completion stays UNKNOWN. */
+  P7D_UART_FIFO_LOADED=23
 };
 enum p7_diag_nv { P7D_NVSTATE_UNKNOWN=0, P7D_NVSTATE_RESTORED=1, P7D_NVSTATE_NEW=2, P7D_NVSTATE_AMBIGUOUS=3 };
 typedef struct { uint32_t seq; uint32_t tick; uint16_t kind; uint16_t arg; } p7_diag_event_t; /* 12 B, numeric only */
@@ -76,11 +82,16 @@ size_t p7_diag_snapshot(uint8_t *out, size_t cap);
 uint16_t p7_diag_crc16(const uint8_t *data, size_t len);
 extern volatile p7_diag_state_t p7_diag_state;
 extern p7_diag_event_t p7_diag_ring[P7_DIAG_RING];
-/* Writer-contention drops (nested task attempts + ISR attempts).
+/* Writer-contention drops (nested task attempts + ISR attempts),
+ * incremented only with C11 atomic fetch-add (lock-free on M4F;
+ * native workflow fails if any __atomic library symbol is linked).
  * Mirrored into snapshot bytes 24-27 for wire compatibility. */
-extern volatile uint32_t p7_diag_contention_dropped;
-/* Host test hook (NULL on target): invoked once mid-write, after the
- * first event field is stored and while writer ownership is held, so
- * tests can inject a nested task record + an ISR record attempt. */
+extern _Atomic uint32_t p7_diag_contention_dropped;
+#if defined(P7_DIAG_TEST_HOOKS) && P7_DIAG_TEST_HOOKS
+/* Host-test ONLY (CR8): compiled in solely when the host test defines
+ * P7_DIAG_TEST_HOOKS=1. Firmware/native builds never define it, so no
+ * mutable hook pointer exists in a linked firmware image; the native
+ * workflow asserts the symbol is absent from the DIAG ELF. */
 extern void (*p7_diag_preempt_hook)(void);
+#endif
 #endif

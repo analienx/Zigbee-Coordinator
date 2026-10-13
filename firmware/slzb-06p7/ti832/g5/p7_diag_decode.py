@@ -10,7 +10,7 @@ MAGIC=b"P7D1"; SCHEMA=1; HDR=28; EV=12; MAX_EVENTS=8; RING=64
 KINDS={1:"BOOT_ENTER",2:"NV_READ_BEGIN",3:"NV_RESTORED",4:"NV_NEW",5:"NV_AMBIGUOUS",
  6:"ZDO_INIT_ENTER",7:"ZDO_INIT_EXIT",8:"DEV_STATE",9:"MT_RX",10:"SRSP_QUEUED",
  11:"UART_ACCEPTED",12:"UART_TX_FINISHED",13:"UART_REJECTED",14:"QUEUE_DEPTH",15:"FAULT",16:"RESET_SOURCE",
- 17:"ZDO_DISPATCH",18:"NPI_Q_ACCEPT",19:"NPI_Q_REJECT",20:"PARSE_ERR",21:"FCS_ERR",22:"OVERFLOW"}
+ 17:"ZDO_DISPATCH",18:"NPI_Q_ACCEPT",19:"NPI_Q_REJECT",20:"PARSE_ERR",21:"FCS_ERR",22:"OVERFLOW",23:"UART_FIFO_LOADED"}
 NV_NAMES={0:"unknown",1:"restored",2:"new",3:"ambiguous"}
 
 def crc16(data: bytes) -> int:
@@ -130,6 +130,8 @@ def selftest() -> None:
       ({"host_timeout_40s":True},"UNKNOWN_TIMEOUT_NOT_CRASH"),
       ({"host_timeout_40s":True,"srsp_queued":True},"UNKNOWN_TIMEOUT_NOT_CRASH"),
       ({"host_timeout_40s":True,"srsp_queued":True,"uart_tx_finished":False},"SRSP_QUEUED_TX_NOT_FINISHED"),
+      ({"host_timeout_40s":True,"srsp_queued":True,"uart_fifo_loaded":True},"UNKNOWN_TIMEOUT_NOT_CRASH"),
+      ({"uart_fifo_loaded":True},"UNKNOWN_INSUFFICIENT_EVIDENCE"),
       ({"queue_high_water":158,"queue_current":0},"NOT_STUCK_HIGHWATER_ONLY"),
       ({"queue_high_water":158,"queue_current":3,"uart_tx_finished":False,"diag_rtt_ms":1},"UNKNOWN_INSUFFICIENT_EVIDENCE"),
       ({"diag_rtt_ms":1545},"UNKNOWN_RTT_ONLY"),

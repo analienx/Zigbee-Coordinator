@@ -19,8 +19,10 @@
 #include <stdatomic.h>
 volatile p7_diag_state_t p7_diag_state;
 p7_diag_event_t p7_diag_ring[P7_DIAG_RING];
-volatile uint32_t p7_diag_contention_dropped;
+_Atomic uint32_t p7_diag_contention_dropped;
+#if defined(P7_DIAG_TEST_HOOKS) && P7_DIAG_TEST_HOOKS
 void (*p7_diag_preempt_hook)(void);
+#endif
 /* Keep the seal/snapshot API linked even while the MT endpoint is
  * disabled, so BASE-vs-DIAG linked evidence covers the full chain. */
 #if defined(__clang__) || defined(__GNUC__)
@@ -76,7 +78,7 @@ static void fold_event(const p7_diag_event_t *e){
 static int writer_try_claim(int count_drop){
   uint32_t expected=0;
   if(!atomic_compare_exchange_strong(&writer_owned,&expected,1u)){
-    if(count_drop && p7_diag_contention_dropped<0xFFFFFFFFu) p7_diag_contention_dropped++;
+    if(count_drop) atomic_fetch_add(&p7_diag_contention_dropped,1u);
     return 0;
   }
   atomic_fetch_add(&write_seq,1u); /* odd: write in progress */
@@ -96,7 +98,9 @@ static void apply_nv(uint8_t ns){
 static void record_common(uint16_t kind, uint16_t arg, uint32_t tick){
   p7_diag_event_t *e=&p7_diag_ring[p7_diag_state.head];
   e->seq=alloc_seq();
-  if(p7_diag_preempt_hook) p7_diag_preempt_hook(); /* test-only preemption point, ownership held */
+#if defined(P7_DIAG_TEST_HOOKS) && P7_DIAG_TEST_HOOKS
+  if(p7_diag_preempt_hook) p7_diag_preempt_hook(); /* host-test only, ownership held */
+#endif
   e->tick=tick; e->kind=kind; e->arg=arg;
   p7_diag_state.head=(uint16_t)((p7_diag_state.head+1u)%P7_DIAG_RING);
   if(p7_diag_state.count<P7_DIAG_RING) p7_diag_state.count++;

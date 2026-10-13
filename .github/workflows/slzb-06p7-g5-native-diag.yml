@@ -179,6 +179,9 @@ jobs:
           "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-diag/DIAG-NOT-FLASHABLE.hex
           grep -E 'p7_diag_(record|record_isr|seal_retained|init|snapshot)' bundle-diag/DIAG-symbols.txt | tee bundle-diag/diag-symbol-evidence.txt
           if grep -E 'p7_diag_record' bundle-base/BASE-symbols.txt; then echo "::error::diag symbols leaked into BASE"; exit 1; fi
+          if grep -E 'p7_diag_preempt_hook' bundle-diag/DIAG-symbols.txt; then echo "::error::CR8 test hook linked into DIAG firmware"; exit 1; fi
+          if grep -E '__atomic_(load|store|fetch|exchange|compare)' bundle-diag/DIAG-symbols.txt; then echo "::error::CR8 libatomic call linked into DIAG (must be lock-free M4F atomics)"; exit 1; fi
+          echo "CR8_HOOK_ABSENT_AND_ATOMICS_LOCKFREE_OK" | tee bundle-diag/cr8-evidence.txt
           printf '%s\n' 'DIAG_NOT_FLASHABLE' 'ENDPOINT_0xF0_DISABLED' 'RUNTIME_NOT_QUALIFIED' > bundle-diag/NOT_FLASHABLE.txt
       - name: Compare BASE vs DIAG maps, symbols and resources
         shell: bash

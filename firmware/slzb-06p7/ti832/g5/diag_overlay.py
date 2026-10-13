@@ -112,8 +112,8 @@ PATCHES = [
  ("source/ti/zstack/npi/npi_tl_uart.c",
   "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n{\n    uint32_t key;",
   "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)\n{\n"
-  f"    {RI}(P7D_UART_TX_FINISHED, (uint16_t)size, 0); /* P7DIAG:uart_tx_finished (UART2 write-callback == TX_FINISHED in this SDK) */\n"
-  "    uint32_t key;", "uart_tx_finished"),
+  f"    {RI}(P7D_UART_FIFO_LOADED, (uint16_t)size, 0); /* P7DIAG:uart_fifo_loaded - CR7: TI SDK 8.32 UART2 write callback = bytes in HW FIFO, NOT TX-pin completion; physical wire completion is UART2_EVENT_TX_FINISHED (not subscribed here) and stays UNKNOWN */\n"
+  "    uint32_t key;", "uart_fifo_loaded"),
  ("source/ti/zstack/npi/npi_tl_uart.c",
   "        if (size != NPITLUART_readIsrBuf(size))\n        {\n            // Buffer overflow imminent. Cancel read and pass to higher layers",
   "        if (size != NPITLUART_readIsrBuf(size))\n        {\n"
