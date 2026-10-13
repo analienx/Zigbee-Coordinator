@@ -65,7 +65,11 @@ def decode(raw: bytes) -> dict:
     if events and any(e["seq"]==0xFFFFFFFF for e in events) and total!=0xFFFFFFFF:
         raise ValueError("TOTAL_MISMATCH_WRAP")
     if events and total==0xFFFFFFFF:
-        pass  # saturated post-wrap window: total/dropped both pinned, seq contiguity already checked
+        # Saturated post-wrap window (p7_crashdiag.c: alloc_seq MAX->1,
+        # total saturates): total==MAX implies >=MAX records, hence
+        # count==64, n==8, dropped in [MAX-64, MAX].
+        if n!=8: raise ValueError("SATURATED_WINDOW_SHORT")
+        if dropped<0xFFFFFFFF-64: raise ValueError("DROPPED_MISMATCH_SATURATED")
     elif events:
         # Unconditional (non-wrap window): snapshot always ends at the last
         # record, so total == last seq and dropped == evictions beyond ring.
