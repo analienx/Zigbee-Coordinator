@@ -187,7 +187,7 @@ def main():
     constants = "\n".join(re.findall(r"^#define UART2_STATUS_\w+ .+$", header, re.M))
     assert "params.writeMode = UART2_Mode_CALLBACK;" in texts[g.UART]
     mode_enum = header[header.index("UART2_Mode_BLOCKING,"):header.index("UART2_Mode_POLLING =")]
-    assert re.findall(r"UART2_Mode_(BLOCKING|CALLBACK|NONBLOCKING),", mode_enum) == ["BLOCKING", "CALLBACK", "NONBLOCKING"]
+    assert re.findall(r"^\s*UART2_Mode_(BLOCKING|CALLBACK|NONBLOCKING),\s*$", mode_enum, re.M) == ["BLOCKING", "CALLBACK", "NONBLOCKING"]
     driver_blob = (args.sdk / "source/ti/drivers/UART2.c").read_text()
     driver = driver_blob.replace("int_fast16_t __attribute__((weak))\n", "int_fast16_t ")
     driver_bodies = "\n".join(g.function(driver, name) for name in (
