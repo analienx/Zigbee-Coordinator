@@ -17,9 +17,9 @@ static uint32_t retained_compute(void){
   /* Covers ring bytes, dropped, nv_state and sequencing: any corrupt
    * retained history must fail this and fall back to a clean init.
    * Bounded (768 B ring) and only recomputed on record/init paths. */
-  uint32_t v[5]; v[0]=p7_diag_state.boot_generation; v[1]=p7_diag_state.total;
+  uint32_t v[7]; v[0]=p7_diag_state.boot_generation; v[1]=p7_diag_state.total;
   v[2]=(uint32_t)p7_diag_state.head|((uint32_t)p7_diag_state.count<<16); v[3]=next_seq;
-  v[4]=p7_diag_state.dropped|((uint32_t)p7_diag_state.nv_state<<24);
+  v[4]=p7_diag_state.dropped; v[5]=p7_diag_state.nv_state; v[6]=isr_dropped;
   uint16_t c=p7_diag_crc16((const uint8_t*)p7_diag_ring,sizeof p7_diag_ring);
   c^=p7_diag_crc16((const uint8_t*)v,sizeof v);
   return (uint32_t)c | ((uint32_t)p7_diag_state.count<<16);
@@ -60,6 +60,7 @@ void p7_diag_record_isr(uint16_t k,uint16_t a,uint32_t t){
   record_common(k,a,t);
 }
 void p7_diag_init(uint32_t gen, uint8_t rs, uint8_t known){
+  if(gen==0) gen=1; /* generation 0 is reserved/invalid on the wire */
   write_seq++;
   memset(p7_diag_ring,0,sizeof p7_diag_ring);
   p7_diag_state.boot_generation=gen; p7_diag_state.dropped=0; p7_diag_state.total=0;
@@ -74,7 +75,7 @@ void p7_diag_init_preserving(uint32_t gen, uint8_t rs, uint8_t known, uint8_t re
   /* retained_valid must come from a separately gated noinit-section check
    * at integration; here we additionally require magic + CRC + ranges so
    * corrupt retained RAM falls back to a clean init. */
-  if(!retained_valid || !retained_sane() || p7_diag_state.count==0 || gen==0 || gen==p7_diag_state.boot_generation){ p7_diag_init(gen,rs,known); return; }
+  if(!retained_valid || !retained_sane() || p7_diag_state.count==0 || gen<=p7_diag_state.boot_generation){ p7_diag_init(gen,rs,known); return; }
   write_seq++;
   p7_diag_state.boot_generation=gen;
   p7_diag_state.reset_source=rs; p7_diag_state.reset_source_known=known?1u:0u;
@@ -98,9 +99,9 @@ size_t p7_diag_snapshot(uint8_t *out, size_t cap){
     uint16_t start=(uint16_t)((oldest+(count-n))%P7_DIAG_RING);
     memcpy(out,"P7D1",4); out[4]=P7_DIAG_SCHEMA; out[5]=p7_diag_state.nv_state;
     out[6]=(uint8_t)n; out[7]=p7_diag_state.reset_source_known;
-    put32(out+8,p7_diag_state.boot_generation); put32(out+12,p7_diag_state.dropped+isr_dropped);
+    put32(out+8,p7_diag_state.boot_generation); put32(out+12,p7_diag_state.dropped);
     out[16]=p7_diag_state.reset_source_known?p7_diag_state.reset_source:0; out[17]=p7_diag_state.reset_source_known;
-    out[18]=0; out[19]=0; put32(out+20,p7_diag_state.total);
+    out[18]=0; out[19]=0; put32(out+20,p7_diag_state.total); put32(out+24,isr_dropped);
     for(uint16_t i=0;i<n;i++){
       const p7_diag_event_t *e=&p7_diag_ring[(start+i)%P7_DIAG_RING]; uint8_t *o=out+P7_DIAG_HDR+(size_t)i*12u;
       put32(o,e->seq); put32(o+4,e->tick); put16(o+8,e->kind); put16(o+10,e->arg);

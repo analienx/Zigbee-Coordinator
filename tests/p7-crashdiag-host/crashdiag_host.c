@@ -8,7 +8,7 @@ int main(void){
   p7_diag_init(7,0,0);
   p7_diag_record(2,0,5); p7_diag_record(3,0,9); p7_diag_record(10,0,12);
   size_t n=p7_diag_snapshot(buf,sizeof buf);
-  assert(n==24+5*12+2); assert(!memcmp(buf,"P7D1",4)); assert(buf[4]==1);
+  assert(n==28+5*12+2); assert(!memcmp(buf,"P7D1",4)); assert(buf[4]==1);
   printf("SNAPSHOT_HEX=");
   for(size_t i=0;i<n;i++) printf("%02x",buf[i]);
   printf("\n");
@@ -25,7 +25,7 @@ int main(void){
   /* overflow: ring saturates, dropped counts, snapshot stays bounded */
   for(int i=0;i<200;i++) p7_diag_record_isr(14,(uint16_t)i,(uint32_t)i);
   assert(p7_diag_state.count==64); assert(p7_diag_state.dropped>0);
-  n=p7_diag_snapshot(buf,sizeof buf); assert(n<=24+8*12+2);
+  n=p7_diag_snapshot(buf,sizeof buf); assert(n<=28+8*12+2);
   assert(p7_diag_snapshot(buf,10)==0);
   printf("PASS_HOST_CRASHDIAG_RING snapshot=%zu dropped=%u\n",n,(unsigned)p7_diag_state.dropped);
   return 0;

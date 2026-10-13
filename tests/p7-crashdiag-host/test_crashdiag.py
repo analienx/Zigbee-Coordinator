@@ -58,6 +58,14 @@ def test_decoder_strictness():
     except ValueError: pass
     else: raise AssertionError("reserved nonzero accepted")
     assert d.classify({"queue_current_samples":[True,True],"uart_tx_finished":False})=="UNKNOWN_INSUFFICIENT_EVIDENCE"
+    for kw in (dict(total=5,dropped=999),dict(total=1,dropped=999)):
+        try: d.decode(d.encode([(10,0,1,0),(11,1,1,0)],**kw))
+        except ValueError: continue
+        raise AssertionError(f"total/dropped bypass {kw}")
+    ok=d.decode(d.encode([(69,0,1,0),(70,1,1,0)],total=70,dropped=6,isr_dropped=5))
+    assert ok["isr_dropped"]==5 and ok["dropped"]==6
+    boot=d.decode(d.encode([(5,500,3,0),(6,0,1,0),(7,0,16,0xFFFF)],total=7))
+    assert boot["events"][1]["kind"]=="BOOT_ENTER"
 
 def test_no_forbidden_tokens_in_c():
     for name in ("p7_crashdiag.h","p7_crashdiag.c"):

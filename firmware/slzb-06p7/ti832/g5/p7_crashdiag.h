@@ -16,7 +16,7 @@
 #include <stddef.h>
 #define P7_DIAG_SCHEMA 1u
 #define P7_DIAG_RING 64u
-#define P7_DIAG_HDR 24u
+#define P7_DIAG_HDR 28u
 #define P7_DIAG_MT_CMD_CANDIDATE 0xF0u
 #define P7_DIAG_MT_ENDPOINT_ENABLED 0 /* UNKNOWN collision -> disabled */
 #define P7_DIAG_SNAPSHOT_EVENTS 8u /* bounded: fits one MT SRSP payload */
