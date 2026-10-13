@@ -246,7 +246,13 @@ def run_suite(sdk,output):
             # frameMsg calls FCS helper; preserve the genuine helper body too.
             body=g.function(t[g.FRAME],"npiframe_calcMTFCS")+"\n"+body
             body+=g.function(t[g.TASK],"NPITask_sendToHost")+"\n"+g.function(t[g.TASK],"NPITask_sendBufToStack")+"\n"
-            body+=g.function(t[g.TASK],"NPITask_incomingFrameCB")+"\n"+ALLOC_MAIN
+            vectors=ALLOC_MAIN
+            if version=="pre":
+                # The named pre-stack negative must hit its leaking payload
+                # allocation, not fail earlier on the old success-status bug.
+                vectors=vectors.replace("for(unsigned f=1;f<=3;f++) for(send_status=0;",
+                    "for(unsigned f=2;f<=2;f++) for(send_status=0;")
+            body+=g.function(t[g.TASK],"NPITask_incomingFrameCB")+"\n"+vectors
             exe=build(version+"_alloc","#define MT_SOF 0xfe\n"+body)
             for case in ("send","stack","ingress"):
                 r=subprocess.run([str(exe),case],capture_output=True,text=True)

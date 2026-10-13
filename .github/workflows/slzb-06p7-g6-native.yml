@@ -250,6 +250,7 @@ jobs:
           fi
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$G6_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           cp diag-staged/G6-OVERLAY-MANIFEST.json bundle-compare/
+          cp evidence/actual-sys-compatibility.json bundle-compare/
           git -C repo rev-parse HEAD > bundle-compare/candidate-sha.txt
           sha256sum bundle-base/* bundle-diag/* > bundle-compare/artifact-sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

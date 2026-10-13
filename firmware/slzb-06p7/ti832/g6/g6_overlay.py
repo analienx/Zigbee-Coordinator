@@ -167,7 +167,8 @@ def apply(sdk, examples, output):
     entry=diag.DIAG_FILE_ENTRY.replace("p7_crashdiag.c","p7_g6.c")
     text=replace(text,diag.DIAG_FILE_ENTRY,diag.DIAG_FILE_ENTRY+entry,"g6_projectspec")
     recorder=sdk/"source/ti/zstack/startup/p7_crashdiag.c"
-    recorder_source=clock_recorder(recorder.read_text())
+    recorder_input=recorder.read_text()
+    recorder_source=clock_recorder(recorder_input)
     for p,t in patched.items(): (sdk/p).write_text(t)
     recorder.write_text(recorder_source)
     spec.write_text(text)
@@ -179,6 +180,8 @@ def apply(sdk, examples, output):
         "clock_source":"Clock_getTicks", "clock_resolution":"Clock_tickPeriod microseconds",
         "clock_origin":"BIOS per boot; pre-BIOS boot records unavailable",
         "reboot_unique_identity_known":False,
+        "clock_recorder":{"input_sha256":hashlib.sha256(recorder_input.encode()).hexdigest(),
+            "output_sha256":hashlib.sha256(recorder_source.encode()).hexdigest()},
         "reliability_features":["F10 allocation ownership", "F15 RX overflow resynchronization"],
         "files":{p:{"input_sha256":hashlib.sha256(original[p].encode()).hexdigest(),
                     "output_sha256":hashlib.sha256(patched[p].encode()).hexdigest()} for p in paths}}
