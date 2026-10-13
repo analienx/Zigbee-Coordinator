@@ -75,6 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           cd repo
+          python3 tests/p7-g6-host/test_elf_load_hex.py
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
@@ -211,11 +212,13 @@ jobs:
           "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-diag/DIAG-symbols.txt || true
           "$(dirname "$TIARMCLANG")/tiarmobjdump" -d "$OUT" > bundle-diag/DIAG-disassembly.txt || true
           "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex diag-staged/DIAG-OBJCOPY-NOT-FLASHABLE.hex
-          # The actual CCS project emits TI vendor HEX. Keep the objcopy output
-          # separate for diagnosis, never silently change the strict byte audit.
+          # Preserve vendor exporters separately: they omit initialized ELF
+          # inter-section padding in the stock G6 image. Export every PT_LOAD
+          # file byte; the unchanged independent board audits gate publication.
           HEXF=$(find ccs-workspace-diag -type f -name '*.hex' -print -quit)
           test -s "$HEXF"
-          cp "$HEXF" bundle-diag/DIAG-NOT-FLASHABLE.hex
+          cp "$HEXF" diag-staged/DIAG-CCS-NOT-FLASHABLE.hex
+          python3 repo/firmware/slzb-06p7/ti832/g6/elf_load_hex.py --elf "$OUT" --hex bundle-diag/DIAG-NOT-FLASHABLE.hex | tee bundle-diag/HEX-PRODUCER.json
           grep -E 'p7_diag_(record|record_isr|seal_retained|init|snapshot)' bundle-diag/DIAG-symbols.txt | tee bundle-diag/diag-symbol-evidence.txt
           if grep -E 'p7_diag_record' bundle-base/BASE-symbols.txt; then echo "::error::diag symbols leaked into BASE"; exit 1; fi
           if grep -E 'p7_diag_preempt_hook' bundle-diag/DIAG-symbols.txt; then echo "::error::CR8 test hook linked into DIAG firmware"; exit 1; fi
