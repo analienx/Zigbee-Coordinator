@@ -67,6 +67,17 @@ def test_decoder_strictness():
     boot=d.decode(d.encode([(5,500,3,0),(6,0,1,0),(7,0,16,0xFFFF)],total=7))
     assert boot["events"][1]["kind"]=="BOOT_ENTER"
 
+def test_extended_kinds_and_seal_api():
+    dec=d.decode(d.encode([(1,0,17,0),(2,1,18,0),(3,2,19,0),(4,3,20,0),(5,4,21,0),(6,5,22,0)]))
+    assert [e["kind"] for e in dec["events"]]==["ZDO_DISPATCH","NPI_Q_ACCEPT","NPI_Q_REJECT","PARSE_ERR","FCS_ERR","OVERFLOW"]
+    hdr=(ROOT/"firmware/slzb-06p7/ti832/g5/p7_crashdiag.h").read_text()
+    src=(ROOT/"firmware/slzb-06p7/ti832/g5/p7_crashdiag.c").read_text()
+    assert "p7_diag_seal_retained" in hdr and "p7_diag_preempt_hook" in hdr
+    import re as _re
+    body=_re.search(r"static void record_common\(.*?\n\}\n", src, _re.S).group(0)
+    assert "retained_compute" not in body and "fold_event(e);" in body, "record path not O(1) fold"
+    assert src.count("retained_compute()")>=2  # seal + boot verify definition/call sites only
+
 def test_no_forbidden_tokens_in_c():
     for name in ("p7_crashdiag.h","p7_crashdiag.c"):
         data=(ROOT/"firmware/slzb-06p7/ti832/g5"/name).read_bytes()
@@ -75,6 +86,6 @@ def test_no_forbidden_tokens_in_c():
 
 if __name__=="__main__":
     test_golden_roundtrip(); test_c_snapshot_cross_decode(); test_malformed_rejected()
-    test_negative_classifications(); test_decoder_strictness(); test_no_forbidden_tokens_in_c()
+    test_negative_classifications(); test_decoder_strictness(); test_extended_kinds_and_seal_api(); test_no_forbidden_tokens_in_c()
     d.selftest()
     print("PASS test_crashdiag (standalone)")

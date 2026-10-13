@@ -20,8 +20,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py tests/p7-crashdiag-host/test_crashdiag.py
+          python3 -m py_compile firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py tests/p7-crashdiag-host/test_crashdiag.py
           python3 firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py --selftest
+          python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
+          python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/p7_diag_decode.py --selftest
           python3 firmware/slzb-06p7/ti832/phase0/validate_inventory.py --selftest
           python3 firmware/slzb-06p7/ti832/g4/cap192_capacity.py --selftest

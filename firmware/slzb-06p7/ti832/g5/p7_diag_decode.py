@@ -9,7 +9,8 @@ import struct, sys
 MAGIC=b"P7D1"; SCHEMA=1; HDR=28; EV=12; MAX_EVENTS=8; RING=64
 KINDS={1:"BOOT_ENTER",2:"NV_READ_BEGIN",3:"NV_RESTORED",4:"NV_NEW",5:"NV_AMBIGUOUS",
  6:"ZDO_INIT_ENTER",7:"ZDO_INIT_EXIT",8:"DEV_STATE",9:"MT_RX",10:"SRSP_QUEUED",
- 11:"UART_ACCEPTED",12:"UART_TX_FINISHED",13:"UART_REJECTED",14:"QUEUE_DEPTH",15:"FAULT",16:"RESET_SOURCE"}
+ 11:"UART_ACCEPTED",12:"UART_TX_FINISHED",13:"UART_REJECTED",14:"QUEUE_DEPTH",15:"FAULT",16:"RESET_SOURCE",
+ 17:"ZDO_DISPATCH",18:"NPI_Q_ACCEPT",19:"NPI_Q_REJECT",20:"PARSE_ERR",21:"FCS_ERR",22:"OVERFLOW"}
 NV_NAMES={0:"unknown",1:"restored",2:"new",3:"ambiguous"}
 
 def crc16(data: bytes) -> int:
@@ -118,6 +119,7 @@ def selftest() -> None:
     must(classify({"snapshot":d})=="UNKNOWN_INSUFFICIENT_EVIDENCE","SNAPSHOT_CLASSIFY")
     amb=decode(encode([(1,0,1,0)],nv_state=3)); must(classify({"snapshot":amb})=="UNKNOWN_NV_AMBIGUOUS","SNAPSHOT_NV_AMBIG")
     wrap=decode(encode([(4294967295,0,1,0),(1,1,1,0)])); must(wrap["events"][1]["seq"]==1,"SEQ_WRAP")
+    ext=decode(encode([(1,0,17,0),(2,1,18,0),(3,2,21,0)])); must([e["kind"] for e in ext["events"]]==["ZDO_DISPATCH","NPI_Q_ACCEPT","FCS_ERR"],"EXTENDED_KINDS")
     for bad in (b"",b"P7D1",raw[:-1],raw+b"\x00",raw[:4]+b"\x02"+raw[5:],
                 raw[:6]+b"\x09"+raw[7:],raw[:-2]+b"\x00\x00",
                 encode([(1,0,1,0)],nv_state=99),encode([(0,0,1,0)])):
