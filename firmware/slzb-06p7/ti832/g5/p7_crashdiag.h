@@ -2,16 +2,21 @@
  * Source-only prototype: NOT_FLASHABLE, not wired into any CCS build yet.
  * Invariants: fixed static storage, zero allocation (incl. ISR path),
  * no keys/addresses/PAN/IEEE/payloads in events, no NV/CCFG writes.
+ * Concurrency: seqlock (write_seq odd while a record mutates the ring).
+ * The ISR path never blocks: if a task-context write is in progress it
+ * drops the event and bumps dropped instead of tearing shared state.
+ * Snapshots retry on the seqlock and return 0 when unstable, so a CRC
+ * is never computed over a torn copy.
  * MT SYS vendor endpoint: candidate 0xF0, collision check UNKNOWN against
- * pinned TI mt_sys.c (not vendored in this repo; parity F13 documents the
- * P10 CAP192 use of 0xF0, which does NOT prove P7 vanilla availability).
- * Endpoint therefore gated DISABLED until the G5 CI SDK grep passes. */
+ * pinned TI mt_sys.c. Endpoint gated DISABLED until the G5 CI SDK grep
+ * plus a Herdsman check pass at an exact SHA. */
 #ifndef P7_CRASHDIAG_H
 #define P7_CRASHDIAG_H
 #include <stdint.h>
 #include <stddef.h>
 #define P7_DIAG_SCHEMA 1u
 #define P7_DIAG_RING 64u
+#define P7_DIAG_HDR 20u
 #define P7_DIAG_MT_CMD_CANDIDATE 0xF0u
 #define P7_DIAG_MT_ENDPOINT_ENABLED 0 /* UNKNOWN collision -> disabled */
 #define P7_DIAG_SNAPSHOT_EVENTS 8u /* bounded: fits one MT SRSP payload */
@@ -30,10 +35,13 @@ typedef struct {
   uint8_t reset_source; uint8_t reserved;
 } p7_diag_state_t;
 void p7_diag_init(uint32_t boot_generation, uint8_t reset_source, uint8_t reset_known);
+/* If retained SRAM magic survived (retention UNPROVEN on this board),
+ * keep the pre-reset ring, bump generation and append boot/reset events.
+ * Otherwise fall back to p7_diag_init. Never claims retention happened:
+ * the caller must pass retained_valid from a separately gated check. */
+void p7_diag_init_preserving(uint32_t boot_generation, uint8_t reset_source, uint8_t reset_known, uint8_t retained_valid);
 void p7_diag_record(uint16_t kind, uint16_t arg, uint32_t tick); /* task context */
-void p7_diag_record_isr(uint16_t kind, uint16_t arg, uint32_t tick); /* no alloc/block/print */
-/* Bounded snapshot: header 16 B + up to P7_DIAG_SNAPSHOT_EVENTS*12 B = 112 B.
- * Returns bytes written, 0 if out too small. CRC16-CCITT over payload. */
+void p7_diag_record_isr(uint16_t kind, uint16_t arg, uint32_t tick); /* no alloc/block/print; drops on contention */
 size_t p7_diag_snapshot(uint8_t *out, size_t cap);
 uint16_t p7_diag_crc16(const uint8_t *data, size_t len);
 extern volatile p7_diag_state_t p7_diag_state;

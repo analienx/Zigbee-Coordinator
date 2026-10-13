@@ -16,14 +16,15 @@ SCHEMA=1; RING=64; SNAPSHOT_MAX_BYTES=16+8*12+2
 MT_CANDIDATE=0xF0; COLLISION="UNKNOWN"  # pinned mt_sys.c not vendored here
 ENDPOINT_ENABLED=False  # gated: UNKNOWN collision + no board evidence
 SOURCES=["p7_crashdiag.h","p7_crashdiag.c","p7_diag_decode.py"]
-FORBIDDEN_TOKENS=[b"nvs_write(",b"flash_write(",b"NVOCMP_write",b"malloc(",b"free(",b"printf("]
+FORBIDDEN_TOKENS=[b"nvs_write",b"flash_write",b"nvocmp_write",b"malloc",b"calloc",b"realloc",b"free",b"printf",b"fprintf",b"sprintf"]
 
 def must(v: bool, m: str) -> None:
     if not v: raise ValueError(m)
 
 def audit_source(name: str, data: bytes) -> None:
     if name.endswith((".h",".c")):
-        for tok in FORBIDDEN_TOKENS: must(tok not in data, f"FORBIDDEN_TOKEN_{tok.decode()}_IN_{name}")
+        squashed=b"".join(data.split()).lower()
+        for tok in FORBIDDEN_TOKENS: must(tok not in squashed, f"FORBIDDEN_TOKEN_{tok.decode()}_IN_{name}")
         must(b"P7_DIAG_RING 64" in data or name.endswith(".c"), "RING_PIN_MISSING")
 
 def stage(src_dir: Path, out: Path) -> dict:
@@ -34,6 +35,7 @@ def stage(src_dir: Path, out: Path) -> dict:
     for name in SOURCES:
         f=src_dir/name; must(f.is_file(), "INPUT_MISSING_"+name)
         data=f.read_bytes(); audit_source(name,data); inputs[name]=data
+    for name, data in inputs.items():
         t=out/name; t.parent.mkdir(parents=True, exist_ok=True); t.write_bytes(data)
     manifest={"qualification":CANDIDATE,"schema":SCHEMA,"ring_events":RING,
       "snapshot_max_bytes":SNAPSHOT_MAX_BYTES,"isr_allocation":"none",
@@ -54,7 +56,7 @@ def selftest() -> None:
         try: stage(here, here/"inside")
         except ValueError: pass
         else: raise AssertionError("ISOLATION_GUARD_ACCEPTED")
-    for bad in (b"xx malloc( yy", b"printf( x"):
+    for bad in (b"xx malloc( yy", b"printf( x", b"calloc(1,2)", b"malloc (1)", b"NVOCMP_writeItem(x)"):
         try: audit_source("x.c", bad)
         except ValueError: continue
         raise AssertionError("FORBIDDEN_TOKEN_ACCEPTED")
