@@ -83,6 +83,8 @@ wrapper, and check 147 ms, 1545 ms, 40 s, wrap, reset/unknown boundaries, metada
 corruption, error/busy responses and FIFO/idle distinction. Platform allocators,
 queues and critical sections are controlled harness substitutes, not full RTOS
 or hardware scheduling proof.
+The RX harness takes its 270-byte geometry from the exact pinned `npi_config.h`
+and tests overflow at that boundary, including repeated circular-buffer wraps.
 
 `slzb-06p7-g6-native.yml` builds pristine BASE and G6 in two tracks: stock NV2
 and CAP192/NV5. Both use genuine pinned CCS12.8/TIARMClang/SysConfig and exact
@@ -91,6 +93,8 @@ no initialized NV bytes, original TI-reference CCFG byte identity, unchanged
 track-specific NV geometry, real G6/Clock symbols, no test hook/libatomic and
 the CAP192 generated effective-capacity audit. These are compiler and source
 proofs, not original SMLIGHT board or runtime qualification.
+Both tracks compare against pristine stock BASE: the CAP192 delta includes
+capacity/NV5 and G6 changes together, rather than isolating the G6-only cost.
 
 ## Pinned authorities
 

@@ -38,7 +38,7 @@ typedef uint32_t Clock_Handle; typedef void *UART2_Handle;
 #define MT_RPC_CMD_SRSP 0x60
 #define MT_RPC_SYS_SYS 1
 #define CMD_SERIAL_MSG 1
-#define NPI_TL_BUF_SIZE 64
+#define NPI_TL_BUF_SIZE PINNED_NPI_BUF_SIZE
 #define NPITASK_TX_READY_EVENT 0x10
 #define NPITASK_SYNC_TX_READY_EVENT 0x40
 #define NPITASK_TRANSPORT_RX_EVENT 2
@@ -144,7 +144,7 @@ int main(int argc,char **argv) {
     uint8_t partial[]={0xfe,3,0x20}; batch(partial,sizeof partial);
     NPITask_transportRXCallBack(sizeof partial); NPIFrame_collectFrameData(); assert(blocks==1);
     /* Overflow after a partial allocation; must not trap or complete it. */
-    uint8_t lost[64]={0}; batch(lost,sizeof lost); NPITask_transportRXCallBack(sizeof lost);
+    uint8_t lost[NPI_TL_BUF_SIZE]={0}; batch(lost,sizeof lost); NPITask_transportRXCallBack(sizeof lost);
     assert(p7_g6_rx_resync && NPITL_getRxBufLen()==0);
     /* Drop subsequent batches until task resynchronizes. */
     uint8_t clean[]={0xfe,1,0x20,1,0x42,0x62}; batch(clean,sizeof clean);
@@ -226,6 +226,10 @@ def strip_includes(s): return re.sub(r'^#include[^\n]*\n','',s,flags=re.M)
 def run_suite(sdk,output):
     paths=sorted({p[0] for p in g.diag.PATCHES}|{g.RX,g.TL,g.SYS})
     old={p:(sdk/p).read_text() for p in paths}
+    config=(sdk/"source/ti/zstack/npi/npi_config.h").read_text()
+    sizes=re.findall(r'^#define\s+NPI_TL_BUF_SIZE\s+(\d+)\s*$',config,re.M)
+    if len(sizes)!=1:raise ValueError("PINNED_RX_SIZE_NOT_UNIQUE")
+    native_rx_size=int(sizes[0]); assert native_rx_size==270
     stage,_=g.diag.apply_patches(old); new=g.patch(stage)
     output.mkdir(parents=True,exist_ok=True)
     (output/"inputs.json").write_text(json.dumps({p:hashlib.sha256(old[p].encode()).hexdigest() for p in paths},indent=2))
@@ -235,7 +239,7 @@ def run_suite(sdk,output):
         (d/"ti/sysbios/knl/Clock.h").write_text("#include <stdint.h>\nextern const uint32_t Clock_tickPeriod;\nuint32_t Clock_getTicks(void);\n")
         recorder=d/"p7_clock_recorder.c"; recorder.write_text(g.clock_recorder((g.G5/"p7_crashdiag.c").read_text()))
         def build(name,body):
-            c=d/(name+".c"); c.write_text(COMMON+body)
+            c=d/(name+".c"); c.write_text(COMMON.replace("PINNED_NPI_BUF_SIZE",str(native_rx_size))+body)
             exe=d/name
             subprocess.run(["cc","-std=c11","-Wall","-Wextra","-Wno-unused-function","-Wno-unused-variable","-g","-fsanitize=address,undefined","-DP7_DIAG_TEST_HOOKS=1",
                 "-I"+str(d),"-I"+str(G6),"-I"+str(g.G5),str(c),str(G6/"p7_g6.c"),str(recorder),"-o",str(exe)],check=True)
@@ -268,7 +272,7 @@ def run_suite(sdk,output):
         body+=strip_includes(t[g.RX])+"\n"+strip_includes(t[g.FRAME])+"\n"
         body+=g.function(t[g.TASK],"NPITask_transportRXCallBack")+"\n"+RX_MAIN.replace("RECOVERY_BODY",recovery)
         exe=build("post_rx",body); r=subprocess.run([str(exe)],capture_output=True,text=True,check=True); print(r.stdout)
-        checks.append({"test":"post_overflow_512_frames","returncode":r.returncode})
+        checks.append({"test":"post_overflow_512_frames","returncode":r.returncode,"pinned_rx_buffer_bytes":native_rx_size})
         # Unpatched infinite callback demonstrably fails the same overflow input.
         pre=body.replace(g.function(new[g.TASK],"NPITask_transportRXCallBack"),g.function(old[g.TASK],"NPITask_transportRXCallBack"))
         exe=build("pre_rx",pre)
