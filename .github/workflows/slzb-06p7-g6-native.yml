@@ -210,7 +210,12 @@ jobs:
           cp "$OUT" bundle-diag/DIAG-NOT-FLASHABLE.out; cp "$MAP" bundle-diag/DIAG-NOT-FLASHABLE.map
           "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-diag/DIAG-symbols.txt || true
           "$(dirname "$TIARMCLANG")/tiarmobjdump" -d "$OUT" > bundle-diag/DIAG-disassembly.txt || true
-          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-diag/DIAG-NOT-FLASHABLE.hex
+          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-diag/DIAG-OBJCOPY-NOT-FLASHABLE.hex
+          # The actual CCS project emits TI vendor HEX. Keep the objcopy output
+          # separate for diagnosis, never silently change the strict byte audit.
+          HEXF=$(find ccs-workspace-diag -type f -name '*.hex' -print -quit)
+          test -s "$HEXF"
+          cp "$HEXF" bundle-diag/DIAG-NOT-FLASHABLE.hex
           grep -E 'p7_diag_(record|record_isr|seal_retained|init|snapshot)' bundle-diag/DIAG-symbols.txt | tee bundle-diag/diag-symbol-evidence.txt
           if grep -E 'p7_diag_record' bundle-base/BASE-symbols.txt; then echo "::error::diag symbols leaked into BASE"; exit 1; fi
           if grep -E 'p7_diag_preempt_hook' bundle-diag/DIAG-symbols.txt; then echo "::error::CR8 test hook linked into DIAG firmware"; exit 1; fi

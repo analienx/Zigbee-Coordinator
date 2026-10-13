@@ -12,6 +12,13 @@ def verify(base,cand,profile):
     bh=(base/"BASE-NOT-FLASHABLE.hex").read_text()
     ch=(cand/"DIAG-NOT-FLASHABLE.hex").read_text()
     cm=(cand/"DIAG-NOT-FLASHABLE.map").read_text()
+    syms=maps.symbols((cand/"DIAG-symbols.txt").read_text())
+    print("G6_CLOCK_SYMBOLS",sorted(s for s in syms if "Clock" in s and ("Ticks" in s or "Period" in s)))
+    em,_=(nv5.load_elf(ce) if profile=="cap192" else stock.read_elf(ce))
+    hm=stock.read_hex(ch)
+    print("G6_IMAGE_COUNTS",json.dumps({"elf":len(em),"hex":len(hm),
+        "hex_missing_first32":[hex(a) for a in sorted(set(em)-set(hm))[:32]],
+        "hex_extra_first32":[hex(a) for a in sorted(set(hm)-set(em))[:32]]}))
     bmem,_=stock.read_elf(be)
     base_audit=stock.audit(be,bh)
     if profile=="cap192":
@@ -24,7 +31,6 @@ def verify(base,cand,profile):
     cr=bytes(cmem[a] for a in range(0xaffa8,0xb0000))
     if cr!=br:raise ValueError("CCFG_CHANGED")
     if any(nv_base<=a<0xae000 for a in cmem):raise ValueError("NV_IMAGE_WRITE")
-    syms=maps.symbols((cand/"DIAG-symbols.txt").read_text())
     required={"p7_g6_now","p7_g6_record","p7_g6_response","p7_g6_rx_resync", "p7_g6_reset_parser",
               "p7_g6_discard_ring","p7_g6_discard_tl","Clock_getTicks"}
     if not required<=syms:raise ValueError("G6_SYMBOLS_MISSING:"+str(required-syms))
