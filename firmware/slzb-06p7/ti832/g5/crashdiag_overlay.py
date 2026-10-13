@@ -12,7 +12,7 @@ import argparse, hashlib, json
 from pathlib import Path
 
 CANDIDATE="G5_CRASHDIAG_RAM_RECORDER_NOT_FLASHABLE"
-SCHEMA=1; RING=64; SNAPSHOT_MAX_BYTES=20+8*12+2
+SCHEMA=1; RING=64; SNAPSHOT_MAX_BYTES=24+8*12+2
 MT_CANDIDATE=0xF0; COLLISION="UNKNOWN"  # pinned mt_sys.c not vendored here
 ENDPOINT_ENABLED=False  # gated: UNKNOWN collision + no board evidence
 SOURCES=["p7_crashdiag.h","p7_crashdiag.c","p7_diag_decode.py"]
@@ -24,11 +24,15 @@ def must(v: bool, m: str) -> None:
 def audit_source(name: str, data: bytes) -> None:
     if name.endswith((".h",".c")):
         import re as _re
-        stripped=_re.sub(rb"/\*.*?\*/",b"",data,flags=_re.S)
+        stripped=data.replace(b"\\\r\n",b"").replace(b"\\\n",b"")
+        stripped=_re.sub(rb"/\*.*?\*/",b"",stripped,flags=_re.S)
         stripped=b"\n".join(l.split(b"//")[0] for l in stripped.splitlines())
         squashed=b"".join(stripped.split()).lower()
         for tok in FORBIDDEN_TOKENS: must(tok not in squashed, f"FORBIDDEN_TOKEN_{tok.decode()}_IN_{name}")
-        must(b"P7_DIAG_RING 64" in data or name.endswith(".c"), "RING_PIN_MISSING")
+        must(b"##" not in stripped, "TOKEN_PASTE_OPERATOR_FORBIDDEN_"+name)
+        if name.endswith(".h"):
+            m=_re.search(rb"#define\s+P7_DIAG_RING\s+(\d+)", stripped)
+            must(m is not None and int(m.group(1))==64, "RING_PIN_MISSING_OR_WRONG")
 
 def stage(src_dir: Path, out: Path) -> dict:
     must(src_dir.is_dir(), "INPUT_MISSING_g5_dir")
