@@ -192,7 +192,7 @@ jobs:
           test -s "$OUT" && test -s "$MAP" && test -s "$GENH" && test -s "$DRV"
           cp "$OUT" bundle-cap192/CAP192-NOT-FLASHABLE.out; cp "$MAP" bundle-cap192/CAP192-NOT-FLASHABLE.map; cp "$GENH" bundle-cap192/generated-ti_zstack_config.h; cp "$DRV" bundle-cap192/generated-ti_drivers_config.c
           "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-cap192/CAP192-symbols.txt || true
-          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-cap192/CAP192-NOT-FLASHABLE.hex
+          HEXF=$(find ccs-workspace-cap -type f -name '*.hex' -print -quit); test -s "$HEXF"; cp "$HEXF" bundle-cap192/CAP192-NOT-FLASHABLE.hex
           python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py --generated "$GENH" | tee bundle-cap192/CAPACITY-EFFECTIVE-AUDIT.json
           python3 repo/firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py --elf bundle-cap192/CAP192-NOT-FLASHABLE.out --hex bundle-cap192/CAP192-NOT-FLASHABLE.hex --map bundle-cap192/CAP192-NOT-FLASHABLE.map --out bundle-cap192/NV5-LINKED-AUDIT.json
           python3 repo/firmware/slzb-06p7/ti832/g3/nv5_effective.py --generated bundle-cap192/generated-ti_drivers_config.c --compiler-log build-evidence/ccs-cap-build.log --linked-proof bundle-cap192/NV5-LINKED-AUDIT.json --out bundle-cap192/NV5-EFFECTIVE-AUDIT.json
