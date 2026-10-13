@@ -222,7 +222,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bundle-compare
-          python3 repo/firmware/slzb-06p7/ti832/g5/diag_build_compare.py --base-map bundle-base/BASE-NOT-FLASHABLE.map --diag-map bundle-diag/DIAG-NOT-FLASHABLE.map --base-symbols bundle-base/BASE-symbols.txt --diag-symbols bundle-diag/DIAG-symbols.txt --base-elf bundle-base/BASE-NOT-FLASHABLE.out --diag-elf bundle-diag/DIAG-NOT-FLASHABLE.out --out bundle-compare/BASE-VS-DIAG.json | tee bundle-compare/compare.log
+          python3 repo/firmware/slzb-06p7/ti832/g6/g6_build_compare.py --base-map bundle-base/BASE-NOT-FLASHABLE.map --diag-map bundle-diag/DIAG-NOT-FLASHABLE.map --base-symbols bundle-base/BASE-symbols.txt --diag-symbols bundle-diag/DIAG-symbols.txt --base-elf bundle-base/BASE-NOT-FLASHABLE.out --diag-elf bundle-diag/DIAG-NOT-FLASHABLE.out --out bundle-compare/BASE-VS-DIAG.json | tee bundle-compare/compare.log
           cp diag-staged/DIAG-OVERLAY-MANIFEST.json diag-staged/callsite-grep.txt evidence/collision-evidence.txt evidence/mt-sys-f0-grep.txt evidence/herdsman-zstack-sys-handlers.txt evidence/herdsman-f0-grep.txt bundle-compare/ 2>/dev/null || true
           cp build-evidence/compiler-version.txt bundle-compare/ || true
           python3 - <<'PY'

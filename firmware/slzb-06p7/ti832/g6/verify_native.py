@@ -25,7 +25,7 @@ def verify(base,cand,profile):
     if cr!=br:raise ValueError("CCFG_CHANGED")
     if any(nv_base<=a<0xae000 for a in cmem):raise ValueError("NV_IMAGE_WRITE")
     syms=maps.symbols((cand/"DIAG-symbols.txt").read_text())
-    required={"p7_g6_now","p7_g6_response","p7_g6_rx_resync", "p7_g6_reset_parser",
+    required={"p7_g6_now","p7_g6_record","p7_g6_response","p7_g6_rx_resync", "p7_g6_reset_parser",
               "p7_g6_discard_ring","p7_g6_discard_tl","Clock_getTicks"}
     if not required<=syms:raise ValueError("G6_SYMBOLS_MISSING:"+str(required-syms))
     if "p7_diag_preempt_hook" in syms or any(s.startswith("__atomic_") for s in syms):
