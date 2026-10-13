@@ -1,5 +1,5 @@
 """HOSTED ONLY: actual ELF/HEX/map proof, CCFG identity and per-track NV geometry."""
-import argparse, hashlib, json, sys
+import argparse, hashlib, json, sys, re
 from pathlib import Path
 TI=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(TI/"g2")); import validate_elf_hex as stock
@@ -32,8 +32,16 @@ def verify(base,cand,profile):
     if cr!=br:raise ValueError("CCFG_CHANGED")
     if any(nv_base<=a<0xae000 for a in cmem):raise ValueError("NV_IMAGE_WRITE")
     required={"p7_g6_now","p7_g6_record","p7_g6_response","p7_g6_rx_resync", "p7_g6_reset_parser",
-              "p7_g6_discard_ring","p7_g6_discard_tl","Clock_getTicks"}
+              "p7_g6_discard_ring","p7_g6_discard_tl"}
     if not required<=syms:raise ValueError("G6_SYMBOLS_MISSING:"+str(required-syms))
+    # Actual approved P7 BASE symbol artifact uses TI's namespaced API symbol.
+    # Accept only these exact API forms, and prove the G6 getter branches to it.
+    clocks={"Clock_getTicks","ti_sysbios_knl_Clock_getTicks"}&syms
+    if not clocks:raise ValueError("LINKED_CLOCK_API_MISSING")
+    dis=(cand/"DIAG-disassembly.txt").read_text()
+    body=re.search(r'<p7_g6_now>:(.*?)(?=^\s*[0-9a-fA-F]+\s+<|\Z)',dis,re.S|re.M)
+    if not body or not any("<"+clock+">" in body.group(1) for clock in clocks):
+        raise ValueError("G6_GETTER_CLOCK_CALL_NOT_PROVEN")
     if "p7_diag_preempt_hook" in syms or any(s.startswith("__atomic_") for s in syms):
         raise ValueError("TEST_HOOK_OR_LIBATOMIC_LINKED")
     region=maps.parse_map(cm)["regions"]
@@ -43,7 +51,8 @@ def verify(base,cand,profile):
         "flash_authorized":False,"hardware_qualified":False,"runtime_qualified":False,
         "base_audit":base_audit,"candidate_audit":audit,"nv_base":nv_base,"nv_size":nv_size,
         "nv_initialized_bytes":0,"ccfg_equal":True,"ccfg_sha256":hashlib.sha256(cr).hexdigest(),
-        "g6_symbols":sorted(required),"candidate_resources":region,
+        "g6_symbols":sorted(required),"clock_symbols":sorted(clocks),
+        "clock_call_from_g6_getter_verified":True,"candidate_resources":region,
         "clock_and_uart_runtime_on_original_board":"UNPROVEN"}
 
 if __name__=="__main__":
