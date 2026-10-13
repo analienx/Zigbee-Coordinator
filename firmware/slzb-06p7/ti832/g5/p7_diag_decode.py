@@ -58,10 +58,10 @@ def decode(raw: bytes) -> dict:
     for a,b in zip(events,events[1:]):
         want=1 if a["seq"]==0xFFFFFFFF else a["seq"]+1  # contiguous records, seq 0 skipped
         if b["seq"]!=want: raise ValueError("SEQ_NOT_CONTIGUOUS")
-        if b["tick"]<a["tick"]:
-            boot_reset=b["kind"]=="BOOT_ENTER"
-            tick_wrap=a["tick"]>0xFF000000 and b["tick"]<0x01000000
-            if not (boot_reset or tick_wrap): raise ValueError("TICK_REGRESSION")
+        # Clock_getTicks is modulo 2^32. Only intervals below half its range
+        # have an unambiguous direction; a BOOT_ENTER starts a new epoch.
+        if ((b["tick"]-a["tick"])&0xFFFFFFFF)>=0x80000000 and b["kind"]!="BOOT_ENTER":
+            raise ValueError("TICK_REGRESSION")
     if events and any(e["seq"]==0xFFFFFFFF for e in events) and total!=0xFFFFFFFF:
         raise ValueError("TOTAL_MISMATCH_WRAP")
     if events and total==0xFFFFFFFF:
