@@ -1,0 +1,55 @@
+name: SLZB-06P7 G5 crashdiag host tests (NO DEVICE)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7-g5-crashdiag-host.yml'
+      - 'firmware/slzb-06p7/ti832/g5/**'
+      - 'tests/p7-crashdiag-host/**'
+      - 'docs/SLZB_06P7_M1_FALSIFICATION_2026-10-13.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: G5 + cheap existing P7 host gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py tests/p7-crashdiag-host/test_crashdiag.py
+          python3 firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py --selftest
+          python3 firmware/slzb-06p7/ti832/g5/p7_diag_decode.py --selftest
+          python3 tests/p7-crashdiag-host/test_crashdiag.py
+          python3 firmware/slzb-06p7/ti832/phase0/validate_inventory.py --selftest
+          python3 firmware/slzb-06p7/ti832/g4/cap192_capacity.py --selftest
+          gcc -std=c11 -O2 -Wall -Wextra -Werror tests/p7-crashdiag-host/crashdiag_host.c firmware/slzb-06p7/ti832/g5/p7_crashdiag.c -o /tmp/crashdiag_host
+          /tmp/crashdiag_host
+      - name: Record 0xF0 collision evidence against pinned TI SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MT_SYS_F0_COLLISION=UNKNOWN_UNTIL_SDK_GREP_BELOW"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+          sparse-checkout: |
+            source/ti/zstack/mt/mt_sys.c
+          sparse-checkout-cone-mode: false
+      - name: Grep pinned MT SYS dispatch for 0xF0
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          if grep -nE '0xF0|0xf0' sdk/source/ti/zstack/mt/mt_sys.c; then
+            echo "MT_SYS_F0_FOUND_IN_PINNED_SDK=YES (endpoint stays disabled; human review required)"
+          else
+            echo "MT_SYS_F0_FOUND_IN_PINNED_SDK=NO (necessary, not sufficient: Herdsman check still pending; endpoint stays disabled)"
+          fi
+          echo 'NO_HARDWARE_USED NO_FLASH NO_NV_WRITE'

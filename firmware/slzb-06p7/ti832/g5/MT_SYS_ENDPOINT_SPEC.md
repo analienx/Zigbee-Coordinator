@@ -1,0 +1,14 @@
+# G5 MT SYS vendor endpoint spec (DISABLED)
+
+Status: **SPEC ONLY — `P7_DIAG_MT_ENDPOINT_ENABLED=0`, not wired, NOT_FLASHABLE.**
+
+| Item | Value |
+| --- | --- |
+| Candidate CMD | `0xF0` (MT SYS subsystem, SREQ `0x21 0xF0` / SRSP `0x61 0xF0` shape) |
+| Collision check | **UNKNOWN** — pinned TI `mt_sys.c` (SDK `6499c3f5…`) is not vendored in this repo; `feature-parity.json` F13 documents the *P10 CAP192* use of `0xF0`, which is P10 evidence, not proof of availability in the P7 vanilla table. The G5 workflow greps the pinned SDK checkout and records the result; until that grep plus a Herdsman (`0968f979…`) check pass at an exact SHA, the endpoint stays disabled. |
+| Request | 0 bytes only; any payload → reject, no state change |
+| Response | `p7_diag_snapshot()` bytes: 16 B header + ≤8×12 B events + 2 B CRC16 = ≤114 B, schema v1 |
+| Semantics | Read-only snapshot; never resets counters, never writes NV/CCFG, SRSP priority preserved (single bounded snapshot, no loops) |
+| Privacy | Numeric kinds/args only; no keys, addresses, PAN/IEEE, payloads |
+
+Enablement gate (all required): pinned-SDK grep shows `0xF0` unused in MT SYS dispatch, Herdsman has no conflicting SYS handler, CCS build + host decoder CI green at the same SHA, board gate separately approved.
