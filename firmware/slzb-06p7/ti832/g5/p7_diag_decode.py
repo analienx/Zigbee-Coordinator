@@ -24,7 +24,7 @@ def encode(events, boot_gen=1, dropped=0, nv_state=0, reset_known=0, reset_sourc
     ev=list(events)[-MAX_EVENTS:]
     out=bytearray(MAGIC); out+=bytes([SCHEMA,nv_state,len(ev),reset_known])
     out+=struct.pack("<II",boot_gen,dropped)
-    out+=bytes([reset_source,reset_known,0,0])
+    out+=bytes([reset_source if reset_known else 0,reset_known,0,0])
     for seq,tick,kind,arg in ev: out+=struct.pack("<IIHH",seq,tick,kind,arg)
     out+=struct.pack("<H",crc16(bytes(out))); return bytes(out)
 
@@ -41,6 +41,8 @@ def decode(raw: bytes) -> dict:
     if crc16(body)!=got: raise ValueError("CRC_MISMATCH")
     reset_source=raw[16]
     if raw[17] not in (0,1) or raw[17]!=reset_known: raise ValueError("RESET_KNOWN_INCONSISTENT")
+    if raw[18]!=0 or raw[19]!=0: raise ValueError("RESERVED_NONZERO")
+    if not reset_known and reset_source!=0: raise ValueError("RESET_SOURCE_UNMASKED")
     boot_gen,dropped=struct.unpack_from("<II",raw,8)
     events=[]
     for i in range(n):
@@ -49,9 +51,12 @@ def decode(raw: bytes) -> dict:
         if seq==0: raise ValueError("SEQ_ZERO_INVALID")
         events.append({"seq":seq,"tick":tick,"kind":KINDS[kind],"arg":arg})
     for a,b in zip(events,events[1:]):
-        if b["seq"]>a["seq"]: continue
-        if a["seq"]==0xFFFFFFFF and b["seq"]>=1: continue  # single wrap, seq 0 skipped
-        raise ValueError("SEQ_NOT_MONOTONIC")
+        want=1 if a["seq"]==0xFFFFFFFF else a["seq"]+1  # contiguous records, seq 0 skipped
+        if b["seq"]!=want: raise ValueError("SEQ_NOT_CONTIGUOUS")
+    for e in events:
+        if e["kind"]=="RESET_SOURCE":
+            if reset_known and e["arg"]!=reset_source: raise ValueError("RESET_SOURCE_EVENT_MISMATCH")
+            if not reset_known and e["arg"]!=0xFFFF: raise ValueError("RESET_SOURCE_EVENT_UNMASKED")
     return {"schema":schema,"nv_state":nv_state,"reset_known":bool(reset_known),
             "reset_source":reset_source if reset_known else None,
             "boot_generation":boot_gen,"dropped":dropped,"events":events}
@@ -76,7 +81,7 @@ def classify(obs: dict) -> str:
     if hw is not None and cur is not None and hw>=158 and cur==0:
         return "NOT_STUCK_HIGHWATER_ONLY"
     samples=obs.get("queue_current_samples")
-    persistent=isinstance(samples,list) and len(samples)>=2 and all(isinstance(x,int) and x>0 for x in samples)
+    persistent=isinstance(samples,list) and len(samples)>=2 and all(type(x) is int and x>0 for x in samples)
     if persistent and obs.get("uart_tx_finished") is False:
         return "POSSIBLE_TX_STALL_DEPTH_PERSISTS"
     if obs.get("diag_rtt_ms") is not None and not obs.get("srsp_queued") and cur is None and not persistent:

@@ -19,7 +19,10 @@ def test_c_snapshot_cross_decode():
     hx=[l.split("=",1)[1] for l in out.splitlines() if l.startswith("SNAPSHOT_HEX=")][0]
     dec=d.decode(bytes.fromhex(hx))
     assert dec["boot_generation"]==7 and dec["nv_state"]==1
+    assert dec["reset_source"] is None and dec["reset_known"] is False
     assert [e["kind"] for e in dec["events"]]==["BOOT_ENTER","RESET_SOURCE","NV_READ_BEGIN","NV_RESTORED","SRSP_QUEUED"]
+    assert [e["tick"] for e in dec["events"]]==[0,0,5,9,12]
+    assert [e["seq"] for e in dec["events"]]==[1,2,3,4,5]
     assert d.classify({"snapshot":dec})=="UNKNOWN_INSUFFICIENT_EVIDENCE"
 
 def test_malformed_rejected():
@@ -43,6 +46,19 @@ def test_negative_classifications():
     snap=d.decode(d.encode([(1,0,1,0)],nv_state=3))
     assert d.classify({"snapshot":snap})=="UNKNOWN_NV_AMBIGUOUS"
 
+def test_decoder_strictness():
+    import struct
+    for evs in ([(0xFFFFFFFF,0,1,0),(0xFFFFFFFF,1,1,0)],[(1,0,1,0),(100,1,1,0)],[(1,0,1,0),(1,1,1,0)]):
+        try: d.decode(d.encode(evs))
+        except ValueError: continue
+        raise AssertionError(f"non-contiguous accepted {evs}")
+    raw=bytearray(d.encode([(1,0,1,0)])); raw[18]=0xFF
+    raw[-2:]=struct.pack("<H",d.crc16(bytes(raw[:-2])))
+    try: d.decode(bytes(raw))
+    except ValueError: pass
+    else: raise AssertionError("reserved nonzero accepted")
+    assert d.classify({"queue_current_samples":[True,True],"uart_tx_finished":False})=="UNKNOWN_INSUFFICIENT_EVIDENCE"
+
 def test_no_forbidden_tokens_in_c():
     for name in ("p7_crashdiag.h","p7_crashdiag.c"):
         data=(ROOT/"firmware/slzb-06p7/ti832/g5"/name).read_bytes()
@@ -51,6 +67,6 @@ def test_no_forbidden_tokens_in_c():
 
 if __name__=="__main__":
     test_golden_roundtrip(); test_c_snapshot_cross_decode(); test_malformed_rejected()
-    test_negative_classifications(); test_no_forbidden_tokens_in_c()
+    test_negative_classifications(); test_decoder_strictness(); test_no_forbidden_tokens_in_c()
     d.selftest()
     print("PASS test_crashdiag (standalone)")

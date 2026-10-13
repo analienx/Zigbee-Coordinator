@@ -12,7 +12,7 @@ import argparse, hashlib, json
 from pathlib import Path
 
 CANDIDATE="G5_CRASHDIAG_RAM_RECORDER_NOT_FLASHABLE"
-SCHEMA=1; RING=64; SNAPSHOT_MAX_BYTES=16+8*12+2
+SCHEMA=1; RING=64; SNAPSHOT_MAX_BYTES=20+8*12+2
 MT_CANDIDATE=0xF0; COLLISION="UNKNOWN"  # pinned mt_sys.c not vendored here
 ENDPOINT_ENABLED=False  # gated: UNKNOWN collision + no board evidence
 SOURCES=["p7_crashdiag.h","p7_crashdiag.c","p7_diag_decode.py"]
@@ -23,7 +23,10 @@ def must(v: bool, m: str) -> None:
 
 def audit_source(name: str, data: bytes) -> None:
     if name.endswith((".h",".c")):
-        squashed=b"".join(data.split()).lower()
+        import re as _re
+        stripped=_re.sub(rb"/\*.*?\*/",b"",data,flags=_re.S)
+        stripped=b"\n".join(l.split(b"//")[0] for l in stripped.splitlines())
+        squashed=b"".join(stripped.split()).lower()
         for tok in FORBIDDEN_TOKENS: must(tok not in squashed, f"FORBIDDEN_TOKEN_{tok.decode()}_IN_{name}")
         must(b"P7_DIAG_RING 64" in data or name.endswith(".c"), "RING_PIN_MISSING")
 
@@ -56,7 +59,7 @@ def selftest() -> None:
         try: stage(here, here/"inside")
         except ValueError: pass
         else: raise AssertionError("ISOLATION_GUARD_ACCEPTED")
-    for bad in (b"xx malloc( yy", b"printf( x", b"calloc(1,2)", b"malloc (1)", b"NVOCMP_writeItem(x)"):
+    for bad in (b"xx malloc( yy", b"printf( x", b"calloc(1,2)", b"malloc (1)", b"NVOCMP_writeItem(x)", b"mal/**/loc(1)", b"print/**/f(x)"):
         try: audit_source("x.c", bad)
         except ValueError: continue
         raise AssertionError("FORBIDDEN_TOKEN_ACCEPTED")

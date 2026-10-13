@@ -9,8 +9,21 @@ volatile p7_diag_state_t p7_diag_state;
 p7_diag_event_t p7_diag_ring[P7_DIAG_RING];
 static uint32_t next_seq;
 static volatile uint32_t write_seq;
+static volatile uint32_t isr_dropped; /* ISR-only writer; snapshot sums it */
 static uint32_t retained_magic;
+static uint32_t retained_crc;
 #define P7_RETAINED_MAGIC 0x50374449u
+static uint32_t retained_compute(void){
+  uint32_t v[4]; v[0]=p7_diag_state.boot_generation; v[1]=p7_diag_state.total;
+  v[2]=(uint32_t)p7_diag_state.head|((uint32_t)p7_diag_state.count<<16); v[3]=next_seq;
+  return (uint32_t)p7_diag_crc16((const uint8_t*)v,sizeof v) | ((uint32_t)p7_diag_state.count<<16);
+}
+static int retained_sane(void){
+  if(retained_magic!=P7_RETAINED_MAGIC) return 0;
+  if(p7_diag_state.count>P7_DIAG_RING || p7_diag_state.head>=P7_DIAG_RING) return 0;
+  if(p7_diag_state.nv_state>3u || next_seq==0) return 0;
+  return retained_crc==retained_compute();
+}
 uint16_t p7_diag_crc16(const uint8_t *data, size_t len){
   uint16_t crc=0xFFFFu; for(size_t i=0;i<len;i++){ crc^=(uint16_t)data[i]<<8;
     for(int b=0;b<8;b++) crc=(crc&0x8000u)?(uint16_t)((crc<<1)^0x1021u):(uint16_t)(crc<<1);} return crc; }
@@ -32,11 +45,12 @@ static void record_common(uint16_t kind, uint16_t arg, uint32_t tick){
   if(kind==P7D_NV_RESTORED) apply_nv(P7D_NVSTATE_RESTORED);
   if(kind==P7D_NV_NEW) apply_nv(P7D_NVSTATE_NEW);
   if(kind==P7D_NV_AMBIGUOUS) apply_nv(P7D_NVSTATE_AMBIGUOUS);
+  retained_crc=retained_compute();
   write_seq++;
 }
 void p7_diag_record(uint16_t k,uint16_t a,uint32_t t){ record_common(k,a,t); }
 void p7_diag_record_isr(uint16_t k,uint16_t a,uint32_t t){
-  if(write_seq&1u){ if(p7_diag_state.dropped<0xFFFFFFFFu) p7_diag_state.dropped++; return; }
+  if(write_seq&1u){ if(isr_dropped<0xFFFFFFFFu) isr_dropped++; return; }
   record_common(k,a,t);
 }
 void p7_diag_init(uint32_t gen, uint8_t rs, uint8_t known){
@@ -51,9 +65,15 @@ void p7_diag_init(uint32_t gen, uint8_t rs, uint8_t known){
   p7_diag_record(P7D_RESET_SOURCE, known?(uint16_t)rs:0xFFFFu,0);
 }
 void p7_diag_init_preserving(uint32_t gen, uint8_t rs, uint8_t known, uint8_t retained_valid){
-  if(!retained_valid || retained_magic!=P7_RETAINED_MAGIC || p7_diag_state.count==0){ p7_diag_init(gen,rs,known); return; }
+  /* retained_valid must come from a separately gated noinit-section check
+   * at integration; here we additionally require magic + CRC + ranges so
+   * corrupt retained RAM falls back to a clean init. */
+  if(!retained_valid || !retained_sane() || p7_diag_state.count==0){ p7_diag_init(gen,rs,known); return; }
+  write_seq++;
   p7_diag_state.boot_generation=gen;
   p7_diag_state.reset_source=rs; p7_diag_state.reset_source_known=known?1u:0u;
+  retained_crc=retained_compute();
+  write_seq++;
   p7_diag_record(P7D_BOOT_ENTER,0,0);
   p7_diag_record(P7D_RESET_SOURCE, known?(uint16_t)rs:0xFFFFu,0);
 }
@@ -71,8 +91,8 @@ size_t p7_diag_snapshot(uint8_t *out, size_t cap){
     uint16_t start=(uint16_t)((oldest+(count-n))%P7_DIAG_RING);
     memcpy(out,"P7D1",4); out[4]=P7_DIAG_SCHEMA; out[5]=p7_diag_state.nv_state;
     out[6]=(uint8_t)n; out[7]=p7_diag_state.reset_source_known;
-    put32(out+8,p7_diag_state.boot_generation); put32(out+12,p7_diag_state.dropped);
-    out[16]=p7_diag_state.reset_source; out[17]=p7_diag_state.reset_source_known;
+    put32(out+8,p7_diag_state.boot_generation); put32(out+12,p7_diag_state.dropped+isr_dropped);
+    out[16]=p7_diag_state.reset_source_known?p7_diag_state.reset_source:0; out[17]=p7_diag_state.reset_source_known;
     out[18]=0; out[19]=0;
     for(uint16_t i=0;i<n;i++){
       const p7_diag_event_t *e=&p7_diag_ring[(start+i)%P7_DIAG_RING]; uint8_t *o=out+P7_DIAG_HDR+(size_t)i*12u;
