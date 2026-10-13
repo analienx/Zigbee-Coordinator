@@ -26,7 +26,8 @@ def replace(text, anchor, value, label):
 
 def function(text, name):
     # Select a definition, never a forward declaration; brace-balanced body.
-    matches=list(re.finditer(r"(?m)^[^\n;]*\b"+re.escape(name)+r"\([^;]*?\)\s*\{",text))
+    matches=list(re.finditer(r"(?m)^(?:static[ \t]+)?[A-Za-z_]\w*[ \t*]+"+
+        re.escape(name)+r"\([^;{]*?\)\s*\{",text))
     if len(matches)!=1: raise ValueError("FUNCTION_NOT_UNIQUE_"+name)
     start=matches[0].start(); pos=text.index("{",matches[0].start()); depth=1; end=pos+1
     while depth:

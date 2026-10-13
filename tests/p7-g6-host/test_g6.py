@@ -74,7 +74,7 @@ static uint8_t OsalPort_msgSend(int id,byte *p) {
     return send_status;
 }
 static uint16_t NPITL_getRxBufLen(void) { return npiRxBufTail-npiRxBufHead; }
-static void batch(const uint8_t *p,unsigned n) { assert(n<NPI_TL_BUF_SIZE); memcpy(npiRxBuf,p,n); npiRxBufHead=0; npiRxBufTail=n; }
+static void batch(const uint8_t *p,unsigned n) { assert(n<=NPI_TL_BUF_SIZE); memcpy(npiRxBuf,p,n); npiRxBufHead=0; npiRxBufTail=n; }
 '''
 
 ALLOC_MAIN=r'''
@@ -116,7 +116,7 @@ int main(int argc,char **argv) {
     uint8_t partial[]={0xfe,3,0x20}; batch(partial,sizeof partial);
     NPITask_transportRXCallBack(sizeof partial); NPIFrame_collectFrameData(); assert(blocks==1);
     /* Overflow after a partial allocation; must not trap or complete it. */
-    uint8_t lost[63]={0}; batch(lost,sizeof lost); NPITask_transportRXCallBack(sizeof lost);
+    uint8_t lost[64]={0}; batch(lost,sizeof lost); NPITask_transportRXCallBack(sizeof lost);
     assert(p7_g6_rx_resync && NPITL_getRxBufLen()==0);
     /* Drop subsequent batches until task resynchronizes. */
     uint8_t clean[]={0xfe,1,0x20,1,0x42,0x62}; batch(clean,sizeof clean);
