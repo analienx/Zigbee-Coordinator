@@ -8,9 +8,10 @@ validated** and does not satisfy F11/F12 yet. No test/build has run locally.
 
 Required next implementation:
 
-1. Inspect the exact pinned `UART2_write` implementation to distinguish a
-   proven pre-submission rejection from accepted/ambiguous writes. Keep
-   accepted/ambiguous frames out of all retry paths.
+1. Source inspection completed in `PINNED_TRANSPORT_CONTRACT.md`: callback
+   mode uses `UART2_writeTimeoutBlocking`; ENOTOPEN/EINUSE precede submission,
+   cancellation/timeout follow DMA start and cannot enter a retry path.
+   Native linked-path proof and hosted actual-driver regressions remain due.
 2. Patch P7 `NPITLUART_writeTransport` and `NPITL_writeTL` with explicit outcome
    propagation; clear the busy latch only for a proven immediate rejection.
 3. Integrate per-head pending ownership and bounded retry state into the actual
