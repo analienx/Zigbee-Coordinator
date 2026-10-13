@@ -79,7 +79,7 @@ def classify(obs: dict) -> str:
     persistent=isinstance(samples,list) and len(samples)>=2 and all(isinstance(x,int) and x>0 for x in samples)
     if persistent and obs.get("uart_tx_finished") is False:
         return "POSSIBLE_TX_STALL_DEPTH_PERSISTS"
-    if obs.get("diag_rtt_ms") is not None and not obs.get("srsp_queued"):
+    if obs.get("diag_rtt_ms") is not None and not obs.get("srsp_queued") and cur is None and not persistent:
         return "UNKNOWN_RTT_ONLY"
     if obs.get("uart_accepted") and obs.get("host_received") is not True:
         return "UNKNOWN_HOST_RECEPTION_UNPROVEN"
