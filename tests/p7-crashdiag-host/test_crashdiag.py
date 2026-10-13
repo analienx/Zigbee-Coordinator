@@ -66,6 +66,9 @@ def test_decoder_strictness():
     assert ok["isr_dropped"]==5 and ok["dropped"]==6
     boot=d.decode(d.encode([(5,500,3,0),(6,0,1,0),(7,0,16,0xFFFF)],total=7))
     assert boot["events"][1]["kind"]=="BOOT_ENTER"
+    # preserved history: prior boot RESET_SOURCE(0xFFFF) + new boot source=1 decodes
+    pres=d.decode(d.encode([(1,0,1,0),(2,0,16,0xFFFF),(3,9,3,0),(4,0,1,0),(5,0,16,1)],boot_gen=51,reset_known=1,reset_source=1,total=5))
+    assert pres["reset_source"]==1 and len(pres["events"])==5
 
 def test_extended_kinds_and_seal_api():
     dec=d.decode(d.encode([(1,0,17,0),(2,1,18,0),(3,2,19,0),(4,3,20,0),(5,4,21,0),(6,5,22,0)]))

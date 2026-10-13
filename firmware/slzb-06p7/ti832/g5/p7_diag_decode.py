@@ -67,10 +67,14 @@ def decode(raw: bytes) -> dict:
         # record, so total == last seq and dropped == evictions beyond ring.
         if total!=events[-1]["seq"]: raise ValueError("TOTAL_MISMATCH")
         if dropped!=max(0,total-RING): raise ValueError("DROPPED_MISMATCH")
-    for e in events:
-        if e["kind"]=="RESET_SOURCE":
-            if reset_known and e["arg"]!=reset_source: raise ValueError("RESET_SOURCE_EVENT_MISMATCH")
-            if not reset_known and e["arg"]!=0xFFFF: raise ValueError("RESET_SOURCE_EVENT_UNMASKED")
+    # Only the LATEST RESET_SOURCE event belongs to the current boot and
+    # must match the header; earlier ones are preserved pre-reset history
+    # (their boot may have had a different/unknown reset source).
+    rs_events=[e for e in events if e["kind"]=="RESET_SOURCE"]
+    if rs_events:
+        e=rs_events[-1]
+        if reset_known and e["arg"]!=reset_source: raise ValueError("RESET_SOURCE_EVENT_MISMATCH")
+        if not reset_known and e["arg"]!=0xFFFF: raise ValueError("RESET_SOURCE_EVENT_UNMASKED")
     return {"schema":schema,"nv_state":nv_state,"reset_known":bool(reset_known),
             "reset_source":reset_source if reset_known else None,
             "boot_generation":boot_gen,"dropped":dropped,"total":total,"isr_dropped":isr_dropped,"events":events}

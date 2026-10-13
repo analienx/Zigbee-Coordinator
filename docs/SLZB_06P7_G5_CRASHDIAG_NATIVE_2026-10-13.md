@@ -13,7 +13,7 @@
 
 ## Callsites (DIAG only, BASE unchanged)
 
-Boot/main entry (`p7_diag_init` in `main()`), `ZDOInitDeviceEx` enter/exit, NV restore decision read from the already-decided `networkStateNV` (restored/new/ambiguous), MT `startupFromApp` RX, MT dispatch, SRSP queued, NPI queue accept (sync/async) and reject (type/alloc), UART2 write accepted/rejected (both flow-control variants), UART2 write-callback TX-finished, frame FCS error, frame alloc/parse error, and RX overflow (NPI + UART, ISR-context record).
+Boot/main entry (`p7_diag_init` in `main()`), `ZDOInitDeviceEx` enter/exit, NV restore decision read from the already-decided `networkStateNV` (restored/new/ambiguous), MT `startupFromApp` RX, MT dispatch, SRSP queued, NPI queue accept (sync/async) and reject (type/alloc), UART2 write accepted/rejected (both flow-control variants), UART2 write-callback FIFO-loaded (kind 23; wire TX-finished stays UNKNOWN per CR7), frame FCS error, frame alloc/parse error, and RX overflow (NPI + UART, ISR-context record).
 
 ## Retention note
 
