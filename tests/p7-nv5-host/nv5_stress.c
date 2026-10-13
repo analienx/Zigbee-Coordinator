@@ -86,7 +86,7 @@ static void update_all(unsigned epoch){
     }
 }
 int main(int argc,char **argv){
-    if(argc<3){fprintf(stderr,"usage: nv5_stress fill|verify|churn|recover|compact <epoch>\n");return 2;}
+    if(argc<3){fprintf(stderr,"usage: nv5_stress fill|verify|churn|recover|compact|cycle|heal <epoch>\n");return 2;}
     char *end=0;
     unsigned long epoch=strtoul(argv[2],&end,10);
     must(end && *end==0 && epoch<=16,"EPOCH_INVALID");
@@ -122,6 +122,19 @@ int main(int argc,char **argv){
         verify_all((unsigned)epoch-1,(unsigned)epoch);
         update_all((unsigned)epoch);
         verify_all((unsigned)epoch,(unsigned)-1);
+    } else if(strcmp(argv[1],"cycle")==0) {
+        /* Realistic near-full stress: 587-record mix (192x27B TC,
+         * 96x23B NWK, 298x19B addr, 2300B misc per G3 accounting) in
+         * 4x8KiB storage pages; repeated update+compact forces
+         * compaction under load. Host simulation only, non-hardware. */
+        must(epoch>0,"CYCLE_REQUIRES_NONZERO");
+        verify_all((unsigned)epoch-1,(unsigned)-1);
+        for(unsigned round=0;round<3;round++){
+            update_all((unsigned)epoch);
+            status=fns.compactNV(0);
+            if(status!=NVINTF_SUCCESS)fail("CYCLE_COMPACT",0,round,status);
+            verify_all((unsigned)epoch,(unsigned)-1);
+        }
     } else if(strcmp(argv[1],"compact")==0) {
         verify_all((unsigned)epoch,(unsigned)-1);
         status=fns.compactNV(0);
@@ -135,6 +148,8 @@ int main(int argc,char **argv){
         must(note_count==(int)total_records(),"FILL_COUNT_MISMATCH");
     if(strcmp(argv[1],"churn")==0 || strcmp(argv[1],"heal")==0)
         must(note_count==(int)total_records(),"UPDATE_COUNT_MISMATCH");
+    if(strcmp(argv[1],"cycle")==0)
+        must(note_count==(int)(3*total_records()),"CYCLE_COUNT_MISMATCH");
     fprintf(stdout,"PASS_PINNED_TI_NVOCMP_REAL_DRIVER op=%s epoch=%lu "
             "records=%u mutations=%d free=%lu pages=5 byte_range=40960\n",
             argv[1],epoch,total_records(),note_count,

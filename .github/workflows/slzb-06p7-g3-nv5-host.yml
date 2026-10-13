@@ -255,6 +255,36 @@ jobs:
           Path("nv5-stress/faults/GARBAGE-VERDICT.json").write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n")
           PY
+      - name: Realistic mix near-full compaction, restart and CRC negatives (host only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export P7_NV_FILE="$GITHUB_WORKSPACE/nv5-stress/faults/flash.img"
+          ./nv5-stress/ti_nv5_driver_host cycle 2 2>&1 | tee nv5-stress/faults/cycle.log
+          grep -F 'records=587' nv5-stress/faults/cycle.log
+          for i in 1 2 3 4 5; do ./nv5-stress/ti_nv5_driver_host verify 2 >> nv5-stress/faults/cycle.log 2>&1; done
+          test "$(grep -c PASS_PINNED_TI_NVOCMP_REAL_DRIVER nv5-stress/faults/cycle.log)" = "6"
+          cp "$P7_NV_FILE" nv5-stress/faults/crc-clean.img
+          python3 -c "import pathlib; p=pathlib.Path('nv5-stress/faults/flash.img'); d=bytearray(p.read_bytes()); d[5000]^=0xFF; p.write_bytes(d)"
+          set +e; ./nv5-stress/ti_nv5_driver_host verify 2 > nv5-stress/faults/crc.log 2>&1; CODE=$?; set -e
+          echo "crc-corrupt verify exit=$CODE" | tee -a nv5-stress/faults/crc.log
+          case "$CODE" in 4|5) echo "CRC_NEGATIVE_CONTROLLED" | tee -a nv5-stress/faults/crc.log;; *) echo "CRC_NEGATIVE_UNCONTROLLED exit=$CODE"; cat nv5-stress/faults/crc.log; exit 1;; esac
+          cp nv5-stress/faults/crc-clean.img "$P7_NV_FILE"
+          ./nv5-stress/ti_nv5_driver_host verify 2 >> nv5-stress/faults/crc.log 2>&1
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          log=(Path("nv5-stress/faults/cycle.log").read_text()+Path("nv5-stress/faults/crc.log").read_text())
+          r={"status":"NV5_REALISTIC_MIX_HOST_PASS_NON_HARDWARE","records":587,
+             "mix":"192x27B TC + 96x23B NWK + 298x19B addr + 2300B misc (G3 accounting)",
+             "near_full_compaction_cycles":3,"cold_restarts_verified":5,
+             "crc_corruption_negative":"controlled driver failure, clean image re-verified",
+             "torn_write_erase_prefix":"covered by PARTIAL-WRITE/ERASE verdicts in this workflow",
+             "hardware_qualified":False,"flash_authorized":False,
+             "log_sha256":hashlib.sha256(log.encode()).hexdigest()}
+          Path("nv5-stress/faults/REALISTIC-VERDICT.json").write_text(json.dumps(r,indent=2,sort_keys=True)+"\n")
+          print("REALISTIC_NV5_OK")
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: P7-G3-REAL-TI-NVOCMP-HOST-STRESS-NO-FIRMWARE
@@ -267,6 +297,9 @@ jobs:
             nv5-stress/faults/ERASE-VERDICT.json
             nv5-stress/faults/erase-results.log
             nv5-stress/faults/GARBAGE-VERDICT.json
+            nv5-stress/faults/REALISTIC-VERDICT.json
+            nv5-stress/faults/cycle.log
+            nv5-stress/faults/crc.log
             nv5-stress/faults/garbage-outcome.txt
           retention-days: 30
           if-no-files-found: error
