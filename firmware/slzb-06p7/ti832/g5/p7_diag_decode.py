@@ -10,7 +10,8 @@ MAGIC=b"P7D1"; SCHEMA=1; HDR=28; EV=12; MAX_EVENTS=8; RING=64
 KINDS={1:"BOOT_ENTER",2:"NV_READ_BEGIN",3:"NV_RESTORED",4:"NV_NEW",5:"NV_AMBIGUOUS",
  6:"ZDO_INIT_ENTER",7:"ZDO_INIT_EXIT",8:"DEV_STATE",9:"MT_RX",10:"SRSP_QUEUED",
  11:"UART_ACCEPTED",12:"UART_TX_FINISHED",13:"UART_REJECTED",14:"QUEUE_DEPTH",15:"FAULT",16:"RESET_SOURCE",
- 17:"ZDO_DISPATCH",18:"NPI_Q_ACCEPT",19:"NPI_Q_REJECT",20:"PARSE_ERR",21:"FCS_ERR",22:"OVERFLOW",23:"UART_FIFO_LOADED"}
+ 17:"ZDO_DISPATCH",18:"NPI_Q_ACCEPT",19:"NPI_Q_REJECT",20:"PARSE_ERR",21:"FCS_ERR",22:"OVERFLOW",23:"UART_FIFO_LOADED",
+ 24:"SRSP_SEND_ATTEMPTED"}
 NV_NAMES={0:"unknown",1:"restored",2:"new",3:"ambiguous"}
 
 def crc16(data: bytes) -> int:
@@ -58,10 +59,10 @@ def decode(raw: bytes) -> dict:
     for a,b in zip(events,events[1:]):
         want=1 if a["seq"]==0xFFFFFFFF else a["seq"]+1  # contiguous records, seq 0 skipped
         if b["seq"]!=want: raise ValueError("SEQ_NOT_CONTIGUOUS")
-        if b["tick"]<a["tick"]:
-            boot_reset=b["kind"]=="BOOT_ENTER"
-            tick_wrap=a["tick"]>0xFF000000 and b["tick"]<0x01000000
-            if not (boot_reset or tick_wrap): raise ValueError("TICK_REGRESSION")
+        # Clock_getTicks is modulo 2^32. Only intervals below half its range
+        # have an unambiguous direction; a BOOT_ENTER starts a new epoch.
+        if ((b["tick"]-a["tick"])&0xFFFFFFFF)>=0x80000000 and b["kind"]!="BOOT_ENTER":
+            raise ValueError("TICK_REGRESSION")
     if events and any(e["seq"]==0xFFFFFFFF for e in events) and total!=0xFFFFFFFF:
         raise ValueError("TOTAL_MISMATCH_WRAP")
     if events and total==0xFFFFFFFF:

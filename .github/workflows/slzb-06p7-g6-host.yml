@@ -1,0 +1,71 @@
+name: P7 G6 actual-source regressions (NOT FLASHABLE)
+on:
+  push:
+    branches: ['codex/p7-g6-*']
+  pull_request:
+    paths: ['firmware/slzb-06p7/ti832/g6/**', 'tests/p7-g6-host/**', '.github/workflows/slzb-06p7-g6-*.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  source-regressions:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Koenkk/zigbee-herdsman
+          ref: 0968f979d558874b17396c96b66382d4236bbdcd
+          path: herdsman
+          persist-credentials: false
+      - name: Pinned compatibility and compiled pre/post regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git -C repo rev-parse HEAD | tee evidence/candidate-sha.txt
+          test "$(git -C sdk rev-parse HEAD)" = 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          test "$(git -C herdsman rev-parse HEAD)" = 0968f979d558874b17396c96b66382d4236bbdcd
+          python3 repo/firmware/slzb-06p7/ti832/g6/check_compatibility.py --sdk sdk --herdsman herdsman | tee evidence/compatibility.json
+          python3 repo/tests/p7-g6-host/test_elf_load_hex.py | tee evidence/elf-load-hex.log
+          python3 repo/tests/p7-g6-host/test_g6.py --sdk sdk --out evidence | tee evidence/host.log
+          python3 repo/firmware/slzb-06p7/ti832/g6/p7_g6_decode.py --selftest | tee evidence/timing.log
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,'repo/firmware/slzb-06p7/ti832/g6')
+          from p7_g6_decode import decode, timing_report
+          lines=Path('evidence/g6-snapshot.txt').read_text().splitlines()
+          line=next(x for x in lines if x.startswith('G6_HEX='))
+          d=decode(bytes.fromhex(line.split('=',1)[1]))
+          assert d['snapshot']['events'][-1]['kind']=='UART_TX_FINISHED'
+          assert d['snapshot']['events'][-2]['kind']=='UART_FIFO_LOADED'
+          assert [e['tick'] for e in d['snapshot']['events']][-3:]==[147,1545,1545]
+          raw=bytes.fromhex(line.split('=',1)[1])
+          for i in range(len(raw)):
+              bad=bytearray(raw);bad[i]^=1
+              try:decode(bytes(bad))
+              except ValueError:pass
+              else:raise AssertionError('CRC metadata corruption accepted '+str(i))
+          pre=bytes.fromhex(next(x for x in lines if x.startswith('PRE_RACE_HEX=')).split('=',1)[1])
+          try:decode(pre)
+          except ValueError as e:assert str(e)=='TICK_REGRESSION'
+          else:raise AssertionError('pre-fix sampling race did not reproduce')
+          post=decode(bytes.fromhex(next(x for x in lines if x.startswith('POST_RACE_HEX=')).split('=',1)[1]))
+          assert post['snapshot']['isr_dropped']==1
+          assert timing_report(post,same_boot=True)['stage_durations_ms']=={}
+          print('PASS actual C snapshot cross-decodes with Clock metadata')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with: {name: p7-g6-host-evidence, path: evidence/, if-no-files-found: error}
