@@ -43,7 +43,7 @@ jobs:
           sparse-checkout: |
             src/adapter/z-stack
           sparse-checkout-cone-mode: false
-      - name: Verify pinned SHAs and endpoint collision evidence (stays DISABLED)
+      - name: Verify pinned SHAs and actual SYS command compatibility
         shell: bash
         run: |
           set -euo pipefail
@@ -65,7 +65,8 @@ jobs:
             echo "HERDSMAN_ZSTACK_F0_MATCH=NO_MATCH_IN_ZSTACK_ADAPTER" >> evidence/collision-evidence.txt
           fi
           cat evidence/collision-evidence.txt
-          echo "MT_ENDPOINT_ENABLED=0 (evidence reported, endpoint NOT enabled)"
+          python3 repo/firmware/slzb-06p7/ti832/g6/check_compatibility.py --sdk sdk --herdsman herdsman | tee evidence/actual-sys-compatibility.json
+          echo "G6_MT_ENDPOINT_ENABLED=1_IN_OFFLINE_CANDIDATE_ONLY"
       - name: Host gates for diag tooling
         shell: bash
         run: |
@@ -241,16 +242,22 @@ jobs:
           G6_PROFILE: ${{ matrix.profile }}
         run: |
           set -euo pipefail
+          if [ "$G6_PROFILE" = cap192 ]; then
+            GENH=$(find ccs-workspace-diag -type f -name ti_zstack_config.h -print -quit)
+            test -s "$GENH"
+            cp "$GENH" bundle-diag/generated-ti_zstack_config.h
+            python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py --generated "$GENH" | tee bundle-compare/CAPACITY-EFFECTIVE-AUDIT.json
+          fi
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$G6_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           cp diag-staged/G6-OVERLAY-MANIFEST.json bundle-compare/
           git -C repo rev-parse HEAD > bundle-compare/candidate-sha.txt
           sha256sum bundle-base/* bundle-diag/* > bundle-compare/artifact-sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with: {name: p7-g6-${{ matrix.profile }}-BASE-NOT-FLASHABLE, path: bundle-base/, retention-days: 30, if-no-files-found: error}
+        with: {name: 'p7-g6-${{ matrix.profile }}-BASE-NOT-FLASHABLE', path: bundle-base/, retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with: {name: p7-g6-${{ matrix.profile }}-DIAG-NOT-FLASHABLE, path: bundle-diag/, retention-days: 30, if-no-files-found: error}
+        with: {name: 'p7-g6-${{ matrix.profile }}-DIAG-NOT-FLASHABLE', path: bundle-diag/, retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with: {name: p7-g6-${{ matrix.profile }}-BASE-VS-DIAG-EVIDENCE, path: bundle-compare/, retention-days: 30, if-no-files-found: error}
+        with: {name: 'p7-g6-${{ matrix.profile }}-BASE-VS-DIAG-EVIDENCE', path: bundle-compare/, retention-days: 30, if-no-files-found: error}
       - name: Preserve failure logs only (no firmware)
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

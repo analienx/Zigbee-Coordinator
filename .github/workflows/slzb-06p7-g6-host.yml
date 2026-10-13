@@ -43,12 +43,26 @@ jobs:
           import sys
           from pathlib import Path
           sys.path.insert(0,'repo/firmware/slzb-06p7/ti832/g6')
-          from p7_g6_decode import decode
-          line=next(x for x in Path('evidence/g6-snapshot.txt').read_text().splitlines() if x.startswith('G6_HEX='))
+          from p7_g6_decode import decode, timing_report
+          lines=Path('evidence/g6-snapshot.txt').read_text().splitlines()
+          line=next(x for x in lines if x.startswith('G6_HEX='))
           d=decode(bytes.fromhex(line.split('=',1)[1]))
           assert d['snapshot']['events'][-1]['kind']=='UART_TX_FINISHED'
           assert d['snapshot']['events'][-2]['kind']=='UART_FIFO_LOADED'
           assert [e['tick'] for e in d['snapshot']['events']][-3:]==[147,1545,1545]
+          raw=bytes.fromhex(line.split('=',1)[1])
+          for i in range(len(raw)):
+              bad=bytearray(raw);bad[i]^=1
+              try:decode(bytes(bad))
+              except ValueError:pass
+              else:raise AssertionError('CRC metadata corruption accepted '+str(i))
+          pre=bytes.fromhex(next(x for x in lines if x.startswith('PRE_RACE_HEX=')).split('=',1)[1])
+          try:decode(pre)
+          except ValueError as e:assert str(e)=='TICK_REGRESSION'
+          else:raise AssertionError('pre-fix sampling race did not reproduce')
+          post=decode(bytes.fromhex(next(x for x in lines if x.startswith('POST_RACE_HEX=')).split('=',1)[1]))
+          assert post['snapshot']['isr_dropped']==1
+          assert timing_report(post,same_boot=True)['stage_durations_ms']=={}
           print('PASS actual C snapshot cross-decodes with Clock metadata')
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

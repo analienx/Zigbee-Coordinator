@@ -43,7 +43,7 @@ def patch(texts):
     for rel in sorted({p[0] for p in diag.PATCHES}):
         t=out[rel]
         t=replace(t,diag.INC,diag.INC+INC,"include_"+rel)
-        t,n=re.subn(r'(p7_diag_record(?:_isr)?\([^;\n]+), 0\);',r'\1, p7_g6_now());',t)
+        t,n=re.subn(r'p7_diag_record(?:_isr)?\(([^;\n]+), 0\);',r'p7_g6_record(\1);',t)
         expected=sum(len(re.findall(r'p7_diag_record(?:_isr)?\(',p[2])) for p in diag.PATCHES if p[0]==rel)
         if n!=expected: raise ValueError(f"TIMEBASE_COUNT_{rel}:{n}!={expected}")
         out[rel]=t
@@ -76,6 +76,13 @@ def patch(texts):
         "            OsalPort_msgDeallocate(pOsalMsg);\n"
         "        } /* P7G6:F10 payload allocation */\n\n    }","stack_alloc")
     out[TASK]=replace(out[TASK],old,new,"stack_function")
+    old=function(out[TASK],"NPITask_incomingFrameCB")
+    new=old[:-1]+"    else {\n"
+    new+="        OsalPort_msgDeallocate(pFrame);\n"
+    new+="        if (npiMsgPtr != NULL) OsalPort_free(npiMsgPtr);\n"
+    new+="        if (recPtr != NULL) OsalPort_free(recPtr);\n"
+    new+="    } /* P7G6:F10 ingress partial allocation */\n}"
+    out[TASK]=replace(out[TASK],old,new,"incoming_alloc")
 
     # F15: drop the entire lost batch in O(1), latch task-side resynchronization.
     # While latched every incoming batch is discarded. Parser/free is task-only.
@@ -126,7 +133,7 @@ def patch(texts):
         "static void p7_g6_uart_event(UART2_Handle handle, uint32_t event, uint32_t data, void *arg) {\n"
         "    (void)handle; (void)data; (void)arg;\n"
         "    if (event & UART2_EVENT_TX_FINISHED)\n"
-        "        p7_diag_record_isr(P7D_UART_TX_FINISHED, 0, p7_g6_now());\n"
+        "        p7_g6_record(P7D_UART_TX_FINISHED, 0);\n"
         "} /* P7G6:may aggregate multiple frames; never proves host reception */\n","uart_callback")
     # Only this offline image gains SYS F0. Validate length before touching data.
     out[SYS]=replace(out[SYS],'#include "mt_sys.h"\n','#include "mt_sys.h"\n'+INC,"sys_include")
@@ -142,6 +149,15 @@ def patch(texts):
         "      break;\n    } /* P7G6:versioned read-only endpoint */","sys_dispatch")
     return out
 
+def clock_recorder(source):
+    if "void p7_g6_record(" in source:raise ValueError("CLOCK_RECORDER_ALREADY_PATCHED")
+    return source+'\n#include "p7_g6.h"\n'+'''void p7_g6_record(uint16_t kind, uint16_t arg) {
+    if (!writer_try_claim(1)) return;
+    record_common(kind, arg, p7_g6_now()); /* sample inside writer ownership */
+    writer_release();
+}
+'''
+
 def apply(sdk, examples, output):
     paths=sorted({p[0] for p in diag.PATCHES}|{RX,TL,SYS})
     original={p:(sdk/p).read_text() for p in paths}
@@ -150,7 +166,10 @@ def apply(sdk, examples, output):
     text=spec.read_text()
     entry=diag.DIAG_FILE_ENTRY.replace("p7_crashdiag.c","p7_g6.c")
     text=replace(text,diag.DIAG_FILE_ENTRY,diag.DIAG_FILE_ENTRY+entry,"g6_projectspec")
+    recorder=sdk/"source/ti/zstack/startup/p7_crashdiag.c"
+    recorder_source=clock_recorder(recorder.read_text())
     for p,t in patched.items(): (sdk/p).write_text(t)
+    recorder.write_text(recorder_source)
     spec.write_text(text)
     for name in ("p7_g6.c","p7_g6.h"):
         (sdk/"source/ti/zstack/startup"/name).write_bytes((Path(__file__).parent/name).read_bytes())

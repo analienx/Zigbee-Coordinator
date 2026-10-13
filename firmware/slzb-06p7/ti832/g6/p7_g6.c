@@ -8,6 +8,11 @@ static void put32(uint8_t *p, uint32_t v) {
     p[0]=(uint8_t)v; p[1]=(uint8_t)(v>>8);
     p[2]=(uint8_t)(v>>16); p[3]=(uint8_t)(v>>24);
 }
+static size_t finish(uint8_t *out, size_t n) {
+    uint16_t crc=p7_diag_crc16(out,n);
+    out[n]=(uint8_t)crc; out[n+1]=(uint8_t)(crc>>8);
+    return n+2;
+}
 size_t p7_g6_response(const uint8_t *req, size_t len, int sreq,
                       uint8_t *out, size_t cap) {
     size_t n;
@@ -26,8 +31,8 @@ size_t p7_g6_response(const uint8_t *req, size_t len, int sreq,
     else if (req[1]!=0) out[5]=P7_G6_OPERATION;
     else {
         n=p7_diag_snapshot(out+P7_G6_HDR,cap-P7_G6_HDR);
-        if (n) return P7_G6_HDR+n;
+        if (n) return finish(out,P7_G6_HDR+n);
         out[5]=P7_G6_BUSY;
     }
-    return P7_G6_HDR;
+    return finish(out,P7_G6_HDR);
 }
