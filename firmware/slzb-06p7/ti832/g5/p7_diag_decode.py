@@ -130,7 +130,8 @@ def selftest() -> None:
     must(encode(GOLDEN_EVENTS,boot_gen=7,nv_state=1).hex()==GOLDEN_HEX,"GOLDEN_STABLE")
     must(classify({"snapshot":d})=="UNKNOWN_INSUFFICIENT_EVIDENCE","SNAPSHOT_CLASSIFY")
     amb=decode(encode([(1,0,1,0)],nv_state=3)); must(classify({"snapshot":amb})=="UNKNOWN_NV_AMBIGUOUS","SNAPSHOT_NV_AMBIG")
-    wrap=decode(encode([(4294967295,0,1,0),(1,1,1,0)],total=4294967295)); must(wrap["events"][1]["seq"]==1,"SEQ_WRAP")
+    M=4294967295
+    wrap=decode(encode([(s,s,1,0) for s in (M-6,M-5,M-4,M-3,M-2,M-1,M,1)],total=M,dropped=M)); must(wrap["events"][-1]["seq"]==1,"SEQ_WRAP")
     ext=decode(encode([(1,0,17,0),(2,1,18,0),(3,2,21,0)])); must([e["kind"] for e in ext["events"]]==["ZDO_DISPATCH","NPI_Q_ACCEPT","FCS_ERR"],"EXTENDED_KINDS")
     for bad in (b"",b"P7D1",raw[:-1],raw+b"\x00",raw[:4]+b"\x02"+raw[5:],
                 raw[:6]+b"\x09"+raw[7:],raw[:-2]+b"\x00\x00",
