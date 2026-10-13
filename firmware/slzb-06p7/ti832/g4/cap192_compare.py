@@ -23,7 +23,7 @@ def parse_map(text: str) -> dict:
     heap = None
     hs = re.findall(r"(?m)^\s*([0-9A-Fa-f]{8})\s+heapStart\s*$", text)
     he = re.findall(r"(?m)^\s*([0-9A-Fa-f]{8})\s+heapEnd\s*$", text)
-    if len(hs) == 1 and len(he) == 1: heap = int(he[0], 16) - int(hs[0], 16)
+    if hs and he: heap = int(he[0], 16) - int(hs[0], 16)  # first (alpha) symbol table
     return {"regions": regions, "sections": sections, "heap_span_bytes": heap}
 def compare(base: str, cand: str, base_elf: int, cand_elf: int) -> dict:
     b, c = parse_map(base), parse_map(cand)
