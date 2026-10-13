@@ -34,7 +34,7 @@ jobs:
           path: herdsman
           persist-credentials: false
           sparse-checkout: |
-            src/adapter/zstack
+            src/adapter/z-stack
           sparse-checkout-cone-mode: false
       - name: Verify pinned SHAs and endpoint collision evidence (stays DISABLED)
         shell: bash
@@ -49,8 +49,10 @@ jobs:
           else
             echo "MT_SYS_F0_FOUND_IN_PINNED_SDK=NO" | tee evidence/collision-evidence.txt
           fi
-          grep -rnE 'SYS|Subsystem' herdsman/src/adapter/zstack --include='*.ts' | head -100 > evidence/herdsman-zstack-sys-handlers.txt || true
-          if grep -rnE '0xF0|0xf0|\b240\b' herdsman/src/adapter/zstack --include='*.ts' | tee evidence/herdsman-f0-grep.txt; then
+          test -d herdsman/src/adapter/z-stack
+          grep -rnE 'SYS|Subsystem' herdsman/src/adapter/z-stack --include='*.ts' | head -100 > evidence/herdsman-zstack-sys-handlers.txt || true
+          test -s evidence/herdsman-zstack-sys-handlers.txt
+          if grep -rnE '0xF0|0xf0|\b240\b' herdsman/src/adapter/z-stack --include='*.ts' | tee evidence/herdsman-f0-grep.txt; then
             echo "HERDSMAN_ZSTACK_F0_MATCH=YES_REVIEW_REQUIRED" >> evidence/collision-evidence.txt
           else
             echo "HERDSMAN_ZSTACK_F0_MATCH=NO_MATCH_IN_ZSTACK_ADAPTER" >> evidence/collision-evidence.txt
