@@ -1,5 +1,5 @@
 """HOSTED ONLY: actual ELF/HEX/map proof, CCFG identity and per-track NV geometry."""
-import argparse, hashlib, json, sys, re
+import argparse, hashlib, json, sys, re, struct
 from pathlib import Path
 TI=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(TI/"g2")); import validate_elf_hex as stock
@@ -19,6 +19,21 @@ def verify(base,cand,profile):
     print("G6_IMAGE_COUNTS",json.dumps({"elf":len(em),"hex":len(hm),
         "hex_missing_first32":[hex(a) for a in sorted(set(em)-set(hm))[:32]],
         "hex_extra_first32":[hex(a) for a in sorted(set(hm)-set(em))[:32]]}))
+    # Diagnostic only: identify the actual initialized-section boundaries
+    # around missing bytes. Keep the strict audit below unchanged.
+    missing=sorted(set(em)-set(hm))
+    if missing:
+        hdr=struct.unpack_from("<HHIIIIIHHHHHH",ce,16)
+        shoff,shsize,shnum,shstr=hdr[5],hdr[10],hdr[11],hdr[12]
+        rows=[struct.unpack_from("<IIIIIIIIII",ce,shoff+i*shsize) for i in range(shnum)]
+        names=rows[shstr]; strings=ce[names[4]:names[4]+names[5]]
+        nearby=[]
+        for row in rows:
+            name=strings[row[0]:].split(b'\0',1)[0].decode(errors='replace')
+            start,size=row[3],row[5]
+            if row[2]&2 and any(start-32<=a<start+size+32 for a in missing):
+                nearby.append({"name":name,"type":row[1],"flags":row[2],"address":hex(start),"size":size,"end":hex(start+size)})
+        print("G6_IMAGE_GAP_CONTEXT",json.dumps({"missing_values":[[hex(a),em[a]] for a in missing[:32]],"sections":nearby}))
     bmem,_=stock.read_elf(be)
     base_audit=stock.audit(be,bh)
     if profile=="cap192":
