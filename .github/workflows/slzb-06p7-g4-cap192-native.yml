@@ -1,0 +1,280 @@
+name: SLZB-06P7 G4 CAP192 native CCS BASE/CAP192/CAP192+DIAG (NOT FLASHABLE)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7-g4-cap192-native.yml'
+      - 'firmware/slzb-06p7/ti832/g5/**'
+      - 'firmware/slzb-06p7/ti832/g4/**'
+      - 'firmware/slzb-06p7/ti832/g3/nv5_layout.py'
+      - 'tests/p7-crashdiag-host/**'
+      - 'docs/SLZB_06P7_G4_CAP192_RUNTIME_2026-10-13.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-base-vs-diag:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {path: repo, persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Koenkk/zigbee-herdsman
+          ref: 0968f979d558874b17396c96b66382d4236bbdcd
+          path: herdsman
+          persist-credentials: false
+          sparse-checkout: |
+            src/adapter/z-stack
+          sparse-checkout-cone-mode: false
+      - name: Verify pinned SHAs and endpoint collision evidence (stays DISABLED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          test "$(git -C examples rev-parse HEAD)" = "87ff5b638b632050228a7504f35cf3b95581c278"
+          test "$(git -C herdsman rev-parse HEAD)" = "0968f979d558874b17396c96b66382d4236bbdcd"
+          mkdir -p evidence
+          if grep -nE '0xF0|0xf0' sdk/source/ti/zstack/mt/mt_sys.c | tee evidence/mt-sys-f0-grep.txt; then
+            echo "MT_SYS_F0_FOUND_IN_PINNED_SDK=YES" | tee evidence/collision-evidence.txt
+          else
+            echo "MT_SYS_F0_FOUND_IN_PINNED_SDK=NO" | tee evidence/collision-evidence.txt
+          fi
+          test -d herdsman/src/adapter/z-stack
+          grep -rnE 'SYS|Subsystem' herdsman/src/adapter/z-stack --include='*.ts' | head -100 > evidence/herdsman-zstack-sys-handlers.txt || true
+          test -s evidence/herdsman-zstack-sys-handlers.txt
+          if grep -rnE '0xF0|0xf0|\b240\b' herdsman/src/adapter/z-stack --include='*.ts' | tee evidence/herdsman-f0-grep.txt; then
+            echo "HERDSMAN_ZSTACK_F0_MATCH=YES_REVIEW_REQUIRED" >> evidence/collision-evidence.txt
+          else
+            echo "HERDSMAN_ZSTACK_F0_MATCH=NO_MATCH_IN_ZSTACK_ADAPTER" >> evidence/collision-evidence.txt
+          fi
+          cat evidence/collision-evidence.txt
+          echo "MT_ENDPOINT_ENABLED=0 (evidence reported, endpoint NOT enabled)"
+      - name: Host gates for diag tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd repo
+          python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
+          python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
+          python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
+          python3 firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py --selftest
+          python3 firmware/slzb-06p7/ti832/g5/p7_diag_decode.py --selftest
+          python3 -m py_compile firmware/slzb-06p7/ti832/g4/cap192_capacity.py firmware/slzb-06p7/ti832/g4/cap192_overlay.py firmware/slzb-06p7/ti832/g4/cap192_compare.py firmware/slzb-06p7/ti832/g3/nv5_layout.py
+          python3 firmware/slzb-06p7/ti832/g4/cap192_capacity.py --selftest
+          python3 firmware/slzb-06p7/ti832/g4/cap192_overlay.py --selftest
+          python3 firmware/slzb-06p7/ti832/g4/cap192_compare.py --selftest
+          python3 firmware/slzb-06p7/ti832/g3/nv5_layout.py --selftest
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DP7_DIAG_TEST_HOOKS=1 tests/p7-crashdiag-host/crashdiag_host.c firmware/slzb-06p7/ti832/g5/p7_crashdiag.c -o /tmp/crashdiag_host
+          /tmp/crashdiag_host
+          CRASHDIAG_HOST_BIN=/tmp/crashdiag_host python3 tests/p7-crashdiag-host/test_crashdiag.py
+      - name: Install actual CCS12.8 vendor toolchain and SysConfig 1.21.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl tar xz-utils cmake libc6-i386 libusb-0.1-4 libncurses5 libtinfo5 libx11-6 libxext6 libxrender1 libxtst6 libxi6 libxt6 libxinerama1 libgtk2.0-0 libnss3 xvfb
+          mkdir -p "$HOME/ti/downloads" build-evidence
+          cd "$HOME/ti/downloads"
+          FILE=CCS12.8.0.00012_web_linux-x64.tar.gz
+          curl -fL --retry 5 --retry-delay 2 -o "$FILE" "https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-J1VdearkvK/12.8.0/$FILE"
+          python3 "$GITHUB_WORKSPACE/repo/firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py" --name ccs --download "$PWD/$FILE"
+          tar xzf "$FILE"
+          SETUP=$(find . -maxdepth 3 -type f -name ccs_setup_12.8.0.00012.run -print -quit)
+          test -n "$SETUP"; chmod +x "$SETUP"
+          "$SETUP" --mode unattended --enable-components PF_WCONN --prefix "$HOME/ti/ccs1280"
+          FILE=sysconfig-1.21.1_3772-setup.run
+          curl -fL --retry 5 --retry-delay 2 -o "$FILE" "https://software-dl.ti.com/ccs/esd/sysconfig/$FILE"
+          python3 "$GITHUB_WORKSPACE/repo/firmware/slzb-06p7/ti832/g3/verify_toolchain_lock.py" --name sysconfig --download "$PWD/$FILE"
+          chmod +x "$FILE"; "./$FILE" --mode unattended --prefix "$HOME/ti/sysconfig_1.21.1"
+          sha256sum CCS12.8.0.00012_web_linux-x64.tar.gz sysconfig-1.21.1_3772-setup.run | tee "$GITHUB_WORKSPACE/build-evidence/vendor-installer-sha256.txt"
+      - name: Pin actual compiler versions and activate SysConfig 1.21.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          TIARMCLANG=$(find "$HOME/ti/ccs1280" -type f -name tiarmclang -perm -u+x -print -quit)
+          SYSCONFIG=$(find "$HOME/ti/sysconfig_1.21.1" -type f -name sysconfig_cli.sh -print -quit)
+          XDC=$(find "$HOME/ti/ccs1280" -type d -name xdctools_3_62_01_16_core -print -quit)
+          CCS_ECLIPSE=$(find "$HOME/ti/ccs1280" -type f -name eclipse -path '*/eclipse/eclipse' -perm -u+x -print -quit)
+          test -x "$TIARMCLANG" && test -x "$SYSCONFIG" && test -d "$XDC" && test -x "$CCS_ECLIPSE"
+          "$TIARMCLANG" --version | tee build-evidence/compiler-version.txt
+          grep -F '3.2.2.LTS' build-evidence/compiler-version.txt
+          BUNDLED=$(find "$HOME/ti/ccs1280" -maxdepth 5 -type d -name sysconfig_1.21.0 -print -quit)
+          test -d "$BUNDLED"; mv "$BUNDLED" "$BUNDLED.orig-1.21.0"
+          ln -s "$HOME/ti/sysconfig_1.21.1" "$BUNDLED"
+          { echo "TIARMCLANG=$TIARMCLANG"; echo "SYSCONFIG=$SYSCONFIG"; echo "XDC=$XDC"; echo "CCS_ECLIPSE=$CCS_ECLIPSE"; } >> "$GITHUB_ENV"
+      - name: Build genuine P7 ARM-M4F SDK libraries (shared by BASE and DIAG)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TICLANG_ARMCOMPILER="$(dirname "$(dirname "$TIARMCLANG")")"
+          export XDC_INSTALL_DIR="$XDC" SYSCONFIG_TOOL="$SYSCONFIG" GCC_ARMCOMPILER= IAR_ARMCOMPILER=
+          cmake -G "Unix Makefiles" -S sdk -B sdk/build/ticlang --log-level=VERBOSE
+          cmake --build sdk/build/ticlang --target tirtos7_m4f drivers_cc13x2x7 display_cc13x2x7 driverlib_cc13x2x7_cc26x2x7 spiffs_m4f_cc26xx -j 2 2>&1 | tee build-evidence/p7-sdk-libs-build.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil,sys
+          sdk=Path("sdk")
+          built=[p for p in (sdk/"build/ticlang").rglob("*") if p.is_file() and p.suffix in (".a",".lib")]
+          wanted={"sysbios.a":"kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m4f/sysbios.a",
+            "drivers_cc13x2x7.a":"source/ti/drivers/lib/ticlang/m4f/drivers_cc13x2x7.a",
+            "display_cc13x2x7.a":"source/ti/display/lib/ticlang/m4f/display_cc13x2x7.a",
+            "driverlib.lib":"source/ti/devices/cc13x2x7_cc26x2x7/driverlib/bin/ticlang/driverlib.lib",
+            "spiffs_cc26xx.a":"source/third_party/spiffs/lib/ticlang/m4f/spiffs_cc26xx.a"}
+          for name,rel in wanted.items():
+              matches=[p for p in built if p.name==name]
+              if len(matches)!=1: sys.exit("LIBRARY_NOT_UNIQUE "+name)
+              dst=sdk/rel; dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(matches[0],dst)
+              print("NATIVE_LIBRARY",name,matches[0].stat().st_size,rel)
+          PY
+      - name: Build BASE (pristine pinned ZNP, no diag)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C sdk diff --exit-code HEAD; git -C examples diff --exit-code HEAD
+          mkdir -p ccs-workspace-base bundle-base
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-base" -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" 2>&1 | tee build-evidence/ccs-base-register.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-base" -application com.ti.ccstudio.apps.projectCreate -ccs.projectSpec "$SPEC" -ccs.overwrite 2>&1 | tee build-evidence/ccs-base-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-base" -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang -ccs.configuration default 2>&1 | tee build-evidence/ccs-base-build.log
+          if grep -E 'error:|^ERROR:' build-evidence/ccs-base-build.log; then echo "::error::BASE build error"; exit 1; fi
+          OUT=$(find ccs-workspace-base -type f -name '*.out' -print -quit); MAP=$(find ccs-workspace-base -type f -name '*.map' -print -quit)
+          test -s "$OUT" && test -s "$MAP"
+          cp "$OUT" bundle-base/BASE-NOT-FLASHABLE.out; cp "$MAP" bundle-base/BASE-NOT-FLASHABLE.map
+          "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-base/BASE-symbols.txt || true
+          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-base/BASE-NOT-FLASHABLE.hex
+          printf '%s\n' 'BASE_NOT_FLASHABLE' 'NO_DIAG_INSTRUMENTATION' > bundle-base/NOT_FLASHABLE.txt
+          { echo "BASE_OUT=$OUT"; echo "BASE_MAP=$MAP"; } >> "$GITHUB_ENV"
+      - name: Apply NV5+CAP192 overlay (syscfg only, no-wipe guard)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C sdk diff --exit-code HEAD; git -C examples diff --exit-code HEAD
+          mkdir -p cap-staged cap192
+          python3 repo/firmware/slzb-06p7/ti832/g3/nv5_layout.py --sdk sdk --examples examples --out cap-staged/nv5 | tee cap192/nv5.log
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_overlay.py --examples examples --out cap-staged/cap | tee cap192/cap.log
+          python3 - <<'PY'
+          import shutil
+          from pathlib import Path
+          shutil.copy2("cap-staged/nv5/sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd", "sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd")
+          shutil.copy2("cap-staged/nv5/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec")
+          shutil.copy2("cap-staged/cap/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
+          print("NV5_CAP192_STAGED_COPIED")
+          PY
+          git -C sdk diff --name-only HEAD | tee cap192/sdk-diff-names.txt
+          test "$(cat cap192/sdk-diff-names.txt)" = "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"
+          if git -C sdk diff HEAD | grep -nE 'formatNV|wipe|ZDO_INITDEV|nvocmp'; then echo "::error::startup/NV guard violated"; exit 1; fi
+          echo "STARTUP_NO_WIPE_GUARD_OK" | tee cap192/startup-guard.txt
+          cp cap-staged/cap/CAP192-RUNTIME-MANIFEST.json cap-staged/nv5/NV5-CANDIDATE-SOURCE-MANIFEST.json cap192/
+      - name: Build CAP192 (NV5+capacity, no diag)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ccs-workspace-cap bundle-cap192
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-cap" -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" 2>&1 | tee build-evidence/ccs-cap-register.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-cap" -application com.ti.ccstudio.apps.projectCreate -ccs.projectSpec "$SPEC" -ccs.overwrite 2>&1 | tee build-evidence/ccs-cap-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-cap" -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang -ccs.configuration default 2>&1 | tee build-evidence/ccs-cap-build.log
+          if grep -E 'error:|^ERROR:' build-evidence/ccs-cap-build.log; then echo "::error::CAP192 build error"; exit 1; fi
+          OUT=$(find ccs-workspace-cap -type f -name '*.out' -print -quit); MAP=$(find ccs-workspace-cap -type f -name '*.map' -print -quit); GENH=$(find ccs-workspace-cap -type f -name ti_zstack_config.h -print -quit); DRV=$(find ccs-workspace-cap -type f -name ti_drivers_config.c -print -quit)
+          test -s "$OUT" && test -s "$MAP" && test -s "$GENH" && test -s "$DRV"
+          cp "$OUT" bundle-cap192/CAP192-NOT-FLASHABLE.out; cp "$MAP" bundle-cap192/CAP192-NOT-FLASHABLE.map; cp "$GENH" bundle-cap192/generated-ti_zstack_config.h; cp "$DRV" bundle-cap192/generated-ti_drivers_config.c
+          "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-cap192/CAP192-symbols.txt || true
+          HEXF=$(find ccs-workspace-cap -type f -name '*.hex' -print -quit); test -s "$HEXF"; cp "$HEXF" bundle-cap192/CAP192-NOT-FLASHABLE.hex
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py --generated "$GENH" | tee bundle-cap192/CAPACITY-EFFECTIVE-AUDIT.json
+          python3 -c "import re; m=open('bundle-cap192/CAP192-NOT-FLASHABLE.map').read(); assert 'FLASH_NV' in m; print('CAP192_MAP_FLASH_NV_PRESENT')"
+          if grep -E 'p7_diag_record' bundle-cap192/CAP192-symbols.txt; then echo "::error::diag leaked into CAP192"; exit 1; fi
+          printf '%s\n' 'CAP192_NOT_FLASHABLE' 'RUNTIME_NOT_QUALIFIED' > bundle-cap192/NOT_FLASHABLE.txt
+      - name: Apply DIAG overlay to mutable CI checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag-staged
+          python3 repo/firmware/slzb-06p7/ti832/g5/diag_overlay.py --sdk sdk --examples examples --g5 repo/firmware/slzb-06p7/ti832/g5 --out diag-staged | tee diag-staged/apply.log
+          git -C sdk diff --stat HEAD | tee diag-staged/sdk-diff-stat.txt
+          git -C examples diff --stat HEAD | tee diag-staged/examples-diff-stat.txt
+          grep -rn 'P7DIAG:' sdk/source/ti/zstack/startup/main.c sdk/source/ti/zstack/stack/zdo/zd_app.c sdk/source/ti/zstack/mt/mt_zdo.c sdk/source/ti/zstack/mt/mt_task.c sdk/source/ti/zstack/npi/npi_task.c sdk/source/ti/zstack/npi/npi_tl_uart.c sdk/source/ti/zstack/npi/npi_frame_mt.c | tee diag-staged/callsite-grep.txt
+          test "$(grep -c 'P7DIAG:' diag-staged/callsite-grep.txt)" -ge 18
+          printf '%s\n' 'DIAG_NOT_FLASHABLE' 'ENDPOINT_0xF0_DISABLED' > diag-staged/NOT_FLASHABLE.txt
+      - name: Build CAP192+DIAG (CAP192 tree + crashdiag callsites)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ccs-workspace-diag bundle-diag
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-diag" -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" 2>&1 | tee build-evidence/ccs-diag-register.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          grep -F 'p7_crashdiag.c' "$SPEC"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-diag" -application com.ti.ccstudio.apps.projectCreate -ccs.projectSpec "$SPEC" -ccs.overwrite 2>&1 | tee build-evidence/ccs-diag-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-diag" -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang -ccs.configuration default 2>&1 | tee build-evidence/ccs-diag-build.log
+          if grep -E 'error:|^ERROR:' build-evidence/ccs-diag-build.log; then echo "::error::DIAG build error"; exit 1; fi
+          OUT=$(find ccs-workspace-diag -type f -name '*.out' -print -quit); MAP=$(find ccs-workspace-diag -type f -name '*.map' -print -quit)
+          test -s "$OUT" && test -s "$MAP"
+          cp "$OUT" bundle-diag/DIAG-NOT-FLASHABLE.out; cp "$MAP" bundle-diag/DIAG-NOT-FLASHABLE.map
+          "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-diag/DIAG-symbols.txt || true
+          "$(dirname "$TIARMCLANG")/tiarmobjdump" -d "$OUT" > bundle-diag/DIAG-disassembly.txt || true
+          "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-diag/DIAG-NOT-FLASHABLE.hex
+          grep -E 'p7_diag_(record|record_isr|seal_retained|init|snapshot)' bundle-diag/DIAG-symbols.txt | tee bundle-diag/diag-symbol-evidence.txt
+          if grep -E 'p7_diag_record' bundle-base/BASE-symbols.txt; then echo "::error::diag symbols leaked into BASE"; exit 1; fi
+          if grep -E 'p7_diag_preempt_hook' bundle-diag/DIAG-symbols.txt; then echo "::error::CR8 test hook linked into DIAG firmware"; exit 1; fi
+          if grep -E '__atomic_(load|store|fetch|exchange|compare)' bundle-diag/DIAG-symbols.txt; then echo "::error::CR8 libatomic call linked into DIAG (must be lock-free M4F atomics)"; exit 1; fi
+          echo "CR8_HOOK_ABSENT_AND_ATOMICS_LOCKFREE_OK" | tee bundle-diag/cr8-evidence.txt
+          printf '%s\n' 'DIAG_NOT_FLASHABLE' 'ENDPOINT_0xF0_DISABLED' 'RUNTIME_NOT_QUALIFIED' > bundle-diag/NOT_FLASHABLE.txt
+      - name: Compare BASE vs DIAG maps, symbols and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle-compare
+          python3 repo/firmware/slzb-06p7/ti832/g4/cap192_compare.py --base-map bundle-base/BASE-NOT-FLASHABLE.map --cand-map bundle-cap192/CAP192-NOT-FLASHABLE.map --base-elf bundle-base/BASE-NOT-FLASHABLE.out --cand-elf bundle-cap192/CAP192-NOT-FLASHABLE.out --out bundle-compare/BASE-VS-CAP192.json | tee bundle-compare/cap192-compare.log
+          python3 repo/firmware/slzb-06p7/ti832/g5/diag_build_compare.py --base-map bundle-base/BASE-NOT-FLASHABLE.map --diag-map bundle-diag/DIAG-NOT-FLASHABLE.map --base-symbols bundle-base/BASE-symbols.txt --diag-symbols bundle-diag/DIAG-symbols.txt --base-elf bundle-base/BASE-NOT-FLASHABLE.out --diag-elf bundle-diag/DIAG-NOT-FLASHABLE.out --out bundle-compare/BASE-VS-DIAG.json | tee bundle-compare/compare.log
+          cp diag-staged/DIAG-OVERLAY-MANIFEST.json diag-staged/callsite-grep.txt evidence/collision-evidence.txt evidence/mt-sys-f0-grep.txt evidence/herdsman-zstack-sys-handlers.txt evidence/herdsman-f0-grep.txt bundle-compare/ 2>/dev/null || true
+          cp build-evidence/compiler-version.txt bundle-compare/ || true
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path("bundle-compare/BASE-VS-CAP192.json").read_text())
+          assert c["flash_authorized"] is False and c["runtime_qualified"] is False
+          assert c["delta_candidate_minus_base"]["flash_nv_used"]==24576, c["delta_candidate_minus_base"]
+          assert c["heap_at_least_32kib"]["candidate"] is True and c["candidate"]["heap_span_bytes"]>=32768
+          print("CAP192_LINKED_GATE_OK", c["delta_candidate_minus_base"], c["candidate"]["heap_span_bytes"])
+          r=json.loads(Path("bundle-compare/BASE-VS-DIAG.json").read_text())
+          assert r["flash_authorized"] is False and r["runtime_qualified"] is False
+          assert len(r["diag_symbols_present"])==5 and len(r["base_symbols_absent"])==5
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"],"a") as f:
+              f.write("## P7 G5 BASE vs DIAG (linked evidence, NOT FLASHABLE)\n\n")
+              f.write(f"- delta (diag-base): {r['delta_diag_minus_base']}\n")
+              f.write(f"- ELF size delta: {r['elf_size_bytes']['delta']} bytes\n")
+              f.write("- Runtime/hardware: NOT qualified. Endpoint 0xF0: DISABLED.\n")
+          print("BASE_VS_DIAG_LINKED_OK", r["delta_diag_minus_base"])
+          PY
+          printf '%s\n' 'NOT_FLASHABLE' 'LINKED_EVIDENCE_ONLY' > bundle-compare/NOT_FLASHABLE.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: p7-g5-BASE-NOT-FLASHABLE, path: bundle-base/, retention-days: 30, if-no-files-found: error}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: p7-g4-CAP192-NOT-FLASHABLE, path: bundle-cap192/, retention-days: 30, if-no-files-found: error}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: p7-g4-CAP192DIAG-NOT-FLASHABLE, path: bundle-diag/, retention-days: 30, if-no-files-found: error}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: p7-g5-BASE-VS-DIAG-EVIDENCE, path: bundle-compare/, retention-days: 30, if-no-files-found: error}
+      - name: Preserve failure logs only (no firmware)
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-g5-native-FAILED-LOGS-ONLY
+          path: |
+            build-evidence/*.log
+            diag-staged/*.txt
+            diag-staged/*.log
+          retention-days: 7
+          if-no-files-found: warn
