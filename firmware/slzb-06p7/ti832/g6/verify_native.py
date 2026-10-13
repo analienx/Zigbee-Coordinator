@@ -40,7 +40,8 @@ def verify(base,cand,profile):
     if not clocks:raise ValueError("LINKED_CLOCK_API_MISSING")
     dis=(cand/"DIAG-disassembly.txt").read_text()
     body=re.search(r'<p7_g6_now>:(.*?)(?=^\s*[0-9a-fA-F]+\s+<|\Z)',dis,re.S|re.M)
-    if not body or not any("<"+clock+">" in body.group(1) for clock in clocks):
+    if not body or not any(re.search(r'\b(?:b(?:\.[wn])?|bl(?:\.w)?|blx)\s+[^\n]*<'+
+            re.escape(clock)+r'>',body.group(1)) for clock in clocks):
         raise ValueError("G6_GETTER_CLOCK_CALL_NOT_PROVEN")
     if "p7_diag_preempt_hook" in syms or any(s.startswith("__atomic_") for s in syms):
         raise ValueError("TEST_HOOK_OR_LIBATOMIC_LINKED")
