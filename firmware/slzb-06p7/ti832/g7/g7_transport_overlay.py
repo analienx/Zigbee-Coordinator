@@ -96,8 +96,8 @@ def patch(texts):
                          "g7_submit_" + rel)
         source += f"\np7_submit_result_t {getter}(void) {{ return {state}; }}\n"
         out[rel] = source
-    /* The pinned TI write callback ignores status and the completed byte
-     * count. An error/short callback must not grant another queued write. */
+    # The pinned TI write callback ignores status and the completed byte
+    # count. An error/short callback must not grant another queued write.
     source = out[UART]
     callback = function(source, "NPITLUART_writeCallBack")
     if "npiTransmitCB(0,TransportTxLen);" not in callback:
