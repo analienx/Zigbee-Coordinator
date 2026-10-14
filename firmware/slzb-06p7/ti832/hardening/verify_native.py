@@ -12,13 +12,17 @@ from verify_composed_native import function_body, verify_source as verify_f07
 from runtime_overlay import function
 from security_overlay import SEC,ZDO,MAC
 from nv_overlay import SOURCE as NV
+from startup_overlay import SYS,BDB
 
 EDGES={"ZMacDataReqSec":"p7_security_persistence_ok",
        "ZDOInitDeviceEx":"p7_security_persistence_ok",
        "ZDApp_NetworkStartEvt":"p7_security_persistence_ok",
        "ZDApp_SaveNwkKey":"p7_security_latch_failure",
        "ZDSecMgrInitNVKeyTables":"p7_security_persistence_ok",
-       "p7_security_persistence_ok":"p7_nv_persistence_ok"}
+       "p7_security_persistence_ok":"p7_nv_persistence_ok",
+       "zgInit":"p7_security_latch_failure",
+       "bdb_StartCommissioning":"p7_security_persistence_ok",
+       "bdb_setNodeIsOnANetwork":"p7_security_persistence_ok"}
 
 def verify_source(sdk:Path):
     sec,zdo,mac,nv=((sdk/p).read_text() for p in (SEC,ZDO,MAC,NV))
@@ -41,7 +45,17 @@ def verify_source(sdk:Path):
         raise ValueError("RESTORED_KEY_TABLE_VALIDATION_AFTER_CREATION")
     if function(nv,"NVOCMP_initNvApi").index("p7_nv_precheck()")>function(nv,"NVOCMP_initNvApi").index("NVOCMP_initNv(&"):
         raise ValueError("NV_PRECHECK_AFTER_POSSIBLE_MUTATION")
-    return {p:hashlib.sha256((sdk/p).read_bytes()).hexdigest() for p in (SEC,ZDO,MAC,NV)}
+    sys,bdb=((sdk/p).read_text() for p in (SYS,BDB))
+    init=function(sys,"zgInit")
+    if not init.index("osal_nv_item_len(ZCD_NV_NIB)")<init.index("status = osal_nv_item_init(ZCD_NV_BDBNODEISONANETWORK"):
+        raise ValueError("LOST_BDB_MARKER_DEFAULTED_BEFORE_CHECK")
+    setter=function(bdb,"bdb_setNodeIsOnANetwork")
+    if not setter.index("osal_nv_write(")<setter.index("osal_nv_read(")<setter.index("bdbAttributes.bdbNodeIsOnANetwork = isOnANetwork;"):
+        raise ValueError("BDB_MARKER_PUBLISHED_BEFORE_COMMIT")
+    commissioning=function(bdb,"bdb_StartCommissioning")
+    if "if (!p7_security_persistence_ok()) return;\n      bdb_setNodeIsOnANetwork(FALSE);" not in commissioning:
+        raise ValueError("BDB_DEFAULTS_NETWORK_AFTER_RESTORE_FAULT")
+    return {p:hashlib.sha256((sdk/p).read_bytes()).hexdigest() for p in (SEC,ZDO,MAC,NV,SYS,BDB)}
 
 def verify(candidate:Path,sdk:Path):
     sources=verify_source(sdk)

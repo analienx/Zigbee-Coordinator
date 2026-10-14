@@ -105,6 +105,12 @@ or deployment tooling. Baseline source is feature commit
   request handlers now release an unqueued message when appID validation fails.
   Missing-association responses also initialize all bytes before returning their
   existing fixed-size structure.
+- **P1: BDB cleanup could erase the network marker after a protected restore
+  failure.** Commissioning now observes the existing persistence latch before
+  clearing that marker. Startup checks an existing NIB's missing/wrong-sized
+  marker before creating defaults, and checks marker initialization failures.
+  Marker writes/readback complete before RAM state changes. Blank provisioning,
+  explicit network/config defaults and normal restore remain supported.
 
 `test_runtime.py` compiles actual pinned function bodies and actual NV callback
 types. Eight original-source cases fail and the same eight patched cases pass
@@ -156,6 +162,11 @@ fails the negative cases; ordinary controls pass both. Dispatcher boundary tests
 substitute leaf calls to check that malformed packets cannot reach them; the
 reset test uses its actual handler and reproduces the short-packet read under
 ASan. Native builds compile the complete handlers with the guards in place.
+`test_startup_marker.py` compiles actual `zgInit`, commissioning and marker setter
+functions with SDK BDB structures for 13 coordinator cases per version. The old
+source fails lost-marker, failed initialization/restore/read/write/readback and
+sticky-fault cases. Fresh/default/normal controls pass both. Source ordering and
+native call-edge checks cover the added BDB guards.
 
 ## Coverage still being worked through
 
