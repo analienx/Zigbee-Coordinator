@@ -90,6 +90,7 @@ jobs:
           python3 tests/p7-f07-host/test_f07_counter_escrow.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_nwk_checkpoint.py --sdk ../sdk
           python3 tests/p7-f07-host/test_g7_f07_integration.py --sdk ../sdk
+          python3 tests/p7-runtime-host/test_runtime.py --sdk ../sdk --out /tmp/p7-runtime-host
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
@@ -209,6 +210,9 @@ jobs:
           git -C examples diff --stat HEAD | tee diag-staged/examples-diff-stat.txt
           grep -rn 'P7DIAG:' sdk/source/ti/zstack/startup/main.c sdk/source/ti/zstack/stack/zdo/zd_app.c sdk/source/ti/zstack/mt/mt_zdo.c sdk/source/ti/zstack/mt/mt_task.c sdk/source/ti/zstack/npi/npi_task.c sdk/source/ti/zstack/npi/npi_tl_uart.c sdk/source/ti/zstack/npi/npi_frame_mt.c | tee diag-staged/callsite-grep.txt
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_composition.py --sdk sdk | tee diag-staged/G7-COMPOSITION.json
+
+          python3 repo/firmware/slzb-06p7/ti832/hardening/runtime_overlay.py \
+            --sdk sdk --out diag-staged
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_nib_gate.py \
             --sdk sdk --out diag-staged/F07-NIB-SLICE1-SOURCE-ONLY.json
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_restore_guard.py \
@@ -315,6 +319,7 @@ jobs:
           cp diag-staged/F07-RESTORE-SLICE2-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/F07-COUNTER-ESCROW-SLICE3-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/F07-NWK-CHECKPOINT-SLICE4-SOURCE-ONLY.json bundle-compare/
+          cp diag-staged/RUNTIME-HARDENING-SOURCE.json bundle-compare/
           if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
           fi

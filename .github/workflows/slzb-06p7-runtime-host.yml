@@ -1,0 +1,32 @@
+name: P7 runtime NV and AF memory regressions (NO DEVICE)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7/ti832/hardening/**'
+      - 'tests/p7-runtime-host/**'
+      - '.github/workflows/slzb-06p7-runtime-host.yml'
+      - '.github/workflows/slzb-06p7-g7-f07-integration-native.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime-sanitizers:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+          sparse-checkout: |
+            source/ti/zstack
+            source/ti/common/nv
+      - name: Compile genuine source and reject NV failures and AF heap faults
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = '6499c3f53fc5fb5806213be695450a7b43fbaf3d'
+          python3 tests/p7-runtime-host/test_runtime.py --sdk sdk --out /tmp/p7-runtime-host
