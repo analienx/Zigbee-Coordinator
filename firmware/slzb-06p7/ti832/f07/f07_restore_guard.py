@@ -27,8 +27,8 @@ static uint8_t p7_f07_nv_restore_preflight(void)
     nwkIB_t *copy;
     uint8_t readable;
     if (pZStackCfg == NULL ||
-        pZStackCfg->nvFps.getItemLen == NULL ||
-        pZStackCfg->nvFps.readItem == NULL)
+        pZStackCfg->nvFps.getItemLen == 0 ||
+        pZStackCfg->nvFps.readItem == 0)
     {
         return FALSE;
     }
