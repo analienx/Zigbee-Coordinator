@@ -62,17 +62,19 @@ bad = bytearray(image); struct.pack_into("<I", bad, 4, 0x100)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
 
 
-def chunk(address, payload):
-    return struct.pack(">III", address, len(payload), zlib.crc32(payload) & 0xffffffff) + payload
+def package(rows, prefix=b""):
+    heads = [struct.pack(">III", address, len(payload), zlib.crc32(payload) & 0xffffffff) for address, payload in rows]
+    return prefix + b"SLZB" + b"".join(heads) + b"".join(data for _, data in rows)
 
 
 app = bytes(image[:0x200])
-container = b"SLZB" + chunk(0, app) + chunk(CCFG_START, bytes(image[CCFG_START:]))
+container = package([(0, app), (CCFG_START, bytes(image[CCFG_START:]))])
 wrapped = slzb_container(container, header, "SLZB-06P7U")
 assert wrapped["ccfg"]["sha256"] == parsed["ccfg"]["sha256"] and wrapped["nv2_addresses_present"] == 0
 assert wrapped["source_bytes_consumed"] == len(container)
-assert slzb_container(b"\x01\x03" + container, header, "SLZB-06P7U")["opaque_prefix"] == "0103_opaque"
-assert slzb_container(b"SLZB" + chunk(0, app), header, "SLZB-06P7U")["ccfg"] is None
+new = package([(0, app[:0x100]), (0x100, app[0x100:]), (CCFG_START, bytes(image[CCFG_START:]))], b"\x01\x03")
+assert slzb_container(new, header, "SLZB-06P7U")["opaque_prefix"] == "0103_opaque"
+assert slzb_container(package([(0, app)]), header, "SLZB-06P7U")["ccfg"] is None
 
 
 def container_rejects(blob, reason):
@@ -81,14 +83,15 @@ def container_rejects(blob, reason):
     else: raise AssertionError("accepted " + reason)
 
 
-bad = bytearray(container); bad[16] ^= 1
+bad = bytearray(container); bad[28] ^= 1
 container_rejects(bytes(bad), "CONTAINER_CRC_MISMATCH")
-container_rejects(container[:-1], "TRUNCATED_CONTAINER_PAYLOAD")
-container_rejects(container + b"x", "TRUNCATED_OR_EXCESS_CONTAINER_RECORDS")
-container_rejects(container + chunk(0, app), "CONTAINER_OVERLAPPING_LOAD_BYTES")
-container_rejects(b"SLZB" + chunk(FLASH_END, b"x"), "CONTAINER_RANGE_OUTSIDE_P7_FLASH")
+container_rejects(container[:-1], "INVALID_CONTAINER_TABLE_OR_PAYLOAD_LENGTH")
+container_rejects(container + b"x", "INVALID_CONTAINER_TABLE_OR_PAYLOAD_LENGTH")
+container_rejects(package([(0, app), (0, app)]), "CONTAINER_OVERLAPPING_LOAD_BYTES")
+container_rejects(package([(FLASH_END, b"x")]), "CONTAINER_RANGE_OUTSIDE_P7_FLASH")
 container_rejects(b"\x02\x03" + container, "UNKNOWN_SLZB_CONTAINER_HEADER")
-container_rejects(b"SLZB" + chunk(CCFG_START, bytes(image[CCFG_START:])), "CONTAINER_VECTOR_BYTES_MISSING")
+container_rejects(package([(CCFG_START, bytes(image[CCFG_START:]))]), "CONTAINER_VECTOR_BYTES_MISSING")
+container_rejects(b"\x01\x03" + container, "INVALID_CONTAINER_TABLE_OR_PAYLOAD_LENGTH")
 print("PASS observed SLZB container CRC/range/completeness/overlap/opaque-prefix negatives; console protocol unqualified")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 1)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")

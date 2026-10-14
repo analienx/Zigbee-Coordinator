@@ -24,7 +24,10 @@ itself; the P7 family selection is bound to the manufacturer catalog.
 
 Hosted acquisition at9bd1963 recorded both hashes and actual lengths273894 and
 172356bytes. Both start with SLZB container markers, not ARM vectors. Offline
-interpretation uses observed big-endian address/size/CRC32 records, requires
+interpretation uses an observed big-endian address/size/CRC32 descriptor table
+followed by the segment payloads; an initial interleaved-record hypothesis
+failed real CRCs and was discarded. Legacy table count requires a unique full
+length resolution; the observed0103 form requires exactly three descriptors. It requires
 every CRC and byte extent, rejects overlap/out-of-range/trailing/truncated data,
 and preserves the newer opaque01/03 prefix without guessing its semantics.
 This inferred container structure is not an authoritative console parser or

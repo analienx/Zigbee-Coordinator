@@ -5,16 +5,15 @@ import struct
 import sys
 import zlib
 from pathlib import Path
+from compare_vendor_ccfg import container_layout
 
 for name in sys.argv[1:]:
     raw = Path(name).read_bytes()
-    cursor = 6 if raw.startswith(b"\x01\x03SLZB") else 4 if raw.startswith(b"SLZB") else 0
+    cursor, table, prefix = container_layout(raw)
     rows = []
-    while cursor and cursor + 12 <= len(raw) and len(rows) < 8:
-        address, size, field = struct.unpack_from(">III", raw, cursor)
-        cursor += 12
+    for address, size, field in table:
         if not size or cursor + size > len(raw):
-            rows.append({"offset": cursor - 12, "address": address, "size": size, "field": f"0x{field:08x}", "bounded": False})
+            rows.append({"address": address, "size": size, "field": f"0x{field:08x}", "bounded": False})
             break
         data = raw[cursor:cursor + size]
         crc = zlib.crc32(data) & 0xffffffff

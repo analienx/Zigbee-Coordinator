@@ -91,25 +91,37 @@ def vendor_bin(blob, header, model, base):
             "installed_content_verified": False, "flash_authorized": False}
 
 
+def container_layout(blob):
+    """Resolve one complete descriptor table; never guess missing bytes."""
+    if blob.startswith(b"SLZB"):
+        marker, prefix, counts = 4, "none", range(1, 65)
+    elif blob.startswith(b"\x01\x03SLZB"):
+        marker, prefix, counts = 6, "0103_opaque", [3]
+    else:
+        raise ValueError("UNKNOWN_SLZB_CONTAINER_HEADER")
+    layouts = []
+    for count in counts:
+        end = marker + count * 12
+        if end > len(blob):
+            continue
+        rows = [struct.unpack_from(">III", blob, marker + i * 12) for i in range(count)]
+        if all(0 < size <= FLASH_END for _, size, _ in rows) and end + sum(r[1] for r in rows) == len(blob):
+            layouts.append((end, rows, prefix))
+    need(len(layouts) == 1, "INVALID_CONTAINER_TABLE_OR_PAYLOAD_LENGTH")
+    return layouts[0]
+
+
 def slzb_container(blob, header, model):
-    """Observed manufacturer records: big-endian address/size/CRC32 + bytes.
+    """Observed manufacturer descriptor table, followed by segment payloads.
 
     20240316 begins SLZB. 20260311 adds observed opaque prefix01/03 before SLZB.
     Prefix semantics are not inferred. Every byte/record CRC must validate.
     This is offline format inference, not proof of console erase/write behavior.
     """
     need(model == "SLZB-06P7U", "WRONG_VENDOR_MODEL")
-    if blob.startswith(b"SLZB"):
-        cursor, prefix = 4, "none"
-    elif blob.startswith(b"\x01\x03SLZB"):
-        cursor, prefix = 6, "0103_opaque"
-    else:
-        raise ValueError("UNKNOWN_SLZB_CONTAINER_HEADER")
+    cursor, table, prefix = container_layout(blob)
     memory, chunks = {}, []
-    while cursor < len(blob):
-        need(len(chunks) < 64 and cursor + 12 <= len(blob), "TRUNCATED_OR_EXCESS_CONTAINER_RECORDS")
-        address, size, crc = struct.unpack_from(">III", blob, cursor)
-        cursor += 12
+    for address, size, crc in table:
         need(size > 0 and address + size <= FLASH_END, "CONTAINER_RANGE_OUTSIDE_P7_FLASH")
         need(cursor + size <= len(blob), "TRUNCATED_CONTAINER_PAYLOAD")
         payload = blob[cursor:cursor + size]
@@ -131,7 +143,7 @@ def slzb_container(blob, header, model):
     ccfg = decode_ccfg(bytes(memory[a] for a in range(CCFG_START, FLASH_END)), header) if ccfg_count == 88 else None
     nv2 = [v for a, v in memory.items() if 0xaa000 <= a < 0xae000]
     nv5 = [v for a, v in memory.items() if 0xa4000 <= a < 0xae000]
-    return {"format": "SLZB_ADDRESS_SIZE_CRC32_RECORDS", "opaque_prefix": prefix,
+    return {"format": "SLZB_DESCRIPTOR_TABLE_CRC32_SEGMENTS", "opaque_prefix": prefix,
             "format_authority": "OBSERVED_STRUCTURE_ALL_RECORD_CRCS_VALIDATED",
             "console_parser_proven": False, "sha256": digest(blob), "bytes": len(blob),
             "initialized_address_count": len(memory), "source_bytes_consumed": cursor,
