@@ -15,6 +15,7 @@ from pathlib import Path
 GUARDS = {
     "ZDApp_NetworkStartEvt": "p7_f07_commit_nib_before_ready",
     "ZDOInitDeviceEx": "p7_f07_nv_restore_preflight",
+    "ZDApp_RestoreNetworkState": "p7_f07_nwk_counter_escrow",
 }
 SRC_RESTORED = "networkStateNV = ZDApp_RestoreNetworkState();"
 SRC_CHECK = "if (networkStateNV != ZDO_INITDEV_RESTORED_NETWORK_STATE)"
@@ -34,6 +35,8 @@ def verify_source(text: str) -> dict:
     required = (
         "p7_f07_commit_nib_before_ready",
         "p7_f07_nv_restore_preflight",
+        "p7_f07_nwk_counter_escrow",
+        "pZStackCfg->nvFps.updateItem(id, sizeof(selected), &selected) != NVINTF_SUCCESS",
         "pZStackCfg->nvFps.updateItem(id, sizeof(nwkIB_t), &_NIB) == NVINTF_SUCCESS",
         "pZStackCfg->nvFps.readItem(id, 0, sizeof(nwkIB_t), readback) == NVINTF_SUCCESS",
         "pZStackCfg->nvFps.readItem(id, 0, sizeof(nwkIB_t), copy) == NVINTF_SUCCESS",
@@ -48,6 +51,8 @@ def verify_source(text: str) -> dict:
         raise ValueError("F07_NIB_GUARD_CALLSITE_AMBIGUOUS")
     if text.count("p7_f07_nv_restore_preflight(") != 2:
         raise ValueError("F07_RESTORE_GUARD_CALLSITE_AMBIGUOUS")
+    if text.count("p7_f07_nwk_counter_escrow(") != 2:
+        raise ValueError("F07_COUNTER_ESCROW_CALLSITE_AMBIGUOUS")
     start = text.index("uint8_t ZDOInitDeviceEx( uint16_t startDelay, uint8_t mode)\n{")
     ready = text.index("void ZDApp_NetworkStartEvt( void )\n{")
     start_text = text[start:ready]
@@ -69,7 +74,14 @@ def verify_source(text: str) -> dict:
             < ready_text.index("ZDApp_NwkWriteNVRequest();")
             < ready_text.index("ZDApp_ChangeState( DEV_ZB_COORD );")):
         raise ValueError("F07_READY_BEFORE_NIB_GUARD")
-    return {"restoration_guard_precedes_restore_and_touchlink": True,
+    restore_key = text.index("uint8_t ZDApp_RestoreNetworkState( void )\n{")
+    restore_key_end = text.index("#endif // NV_RESTORE", restore_key)
+    key_body = text[restore_key:restore_key_end]
+    if not (key_body.index("if (!p7_f07_nwk_counter_escrow()")
+            < key_body.index("return ( ZDO_INITDEV_RESTORED_NETWORK_STATE );")):
+        raise ValueError("F07_COUNTER_ESCROW_AFTER_RESTORE_READY")
+    return {"nwk_counter_escrow_precedes_network_restore": True,
+            "restoration_guard_precedes_restore_and_touchlink": True,
             "no_implicit_network_clear_on_failed_restore": True,
             "coordinator_ready_preceded_by_nib_commit": True,
             "raw_nv_success_only": True,
