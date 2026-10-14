@@ -1,0 +1,26 @@
+name: P7U preflash backup and security inventory host (NO FLASH)
+on:
+  push:
+    branches: ['feat/p7u-preflash-backup-gate-*']
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7u-backup-preflight.yml'
+      - 'firmware/slzb-06p7u/qualification/**'
+      - 'tests/p7u-backup-gate/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backup-negative-controls:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Confirm strict Python source and synthetic-only inventory gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile firmware/slzb-06p7u/qualification/verify_z2m_backup.py
+          python3 tests/p7u-backup-gate/test_backup_gate.py
+          echo "BACKUP_INVENTORY_GATE_PASSED_BUT_NEVER_FLASH_AUTHORIZED"
