@@ -37,9 +37,9 @@ static uint8_t p7_f07_commit_nib_before_ready(void)
      * A valid item/readback alone is therefore not proof of a write.
      */
     if (pZStackCfg == NULL ||
-        pZStackCfg->nvFps.getItemLen == NULL ||
-        pZStackCfg->nvFps.updateItem == NULL ||
-        pZStackCfg->nvFps.readItem == NULL)
+        pZStackCfg->nvFps.getItemLen == 0 ||
+        pZStackCfg->nvFps.updateItem == 0 ||
+        pZStackCfg->nvFps.readItem == 0)
     {
         return FALSE;
     }
