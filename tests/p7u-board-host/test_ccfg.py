@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Hosted genuine-header CCFG interpretation and wrong-image negatives."""
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -15,11 +16,16 @@ image = bytearray(b"\xff" * FLASH_END)
 struct.pack_into("<II", image, 0, 0x20024000, 0x101)
 struct.pack_into("<I", image, CCFG_START + offsets["BL_CONFIG"], 0xc5ff0fc5)
 struct.pack_into("<I", image, CCFG_START + offsets["IEEE_MAC_0"], 0x12345678)
+struct.pack_into("<I", image, CCFG_START + offsets["MODE_CONF_1"], 0x11223344)
+struct.pack_into("<I", image, CCFG_START + offsets["MODE_CONF"], 0x55667788)
 parsed = vendor_bin(bytes(image), header, "SLZB-06P7U", 0)
 assert parsed["ccfg"]["rom_bsl_enabled"] and parsed["ccfg"]["backdoor_enabled"]
 assert parsed["ccfg"]["backdoor_dio"] == 15 and parsed["ccfg"]["backdoor_level"] == 1
 assert parsed["nv2_non_ff_bytes"] == parsed["nv5_non_ff_bytes"] == 0
 assert "12345678" not in json.dumps(parsed)
+mask = int(re.search(r'^#define CCFG_MODE_CONF_1_XOSC_MAX_START_M\s+(0x\w+)', header, re.M)[1], 16)
+shift = int(re.search(r'^#define CCFG_MODE_CONF_1_XOSC_MAX_START_S\s+(\d+)', header, re.M)[1])
+assert parsed["ccfg"]["fields"]["MODE_CONF_1_XOSC_MAX_START"] == (0x11223344 & mask) >> shift
 candidate_ccfg = bytearray(image[CCFG_START:])
 struct.pack_into("<I", candidate_ccfg, offsets["BL_CONFIG"], 0x00ff00ff)
 different = {"ccfg": decode_ccfg(bytes(candidate_ccfg), header)}
@@ -42,6 +48,8 @@ rejects(bytes(image[:-88]), "SLZB-06P7U", 0, "FLAT_P7_BIN_NOT_COMPLETE_704KIB")
 bad = bytearray(image); struct.pack_into("<I", bad, 0, 0x20024008)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_INITIAL_STACK_POINTER")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 0x100)
+rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
+bad = bytearray(image); struct.pack_into("<I", bad, 4, 1)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 0xaffa9)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")

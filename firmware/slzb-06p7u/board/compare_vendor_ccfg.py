@@ -47,6 +47,10 @@ def decode_ccfg(blob, header):
         if name in PRIVATE_WORDS:
             continue
         for field, mask in re.findall(r'^#define CCFG_' + name + r'_(\w+)_M\s+(0x[0-9a-fA-F]+)\s*$', header, re.M):
+            full = name + "_" + field
+            owners = [r for r in values if full.startswith(r + "_")]
+            if max(owners, key=len) != name:
+                continue  # MODE_CONF must not decode MODE_CONF_1's fields.
             shifts = re.findall(r'^#define CCFG_' + name + '_' + field + r'_S\s+(\d+)\s*$', header, re.M)
             need(len(shifts) == 1, "CCFG_FIELD_SHIFT_" + name + "_" + field)
             fields[name + "_" + field] = (value & int(mask, 16)) >> int(shifts[0])
@@ -69,7 +73,7 @@ def vendor_bin(blob, header, model, base):
     need(len(blob) == FLASH_END, "FLAT_P7_BIN_NOT_COMPLETE_704KIB")
     sp, reset = struct.unpack_from("<II", blob)
     need(0x20000000 <= sp <= 0x20024000 and sp % 8 == 0, "INVALID_INITIAL_STACK_POINTER")
-    need(reset & 1 and (reset & ~1) < 0xa4000, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
+    need(reset & 1 and 8 <= (reset & ~1) < 0xaa000, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
     ccfg = decode_ccfg(blob[CCFG_START:FLASH_END], header)
     return {"sha256": digest(blob), "bytes": len(blob), "base": base,
             "initial_sp": f"0x{sp:x}", "reset_thumb": f"0x{reset:x}", "ccfg": ccfg,
