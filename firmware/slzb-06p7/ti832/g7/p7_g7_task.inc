@@ -16,7 +16,7 @@ typedef struct {
 } p7_g7_lane_t;
 typedef struct {
     uint32_t queued[2], submitted[2], ambiguous, rejected, dropped;
-    uint32_t invalid, full, timer_fault, transport_fault;
+    uint32_t invalid, full, timer_fault, transport_fault, unexpected_outcome, completion_fault;
     uint8_t high_water[2];
 } p7_g7_counters_t;
 /* RAM counters only: submission is not host reception or physical TX idle. */
@@ -175,6 +175,14 @@ static void __attribute__((noinline)) p7_g7_service(void)
     npiServiceTaskEvents &= ~(NPITASK_TX_READY_EVENT | NPITASK_TRANSPORT_TX_DONE_EVENT | P7_G7_WAKE_EVENT);
     if (p7_g7_clock) ClockP_stop(p7_g7_clock);
     if (p7_g7_fault) { OsalPort_leaveCS(key); return; }
+    if (p7_g7_uart_completion_error()) {
+        /* A failed/short DMA callback is not successful delivery; never
+         * retransmit uncertain bytes. Retire task queues, keep RX alive. */
+        ++p7_g7_counters.completion_fault;
+        p7_g7_latch_transport_fault();
+        OsalPort_leaveCS(key);
+        return;
+    }
     if (NPITL_checkNpiBusy()) {
         if (!p7_g7_busy_seen) { p7_g7_busy_seen = 1; p7_g7_busy_tick = now; }
         if (p7_g7_elapsed(p7_g7_busy_tick, now, period)) {
@@ -230,7 +238,20 @@ static void __attribute__((noinline)) p7_g7_service(void)
             p7_g7_burst = p7_tx_accepted_burst(selected, p7_g7_burst);
             p7_g7_release_head(i, 0); /* transport owns its independent copy */
             if (NPITL_checkNpiBusy()) { p7_g7_busy_seen = 1; p7_g7_busy_tick = now; }
-        } else if (result != P7_SUBMIT_BUSY) p7_g7_release_head(i, 1);
+        } else {
+            /* Service selected while TL was idle under the SAME OSAL CS.
+             * BUSY, INVALID and unrecognized result values violate the
+             * transport contract. Do not retry, or silently discard and
+             * continue: an accepted DMA write may already own the TL copy.
+             * Freeze TX, preserve that copy, and keep RX operational. */
+            ++p7_g7_counters.unexpected_outcome;
+            p7_g7_latch_transport_fault();
+        }
+    }
+    if (p7_g7_fault) {
+        /* The one-shot was stopped at entry. A fault must not rearm it. */
+        OsalPort_leaveCS(key);
+        return;
     }
     /* Compute the next wake from absolute budgets, never from enqueue time.
      * With a pending UART copy monitor even when both task queues are empty. */

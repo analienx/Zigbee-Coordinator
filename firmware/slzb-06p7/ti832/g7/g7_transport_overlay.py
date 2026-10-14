@@ -96,4 +96,21 @@ def patch(texts):
                          "g7_submit_" + rel)
         source += f"\np7_submit_result_t {getter}(void) {{ return {state}; }}\n"
         out[rel] = source
+    # The pinned TI write callback ignores status and the completed byte
+    # count. An error/short callback must not grant another queued write.
+    source = out[UART]
+    callback = function(source, "NPITLUART_writeCallBack")
+    if "npiTransmitCB(0,TransportTxLen);" not in callback:
+        raise ValueError("G7_CALLBACK_PREDECESSOR_CHANGED")
+    updated = replace(callback, "    key = OsalPort_enterCS();\n",
+                      "    key = OsalPort_enterCS();\n"
+                      "    if (status != UART2_STATUS_SUCCESS || size != (size_t)TransportTxLen)\n"
+                      "        p7_g7_completion_error = 1; /* sticky, callback-owned */\n",
+                      "g7_callback_status_and_length")
+    source = replace(source, callback,
+                     "static volatile uint8_t p7_g7_completion_error;\n" + updated,
+                     "g7_callback_owner")
+    source += ("\nint p7_g7_uart_completion_error(void) "
+               "{ return p7_g7_completion_error != 0; }\n")
+    out[UART] = source
     return out
