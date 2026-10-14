@@ -111,15 +111,23 @@ or deployment tooling. Baseline source is feature commit
   marker before creating defaults, and checks marker initialization failures.
   Marker writes/readback complete before RAM state changes. Blank provisioning,
   explicit network/config defaults and normal restore remain supported.
+- **P1: ZDO parsing and serialization could overrun buffers.** Empty AF payloads
+  and truncated known ZDO formats are rejected before callbacks or parsing.
+  Counted lists are checked against the received payload. Generic and endpoint
+  sends check the existing 82-byte TX buffer; oversized MT indications are
+  rejected using wide arithmetic before allocation/copy. Empty address responses
+  initialize their fields. The endpoint scratch buffer now covers all byte-valued
+  endpoints (204 extra static bytes); match notifications use a wide allocation
+  size, and failed inbound-cluster allocations skip the correct wire bytes.
 
 `test_runtime.py` compiles actual pinned function bodies and actual NV callback
 types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
-All 22 checks passed at `e438d47`, including the two P7U integrated native builds,
+All 22 checks passed at `960b93e`, including the two P7U integrated native builds,
 the inherited native profiles, endpoint/packet/timer regressions and the
-diagnostic concurrency test. Subsequent MT dispatch changes require fresh native
-results.
+diagnostic concurrency test, MT dispatch guards and BDB marker fixes. Subsequent
+ZDO packet changes require fresh native results.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
@@ -167,6 +175,14 @@ functions with SDK BDB structures for 13 coordinator cases per version. The old
 source fails lost-marker, failed initialization/restore/read/write/readback and
 sticky-fault cases. Fresh/default/normal controls pass both. Source ordering and
 native call-edge checks cover the added BDB guards.
+`test_zdo_packets.py` compiles actual receive/send/callback/match/address functions
+with SDK packet/descriptor structures for 39 cases per version. These include
+empty/truncated/valid formats, list counts, fixed-buffer limits, MT length wrap,
+53/200 endpoints, a large match notification, failed cluster allocation and
+initialized address responses. The old source fails the negative cases under
+ASan/UBSan or response assertions. Receive tests substitute downstream consumers
+to verify that rejection happens before they are called; they do not claim a
+complete vendor RF-stack simulation.
 
 ## Coverage still being worked through
 

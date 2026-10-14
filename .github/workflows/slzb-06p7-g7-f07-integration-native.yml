@@ -103,6 +103,7 @@ jobs:
           python3 tests/p7-runtime-host/test_osal_timers.py --sdk ../sdk --out /tmp/p7-osal-timer-host
           python3 tests/p7-runtime-host/test_mt_bounds.py --sdk ../sdk --out /tmp/p7-mt-bounds-host
           python3 tests/p7-runtime-host/test_startup_marker.py --sdk ../sdk --out /tmp/p7-startup-marker-host
+          python3 tests/p7-runtime-host/test_zdo_packets.py --sdk ../sdk --out /tmp/p7-zdo-packet-host
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
@@ -247,6 +248,8 @@ jobs:
             --sdk sdk --out diag-staged
           python3 repo/firmware/slzb-06p7/ti832/hardening/startup_overlay.py \
             --sdk sdk --out diag-staged
+          python3 repo/firmware/slzb-06p7/ti832/hardening/zdo_overlay.py \
+            --sdk sdk --out diag-staged
           test "$(grep -Fc 'p7_f07_commit_nib_before_ready' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           test "$(grep -Fc 'p7_f07_nv_restore_preflight' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           test "$(grep -Fc 'p7_f07_nwk_counter_escrow' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
@@ -350,6 +353,7 @@ jobs:
           cp diag-staged/OSAL-HARDENING-SOURCE.json bundle-compare/
           cp diag-staged/MT-HARDENING-SOURCE.json bundle-compare/
           cp diag-staged/STARTUP-HARDENING-SOURCE.json bundle-compare/
+          cp diag-staged/ZDO-HARDENING-SOURCE.json bundle-compare/
           if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
           fi

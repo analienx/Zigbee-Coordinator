@@ -13,6 +13,7 @@ from runtime_overlay import function
 from security_overlay import SEC,ZDO,MAC
 from nv_overlay import SOURCE as NV
 from startup_overlay import SYS,BDB
+from zdo_overlay import PROFILE
 
 EDGES={"ZMacDataReqSec":"p7_security_persistence_ok",
        "ZDOInitDeviceEx":"p7_security_persistence_ok",
@@ -55,7 +56,10 @@ def verify_source(sdk:Path):
     commissioning=function(bdb,"bdb_StartCommissioning")
     if "if (!p7_security_persistence_ok()) return;\n      bdb_setNodeIsOnANetwork(FALSE);" not in commissioning:
         raise ValueError("BDB_DEFAULTS_NETWORK_AFTER_RESTORE_FAULT")
-    return {p:hashlib.sha256((sdk/p).read_bytes()).hexdigest() for p in (SEC,ZDO,MAC,NV,SYS,BDB)}
+    incoming=function((sdk/PROFILE).read_text(),"ZDP_IncomingData")
+    if not incoming.index("p7_zdo_payload_ok(")<incoming.index("inMsg.asduLen =")<incoming.index("ZDO_SendMsgCBs("):
+        raise ValueError("ZDO_PACKET_VALIDATION_AFTER_CALLBACKS")
+    return {p:hashlib.sha256((sdk/p).read_bytes()).hexdigest() for p in (SEC,ZDO,MAC,NV,SYS,BDB,PROFILE)}
 
 def verify(candidate:Path,sdk:Path):
     sources=verify_source(sdk)
