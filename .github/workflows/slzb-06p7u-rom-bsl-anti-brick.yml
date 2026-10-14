@@ -20,6 +20,6 @@ jobs:
       - name: Reject any HEX containing dangerous CCFG, lost ROM BSL or NV writes
         run: |
           set -euo pipefail
-          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rom_bsl_image_gate.py tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rom_bsl_image_gate.py firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
           python3 tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
           echo "NO_DEVICE_NO_FLASH_NO_KEY_OR_NV_ACCESS"
