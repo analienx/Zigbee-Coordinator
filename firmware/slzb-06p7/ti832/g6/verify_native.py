@@ -5,6 +5,8 @@ TI=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(TI/"g2")); import validate_elf_hex as stock
 sys.path.insert(0,str(TI/"g3")); import nv5_verify_linked as nv5
 sys.path.insert(0,str(TI/"g5")); import diag_build_compare as maps
+P7U=Path(__file__).resolve().parents[3]/"slzb-06p7u"/"ti832"
+sys.path.insert(0,str(P7U)); import p7u_stock_ccfg as p7u
 
 def verify(base,cand,profile):
     be=(base/"BASE-NOT-FLASHABLE.out").read_bytes()
@@ -44,7 +46,12 @@ def verify(base,cand,profile):
         nv_base,nv_size=0xaa000,0x4000
     br=bytes(bmem[a] for a in range(0xaffa8,0xb0000))
     cr=bytes(cmem[a] for a in range(0xaffa8,0xb0000))
-    if cr!=br:raise ValueError("CCFG_CHANGED")
+    if profile=="p7u-stock":
+        binding=json.loads((P7U.parent/"board"/"stock-20240710-ccfg-binding.json").read_text())
+        vendor_ccfg=p7u.validate_linked_ccfg(br,cr,binding)
+    else:
+        if cr!=br:raise ValueError("CCFG_CHANGED")
+        vendor_ccfg=None
     if any(nv_base<=a<0xae000 for a in cmem):raise ValueError("NV_IMAGE_WRITE")
     required={"p7_g6_now","p7_g6_record","p7_g6_response","p7_g6_rx_resync", "p7_g6_reset_parser",
               "p7_g6_discard_ring","p7_g6_discard_tl"}
@@ -66,14 +73,15 @@ def verify(base,cand,profile):
     return {"profile":profile,"qualification":"G6_SOURCE_AND_NATIVE_ONLY_NOT_FLASHABLE",
         "flash_authorized":False,"hardware_qualified":False,"runtime_qualified":False,
         "base_audit":base_audit,"candidate_audit":audit,"nv_base":nv_base,"nv_size":nv_size,
-        "nv_initialized_bytes":0,"ccfg_equal":True,"ccfg_sha256":hashlib.sha256(cr).hexdigest(),
+        "nv_initialized_bytes":0,"ccfg_equal":cr==br,"ccfg_sha256":hashlib.sha256(cr).hexdigest(),
+        "p7u_vendor_ccfg_evidence":vendor_ccfg,
         "g6_symbols":sorted(required),"clock_symbols":sorted(clocks),
         "clock_call_from_g6_getter_verified":True,"candidate_resources":region,
         "clock_and_uart_runtime_on_original_board":"UNPROVEN"}
 
 if __name__=="__main__":
     p=argparse.ArgumentParser();p.add_argument("--base",type=Path,required=True)
-    p.add_argument("--candidate",type=Path,required=True);p.add_argument("--profile",choices=("stock","cap192"),required=True)
+    p.add_argument("--candidate",type=Path,required=True);p.add_argument("--profile",choices=("stock","cap192","p7u-stock"),required=True)
     p.add_argument("--out",type=Path,required=True);a=p.parse_args()
     result=verify(a.base,a.candidate,a.profile);a.out.write_text(json.dumps(result,indent=2)+"\n")
     print(json.dumps(result,indent=2))

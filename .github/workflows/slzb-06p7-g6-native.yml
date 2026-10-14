@@ -1,12 +1,14 @@
 name: P7 G6 native CCS stock and CAP192 (NOT FLASHABLE)
 on:
   push:
-    branches: ['codex/p7-g6-*']
+    branches: ['codex/p7-g6-*', 'feat/p7u-r1-ccfg-native-*']
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g6-native.yml'
       - 'firmware/slzb-06p7/ti832/g6/**'
       - 'tests/p7-g6-host/**'
+      - 'firmware/slzb-06p7u/**'
+      - 'tests/p7u-ccfg-host/**'
       - 'firmware/slzb-06p7/ti832/g5/**'
       - 'tests/p7-crashdiag-host/**'
   workflow_dispatch:
@@ -19,7 +21,7 @@ jobs:
   native-base-vs-diag:
     strategy:
       fail-fast: false
-      matrix: {profile: [stock, cap192]}
+      matrix: {profile: [stock, cap192, p7u-stock]}
     runs-on: ubuntu-22.04
     timeout-minutes: 150
     steps:
@@ -77,6 +79,7 @@ jobs:
           cd repo
           python3 tests/p7-g6-host/test_elf_load_hex.py
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
+          python3 tests/p7u-ccfg-host/test_ccfg_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py --selftest
@@ -195,6 +198,18 @@ jobs:
           grep -rn 'P7DIAG:' sdk/source/ti/zstack/startup/main.c sdk/source/ti/zstack/stack/zdo/zd_app.c sdk/source/ti/zstack/mt/mt_zdo.c sdk/source/ti/zstack/mt/mt_task.c sdk/source/ti/zstack/npi/npi_task.c sdk/source/ti/zstack/npi/npi_tl_uart.c sdk/source/ti/zstack/npi/npi_frame_mt.c | tee diag-staged/callsite-grep.txt
           test "$(grep -c 'P7DIAG:' diag-staged/callsite-grep.txt)" -ge 18
           printf '%s\n' 'DIAG_NOT_FLASHABLE' 'G6_ENDPOINT_READ_ONLY_OFFLINE' > diag-staged/NOT_FLASHABLE.txt
+      - name: Bind P7U vendor stock CCFG after G6 overlay (R1, NOT FLASHABLE)
+        if: matrix.profile == 'p7u-stock'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/slzb-06p7u/ti832/p7u_stock_ccfg.py \
+            --syscfg examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg \
+            --binding repo/firmware/slzb-06p7u/board/stock-20240710-ccfg-binding.json \
+            --out diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json
+          grep -Fn 'device.enableDCDC = false' examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg
+          test "$(grep -Fc 'device.enableDCDC = false' examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg)" = 1
+          echo "P7U_VENDOR_CCFG_SOURCE_BOUND_NOT_FLASHABLE"
       - name: Build DIAG (same pinned ZNP + crashdiag callsites)
         shell: bash
         run: |
@@ -262,6 +277,9 @@ jobs:
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$G6_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           cp diag-staged/G6-OVERLAY-MANIFEST.json bundle-compare/
           cp evidence/actual-sys-compatibility.json bundle-compare/
+          if [ "$G6_PROFILE" = p7u-stock ]; then
+            cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
+          fi
           git -C repo rev-parse HEAD > bundle-compare/candidate-sha.txt
           sha256sum bundle-base/* bundle-diag/* > bundle-compare/artifact-sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
