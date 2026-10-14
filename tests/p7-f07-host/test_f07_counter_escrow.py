@@ -131,7 +131,8 @@ static void case_check(int allow,uint32_t expected) {
      nwkFrameCounter!=expected || entries[0].FrameCounter!=expected ||
      wrote!=1 || nwkFrameCounterChanges!=0)) ||
      (!allow && (FrameCounterUpdated || nwkFrameCounter!=prior ||
-     (entries[0].FrameCounter!=before && !(corrupt_verify && wrote)) ||\n     nwkFrameCounterChanges!=5))){
+     (entries[0].FrameCounter!=before && !(corrupt_verify && wrote)) ||
+     nwkFrameCounterChanges!=5))){
       fprintf(stderr,"ESCROW_TEST_FAILED allow=%d result=%d ram=%u stored=%u wrote=%d\n",
          allow,success,(unsigned)nwkFrameCounter,
          (unsigned)entries[0].FrameCounter,wrote);
