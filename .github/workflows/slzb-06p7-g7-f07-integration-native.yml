@@ -1,7 +1,7 @@
 name: P7U integrated G7+F07 NV2/NV5 native acceptance (NOT FLASHABLE)
 on:
   push:
-    branches: ['feat/p7u-g7-f07-integration-native-*', 'feat/p7u-cap192-f07-production-target-*', 'feat/p7u-f07-counter-escrow-*']
+    branches: ['feat/p7u-g7-f07-integration-native-*', 'feat/p7u-cap192-f07-production-target-*', 'feat/p7u-f07-counter-escrow-*', 'feat/p7u-f07-nwk-checkpoint-*']
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g7-f07-integration-native.yml'
@@ -87,6 +87,7 @@ jobs:
           python3 tests/p7-f07-host/test_f07.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_restore.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_counter_escrow.py --sdk ../sdk
+          python3 tests/p7-f07-host/test_f07_nwk_checkpoint.py --sdk ../sdk
           python3 tests/p7-f07-host/test_g7_f07_integration.py --sdk ../sdk
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
@@ -213,9 +214,12 @@ jobs:
             --sdk sdk --out diag-staged/F07-RESTORE-SLICE2-SOURCE-ONLY.json
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_nwk_counter_escrow.py \
             --sdk sdk --out diag-staged/F07-COUNTER-ESCROW-SLICE3-SOURCE-ONLY.json
+          python3 repo/firmware/slzb-06p7/ti832/f07/f07_nwk_checkpoint.py \
+            --sdk sdk --out diag-staged/F07-NWK-CHECKPOINT-SLICE4-SOURCE-ONLY.json
           test "$(grep -Fc 'p7_f07_commit_nib_before_ready' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           test "$(grep -Fc 'p7_f07_nv_restore_preflight' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           test "$(grep -Fc 'p7_f07_nwk_counter_escrow' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
+          test "$(grep -Fc 'p7_f07_nwk_checkpoint(' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           echo "G7_F07_COMPOSED_NO_FLASH"
           printf '%s\n' 'DIAG_NOT_FLASHABLE' 'G6_ENDPOINT_READ_ONLY_OFFLINE' > diag-staged/NOT_FLASHABLE.txt
       - name: Bind P7U R1 stock vendor CCFG to SysConfig (no flash)
@@ -309,6 +313,7 @@ jobs:
           cp diag-staged/F07-NIB-SLICE1-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/F07-RESTORE-SLICE2-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/F07-COUNTER-ESCROW-SLICE3-SOURCE-ONLY.json bundle-compare/
+          cp diag-staged/F07-NWK-CHECKPOINT-SLICE4-SOURCE-ONLY.json bundle-compare/
           if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
           fi
