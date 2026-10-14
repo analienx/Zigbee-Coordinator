@@ -30,7 +30,7 @@ def verify(candidate):
                 "UART2_writeTimeout", "UART2_writeTimeoutBlocking", "NPITL_writeTL",
                 "NPITLUART_writeTransport"}
     if not required <= syms: raise ValueError("G7_LINKED_SYMBOLS_MISSING:" + str(required - syms))
-    task_callers = [name for name in ("NPITask_process", "NPITask_Fxn")
+    task_callers = [name for name in ("NPITask_process", "NPITask_Fxn", "NPITask_task")
                     if name in syms and calls(dis, name, "p7_g7_service")]
     if not task_callers: raise ValueError("TASK_TO_G7_SERVICE_NOT_LINKED")
     edges = [("p7_g7_service", "NPITL_writeTL"), ("NPITL_writeTL", "NPITLUART_writeTransport"),
