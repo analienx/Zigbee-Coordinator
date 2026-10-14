@@ -39,6 +39,12 @@ or deployment tooling. Baseline source is feature commit
   The raw backend requires bytes, while normal OSAL callers may request no
   initializer. The adapter now supplies a temporary zeroed buffer and handles
   allocation failure without creating a partial item.
+- **P1: Normal MT chunked NV writes ignored offsets and prefix initialization.**
+  The full-item NV update API was given a shorter chunk, and prefix initialization
+  ignored the resulting failed write. The handlers now read/merge/write partial
+  updates, initialize the supplied prefix plus a zeroed remainder once, and update
+  runtime globals after persistence succeeds. Existing-item initialization and
+  the legacy poll-rate alias remain supported.
 - **P1: APS/TCLK persistence could reuse or corrupt counter state.** Restore and
   periodic checkpoints ignored read/write errors, published counters before
   verified persistence, cleared pending flags on failure, and allowed counter
@@ -78,9 +84,9 @@ or deployment tooling. Baseline source is feature commit
 types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
-All 17 hosted checks passed at `0e06cfe`, including all seven native profiles and
-the additional NV/security overlays. The incoming AF and NULL-initializer changes
-added after that commit still require their own native CCS results.
+All three integrated native profiles passed at `13709d9`, including incoming AF
+and NULL-initializer changes. All 17 checks passed at prior `0e06cfe`. The normal MT
+partial-write/prefix changes added after `13709d9` still require fresh native results.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
@@ -101,6 +107,10 @@ per version, including normal non-head deletion, payload limits, padding, valid
 retrieval and missing messages. Seven negative cases fail on the original source;
 the controls pass both versions. The NULL-initializer cases connect the actual
 adapter to the complete NV driver for both layouts.
+`test_nv_host_commands.py` compiles the actual MT write/init bodies for 16 cases
+per version, covering full/partial/extended writes, unchanged surrounding bytes,
+prefix/empty/existing initialization, allocation/read/write errors and the legacy
+poll-rate conversion. Ten original-source cases fail; controls pass both versions.
 
 ## Coverage still being worked through
 

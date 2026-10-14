@@ -16,6 +16,7 @@ from g6_overlay import function, replace
 NV = "source/ti/zstack/osal/osal_nv.c"
 AF = "source/ti/zstack/mt/mt_af.c"
 MAIN = "source/ti/zstack/startup/main.c"
+SYS = "source/ti/zstack/mt/mt_sys.c"
 
 NV_INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t len, void *buf )
 {
@@ -186,12 +187,18 @@ def patch(texts: dict[str, str]) -> dict[str, str]:
     source = replace(source,function(source,"MT_AfDataRetrieve"),
                      (Path(__file__).parent/"p7_af_retrieve.inc").read_text(),"af_retrieve_bounds_and_unlink")
     out[AF] = source
+    source = out[SYS]
+    for name,template in (("MT_SysOsalNVWrite","p7_nv_host_write.inc"),
+                          ("MT_SysOsalNVItemInit","p7_nv_host_init.inc")):
+        source=replace(source,function(source,name),
+                       (Path(__file__).parent/template).read_text(),name+"_partial_item")
+    out[SYS] = source
     out[MAIN] = replace(out[MAIN], STARTUP_OLD, STARTUP_NEW, "nv_startup_result")
     return out
 
 
 def apply(sdk: Path, output: Path) -> dict:
-    originals = {name: (sdk/name).read_text(encoding="utf8") for name in (NV, AF, MAIN)}
+    originals = {name: (sdk/name).read_text(encoding="utf8") for name in (NV, AF, MAIN, SYS)}
     patched = patch(originals)
     report = {"qualification":"P7_RUNTIME_SOURCE_HARDENING_NOT_HARDWARE_QUALIFIED",
               "flash_authorized":False,

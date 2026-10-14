@@ -34,3 +34,4 @@ jobs:
           python3 tests/p7-runtime-host/test_security.py --sdk sdk --out /tmp/p7-security-host
           python3 tests/p7-runtime-host/test_mac_boundary.py --sdk sdk --out /tmp/p7-mac-host
           python3 tests/p7-runtime-host/test_af_incoming.py --sdk sdk --out /tmp/p7-af-incoming-host
+          python3 tests/p7-runtime-host/test_nv_host_commands.py --sdk sdk --out /tmp/p7-nv-command-host
