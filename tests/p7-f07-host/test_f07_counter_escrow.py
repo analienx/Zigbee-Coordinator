@@ -168,7 +168,8 @@ def main():
     original=(args.sdk/s1.ZDO_PATH).read_text(encoding="utf8")
     source=s3.patch(s2.patch(s1.patch(original)))
     assert source.count("p7_f07_nwk_counter_escrow(")==2
-    assert source.count("ZDApp_RestoreNwkKey( TRUE )")==original.count(\n        "ZDApp_RestoreNwkKey( TRUE )")
+    assert source.count("ZDApp_RestoreNwkKey( TRUE )")==original.count(
+        "ZDApp_RestoreNwkKey( TRUE )")
     fragment=source[source.index("uint8_t ZDApp_RestoreNetworkState( void )\n{"):]
     assert fragment.index("p7_f07_nwk_counter_escrow()") < fragment.index(
         "return ( ZDO_INITDEV_RESTORED_NETWORK_STATE );")
