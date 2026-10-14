@@ -37,6 +37,19 @@
     "ethernet_connected": false,
     "automatic_zigbee_update": false
   },
+  "latest_reported_radio_firmware": {
+    "provenance": "USER_CORRECTION_2026_10_14",
+    "type": "Zigbee Coordinator",
+    "revision": "20240710",
+    "sdk": "7.41",
+    "baud": 115200,
+    "catalog_max_transmit_power_label": "10dB",
+    "catalog_transmit_power_levels": [6, 7, 8, 9, 10],
+    "actual_configured_tx_power": null,
+    "live_sys_version": null,
+    "installed_image_digest": null
+  },
+  "latest_reported_usb_driver": {"provenance": "USER_REPORT_2026_10_14", "driver": "standard", "line_control_semantics_verified": false},
   "flash_region": {
     "start": 0, "end_exclusive": 720896, "sector_bytes": 8192,
     "ccfg_sector_start": 712704, "ccfg_record_start": 720808, "ccfg_record_bytes": 88

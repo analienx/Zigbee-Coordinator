@@ -1,0 +1,51 @@
+name: P7U vendor CCFG offline evidence (NOT FLASHABLE)
+on:
+  push:
+    branches: ['feat/p7u-vendor-ccfg-evidence']
+  pull_request:
+    paths: ['firmware/slzb-06p7u/board/*ccfg*', 'firmware/slzb-06p7u/board/vendor-images.json', 'firmware/slzb-06p7u/board/acquire_vendor_evidence.py', 'tests/p7u-board-host/test_ccfg.py', '.github/workflows/slzb-06p7u-vendor-ccfg.yml']
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  offline-ccfg:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Pinned TI definitions, adversarial decode and vendor acquisition
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence private-downloads reference
+          git rev-parse HEAD > evidence/candidate-sha.txt
+          curl -fL --retry 2 https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/6499c3f53fc5fb5806213be695450a7b43fbaf3d/source/ti/devices/cc13x2x7_cc26x2x7/inc/hw_ccfg.h -o reference/hw_ccfg.h
+          python3 tests/p7u-board-host/test_ccfg.py reference/hw_ccfg.h | tee evidence/decode-regressions.log
+          python3 firmware/slzb-06p7u/board/acquire_vendor_evidence.py --inputs firmware/slzb-06p7u/board/vendor-images.json --private-downloads private-downloads --evidence evidence
+          python3 firmware/slzb-06p7u/board/probe_container.py private-downloads/*.bin | tee evidence/container-diagnostics.jsonl
+      - name: Compare vendor to accepted G6 native stock artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run view 38460878690 --repo analienx/Zigbee-Coordinator --json headSha,conclusion | tee evidence/g6-run.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('evidence/g6-run.json').read_text())
+          assert r['headSha']=='b308eb1d87cbafd43f3464d2af569e7d20dbf1ca' and r['conclusion']=='success'
+          PY
+          gh run download 38460878690 --repo analienx/Zigbee-Coordinator --name p7-g6-stock-BASE-NOT-FLASHABLE --dir reference/base
+          gh run download 38460878690 --repo analienx/Zigbee-Coordinator --name p7-g6-stock-DIAG-NOT-FLASHABLE --dir reference/candidate
+          COMPARE_STATUS=0
+          for FILE in znp-SLZB-06P7U-115200-20260310.bin CC1352P7_coordinator_20240316.bin CC1352P7_coordinator_20240710.bin; do
+            python3 firmware/slzb-06p7u/board/compare_vendor_ccfg.py --vendor "private-downloads/$FILE" --header reference/hw_ccfg.h --base-elf reference/base/BASE-NOT-FLASHABLE.out --base-hex reference/base/BASE-NOT-FLASHABLE.hex --candidate-elf reference/candidate/DIAG-NOT-FLASHABLE.out --candidate-hex reference/candidate/DIAG-NOT-FLASHABLE.hex --out "evidence/$FILE-comparison.json" || COMPARE_STATUS=1
+          done
+          exit "$COMPARE_STATUS"
+      - name: Publish derived nonsecret evidence only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with: {name: p7u-vendor-ccfg-derived-evidence, path: evidence/, if-no-files-found: error}
