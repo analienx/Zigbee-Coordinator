@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""SMLIGHT P7U only: vendor management BSL entry + minimal TI ROM transport.
+
+NO import of upstream flasher, CLI, gpiod or high-level CC26xx.erase().
+USB CDC mode demands the radio already be placed in ROM BSL via SMLIGHT OS.
+"""
+from __future__ import annotations
+
+import asyncio
+import re
+from p7u_rom_lowlevel import RomSerial
+
+
+class BslConnectionError(RuntimeError):
+    pass
+
+
+class SmlightRom(RomSerial):
+    """Exposes only READ/CRC and bounded ERASE_SECTOR/DOWNLOAD/SEND_DATA."""
+    pass
+
+
+class LiveSmlightSession:
+    """A session never calls radio reset, ESP flash or bank/chip/CCFG erase."""
+    def __init__(self,device:str):
+        self.device=device
+        self.__rom=None
+
+    async def __aenter__(self):
+        if self.device.startswith("socket://"):
+            match=re.fullmatch(r"socket://([A-Za-z0-9.-]+):6638",self.device)
+            if not match:raise BslConnectionError("P7U_SOCKET_MUST_USE_PORT_6638")
+            from pysmlight.const import Commands
+            from pysmlight.web import Api2
+            async with Api2(match.group(1)) as api:
+                if await api.check_auth_needed():
+                    raise BslConnectionError("SMLIGHT_API_AUTH_NOT_SUPPORTED_STOP")
+                if not bool(await api.set_cmd(Commands.CMD_ZB_BSL)):
+                    raise BslConnectionError("MANAGEMENT_BSL_ENTRY_NOT_ACKNOWLEDGED")
+            await asyncio.sleep(0.35)
+        elif not re.fullmatch(r"(COM[0-9]+|/dev/tty(?:ACM|USB|S)[0-9]+)",self.device):
+            raise BslConnectionError("USB_PORT_EXPLICIT_NOT_COM_OR_TTY")
+        serial=SmlightRom()
+        try:
+            await serial.open(self.device,115200)
+            if not await serial.synchronize():
+                raise BslConnectionError("ROM_BSL_SYNC_NOT_ACKNOWLEDGED")
+        except Exception:
+            try:await serial.close()
+            except Exception:pass
+            raise
+        self.__rom=serial
+        return serial
+
+    async def __aexit__(self,exc_type,exc,tb):
+        if self.__rom is not None:
+            try:await self.__rom.close()
+            finally:self.__rom=None
+        # Leave radio in ROM BSL for explicit operator-controlled app reset.
+        return False
