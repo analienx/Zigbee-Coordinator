@@ -105,7 +105,7 @@ static void advance(uint32_t now) {
     }
 }
 static void setup(void){
-    assert(!blocks);reset();memset(p7_g7_lanes,0,sizeof(p7_g7_lanes));
+    assert(!blocks);reset();forced_tl_outcome=0;memset(p7_g7_lanes,0,sizeof(p7_g7_lanes));
     memset((void*)&p7_g7_counters,0,sizeof(p7_g7_counters));
     p7_g7_burst=p7_g7_fault=p7_g7_busy_seen=p7_g7_isr_event=0;
     tick=0;period=1000;timer_fail=posts=rx_passes=inline_completion=0;
@@ -198,10 +198,34 @@ int main(void){
     NPITask_processStackMsg(raw(0x61,1,0));assert(!blocks&&!p7_g7_lanes[0].count);
     incomingTXEventAppCBFunc=echo;incomingTXReroute=ECHO;
     NPITask_processStackMsg(raw(0x61,1,0));drain();
+    /* A missing lower UART handle is an impossible post-validation result:
+     * fail closed, drain both lanes and never schedule a retry. */
+    setup();uartHandle=NULL;
+    NPITask_sendToHost(raw(0x61,1,0));
+    NPITask_sendToHost(raw(0x41,2,0));task_once();
+    assert(p7_g7_fault && p7_g7_counters.unexpected_outcome==1);
+    assert(p7_g7_counters.transport_fault==1 && p7_g7_counters.dropped==2);
+    assert(!blocks && !npiTxActive && !dma_calls && !p7_g7_clock->active);
+    NPITask_sendToHost(raw(0x61,3,0));task_once();
+    assert(!blocks && !dma_calls && p7_g7_counters.dropped==3);
+    /* Inject an anomalous status after a real, accepted driver write.
+     * The low-level getter remains genuine; only the task's view is spoofed.
+     * Neither BUSY nor INVALID nor a future enum may release/retry DMA. */
+    for (int outcome=0;outcome<3;outcome++) {
+        setup();
+        forced_tl_outcome=outcome==0 ? P7_SUBMIT_BUSY :
+                          outcome==1 ? P7_SUBMIT_INVALID : (p7_submit_result_t)99;
+        NPITask_sendToHost(raw(0x61,1,0));task_once();
+        assert(p7_g7_fault && p7_g7_counters.unexpected_outcome==1);
+        assert(p7_g7_counters.transport_fault==1 && p7_g7_counters.dropped==1);
+        assert(dma_calls==1 && npiTxActive && !blocks && !p7_g7_clock->active);
+        tick=100;task_once();assert(dma_calls==1 && npiTxActive);
+        complete();task_once();assert(dma_calls==1 && !npiTxActive);
+    }
     setup();timer_fail=1;p7_g7_init();NPITask_sendToHost(raw(0x61,1,0));task_once();
     assert(!blocks&&p7_g7_fault&&p7_g7_counters.timer_fault==1&&!dma_calls);
     setup();period=0;p7_g7_init();NPITask_sendToHost(raw(0x61,1,0));task_once();assert(!blocks&&p7_g7_fault);
-    puts("PASS actual Queue/frame/Task/UART/TL composition: ownership, timed rejection, no uncertain retry, bounded saturation/fault, FIFO and 4-SRSP fairness, RX progress, wrap/coarse ticks, allocation/timer failures");
+    puts("PASS actual Queue/frame/Task/UART/TL composition: ownership, timed rejection, no uncertain retry, invalid/busy/unknown fail-closed with DMA preservation, bounded saturation/fault, FIFO and 4-SRSP fairness, RX progress, wrap/coarse ticks, allocation/timer failures");
     return 0;
 }
 '''
@@ -250,8 +274,19 @@ def main():
                            ((g6.UART, "NPITLUART_writeTransport"), (g6.TL, "NPITL_writeTL"),
                             (g6.UART, "p7_g7_uart_outcome"), (g6.TL, "p7_g7_tl_outcome"),
                             (g6.TL, "NPITL_transmissionCallBack")))
+    # A fault-injection adapter at the task boundary leaves the genuine SDK
+    # UART2, TL and getter functions untouched. Only the task's observed enum
+    # is forced after actual UART2_write has already run.
+    injected_outcome = r"""
+static p7_submit_result_t forced_tl_outcome;
+static p7_submit_result_t p7_test_tl_outcome(void) {
+    return forced_tl_outcome ? forced_tl_outcome : p7_g7_tl_outcome();
+}
+#define p7_g7_tl_outcome p7_test_tl_outcome
+"""
     c = args.out / "task-post.c"
-    c.write_text(prefix + transport + callbacks + frame + '\n#include "p7_g7_task.inc"\n' + task + TEST)
+    c.write_text(prefix + transport + callbacks + frame + injected_outcome +
+                 '\n#include "p7_g7_task.inc"\n' + task + TEST)
     binary = args.out / "task-post"
     flags = ["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
              "-Wno-unused-variable", "-Wno-unused-parameter", "-DNPI_TL_BUF_SIZE=270",
