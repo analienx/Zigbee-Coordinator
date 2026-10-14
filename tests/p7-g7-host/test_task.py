@@ -105,7 +105,7 @@ static void advance(uint32_t now) {
     }
 }
 static void setup(void){
-    assert(!blocks);reset();forced_tl_outcome=0;memset(p7_g7_lanes,0,sizeof(p7_g7_lanes));
+    assert(!blocks);reset();force_tl_outcome_enabled=false;forced_tl_outcome=0;memset(p7_g7_lanes,0,sizeof(p7_g7_lanes));
     memset((void*)&p7_g7_counters,0,sizeof(p7_g7_counters));
     p7_g7_burst=p7_g7_fault=p7_g7_busy_seen=p7_g7_isr_event=0;
     tick=0;period=1000;timer_fail=posts=rx_passes=inline_completion=0;
@@ -213,6 +213,7 @@ int main(void){
      * Neither BUSY nor INVALID nor a future enum may release/retry DMA. */
     for (int outcome=0;outcome<3;outcome++) {
         setup();
+        force_tl_outcome_enabled=true;
         forced_tl_outcome=outcome==0 ? P7_SUBMIT_BUSY :
                           outcome==1 ? P7_SUBMIT_INVALID : (p7_submit_result_t)99;
         NPITask_sendToHost(raw(0x61,1,0));task_once();
@@ -278,9 +279,10 @@ def main():
     # UART2, TL and getter functions untouched. Only the task's observed enum
     # is forced after actual UART2_write has already run.
     injected_outcome = r"""
+static bool force_tl_outcome_enabled;
 static p7_submit_result_t forced_tl_outcome;
 static p7_submit_result_t p7_test_tl_outcome(void) {
-    return forced_tl_outcome ? forced_tl_outcome : p7_g7_tl_outcome();
+    return force_tl_outcome_enabled ? forced_tl_outcome : p7_g7_tl_outcome();
 }
 #define p7_g7_tl_outcome p7_test_tl_outcome
 """
