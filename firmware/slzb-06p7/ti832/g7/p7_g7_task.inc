@@ -81,7 +81,7 @@ static int p7_g7_classify(const NPIMSG_msg_t *msg)
 }
 
 /* Consumes msg on every path, including allocation failure and saturation. */
-static void p7_g7_enqueue(NPIMSG_msg_t *msg)
+static void __attribute__((noinline)) p7_g7_enqueue(NPIMSG_msg_t *msg)
 {
     NPI_QueueRec *rec;
     int lane;
@@ -164,7 +164,7 @@ static void p7_g7_latch_transport_fault(void)
 
 /* One bounded service pass, not a semaphore repost loop. Called on enqueue,
  * completion and timer events. All absolute timestamps survive unrelated wakes. */
-static void p7_g7_service(void)
+static void __attribute__((noinline)) p7_g7_service(void)
 {
     uint32_t key = OsalPort_enterCS();
     uint32_t now = p7_g6_now(), period = p7_g6_period_us(), wait = 0xffffffffu;

@@ -38,6 +38,8 @@ TASK_COMMON = r'''
 typedef struct Queue_Elem { struct Queue_Elem *next,*prev; } Queue_Elem;
 typedef Queue_Elem Queue_Object; typedef Queue_Object Queue_Struct;
 typedef Queue_Object *Queue_Handle; typedef struct {int dummy;} Queue_Params;
+static Queue_Struct rx_queue_struct;
+static Queue_Handle npiRxQueue;
 typedef enum { NPIMSG_Type_ASYNC=1, NPIMSG_Type_SYNCRSP=2 } NPIMSG_Type;
 typedef struct { uint8_t *pBuf; uint16_t pBufSize; NPIMSG_Type msgType; } NPIMSG_msg_t;
 typedef struct { Queue_Elem _elem; NPIMSG_msg_t *npiMsg; } NPI_QueueRec;
@@ -110,6 +112,7 @@ static void setup(void){
     TX_DONE_ISR_EVENT_FLAG=MRDY_ISR_EVENT_FLAG=TRANSPORT_RX_ISR_EVENT_FLAG=0;
     incomingTXEventAppCBFunc=NULL;incomingTXReroute=NONE;
     p7_g7_init();npiTransmitCB=NPITL_transmissionCallBack;taskTxCB=completed;
+    npiRxQueue=Queue_construct(&rx_queue_struct,NULL);
 }
 static uint8_t *raw(uint8_t cmd,uint8_t seq,uint8_t len){
     uint8_t*p=alloc((size_t)len+3);p[0]=len;p[1]=cmd;p[2]=seq;
@@ -119,9 +122,12 @@ static uint8_t *raw(uint8_t cmd,uint8_t seq,uint8_t len){
 static void drain(void){
     object.writeInUse=false;
     while(p7_g7_lanes[0].count||p7_g7_lanes[1].count){
-        if(npiTxActive)complete();task_once();if(npiTxActive)complete();
+        if(npiTxActive)complete();
+        task_once();
+        if(npiTxActive)complete();
     }
-    if(npiTxActive)complete();task_once();assert(!blocks&&!npiTxActive);
+    if(npiTxActive)complete();
+    task_once();assert(!blocks&&!npiTxActive);
 }
 static void intercept(uint8_t*p){release(p);}
 static void echo(uint8_t*p){assert(p&&blocks);}
