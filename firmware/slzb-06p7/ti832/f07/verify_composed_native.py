@@ -48,8 +48,8 @@ def verify_source(text: str) -> dict:
         raise ValueError("F07_NIB_GUARD_CALLSITE_AMBIGUOUS")
     if text.count("p7_f07_nv_restore_preflight(") != 2:
         raise ValueError("F07_RESTORE_GUARD_CALLSITE_AMBIGUOUS")
-    start = text.index("uint8_t ZDOInitDeviceEx( uint16_t startDelay, uint8_t mode)\\n{")
-    ready = text.index("void ZDApp_NetworkStartEvt( void )\\n{")
+    start = text.index("uint8_t ZDOInitDeviceEx( uint16_t startDelay, uint8_t mode)\n{")
+    ready = text.index("void ZDApp_NetworkStartEvt( void )\n{")
     start_text = text[start:ready]
     if not (
         start_text.index("if (!p7_f07_nv_restore_preflight())")
