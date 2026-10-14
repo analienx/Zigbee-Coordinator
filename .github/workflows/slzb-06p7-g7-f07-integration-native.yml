@@ -1,7 +1,7 @@
 name: P7U integrated G7+F07 NV2/NV5 native acceptance (NOT FLASHABLE)
 on:
   push:
-    branches: ['feat/p7u-g7-f07-integration-native-*']
+    branches: ['feat/p7u-g7-f07-integration-native-*', 'feat/p7u-cap192-f07-production-target-*']
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g7-f07-integration-native.yml'
@@ -25,7 +25,7 @@ jobs:
   native-base-vs-diag:
     strategy:
       fail-fast: false
-      matrix: {profile: [p7u-f07-stock, cap192-f07]}
+      matrix: {profile: [p7u-f07-stock, cap192-f07, p7u-cap192-f07]}
     runs-on: ubuntu-22.04
     timeout-minutes: 150
     steps:
@@ -173,7 +173,7 @@ jobs:
           printf '%s\n' 'BASE_NOT_FLASHABLE' 'NO_DIAG_INSTRUMENTATION' > bundle-base/NOT_FLASHABLE.txt
           { echo "BASE_OUT=$OUT"; echo "BASE_MAP=$MAP"; } >> "$GITHUB_ENV"
       - name: Apply NV5+CAP192 overlay (syscfg only, no-wipe guard)
-        if: matrix.profile == 'cap192-f07'
+        if: matrix.profile == 'cap192-f07' || matrix.profile == 'p7u-cap192-f07'
         shell: bash
         run: |
           set -euo pipefail
@@ -215,7 +215,7 @@ jobs:
           echo "G7_F07_COMPOSED_NO_FLASH"
           printf '%s\n' 'DIAG_NOT_FLASHABLE' 'G6_ENDPOINT_READ_ONLY_OFFLINE' > diag-staged/NOT_FLASHABLE.txt
       - name: Bind P7U R1 stock vendor CCFG to SysConfig (no flash)
-        if: matrix.profile == 'p7u-f07-stock'
+        if: matrix.profile == 'p7u-f07-stock' || matrix.profile == 'p7u-cap192-f07'
         shell: bash
         run: |
           set -euo pipefail
@@ -283,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           TRIAGE_PROFILE=stock
-          if [ "$G7_PROFILE" = cap192-f07 ]; then TRIAGE_PROFILE=cap192; fi
+          if [ "$G7_PROFILE" = cap192-f07 ] || [ "$G7_PROFILE" = p7u-cap192-f07 ]; then TRIAGE_PROFILE=cap192; fi
           python3 repo/firmware/slzb-06p7/ti832/g7/native_failure_triage.py --candidate bundle-diag --profile "$TRIAGE_PROFILE" | tee diag-staged/native-failure-triage.log
           echo 'G7_TRIAGE_ONLY=NO_ACCEPTANCE_AND_NO_FLASH_AUTHORIZATION'
       - name: Exact binary, NV, CCFG and G6 linked evidence
@@ -292,7 +292,7 @@ jobs:
           G6_PROFILE: ${{ matrix.profile }}
         run: |
           set -euo pipefail
-          if [ "$G6_PROFILE" = cap192-f07 ]; then
+          if [ "$G6_PROFILE" = cap192-f07 ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             GENH=$(find ccs-workspace-diag -type f -name ti_zstack_config.h -print -quit)
             test -s "$GENH"
             cp "$GENH" bundle-diag/generated-ti_zstack_config.h
@@ -300,10 +300,11 @@ jobs:
           fi
           VERIFY_PROFILE=cap192
           if [ "$G6_PROFILE" = p7u-f07-stock ]; then VERIFY_PROFILE=p7u-stock; fi
+          if [ "$G6_PROFILE" = p7u-cap192-f07 ]; then VERIFY_PROFILE=p7u-cap192; fi
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$VERIFY_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           cp diag-staged/F07-NIB-SLICE1-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/F07-RESTORE-SLICE2-SOURCE-ONLY.json bundle-compare/
-          if [ "$G6_PROFILE" = p7u-f07-stock ]; then
+          if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
           fi
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-diag --out bundle-compare/G7-LINKED-EVIDENCE.json

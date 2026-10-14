@@ -77,7 +77,7 @@ def verify_source(text: str) -> dict:
 
 
 def verify(candidate: Path, source: Path, profile: str) -> dict:
-    if profile not in ("p7u-f07-stock", "cap192-f07"):
+    if profile not in ("p7u-f07-stock", "cap192-f07", "p7u-cap192-f07"):
         raise ValueError("F07_INTEGRATION_PROFILE_NOT_SUPPORTED")
     source_evidence = verify_source(source.read_text())
     symbols_text = (candidate / "DIAG-symbols.txt").read_text()

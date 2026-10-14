@@ -16,7 +16,7 @@ def verify(base,cand,profile):
     cm=(cand/"DIAG-NOT-FLASHABLE.map").read_text()
     syms=maps.symbols((cand/"DIAG-symbols.txt").read_text())
     print("G6_CLOCK_SYMBOLS",sorted(s for s in syms if "Clock" in s and ("Ticks" in s or "Period" in s)))
-    em,_=(nv5.load_elf(ce) if profile=="cap192" else stock.read_elf(ce))
+    em,_=(nv5.load_elf(ce) if profile in ("cap192","p7u-cap192") else stock.read_elf(ce))
     hm=stock.read_hex(ch)
     print("G6_IMAGE_COUNTS",json.dumps({"elf":len(em),"hex":len(hm),
         "hex_missing_first32":[hex(a) for a in sorted(set(em)-set(hm))[:32]],
@@ -38,7 +38,7 @@ def verify(base,cand,profile):
         print("G6_IMAGE_GAP_CONTEXT",json.dumps({"missing_values":[[hex(a),em[a]] for a in missing[:32]],"sections":nearby}))
     bmem,_=stock.read_elf(be)
     base_audit=stock.audit(be,bh)
-    if profile=="cap192":
+    if profile in ("cap192","p7u-cap192"):
         audit=nv5.validate(ce,ch,cm); cmem,_=nv5.load_elf(ce)
         nv_base,nv_size=0xa4000,0xa000
     else:
@@ -46,7 +46,7 @@ def verify(base,cand,profile):
         nv_base,nv_size=0xaa000,0x4000
     br=bytes(bmem[a] for a in range(0xaffa8,0xb0000))
     cr=bytes(cmem[a] for a in range(0xaffa8,0xb0000))
-    if profile=="p7u-stock":
+    if profile in ("p7u-stock","p7u-cap192"):
         binding=json.loads((P7U.parent/"board"/"stock-20240710-ccfg-binding.json").read_text())
         vendor_ccfg=p7u.validate_linked_ccfg(br,cr,binding)
     else:
@@ -81,7 +81,7 @@ def verify(base,cand,profile):
 
 if __name__=="__main__":
     p=argparse.ArgumentParser();p.add_argument("--base",type=Path,required=True)
-    p.add_argument("--candidate",type=Path,required=True);p.add_argument("--profile",choices=("stock","cap192","p7u-stock"),required=True)
+    p.add_argument("--candidate",type=Path,required=True);p.add_argument("--profile",choices=("stock","cap192","p7u-stock","p7u-cap192"),required=True)
     p.add_argument("--out",type=Path,required=True);a=p.parse_args()
     result=verify(a.base,a.candidate,a.profile);a.out.write_text(json.dumps(result,indent=2)+"\n")
     print(json.dumps(result,indent=2))
