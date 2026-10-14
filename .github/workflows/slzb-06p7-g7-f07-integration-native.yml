@@ -15,6 +15,8 @@ on:
       - 'tests/p7-g6-host/**'
       - 'firmware/slzb-06p7/ti832/g5/**'
       - 'tests/p7-crashdiag-host/**'
+      - 'firmware/slzb-06p7/ti832/hardening/**'
+      - 'tests/p7-runtime-host/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -91,6 +93,9 @@ jobs:
           python3 tests/p7-f07-host/test_f07_nwk_checkpoint.py --sdk ../sdk
           python3 tests/p7-f07-host/test_g7_f07_integration.py --sdk ../sdk
           python3 tests/p7-runtime-host/test_runtime.py --sdk ../sdk --out /tmp/p7-runtime-host
+          python3 tests/p7-runtime-host/test_nv_driver.py --sdk ../sdk --out /tmp/p7-nv-host
+          python3 tests/p7-runtime-host/test_security.py --sdk ../sdk --out /tmp/p7-security-host
+          python3 tests/p7-runtime-host/test_mac_boundary.py --sdk ../sdk --out /tmp/p7-mac-host
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
@@ -213,6 +218,8 @@ jobs:
 
           python3 repo/firmware/slzb-06p7/ti832/hardening/runtime_overlay.py \
             --sdk sdk --out diag-staged
+          python3 repo/firmware/slzb-06p7/ti832/hardening/nv_overlay.py \
+            --sdk sdk --out diag-staged
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_nib_gate.py \
             --sdk sdk --out diag-staged/F07-NIB-SLICE1-SOURCE-ONLY.json
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_restore_guard.py \
@@ -221,6 +228,8 @@ jobs:
             --sdk sdk --out diag-staged/F07-COUNTER-ESCROW-SLICE3-SOURCE-ONLY.json
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_nwk_checkpoint.py \
             --sdk sdk --out diag-staged/F07-NWK-CHECKPOINT-SLICE4-SOURCE-ONLY.json
+          python3 repo/firmware/slzb-06p7/ti832/hardening/security_overlay.py \
+            --sdk sdk --out diag-staged
           test "$(grep -Fc 'p7_f07_commit_nib_before_ready' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           test "$(grep -Fc 'p7_f07_nv_restore_preflight' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           test "$(grep -Fc 'p7_f07_nwk_counter_escrow' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
@@ -320,6 +329,7 @@ jobs:
           cp diag-staged/F07-COUNTER-ESCROW-SLICE3-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/F07-NWK-CHECKPOINT-SLICE4-SOURCE-ONLY.json bundle-compare/
           cp diag-staged/RUNTIME-HARDENING-SOURCE.json bundle-compare/
+          cp diag-staged/NV-HARDENING-SOURCE.json diag-staged/SECURITY-HARDENING-SOURCE.json bundle-compare/
           if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
           fi
@@ -340,6 +350,9 @@ jobs:
             --source sdk/source/ti/zstack/stack/zdo/zd_app.c \
             --profile "$G6_PROFILE" \
             --out bundle-compare/F07-INTEGRATION-EVIDENCE.json
+          python3 repo/firmware/slzb-06p7/ti832/hardening/verify_native.py \
+            --candidate bundle-diag --sdk sdk \
+            --out bundle-compare/RUNTIME-SECURITY-LINKED-EVIDENCE.json
           cp diag-staged/G7-OVERLAY-MANIFEST.json bundle-compare/
           cp diag-staged/G7-COMPOSITION.json bundle-compare/
           cp diag-staged/G6-OVERLAY-MANIFEST.json bundle-compare/

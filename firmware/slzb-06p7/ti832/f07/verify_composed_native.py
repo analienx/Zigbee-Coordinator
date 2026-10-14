@@ -60,7 +60,12 @@ def verify_source(text: str) -> dict:
         raise ValueError("F07_COUNTER_ESCROW_CALLSITE_AMBIGUOUS")
     if text.count("p7_f07_nwk_checkpoint(") != 2:
         raise ValueError("F07_NWK_CHECKPOINT_CALLSITE_AMBIGUOUS")
-    if not (text.index("if (!p7_f07_nwk_checkpoint())") < text.index("ZDApp_PauseNwk();") < text.index("ZDApp_ChangeState(DEV_HOLD);")):
+    # Check the checkpoint's own failure block. Other independently guarded
+    # startup paths may also pause the network earlier in this source file.
+    save_start = text.index("void ZDApp_SaveNwkKey( void )\n{")
+    save_end = text.index("* @fn      ZDApp_ForceConcentratorChange()", save_start)
+    save_body = text[save_start:save_end]
+    if not (save_body.index("if (!p7_f07_nwk_checkpoint())") < save_body.index("ZDApp_PauseNwk();") < save_body.index("ZDApp_ChangeState(DEV_HOLD);")):
         raise ValueError("F07_NWK_CHECKPOINT_HOLD_ORDER_BROKEN")
     start = text.index("uint8_t ZDOInitDeviceEx( uint16_t startDelay, uint8_t mode)\n{")
     ready = text.index("void ZDApp_NetworkStartEvt( void )\n{")
