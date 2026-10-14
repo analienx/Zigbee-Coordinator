@@ -12,9 +12,12 @@ installed until that evidence exists.
 
 `verify_board.py` allows unknown board claims under SOURCE_ONLY while rejecting
 wrong models, SoCs, revision expectations and flash geometry. A declared
-BOARD_FLASH_CANDIDATE requires all board-scoped evidence and the actual revision;
-it never grants flash/physical/network qualification. The image/CCFG/erase-policy
-verifier is a separate remaining gate, not implemented by this profile scaffold.
+BOARD_FLASH_CANDIDATE checks board-scoped declarations and the actual revision,
+then remains blocked with BOARD_IMAGE_GATE_NOT_IMPLEMENTED. Self-declared
+metadata cannot approve an image. It never grants flash/physical/network
+qualification. The image/CCFG/erase-policy verifier is a separate remaining gate.
+Known reference IDs cannot be promoted to fitted-board proof, duplicate IDs are
+rejected, and physical-revision proof must equal the observed revision.
 
 The user-supplied dashboard reports P7U, CC2652P7/ESP32-S3, stock metadata20240316,
 core3.2.6.dev3 and USB Device mode. PCB revision, UART baud, exact bridge driver,

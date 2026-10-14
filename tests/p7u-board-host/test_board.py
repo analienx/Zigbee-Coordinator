@@ -48,6 +48,34 @@ rejects(changed, m, "SOURCE_ONLY", "SLZB-06P7U", None, "P7_FLASH_GEOMETRY_MISMAT
 changed = copy.deepcopy(p); changed["proofs"]["uart_cc_dio"] = {
     "accepted": True, "value": {"tx": 17, "rx": 18}, "evidence": ["SMLIGHT_ESPHOME_06XU_R173"]}
 rejects(changed, m, "SOURCE_ONLY", "SLZB-06P7U", None, "UNQUALIFIED_BOARD_EVIDENCE")
+changed_manifest = copy.deepcopy(m)
+fake = {"id": "SMLIGHT_ESPHOME_06XU_R173", "model": "SLZB-06P7U", "board_revision": "1.73",
+        "scope": "FITTED_P7U_BOARD_EVIDENCE", "proof": "uart_cc_dio", "accepted": True,
+        "sha256": "0"*64, "source": "reference"}
+changed_manifest["accepted_board_proofs"] = [fake]
+rejects(changed, changed_manifest, "SOURCE_ONLY", "SLZB-06P7U", None, "REFERENCE_CANNOT_BECOME_BOARD_EVIDENCE")
+fake["id"] = "lab-proof"
+changed_manifest["accepted_board_proofs"] = [fake, fake]
+rejects(p, changed_manifest, "SOURCE_ONLY", "SLZB-06P7U", None, "DUPLICATE_BOARD_EVIDENCE")
+changed = copy.deepcopy(p); changed["board_revision_observed"] = "1.74"
+changed["proofs"]["physical_revision"] = {"accepted": True, "value": "1.73", "evidence": ["lab-proof"]}
+fake.update({"board_revision": "1.74", "proof": "physical_revision"})
+changed_manifest["accepted_board_proofs"] = [fake]
+rejects(changed, changed_manifest, "SOURCE_ONLY", "SLZB-06P7U", "1.74", "PHYSICAL_REVISION_PROOF_MISMATCH")
+# Even complete declarations cannot substitute for the absent real image gate.
+changed = copy.deepcopy(p); changed["board_revision_observed"] = "1.73"
+changed_manifest = copy.deepcopy(m)
+for name in changed["proofs"]:
+    value = "declared"
+    if name == "physical_revision": value = "1.73"
+    if name == "uart_cc_dio": value = {"tx": 1, "rx": 2}
+    if name == "ccfg_original_sha256": value = "0"*64
+    ref = "synthetic-" + name
+    changed["proofs"][name] = {"accepted": True, "value": value, "evidence": [ref]}
+    changed_manifest["accepted_board_proofs"].append({"id": ref, "model": "SLZB-06P7U",
+        "board_revision": "1.73", "scope": "FITTED_P7U_BOARD_EVIDENCE", "proof": name,
+        "accepted": True, "sha256": "0"*64, "source": "synthetic test only"})
+rejects(changed, changed_manifest, "BOARD_FLASH_CANDIDATE", "SLZB-06P7U", "1.73", "BOARD_IMAGE_GATE_NOT_IMPLEMENTED")
 # Original P7 contract must be byte-for-byte unchanged from accepted G6 merge.
 prior = subprocess.check_output(["git", "show", "2ddcb4dbfcf757179046a62041817119270c601d:firmware/slzb-06p7/ti832/board/board-contract.json"], cwd=ROOT)
 current = (ROOT / "firmware/slzb-06p7/ti832/board/board-contract.json").read_bytes()

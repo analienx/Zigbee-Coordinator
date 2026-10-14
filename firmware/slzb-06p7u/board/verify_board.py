@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Hosted static profile gate. SOURCE_ONLY accepts declared unknowns.
 
-BOARD_FLASH_CANDIDATE requires board-scoped evidence; it does not authorize a
-flash or claim physical/network acceptance. No force/unknown bypass exists.
+BOARD_FLASH_CANDIDATE checks declarations but remains blocked until an actual
+image gate exists. No force/unknown bypass or flash authorization exists.
 """
 import argparse
 import json
@@ -62,7 +62,13 @@ def verify(profile, manifest, intent, expected_model, expected_revision=None, ma
                  [str(reference["inverted"][field]).lower()], "MANUFACTURER_INVERSION_MISMATCH_" + field)
         need(re.findall(r'^\s*uart2_baud:\s*(\d+)\s*$', manufacturer_text, re.M) ==
              [str(reference["uart_baud"])], "MANUFACTURER_BAUD_MISMATCH")
-    evidence = {item["id"]: item for item in manifest.get("accepted_board_proofs", [])}
+    declared = manifest.get("accepted_board_proofs", [])
+    need(len({item["id"] for item in declared}) == len(declared), "DUPLICATE_BOARD_EVIDENCE")
+    sources = manifest.get("sources", [])
+    source_ids = {item["id"] for item in sources}
+    need(len(source_ids) == len(sources), "DUPLICATE_REFERENCE_SOURCE")
+    need(not source_ids.intersection({item["id"] for item in declared}), "REFERENCE_CANNOT_BECOME_BOARD_EVIDENCE")
+    evidence = {item["id"]: item for item in declared}
     missing = []
     for name in sorted(PROOFS):
         proof = profile["proofs"][name]
@@ -74,9 +80,12 @@ def verify(profile, manifest, intent, expected_model, expected_revision=None, ma
         for ref in proof["evidence"]:
             item = evidence.get(ref, {})
             need(item.get("model") == expected_model and item.get("board_revision") == revision and
+                 item.get("scope") == "FITTED_P7U_BOARD_EVIDENCE" and
                  item.get("proof") == name and item.get("accepted") is True and
                  re.fullmatch(r"[0-9a-f]{64}", item.get("sha256", "")) is not None and
                  bool(item.get("source")), "UNQUALIFIED_BOARD_EVIDENCE_" + name)
+        if name == "physical_revision":
+            need(proof["value"] == revision and revision is not None, "PHYSICAL_REVISION_PROOF_MISMATCH")
     if intent == "BOARD_FLASH_CANDIDATE":
         need(revision is not None and expected_revision == revision, "BOARD_REVISION_NOT_CONFIRMED")
         need(not missing, "MISSING_BOARD_PROOFS:" + ",".join(missing))
@@ -86,6 +95,7 @@ def verify(profile, manifest, intent, expected_model, expected_revision=None, ma
              "INVALID_CC_UART_DIO")
         need(re.fullmatch(r"[0-9a-f]{64}", profile["proofs"]["ccfg_original_sha256"]["value"]) is not None,
              "INVALID_VENDOR_CCFG_DIGEST")
+        raise ValueError("BOARD_IMAGE_GATE_NOT_IMPLEMENTED")
     return {"status": "SOURCE_PROFILE_PASS" if intent == "SOURCE_ONLY" else "DECLARED_BOARD_EVIDENCE_PASS",
             "model": expected_model, "missing_board_proofs": missing,
             "source_reference_checked": manufacturer_text is not None,
