@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Staged lower-layer G7 delta; not yet a complete F11/F12 overlay.
+"""Lower-layer G7 delta, composed with g7_task_overlay for task ownership.
 
 Applied after G6. No source writes until all exact anchors have succeeded.
-Task queue ownership/timer/fairness integration remains mandatory before any
-native firmware candidate is built or published using these deltas.
+Using this delta alone does not establish task ownership/retry/fairness.
 """
 import sys
 from pathlib import Path

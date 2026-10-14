@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HOSTED ONLY: actual pinned UART dispatch + NPI transport body regression.
 
-Lower-layer acceptance only; task queue ownership/retry/fairness is pending.
+Lower-layer acceptance only; test_task covers the composed task owner separately.
 """
 import argparse
 import hashlib
@@ -62,11 +62,12 @@ static uint32_t txPktCount;
 static void (*taskRxCB)(uint16);
 static void (*taskTxCB)(uint16);
 static p7_submit_result_t p7_uart_result,p7_tl_result;
-static uint32_t OsalPort_enterCS(void) { return (uint32_t)osal_depth++; }
-static void OsalPort_leaveCS(uint32_t key) { assert(osal_depth==(int)key+1); --osal_depth; }
 static bool HwiP_interruptsEnabled(void) { return hwi_depth==0; }
 static uintptr_t HwiP_disable(void) { return (uintptr_t)hwi_depth++; }
 static void HwiP_restore(uintptr_t key) { assert(hwi_depth==(int)key+1); --hwi_depth; }
+/* Actual OsalPort CS disables HwiP; preserve that coupling in the host boundary. */
+static uint32_t OsalPort_enterCS(void) { osal_depth++;return (uint32_t)HwiP_disable(); }
+static void OsalPort_leaveCS(uint32_t key) { assert(osal_depth>0);--osal_depth;HwiP_restore(key); }
 static int SemaphoreP_pend(int *sem,uint32_t timeout) { (void)sem;(void)timeout;return SemaphoreP_OK; }
 static void UART2Support_enableTx(const UART2_HWAttrs *hw) { (void)hw;assert(hwi_depth); }
 static void UART2Support_dmaStartTx(UART2_Handle handle) {

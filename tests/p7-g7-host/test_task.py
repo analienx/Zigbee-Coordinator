@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 G7 = ROOT / "firmware/slzb-06p7/ti832/g7"
 sys.path.insert(0, str(G7))
 import g7_task_overlay as overlay
+import verify_composition
 import g6_overlay as g6
 import diag_overlay as diag
 
@@ -135,10 +136,15 @@ int main(void){
     setup();object.writeInUse=true;NPITask_sendToHost(raw(0x61,1,0));task_once();
     assert(blocks==3 && p7_g7_lanes[0].head && dma_calls==0 && driver_calls==1);
     assert(p7_g7_clock->due==6);
-    for(uint32_t t=1;t<6;t++){tick=t;task_once();assert(driver_calls==1&&p7_g7_clock->due==6);}
+    int before_posts=posts;
+    for(uint32_t t=1;t<6;t++){tick=t;task_once();assert(driver_calls==1&&p7_g7_clock->due==6&&posts==before_posts);}
     advance(6);assert(driver_calls==2&&blocks==3&&p7_g7_clock->due==12);
     advance(12);assert(driver_calls==3&&blocks==0&&p7_g7_counters.dropped==1);
     assert(p7_g7_counters.rejected==3&&!p7_g7_clock->active);
+    setup();object.writeInUse=true;NPITask_sendToHost(raw(0x61,1,0));task_once();
+    /* A delayed task wake cannot grant a fresh deadline or a second call. */
+    object.writeInUse=false;advance(50);
+    assert(driver_calls==1&&dma_calls==0&&!blocks&&p7_g7_counters.dropped==1&&!p7_g7_clock->active);
     setup();object.writeInUse=true;NPITask_sendToHost(raw(0x61,1,0));task_once();
     object.writeInUse=false;advance(6);assert(dma_calls==1&&blocks==0);complete();task_once();
     assert(dma_calls==1&&!p7_g7_clock->active);
@@ -146,7 +152,8 @@ int main(void){
     uint8_t copy[NPI_TL_BUF_SIZE];memcpy(copy,npiTxBuf,sizeof(copy));
     for(unsigned i=0;i<8;i++)NPITask_sendToHost(raw(0x41,(uint8_t)i,0));
     NPITask_sendToHost(raw(0x41,99,0));assert(blocks==24&&p7_g7_counters.full==1);
-    for(uint32_t t=1;t<50;t++){tick=t;task_once();assert(dma_calls==1&&!memcmp(copy,npiTxBuf,sizeof(copy)));}
+    before_posts=posts;
+    for(uint32_t t=1;t<50;t++){tick=t;task_once();assert(dma_calls==1&&posts==before_posts&&!memcmp(copy,npiTxBuf,sizeof(copy)));}
     advance(50);assert(p7_g7_fault&&p7_g7_counters.transport_fault==1&&!blocks&&npiTxActive);
     complete();NPITask_sendToHost(raw(0x61,2,0));task_once();
     assert(dma_calls==1&&!blocks&&p7_g7_fault);
@@ -212,6 +219,8 @@ def main():
     g5, _ = diag.apply_patches(original)
     g6_source = g6.patch(g5)
     post = overlay.patch(g6_source)
+    composition = verify_composition.verify_texts(post)
+    (args.out / "task-composition.json").write_text(json.dumps(composition, indent=2) + "\n")
     # Double apply must fail before a single source write.
     try: overlay.patch(post)
     except ValueError: pass
@@ -270,10 +279,29 @@ assert(blocks==3);return 0;}
     pre_result = subprocess.run([str(pre_binary)], capture_output=True, text=True, timeout=10)
     (args.out / "task-pre.log").write_text(pre_result.stdout + pre_result.stderr)
     assert pre_result.returncode != 0 and "Assertion `blocks==3' failed" in pre_result.stderr, pre_result.stderr
+    spin = args.out / "task-pre-spin.c"
+    spin.write_text(prefix.replace("completion_hook();", "") + transport + frame +
+                   "\nstatic Queue_Handle npiTxQueue;\n" + g6.function(g6_source[g6.TASK], "NPITask_ProcessTXQ") +
+                   "\nstatic void NPITask_processStackMsg(uint8_t *p){(void)p;}\n" +
+                   g6.function(g6_source[g6.TASK], "NPITask_process") + r'''
+static void NPITask_transportTxDoneCallBack(int s){(void)s;}
+static void completion_hook(void){}
+int main(void){reset();Queue_Struct q;npiTxQueue=Queue_construct(&q,NULL);
+NPI_QueueRec r;Queue_enqueue(npiTxQueue,&r._elem);npiTxActive=true;
+npiServiceTaskEvents=NPITASK_TX_READY_EVENT;posts=pend_calls=0;
+if(!setjmp(task_exit))NPITask_process();
+assert(posts==0);return 0;}
+''')
+    spin_binary = args.out / "task-pre-spin"
+    subprocess.run(flags + [str(spin), "-o", str(spin_binary)], check=True)
+    spin_result = subprocess.run([str(spin_binary)], capture_output=True, text=True, timeout=10)
+    (args.out / "task-pre-spin.log").write_text(spin_result.stdout + spin_result.stderr)
+    assert spin_result.returncode != 0 and "Assertion `posts==0' failed" in spin_result.stderr, spin_result.stderr
     (args.out / "task-source-evidence.json").write_text(json.dumps({
         "qualification": "G7_HOST_SOURCE_REGRESSIONS_ONLY_NOT_FLASHABLE",
         "runtime_qualified": False, "hardware_qualified": False, "flash_authorized": False,
-        "pre_ownership_control": pre_result.returncode, "post": result.returncode,
+        "pre_ownership_control": pre_result.returncode, "pre_busy_repost_control": spin_result.returncode,
+        "post": result.returncode,
         "queue_sha256": hashlib.sha256(queue_blob.encode()).hexdigest(),
         "driver_sha256": hashlib.sha256(driver_blob.encode()).hexdigest(),
         "patched_sha256": {p: hashlib.sha256(post[p].encode()).hexdigest() for p in (g6.TASK, g6.TL, g6.UART)}}, indent=2) + "\n")

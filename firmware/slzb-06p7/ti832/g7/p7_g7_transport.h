@@ -1,4 +1,4 @@
-/* G7 staged transport boundary; task ownership/retry integration is pending. */
+/* G7 transport boundary, used by the retained task owner after each call. */
 #ifndef P7_G7_TRANSPORT_H
 #define P7_G7_TRANSPORT_H
 #if !defined(NPI_USE_UART) || NPI_FLOW_CTRL != 0 || defined(NPI_SREQRSP)

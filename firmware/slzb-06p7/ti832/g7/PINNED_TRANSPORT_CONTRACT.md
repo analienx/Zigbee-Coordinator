@@ -1,7 +1,9 @@
-# G7 pinned transport findings — implementation still pending
+# G7 pinned transport findings — source contract
 
 Authority: TI SDK `6499c3f53fc5fb5806213be695450a7b43fbaf3d`.
-This is source inspection, not a runtime qualification or F11/F12 acceptance.
+This is source inspection. The implemented overlay and current acceptance
+status are described in README and IMPLEMENTATION_STATUS; physical/runtime
+qualification remains separate.
 
 ## Driver boundary
 

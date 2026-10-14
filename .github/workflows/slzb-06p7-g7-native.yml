@@ -196,7 +196,7 @@ jobs:
           git -C sdk diff --stat HEAD | tee diag-staged/sdk-diff-stat.txt
           git -C examples diff --stat HEAD | tee diag-staged/examples-diff-stat.txt
           grep -rn 'P7DIAG:' sdk/source/ti/zstack/startup/main.c sdk/source/ti/zstack/stack/zdo/zd_app.c sdk/source/ti/zstack/mt/mt_zdo.c sdk/source/ti/zstack/mt/mt_task.c sdk/source/ti/zstack/npi/npi_task.c sdk/source/ti/zstack/npi/npi_tl_uart.c sdk/source/ti/zstack/npi/npi_frame_mt.c | tee diag-staged/callsite-grep.txt
-          test "$(grep -c 'P7DIAG:' diag-staged/callsite-grep.txt)" -ge 18
+          python3 repo/firmware/slzb-06p7/ti832/g7/verify_composition.py --sdk sdk | tee diag-staged/G7-COMPOSITION.json
           printf '%s\n' 'DIAG_NOT_FLASHABLE' 'G6_ENDPOINT_READ_ONLY_OFFLINE' > diag-staged/NOT_FLASHABLE.txt
       - name: Build DIAG (same pinned ZNP + crashdiag callsites)
         shell: bash
@@ -265,6 +265,7 @@ jobs:
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$G6_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-diag --out bundle-compare/G7-LINKED-EVIDENCE.json
           cp diag-staged/G7-OVERLAY-MANIFEST.json bundle-compare/
+          cp diag-staged/G7-COMPOSITION.json bundle-compare/
           cp diag-staged/G6-OVERLAY-MANIFEST.json bundle-compare/
           cp evidence/actual-sys-compatibility.json bundle-compare/
           git -C repo rev-parse HEAD > bundle-compare/candidate-sha.txt

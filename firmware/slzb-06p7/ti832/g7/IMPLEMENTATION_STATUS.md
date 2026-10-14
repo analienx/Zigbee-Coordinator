@@ -1,39 +1,32 @@
-# G7 transport retry and fairness — work in progress
+# G7 source implementation - native acceptance pending, NOT FLASHABLE
 
-G6 source baseline: `7b4ffb0b9e43fd945fb55f12c7232c8a7502d77d`; G6 acceptance
-run is separate and must finish before its source is accepted into the P7 feature.
+G6 PR64 is accepted and merged into the P7 feature, source b308eb1 and feature
+merge 2ddcb4d. Separate P7U profile and vendor evidence PR65/66 are accepted.
+They do not establish fitted-board UART/RF/clock or physical approval.
 
-`p7_tx_policy.c` is initial policy authoring only. The staged
-`g7_transport_overlay.py` now propagates explicit lower-layer outcomes and
-clears the busy latch only for a proved rejected/invalid submission. It does
-not yet retain/retry task queue heads or implement fairness, and is not wired
-into any native firmware build. F11/F12 remain unqualified. The hosted G7
-workflow compiles actual pinned UART dispatch and transport bodies with
-controlled platform stubs; no test/build has run locally.
+G7 now composes explicit UART/TL outcomes with actual task-level bounded
+ownership, a static one-shot retry clock, validated MT SRSP/AREQ FIFO lanes,
+4:1 submitted-attempt fairness and a bounded lost-callback fault. See README
+for exact semantics, clock uncertainty and the guarded profile.
 
-Required next implementation:
+Hosted Actions runs38521321039 at731db37 and38521527551 at270161e passed actual
+pinned Queue/frame/task/UART/TL composition and specific old-code negative
+controls. Follow-up review adds no-repost and rejected-head expiry assertions
+and a specific old-task busy-repost control. These require another hosted run.
+The ownership negative uses old G6 task plus repaired lower transport to
+isolate unconditional free; it is not a complete original firmware image.
 
-1. Source inspection completed in `PINNED_TRANSPORT_CONTRACT.md`: callback
-   mode uses `UART2_writeTimeoutBlocking`; ENOTOPEN/EINUSE precede submission,
-   cancellation/timeout follow DMA start and cannot enter a retry path.
-   Native linked-path proof and hosted actual-driver regressions remain due.
-2. Staged UART/TL patch authored with explicit outcomes and rejected busy-latch
-   cleanup. Hosted pre-fix stuck-busy control and post-fix boundary tests must
-   pass; source review, G5/G6 composition, and native linkage remain due.
-3. Integrate per-head pending ownership and bounded retry state into the actual
-   NPI task queues. Retain each frame until accepted or explicitly discarded
-   at three attempts/50ms; use a one-shot timer instead of semaphore spinning.
-4. Add SRSP/AREQ FIFO selection based on framed MT command type, preserving
-   ordering and servicing ready AREQ after four accepted SRSPs. Rejection and
-   fallback must not falsely advance the accepted-write fairness count.
-5. Compile the exact modified TI bodies in hosted adversarial harnesses with
-   pre-fix negative controls: immediate rejection, accepted callbacks, ambiguous
-   status, wrap/deadline, queue pressure, ownership, timer wake and fairness.
-6. Native BASE/G7 and CAP192+G7 source/artifact/CCFG/NV/resource checks; independent
-   reviews; publish a scoped PR to the P7 feature only after acceptance.
+The G7 native stock+CAP192 workflow is wired after G6. It retains unchanged
+independent ELF/HEX/NV/CCFG audits, verifies surviving G5/G6 source hooks and
+new G7 producer/service integration, and checks the actual linked UART2.c.obj
+call path. Native acceptance is pending; do not mark F11/F12 fully accepted
+until exact candidate checks and independent artifact review pass.
 
-Goal remains full original P7 firmware finalization through all phases. G7
-does not replace remaining buffers, NV/startup, exact F13 v2 ABI, AF diagnostics,
-legacy diagnostic/retention/tooling or physical H1–H7/migration/runtime gates.
-Hardware, radio, production services, flash/reset/erase/migration and mainline
-merge remain outside current authorization. All execution evidence is hosted.
+All repository tests/builds run on GitHub-hosted Actions. No local test/build,
+serial-open, flash, reset, erase or production migration follows from these
+source results. Original physical/network acceptance fields remain false.
+
+The adopted P7U plan next requires F07/R10 non-destructive durable startup,
+vendor-correct P7U native CCFG and board binding, then separate stock NV2 R1
+and CAP192/NV5 R2 qualification. Exact P10 F13 v2 ABI and speculative retained
+telemetry are deferred unless needed; they are not R1 completion prerequisites.

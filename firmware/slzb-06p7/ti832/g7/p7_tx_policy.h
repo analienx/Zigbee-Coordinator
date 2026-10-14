@@ -1,4 +1,4 @@
-/* P7 G7 work in progress. Not a firmware-qualified interface yet. */
+/* P7 G7 retry/fairness policy; source/native evidence, not runtime qualification. */
 #ifndef P7_TX_POLICY_H
 #define P7_TX_POLICY_H
 #include <stdint.h>
@@ -13,7 +13,7 @@ typedef struct {
 enum p7_tx_ready { P7_TX_NOW=0, P7_TX_WAIT=1, P7_TX_EXPIRED=2 };
 enum p7_tx_lane { P7_TX_NONE=0, P7_TX_SRSP=1, P7_TX_AREQ=2 };
 void p7_tx_budget_init(p7_tx_budget_t *b);
-/* Caller increments ONLY immediately before a real UART submission. */
+/* Caller increments once per real driver call, with its pre-call timestamp. */
 void p7_tx_budget_attempt(p7_tx_budget_t *b, uint32_t now);
 /* Called ONLY for driver-proven immediate rejection; accepted/ambiguous
  * writes must never reach a retry path or be transmitted a second time. */

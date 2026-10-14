@@ -75,6 +75,8 @@ def apply(sdk, examples, output):
     output.mkdir(parents=True, exist_ok=True)
     manifest = {"qualification": "G7_SOURCE_OVERLAY_NOT_FLASHABLE", "runtime_qualified": False,
                 "hardware_qualified": False, "flash_authorized": False,
+                "linked_sources_sha256": {name: hashlib.sha256(data).hexdigest() for name, data in copies.items()},
+                "projectspec_sha256": hashlib.sha256(text.encode()).hexdigest(),
                 "files": {p: {"input_sha256": hashlib.sha256(original[p].encode()).hexdigest(),
                               "patched_sha256": hashlib.sha256(source.encode()).hexdigest()}
                           for p, source in patched.items()}}
