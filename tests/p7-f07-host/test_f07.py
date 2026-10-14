@@ -110,7 +110,7 @@ def main():
     assert patched.index("if (!p7_f07_commit_nib_before_ready())") < patched.index(
         "ZDApp_ChangeState( DEV_ZB_COORD );")
     assert "zstackconfig.h" in patched
-    assert "pZStackCfg->nvFps.updateItem == NULL" in patched
+    assert "pZStackCfg->nvFps.updateItem == 0" in patched
     assert "NLME_SetDefaultNV();" in patched
     # This tranche MUST NOT alter the destructive restore fallback.
     assert patched.count("NLME_SetDefaultNV();") == src.count("NLME_SetDefaultNV();")
