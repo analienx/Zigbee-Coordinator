@@ -2,8 +2,9 @@
  * Writer ownership: writer_owned is claimed by one atomic exchange.
  * Task and ISR writers share the same try-claim: on contention the
  * event is dropped and p7_diag_contention_dropped increments; no
- * writer ever waits, spins, or interleaves a ring mutation. write_seq
- * is the seqlock for readers: odd exactly while ownership is held.
+ * writer ever waits, spins, or interleaves a ring mutation. Snapshot readers
+ * claim the same ownership: retrying a sequence number alone does not make
+ * concurrent reads of ordinary C ring/state fields race-free.
  * On Cortex-M4 the C11 atomic exchange compiles to an LDREX/STREX
  * loop bounded to a single claim attempt in effect (a failed claim
  * observes ownership, it does not retry the write); the equivalent
@@ -157,13 +158,14 @@ void p7_diag_init_preserving(uint32_t gen, uint8_t rs, uint8_t known, uint8_t re
 static void put16(uint8_t*o,uint16_t v){o[0]=(uint8_t)v;o[1]=(uint8_t)(v>>8);}
 static void put32(uint8_t*o,uint32_t v){put16(o,(uint16_t)v);put16(o+2,(uint16_t)(v>>16));}
 size_t p7_diag_snapshot(uint8_t *out, size_t cap){
-  if(!out) return 0;
-  for(int attempt=0;attempt<8;attempt++){
-    uint32_t s1=atomic_load(&write_seq); if((s1&1u) || atomic_load(&writer_owned)) continue;
-    if(p7_diag_state.count==0) return 0; /* no snapshot before init */
+  size_t length=0;
+  if(!out || !writer_try_claim(0)) return 0;
+  /* One bounded copy under the existing guard; ISR writers still never wait. */
+  {
+    if(p7_diag_state.count==0) goto done; /* no snapshot before init */
     uint16_t n=p7_diag_state.count; if(n>P7_DIAG_SNAPSHOT_EVENTS)n=P7_DIAG_SNAPSHOT_EVENTS;
     size_t need=(size_t)P7_DIAG_HDR+(size_t)n*12u+2u;
-    if(cap<need) return 0;
+    if(cap<need) goto done;
     uint16_t count=p7_diag_state.count;
     uint16_t oldest=(uint16_t)((p7_diag_state.head+P7_DIAG_RING-count)%P7_DIAG_RING);
     uint16_t start=(uint16_t)((oldest+(count-n))%P7_DIAG_RING);
@@ -177,8 +179,10 @@ size_t p7_diag_snapshot(uint8_t *out, size_t cap){
       const p7_diag_event_t *e=&p7_diag_ring[(start+i)%P7_DIAG_RING]; uint8_t *o=out+P7_DIAG_HDR+(size_t)i*12u;
       put32(o,e->seq); put32(o+4,e->tick); put16(o+8,e->kind); put16(o+10,e->arg);
     }
-    if(atomic_load(&write_seq)!=s1 || atomic_load(&writer_owned)) continue;
-    size_t len=(size_t)P7_DIAG_HDR+(size_t)n*12u; put16(out+len,p7_diag_crc16(out,len)); return len+2u;
+    size_t len=(size_t)P7_DIAG_HDR+(size_t)n*12u;
+    put16(out+len,p7_diag_crc16(out,len)); length=len+2u;
   }
-  return 0;
+done:
+  writer_release();
+  return length;
 }

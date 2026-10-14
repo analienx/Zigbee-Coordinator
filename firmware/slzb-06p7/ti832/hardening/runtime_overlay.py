@@ -17,6 +17,8 @@ NV = "source/ti/zstack/osal/osal_nv.c"
 AF = "source/ti/zstack/mt/mt_af.c"
 MAIN = "source/ti/zstack/startup/main.c"
 SYS = "source/ti/zstack/mt/mt_sys.c"
+MT = "source/ti/zstack/mt/mt.c"
+APP_AF = "source/ti/zstack/stack/af/af.c"
 
 NV_INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t len, void *buf )
 {
@@ -139,6 +141,58 @@ def patch(texts: dict[str, str]) -> dict[str, str]:
     out[NV] = source
 
     source = out[AF]
+    old = function(source,"MT_AfRegister")
+    old_header=old
+    old=replace(old,"  cmdId = pBuf[MT_RPC_POS_CMD1];",
+                "  cmdId = pBuf[MT_RPC_POS_CMD1];\n  uint16_t frameLen = pBuf[MT_RPC_POS_LEN];",
+                "af_register_length_before_payload")
+    new = replace(old,"  epDesc = (endPointDesc_t *)OsalPort_malloc(sizeof(endPointDesc_t));",
+                  "  if (frameLen < 9) { retValue = afStatus_INVALID_PARAMETER; goto respond; }\n"
+                  "  uint16_t outCount = 8u + 2u * pBuf[7];\n"
+                  "  if (outCount >= frameLen || outCount + 1u + 2u * pBuf[outCount] > frameLen)\n"
+                  "  { retValue = afStatus_INVALID_PARAMETER; goto respond; }\n"
+                  "  epDesc = (endPointDesc_t *)OsalPort_malloc(sizeof(endPointDesc_t));",
+                  "af_register_packet_bounds")
+    new = replace(new,"    epDesc->task_id = &MT_TaskID;",
+                  "    memset(epDesc, 0, sizeof(*epDesc));\n    epDesc->task_id = &MT_TaskID;",
+                  "af_register_descriptor_initialized")
+    new = replace(new,"      OsalPort_free( epDesc );",
+                  "      if (epDesc->simpleDesc)\n"
+                  "      {\n"
+                  "        if (epDesc->simpleDesc->pAppInClusterList) OsalPort_free(epDesc->simpleDesc->pAppInClusterList);\n"
+                  "        if (epDesc->simpleDesc->pAppOutClusterList) OsalPort_free(epDesc->simpleDesc->pAppOutClusterList);\n"
+                  "        OsalPort_free(epDesc->simpleDesc);\n"
+                  "      }\n"
+                  "      OsalPort_free( epDesc );", "af_register_failure_cleanup")
+    new = replace(new,"  /* Build and send back the response */",
+                  "respond:\n  /* Build and send back the response */","af_register_response")
+    source = replace(source,old_header,new,"af_registration_cleanup")
+    old = function(source,"MT_AfDelete")
+    original_delete=old
+    old=replace(old,"  cmdId = pBuf[MT_RPC_POS_CMD1];",
+                "  cmdId = pBuf[MT_RPC_POS_CMD1];\n  uint8_t frameLen = pBuf[MT_RPC_POS_LEN];",
+                "af_delete_length_before_payload")
+    new = replace(old,"  retValue = afDelete( *pBuf );",
+                  "  if (frameLen < 1)\n"
+                  "  { retValue = afStatus_INVALID_PARAMETER; goto respond; }\n"
+                  "  endPointDesc_t *epDesc = afFindEndPointDesc(*pBuf);\n"
+                  "  retValue = afDelete( *pBuf );\n"
+                  "  if (retValue == ZSuccess && pMtAfDataReq && pMtAfDataReq->epDesc == epDesc)\n"
+                  "  { OsalPort_free(pMtAfDataReq); pMtAfDataReq = NULL; }\n"
+                  "  /* afDelete removes the list entry; MT owns its allocated descriptor. */\n"
+                  "  if (retValue == ZSuccess && epDesc && epDesc->task_id == &MT_TaskID)\n"
+                  "  {\n"
+                  "    if (epDesc->simpleDesc)\n"
+                  "    {\n"
+                  "      if (epDesc->simpleDesc->pAppInClusterList) OsalPort_free(epDesc->simpleDesc->pAppInClusterList);\n"
+                  "      if (epDesc->simpleDesc->pAppOutClusterList) OsalPort_free(epDesc->simpleDesc->pAppOutClusterList);\n"
+                  "      OsalPort_free(epDesc->simpleDesc);\n"
+                  "    }\n"
+                  "    OsalPort_free(epDesc);\n"
+                  "  }", "af_delete_owned_descriptor")
+    new=replace(new,"  /* Build and send back the response */",
+                "respond:\n  /* Build and send back the response */","af_delete_response")
+    source=replace(source,original_delete,new,"af_delete_heap_lifetime")
     source = replace(source, "  uint16_t dataLen;\n  uint8_t transId;",
                      "  uint16_t dataLen;\n  uint16_t received;\n  uint8_t *coverage;\n  uint8_t transId;",
                      "af_staging_coverage")
@@ -193,12 +247,39 @@ def patch(texts: dict[str, str]) -> dict[str, str]:
         source=replace(source,function(source,name),
                        (Path(__file__).parent/template).read_text(),name+"_partial_item")
     out[SYS] = source
+    source = out[MT]
+    old = function(source,"MT_BuildEndpointDesc")
+    new = replace(old,"  epDesc = (endPointDesc_t *)param;",
+                  "  if (!pBuf || !param) return ZInvalidParameter;\n  epDesc = (endPointDesc_t *)param;",
+                  "endpoint_arguments")
+    new = replace(new,"      /* Endpoint */",
+                  "      memset(epDesc->simpleDesc, 0, sizeof(*epDesc->simpleDesc));\n      /* Endpoint */",
+                  "endpoint_empty_cluster_pointers")
+    # Failure of the inbound list must not parse its payload as the out-count.
+    anchor="        else\n        {\n          ret = ZMemError;\n        }"
+    if new.count(anchor)!=2: raise ValueError("ENDPOINT_ALLOCATION_BRANCH_CHANGED")
+    new=new.replace(anchor,"        else\n        {\n"
+                    "          OsalPort_free(epDesc->simpleDesc);\n"
+                    "          epDesc->simpleDesc = NULL;\n"
+                    "          return ZMemError;\n        }",1)
+    new = replace(new,"        if (epDesc->simpleDesc->AppNumOutClusters)",
+                  "        if (epDesc->simpleDesc->pAppOutClusterList)","endpoint_free_existing_out_list")
+    new = replace(new,"\n        OsalPort_free(epDesc->simpleDesc);\n      }",
+                  "\n        OsalPort_free(epDesc->simpleDesc);\n        epDesc->simpleDesc = NULL;\n      }",
+                  "endpoint_failed_descriptor_not_published")
+    source = replace(source,old,new,"endpoint_allocation_failure")
+    out[MT] = source
+    old=function(out[APP_AF],"afBuildMSGIncoming")
+    new=replace(old,"  const uint8_t len = sizeof( afIncomingMSGPacket_t ) + aff->asduLength;",
+                "  const uint16_t len = sizeof( afIncomingMSGPacket_t ) + aff->asduLength;",
+                "af_incoming_allocation_width")
+    out[APP_AF]=replace(out[APP_AF],old,new,"af_incoming_payload_allocation")
     out[MAIN] = replace(out[MAIN], STARTUP_OLD, STARTUP_NEW, "nv_startup_result")
     return out
 
 
 def apply(sdk: Path, output: Path) -> dict:
-    originals = {name: (sdk/name).read_text(encoding="utf8") for name in (NV, AF, MAIN, SYS)}
+    originals = {name: (sdk/name).read_text(encoding="utf8") for name in (NV, AF, MAIN, SYS, MT, APP_AF)}
     patched = patch(originals)
     report = {"qualification":"P7_RUNTIME_SOURCE_HARDENING_NOT_HARDWARE_QUALIFIED",
               "flash_authorized":False,

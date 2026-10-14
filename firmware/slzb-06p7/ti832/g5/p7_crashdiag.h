@@ -14,9 +14,9 @@
  * counter instead of interleaving. An ISR writer never waits and
  * never preempts an owner: it makes one exchange attempt, and on
  * contention drops + counts. A higher-priority ISR preempting a
- * lower ISR writer therefore also drops. The snapshot reader keeps
- * the seqlock discipline (write_seq odd while owned/mutating), retries
- * bounded times and returns 0 when unstable: no torn CRC-valid data.
+ * lower ISR writer therefore also drops. The snapshot reader claims
+ * the same ownership for one bounded copy and returns 0 when busy.
+ * Ordinary ring/state fields are never read concurrently with a writer.
  * This is a source/host-proven protocol, NOT hardware qualification:
  * no Hwi priority or PRIMASK behaviour is claimed as board-verified.
  *

@@ -45,6 +45,22 @@ or deployment tooling. Baseline source is feature commit
   updates, initialize the supplied prefix plus a zeroed remainder once, and update
   runtime globals after persistence succeeds. Existing-item initialization and
   the legacy poll-rate alias remain supported.
+- **P1: Endpoint registration could free uninitialized cluster pointers.**
+  Descriptor/list allocations now start initialized, stop parsing on failed
+  allocations, and release all owned buffers if registration fails. MT deletion
+  releases its owned descriptor and cancels a staged request borrowing it;
+  descriptors owned by other tasks and failed deletions are preserved.
+- **P1: AF packet allocation used an 8-bit total size.** The packet structure
+  plus a valid 240/255-byte local payload wrapped before allocation. The total
+  now uses 16 bits, matching the OSAL allocator and the SDK's 8-bit ASDU length.
+- **P2: Diagnostic snapshots raced with recorder writes.** Sequence retries
+  did not make accesses to ordinary C ring fields safe across tasks. Snapshot
+  copying now claims the existing nonblocking ownership guard once. The wire
+  format is unchanged; ISR writers still never wait.
+- **P1: OSAL timer restart and lifetime errors.** Existing-timer restarts now
+  return success and update reload mode/period. Tick conversion cannot wrap into
+  a premature expiry. Schedule allocation failures free the wrapper; rescheduling
+  updates callback/argument; stopping a schedule passes its actual clock handle.
 - **P1: APS/TCLK persistence could reuse or corrupt counter state.** Restore and
   periodic checkpoints ignored read/write errors, published counters before
   verified persistence, cleared pending flags on failure, and allowed counter
@@ -84,9 +100,9 @@ or deployment tooling. Baseline source is feature commit
 types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
-All three integrated native profiles passed at `13709d9`, including incoming AF
-and NULL-initializer changes. All 17 checks passed at prior `0e06cfe`. The normal MT
-partial-write/prefix changes added after `13709d9` still require fresh native results.
+All 17 checks passed at `2482c6e`, including all seven native profiles and normal
+MT partial-write/prefix changes. The subsequent endpoint, packet-builder, timer
+and diagnostic race fixes require fresh native results.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
@@ -111,11 +127,25 @@ adapter to the complete NV driver for both layouts.
 per version, covering full/partial/extended writes, unchanged surrounding bytes,
 prefix/empty/existing initialization, allocation/read/write errors and the legacy
 poll-rate conversion. Ten original-source cases fail; controls pass both versions.
+`test_endpoint.py` compiles actual descriptor/register/delete functions and SDK
+structures for 15 cases per version, including failed allocation/registration,
+empty clusters, borrowed descriptors and staged-request cancellation.
+`test_af_packet.py` compiles the actual builder with SDK packet/frame types for
+five cases per version; valid 240/255-byte payloads reproduce the old overflow.
+`test_osal_timers.py` compiles actual timer/schedule functions and structures for
+12 cases per version. The exact diagnostic implementation also ran with concurrent
+writer/snapshot threads under ThreadSanitizer: the old source reports ring/state
+races, while the ownership-guarded source passes with valid snapshot CRCs. Tests
+run with ASLR disabled for that instrumented process to avoid TSan shadow mapping
+conflicts; firmware and host settings are unchanged.
 
 ## Coverage still being worked through
 
 The real projectspec lists 74 inherited C translation units, plus the three
 local recorder/policy C files, the task include and generated configuration.
+The genuine R1 linker map has contributions from 47 inherited units; the other
+27 do not contribute to this linked candidate. This inventory guides coverage
+and is not itself proof that a function has been reviewed.
 The review uses reconstructed G5/G6/G7/F07 composed sources and the actual
 native map/symbol inventory, including the inherited NV and driver boundaries.
 
@@ -127,10 +157,10 @@ native map/symbol inventory, including the inherited NV and driver boundaries.
 | RX parser/resynchronization | Existing allocation/overflow tests passed; full MT command bounds pending |
 | NVOCMP NV2/NV5 recovery | Full driver compiled for both layouts; preservation, physical failures and API memory bounds fixed; hardware interruption qualification pending |
 | AF and MT host commands | AF staging defects fixed; remaining command handlers pending |
-| Capacity, heap, routing, fragmentation | Generated source/profile and linker inventory obtained; review pending |
-| Board, RF, clocks, power, reset | Source/profile inventory obtained; review pending |
-| Diagnostics and interrupt safety | Recorder/timebase source read; remaining concurrency checks pending |
-| Inherited BDB/ZDO/AF/OSAL/MAC boundaries | Available sources obtained; full review pending |
+| Capacity, heap, routing, fragmentation | Generated R2 table sizes/index types and actual R1/R2 maps checked; AF allocation overflow fixed; remaining caller review pending |
+| Board, RF, clocks, power, reset | CCFG/layout and SysConfig reviewed; physical UART/RF/oscillator binding remains unproven; power/reset caller review pending |
+| Diagnostics and interrupt safety | Shared-field snapshot race reproduced/fixed under TSan; existing recorder/decoder/preemption tests pass |
+| Inherited BDB/ZDO/AF/OSAL/MAC boundaries | Timer/schedule defects fixed and compiled; remaining BDB/ZDO/API callers pending |
 
 The possible checkpoint-fault resume bypass was **not confirmed in RC1**:
 `ZDApp_ResumeNwk` and its non-ZNP request caller are excluded from the native

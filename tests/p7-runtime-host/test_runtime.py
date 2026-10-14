@@ -237,7 +237,7 @@ def main():
     parser.add_argument("--sdk",type=Path,required=True)
     parser.add_argument("--out",type=Path,required=True)
     args=parser.parse_args();args.out.mkdir(parents=True,exist_ok=True)
-    original={name:(args.sdk/name).read_text() for name in (overlay.NV,overlay.AF,overlay.MAIN,overlay.SYS)}
+    original={name:(args.sdk/name).read_text() for name in (overlay.NV,overlay.AF,overlay.MAIN,overlay.SYS,overlay.MT,overlay.APP_AF)}
     # Runtime overlay deliberately requires G5's recorder only for the main halt.
     patched=overlay.patch(original)
     try: overlay.patch(patched)

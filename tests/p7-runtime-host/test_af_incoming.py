@@ -112,7 +112,7 @@ int main(int argc,char **argv) {
 def main():
     p=argparse.ArgumentParser();p.add_argument("--sdk",type=Path,required=True);p.add_argument("--out",type=Path,required=True)
     a=p.parse_args();a.out.mkdir(parents=True,exist_ok=True)
-    original={path:(a.sdk/path).read_text() for path in (overlay.NV,overlay.AF,overlay.MAIN,overlay.SYS)}
+    original={path:(a.sdk/path).read_text() for path in (overlay.NV,overlay.AF,overlay.MAIN,overlay.SYS,overlay.MT,overlay.APP_AF)}
     patched=overlay.patch(original)
     controls=("success","missing","inline","delete-head")
     for version,source in (("pre",original[overlay.AF]),("post",patched[overlay.AF])):
