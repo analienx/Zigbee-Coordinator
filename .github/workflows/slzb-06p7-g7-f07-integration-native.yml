@@ -322,7 +322,8 @@ jobs:
             python3 repo/firmware/slzb-06p7u/qualification/p7u_rom_bsl_image_gate.py \
               --hex bundle-diag/DIAG-NOT-FLASHABLE.hex \
               --profile "$G6_PROFILE" \
-              --out bundle-compare/P7U-ROM-BSL-GATE.json
+              --out bundle-compare/P7U-ROM-BSL-GATE.json \
+              --app-only-out bundle-compare/P7U-APP-ONLY-SOURCE-NOT-FLASHABLE.hex
           fi
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-diag --out bundle-compare/G7-LINKED-EVIDENCE.json
           python3 repo/firmware/slzb-06p7/ti832/f07/verify_composed_native.py \
