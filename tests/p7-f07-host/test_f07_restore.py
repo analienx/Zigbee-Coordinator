@@ -37,7 +37,12 @@ STUB=r'''
 #define NVINTF_SYSID_ZSTACK 1
 #define ZCD_NV_EX_LEGACY 0
 #define ZCD_NV_NIB 20
+#ifndef BDB_TOUCHLINK_CAPABILITY_ENABLED
 #define BDB_TOUCHLINK_CAPABILITY_ENABLED 0
+#endif
+#define BDB_COMMISSIONING_STATE_TL 7
+typedef struct { int bdbCommissioningState; } bdbState_t;
+static bdbState_t bdbCommissioningProcedureState = {BDB_COMMISSIONING_STATE_TL};
 #define DEV_HOLD 2
 #define DEV_INIT 3
 #define ZDO_INITDEV_RESTORED_NETWORK_STATE 0
@@ -131,6 +136,8 @@ def main():
     block=patched[start:end]
     assert block.count("return ZDO_INITDEV_LEAVE_NOT_STARTED;")==2
     assert block.index("p7_f07_nv_restore_preflight()")<block.index("ZDApp_RestoreNetworkState()")
+    assert block.index("networkStateNV != ZDO_INITDEV_RESTORED_NETWORK_STATE")<block.index(
+        "#if (BDB_TOUCHLINK_CAPABILITY_ENABLED == TRUE)")
     assert block.index("networkStateNV != ZDO_INITDEV_RESTORED_NETWORK_STATE")<block.index("NLME_InitNV();")
     assert block.count("ZDSecMgrClearNVKeyValues();")==1
     assert patched.count("    ZDSecMgrClearNVKeyValues();")==before.count(
@@ -153,9 +160,11 @@ def main():
 return networkStateNV;
 }\n"""+TAIL
         path.write_text(source,encoding="utf8")
-        subprocess.run(["gcc","-std=c11","-O2","-Wall","-Wextra","-Werror",
-                        str(path),"-o",str(exe)],check=True)
-        subprocess.run([str(exe)],check=True)
+        for touchlink in (0,1):
+            subprocess.run(["gcc","-std=c11","-O2","-Wall","-Wextra","-Werror",
+                            f"-DBDB_TOUCHLINK_CAPABILITY_ENABLED={touchlink}",
+                            str(path),"-o",str(exe)],check=True)
+            subprocess.run([str(exe)],check=True)
     print("F07_REQUESTED_RESTORE_FAIL_CLOSED_HOST_ONLY_PASS_NOT_FLASHABLE")
 
 if __name__=="__main__":
