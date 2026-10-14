@@ -153,17 +153,66 @@ def candidate_audit(data: dict[int, int], profile: str,
         "no_write_operations": True,
     }
 
+def application_only_hex(data: dict[int, int], profile: str) -> bytes:
+    """Generate a valid Intel HEX without *any* CCFG or NV bytes.
+
+    An app-only source image is NOT SAFE to flash with a whole-bank-erase tool.
+    It is for controlled sector-aware recovery evaluation only.
+    """
+    limit = NV2_BASE if profile == "p7u-f07-stock" else NV5_BASE
+    require(profile in ("p7u-f07-stock", "p7u-cap192-f07"), "P7U_PROFILE_MISMATCH")
+    addresses = sorted(x for x in data if x < limit)
+    require(bool(addresses), "IMAGE_APP_TOO_SMALL")
+    def emit(address: int, kind: int, payload: bytes = b"") -> str:
+        header = bytes((len(payload), (address >> 8) & 255,
+                        address & 255, kind))
+        content = header + payload
+        return ":" + (content + bytes((-sum(content) & 255,))).hex().upper()
+    lines: list[str] = []
+    upper = -1
+    pos = 0
+    while pos < len(addresses):
+        start = addresses[pos]
+        hi = start >> 16
+        if hi != upper:
+            lines.append(emit(0, 4, hi.to_bytes(2, "big")))
+            upper = hi
+        chunk = [start]
+        pos += 1
+        while (pos < len(addresses) and
+               addresses[pos] == chunk[-1] + 1 and
+               len(chunk) < 16 and addresses[pos] >> 16 == upper):
+            chunk.append(addresses[pos])
+            pos += 1
+        lines.append(emit(start & 65535, 0, bytes(data[x] for x in chunk)))
+    lines.append(emit(0, 1))
+    result = ("\\n".join(lines) + "\\n").encode("ascii")
+    # Double-parse our own output before publishing any derived bytes.
+    roundtrip = parse_hex(result)
+    require(roundtrip == {a:data[a] for a in addresses},
+            "APP_ONLY_ROUNDTRIP_CHANGED_BYTES")
+    require(max(roundtrip) < limit, "APP_ONLY_CROSSES_NV")
+    return result
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--hex", required=True, type=Path)
     p.add_argument("--profile", required=True, choices=["p7u-f07-stock","p7u-cap192-f07"])
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--installed-ccfg", type=Path, help="Optional private read-only 88-byte device snapshot")
+    p.add_argument("--app-only-out", type=Path, help="Optional derived CCFG-free HEX, NOT FLASHABLE without approved sector-aware backend")
     a = p.parse_args()
     try:
         audit = candidate_audit(
             parse_hex(a.hex.read_bytes()), a.profile,
             installed_ccfg=a.installed_ccfg.read_bytes() if a.installed_ccfg else None)
+        if a.app_only_out:
+            application = application_only_hex(parse_hex(a.hex.read_bytes()), a.profile)
+            a.app_only_out.parent.mkdir(parents=True, exist_ok=True)
+            a.app_only_out.write_bytes(application)
+            audit["derived_app_only_hex_sha256"] = hashlib.sha256(application).hexdigest()
+            audit["derived_app_only_never_flash_with_bank_erase"] = True
         status = "SOURCE_HEX_BSL_GEOMETRY_PASS_NOT_FLASHABLE"
     except (PreflightError, OSError) as exc:
         reason = str(exc) if isinstance(exc, PreflightError) else "INPUT_UNREADABLE"
