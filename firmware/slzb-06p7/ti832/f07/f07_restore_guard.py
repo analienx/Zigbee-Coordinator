@@ -27,7 +27,7 @@ extern zstack_Config_t *pZStackCfg;
  * NLME_InitNV() may create/replace records. This is not a complete
  * key-table/frame-counter validation and is not a blank-NV detector.
  */
-static uint8_t p7_f07_nv_restore_preflight(void)
+__attribute__((noinline)) static uint8_t p7_f07_nv_restore_preflight(void)
 {
     nwkIB_t *copy;
     uint8_t readable;
