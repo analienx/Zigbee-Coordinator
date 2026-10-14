@@ -22,6 +22,8 @@ STATE_ANCHOR = (
 )
 
 GATE = """#if defined(NV_RESTORE)
+#include "zstackconfig.h" /* P7 F07: real configured NV backend type */
+extern zstack_Config_t *pZStackCfg;
 /* F07 slice 1: a void AddrMgrWriteNVRequest is not a durable NIB ack.
  * A missing NV backend may cause osal_nv_write() to report false SUCCESS;
  * require item length and a complete readback before coordinator-ready.
@@ -31,6 +33,16 @@ static uint8_t p7_f07_commit_nib_before_ready(void)
 {
     nwkIB_t *readback;
     uint8_t passed = FALSE;
+    /* TI osal_nv_write_ex() may report SUCCESS when updateItem is NULL.
+     * A valid item/readback alone is therefore not proof of a write.
+     */
+    if (pZStackCfg == NULL ||
+        pZStackCfg->nvFps.getItemLen == NULL ||
+        pZStackCfg->nvFps.updateItem == NULL ||
+        pZStackCfg->nvFps.readItem == NULL)
+    {
+        return FALSE;
+    }
     if (osal_nv_item_len(ZCD_NV_NIB) != sizeof(nwkIB_t))
     {
         return FALSE;
