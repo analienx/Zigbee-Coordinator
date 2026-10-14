@@ -14,6 +14,40 @@ from nv5_verify_linked import load_elf as nv5_load_elf
 from validate_elf_hex import read_elf as stock_read_elf, read_hex
 from verify_vanilla import map_rows
 
+def file_load_gaps(elf, app_end):
+    """Find program-header bytes absent from allocatable, file-backed sections.
+    Diagnostic data only: does NOT authorize tolerating any count mismatch."""
+    hdr = struct.unpack_from("<HHIIIIIHHHHHH", elf, 16)
+    phoff, phentsize, phnum = hdr[4], hdr[8], hdr[9]
+    shoff, shentsize, shnum = hdr[5], hdr[10], hdr[11]
+    if not shoff or shentsize != 40 or shnum > 4096:
+        raise ValueError("TRIAGE_UNEXPECTED_ELF_SECTIONS")
+    sections = [struct.unpack_from("<IIIIIIIIII", elf, shoff + i * shentsize)
+                for i in range(shnum)]
+    coverage = set()
+    alloc_sections = []
+    for sec in sections:
+        typ, flags, off, size = sec[1], sec[2], sec[4], sec[5]
+        if typ != 8 and flags & 2 and size:
+            coverage.update(range(off, off + size))
+            alloc_sections.append({"file_offset": off, "size": size,
+                                   "vaddr": hex(sec[3]), "type": typ})
+    gaps = []
+    for i in range(phnum):
+        typ, offset, vaddr, paddr, filesz, memsz, flags, align = struct.unpack_from(
+            "<IIIIIIII", elf, phoff + i * phentsize)
+        if typ != 1 or not filesz or paddr >= app_end:
+            continue
+        for j in range(filesz):
+            pos = offset + j
+            if pos not in coverage:
+                gaps.append({"file_offset": pos, "paddr": hex(paddr + j),
+                             "byte": hex(elf[pos])})
+    return {"unattributed_file_bytes": len(gaps), "unattributed_first32": gaps[:32],
+            "alloc_file_backed_section_count": len(alloc_sections),
+            "alloc_file_backed_sections_last12": alloc_sections[-12:]}
+
+
 def diagnose(root, profile):
     dis = (root / "DIAG-disassembly.txt").read_text(errors="replace")
     elf = (root / "DIAG-NOT-FLASHABLE.out").read_bytes()
@@ -35,6 +69,7 @@ def diagnose(root, profile):
     app = {a for a in mem if a < app_end}
     app_hex = {a for a in hexmem if a < app_end}
     flash_used = rows["FLASH"]["used"]
+    gaps = file_load_gaps(elf, app_end)
     return {
         "mode": "DIAGNOSTIC_ONLY_UNCHANGED_NATIVE_GATES",
         "profile": profile,
@@ -46,6 +81,7 @@ def diagnose(root, profile):
         "unique_ELF_app_programmed_bytes": len(app),
         "unique_HEX_app_programmed_bytes": len(app_hex),
         "map_minus_ELF_app_bytes": flash_used - len(app),
+        "file_load_gaps": gaps,
         "ELF_HEX_app_addresses_equal": app == app_hex,
         "ELF_HEX_app_content_equal": app == app_hex and all(mem[a] == hexmem[a] for a in app),
         "map_region_flash": rows["FLASH"],
