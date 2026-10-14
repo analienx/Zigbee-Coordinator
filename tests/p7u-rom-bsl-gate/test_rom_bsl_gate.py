@@ -62,6 +62,15 @@ def main():
         assert result["backdoor_ti_dio"]==15
         assert result["ccfg_88_bytes_exact_vendor"] is True
         assert result["target_bsl_entry_verified"] is False
+    for profile in ("p7u-f07-stock", "p7u-cap192-f07"):
+        app_only = gate.application_only_hex(data,profile)
+        recovered = gate.parse_hex(app_only)
+        assert recovered == {k:v for k,v in data.items() if k < (
+            gate.NV2_BASE if profile=="p7u-f07-stock" else gate.NV5_BASE)}
+        assert all(k < gate.NV5_BASE for k in recovered)
+        assert not any(gate.CCFG_START <= k < gate.CCFG_END for k in recovered)
+        assert gate.application_only_hex(data,profile)==app_only
+    reject(lambda:gate.application_only_hex(data,"p10"),"P7U_PROFILE_MISMATCH")
     reject(lambda:gate.candidate_audit(data,"p7u-f07-stock"),"IMAGE_CCFG_VENDOR_HASH_MISMATCH")
     reject(lambda:gate.candidate_audit(data,"p10",digest),"P7U_PROFILE_MISMATCH")
     reject(lambda:gate.candidate_audit(data,"p7u-f07-stock",digest,b"FF"),"INSTALLED_CCFG_BAD_LENGTH")
