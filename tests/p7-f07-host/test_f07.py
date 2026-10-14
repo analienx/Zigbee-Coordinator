@@ -133,8 +133,10 @@ def main():
         cpath = Path(temp) / "f07_host.c"
         executable = Path(temp) / "f07_host"
         cpath.write_text(PREFIX + f07.GATE + SUFFIX)
+        (Path(temp) / "zstackconfig.h").write_text(
+            "/* Hosted stand-in: only backend pointer presence is inspected. */\n")
         subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-                        str(cpath), "-o", str(executable)], check=True)
+                        "-I", str(temp), str(cpath), "-o", str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
     print("F07_SOURCE_AND_HOSTED_C_GATES_PASS_NOT_FLASHABLE")
 
