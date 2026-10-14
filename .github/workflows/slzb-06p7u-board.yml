@@ -1,0 +1,32 @@
+name: P7U separate board profile (NOT FLASHABLE)
+on:
+  push:
+    branches: ['feat/p7u-board-profile']
+  pull_request:
+    paths: ['firmware/slzb-06p7u/**', 'tests/p7u-board-host/**', '.github/workflows/slzb-06p7u-board.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  board-profile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Pinned manufacturer map and negative profile controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/candidate-sha.txt
+          curl -fL --retry 2 https://raw.githubusercontent.com/smlight-tech/slzb-esphome/3397f6ffe7b0a58cf1546c8293bfa644235a9769/hw_defs/06xu/r1_73.yaml -o evidence/manufacturer-r1_73.yaml
+          test "$(git hash-object evidence/manufacturer-r1_73.yaml)" = 30dfffbfc092b4c0bebe1581671ead73f6f9475a
+          sha256sum evidence/manufacturer-r1_73.yaml > evidence/manufacturer-sha256.txt
+          python3 firmware/slzb-06p7u/board/verify_board.py --profile firmware/slzb-06p7u/board/board-contract.json --manifest firmware/slzb-06p7u/board/evidence-manifest.json --intent SOURCE_ONLY --expected-model SLZB-06P7U --manufacturer-file evidence/manufacturer-r1_73.yaml | tee evidence/profile.json
+          python3 tests/p7u-board-host/test_board.py evidence/manufacturer-r1_73.yaml | tee evidence/negative-controls.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with: {name: p7u-board-source-evidence, path: evidence/, if-no-files-found: error}

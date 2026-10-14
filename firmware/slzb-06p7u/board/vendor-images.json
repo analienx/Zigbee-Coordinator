@@ -1,0 +1,58 @@
+{
+  "schema": "p7u-vendor-image-inputs-v1",
+  "model": "SLZB-06P7U",
+  "catalog_url": "https://updates.smlight.tech/services/api/slzb-06x-ota.php?type=ZB&format=slzb&device=17&idx=0",
+  "catalog_device_id": 17,
+  "catalog_parameter_source": "https://github.com/smlight-workspace/pysmlight/blob/85142c6b80123819d31a388b210532fff09458eb/pysmlight/catalog.py",
+  "catalog_model_source": "https://github.com/smlight-workspace/pysmlight/blob/85142c6b80123819d31a388b210532fff09458eb/pysmlight/const.py",
+  "installed_content_verified": false,
+  "flash_authorized": false,
+  "images": [
+    {
+      "id": "P7U_VENDOR_20260311_115200",
+      "rev": "20260311",
+      "baud": 115200,
+      "type": "0",
+      "filename": "znp-SLZB-06P7U-115200-20260310.bin",
+      "url": "https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/20260310/znp-SLZB-06P7U-115200-20260310.bin",
+      "sha256": "f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbe",
+      "observed_container_bytes": 273894,
+      "catalog_sdk": "8.32.00.07",
+      "catalog_beta": true,
+      "license_url": "https://smlight.tech/legal/licenses/restrictive-smlight-slzb06-v20240328.txt"
+    },
+    {
+      "id": "P7U_CATALOG_20240316_115200",
+      "rev": "20240316",
+      "baud": 115200,
+      "type": "0",
+      "filename": "CC1352P7_coordinator_20240316.bin",
+      "url": "https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240316.bin",
+      "sha256": "3d0addd3d9c5920b9a23083f648cd506802d664706da6c0f2728f78cc94b99f9",
+      "observed_container_bytes": 172356,
+      "catalog_sdk": "6.10",
+      "catalog_beta": false,
+      "source_note": "Catalog-provided historical public image; same version metadata is not installed-content proof.",
+      "license_url": "https://github.com/Koenkk/Z-Stack-firmware/blob/master/LICENSE"
+    },
+    {
+      "id": "P7U_REPORTED_CURRENT_20240710_115200",
+      "rev": "20240710",
+      "baud": 115200,
+      "type": "0",
+      "filename": "CC1352P7_coordinator_20240710.bin",
+      "url": "https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240710.bin",
+      "sha256": "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b",
+      "observed_container_bytes": 179804,
+      "catalog_sdk": "7.41",
+      "catalog_beta": false,
+      "reported_current_by_user": true,
+      "catalog_max_transmit_power_label": "10dB",
+      "catalog_transmit_power_levels": [6, 7, 8, 9, 10],
+      "actual_configured_tx_power": null,
+      "live_sys_version_verified": false,
+      "source_notes": "https://github.com/Koenkk/Z-Stack-firmware/discussions/505",
+      "license_url": "https://github.com/Koenkk/Z-Stack-firmware/blob/master/LICENSE"
+    }
+  ]
+}
