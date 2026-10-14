@@ -79,7 +79,8 @@ def check_backup(data: dict, expected_ieee: str, now: datetime,
     require(coord==normalized_ieee(expected_ieee),"BACKUP_COORDINATOR_IEEE_MISMATCH")
     for key,ln in (("pan_id",4),("extended_pan_id",16)):
         v=data.get(key)
-        require(isinstance(v,str) and re.fullmatch("[0-9A-Fa-f]{"+str(ln)+"}",v) is not None,
+        length_spec="1,"+str(ln) if key=="pan_id" else str(ln)
+        require(isinstance(v,str) and re.fullmatch("[0-9A-Fa-f]{"+length_spec+"}",v) is not None,
                 key.upper()+"_MISSING")
     require(type(data.get("channel")) is int and 11<=data["channel"]<=26,"CHANNEL_INVALID")
     mask=data.get("channel_mask")
@@ -114,7 +115,7 @@ def check_backup(data: dict, expected_ieee: str, now: datetime,
         require(type(dev.get("is_child")) is bool,"BACKUP_CHILD_FLAG_INVALID")
         addr=dev.get("nwk_address")
         require(addr is None or
-                (isinstance(addr,str) and re.fullmatch(r"[0-9a-fA-F]{4}",addr)),
+                (isinstance(addr,str) and re.fullmatch(r"[0-9a-fA-F]{1,4}",addr) is not None),
                 "BACKUP_DEVICE_NWK_ADDRESS_INVALID")
         link=dev.get("link_key")
         if link is not None:
@@ -126,6 +127,7 @@ def check_backup(data: dict, expected_ieee: str, now: datetime,
     return {"metadata_date":stamp.isoformat(),
             "nwk_counter":nwk_counter,"devices":by_ieee,
             "coordinator_ieee":coord,
+            "extended_pan_id":data["extended_pan_id"].lower(),
             "network_key_sequence":network_key["sequence_number"]}
 
 
@@ -166,9 +168,19 @@ def qualify(backup: Path,database: Path,expected_ieee: str,
     if previous:
         old=check_backup(load_backup(previous),expected_ieee,now,
                          365*24*100)  # Previous baseline may legitimately be old.
-        require(fresh["nwk_counter"]>=old["nwk_counter"],"NETWORK_COUNTER_REGRESSION")
+        require(fresh["extended_pan_id"]==old["extended_pan_id"],
+                "EXTENDED_PAN_ID_CHANGED")
         require(fresh["network_key_sequence"]>=old["network_key_sequence"],
                 "NETWORK_KEY_SEQUENCE_REGRESSION")
+        if fresh["network_key_sequence"]==old["network_key_sequence"]:
+            require(fresh["nwk_counter"]>=old["nwk_counter"],
+                    "NETWORK_COUNTER_REGRESSION")
+            require(load_backup(backup)["network_key"]["key"].lower() ==
+                    load_backup(previous)["network_key"]["key"].lower(),
+                    "NETWORK_KEY_CHANGED_WITHOUT_SEQUENCE_UPDATE")
+        require(load_backup(backup)["stack_specific"]["zstack"]["tclk_seed"].lower() ==
+                load_backup(previous)["stack_specific"]["zstack"]["tclk_seed"].lower(),
+                "TRUST_CENTER_SEED_CHANGED")
         for ieee,dev in fresh["devices"].items():
             prior=old["devices"].get(ieee)
             if not prior:
@@ -176,6 +188,8 @@ def qualify(backup: Path,database: Path,expected_ieee: str,
             newer_key=dev.get("link_key")
             older_key=prior.get("link_key")
             if older_key and newer_key:
+                require(newer_key["key"].lower()==older_key["key"].lower(),
+                        "DEVICE_LINK_KEY_CHANGED")
                 for kind in ("rx_counter","tx_counter"):
                     require(newer_key[kind]>=older_key[kind],"DEVICE_LINK_COUNTER_REGRESSION")
             elif older_key and not newer_key:
