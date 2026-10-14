@@ -21,6 +21,8 @@ NV_INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_
 {
   NVINTF_itemID_t nvId;
   uint32_t nvLen;
+  uint8_t status;
+  void *initial = buf;
   if (!pZStackCfg || !pZStackCfg->nvFps.getItemLen ||
       !pZStackCfg->nvFps.createItem || len == 0)
   {
@@ -33,8 +35,16 @@ NV_INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_
   if (nvLen == len) return SUCCESS;
   /* Existing incompatible records must not be reported as newly created. */
   if (nvLen != 0) return NV_OPER_FAILED;
-  return pZStackCfg->nvFps.createItem(nvId, len, buf) == NVINTF_SUCCESS
-      ? NV_ITEM_UNINIT : NV_OPER_FAILED;
+  /* The OSAL contract permits NULL; NVINTF createItem requires actual bytes. */
+  if (!initial)
+  {
+    initial = OsalPort_malloc(len);
+    if (!initial) return NV_OPER_FAILED;
+    memset(initial, 0, len);
+  }
+  status = pZStackCfg->nvFps.createItem(nvId, len, initial);
+  if (!buf) OsalPort_free(initial);
+  return status == NVINTF_SUCCESS ? NV_ITEM_UNINIT : NV_OPER_FAILED;
 }'''
 
 AF_STORE = r'''static void MT_AfDataStore(uint8_t *pBuf)
@@ -102,6 +112,7 @@ STARTUP_NEW = '''    /* P7 runtime: never construct the stack on failed NV initi
 def patch(texts: dict[str, str]) -> dict[str, str]:
     out = dict(texts)
     source = out[NV]
+    source = replace(source,'#include "osal_nv.h"','#include "osal_nv.h"\n#include "osal_port.h"',"nv_allocator_api")
     old = function(source, "osal_nv_item_init_ex")
     if "== NVINTF_FAILURE" not in old or "return ( NV_ITEM_UNINIT );" not in old:
         raise ValueError("NV_INIT_PREDECESSOR_CHANGED")
@@ -158,6 +169,22 @@ def patch(texts: dict[str, str]) -> dict[str, str]:
                   "af_coverage_init")
     source = replace(source, old, new, "af_large_request")
     source = replace(source, function(source, "MT_AfDataStore"), AF_STORE, "af_store_bounds")
+    source = replace(source,"  uint32_t timestamp;         // Receipt timestamp from MAC.",
+                     "  uint16_t dataLen;\n  uint32_t timestamp;         // Receipt timestamp from MAC.",
+                     "af_incoming_stored_length")
+    old = function(source,"MT_AfIncomingMsg")
+    new = replace(old,"  uint16_t respLen = MT_AF_INC_MSG_LEN + dataLen;",
+                  "  uint32_t respLen = (uint32_t)MT_AF_INC_MSG_LEN + dataLen;",
+                  "af_incoming_response_width")
+    new = replace(new,"  pTmp = pRsp;",
+                  "  memset(pRsp, 0, respLen); /* short addresses occupy a padded 8-byte field */\n  pTmp = pRsp;",
+                  "af_incoming_zero_padded_fields")
+    new = replace(new,"    pItem->timestamp = pMsg->timestamp;",
+                  "    pItem->dataLen = dataLen;\n    pItem->timestamp = pMsg->timestamp;",
+                  "af_incoming_record_length")
+    source = replace(source,old,new,"af_incoming_bounds")
+    source = replace(source,function(source,"MT_AfDataRetrieve"),
+                     (Path(__file__).parent/"p7_af_retrieve.inc").read_text(),"af_retrieve_bounds_and_unlink")
     out[AF] = source
     out[MAIN] = replace(out[MAIN], STARTUP_OLD, STARTUP_NEW, "nv_startup_result")
     return out

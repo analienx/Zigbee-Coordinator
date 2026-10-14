@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"firmware/slzb-06p7/ti832/hardening"))
 import nv_overlay
+import runtime_overlay
 
 NVS_HEADER=r'''
 #ifndef TEST_NVS_H
@@ -68,6 +69,9 @@ uint8_t fixture_cache[8192];
 int fixture_gate_fail;
 static bool fixture_voltage_ok=true;
 static bool voltage_check(void) {return fixture_voltage_ok;}
+static int fail_alloc;
+static void *OsalPort_malloc(size_t len) {return fail_alloc?NULL:malloc(len);}
+#define OsalPort_free free
 static uint8_t flash[NVOCMP_NVPAGES*8192],saved[NVOCMP_NVPAGES*8192];
 static unsigned writes,erases,reads;
 static int fail_open,bad_geometry,fail_read,fail_write,fail_erase;
@@ -95,6 +99,13 @@ int_fast16_t NVS_erase(NVS_Handle h,size_t off,size_t len) {
   erases++;if(fail_erase)return -1;memset(flash+off,0xFF,len);return 0;
 }
 #include "driver.c"
+#define NV_OPER_FAILED 10
+#define NV_ITEM_UNINIT 9
+#define SUCCESS 0
+typedef struct {NVINTF_nvFuncts_t nvFps;} zstack_Config_t;
+static zstack_Config_t cfg;
+static zstack_Config_t *pZStackCfg=&cfg;
+#include "adapter.c"
 #ifndef PATCHED
 static uint8_t p7_nv_persistence_ok(void) {return NVOCMP_failF==NVINTF_SUCCESS;}
 #endif
@@ -120,7 +131,20 @@ int main(int argc,char **argv) {
     puts("NV_BAD_STARTUP_PRESERVED_PASS");return 0;
   }
   assert(status==NVINTF_SUCCESS);
+  cfg.nvFps=api;
   if(!strcmp(mode,"blank")) {puts("NV_BLANK_INIT_PASS");return 0;}
+  if(!strcmp(mode,"create-null") || !strcmp(mode,"create-null-allocation")) {
+    NVINTF_itemID_t id={NVINTF_SYSID_ZSTACK,10,1};uint8_t out[200];writes=erases=0;
+    if(!strcmp(mode,"create-null-allocation")) {
+      fail_alloc=1;assert(osal_nv_item_init_ex(10,1,sizeof(out),NULL)==NV_OPER_FAILED);
+      assert(api.getItemLen(id)==0 && writes==0 && erases==0);
+    } else {
+      assert(osal_nv_item_init_ex(10,1,sizeof(out),NULL)==NV_ITEM_UNINIT);
+      assert(api.getItemLen(id)==sizeof(out) && api.readItem(id,0,sizeof(out),out)==NVINTF_SUCCESS);
+      for(unsigned i=0;i<sizeof(out);i++)assert(out[i]==0);
+    }
+    puts("OSAL_NULL_INITIALIZER_ACTUAL_NV_DRIVER_PASS");return 0;
+  }
   if(!strcmp(mode,"write-error") || !strcmp(mode,"erase-error") || !strcmp(mode,"late-read-error") || !strcmp(mode,"voltage")) {
     NVINTF_itemID_t id={NVINTF_SYSID_ZSTACK,10,1};uint8_t data[200],out[200];
     memset(data,0xA5,sizeof(data));assert(api.createItem(id,sizeof(data),data)==NVINTF_SUCCESS);
@@ -218,6 +242,8 @@ def main():
     results=[]
     for version,driver in (("pre",original),("post",patched)):
         (a.out/"driver.c").write_text(driver)
+        adapter=runtime_overlay.function((a.sdk/runtime_overlay.NV).read_text(),"osal_nv_item_init_ex") if version=="pre" else runtime_overlay.NV_INIT
+        (a.out/"adapter.c").write_text(adapter)
         for pages in (2,5):
             source=a.out/(version+str(pages)+"-nv.c");binary=source.with_suffix("")
             source.write_text(FLASH+TEST)
@@ -230,7 +256,8 @@ def main():
                 str(a.sdk/"source/ti/common/nv/crc.c"),"-o",str(binary)],check=True)
             controls=("blank","populate","content-success","resize")
             for mode in (*controls,"unknown","ambiguous","null","zero-sector","short-region","wrong-base","read-error","short-update",
-                         "write-error","erase-error","late-read-error","content-null","content-offset","content-length","voltage","gate"):
+                         "write-error","erase-error","late-read-error","content-null","content-offset","content-length","voltage","gate",
+                         "create-null","create-null-allocation"):
                 expected=version=="pre" and mode not in controls
                 try:
                     result=subprocess.run([str(binary),mode],capture_output=True,text=True,
@@ -246,7 +273,7 @@ def main():
                 results.append({"version":version,"pages":pages,"case":mode,"returncode":result.returncode,
                                 "expected_failure":expected})
     (a.out/"nv-results.json").write_text(json.dumps(results,indent=2)+"\n")
-    print("WHOLE_TI_NV_DRIVER_P7_GPRAM_NV2_NV5_80_CASES_PASS_WITH_PRE_FIX_FALSIFICATION")
+    print("WHOLE_TI_NV_DRIVER_P7_GPRAM_NV2_NV5_88_CASES_PASS_WITH_PRE_FIX_FALSIFICATION")
 
 
 if __name__=="__main__": main()

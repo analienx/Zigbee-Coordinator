@@ -96,6 +96,7 @@ jobs:
           python3 tests/p7-runtime-host/test_nv_driver.py --sdk ../sdk --out /tmp/p7-nv-host
           python3 tests/p7-runtime-host/test_security.py --sdk ../sdk --out /tmp/p7-security-host
           python3 tests/p7-runtime-host/test_mac_boundary.py --sdk ../sdk --out /tmp/p7-mac-host
+          python3 tests/p7-runtime-host/test_af_incoming.py --sdk ../sdk --out /tmp/p7-af-incoming-host
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest

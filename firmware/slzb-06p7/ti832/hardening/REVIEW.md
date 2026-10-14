@@ -27,6 +27,18 @@ or deployment tooling. Baseline source is feature commit
   unique initialized bytes with a bitmap. Arbitrary chunk ordering and overlaps
   remain supported; incomplete flushes do not transmit or discard the pending
   message.
+- **P1: Deleting a queued incoming AF message could leave a freed list node.**
+  Retrieval assigned the predecessor to the selected item before unlinking it.
+  Normal deletion of a non-head item could therefore leave a dangling link.
+  The fix tracks the actual predecessor and preserves the remaining list.
+- **P1: Incoming AF retrieval read beyond the saved message.** Saved messages
+  now retain their length; retrieval checks packet bytes, offset/range and the
+  protocol response limit. Short-address extended indications also initialize
+  their padding, and response-size arithmetic uses a wide type.
+- **P2: Blank NV item creation did not honor the OSAL NULL-initializer contract.**
+  The raw backend requires bytes, while normal OSAL callers may request no
+  initializer. The adapter now supplies a temporary zeroed buffer and handles
+  allocation failure without creating a partial item.
 - **P1: APS/TCLK persistence could reuse or corrupt counter state.** Restore and
   periodic checkpoints ignored read/write errors, published counters before
   verified persistence, cleared pending flags on failure, and allowed counter
@@ -66,13 +78,13 @@ or deployment tooling. Baseline source is feature commit
 types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
-All 15 hosted checks passed at `6b771aa`, including seven native profiles.
-The additional persistence/security overlays added after that commit still
-require their own native CCS results.
+All 17 hosted checks passed at `0e06cfe`, including all seven native profiles and
+the additional NV/security overlays. The incoming AF and NULL-initializer changes
+added after that commit still require their own native CCS results.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
-NVS, VIMS and RTOS boundary fixtures. Its 80 pre/post NV2/NV5 cases include valid
+NVS, VIMS and RTOS boundary fixtures. Its 88 pre/post NV2/NV5 cases include valid
 population, 300 updates causing compaction, reopen, explicit resizing, invalid
 startup images, physical failures and content-search bounds. Negative cases
 falsify the original source; legitimate controls pass both versions.
@@ -83,6 +95,12 @@ real submission function for six cases per version, checking copy ownership,
 allocation failure and faults detected by security callbacks. Source composition
 and native call-edge verification cover the shared gates; physical power-cut and
 RF behavior remain unqualified.
+
+`test_af_incoming.py` compiles the actual incoming/retrieval bodies for 11 cases
+per version, including normal non-head deletion, payload limits, padding, valid
+retrieval and missing messages. Seven negative cases fail on the original source;
+the controls pass both versions. The NULL-initializer cases connect the actual
+adapter to the complete NV driver for both layouts.
 
 ## Coverage still being worked through
 

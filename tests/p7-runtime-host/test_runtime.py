@@ -16,6 +16,7 @@ import runtime_overlay as overlay
 NV_STUB = r'''
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "ti/common/nv/nvintf.h"
@@ -24,6 +25,8 @@ NV_STUB = r'''
 #define NV_ITEM_UNINIT 9
 #define NV_BAD_ITEM_LEN 12
 #define ZCD_NV_EX_LEGACY 0
+#define OsalPort_malloc malloc
+#define OsalPort_free free
 typedef struct { NVINTF_nvFuncts_t nvFps; } zstack_Config_t;
 static zstack_Config_t cfg;
 static zstack_Config_t *pZStackCfg = &cfg;
