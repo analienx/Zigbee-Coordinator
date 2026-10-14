@@ -31,6 +31,11 @@ STUB=r'''
 #define TRUE 1
 #define FALSE 0
 #define SUCCESS 0
+#define NVINTF_SUCCESS 0
+#define NVINTF_FAILURE 1
+#define NVINTF_NOTFOUND 10
+#define NVINTF_SYSID_ZSTACK 1
+#define ZCD_NV_EX_LEGACY 0
 #define ZCD_NV_NIB 20
 #define BDB_TOUCHLINK_CAPABILITY_ENABLED 0
 #define DEV_HOLD 2
@@ -40,22 +45,36 @@ STUB=r'''
 #define ZDO_INITDEV_LEAVE_NOT_STARTED 2
 #define NWK_NV_NIB_ENABLE 1
 typedef struct { uint8_t nwkLogicalChannel; uint8_t reserved[15]; } nwkIB_t;
-typedef struct { struct {int readItem; int getItemLen; int updateItem;} nvFps; } zstack_Config_t;
-static zstack_Config_t cfg = {.nvFps={1,1,1}};
-static zstack_Config_t *pZStackCfg=&cfg;
+typedef struct { uint8_t systemID; uint16_t itemID,subID; } NVINTF_itemID_t;
+typedef struct {
+ struct {
+   uint8_t (*readItem)(NVINTF_itemID_t,uint16_t,uint16_t,void*);
+   uint32_t (*getItemLen)(NVINTF_itemID_t);
+   int updateItem;
+ } nvFps;
+} zstack_Config_t;
 static nwkIB_t _NIB = {.nwkLogicalChannel=11};
 static int item_length, read_ok, alloc_ok, restore_status;
 static int init_called, defaults_called, keys_cleared, restore_called;
 static int devState, runtimeChannel;
-static uint16_t osal_nv_item_len(uint16_t id) {
- if(id!=ZCD_NV_NIB) abort();
- return (uint16_t)item_length;
+static void validate_id(NVINTF_itemID_t id) {
+ if(id.systemID!=NVINTF_SYSID_ZSTACK || id.itemID!=ZCD_NV_EX_LEGACY ||
+    id.subID!=ZCD_NV_NIB) abort();
 }
-static uint8_t osal_nv_read(uint16_t id,uint16_t offset,uint16_t n,void *out){
- if(id!=ZCD_NV_NIB || offset || n!=sizeof(nwkIB_t))abort();
- if(!read_ok)return 2;
- memcpy(out,&_NIB,n);return SUCCESS;
+static uint32_t len_cb(NVINTF_itemID_t id) {
+ validate_id(id);
+ return (uint32_t)item_length;
 }
+static uint8_t read_cb(NVINTF_itemID_t id,uint16_t offset,uint16_t n,void *out) {
+ validate_id(id);
+ if(offset || n!=sizeof(nwkIB_t))abort();
+ if(read_ok==2)return NVINTF_NOTFOUND;
+ if(!read_ok)return NVINTF_FAILURE;
+ memcpy(out,&_NIB,n);
+ return NVINTF_SUCCESS;
+}
+static zstack_Config_t cfg = {.nvFps={read_cb,len_cb,1}};
+static zstack_Config_t *pZStackCfg=&cfg;
 static void *OsalPort_malloc(size_t n){return alloc_ok?malloc(n):NULL;}
 static void OsalPort_free(void *p){free(p);}
 static uint8_t ZDApp_RestoreNetworkState(void){restore_called++;return restore_status;}
@@ -66,8 +85,8 @@ static void ZDSecMgrClearNVKeyValues(void){keys_cleared++;}
 TAIL=r'''
 static void check(int starting,int backend,int len,int readable,int alloc,
                   int restore,int expected,int attempts,int destructive){
-  cfg.nvFps.readItem=(backend&1)!=0;
-  cfg.nvFps.getItemLen=(backend&2)!=0;
+  cfg.nvFps.readItem=(backend&1)?read_cb:NULL;
+  cfg.nvFps.getItemLen=(backend&2)?len_cb:NULL;
   pZStackCfg=(backend&4)?&cfg:NULL;
   item_length=len;read_ok=readable;alloc_ok=alloc;restore_status=restore;
   init_called=defaults_called=keys_cleared=restore_called=0;
@@ -88,6 +107,7 @@ int main(void) {
   check(0,7,present,1,1,1,2,1,0); /* restore failed: NOT a new network */
   check(0,7,0,1,1,0,2,0,0); /* missing NIB cannot start implicit network */
   check(0,7,present,0,1,0,2,0,0); /* unreadable NIB */
+  check(0,7,present,2,1,0,2,0,0); /* NVINTF_NOTFOUND rejected */
   check(0,7,present,1,0,0,2,0,0); /* OOM */
   check(0,6,present,1,1,0,2,0,0); /* no read backend */
   check(0,5,present,1,1,0,2,0,0); /* no len backend */
@@ -117,6 +137,7 @@ def main():
         "    ZDSecMgrClearNVKeyValues();")
     assert "p7_f07_commit_nib_before_ready" in patched
     assert "p7_f07_nv_restore_preflight" in patched
+    assert "nvFps.readItem(id, 0, sizeof(nwkIB_t), copy) == NVINTF_SUCCESS" in patched
     for mutated in (
         prepared.replace(s2.ANCHOR,"",1),
         prepared.replace(s2.RESTORE_ANCHOR,"",1),
