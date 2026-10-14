@@ -133,14 +133,18 @@ def slzb_container(blob, header, model):
             memory[target] = value
         chunks.append({"address": f"0x{address:x}", "bytes": size, "crc32": f"0x{crc:08x}"})
         cursor += size
-    need(chunks and all(a in memory for a in range(8)), "CONTAINER_VECTOR_BYTES_MISSING")
-    sp, reset = struct.unpack("<II", bytes(memory[a] for a in range(8)))
-    need(0x20000000 <= sp <= 0x20024000 and sp % 8 == 0, "INVALID_INITIAL_STACK_POINTER")
-    pc = reset & ~1
-    need(reset & 1 and 8 <= pc < 0xaa000 and pc in memory and pc + 1 in memory,
-         "INVALID_THUMB_APPLICATION_RESET_VECTOR")
     ccfg_count = sum(a in memory for a in range(CCFG_START, FLASH_END))
     ccfg = decode_ccfg(bytes(memory[a] for a in range(CCFG_START, FLASH_END)), header) if ccfg_count == 88 else None
+    # TI P7 CCFG explicitly selects ROM's flash vector-table address. A vendor
+    # loader may live above the ordinary TI app/NV split; never assume address0.
+    vector_base = ccfg["fields"]["IMAGE_VALID_CONF_IMAGE_VALID"] if ccfg is not None else 0
+    need(vector_base % 128 == 0 and vector_base + 8 <= CCFG_START, "INVALID_CCFG_VECTOR_TABLE_ADDRESS")
+    need(chunks and all(a in memory for a in range(vector_base, vector_base + 8)), "CONTAINER_VECTOR_BYTES_MISSING")
+    sp, reset = struct.unpack("<II", bytes(memory[a] for a in range(vector_base, vector_base + 8)))
+    need(0x20000000 <= sp <= 0x20024000 and sp % 8 == 0, "INVALID_INITIAL_STACK_POINTER")
+    pc = reset & ~1
+    need(reset & 1 and 8 <= pc < CCFG_START and pc in memory and pc + 1 in memory,
+         "INVALID_THUMB_APPLICATION_RESET_VECTOR")
     nv2 = [v for a, v in memory.items() if 0xaa000 <= a < 0xae000]
     nv5 = [v for a, v in memory.items() if 0xa4000 <= a < 0xae000]
     return {"format": "SLZB_DESCRIPTOR_TABLE_CRC32_SEGMENTS", "opaque_prefix": prefix,
@@ -148,6 +152,8 @@ def slzb_container(blob, header, model):
             "console_parser_proven": False, "sha256": digest(blob), "bytes": len(blob),
             "initialized_address_count": len(memory), "source_bytes_consumed": cursor,
             "chunks": chunks, "initial_sp": f"0x{sp:x}", "reset_thumb": f"0x{reset:x}",
+            "rom_vector_base": f"0x{vector_base:x}",
+            "vector_base_authority": "PINNED_TI_CCFG_IMAGE_VALID_CONF" if ccfg is not None else "ZERO_BASE_PLAUSIBILITY_ONLY_CCFG_MISSING",
             "ccfg": ccfg, "ccfg_coverage": "FULL_88_BYTES" if ccfg_count == 88 else
             ("PARTIAL_NOT_DECODABLE" if ccfg_count else "ABSENT"),
             "nv2_addresses_present": len(nv2), "nv2_non_ff_bytes": sum(v != 0xff for v in nv2),

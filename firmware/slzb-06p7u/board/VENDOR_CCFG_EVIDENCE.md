@@ -39,3 +39,14 @@ differences rather than suppressing them. It cannot enable the board's disabled
 image gate. Observed vendor hashes are frozen in vendor-images.json; installed
 content is still unknown. ERASE_CONF chip permission refers to the JTAG WUC
 request/reset path; the separate bank permission concerns ROM serial bank erase.
+
+The current user-reported20240710 image was added with its exact catalog URL
+and frozen observed digest. Its CRC-validated CCFG differs from accepted G6
+only in MODE_CONF DC/DC-active and recharge settings: vendor disables both,
+while the TI reference enables them. BL_CONFIG agrees (ROM BSL enabled,
+backdoorDIO15 active-low). These are image facts, not original-unit readback.
+The newer image must resolve its ROM vector via IMAGE_VALID_CONF, whose
+[pinned TI register definition](https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk/blob/6499c3f53fc5fb5806213be695450a7b43fbaf3d/source/ti/devices/cc13x2x7_cc26x2x7/inc/hw_ccfg.h)
+explicitly specifies the vector-table start address. A loader outside the
+ordinary TI app range is reported as encoded NV-range overlap; it cannot be
+silently imported into our NV2/NV5 layout. R1 uses stock/NV2 as its first target.
