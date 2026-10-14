@@ -51,14 +51,16 @@ def verify_source(text: str) -> dict:
     start = text.index("uint8_t ZDOInitDeviceEx( uint16_t startDelay, uint8_t mode)\n{")
     ready = text.index("void ZDApp_NetworkStartEvt( void )\n{")
     start_text = text[start:ready]
-    if not (
-        start_text.index("if (!p7_f07_nv_restore_preflight())")
-        < start_text.index(SRC_RESTORED)
-        < start_text.index(SRC_CHECK)
-        < start_text.index("#if (BDB_TOUCHLINK_CAPABILITY_ENABLED == TRUE)",
-                           start_text.index(SRC_CHECK))
-        < start_text.index(SRC_CLEAR)
-    ):
+    try:
+        restore_call = start_text.index("if (!p7_f07_nv_restore_preflight())")
+        restored = start_text.index(SRC_RESTORED)
+        raw_result_check = start_text.index(SRC_CHECK)
+        touchlink_rewrite = start_text.index(
+            "#if (BDB_TOUCHLINK_CAPABILITY_ENABLED == TRUE)", raw_result_check)
+        clear_keys = start_text.index(SRC_CLEAR)
+    except ValueError as error:
+        raise ValueError("F07_RESTORE_FAIL_CLOSED_ORDER_BROKEN") from error
+    if not restore_call < restored < raw_result_check < touchlink_rewrite < clear_keys:
         raise ValueError("F07_RESTORE_FAIL_CLOSED_ORDER_BROKEN")
     if "devState = DEV_HOLD;" not in start_text or start_text.count("return ZDO_INITDEV_LEAVE_NOT_STARTED;") < 2:
         raise ValueError("F07_RESTORE_NO_FAIL_CLOSED_STATE")
