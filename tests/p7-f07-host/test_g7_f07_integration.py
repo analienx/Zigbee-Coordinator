@@ -71,6 +71,7 @@ def main():
           ""])
         (can/"DIAG-disassembly.txt").write_text(dis)
         assert audit.verify(can,src,"p7u-f07-stock")["flash_authorized"] is False
+        assert audit.verify(can,src,"p7u-cap192-f07")["flash_authorized"] is False
         must_reject(lambda: audit.verify(can,src,"other"),"F07_INTEGRATION_PROFILE")
         (can/"DIAG-disassembly.txt").write_text(dis.replace(
            "bl 200 <p7_f07_nv_restore_preflight>",
