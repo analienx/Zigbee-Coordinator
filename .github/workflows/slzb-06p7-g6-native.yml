@@ -1,7 +1,7 @@
 name: P7 G6 native CCS stock and CAP192 (NOT FLASHABLE)
 on:
   push:
-    branches: ['codex/p7-g6-*', 'feat/p7u-r1-ccfg-native-*', 'feat/p7-f07-nib-gate-*']
+    branches: ['codex/p7-g6-*', 'feat/p7u-r1-ccfg-native-*', 'feat/p7-f07-nib-gate-*', 'feat/p7-f07-restore-failclosed-*']
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g6-native.yml'
@@ -81,6 +81,7 @@ jobs:
           cd repo
           python3 tests/p7-g6-host/test_elf_load_hex.py
           python3 tests/p7-f07-host/test_f07.py --sdk ../sdk
+          python3 tests/p7-f07-host/test_f07_restore.py --sdk ../sdk
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 tests/p7u-ccfg-host/test_ccfg_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
@@ -208,6 +209,8 @@ jobs:
           set -euo pipefail
           python3 repo/firmware/slzb-06p7/ti832/f07/f07_nib_gate.py \
             --sdk sdk --out diag-staged/F07-NIB-SLICE1-SOURCE-ONLY.json
+          python3 repo/firmware/slzb-06p7/ti832/f07/f07_restore_guard.py \
+            --sdk sdk --out diag-staged/F07-RESTORE-SLICE2-SOURCE-ONLY.json
           grep -Fn 'p7_f07_commit_nib_before_ready' sdk/source/ti/zstack/stack/zdo/zd_app.c
           test "$(grep -Fc 'p7_f07_commit_nib_before_ready' sdk/source/ti/zstack/stack/zdo/zd_app.c)" = 2
           echo "F07_NIB_GUARD_SOURCE_COMPOSED_NOT_FLASHABLE"
@@ -292,6 +295,7 @@ jobs:
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$VERIFY_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           if [ "$G6_PROFILE" = f07-stock ]; then
             cp diag-staged/F07-NIB-SLICE1-SOURCE-ONLY.json bundle-compare/
+            cp diag-staged/F07-RESTORE-SLICE2-SOURCE-ONLY.json bundle-compare/
           fi
           cp diag-staged/G6-OVERLAY-MANIFEST.json bundle-compare/
           cp evidence/actual-sys-compatibility.json bundle-compare/
