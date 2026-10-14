@@ -1,4 +1,4 @@
-# Whole-firmware review in progress
+# Firmware code review
 
 Scope: P7U R1 NV2 and R2 CAP192/NV5 actual native firmware, not just acceptance
 or deployment tooling. Baseline source is feature commit
@@ -135,9 +135,11 @@ types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
 All 22 checks passed at `5ff9679`, including the two P7U integrated native builds,
-the inherited native profiles, endpoint/packet/timer regressions and the
-diagnostic concurrency test, MT/BDB guards and ZDO fixes. Subsequent entropy and
-Inter-PAN/binding boundary changes require fresh native results.
+the inherited native profiles, endpoint/packet/timer regressions, diagnostic
+concurrency, MT/BDB guards and ZDO fixes. Entropy and Inter-PAN/binding changes
+have also passed their local and hosted sanitizer gates. The final native build
+revision and check results are recorded on draft PR #81; native compilation and
+the linked/source, layout, CCFG and package checks are required for the candidate.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
@@ -203,7 +205,7 @@ restore/search functions with SDK NWK/APS/binding structures for 16 cases per
 version. It reproduces short-header and invalid/failed binding-read faults;
 valid unicast/group frames, configured cluster counts and empty rows pass both.
 
-## Coverage still being worked through
+## Coverage and remaining limits
 
 The real projectspec lists 74 inherited C translation units, plus the three
 local recorder/policy C files, the task include and generated configuration.
@@ -215,23 +217,36 @@ native map/symbol inventory, including the inherited NV and driver boundaries.
 
 | Area | Current review status |
 | --- | --- |
-| Startup, restore, NIB ready gate | NV init, sticky restore/NIB holds and key-table preflight fixed; remaining state/error paths pending |
-| NWK security escrow and checkpoint | APS/TCLK restore/checkpoint/load/sync fixed and compiled; rotation and other key-setting callers pending |
+| Startup, restore, NIB ready gate | Main/stack initialization, commissioning and error/default paths reviewed; NV init, sticky holds, key-table preflight and BDB marker preservation fixed |
+| NWK security escrow and checkpoint | Restore/checkpoint/key-setting/generation callers reviewed; APS/TCLK persistence and entropy failures fixed; inherited F07 key-rotation restriction remains below |
 | UART/DMA ownership, retry, queues | Composed source read and existing actual-source regressions passed |
-| RX parser/resynchronization | Existing allocation/overflow tests passed; full MT command bounds pending |
+| RX parser/resynchronization | NPI framing and the six enabled MT dispatchers reviewed; fixed/variable fields bounded before handlers; valid empty and large-transfer controls pass |
 | NVOCMP NV2/NV5 recovery | Full driver compiled for both layouts; preservation, physical failures and API memory bounds fixed; hardware interruption qualification pending |
-| AF and MT host commands | AF staging defects fixed; remaining command handlers pending |
-| Capacity, heap, routing, fragmentation | Generated R2 table sizes/index types and actual R1/R2 maps checked; AF allocation overflow fixed; remaining caller review pending |
-| Board, RF, clocks, power, reset | CCFG/layout and SysConfig reviewed; physical UART/RF/oscillator binding remains unproven; power/reset caller review pending |
+| AF and MT host commands | Registration/deletion, transmit/staging, incoming/retrieval, NV chunking, management and serializer paths reviewed; memory bounds, ownership and partial-write defects fixed |
+| Capacity, heap, routing, fragmentation | Generated R2 sizes/index types, R1/R2 maps, AF MTU/fragmentation/source-route callers and binding restore reviewed; allocation/scratch/record bounds fixed; 32-bit OSAL heap size/header and 4-byte alignment confirmed |
+| Board, RF, clocks, power, reset | SysConfig, CCFG/layout, startup crypto/power dependencies, reset and ZMAC power callers reviewed; physical UART/RF/oscillator binding remains unproven |
 | Diagnostics and interrupt safety | Shared-field snapshot race reproduced/fixed under TSan; existing recorder/decoder/preemption tests pass |
-| Inherited BDB/ZDO/AF/OSAL/MAC boundaries | Timer/schedule defects fixed and compiled; remaining BDB/ZDO/API callers pending |
+| Inherited BDB/ZDO/AF/OSAL/MAC boundaries | Coordinator commissioning, leave/default, message/queue/timer, ZNP API reachability and MAC/ROM interfaces reviewed; marker, ZDO/Inter-PAN parser and timer/schedule defects fixed |
 
 The possible checkpoint-fault resume bypass was **not confirmed in RC1**:
 `ZDApp_ResumeNwk` and its non-ZNP request caller are excluded from the native
 image. It is not counted as an active firmware finding.
 
+The large non-ZNP application API, disabled MT subsystems and test-only commands
+are distinguished from reachable coordinator code using the build configuration
+and native symbols. The review does not claim that every optional SDK role or
+application variant is covered.
+
+The inherited F07 checkpoint deliberately holds when the active NWK key differs
+from its persisted key. The SDK's key-update/switch interfaces were reviewed,
+but coordinated key rotation and its persistence transition are not qualified by
+this candidate. Changing that policy would require a separate design and test
+scope; it was not expanded during this bug-fix review.
+
 TI supplies parts of NWK/APS/security/MAC as binary libraries/ROM. Their source
 is not available in the pinned checkout; review can assess exposed interfaces,
 caller invariants and linked configuration, but cannot certify their internals.
 No physical RF, power-cut, high-device-count or firmware write has been done.
-The whole-firmware review is not yet complete.
+The review is complete for the available source and linked coordinator scope;
+these remaining hardware, capacity-soak, rotation and vendor-binary limits prevent
+treating it as production qualification or closing the physical gates in #80.
