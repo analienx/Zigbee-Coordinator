@@ -8,12 +8,16 @@ on:
       - 'firmware/slzb-06p7u/qualification/requirements-p7u-spare-serial.txt'
       - 'firmware/slzb-06p7u/qualification/p7u_flash_spare.py'
       - 'firmware/slzb-06p7u/qualification/p7u_stock_rollback.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_rc1_package.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_rc1_verify.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_rc1_native_provenance.py'
       - 'firmware/slzb-06p7u/qualification/STRICT_SPARE_P7U_FLASH_ROLLBACK.md'
       - 'tests/p7u-rom-bsl-gate/**'
       - '.github/workflows/slzb-06p7u-strict-rom-sector-writer.yml'
   push:
     branches:
       - 'feat/p7u-strict-rom-sector-writer-*'
+      - 'feat/p7u-v0.1.0-rc1-release-hardening-*'
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,9 +37,13 @@ jobs:
           python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rom_lowlevel.py
           python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_flash_spare.py
           python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_stock_rollback.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rc1_package.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rc1_verify.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rc1_native_provenance.py
           python3 tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
           python3 tests/p7u-rom-bsl-gate/test_strict_sector_writer.py
           python3 tests/p7u-rom-bsl-gate/test_rom_protocol.py
+          python3 tests/p7u-rom-bsl-gate/test_spare_management_gate.py
           echo "P7U_FAKE_ROM_ONLY_NO_FIRMWARE_WRITE"
   official-vendor-rollback-offline:
     runs-on: ubuntu-22.04
@@ -58,6 +66,7 @@ jobs:
           python3 firmware/slzb-06p7u/qualification/p7u_stock_rollback.py \
             --official-vendor-bin /tmp/p7u-stock/vendor.bin \
             --profile p7u-cap192-f07 --output-prefix /tmp/p7u-stock/r2
+          python3 tests/p7u-rom-bsl-gate/test_rc1_release_package.py --vendor /tmp/p7u-stock/vendor.bin
           python3 - <<'PY'
           import json
           from pathlib import Path

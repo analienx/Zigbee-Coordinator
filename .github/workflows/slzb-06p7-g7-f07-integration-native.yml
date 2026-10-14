@@ -341,6 +341,31 @@ jobs:
           cp evidence/actual-sys-compatibility.json bundle-compare/
           git -C repo rev-parse HEAD > bundle-compare/candidate-sha.txt
           sha256sum bundle-base/* bundle-diag/* > bundle-compare/artifact-sha256.txt
+          # Build actual native-source-linked software RC1 evidence. Never
+          # upload or retain the raw manufacturer BIN or derived stock binary.
+          if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
+            RC_TMP=$(mktemp -d)
+            curl --fail --location --silent --show-error --retry 3 --max-time 45 \
+              'https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240710.bin' \
+              -o "$RC_TMP/vendor.bin"
+            echo "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b  $RC_TMP/vendor.bin" | sha256sum --check
+            python3 repo/firmware/slzb-06p7u/qualification/p7u_rc1_package.py \
+              --native-full-hex bundle-diag/DIAG-NOT-FLASHABLE.hex \
+              --native-evidence-dir bundle-compare \
+              --official-stock-bin "$RC_TMP/vendor.bin" \
+              --profile "$G6_PROFILE" \
+              --git-commit "$(git -C repo rev-parse HEAD)" \
+              --output-dir "$RC_TMP/rc1"
+            if [ "$G6_PROFILE" = p7u-f07-stock ]; then
+              python3 repo/tests/p7u-rom-bsl-gate/test_rc1_release_package.py \
+                --vendor "$RC_TMP/vendor.bin" \
+                --native-full-hex bundle-diag/DIAG-NOT-FLASHABLE.hex \
+                --native-evidence-dir bundle-compare
+            fi
+            cp "$RC_TMP/rc1/RC1-MANIFEST.json" bundle-compare/P7U-RC1-SOFTWARE-ONLY-MANIFEST.json
+            rm -rf "$RC_TMP"
+            echo 'RC1_SOURCE_AND_STOCK_ROLLBACK_LINKED_TO_NATIVE_BUILD_NOT_FLASHABLE'
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: {name: 'p7u-g7-f07-${{ matrix.profile }}-BASE-NOT-FLASHABLE', path: bundle-base/, retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

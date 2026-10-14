@@ -8,6 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+
+
+def normalized_mac(value: str) -> str:
+    """Reject partial, malformed or guessed management MAC identities."""
+    compact = re.sub(r"[:-]", "", value).upper()
+    if not re.fullmatch(r"[0-9A-F]{12}", compact):
+        raise BslConnectionError("SPARE_SMLIGHT_MAC_INVALID")
+    return compact
 from p7u_rom_lowlevel import RomSerial
 
 
@@ -22,8 +30,9 @@ class SmlightRom(RomSerial):
 
 class LiveSmlightSession:
     """A session never calls radio reset, ESP flash or bank/chip/CCFG erase."""
-    def __init__(self,device:str):
+    def __init__(self,device:str,expected_spare_mac:str|None=None):
         self.device=device
+        self.expected_spare_mac=expected_spare_mac
         self.__rom=None
 
     async def __aenter__(self):
@@ -32,7 +41,16 @@ class LiveSmlightSession:
             if not match:raise BslConnectionError("P7U_SOCKET_MUST_USE_PORT_6638")
             from pysmlight.const import Commands
             from pysmlight.web import Api2
+            if not self.expected_spare_mac:
+                raise BslConnectionError("SPARE_MAC_REQUIRED_BEFORE_BSL_ENTRY")
+            expected_mac=normalized_mac(self.expected_spare_mac)
             async with Api2(match.group(1)) as api:
+                info=await api.get_info()  # READ ONLY, before radio BSL reset.
+                model=(info.model or "").upper().replace("-", "")
+                if model != "SLZB06P7U":
+                    raise BslConnectionError("MANAGEMENT_MODEL_NOT_EXACT_SPARE_P7U")
+                if not info.MAC or normalized_mac(info.MAC) != expected_mac:
+                    raise BslConnectionError("MANAGEMENT_MAC_NOT_EXPECTED_SPARE")
                 if await api.check_auth_needed():
                     raise BslConnectionError("SMLIGHT_API_AUTH_NOT_SUPPORTED_STOP")
                 if not bool(await api.set_cmd(Commands.CMD_ZB_BSL)):
