@@ -1,7 +1,7 @@
 name: P7U combined G7+F07 hostile-source regression (NOT FLASHABLE)
 on:
   push:
-    branches: ['feat/p7u-g7-f07-integration-native-*']
+    branches: ['feat/p7u-g7-f07-integration-native-*', 'feat/p7u-cap192-f07-production-target-*']
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7u-g7-f07-host.yml'
