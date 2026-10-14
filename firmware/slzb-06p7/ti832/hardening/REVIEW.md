@@ -119,15 +119,25 @@ or deployment tooling. Baseline source is feature commit
   initialize their fields. The endpoint scratch buffer now covers all byte-valued
   endpoints (204 extra static bytes); match notifications use a wide allocation
   size, and failed inbound-cluster allocations skip the correct wire bytes.
+- **P1: Failed TRNG generation published uninitialized network-key bytes.**
+  The existing void key-generation API now clears its temporary buffer, latches
+  the existing fault hold and stops that caller on entropy failure. It cannot
+  continue into key publication. Successful entropy follows the original path.
+- **P1: Short Inter-PAN frames reached unchecked header parsers.** The receive
+  boundary now checks the complete unicast/group header before either parser.
+- **P1: Binding restore trusted cluster counts and published failed reads.**
+  Restored records now use a temporary buffer, validate their configured cluster
+  limit, and publish only successful valid reads. Unreadable/invalid rows remain
+  empty in RAM; their persisted bytes are preserved.
 
 `test_runtime.py` compiles actual pinned function bodies and actual NV callback
 types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
-All 22 checks passed at `960b93e`, including the two P7U integrated native builds,
+All 22 checks passed at `5ff9679`, including the two P7U integrated native builds,
 the inherited native profiles, endpoint/packet/timer regressions and the
-diagnostic concurrency test, MT dispatch guards and BDB marker fixes. Subsequent
-ZDO packet changes require fresh native results.
+diagnostic concurrency test, MT/BDB guards and ZDO fixes. Subsequent entropy and
+Inter-PAN/binding boundary changes require fresh native results.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
@@ -183,6 +193,15 @@ initialized address responses. The old source fails the negative cases under
 ASan/UBSan or response assertions. Receive tests substitute downstream consumers
 to verify that rejection happens before they are called; they do not claim a
 complete vendor RF-stack simulation.
+`test_key_entropy.py` compiles the actual generator with the SDK's CryptoKey
+structure and a TRNG boundary fixture. Valid entropy succeeds in both versions;
+failed entropy returns with the old source, while the patched source remains
+held with the caller's key untouched. A one-second process-local alarm verifies
+the held state and bounds the host test; firmware has no alarm or reset timer.
+`test_interpan_binding.py` compiles actual Inter-PAN receive/parsers and binding
+restore/search functions with SDK NWK/APS/binding structures for 16 cases per
+version. It reproduces short-header and invalid/failed binding-read faults;
+valid unicast/group frames, configured cluster counts and empty rows pass both.
 
 ## Coverage still being worked through
 

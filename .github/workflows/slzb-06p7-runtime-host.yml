@@ -27,6 +27,7 @@ jobs:
             source/ti/zstack
             source/ti/common/nv
             source/ti/ti154stack/common/osal_port
+            source/ti/drivers/cryptoutils/cryptokey
       - name: Compile genuine source and reject NV failures and AF heap faults
         run: |
           set -euo pipefail
@@ -43,6 +44,8 @@ jobs:
           python3 tests/p7-runtime-host/test_mt_bounds.py --sdk sdk --out /tmp/p7-mt-bounds-host
           python3 tests/p7-runtime-host/test_startup_marker.py --sdk sdk --out /tmp/p7-startup-marker-host
           python3 tests/p7-runtime-host/test_zdo_packets.py --sdk sdk --out /tmp/p7-zdo-packet-host
+          python3 tests/p7-runtime-host/test_key_entropy.py --sdk sdk --out /tmp/p7-key-entropy-host
+          python3 tests/p7-runtime-host/test_interpan_binding.py --sdk sdk --out /tmp/p7-interpan-binding-host
           gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=thread -no-pie -pthread \
             tests/p7-runtime-host/diag_concurrency.c firmware/slzb-06p7/ti832/g5/p7_crashdiag.c \
             -o /tmp/p7-diag-concurrency

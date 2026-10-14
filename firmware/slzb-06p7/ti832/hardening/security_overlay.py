@@ -12,6 +12,14 @@ SEC="source/ti/zstack/stack/zdo/zd_sec_mgr.c"
 ZDO="source/ti/zstack/stack/zdo/zd_app.c"
 MAC="source/ti/zstack/zmac/f8w/zmac.c"
 
+def patch_entropy(body):
+    return replace(body,"      // Handle error",
+                   "      memset(entropyBuffer, 0, sizeof(entropyBuffer));\n"
+                   "      p7_security_latch_failure();\n"
+                   "      ZDApp_PauseNwk();\n"
+                   "      ZDApp_ChangeState(DEV_HOLD);\n"
+                   "      for (;;) {} /* void API: never publish failed entropy or resume caller */",
+                   "failed_entropy_not_a_network_key")
 
 def patch(texts):
     out=dict(texts)
@@ -115,6 +123,9 @@ def patch(texts):
                         "        if (si->frmCntr != UINT32_MAX && si->frmCntr >= *tclkRxFrmCntr)","tclk_rx_no_wrap")
         sec=replace(sec,old,new,name)
     out[SEC]=sec
+    old=function(out[SEC],"ZDSecMgrGenerateRndKey")
+    new=patch_entropy(old)
+    out[SEC]=replace(out[SEC],old,new,"checked_network_key_entropy")
 
     zdo=out[ZDO]
     if "p7_f07_nwk_checkpoint" not in zdo: raise ValueError("SECURITY_REQUIRES_COMPOSED_F07")

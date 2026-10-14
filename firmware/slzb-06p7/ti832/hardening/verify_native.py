@@ -44,6 +44,9 @@ def verify_source(sdk:Path):
     init=function(sec,"ZDSecMgrInitNVKeyTables")
     if not init.index("ZCD_NV_BDBNODEISONANETWORK")<init.index("ZDSecMgrNwkKeyInit(setDefault)"):
         raise ValueError("RESTORED_KEY_TABLE_VALIDATION_AFTER_CREATION")
+    entropy=function(sec,"ZDSecMgrGenerateRndKey")
+    if not entropy.index("p7_security_latch_failure();")<entropy.index("for (;;) {}")<entropy.index("OsalPort_memcpy(pKey"):
+        raise ValueError("FAILED_ENTROPY_CAN_BE_PUBLISHED")
     if function(nv,"NVOCMP_initNvApi").index("p7_nv_precheck()")>function(nv,"NVOCMP_initNvApi").index("NVOCMP_initNv(&"):
         raise ValueError("NV_PRECHECK_AFTER_POSSIBLE_MUTATION")
     sys,bdb=((sdk/p).read_text() for p in (SYS,BDB))
