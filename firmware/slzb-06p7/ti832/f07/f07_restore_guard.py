@@ -18,6 +18,11 @@ RESTORE_ANCHOR=(
     "  }\n  else\n  {\n    // Wipe out the network state in NV"
 )
 HELPER=r'''#if defined(NV_RESTORE)
+/* F07 slice2 is inserted BEFORE slice1's later NIB gate in zd_app.c.
+ * Its own early declaration is required by the authentic native compiler.
+ */
+#include "zstackconfig.h"
+extern zstack_Config_t *pZStackCfg;
 /* F07 slice 2: preflight a requested existing-network restore before
  * NLME_InitNV() may create/replace records. This is not a complete
  * key-table/frame-counter validation and is not a blank-NV detector.
