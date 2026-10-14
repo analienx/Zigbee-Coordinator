@@ -1,7 +1,7 @@
 name: P7U integrated G7+F07 NV2/NV5 native acceptance (NOT FLASHABLE)
 on:
   push:
-    branches: ['feat/p7u-g7-f07-integration-native-*', 'feat/p7u-cap192-f07-production-target-*', 'feat/p7u-f07-counter-escrow-*', 'feat/p7u-f07-nwk-checkpoint-*']
+    branches: ['feat/p7u-g7-f07-integration-native-*', 'feat/p7u-cap192-f07-production-target-*', 'feat/p7u-f07-counter-escrow-*', 'feat/p7u-f07-nwk-checkpoint-*', 'feat/p7u-rom-bsl-anti-brick-gate-*']
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g7-f07-integration-native.yml'
@@ -84,6 +84,7 @@ jobs:
           python3 tests/p7-g6-host/test_elf_load_hex.py
           python3 tests/p7-g7-host/test_alignment.py
           python3 tests/p7u-ccfg-host/test_ccfg_overlay.py
+          python3 tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
           python3 tests/p7-f07-host/test_f07.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_restore.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_counter_escrow.py --sdk ../sdk
@@ -316,6 +317,17 @@ jobs:
           cp diag-staged/F07-NWK-CHECKPOINT-SLICE4-SOURCE-ONLY.json bundle-compare/
           if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
+          fi
+          if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
+            python3 repo/firmware/slzb-06p7u/qualification/p7u_rom_bsl_image_gate.py \
+              --hex bundle-diag/DIAG-NOT-FLASHABLE.hex \
+              --profile "$G6_PROFILE" \
+              --out bundle-compare/P7U-ROM-BSL-GATE.json \
+              --app-only-out bundle-compare/P7U-APP-ONLY-SOURCE-NOT-FLASHABLE.hex
+            python3 repo/firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py \
+              --app-only-hex bundle-compare/P7U-APP-ONLY-SOURCE-NOT-FLASHABLE.hex \
+              --full-image-evidence bundle-compare/P7U-ROM-BSL-GATE.json \
+              --out bundle-compare/P7U-SECTOR-ONLY-PLAN-NO-EXECUTION.json
           fi
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-diag --out bundle-compare/G7-LINKED-EVIDENCE.json
           python3 repo/firmware/slzb-06p7/ti832/f07/verify_composed_native.py \
