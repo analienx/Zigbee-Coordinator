@@ -186,7 +186,7 @@ def application_only_hex(data: dict[int, int], profile: str) -> bytes:
             pos += 1
         lines.append(emit(start & 65535, 0, bytes(data[x] for x in chunk)))
     lines.append(emit(0, 1))
-    result = ("\\n".join(lines) + "\\n").encode("ascii")
+    result = ("\n".join(lines) + "\n").encode("ascii")
     # Double-parse our own output before publishing any derived bytes.
     roundtrip = parse_hex(result)
     require(roundtrip == {a:data[a] for a in addresses},
