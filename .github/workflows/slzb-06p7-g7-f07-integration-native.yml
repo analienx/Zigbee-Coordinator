@@ -86,6 +86,7 @@ jobs:
           python3 tests/p7u-ccfg-host/test_ccfg_overlay.py
           python3 tests/p7-f07-host/test_f07.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_restore.py --sdk ../sdk
+          python3 tests/p7-f07-host/test_g7_f07_integration.py --sdk ../sdk
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
