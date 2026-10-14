@@ -41,8 +41,10 @@ STUB=r'''
 #define BDB_TOUCHLINK_CAPABILITY_ENABLED 0
 #endif
 #define BDB_COMMISSIONING_STATE_TL 7
+#if BDB_TOUCHLINK_CAPABILITY_ENABLED == TRUE
 typedef struct { int bdbCommissioningState; } bdbState_t;
 static bdbState_t bdbCommissioningProcedureState = {BDB_COMMISSIONING_STATE_TL};
+#endif
 #define DEV_HOLD 2
 #define DEV_INIT 3
 #define ZDO_INITDEV_RESTORED_NETWORK_STATE 0
