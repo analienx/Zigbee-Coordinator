@@ -48,7 +48,8 @@ static int item_length, read_ok, alloc_ok, restore_status;
 static int init_called, defaults_called, keys_cleared, restore_called;
 static int devState, runtimeChannel;
 static uint16_t osal_nv_item_len(uint16_t id) {
- if(id!=ZCD_NV_NIB) abort();return (uint16_t)item_length;
+ if(id!=ZCD_NV_NIB) abort();
+ return (uint16_t)item_length;
 }
 static uint8_t osal_nv_read(uint16_t id,uint16_t offset,uint16_t n,void *out){
  if(id!=ZCD_NV_NIB || offset || n!=sizeof(nwkIB_t))abort();
