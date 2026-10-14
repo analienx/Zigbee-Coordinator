@@ -15,7 +15,7 @@ from pathlib import Path
 
 import p7u_strict_sector_writer as strict
 import p7u_stock_rollback as stock
-from p7u_rom_transport import LiveSmlightSession
+from p7u_rom_transport import LiveSmlightSession, normalized_mac
 
 
 def json_write(path: Path, data: dict) -> None:
@@ -61,6 +61,11 @@ async def run(args):
                 "hardware_contacted":False, "flash_performed":False}
     strict.check(args.isolated_spare_only is True,"SPARE_RADIO_ACK_REQUIRED")
     strict.check(bool(args.device),"DEVICE_EXPLICIT_REQUIRED")
+    if args.device.startswith("socket://"):
+        strict.check(bool(args.expected_spare_mac),"SPARE_MAC_REQUIRED_BEFORE_BSL_ENTRY")
+        spare_mac_digest=strict.sha(normalized_mac(args.expected_spare_mac).encode("ascii"))
+    else:
+        spare_mac_digest=None
     if args.phase=="flash":
         strict.check(args.execute_radio_write is True
                      and args.rom_bsl_reentry_twice_confirmed is True
@@ -70,6 +75,8 @@ async def run(args):
                      and args.approve_digest is not None,
                      "APPROVAL_NOT_SUPPLIED")
         approval=strict.load_json(args.approval_file)
+        strict.check(approval.get("spare_management_mac_digest")==spare_mac_digest,
+                     "INSPECTED_SPARE_MAC_DOES_NOT_MATCH_WRITE")
         strict.check(approval.get("rollback_app_sha256")==rollback.hex_sha256
                      and approval.get("rollback_manufacturer_sha256")==stock.VENDOR_SHA,
                      "STOCK_ROLLBACK_NOT_BOUND_TO_APPROVAL")
@@ -78,13 +85,14 @@ async def run(args):
         if args.resume:
             strict.check(args.accept_interrupted_sector_reerase,
                          "INTERRUPTED_REFLASH_NEEDS_EXPLICIT_ACCEPTANCE")
-    async with LiveSmlightSession(args.device) as rom:
+    async with LiveSmlightSession(args.device,args.expected_spare_mac) as rom:
         if args.phase=="inspect":
             result=await strict.preflight(rom,bundle,args.device)
             current={row["address"]:row["before_crc32"] for row in result["sectors"]}
             rollback_expected={f"0x{addr:05X}":
                  f"{__import__('binascii').crc32(image)&0xffffffff:08x}"
                  for addr,image in rollback.sectors}
+            result["spare_management_mac_digest"]=spare_mac_digest
             result["rollback_app_sha256"]=rollback.hex_sha256
             result["rollback_manufacturer_sha256"]=stock.VENDOR_SHA
             result["stock_rollback_matching_sector_count"] = sum(
@@ -113,6 +121,7 @@ def main():
     p.add_argument("--rollback-app-hex",type=Path,required=True)
     p.add_argument("--rollback-receipt",type=Path,required=True)
     p.add_argument("--device",help="Exact COM, /dev/tty or socket://HOST:6638 target; NEVER production MR4U")
+    p.add_argument("--expected-spare-mac",help="Full physical ESP MAC of spare P7U; required before network BSL reset")
     p.add_argument("--isolated-spare-only",action="store_true")
     p.add_argument("--execute-radio-write",action="store_true")
     p.add_argument("--rom-bsl-reentry-twice-confirmed",action="store_true")

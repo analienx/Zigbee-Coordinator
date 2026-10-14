@@ -48,11 +48,12 @@ python -m venv .venv-p7u
 
 On Windows, use `.venv-p7u/Scripts/python.exe`. Native Windows virtualenv installation and import tests are checked on Zephyrus; an actual P7U serial port and radio handshake are still required. No GPIO or external bootloader-reset assumptions are introduced.
 
-**Inspect mode** requires `--isolated-spare-only`. For Ethernet/Wi-Fi, specify `--device socket://SPARE-P7U:6638`; the tool sends SMLIGHT `CMD_ZB_BSL` first and fails if the API requires unsupported authentication. On USB specify a *known, explicitly identified* `COMn` or `/dev/ttyACMn` already placed in ROM BSL using the manufacturer's mechanism. **DTR/RTS on ESP USB is NOT assumed to reset the radio.** No CLI mode forces ESP32 firmware update. Network entry is a radio mode change, so do not run on the production network.
+**Inspect mode** requires `--isolated-spare-only`. For Ethernet/Wi-Fi, specify `--device socket://SPARE-P7U:6638 --expected-spare-mac AA:BB:CC:DD:EE:FF` with the full physical **ESP management** MAC read independently from the spare P7U label/console. Before any `CMD_ZB_BSL` radio reset, the tool makes a read-only manufacturer API `get_info()`, rejects anything but **SLZB-06P7U**, compares full management MAC byte-for-byte, rejects unauthenticated/unsupported access and stops before reset on mismatch. Never substitute the Zigbee/IEEE radio address or the active MR4U/P10 address. On USB specify a *known, explicitly identified* `COMn` or `/dev/ttyACMn` already placed in ROM BSL using the manufacturer's mechanism. **DTR/RTS on ESP USB is NOT assumed to reset the radio.** No CLI mode forces ESP32 firmware update. Network entry is a radio mode change, so do not run on the production network.
 
 Run the exact same command as `--phase offline`, but set:
 ```
---phase inspect --device socket://SPARE-P7U:6638 --isolated-spare-only \
+--phase inspect --device socket://SPARE-P7U:6638 \
+--expected-spare-mac AA:BB:CC:DD:EE:FF --isolated-spare-only \
 --out /private/inspect-1.json
 ```
 This does not erase/program anything; it does enter ROM BSL on the isolated radio. It checks actual ROM `GET_CHIP_ID`, TI FCFG wafer `0xBB77`, 704 KiB internal flash, private primary-IEEE digest and **installed** 88-byte CCFG (enabled ROM BSL, TI DIO15 low backdoor, vector 0), and records per-sector existing and expected CRC32. It never prints IEEE or security-key bytes.
@@ -65,6 +66,7 @@ For `--phase flash --target-image candidate`, supply all the original image/stoc
 ```
 --approval-file /private/inspect-2.json --approve-digest HEX_DIGEST \
 --execute-radio-write --isolated-spare-only \
+--expected-spare-mac AA:BB:CC:DD:EE:FF \
 --rom-bsl-reentry-twice-confirmed --stock-rollback-available \
 --out /private/result.json
 ```
