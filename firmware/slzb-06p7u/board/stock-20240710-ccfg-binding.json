@@ -1,0 +1,28 @@
+{
+  "schema": "p7u-stock-ccfg-source-binding-v1",
+  "model": "SLZB-06P7U",
+  "release_track": "R1_STOCK_NV2_REFERENCE",
+  "status": "SOURCE_BINDING_DEFINED_NOT_NATIVE_BUILT",
+  "vendor_revision": "20240710",
+  "vendor_image_sha256": "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b",
+  "vendor_ccfg_sha256": "1defedbd2f474ee8b7385476801a63de95f55c3dd51115e29f97c69196049af7",
+  "ti_reference_ccfg_sha256": "17cc17509298a7005f0052285c7a11fc120da2907309eaed53bb8a62db0b6aa1",
+  "ti_mode_conf": "0xf3b9c1ff",
+  "vendor_mode_conf": "0xffb9c1ff",
+  "required_generated_field_values": {
+    "MODE_CONF_DCDC_RECHARGE": 1,
+    "MODE_CONF_DCDC_ACTIVE": 1
+  },
+  "pinned_ti_source_macro_values": {
+    "SET_CCFG_MODE_CONF_DCDC_RECHARGE": 1,
+    "SET_CCFG_MODE_CONF_DCDC_ACTIVE": 1
+  },
+  "source_macro_authority": "https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk/blob/6499c3f53fc5fb5806213be695450a7b43fbaf3d/source/ti/devices/cc13x2x7_cc26x2x7/startup_files/ccfg.c",
+  "bsl_reference": {"rom_enable": "0xC5", "backdoor_enable": "0xC5", "dio": 15, "level": 0},
+  "rom_vector_base": "0x0",
+  "required_next_gate": "Apply through actual generated SysConfig then compare every linked CCFG byte against vendor digest; board UART/RF/revision/recovery remain separate",
+  "original_unit_ccfg_readback_verified": false,
+  "board_qualified": false,
+  "flash_authorized": false,
+  "network_qualified": false
+}
