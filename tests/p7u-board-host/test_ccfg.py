@@ -4,11 +4,12 @@ import json
 import re
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware/slzb-06p7u/board"))
-from compare_vendor_ccfg import vendor_bin, decode_ccfg, comparison, FLASH_END, CCFG_START, registers
+from compare_vendor_ccfg import vendor_bin, slzb_container, decode_ccfg, comparison, FLASH_END, CCFG_START, registers
 
 header = Path(sys.argv[1]).read_text()
 offsets = registers(header)
@@ -32,6 +33,10 @@ different = {"ccfg": decode_ccfg(bytes(candidate_ccfg), header)}
 delta = comparison(parsed, different)
 assert delta["ccfg_exact_match"] is False and delta["bsl_configuration_equal"] is False
 assert delta["vendor_rom_bsl_enabled"] and not delta["candidate_rom_bsl_enabled"]
+no_main_enable = bytearray(image[CCFG_START:])
+struct.pack_into("<I", no_main_enable, offsets["BL_CONFIG"], 0x00ff0fc5)
+no_main = decode_ccfg(bytes(no_main_enable), header)
+assert no_main["backdoor_enable_field_is_c5"] and not no_main["backdoor_enabled"]
 assert comparison(parsed, parsed)["ccfg_exact_match"] is True
 assert all(x["field"].split("_", 2)[0] != "IEEE" for x in delta["field_differences"])
 
@@ -55,6 +60,36 @@ bad = bytearray(image); struct.pack_into("<I", bad, 0, 0x20024008)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_INITIAL_STACK_POINTER")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 0x100)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
+
+
+def chunk(address, payload):
+    return struct.pack(">III", address, len(payload), zlib.crc32(payload) & 0xffffffff) + payload
+
+
+app = bytes(image[:0x200])
+container = b"SLZB" + chunk(0, app) + chunk(CCFG_START, bytes(image[CCFG_START:]))
+wrapped = slzb_container(container, header, "SLZB-06P7U")
+assert wrapped["ccfg"]["sha256"] == parsed["ccfg"]["sha256"] and wrapped["nv2_addresses_present"] == 0
+assert wrapped["source_bytes_consumed"] == len(container)
+assert slzb_container(b"\x01\x03" + container, header, "SLZB-06P7U")["opaque_prefix"] == "0103_opaque"
+assert slzb_container(b"SLZB" + chunk(0, app), header, "SLZB-06P7U")["ccfg"] is None
+
+
+def container_rejects(blob, reason):
+    try: slzb_container(blob, header, "SLZB-06P7U")
+    except ValueError as e: assert str(e) == reason, (str(e), reason)
+    else: raise AssertionError("accepted " + reason)
+
+
+bad = bytearray(container); bad[16] ^= 1
+container_rejects(bytes(bad), "CONTAINER_CRC_MISMATCH")
+container_rejects(container[:-1], "TRUNCATED_CONTAINER_PAYLOAD")
+container_rejects(container + b"x", "TRUNCATED_OR_EXCESS_CONTAINER_RECORDS")
+container_rejects(container + chunk(0, app), "CONTAINER_OVERLAPPING_LOAD_BYTES")
+container_rejects(b"SLZB" + chunk(FLASH_END, b"x"), "CONTAINER_RANGE_OUTSIDE_P7_FLASH")
+container_rejects(b"\x02\x03" + container, "UNKNOWN_SLZB_CONTAINER_HEADER")
+container_rejects(b"SLZB" + chunk(CCFG_START, bytes(image[CCFG_START:])), "CONTAINER_VECTOR_BYTES_MISSING")
+print("PASS observed SLZB container CRC/range/completeness/overlap/opaque-prefix negatives; console protocol unqualified")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 1)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 0xaffa9)

@@ -22,7 +22,17 @@ this SLZB-OS console. Physical revision, UART DIO, RF/clocks and console recover
 remain separate requirements. Binary provenance does not identify silicon by
 itself; the P7 family selection is bound to the manufacturer catalog.
 
+Hosted acquisition at9bd1963 recorded both hashes and actual lengths273894 and
+172356bytes. Both start with SLZB container markers, not ARM vectors. Offline
+interpretation uses observed big-endian address/size/CRC32 records, requires
+every CRC and byte extent, rejects overlap/out-of-range/trailing/truncated data,
+and preserves the newer opaque01/03 prefix without guessing its semantics.
+This inferred container structure is not an authoritative console parser or
+erase-policy proof. IEEE words are redacted. Record CRC32 follows the public
+[SMLIGHT CC flasher CRC primitive](https://github.com/smlight-tech/smlight-cc-flasher/blob/9a1d33571c1cdaedc9dfcdcf2df5b5a5fece0b1c/smlight_cc_flasher/firmware.py).
+
 This research produces OFFLINE_COMPARISON_COMPLETE_NOT_FLASHABLE, including
 differences rather than suppressing them. It cannot enable the board's disabled
-image gate. Initial vendor hashes are discovery observations; once acquisition
-succeeds they must be frozen in vendor-images.json before repeatable acceptance.
+image gate. Observed vendor hashes are frozen in vendor-images.json; installed
+content is still unknown. ERASE_CONF chip permission refers to the JTAG WUC
+request/reset path; the separate bank permission concerns ROM serial bank erase.

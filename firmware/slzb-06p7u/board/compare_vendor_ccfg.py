@@ -10,6 +10,7 @@ import json
 import re
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 G2 = Path(__file__).resolve().parents[2] / "slzb-06p7/ti832/g2"
@@ -60,11 +61,12 @@ def decode_ccfg(blob, header):
          "P7_BSL_FIELD_DEFINITIONS_MISSING")
     return {"sha256": digest(blob), "words": public_words, "fields": fields,
             "rom_bsl_enabled": fields["BL_CONFIG_BOOTLOADER_ENABLE"] == 0xc5,
-            "backdoor_enabled": fields["BL_CONFIG_BL_ENABLE"] == 0xc5,
+            "backdoor_enable_field_is_c5": fields["BL_CONFIG_BL_ENABLE"] == 0xc5,
+            "backdoor_enabled": fields["BL_CONFIG_BOOTLOADER_ENABLE"] == 0xc5 and fields["BL_CONFIG_BL_ENABLE"] == 0xc5,
             "backdoor_dio": fields["BL_CONFIG_BL_PIN_NUMBER"],
             "backdoor_level": fields["BL_CONFIG_BL_LEVEL"],
-            "chip_erase_allowed_by_ccfg": fields["ERASE_CONF_CHIP_ERASE_DIS_N"] == 1,
-            "bank_erase_allowed_by_ccfg": fields["ERASE_CONF_BANK_ERASE_DIS_N"] == 1}
+            "jtag_wuc_chip_erase_enabled": fields["ERASE_CONF_CHIP_ERASE_DIS_N"] == 1,
+            "serial_bsl_bank_erase_enabled": fields["ERASE_CONF_BANK_ERASE_DIS_N"] == 1}
 
 
 def vendor_bin(blob, header, model, base):
@@ -87,6 +89,67 @@ def vendor_bin(blob, header, model, base):
             "ccfg_sector_non_ff_bytes": sum(x != 0xff for x in blob[0xae000:FLASH_END]),
             "flasher_erase_semantics": "UNKNOWN",
             "installed_content_verified": False, "flash_authorized": False}
+
+
+def slzb_container(blob, header, model):
+    """Observed manufacturer records: big-endian address/size/CRC32 + bytes.
+
+    20240316 begins SLZB. 20260311 adds observed opaque prefix01/03 before SLZB.
+    Prefix semantics are not inferred. Every byte/record CRC must validate.
+    This is offline format inference, not proof of console erase/write behavior.
+    """
+    need(model == "SLZB-06P7U", "WRONG_VENDOR_MODEL")
+    if blob.startswith(b"SLZB"):
+        cursor, prefix = 4, "none"
+    elif blob.startswith(b"\x01\x03SLZB"):
+        cursor, prefix = 6, "0103_opaque"
+    else:
+        raise ValueError("UNKNOWN_SLZB_CONTAINER_HEADER")
+    memory, chunks = {}, []
+    while cursor < len(blob):
+        need(len(chunks) < 64 and cursor + 12 <= len(blob), "TRUNCATED_OR_EXCESS_CONTAINER_RECORDS")
+        address, size, crc = struct.unpack_from(">III", blob, cursor)
+        cursor += 12
+        need(size > 0 and address + size <= FLASH_END, "CONTAINER_RANGE_OUTSIDE_P7_FLASH")
+        need(cursor + size <= len(blob), "TRUNCATED_CONTAINER_PAYLOAD")
+        payload = blob[cursor:cursor + size]
+        actual_crc = zlib.crc32(payload) & 0xffffffff
+        need(actual_crc == crc, "CONTAINER_CRC_MISMATCH")
+        for offset, value in enumerate(payload):
+            target = address + offset
+            need(target not in memory, "CONTAINER_OVERLAPPING_LOAD_BYTES")
+            memory[target] = value
+        chunks.append({"address": f"0x{address:x}", "bytes": size, "crc32": f"0x{crc:08x}"})
+        cursor += size
+    need(chunks and all(a in memory for a in range(8)), "CONTAINER_VECTOR_BYTES_MISSING")
+    sp, reset = struct.unpack("<II", bytes(memory[a] for a in range(8)))
+    need(0x20000000 <= sp <= 0x20024000 and sp % 8 == 0, "INVALID_INITIAL_STACK_POINTER")
+    pc = reset & ~1
+    need(reset & 1 and 8 <= pc < 0xaa000 and pc in memory and pc + 1 in memory,
+         "INVALID_THUMB_APPLICATION_RESET_VECTOR")
+    ccfg_count = sum(a in memory for a in range(CCFG_START, FLASH_END))
+    ccfg = decode_ccfg(bytes(memory[a] for a in range(CCFG_START, FLASH_END)), header) if ccfg_count == 88 else None
+    nv2 = [v for a, v in memory.items() if 0xaa000 <= a < 0xae000]
+    nv5 = [v for a, v in memory.items() if 0xa4000 <= a < 0xae000]
+    return {"format": "SLZB_ADDRESS_SIZE_CRC32_RECORDS", "opaque_prefix": prefix,
+            "format_authority": "OBSERVED_STRUCTURE_ALL_RECORD_CRCS_VALIDATED",
+            "console_parser_proven": False, "sha256": digest(blob), "bytes": len(blob),
+            "initialized_address_count": len(memory), "source_bytes_consumed": cursor,
+            "chunks": chunks, "initial_sp": f"0x{sp:x}", "reset_thumb": f"0x{reset:x}",
+            "ccfg": ccfg, "ccfg_coverage": "FULL_88_BYTES" if ccfg_count == 88 else
+            ("PARTIAL_NOT_DECODABLE" if ccfg_count else "ABSENT"),
+            "nv2_addresses_present": len(nv2), "nv2_non_ff_bytes": sum(v != 0xff for v in nv2),
+            "nv5_addresses_present": len(nv5), "nv5_non_ff_bytes": sum(v != 0xff for v in nv5),
+            "flasher_erase_semantics": "UNKNOWN", "installed_content_verified": False,
+            "flash_authorized": False}
+
+
+def vendor_image(blob, header, model):
+    if blob.startswith(b"SLZB") or blob.startswith(b"\x01\x03SLZB"):
+        return slzb_container(blob, header, model)
+    result = vendor_bin(blob, header, model, 0)
+    result["format"] = "FLAT_BIN_EXPLICIT_BASE_ZERO"
+    return result
 
 
 def linked_ccfg(elf, hexfile, header):
@@ -129,7 +192,7 @@ if __name__ == "__main__":
     p.add_argument("--out", required=True, type=Path)
     args = p.parse_args()
     header = args.header.read_text()
-    vendor = vendor_bin(args.vendor.read_bytes(), header, "SLZB-06P7U", 0)
+    vendor = vendor_image(args.vendor.read_bytes(), header, "SLZB-06P7U")
     baseline = linked_ccfg(args.base_elf.read_bytes(), args.base_hex.read_text(), header)
     candidate = linked_ccfg(args.candidate_elf.read_bytes(), args.candidate_hex.read_text(), header)
     result = {"status": "OFFLINE_COMPARISON_COMPLETE_NOT_FLASHABLE", "vendor": vendor,
