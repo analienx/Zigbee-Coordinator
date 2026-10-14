@@ -101,6 +101,7 @@ jobs:
           python3 tests/p7-runtime-host/test_endpoint.py --sdk ../sdk --out /tmp/p7-endpoint-host
           python3 tests/p7-runtime-host/test_af_packet.py --sdk ../sdk --out /tmp/p7-af-packet-host
           python3 tests/p7-runtime-host/test_osal_timers.py --sdk ../sdk --out /tmp/p7-osal-timer-host
+          python3 tests/p7-runtime-host/test_mt_bounds.py --sdk ../sdk --out /tmp/p7-mt-bounds-host
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
@@ -227,6 +228,8 @@ jobs:
 
           python3 repo/firmware/slzb-06p7/ti832/hardening/runtime_overlay.py \
             --sdk sdk --out diag-staged
+          python3 repo/firmware/slzb-06p7/ti832/hardening/mt_overlay.py \
+            --sdk sdk --out diag-staged
           python3 repo/firmware/slzb-06p7/ti832/hardening/nv_overlay.py \
             --sdk sdk --out diag-staged
           python3 repo/firmware/slzb-06p7/ti832/hardening/osal_overlay.py \
@@ -342,6 +345,7 @@ jobs:
           cp diag-staged/RUNTIME-HARDENING-SOURCE.json bundle-compare/
           cp diag-staged/NV-HARDENING-SOURCE.json diag-staged/SECURITY-HARDENING-SOURCE.json bundle-compare/
           cp diag-staged/OSAL-HARDENING-SOURCE.json bundle-compare/
+          cp diag-staged/MT-HARDENING-SOURCE.json bundle-compare/
           if [ "$G6_PROFILE" = p7u-f07-stock ] || [ "$G6_PROFILE" = p7u-cap192-f07 ]; then
             cp diag-staged/P7U-R1-CCFG-SOURCE-ONLY.json bundle-compare/
           fi

@@ -95,14 +95,25 @@ or deployment tooling. Baseline source is feature commit
 - **P2: MAC submitted a nonempty payload after copy allocation failed.** The
   boundary now rejects the failed allocation while preserving borrowed-buffer
   ownership and legitimate zero-length requests.
+- **P1: Truncated MT commands reached handlers that read missing fields.** The
+  six enabled dispatchers now check the bytes consumed by their handlers and
+  bound variable relay, cluster, key, group-name and payload fields before use.
+  Invalid requests use the existing MT length error. Empty PING/VERSION,
+  legacy permit-join and large AF staging requests remain valid. Unknown APP_CNF
+  and GP commands now return the existing command error.
+- **P2: Rejected Green Power requests leaked their allocated messages.** Both
+  request handlers now release an unqueued message when appID validation fails.
+  Missing-association responses also initialize all bytes before returning their
+  existing fixed-size structure.
 
 `test_runtime.py` compiles actual pinned function bodies and actual NV callback
 types. Eight original-source cases fail and the same eight patched cases pass
 with AddressSanitizer/UndefinedBehaviorSanitizer. Existing G6 allocation/RX
 resynchronization and composed G7 Queue/Task/UART tests also passed locally.
-All 17 checks passed at `2482c6e`, including all seven native profiles and normal
-MT partial-write/prefix changes. The subsequent endpoint, packet-builder, timer
-and diagnostic race fixes require fresh native results.
+All 22 checks passed at `e438d47`, including the two P7U integrated native builds,
+the inherited native profiles, endpoint/packet/timer regressions and the
+diagnostic concurrency test. Subsequent MT dispatch changes require fresh native
+results.
 
 `test_nv_driver.py` compiles the **entire pinned NVOCMP driver** plus its actual
 CRC implementation, using the target GPRAM/FASTOFF path and 8 KiB pages with only
@@ -138,6 +149,13 @@ writer/snapshot threads under ThreadSanitizer: the old source reports ring/state
 races, while the ownership-guarded source passes with valid snapshot CRCs. Tests
 run with ASLR disabled for that instrumented process to avoid TSan shadow mapping
 conflicts; firmware and host settings are unchanged.
+`test_mt_bounds.py` compiles the pinned dispatchers for 30 representative
+truncated/valid protocol examples, plus the actual GP handlers and SDK structures
+for six allocation/rejection/valid ownership cases per version. The old source
+fails the negative cases; ordinary controls pass both. Dispatcher boundary tests
+substitute leaf calls to check that malformed packets cannot reach them; the
+reset test uses its actual handler and reproduces the short-packet read under
+ASan. Native builds compile the complete handlers with the guards in place.
 
 ## Coverage still being worked through
 

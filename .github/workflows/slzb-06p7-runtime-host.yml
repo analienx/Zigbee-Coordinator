@@ -40,6 +40,7 @@ jobs:
           python3 tests/p7-runtime-host/test_endpoint.py --sdk sdk --out /tmp/p7-endpoint-host
           python3 tests/p7-runtime-host/test_af_packet.py --sdk sdk --out /tmp/p7-af-packet-host
           python3 tests/p7-runtime-host/test_osal_timers.py --sdk sdk --out /tmp/p7-osal-timer-host
+          python3 tests/p7-runtime-host/test_mt_bounds.py --sdk sdk --out /tmp/p7-mt-bounds-host
           gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=thread -no-pie -pthread \
             tests/p7-runtime-host/diag_concurrency.c firmware/slzb-06p7/ti832/g5/p7_crashdiag.c \
             -o /tmp/p7-diag-concurrency
