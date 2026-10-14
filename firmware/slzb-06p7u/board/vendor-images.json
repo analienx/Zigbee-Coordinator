@@ -34,6 +34,24 @@
       "catalog_beta": false,
       "source_note": "Catalog-provided historical public image; same version metadata is not installed-content proof.",
       "license_url": "https://github.com/Koenkk/Z-Stack-firmware/blob/master/LICENSE"
+    },
+    {
+      "id": "P7U_REPORTED_CURRENT_20240710_115200",
+      "rev": "20240710",
+      "baud": 115200,
+      "type": "0",
+      "filename": "CC1352P7_coordinator_20240710.bin",
+      "url": "https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240710.bin",
+      "sha256": null,
+      "catalog_sdk": "7.41",
+      "catalog_beta": false,
+      "reported_current_by_user": true,
+      "catalog_max_transmit_power_label": "10dB",
+      "catalog_transmit_power_levels": [6, 7, 8, 9, 10],
+      "actual_configured_tx_power": null,
+      "live_sys_version_verified": false,
+      "source_notes": "https://github.com/Koenkk/Z-Stack-firmware/discussions/505",
+      "license_url": "https://github.com/Koenkk/Z-Stack-firmware/blob/master/LICENSE"
     }
   ]
 }
