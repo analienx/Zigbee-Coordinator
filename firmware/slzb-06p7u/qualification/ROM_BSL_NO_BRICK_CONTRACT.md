@@ -28,6 +28,12 @@ Official independent hardware reference (not fitted-board proof): `smlight-tech/
 
 Synthetic hostile tests reject disabling BSL, changed DIO/level, disabled bank-erase, malformed HEX, NV overlap and missing/changed CCFG. Actual pinned CCS builds must additionally pass this same parser on the final P7U HEX.
 
+### CCFG-free application-only derived artifact (safer candidate, not flash authorization)
+
+After validation of the **full** ELF-derived P7U HEX, the gate can emit `--app-only-out P7U-APP-ONLY-SOURCE-NOT-FLASHABLE.hex`. The output is independently reparsed and byte-for-byte compared against the original address map below the selected NV start; the entire CCFG sector and NV2/NV5 are absent. Both stock NV2 and CAP192/NV5 native CI paths produce and hash this alternative.
+
+This avoids carrying generic vendor CCFG bytes into a radio application update payload, protecting the potential per-device installed CCFG and its ROM backdoor **only if the selected physical flashing mechanism proves it erases/writes application sectors exclusively**. A backend that performs full-bank erase would still wipe CCFG and NV even when the HEX contains none. **DO NOT USE this derived artifact with a bank-erase/full-chip-erase command** or an updater whose sector plan has not been independently demonstrated.
+
 ### Fundamental limitation: erase semantics
 
 **No initialized bytes in NV does not prove that an underlying flashing tool will avoid erasing NV**. A flashing backend may issue chip/bank erase, sector-erase the last CCFG sector or reprogram the 88-byte record. `smlight-cc-flasher -ewv` examples include erase/write/verify and can use ROM bank erase. For a first test, never assume `-ewv` is non-destructive to security/NV; a full bank erase can clear all NV, and a failed last-sector write could lose the bootloader configuration. The gate cannot infer what a particular SLZB-OS console firmware actually erases.
