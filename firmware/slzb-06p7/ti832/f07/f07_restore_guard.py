@@ -62,18 +62,16 @@ ENTRY=(
     "      devState = DEV_HOLD;\n"
     "      return ZDO_INITDEV_LEAVE_NOT_STARTED;\n"
     "    }\n"
-    "    networkStateNV = ZDApp_RestoreNetworkState();"
-)
-
-EXIT=(
-    "    /* F07: restore returned NEW; do not format NV or clear network keys. */\n"
+    "    networkStateNV = ZDApp_RestoreNetworkState();\n"
+    "    /* Check the RAW restore result before Touchlink may rewrite NEW to RESTORED. */\n"
     "    if (networkStateNV != ZDO_INITDEV_RESTORED_NETWORK_STATE)\n"
     "    {\n"
     "      devState = DEV_HOLD;\n"
     "      return ZDO_INITDEV_LEAVE_NOT_STARTED;\n"
-    "    }\n"
-    + RESTORE_ANCHOR
+    "    }"
 )
+
+EXIT=RESTORE_ANCHOR  # Original Touchlink branch remains, but cannot mask failed restore.
 
 def patch(source: str) -> str:
     if source.count(ANCHOR)!=1 or source.count(RESTORE_ANCHOR)!=1:
