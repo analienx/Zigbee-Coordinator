@@ -19,13 +19,13 @@ def diagnose(root, profile):
     elf = (root / "DIAG-NOT-FLASHABLE.out").read_bytes()
     hexmem = read_hex((root / "DIAG-NOT-FLASHABLE.hex").read_text())
     maptext = (root / "DIAG-NOT-FLASHABLE.map").read_text(errors="replace")
-    symbols = list(re.finditer(r"(?m)^\\s*([0-9a-fA-F]+)\\s+<([^>]+)>:", dis))
+    symbols = list(re.finditer(r"(?m)^\s*([0-9a-fA-F]+)\s+<([^>]+)>:", dis))
     caller_sites = []
     for i, match in enumerate(symbols):
         end = symbols[i+1].start() if i+1 < len(symbols) else len(dis)
         code = dis[match.end():end]
         for line in code.splitlines():
-            if re.search(r"\\b(?:b(?:\\.[wn])?|bl(?:\\.w)?|blx)\\s+[^\\n]*<p7_g7_service(?:\\+0x[0-9a-f]+)?>", line):
+            if re.search(r"\b(?:b(?:\.[wn])?|bl(?:\.w)?|blx)\s+[^\n]*<p7_g7_service(?:\+0x[0-9a-f]+)?>", line):
                 caller_sites.append({"caller":match.group(2), "instruction":line.strip()[:180]})
     task_functions = sorted(set(m.group(2) for m in symbols if "NPITask" in m.group(2)))
     service_functions = sorted(set(m.group(2) for m in symbols if "p7_g7" in m.group(2)))
@@ -50,7 +50,7 @@ def diagnose(root, profile):
         "ELF_HEX_app_content_equal": app == app_hex and all(mem[a] == hexmem[a] for a in app),
         "map_region_flash": rows["FLASH"],
         "flash_map_section_samples": [line.strip()[:160] for line in maptext.splitlines()
-                                      if re.search(r"(?i)\\b(fill|padding|hole|noload|align)\\b", line)][:30],
+                                      if re.search(r"(?i)\b(fill|padding|hole|noload|align)\b", line)][:30],
     }
 
 if __name__ == "__main__":
