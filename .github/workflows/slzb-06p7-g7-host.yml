@@ -31,6 +31,7 @@ jobs:
           test "$(git -C sdk rev-parse HEAD)" = 6499c3f53fc5fb5806213be695450a7b43fbaf3d
           python3 repo/tests/p7-g7-host/test_transport.py --sdk sdk --out evidence | tee evidence/host.log
           python3 repo/tests/p7-g7-host/test_task.py --sdk sdk --out evidence | tee evidence/task-host.log
+          python3 repo/tests/p7-g7-host/test_alignment.py | tee evidence/alignment-host.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with: {name: p7-g7-task-transport-evidence, path: evidence/, if-no-files-found: error}
