@@ -74,7 +74,7 @@ def verify_source(text: str) -> dict:
             < ready_text.index("ZDApp_NwkWriteNVRequest();")
             < ready_text.index("ZDApp_ChangeState( DEV_ZB_COORD );")):
         raise ValueError("F07_READY_BEFORE_NIB_GUARD")
-    restore_key = text.index("uint8_t ZDApp_RestoreNetworkState( void )\\n{")
+    restore_key = text.index("uint8_t ZDApp_RestoreNetworkState( void )\n{")
     restore_key_end = text.index("#endif // NV_RESTORE", restore_key)
     key_body = text[restore_key:restore_key_end]
     if not (key_body.index("if (!p7_f07_nwk_counter_escrow()")
