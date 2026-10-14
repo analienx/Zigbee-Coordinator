@@ -17,4 +17,6 @@ typedef enum {
  */
 p7_submit_result_t p7_g7_uart_outcome(void);
 p7_submit_result_t p7_g7_tl_outcome(void);
+/* Sticky UART write callback error/short transfer, no automatic retry. */
+int p7_g7_uart_completion_error(void);
 #endif
