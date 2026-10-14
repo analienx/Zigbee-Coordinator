@@ -250,6 +250,14 @@ jobs:
           print("BASE_VS_DIAG_LINKED_OK", r["delta_diag_minus_base"])
           PY
           printf '%s\n' 'NOT_FLASHABLE' 'LINKED_EVIDENCE_ONLY' > bundle-compare/NOT_FLASHABLE.txt
+      - name: Forensic-only G7 call graph and NV5 map byte accounting
+        shell: bash
+        env:
+          G7_PROFILE: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          python3 repo/firmware/slzb-06p7/ti832/g7/native_failure_triage.py --candidate bundle-diag --profile "$G7_PROFILE" | tee diag-staged/native-failure-triage.log
+          echo 'G7_TRIAGE_ONLY=NO_ACCEPTANCE_AND_NO_FLASH_AUTHORIZATION'
       - name: Exact binary, NV, CCFG and G6 linked evidence
         shell: bash
         env:
