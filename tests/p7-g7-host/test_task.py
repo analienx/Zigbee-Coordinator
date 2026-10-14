@@ -49,6 +49,7 @@ typedef struct { void (*cb)(uintptr_t); uintptr_t arg; uint32_t timeout,due; boo
 typedef ClockP_Struct *ClockP_Handle;
 static uint32_t tick,period=1000;
 static int timer_fail,posts,pend_calls,rx_passes;
+static volatile uint8_t p7_g7_completion_error; /* genuine UART callback readback in host */
 static void *live[128]; static unsigned blocks,alloc_calls,fail_at;
 static uint32_t npiServiceTaskEvents;
 static uint16_t TX_DONE_ISR_EVENT_FLAG,MRDY_ISR_EVENT_FLAG,TRANSPORT_RX_ISR_EVENT_FLAG;
@@ -105,7 +106,8 @@ static void advance(uint32_t now) {
     }
 }
 static void setup(void){
-    assert(!blocks);reset();force_tl_outcome_enabled=false;forced_tl_outcome=0;memset(p7_g7_lanes,0,sizeof(p7_g7_lanes));
+    assert(!blocks);reset();p7_g7_completion_error=0;
+    force_tl_outcome_enabled=false;forced_tl_outcome=0;memset(p7_g7_lanes,0,sizeof(p7_g7_lanes));
     memset((void*)&p7_g7_counters,0,sizeof(p7_g7_counters));
     p7_g7_burst=p7_g7_fault=p7_g7_busy_seen=p7_g7_isr_event=0;
     tick=0;period=1000;timer_fail=posts=rx_passes=inline_completion=0;
@@ -223,10 +225,28 @@ int main(void){
         tick=100;task_once();assert(dma_calls==1 && npiTxActive);
         complete();task_once();assert(dma_calls==1 && !npiTxActive);
     }
+    /* Real TI write callback otherwise ignores errors and short transfers.
+     * Both are sticky and must stop the next queued SRSP/AREQ before DMA. */
+    for (int callback_mode=0;callback_mode<2;callback_mode++) {
+        setup();NPITask_sendToHost(raw(0x61,1,0));task_once();
+        assert(dma_calls==1 && npiTxActive);
+        NPITask_sendToHost(raw(0x41,2,0));
+        size_t sent = TransportTxLen;
+        object.writeInUse=false;
+        NPITLUART_writeCallBack(uartHandle,npiTxBuf,
+            callback_mode ? sent-1 : sent,NULL,
+            callback_mode ? UART2_STATUS_SUCCESS : UART2_STATUS_ECANCELLED);
+        assert(p7_g7_uart_completion_error());
+        task_once();
+        assert(p7_g7_fault && p7_g7_counters.completion_fault==1);
+        assert(p7_g7_counters.transport_fault==1 && !npiTxActive);
+        assert(!blocks && dma_calls==1 && !p7_g7_clock->active);
+        tick=100;task_once();assert(dma_calls==1);
+    }
     setup();timer_fail=1;p7_g7_init();NPITask_sendToHost(raw(0x61,1,0));task_once();
     assert(!blocks&&p7_g7_fault&&p7_g7_counters.timer_fault==1&&!dma_calls);
     setup();period=0;p7_g7_init();NPITask_sendToHost(raw(0x61,1,0));task_once();assert(!blocks&&p7_g7_fault);
-    puts("PASS actual Queue/frame/Task/UART/TL composition: ownership, timed rejection, no uncertain retry, invalid/busy/unknown fail-closed with DMA preservation, bounded saturation/fault, FIFO and 4-SRSP fairness, RX progress, wrap/coarse ticks, allocation/timer failures");
+    puts("PASS actual Queue/frame/Task/UART/TL composition: ownership, timed rejection, no uncertain retry, invalid/busy/unknown fail-closed with DMA preservation, failed/short UART callback freeze, bounded saturation/fault, FIFO and 4-SRSP fairness, RX progress, wrap/coarse ticks, allocation/timer failures");
     return 0;
 }
 '''
@@ -274,6 +294,7 @@ def main():
     transport += "\n".join(g6.function(post[p], n) for p, n in
                            ((g6.UART, "NPITLUART_writeTransport"), (g6.TL, "NPITL_writeTL"),
                             (g6.UART, "p7_g7_uart_outcome"), (g6.TL, "p7_g7_tl_outcome"),
+                            (g6.UART, "p7_g7_uart_completion_error"),
                             (g6.TL, "NPITL_transmissionCallBack")))
     # A fault-injection adapter at the task boundary leaves the genuine SDK
     # UART2, TL and getter functions untouched. Only the task's observed enum

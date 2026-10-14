@@ -16,7 +16,7 @@ typedef struct {
 } p7_g7_lane_t;
 typedef struct {
     uint32_t queued[2], submitted[2], ambiguous, rejected, dropped;
-    uint32_t invalid, full, timer_fault, transport_fault, unexpected_outcome;
+    uint32_t invalid, full, timer_fault, transport_fault, unexpected_outcome, completion_fault;
     uint8_t high_water[2];
 } p7_g7_counters_t;
 /* RAM counters only: submission is not host reception or physical TX idle. */
@@ -175,6 +175,14 @@ static void __attribute__((noinline)) p7_g7_service(void)
     npiServiceTaskEvents &= ~(NPITASK_TX_READY_EVENT | NPITASK_TRANSPORT_TX_DONE_EVENT | P7_G7_WAKE_EVENT);
     if (p7_g7_clock) ClockP_stop(p7_g7_clock);
     if (p7_g7_fault) { OsalPort_leaveCS(key); return; }
+    if (p7_g7_uart_completion_error()) {
+        /* A failed/short DMA callback is not successful delivery; never
+         * retransmit uncertain bytes. Retire task queues, keep RX alive. */
+        ++p7_g7_counters.completion_fault;
+        p7_g7_latch_transport_fault();
+        OsalPort_leaveCS(key);
+        return;
+    }
     if (NPITL_checkNpiBusy()) {
         if (!p7_g7_busy_seen) { p7_g7_busy_seen = 1; p7_g7_busy_tick = now; }
         if (p7_g7_elapsed(p7_g7_busy_tick, now, period)) {
