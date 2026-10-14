@@ -33,6 +33,7 @@ static uint8_t p7_f07_commit_nib_before_ready(void)
 {
     nwkIB_t *readback;
     uint8_t passed = FALSE;
+    NVINTF_itemID_t id;
     /* TI osal_nv_write_ex() may report SUCCESS when updateItem is NULL.
      * A valid item/readback alone is therefore not proof of a write.
      */
@@ -43,7 +44,10 @@ static uint8_t p7_f07_commit_nib_before_ready(void)
     {
         return FALSE;
     }
-    if (osal_nv_item_len(ZCD_NV_NIB) != sizeof(nwkIB_t))
+    id.systemID = NVINTF_SYSID_ZSTACK;
+    id.itemID = ZCD_NV_EX_LEGACY;
+    id.subID = ZCD_NV_NIB;
+    if (pZStackCfg->nvFps.getItemLen(id) != sizeof(nwkIB_t))
     {
         return FALSE;
     }
@@ -52,8 +56,12 @@ static uint8_t p7_f07_commit_nib_before_ready(void)
     {
         return FALSE;
     }
-    if (osal_nv_write(ZCD_NV_NIB, sizeof(nwkIB_t), &_NIB) == SUCCESS &&
-        osal_nv_read(ZCD_NV_NIB, 0, sizeof(nwkIB_t), readback) == SUCCESS &&
+    /* Use raw NVINTF outcome: osal_nv_read_ex() mistakenly classifies
+     * NVINTF_NOTFOUND (10) as success; it only rejects NVINTF_FAILURE (1).
+     * The real backend's SUCCESS=0 is the only acceptable outcome.
+     */
+    if (pZStackCfg->nvFps.updateItem(id, sizeof(nwkIB_t), &_NIB) == NVINTF_SUCCESS &&
+        pZStackCfg->nvFps.readItem(id, 0, sizeof(nwkIB_t), readback) == NVINTF_SUCCESS &&
         OsalPort_memcmp(readback, &_NIB, sizeof(nwkIB_t)))
     {
         passed = TRUE;
