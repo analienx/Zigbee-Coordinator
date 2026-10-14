@@ -13,11 +13,12 @@ enum p7_tx_ready p7_tx_budget_ready(const p7_tx_budget_t *b,uint32_t now,uint32_
     age=now-b->started_tick; wait=now-b->rejected_tick;
     if (age>=0x80000000u || wait>=0x80000000u) return P7_TX_EXPIRED;
     if ((uint64_t)age*period_us>=P7_TX_DEADLINE_US) return P7_TX_EXPIRED;
-    return (uint64_t)wait*period_us>=P7_TX_RETRY_US ? P7_TX_NOW : P7_TX_WAIT;
+    return wait>=p7_tx_retry_ticks(period_us) ? P7_TX_NOW : P7_TX_WAIT;
 }
 uint32_t p7_tx_retry_ticks(uint32_t period_us) {
     if (!period_us) return 0;
-    return (uint32_t)(((uint64_t)P7_TX_RETRY_US+period_us-1u)/period_us);
+    /* One additional tick covers the unknown phase of the sampled tick. */
+    return (uint32_t)(((uint64_t)P7_TX_RETRY_US+period_us-1u)/period_us)+1u;
 }
 enum p7_tx_lane p7_tx_choose(int srsp_ready,int areq_ready,uint8_t burst) {
     if (srsp_ready && (!areq_ready || burst<4u)) return P7_TX_SRSP;
