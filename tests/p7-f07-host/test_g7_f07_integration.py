@@ -17,6 +17,7 @@ def load(path, name):
 
 s1=load(ROOT/"firmware/slzb-06p7/ti832/f07/f07_nib_gate.py","slice1")
 s2=load(ROOT/"firmware/slzb-06p7/ti832/f07/f07_restore_guard.py","slice2")
+s3=load(ROOT/"firmware/slzb-06p7/ti832/f07/f07_nwk_counter_escrow.py","slice3")
 audit=load(ROOT/"firmware/slzb-06p7/ti832/f07/verify_composed_native.py","audit")
 
 
@@ -35,7 +36,7 @@ def main():
     p.add_argument("--sdk",required=True,type=Path)
     a=p.parse_args()
     original=(a.sdk/s1.ZDO_PATH).read_text()
-    text=s2.patch(s1.patch(original))
+    text=s3.patch(s2.patch(s1.patch(original)))
     result=audit.verify_source(text)
     assert result["raw_nv_success_only"] is True
     must_reject(lambda: audit.verify_source(text.replace(
@@ -57,7 +58,8 @@ def main():
         can.mkdir()
         sym="\n".join(f"00000100 t {name}" for name in (
           "ZDApp_NetworkStartEvt","p7_f07_commit_nib_before_ready",
-          "ZDOInitDeviceEx","p7_f07_nv_restore_preflight"))+"\n"
+          "ZDOInitDeviceEx","p7_f07_nv_restore_preflight",
+          "ZDApp_RestoreNetworkState","p7_f07_nwk_counter_escrow"))+"\n"
         (can/"DIAG-symbols.txt").write_text(sym)
         dis="\n".join([
           "00000100 <ZDApp_NetworkStartEvt>:",
@@ -68,6 +70,10 @@ def main():
           "  1a4: f000 f800 bl 200 <p7_f07_nv_restore_preflight>",
           "00000200 <p7_f07_nv_restore_preflight>:",
           "  204: 4770 bx lr",
+          "00000240 <ZDApp_RestoreNetworkState>:",
+          "  244: f000 f800 bl 2c0 <p7_f07_nwk_counter_escrow>",
+          "000002c0 <p7_f07_nwk_counter_escrow>:",
+          "  2c4: 4770 bx lr",
           ""])
         (can/"DIAG-disassembly.txt").write_text(dis)
         assert audit.verify(can,src,"p7u-f07-stock")["flash_authorized"] is False
@@ -77,6 +83,15 @@ def main():
            "bl 200 <p7_f07_nv_restore_preflight>",
            "bl 200 <something_else>"))
         must_reject(lambda: audit.verify(can,src,"cap192-f07"),
+                    "F07_NATIVE_CALL_EDGE_MISSING")
+        (can/"DIAG-disassembly.txt").write_text(dis)
+        must_reject(lambda: audit.verify_source(text.replace(
+            "if (!p7_f07_nwk_counter_escrow()","if (1)")),
+            "F07_COUNTER_ESCROW_CALLSITE_AMBIGUOUS")
+        (can/"DIAG-disassembly.txt").write_text(dis.replace(
+            "bl 2c0 <p7_f07_nwk_counter_escrow>",
+            "bl 2c0 <wrong_escrow>"))
+        must_reject(lambda: audit.verify(can,src,"p7u-cap192-f07"),
                     "F07_NATIVE_CALL_EDGE_MISSING")
         (can/"DIAG-disassembly.txt").write_text(dis)
         (can/"DIAG-symbols.txt").write_text(sym.replace(
