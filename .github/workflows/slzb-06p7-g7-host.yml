@@ -1,0 +1,37 @@
+name: P7 G7 task and transport regressions (NOT FLASHABLE)
+on:
+  push:
+    branches: ['codex/p7-g7-*']
+  pull_request:
+    paths: ['firmware/slzb-06p7/ti832/g7/**', 'tests/p7-g7-host/**', '.github/workflows/slzb-06p7-g7-host.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  transport-boundary:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - name: Actual driver and transport pre/post controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git -C repo rev-parse HEAD > evidence/candidate-sha.txt
+          test "$(git -C sdk rev-parse HEAD)" = 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          python3 repo/tests/p7-g7-host/test_transport.py --sdk sdk --out evidence | tee evidence/host.log
+          python3 repo/tests/p7-g7-host/test_task.py --sdk sdk --out evidence | tee evidence/task-host.log
+          python3 repo/tests/p7-g7-host/test_alignment.py | tee evidence/alignment-host.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with: {name: p7-g7-task-transport-evidence, path: evidence/, if-no-files-found: error}

@@ -91,6 +91,65 @@ def load_elf(elf:bytes)->tuple[dict[int,int],dict]:
                     "elf_programmed_byte_count":len(chunks),
                     "elf_app_programmed_byte_count":len(chunks)-88}
 
+def verified_app_alignment_fill(elf:bytes, app_bytes:int, map_bytes:int)->list[dict]:
+    """Attest actual zero-valued *inter-section* PT_LOAD alignment bytes.
+
+    TI linker FLASH.used counts allocated section payload, whereas objcopy
+    includes alignment fill in a loadable segment. No arbitrary slack or
+    tolerance is allowed: every surplus byte must be linked, zero-valued,
+    between consecutive allocated file-backed sections, and explained by
+    the following section's actual ELF alignment. Do not touch the image.
+    """
+    if app_bytes==map_bytes:return []
+    must(app_bytes>map_bytes,"MAP_FLASH_BYTES_NOT_IMAGE_BYTES")
+    hdr=struct.unpack_from("<HHIIIIIHHHHHH",elf,16)
+    phoff,phsz,phnum=hdr[4],hdr[8],hdr[9]
+    shoff,shsz,shnum=hdr[5],hdr[10],hdr[11]
+    must(shoff>=52 and shsz==40 and 0<shnum<=4096 and
+         shoff+shsz*shnum<=len(elf),"MAP_FLASH_BYTES_NOT_IMAGE_BYTES")
+    sections=[]
+    for i in range(shnum):
+        sec=struct.unpack_from("<IIIIIIIIII",elf,shoff+40*i)
+        typ,flags,addr,offset,size,align=sec[1],sec[2],sec[3],sec[4],sec[5],sec[8]
+        if typ!=8 and flags&2 and size:
+            must(offset+size<=len(elf),"ALIGNED_SECTION_OUT_OF_ELF")
+            sections.append((offset,offset+size,addr,size,align))
+    sections.sort()
+    gaps=[]
+    for i in range(phnum):
+        typ,offset,vaddr,paddr,filesz,memsz,flags,align=struct.unpack_from(
+            "<IIIIIIII",elf,phoff+i*phsz)
+        if typ!=1 or not filesz or paddr>=APP_END:continue
+        must(paddr+filesz<=APP_END,"ALIGNMENT_CROSSES_NV")
+        seg_end=offset+filesz
+        local=[s for s in sections if offset<=s[0] and s[1]<=seg_end]
+        for s in sections:
+            if s[0]<seg_end and s[1]>offset:
+                must(s in local,"PARTIAL_ALLOCATION_SEGMENT")
+        local.sort()
+        must(bool(local),"APP_SEGMENT_HAS_NO_ALLOC_SECTIONS")
+        # The loaded image must start and end at allocated section boundaries.
+        must(local[0][0]==offset and local[-1][1]==seg_end,
+             "UNATTRIBUTED_EDGE_BYTES")
+        for left,right in zip(local,local[1:]):
+            must(left[1]<=right[0],"OVERLAPPING_ALLOC_SECTIONS")
+            if left[1]==right[0]:continue
+            length=right[0]-left[1]
+            phys=paddr+(left[1]-offset)
+            next_align=right[4]
+            must(0<length<=15 and next_align>1 and
+                 next_align<=256 and (next_align & (next_align-1))==0 and
+                 length<next_align and right[2]%next_align==0 and
+                 left[2]+left[3]==phys and right[2]==phys+length and
+                 all(b==0 for b in elf[left[1]:right[0]]),
+                 "UNPROVEN_INTERSECTION_PADDING")
+            gaps.append({"physical_start":hex(phys),"length":length,
+                         "fill":0,"following_alignment":next_align})
+    must(sum(g["length"] for g in gaps)==app_bytes-map_bytes,
+         "MAP_FLASH_BYTES_NOT_IMAGE_BYTES")
+    return gaps
+
+
 def validate(elf:bytes,hextxt:str,maptxt:str)->dict:
     rows=verify_regions(maptxt)
     elf_mem,meta=load_elf(elf)
@@ -101,9 +160,10 @@ def validate(elf:bytes,hextxt:str,maptxt:str)->dict:
         must(hex_mem[addr]==value,f"HEX_ELF_BYTE_MISMATCH_{addr:#x}")
     must(all(not (NV_BASE<=a<CCFG_SECTOR_BASE) for a in hex_mem),
          "IMAGE_TOUCHES_EXPANDED_NV_REGION")
-    must(rows["FLASH"]["used"]==meta["elf_app_programmed_byte_count"],
-         "MAP_FLASH_BYTES_NOT_IMAGE_BYTES")
-    must(len(hex_mem)==rows["FLASH"]["used"]+88,"MAP_HEX_USED_MISMATCH")
+    alignment_gaps=verified_app_alignment_fill(elf,meta["elf_app_programmed_byte_count"],
+                                               rows["FLASH"]["used"])
+    must(len(hex_mem)==rows["FLASH"]["used"]+sum(g["length"] for g in alignment_gaps)+88,
+         "MAP_HEX_USED_MISMATCH")
     return {
         "status":"NV5_NATIVE_ELF_HEX_LINKER_GEOMETRY_PASS",
         "qualification":CANDIDATE,
@@ -120,6 +180,7 @@ def validate(elf:bytes,hextxt:str,maptxt:str)->dict:
         "nv_image_loaded_bytes":0,
         "app_region_capacity_bytes":APP_END,
         "app_linked_bytes":rows["FLASH"]["used"],
+        "app_elf_alignment_zero_fill":alignment_gaps,
         "app_linked_free_bytes":rows["FLASH"]["unused"],
         "ccfg_loaded_bytes":88,
         "map_regions":rows,
