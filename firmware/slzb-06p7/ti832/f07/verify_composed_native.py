@@ -23,7 +23,7 @@ SRC_CLEAR = "ZDSecMgrClearNVKeyValues();"
 
 def function_body(disassembly: str, symbol: str) -> str:
     m = re.search(
-        r"<" + re.escape(symbol) + r">:(.*?)(?=^\\s*[0-9a-fA-F]+\\s+<|\\Z)",
+        r"<" + re.escape(symbol) + r">:(.*?)(?=^\s*[0-9a-fA-F]+\s+<|\Z)",
         disassembly, re.S | re.M)
     if not m:
         raise ValueError("F07_NATIVE_BODY_MISSING_" + symbol)
@@ -81,11 +81,11 @@ def verify(candidate: Path, source: Path, profile: str) -> dict:
     disassembly = (candidate / "DIAG-disassembly.txt").read_text()
     linked = {}
     for caller, guard in GUARDS.items():
-        if len(re.findall(r"(?m)^\\S.*\\b" + re.escape(guard) + r"$", symbols_text)) != 1:
+        if len(re.findall(r"(?m)^\S.*\b" + re.escape(guard) + r"$", symbols_text)) != 1:
             raise ValueError("F07_LINKED_GUARD_SYMBOL_MISSING_" + guard)
         body = function_body(disassembly, caller)
         function_body(disassembly, guard)
-        if not re.search(r"\\b(?:b(?:\\.[wn])?|bl(?:\\.w)?|blx)\\s+[^\\n]*<" + re.escape(guard) + r">", body):
+        if not re.search(r"\b(?:b(?:\.[wn])?|bl(?:\.w)?|blx)\s+[^\n]*<" + re.escape(guard) + r">", body):
             raise ValueError("F07_NATIVE_CALL_EDGE_MISSING_" + caller + "_" + guard)
         linked[caller] = guard
     # Existing G6/G7 strict audit separately owns CCFG, NV, cap, ELF/HEX map
@@ -111,7 +111,7 @@ def main() -> None:
     a.add_argument("--out", type=Path, required=True)
     args = a.parse_args()
     result = verify(args.candidate, args.source, args.profile)
-    args.out.write_text(json.dumps(result, indent=2) + "\\n")
+    args.out.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, sort_keys=True))
 
 
