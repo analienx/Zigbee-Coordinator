@@ -1,0 +1,70 @@
+name: P7U combined G7+F07 hostile-source regression (NOT FLASHABLE)
+on:
+  push:
+    branches: ['feat/p7u-g7-f07-integration-native-*']
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7u-g7-f07-host.yml'
+      - '.github/workflows/slzb-06p7-g7-f07-integration-native.yml'
+      - 'firmware/slzb-06p7/ti832/f07/**'
+      - 'tests/p7-f07-host/**'
+      - 'firmware/slzb-06p7/ti832/g7/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p7u-g7-f07-host-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  pinned-ti-host-falsification:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {path: repo, persist-credentials: false, ref: "${{ github.event.pull_request.head.sha || github.sha }}"}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-zstack-examples
+          ref: 87ff5b638b632050228a7504f35cf3b95581c278
+          path: examples
+          persist-credentials: false
+      - name: Pinned TI originals, F07 compiled-C faults, strict synthetic linking negatives
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          test "$(git -C examples rev-parse HEAD)" = 87ff5b638b632050228a7504f35cf3b95581c278
+          python3 repo/tests/p7-f07-host/test_f07.py --sdk sdk
+          python3 repo/tests/p7-f07-host/test_f07_restore.py --sdk sdk
+          python3 repo/tests/p7-f07-host/test_g7_f07_integration.py --sdk sdk
+      - name: Compose G5/G6/G7/F07 against actual pinned TI sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staged
+          python3 repo/firmware/slzb-06p7/ti832/g5/diag_overlay.py --sdk sdk --examples examples --g5 repo/firmware/slzb-06p7/ti832/g5 --out staged
+          python3 repo/firmware/slzb-06p7/ti832/g6/g6_overlay.py --sdk sdk --examples examples --out staged
+          python3 repo/firmware/slzb-06p7/ti832/g7/g7_task_overlay.py --sdk sdk --examples examples --out staged
+          python3 repo/firmware/slzb-06p7/ti832/g7/verify_composition.py --sdk sdk
+          python3 repo/firmware/slzb-06p7/ti832/f07/f07_nib_gate.py --sdk sdk --out staged/F07-NIB-ONLY.json
+          python3 repo/firmware/slzb-06p7/ti832/f07/f07_restore_guard.py --sdk sdk --out staged/F07-RESTORE-ONLY.json
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          p=Path("repo/firmware/slzb-06p7/ti832/f07/verify_composed_native.py")
+          s=importlib.util.spec_from_file_location("audit",p)
+          m=importlib.util.module_from_spec(s)
+          s.loader.exec_module(m)
+          source=Path("sdk/source/ti/zstack/stack/zdo/zd_app.c").read_text()
+          a=m.verify_source(source)
+          assert all(v is True for v in a.values() if isinstance(v,bool))
+          print("ACTUAL_G7_F07_COMPOSITION_HOST_VERIFIED_NO_FLASH")
+          PY
+          git -C sdk diff --stat HEAD
+          git -C examples diff --stat HEAD
