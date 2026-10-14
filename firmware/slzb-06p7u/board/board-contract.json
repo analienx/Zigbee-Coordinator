@@ -1,0 +1,62 @@
+{
+  "schema": "p7u-board-contract-v1",
+  "scope": "SLZB_06P7U_ONLY",
+  "model": "SLZB-06P7U",
+  "radio_soc": "CC2652P7",
+  "host_soc": "ESP32-S3",
+  "ethernet": "W5500",
+  "date": "2026-10-14",
+  "flash_authorized": false,
+  "network_qualified": false,
+  "board_revision_observed": null,
+  "reference": {
+    "board_family": "06xU",
+    "revision": "1.73",
+    "unit_revision_verified": false,
+    "source_id": "SMLIGHT_ESPHOME_06XU_R173",
+    "esp_gpio": {
+      "uart2_tx": 17, "uart2_rx": 18, "uart2_cts": 15, "uart2_rts": 14,
+      "radio_reset": 21, "radio_bsl": 16, "usb_device_host": 47
+    },
+    "inverted": {"radio_reset": true, "radio_bsl": true, "usb_device_host": true},
+    "uart_baud": 115200,
+    "tcp_port": 6638,
+    "is_stock_slzb_os_implementation": false
+  },
+  "reported_dashboard": {
+    "provenance": "USER_SUPPLIED_DASHBOARD_2026_10_14",
+    "model": "SLZB-06p7U",
+    "core_version": "v3.2.6.dev3",
+    "radio_firmware_metadata": "20240316",
+    "radio_firmware_live_sys_version": null,
+    "radio_role": "Zigbee coordinator",
+    "usb_mode": "Device",
+    "connection_mode": "USB mode",
+    "flow_control_label": "HW & SW",
+    "wifi_mode": "AP",
+    "ethernet_connected": false,
+    "automatic_zigbee_update": false
+  },
+  "flash_region": {
+    "start": 0, "end_exclusive": 720896, "sector_bytes": 8192,
+    "ccfg_sector_start": 712704, "ccfg_record_start": 720808, "ccfg_record_bytes": 88
+  },
+  "layouts": {
+    "NV2": {"app_end": 696320, "nv_start": 696320, "nv_end": 712704, "nv_bytes": 16384},
+    "NV5": {"app_end": 671744, "nv_start": 671744, "nv_end": 712704, "nv_bytes": 40960}
+  },
+  "proofs": {
+    "physical_revision": {"value": null, "accepted": false, "evidence": []},
+    "uart_cc_dio": {"value": null, "accepted": false, "evidence": []},
+    "uart_baud_and_flow": {"value": null, "accepted": false, "evidence": []},
+    "ccfg_original_sha256": {"value": null, "accepted": false, "evidence": []},
+    "rf_design": {"value": null, "accepted": false, "evidence": []},
+    "oscillator_settings": {"value": null, "accepted": false, "evidence": []},
+    "bootloader_access": {"value": null, "accepted": false, "evidence": []},
+    "flash_protocol_and_erase_policy": {"value": null, "accepted": false, "evidence": []},
+    "usb_bridge_mode": {"value": null, "accepted": false, "evidence": []},
+    "stock_sys_ping_version": {"value": null, "accepted": false, "evidence": []},
+    "launchpad_dependencies_removed": {"value": null, "accepted": false, "evidence": []},
+    "board_native_image_audit": {"value": null, "accepted": false, "evidence": []}
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schema": "p7u-board-evidence-v1",
+  "model": "SLZB-06P7U",
+  "physical_qualified": false,
+  "sources": [
+    {
+      "id": "SMLIGHT_ESPHOME_06XU_R173",
+      "url": "https://github.com/smlight-tech/slzb-esphome/blob/3397f6ffe7b0a58cf1546c8293bfa644235a9769/hw_defs/06xu/r1_73.yaml",
+      "repository": "smlight-tech/slzb-esphome",
+      "commit": "3397f6ffe7b0a58cf1546c8293bfa644235a9769",
+      "git_blob_sha1": "30dfffbfc092b4c0bebe1581671ead73f6f9475a",
+      "hardware_revision": "1.73",
+      "scope": "ESP_HOST_REFERENCE_ONLY",
+      "claim": "ESP32-S3 GPIO reference; not TI application DIO or stock bridge implementation",
+      "observed_vs_inferred": "PRIMARY_SOURCE_REFERENCE",
+      "confidence": "HIGH_FOR_REFERENCE_NOT_FITTED_UNIT"
+    },
+    {
+      "id": "SMLIGHT_PRODUCT_P7U",
+      "url": "https://smlight.tech/products/slzb-06p7u",
+      "scope": "PRODUCT_FAMILY",
+      "claim": "CC2652P7 with ESP32-S3/W5500 product family",
+      "observed_vs_inferred": "MANUFACTURER_DESCRIPTION",
+      "confidence": "PRODUCT_DESCRIPTION_NOT_UNIT_REVISION"
+    },
+    {
+      "id": "TI832_PINNED_REFERENCE",
+      "url": "https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk/tree/6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+      "commit": "6499c3f53fc5fb5806213be695450a7b43fbaf3d",
+      "scope": "SILICON_REFERENCE_ONLY",
+      "claim": "P7 memory/register reference; LaunchPad bindings are not P7U proof",
+      "observed_vs_inferred": "PINNED_SOURCE",
+      "confidence": "SILICON_REFERENCE_NOT_BOARD_QUALIFICATION"
+    }
+  ],
+  "accepted_board_proofs": [],
+  "vendor_images": [],
+  "privacy": "No unit serial, MAC, coordinator IEEE, PAN or key material belongs in public evidence."
+}
