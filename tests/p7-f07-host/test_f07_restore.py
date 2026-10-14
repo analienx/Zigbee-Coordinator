@@ -163,7 +163,7 @@ return networkStateNV;
 }\n"""+TAIL
         path.write_text(source,encoding="utf8")
         (Path(temp)/"zstackconfig.h").write_text(
-            "/* CI-only declaration stub; pinned native CCS uses real TI header. */\\n")
+            "/* CI-only declaration stub; native CCS uses real TI header. */" + chr(10))
         for touchlink in (0,1):
             subprocess.run(["gcc","-std=c11","-O2","-Wall","-Wextra","-Werror",
                             "-I",str(temp),
