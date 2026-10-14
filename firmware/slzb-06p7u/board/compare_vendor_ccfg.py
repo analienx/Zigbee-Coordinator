@@ -70,14 +70,18 @@ def decode_ccfg(blob, header):
 def vendor_bin(blob, header, model, base):
     need(model == "SLZB-06P7U", "WRONG_VENDOR_MODEL")
     need(base == 0, "P7_BIN_BASE_MUST_BE_ZERO")
-    need(len(blob) == FLASH_END, "FLAT_P7_BIN_NOT_COMPLETE_704KIB")
+    need(8 <= len(blob) <= FLASH_END, "P7_BIN_LENGTH_OUTSIDE_FLASH")
     sp, reset = struct.unpack_from("<II", blob)
     need(0x20000000 <= sp <= 0x20024000 and sp % 8 == 0, "INVALID_INITIAL_STACK_POINTER")
-    need(reset & 1 and 8 <= (reset & ~1) < 0xaa000, "INVALID_THUMB_APPLICATION_RESET_VECTOR")
-    ccfg = decode_ccfg(blob[CCFG_START:FLASH_END], header)
+    need(reset & 1 and 8 <= (reset & ~1) < min(len(blob), 0xaa000), "INVALID_THUMB_APPLICATION_RESET_VECTOR")
+    ccfg = decode_ccfg(blob[CCFG_START:FLASH_END], header) if len(blob) == FLASH_END else None
     return {"sha256": digest(blob), "bytes": len(blob), "base": base,
             "initial_sp": f"0x{sp:x}", "reset_thumb": f"0x{reset:x}", "ccfg": ccfg,
-            "flat_bin_contains_nv_addresses": True,
+            "ccfg_coverage": "FULL_88_BYTES" if ccfg is not None else
+                             ("PARTIAL_NOT_DECODABLE" if len(blob) > CCFG_START else "ABSENT"),
+            "flat_bin_contains_nv_addresses": len(blob) > 0xaa000,
+            "nv2_addresses_present": max(0, min(len(blob), 0xae000) - 0xaa000),
+            "nv5_addresses_present": max(0, min(len(blob), 0xae000) - 0xa4000),
             "nv2_non_ff_bytes": sum(x != 0xff for x in blob[0xaa000:0xae000]),
             "nv5_non_ff_bytes": sum(x != 0xff for x in blob[0xa4000:0xae000]),
             "ccfg_sector_non_ff_bytes": sum(x != 0xff for x in blob[0xae000:FLASH_END]),
@@ -95,6 +99,10 @@ def linked_ccfg(elf, hexfile, header):
 
 def comparison(vendor, candidate):
     a, b = vendor["ccfg"], candidate["ccfg"]
+    if a is None:
+        return {"status": "VENDOR_CCFG_NOT_INCLUDED_UNKNOWN", "ccfg_exact_match": None,
+                "bsl_configuration_equal": None, "flash_authorized": False,
+                "physical_bsl_recovery_qualified": False}
     differences = []
     for name in a["words"]:
         if a["words"][name] != b["words"][name]:

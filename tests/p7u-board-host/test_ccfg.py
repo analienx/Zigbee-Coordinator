@@ -44,7 +44,13 @@ def rejects(blob, model, base, reason):
 
 rejects(bytes(image), "SLZB-06P10", 0, "WRONG_VENDOR_MODEL")
 rejects(bytes(image), "SLZB-06P7U", 0x100000, "P7_BIN_BASE_MUST_BE_ZERO")
-rejects(bytes(image[:-88]), "SLZB-06P7U", 0, "FLAT_P7_BIN_NOT_COMPLETE_704KIB")
+absent = vendor_bin(bytes(image[:-88]), header, "SLZB-06P7U", 0)
+assert absent["ccfg"] is None and absent["ccfg_coverage"] == "ABSENT"
+assert comparison(absent, different)["ccfg_exact_match"] is None
+partial = vendor_bin(bytes(image[:-4]), header, "SLZB-06P7U", 0)
+assert partial["ccfg"] is None and partial["ccfg_coverage"] == "PARTIAL_NOT_DECODABLE"
+rejects(bytes(image)+b"\xff", "SLZB-06P7U", 0, "P7_BIN_LENGTH_OUTSIDE_FLASH")
+rejects(b"", "SLZB-06P7U", 0, "P7_BIN_LENGTH_OUTSIDE_FLASH")
 bad = bytearray(image); struct.pack_into("<I", bad, 0, 0x20024008)
 rejects(bytes(bad), "SLZB-06P7U", 0, "INVALID_INITIAL_STACK_POINTER")
 bad = bytearray(image); struct.pack_into("<I", bad, 4, 0x100)

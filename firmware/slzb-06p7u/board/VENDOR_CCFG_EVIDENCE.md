@@ -7,8 +7,9 @@ is proven to match installed content. The acquisition workflow checks catalog
 binding before download, hashes the files, and publishes only derived evidence.
 It does not redistribute vendor binaries or execute a flasher.
 
-Flat BIN format is accepted only at explicit base0 with complete704KiB bounds
-and plausible SRAM/Thumb vectors. The22 CCFG registers and bitfields come from
+Flat BIN interpretation requires explicit base0, P7 flash bounds and plausible
+SRAM/Thumb vectors. A short vendor update may omit CCFG; missing/partial CCFG
+is UNKNOWN, never padded or treated as a match. The22 CCFG registers and bitfields come from
 the exact pinned TI P7 header. Comparison against accepted b308eb1 native stock
 BASE/G6 independently rechecks ELF/HEX equality. IEEE words are redacted, while
 full CCFG equality uses the88-byte digest. No private board NV is read.

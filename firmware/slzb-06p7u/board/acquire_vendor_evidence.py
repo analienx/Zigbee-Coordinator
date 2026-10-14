@@ -29,8 +29,9 @@ for wanted in config["images"]:
     assert wanted["url"].startswith("https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/")
     assert wanted["url"].rsplit("/", 1)[-1] == wanted["filename"] and "P10" not in wanted["filename"]
     with urlopen(wanted["url"], timeout=45) as r:
-        blob = r.read(0xb0000 + 1)
-    assert len(blob) == 0xb0000, "VENDOR_FLAT_IMAGE_SIZE_UNEXPECTED"
+        content_type = r.headers.get("Content-Type")
+        blob = r.read(2 * 1024 * 1024 + 1)
+    assert 0 < len(blob) <= 2 * 1024 * 1024, "VENDOR_DOWNLOAD_SIZE_LIMIT"
     sha = hashlib.sha256(blob).hexdigest()
     if wanted["sha256"] is not None:
         assert sha == wanted["sha256"], "PINNED_VENDOR_DIGEST_CHANGED"
@@ -38,6 +39,8 @@ for wanted in config["images"]:
     observations.append({"id": wanted["id"], "url": wanted["url"], "rev": wanted["rev"],
                          "baud": wanted["baud"], "type": wanted["type"], "sha256": sha,
                          "bytes": len(blob), "expected_digest_was_pinned": wanted["sha256"] is not None,
+                         "content_type": content_type, "first16_hex": blob[:16].hex(),
+                         "full_704kib_image": len(blob) == 0xb0000,
                          "license_url": wanted["license_url"], "installed_content_verified": False})
 (a.evidence / "vendor-acquisition.json").write_text(json.dumps({
     "catalog_url": config["catalog_url"], "catalog_sha256": hashlib.sha256(catalog_bytes).hexdigest(),
