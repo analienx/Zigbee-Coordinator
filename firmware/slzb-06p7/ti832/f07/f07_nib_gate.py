@@ -29,7 +29,7 @@ extern zstack_Config_t *pZStackCfg;
  * require item length and a complete readback before coordinator-ready.
  * Full key/counter/table restoration is a SEPARATE unimplemented gate.
  */
-static uint8_t p7_f07_commit_nib_before_ready(void)
+__attribute__((noinline)) static uint8_t p7_f07_commit_nib_before_ready(void)
 {
     nwkIB_t *readback;
     uint8_t passed = FALSE;
