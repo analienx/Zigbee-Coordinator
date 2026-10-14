@@ -1,0 +1,36 @@
+name: P7 F07 NIB persistence pre-ready source/host (NOT FLASHABLE)
+on:
+  push:
+    branches: ['feat/p7-f07-nib-gate-*']
+  pull_request:
+    paths:
+      - '.github/workflows/slzb-06p7-f07-host.yml'
+      - 'firmware/slzb-06p7/ti832/f07/**'
+      - 'tests/p7-f07-host/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pinned-source-f07-host:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: repo
+          persist-credentials: false
+          ref: "${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+      - name: Assert SDK provenance and compile actual injected guard with faults
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = "6499c3f53fc5fb5806213be695450a7b43fbaf3d"
+          python3 repo/tests/p7-f07-host/test_f07.py --sdk sdk
+          python3 -m py_compile repo/firmware/slzb-06p7/ti832/f07/f07_nib_gate.py
+          echo "F07_SLICE1_SOURCE_HOST_ONLY_NOT_FLASHABLE"
