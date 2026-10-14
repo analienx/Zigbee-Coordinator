@@ -26,6 +26,11 @@ PREFIX = r'''
 #define SUCCESS 0
 #define ZCD_NV_NIB 33
 typedef struct { uint8_t bytes[16]; } nwkIB_t;
+typedef struct {
+  struct { int getItemLen, updateItem, readItem; } nvFps;
+} zstack_Config_t;
+static zstack_Config_t backing = { .nvFps = {1,1,1} };
+static zstack_Config_t *pZStackCfg = &backing;
 static nwkIB_t _NIB = { .bytes = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16} };
 static nwkIB_t stored;
 static int item_present, alloc_ok, write_ok, read_ok, corrupt;
@@ -60,12 +65,16 @@ static int OsalPort_memcmp(const void*a,const void*b,size_t n) {
 }
 '''
 SUFFIX = r'''
-static void reset(int present,int alloc,int write,int read,int corruption) {
+static void reset(int present,int alloc,int write,int read,int corruption, int backend) {
+  pZStackCfg = backend == 2 ? NULL : &backing;
+  backing.nvFps.getItemLen = 1;
+  backing.nvFps.readItem = 1;
+  backing.nvFps.updateItem = backend == 1;
   item_present=present;alloc_ok=alloc;write_ok=write;read_ok=read;
   corrupt=corruption;allocs=frees=writes=reads=0;
 }
-static void scenario(int p,int a,int w,int r,int c,int success) {
-  reset(p,a,w,r,c);
+static void scenario(int p,int a,int w,int r,int c,int backend,int success) {
+  reset(p,a,w,r,c,backend);
   int actual = p7_f07_commit_nib_before_ready();
   if (actual != success || allocs != frees) {
     fprintf(stderr,"F07_FAILURE actual=%d expected=%d alloc=%d free=%d\n",
@@ -75,12 +84,14 @@ static void scenario(int p,int a,int w,int r,int c,int success) {
   if ((!p || !a) && writes) abort();
 }
 int main(void) {
-  scenario(0,1,1,1,0,0); /* absent item/back-end */
-  scenario(1,0,1,1,0,0); /* heap exhausted */
-  scenario(1,1,0,1,0,0); /* explicit write failure */
-  scenario(1,1,1,0,0,0); /* read failure */
-  scenario(1,1,1,1,1,0); /* readback differs */
-  scenario(1,1,1,1,0,1); /* exact persisted NIB */
+  scenario(0,1,1,1,0,1,0); /* absent NV item */
+  scenario(1,0,1,1,0,1,0); /* heap exhausted */
+  scenario(1,1,0,1,0,1,0); /* explicit write failure */
+  scenario(1,1,1,0,0,1,0); /* read failure */
+  scenario(1,1,1,1,1,1,0); /* readback differs */
+  scenario(1,1,1,1,0,0,0); /* missing updateItem, read path present */
+  scenario(1,1,1,1,0,2,0); /* missing backend struct */
+  scenario(1,1,1,1,0,1,1); /* exact persisted NIB */
   puts("F07_ACTUAL_GUARD_C_FALSIFICATION_PASS");
   return 0;
 }
@@ -98,6 +109,8 @@ def main():
     assert patched.count("ZDApp_ChangeState( DEV_ZB_COORD );") == 1
     assert patched.index("if (!p7_f07_commit_nib_before_ready())") < patched.index(
         "ZDApp_ChangeState( DEV_ZB_COORD );")
+    assert "zstackconfig.h" in patched
+    assert "pZStackCfg->nvFps.updateItem == NULL" in patched
     assert "NLME_SetDefaultNV();" in patched
     # This tranche MUST NOT alter the destructive restore fallback.
     assert patched.count("NLME_SetDefaultNV();") == src.count("NLME_SetDefaultNV();")
