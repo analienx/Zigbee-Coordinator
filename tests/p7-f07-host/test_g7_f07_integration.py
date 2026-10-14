@@ -79,7 +79,7 @@ def main():
                     "F07_NATIVE_CALL_EDGE_MISSING")
         (can/"DIAG-disassembly.txt").write_text(dis)
         (can/"DIAG-symbols.txt").write_text(sym.replace(
-           "00000180 t p7_f07_commit_nib_before_ready\n",""))
+           "00000100 t p7_f07_commit_nib_before_ready\n",""))
         must_reject(lambda: audit.verify(can,src,"p7u-f07-stock"),
                     "F07_LINKED_GUARD_SYMBOL_MISSING")
     print("G7_F07_INTEGRATION_HOST_MUTATION_GATES_PASS_NOT_FLASHABLE")
