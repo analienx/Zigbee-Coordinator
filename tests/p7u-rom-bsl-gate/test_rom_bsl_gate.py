@@ -12,6 +12,12 @@ spec = importlib.util.spec_from_file_location("anti_brick", PATH)
 gate = importlib.util.module_from_spec(spec)
 assert spec.loader
 spec.loader.exec_module(gate)
+plan_src = ROOT / "firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py"
+plan_spec = importlib.util.spec_from_file_location("sector", plan_src)
+sector = importlib.util.module_from_spec(plan_spec)
+assert plan_spec.loader
+plan_spec.loader.exec_module(sector)
+
 
 def record(addr: int, kind: int, payload: bytes = b"") -> str:
     raw = bytes([len(payload), (addr >> 8) & 255, addr & 255, kind]) + payload
@@ -71,6 +77,30 @@ def main():
         assert not any(gate.CCFG_START <= k < gate.CCFG_END for k in recovered)
         assert gate.application_only_hex(data,profile)==app_only
     reject(lambda:gate.application_only_hex(data,"p10"),"P7U_PROFILE_MISMATCH")
+
+    for profile in ("p7u-f07-stock","p7u-cap192-f07"):
+        original=gate.candidate_audit(data,profile,digest,ccfg)
+        app_bytes=gate.application_only_hex(data,profile)
+        original["derived_app_only_hex_sha256"]=hashlib.sha256(app_bytes).hexdigest()
+        original["derived_app_only_never_flash_with_bank_erase"]=True
+        original["qualification"]="SOURCE_HEX_BSL_GEOMETRY_PASS_NOT_FLASHABLE"
+        proposal=sector.plan(app_bytes,original)
+        assert proposal["flash_authorized"] is False
+        assert proposal["execution_implemented"] is False
+        assert proposal["explicit_application_sector_erase_addresses"]==["0x00000"]
+        assert all(int(v,16)<gate.NV5_BASE for v in
+                   proposal["explicit_application_sector_erase_addresses"])
+        bad=dict(original);bad["flash_authorized"]=True
+        reject(lambda:sector.plan(app_bytes,bad),"PLAN_FULL_IMAGE_NOT_QUALIFIED")
+        bad=dict(original);bad["derived_app_only_hex_sha256"]="0"*64
+        reject(lambda:sector.plan(app_bytes,bad),"PLAN_NOT_SAME_VALIDATED_APP")
+        bad=dict(original);bad["derived_app_only_never_flash_with_bank_erase"]=False
+        reject(lambda:sector.plan(app_bytes,bad),"PLAN_BANK_ERASE_WARNING_MISSING")
+        dangerous=dict(gate.parse_hex(app_bytes))
+        dangerous[gate.CCFG_START]=1
+        reject(lambda:sector.plan(ihex(dangerous),original),
+               "PLAN_NOT_SAME_VALIDATED_APP")
+
     reject(lambda:gate.candidate_audit(data,"p7u-f07-stock"),"IMAGE_CCFG_VENDOR_HASH_MISMATCH")
     reject(lambda:gate.candidate_audit(data,"p10",digest),"P7U_PROFILE_MISMATCH")
     reject(lambda:gate.candidate_audit(data,"p7u-f07-stock",digest,b"FF"),"INSTALLED_CCFG_BAD_LENGTH")
