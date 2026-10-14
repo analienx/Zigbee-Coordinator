@@ -55,7 +55,8 @@ def verify_source(text: str) -> dict:
         start_text.index("if (!p7_f07_nv_restore_preflight())")
         < start_text.index(SRC_RESTORED)
         < start_text.index(SRC_CHECK)
-        < start_text.index("#if (BDB_TOUCHLINK_CAPABILITY_ENABLED == TRUE)")
+        < start_text.index("#if (BDB_TOUCHLINK_CAPABILITY_ENABLED == TRUE)",
+                           start_text.index(SRC_CHECK))
         < start_text.index(SRC_CLEAR)
     ):
         raise ValueError("F07_RESTORE_FAIL_CLOSED_ORDER_BROKEN")
