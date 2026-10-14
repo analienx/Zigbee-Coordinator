@@ -38,6 +38,12 @@ This avoids carrying generic vendor CCFG bytes into a radio application update p
 
 **No initialized bytes in NV does not prove that an underlying flashing tool will avoid erasing NV**. A flashing backend may issue chip/bank erase, sector-erase the last CCFG sector or reprogram the 88-byte record. `smlight-cc-flasher -ewv` examples include erase/write/verify and can use ROM bank erase. For a first test, never assume `-ewv` is non-destructive to security/NV; a full bank erase can clear all NV, and a failed last-sector write could lose the bootloader configuration. The gate cannot infer what a particular SLZB-OS console firmware actually erases.
 
+## Confirmed dangerous stock CLI behavior (source-proven)
+
+At SMLIGHT flasher source commit `9a1d33571c1cdaedc9dfcdcf2df5b5a5fece0b1c`, `smlight_cc_flasher/device.py` method `CC26xx.erase()` invokes `erase_bank()`, which sends the TI ROM `BANK_ERASE` operation and reports "Erasing all main bank flash sectors". For non-M33 P7 the method does **not** subsequently call `erase_ccfg()`; that does **NOT** rescue NV in the erased main bank or prove last-sector safety. The commonly documented `smlight-cc-flasher -ewv` therefore must not be used as a presumed NV-preserving/BSL-safe method on the target.
+
+The same pinned library exposes `cmdEraseSector(addr)` separately in `smlight_cc_flasher/command.py`, and reads chip identity/flash size during `CC26xx.async_init`. **Design the future writer around a bounded explicit application-sector allowlist**, real ROM `GET_CHIP_ID`/wafer ID, verified installed CCFG, precise before/after CRC and rollback. Never call `CC26xx.erase()`, `erase_bank()`, `erase_ccfg()`, `disable_bootloader()`, `set_ieee_address()` or `--force` for this project. A custom sector-only writer cannot be called proven until tested end-to-end on the spare radio.
+
 ## Physical preflight and rollback qualification (isolated P7U only)
 
 **Read-only evidence required before any write:**
