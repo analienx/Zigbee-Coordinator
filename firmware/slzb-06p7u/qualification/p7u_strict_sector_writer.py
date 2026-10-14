@@ -11,6 +11,7 @@ import binascii
 import hashlib
 import importlib.util
 import json
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,7 +85,7 @@ def load_bundle(app_hex: bytes, source_evidence: dict, plan_file: dict) -> Bundl
           and expected_plan["flash_authorized"] is False,
           "UNEXPECTED_AUTHORIZATION_IN_SOURCE_PLAN")
     starts = [int(x, 16) for x in expected_plan["explicit_application_sector_erase_addresses"]]
-    check(starts and len(starts) <= 82, "SECTOR_COUNT_OUT_OF_BOUNDS")
+    check(starts and len(starts) <= 23, "SECTOR_COUNT_OUT_OF_BOUNDS")
     check(starts == list(range(0, starts[-1] + gate.SECTOR, gate.SECTOR)),
           "SPARSE_SECTORS_NEED_EXPLICIT_REVIEW")
     limit = gate.NV2_BASE if expected_plan["profile"] == "p7u-f07-stock" else gate.NV5_BASE
@@ -178,14 +179,9 @@ async def preflight(rom: Rom, bundle: Bundle, endpoint: str) -> dict:
     return approved
 
 
-async def write_checked(rom: Rom, bundle: Bundle, approval: dict,
-                        supplied_digest: str, endpoint: str,
-                        *, allow_resume: bool = False) -> dict:
-    """Explicit destructive entrypoint. Called only after live CLI confirmation.
-
-    Fail closed on changed chip/CCFG/source manifest. Never uses bank/chip erase,
-    never writes CCFG/IEEE/NV. Leaves BSL active on failure and after success.
-    """
+def validate_approval(bundle: Bundle, approval: dict,
+                      supplied_digest: str, endpoint: str) -> str:
+    """Validate the complete offline approval before any management BSL reset."""
     raw = dict(approval)
     token = raw.pop("approval_digest", None)
     check(type(token) is str and len(token) == 64 and token == sha(canonical(raw)),
@@ -196,23 +192,46 @@ async def write_checked(rom: Rom, bundle: Bundle, approval: dict,
           and approval.get("flash_authorized") is False
           and approval.get("flash_performed") is False,
           "APPROVAL_SCHEMA_CHANGED")
+    identity = approval.get("identity")
+    check(type(identity) is dict
+          and type(identity.get("chip_id")) is int and 0 < identity["chip_id"] <= 65535
+          and identity.get("silicon_wafer") == "CC13x2x7_CC26x2x7_0xBB77"
+          and identity.get("flash_bytes") == gate.RADIO_SIZE
+          and identity.get("rom_backdoor_pin") == "TI_DIO15_ACTIVE_LOW"
+          and identity.get("read_only_identity") is True
+          and all(type(identity.get(key)) is str
+                  and re.fullmatch(r"[0-9a-f]{64}", identity[key]) is not None
+                  for key in ("factory_id_digest", "ccfg_sha256")),
+          "APPROVAL_IDENTITY_INVALID")
     check(approval.get("endpoint") == endpoint
           and approval.get("app_hex_sha256") == bundle.hex_sha256
           and approval.get("sector_plan_sha256") == bundle.plan_sha256
           and approval.get("profile") == bundle.profile, "APPROVAL_TARGET_OR_IMAGE_CHANGED")
-    identity = await observe(rom)
-    check(identity == approval.get("identity"), "TARGET_IDENTITY_OR_CCFG_CHANGED")
     expected = approval.get("sectors")
     check(type(expected) is list and len(expected) == len(bundle.sectors),
           "APPROVAL_SECTOR_COUNT_CHANGED")
-    before = []
     for (addr, image), row in zip(bundle.sectors, expected):
         check(type(row) is dict and row.get("address") == f"0x{addr:05X}"
               and row.get("desired_crc32") ==
               f"{binascii.crc32(image) & 0xffffffff:08x}",
               "APPROVAL_SECTOR_CHANGED")
+        check(type(row.get("before_crc32")) is str
+              and re.fullmatch(r"[0-9a-f]{8}", row["before_crc32"]) is not None,
+              "APPROVAL_PRIOR_CRC_INVALID")
+    return token
+
+
+async def write_checked(rom: Rom, bundle: Bundle, approval: dict,
+                        supplied_digest: str, endpoint: str,
+                        *, allow_resume: bool = False) -> dict:
+    """Recheck approval and live identity before any sector erase; never reset."""
+    token = validate_approval(bundle, approval, supplied_digest, endpoint)
+    identity = await observe(rom)
+    check(identity == approval.get("identity"), "TARGET_IDENTITY_OR_CCFG_CHANGED")
+    before = []
+    for (addr, image), row in zip(bundle.sectors, approval["sectors"]):
         live = await rom.crc32(addr, gate.SECTOR)
-        check(type(live) is int, "ROM_CRC_INVALID")
+        check(type(live) is int and 0 <= live <= 0xFFFFFFFF, "ROM_CRC_INVALID")
         check(allow_resume or f"{live:08x}" in
               (row.get("before_crc32"), row.get("desired_crc32")),
               "FLASH_STATE_CHANGED_SINCE_INSPECTION")

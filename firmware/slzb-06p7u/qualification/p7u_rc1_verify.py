@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 from p7u_rc1_package import verify_directory
+from p7u_strict_sector_writer import StrictError
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
@@ -14,8 +15,8 @@ def main():
         report=verify_directory(a.directory)
         # A file list and its SHA are only trustworthy when cross-checked
         # against the native CCS build's published RC1 manifest.
-    except (OSError,ValueError,KeyError) as exc:
-        message=str(exc) if isinstance(exc,ValueError) else "RC1_MANIFEST_OR_FILE_UNREADABLE"
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        message=str(exc) if (type(exc) is ValueError or isinstance(exc,StrictError)) else "RC1_MANIFEST_OR_FILE_UNREADABLE"
         print(json.dumps({"status":"FAIL_CLOSED","reason":message,"flash_authorized":False}))
         raise SystemExit(2) from None
     print(json.dumps(report,sort_keys=True))

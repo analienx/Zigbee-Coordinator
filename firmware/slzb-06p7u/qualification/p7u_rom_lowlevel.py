@@ -25,6 +25,8 @@ SECTOR_ERASE=0x26
 CRC32=0x27
 GET_CHIP_ID=0x28
 MEMORY_READ=0x2A
+APP_SECTOR_SIZE = 8192
+APP_SECTOR_ADDRESSES = tuple(range(0, 0x2E000, APP_SECTOR_SIZE))
 # BANK_ERASE 0x2C intentionally HAS NO implementation.
 # SET_CCFG 0x2D, MEMORY_WRITE 0x2B and RESET 0x25 are also omitted.
 
@@ -37,6 +39,7 @@ class RomSerial:
     def __init__(self):
         self.reader: Any = None
         self.writer: Any = None
+        self._download_remaining = 0
 
     async def open(self, device: str, baud: int=115200):
         # Only transport dependency, serial_asyncio uses PySerial URL support.
@@ -45,6 +48,7 @@ class RomSerial:
             url=device, baudrate=baud)
 
     async def close(self):
+        self._download_remaining = 0
         if self.writer is not None:
             try:
                 self.writer.close()
@@ -144,18 +148,31 @@ class RomSerial:
         return struct.unpack(">I",data)[0]
 
     async def erase_sector(self,addr:int)->bool:
-        if addr%8192 or addr<0 or addr+8192>0xA4000:
+        if type(addr) is not int or addr not in APP_SECTOR_ADDRESSES:
             raise RomWireError("BSL_ERASE_NOT_IN_P7U_APP_ALLOWLIST")
+        self._download_remaining = 0
         return bool(await self._call(SECTOR_ERASE,address=addr))
 
     async def begin_download(self,addr:int,length:int)->bool:
-        if addr<0 or addr%4 or length<=0 or length%4 or length!=8192:
+        self._download_remaining = 0
+        if (type(addr) is not int or addr % APP_SECTOR_SIZE
+                or type(length) is not int or length != APP_SECTOR_SIZE):
             raise RomWireError("BSL_DOWNLOAD_BAD_GEOMETRY")
-        if addr+length>0xA4000:
+        if addr not in APP_SECTOR_ADDRESSES:
             raise RomWireError("BSL_DOWNLOAD_PROTECTED_RANGE")
-        return bool(await self._call(DOWNLOAD,address=addr,length=length))
+        ok = bool(await self._call(DOWNLOAD,address=addr,length=length))
+        if ok:
+            self._download_remaining = length
+        return ok
 
     async def send_data(self,data:bytes)->bool:
         if not isinstance(data,bytes) or not 0<len(data)<=252 or len(data)%4:
             raise RomWireError("BSL_SEND_DATA_BAD_SIZE")
-        return bool(await self._call(SEND_DATA,payload=data))
+        if not 0 < len(data) <= self._download_remaining:
+            raise RomWireError("BSL_SEND_DATA_OUTSIDE_DOWNLOAD")
+        remaining = self._download_remaining
+        self._download_remaining = 0  # A failed/uncertain packet must not be retried.
+        ok = bool(await self._call(SEND_DATA,payload=data))
+        if ok:
+            self._download_remaining = remaining - len(data)
+        return ok

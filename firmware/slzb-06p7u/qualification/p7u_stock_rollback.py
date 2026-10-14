@@ -16,6 +16,8 @@ from pathlib import Path
 import p7u_strict_sector_writer as strict
 
 VENDOR_SHA = "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b"
+# Deterministic extract() output for the pinned vendor APP plus FF-only tail.
+ROLLBACK_APP_SHA256 = "fc58a392f2ebaa875cbd5e79a37d5823b4dca7daf3ca29706952eb5ce12b35aa"
 VENDOR_BYTES = 179804
 APP_BYTES = 179688
 MODEL = "SLZB-06P7U"

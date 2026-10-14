@@ -72,6 +72,10 @@ For `--phase flash --target-image candidate`, supply all the original image/stoc
 ```
 No write runs unless all those gates pass. Before any sector erase the code rechecks the same target IEEE fingerprint, wafer, CCFG digest, image, sector plan, USB/LAN endpoint, and full approval data. It compares live CRCs to the approved prior-or-desired CRC for every sector. It programs sectors **excluding sector 0 first**, then the vector sector last. Each address is allowed only below `0xA4000`, aligned to 8KiB, and explicitly present in the 23-sector source plan. Each `CMD_SECTOR_ERASE`, `CMD_DOWNLOAD`, every ≤252-byte `CMD_SEND_DATA`, postsector CRC and CCFG re-read must succeed; on failure the tool stops and **never resets the radio**. No call to `CMD_BANK_ERASE`, `ERASE_CCFG`, IEEE writes or ESP update is possible via the exported wrapper.
 
+Use a **new, unused `--out` path for every invocation**. The tool rejects existing paths and aliases of recovery inputs before contacting the device; it never replaces an earlier receipt or stock backup. A flash approval's digest, endpoint, image, profile, sector list and prior CRC syntax are also checked offline before a network BSL-entry reset, then checked again with live identity/CCFG/CRC before erasing.
+
+The physical RC1 CLI requires the exact 23 reviewed application sectors `0x00000..0x2C000`. The transport independently refuses other erase/download addresses and downloads that do not start at an 8KiB sector boundary. SEND_DATA is accepted only within an acknowledged 8KiB download and is disabled after an uncertain/failed packet until a new download is acknowledged.
+
 On successful verification **the radio is deliberately left in ROM BSL**. Only then use the known manufacturer's reset path to start the custom ZNP app and test UART/RF. Confirm you can re-enter BSL even if ZNP crashes. Keep the rollback files isolated from the repo.
 
 ### Interrupted write

@@ -15,12 +15,27 @@ from pathlib import Path
 
 import p7u_strict_sector_writer as strict
 import p7u_stock_rollback as stock
+from p7u_rom_lowlevel import APP_SECTOR_ADDRESSES
 from p7u_rom_transport import LiveSmlightSession, normalized_mac
 
 
 def json_write(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True,exist_ok=True)
-    path.write_text(json.dumps(data,indent=2,sort_keys=True)+"\n",encoding="utf8")
+    # Preserve prior receipts and recovery artifacts, including symlink/hardlink aliases.
+    with path.open("x", encoding="utf8") as report:
+        report.write(json.dumps(data,indent=2,sort_keys=True)+"\n")
+
+
+def validate_output(args) -> None:
+    inputs = [args.app_only_hex, args.full_image_evidence, args.sector_plan,
+              args.official_stock_bin, args.rollback_app_hex, args.rollback_receipt]
+    if args.approval_file is not None:
+        inputs.append(args.approval_file)
+    output = args.out.resolve()
+    strict.check(all(output != path.resolve() for path in inputs),
+                 "OUTPUT_COLLIDES_WITH_RECOVERY_INPUT")
+    strict.check(not args.out.exists() and not args.out.is_symlink(),
+                 "OUTPUT_MUST_BE_NEW")
 
 
 def validate_stock(vendor_bin: Path, rollback: Path, receipt: Path,
@@ -43,12 +58,14 @@ def load_request(args):
     rollback=validate_stock(args.official_stock_bin,args.rollback_app_hex,args.rollback_receipt,bundle.profile)
     strict.check(rollback.hex_sha256!=bundle.hex_sha256,
                  "CANDIDATE_IS_IDENTICAL_TO_ROLLBACK")
-    strict.check(rollback.sectors[-1][0] >= bundle.sectors[-1][0],
-                 "STOCK_ROLLBACK_CANNOT_CLEAR_CUSTOM_TAIL")
+    strict.check(tuple(addr for addr, _ in bundle.sectors) ==
+                 tuple(addr for addr, _ in rollback.sectors) == APP_SECTOR_ADDRESSES,
+                 "RC1_REQUIRES_EXACT_23_APPLICATION_SECTORS")
     return bundle,rollback
 
 
 async def run(args):
+    validate_output(args)
     candidate,rollback=load_request(args)
     bundle = rollback if args.target_image == "stock" else candidate
     if args.phase == "offline":
@@ -75,6 +92,7 @@ async def run(args):
                      and args.approve_digest is not None,
                      "APPROVAL_NOT_SUPPLIED")
         approval=strict.load_json(args.approval_file)
+        strict.validate_approval(bundle,approval,args.approve_digest,args.device)
         strict.check(approval.get("spare_management_mac_digest")==spare_mac_digest,
                      "INSPECTED_SPARE_MAC_DOES_NOT_MATCH_WRITE")
         strict.check(approval.get("rollback_app_sha256")==rollback.hex_sha256
@@ -132,6 +150,14 @@ def main():
     p.add_argument("--accept-interrupted-sector-reerase",action="store_true")
     p.add_argument("--out",type=Path,required=True)
     a=p.parse_args()
+    try:
+        validate_output(a)
+    except (strict.StrictError, OSError) as exc:
+        # Do not write an error receipt to a path that would destroy recovery input.
+        reason=str(exc) if isinstance(exc,strict.StrictError) else "OUTPUT_PATH_INVALID"
+        print(json.dumps({"qualification":"FAIL_CLOSED", "flash_authorized":False,
+                          "error_code":reason, "hardware_contacted":False},sort_keys=True))
+        raise SystemExit(2) from None
     try:
         result=asyncio.run(run(a))
     except Exception as exc:

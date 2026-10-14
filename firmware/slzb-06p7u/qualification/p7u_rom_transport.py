@@ -29,7 +29,7 @@ class SmlightRom(RomSerial):
 
 
 class LiveSmlightSession:
-    """A session never calls radio reset, ESP flash or bank/chip/CCFG erase."""
+    """Network entry resets the verified spare into BSL; never resets on exit."""
     def __init__(self,device:str,expected_spare_mac:str|None=None):
         self.device=device
         self.expected_spare_mac=expected_spare_mac

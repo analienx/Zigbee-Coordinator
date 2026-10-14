@@ -44,6 +44,7 @@ jobs:
           python3 tests/p7u-rom-bsl-gate/test_strict_sector_writer.py
           python3 tests/p7u-rom-bsl-gate/test_rom_protocol.py
           python3 tests/p7u-rom-bsl-gate/test_spare_management_gate.py
+          python3 tests/p7u-rom-bsl-gate/test_flash_cli_guards.py
           echo "P7U_FAKE_ROM_ONLY_NO_FIRMWARE_WRITE"
   official-vendor-rollback-offline:
     runs-on: ubuntu-22.04
