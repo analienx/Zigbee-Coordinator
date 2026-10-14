@@ -16,6 +16,7 @@ GUARDS = {
     "ZDApp_NetworkStartEvt": "p7_f07_commit_nib_before_ready",
     "ZDOInitDeviceEx": "p7_f07_nv_restore_preflight",
     "ZDApp_RestoreNetworkState": "p7_f07_nwk_counter_escrow",
+    "ZDApp_SaveNwkKey": "p7_f07_nwk_checkpoint",
 }
 SRC_RESTORED = "networkStateNV = ZDApp_RestoreNetworkState();"
 SRC_CHECK = "if (networkStateNV != ZDO_INITDEV_RESTORED_NETWORK_STATE)"
@@ -36,6 +37,10 @@ def verify_source(text: str) -> dict:
         "p7_f07_commit_nib_before_ready",
         "p7_f07_nv_restore_preflight",
         "p7_f07_nwk_counter_escrow",
+        "p7_f07_nwk_checkpoint",
+        "nwkFrameCounterChanges = 0; /* only after BOTH verified */",
+        "p7_f07_nwk_checkpoint_fault = TRUE;",
+        "ZDApp_ChangeState(DEV_HOLD);",
         "pZStackCfg->nvFps.updateItem(id, sizeof(selected), &selected) != NVINTF_SUCCESS",
         "pZStackCfg->nvFps.updateItem(id, sizeof(nwkIB_t), &_NIB) == NVINTF_SUCCESS",
         "pZStackCfg->nvFps.readItem(id, 0, sizeof(nwkIB_t), readback) == NVINTF_SUCCESS",
@@ -53,6 +58,10 @@ def verify_source(text: str) -> dict:
         raise ValueError("F07_RESTORE_GUARD_CALLSITE_AMBIGUOUS")
     if text.count("p7_f07_nwk_counter_escrow(") != 2:
         raise ValueError("F07_COUNTER_ESCROW_CALLSITE_AMBIGUOUS")
+    if text.count("p7_f07_nwk_checkpoint(") != 2:
+        raise ValueError("F07_NWK_CHECKPOINT_CALLSITE_AMBIGUOUS")
+    if not (text.index("if (!p7_f07_nwk_checkpoint())") < text.index("ZDApp_PauseNwk();") < text.index("ZDApp_ChangeState(DEV_HOLD);")):
+        raise ValueError("F07_NWK_CHECKPOINT_HOLD_ORDER_BROKEN")
     start = text.index("uint8_t ZDOInitDeviceEx( uint16_t startDelay, uint8_t mode)\n{")
     ready = text.index("void ZDApp_NetworkStartEvt( void )\n{")
     start_text = text[start:ready]
@@ -85,6 +94,7 @@ def verify_source(text: str) -> dict:
             "no_implicit_network_clear_on_failed_restore": True,
             "coordinator_ready_preceded_by_nib_commit": True,
             "raw_nv_success_only": True,
+            "periodic_nwk_checkpoint_guarded": True,
             "pinned_source_sha256": hashlib.sha256(text.encode()).hexdigest()}
 
 
