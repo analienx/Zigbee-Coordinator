@@ -52,7 +52,7 @@ def ihex(data:dict[int,int])->bytes:
 
 def reject(callback, expected):
     try:callback()
-    except gate.PreflightError as exc:
+    except ValueError as exc:
         assert str(exc)==expected, (str(exc),expected)
     else:raise AssertionError("Expected "+expected)
 
