@@ -1,0 +1,75 @@
+name: P7U strict application-sector ROM BSL writer (SIMULATION ONLY)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/qualification/p7u_strict_sector_writer.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_rom_transport.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_rom_lowlevel.py'
+      - 'firmware/slzb-06p7u/qualification/requirements-p7u-spare-serial.txt'
+      - 'firmware/slzb-06p7u/qualification/p7u_flash_spare.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_stock_rollback.py'
+      - 'firmware/slzb-06p7u/qualification/STRICT_SPARE_P7U_FLASH_ROLLBACK.md'
+      - 'tests/p7u-rom-bsl-gate/**'
+      - '.github/workflows/slzb-06p7u-strict-rom-sector-writer.yml'
+  push:
+    branches:
+      - 'feat/p7u-strict-rom-sector-writer-*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  simulated-rom-hostile-faults:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Compile and run fake-ROM BSL adversarial tests; no device or vendor dependencies
+        run: |
+          set -euo pipefail
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_strict_sector_writer.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rom_transport.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_rom_lowlevel.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_flash_spare.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_stock_rollback.py
+          python3 tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
+          python3 tests/p7u-rom-bsl-gate/test_strict_sector_writer.py
+          python3 tests/p7u-rom-bsl-gate/test_rom_protocol.py
+          echo "P7U_FAKE_ROM_ONLY_NO_FIRMWARE_WRITE"
+  official-vendor-rollback-offline:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Hash validate manufacturer 20240710 stock source, extract CCFG-free app, check recovery plan
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-stock
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 \
+            'https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240710.bin' \
+            -o /tmp/p7u-stock/vendor.bin
+          echo '1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b  /tmp/p7u-stock/vendor.bin' | sha256sum --check
+          python3 firmware/slzb-06p7u/qualification/p7u_stock_rollback.py \
+            --official-vendor-bin /tmp/p7u-stock/vendor.bin \
+            --profile p7u-f07-stock --output-prefix /tmp/p7u-stock/r1
+          python3 firmware/slzb-06p7u/qualification/p7u_stock_rollback.py \
+            --official-vendor-bin /tmp/p7u-stock/vendor.bin \
+            --profile p7u-cap192-f07 --output-prefix /tmp/p7u-stock/r2
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for label in ("r1","r2"):
+              d=Path("/tmp/p7u-stock")
+              r=json.loads((d/(label+".receipt.json")).read_text())
+              p=json.loads((d/(label+".plan.json")).read_text())
+              assert r["ccfg_bytes_in_derived_hex"]==0
+              assert r["nv_bytes_in_derived_hex"]==0
+              assert p["explicit_application_sector_erase_addresses"][-1]=="0x2C000"
+              assert p["sector_count"]==23 and p["flash_authorized"] is False
+              print(label,"PINNED_STOCK_APP_ROLLBACK_23_SECTORS_VERIFIED_OFFLINE")
+          PY
+          rm -rf /tmp/p7u-stock
+          echo "NO_VENDOR_FIRMWARE_BINARY_PUBLISHED_NO_FLASH"

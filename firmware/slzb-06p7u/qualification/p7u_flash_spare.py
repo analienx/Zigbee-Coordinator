@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Explicit two-phase CC2652P7U *spare* radio flasher (ROM, sector-only).
+
+Default behavior is offline validation. No automatic reset / HA/Z2M access.
+Stock SMLIGHT cc-flasher CLI MUST NOT be used for CCFG-free segmented HEX:
+the stock CLI forcibly calls BANK_ERASE for segmented writes.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import json
+from pathlib import Path
+
+import p7u_strict_sector_writer as strict
+import p7u_stock_rollback as stock
+from p7u_rom_transport import LiveSmlightSession
+
+
+def json_write(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_text(json.dumps(data,indent=2,sort_keys=True)+"\n",encoding="utf8")
+
+
+def validate_stock(vendor_bin: Path, rollback: Path, receipt: Path,
+                   profile: str) -> strict.Bundle:
+    # Re-derive ALL rollback bytes and the receipt from the independently
+    # SHA-256-pinned official vendor blob, not from self-attested JSON fields.
+    regenerated, source, expected_plan, expected_receipt = stock.extract(
+        vendor_bin.read_bytes(), profile)
+    strict.check(rollback.read_bytes() == regenerated,
+                 "ROLLBACK_BYTES_NOT_FROM_PINNED_VENDOR")
+    strict.check(strict.load_json(receipt) == expected_receipt,
+                 "ROLLBACK_RECEIPT_NOT_FROM_PINNED_VENDOR")
+    return strict.load_bundle(regenerated, source, expected_plan)
+
+
+def load_request(args):
+    source=strict.load_json(args.full_image_evidence)
+    plan=strict.load_json(args.sector_plan)
+    bundle=strict.load_bundle(args.app_only_hex.read_bytes(),source,plan)
+    rollback=validate_stock(args.official_stock_bin,args.rollback_app_hex,args.rollback_receipt,bundle.profile)
+    strict.check(rollback.hex_sha256!=bundle.hex_sha256,
+                 "CANDIDATE_IS_IDENTICAL_TO_ROLLBACK")
+    strict.check(rollback.sectors[-1][0] >= bundle.sectors[-1][0],
+                 "STOCK_ROLLBACK_CANNOT_CLEAR_CUSTOM_TAIL")
+    return bundle,rollback
+
+
+async def run(args):
+    candidate,rollback=load_request(args)
+    bundle = rollback if args.target_image == "stock" else candidate
+    if args.phase == "offline":
+        return {"qualification":"OFFLINE_BUNDLE_VALIDATED",
+                "candidate_sha256":candidate.hex_sha256,
+                "selected_target":args.target_image,
+                "selected_target_sha256":bundle.hex_sha256,
+                "stock_rollback_sha256":rollback.hex_sha256,
+                "sector_count":len(bundle.sectors),
+                "hardware_contacted":False, "flash_performed":False}
+    strict.check(args.isolated_spare_only is True,"SPARE_RADIO_ACK_REQUIRED")
+    strict.check(bool(args.device),"DEVICE_EXPLICIT_REQUIRED")
+    if args.phase=="flash":
+        strict.check(args.execute_radio_write is True
+                     and args.rom_bsl_reentry_twice_confirmed is True
+                     and args.stock_rollback_available is True,
+                     "EXPLICIT_RECOVERY_APPROVAL_MISSING")
+        strict.check(args.approval_file is not None
+                     and args.approve_digest is not None,
+                     "APPROVAL_NOT_SUPPLIED")
+        approval=strict.load_json(args.approval_file)
+        strict.check(approval.get("rollback_app_sha256")==rollback.hex_sha256
+                     and approval.get("rollback_manufacturer_sha256")==stock.VENDOR_SHA,
+                     "STOCK_ROLLBACK_NOT_BOUND_TO_APPROVAL")
+        # Authorization digest of preflight includes rollback fields; validated
+        # independently in write_checked(), never inferred from CLI flags alone.
+        if args.resume:
+            strict.check(args.accept_interrupted_sector_reerase,
+                         "INTERRUPTED_REFLASH_NEEDS_EXPLICIT_ACCEPTANCE")
+    async with LiveSmlightSession(args.device) as rom:
+        if args.phase=="inspect":
+            result=await strict.preflight(rom,bundle,args.device)
+            current={row["address"]:row["before_crc32"] for row in result["sectors"]}
+            rollback_expected={f"0x{addr:05X}":
+                 f"{__import__('binascii').crc32(image)&0xffffffff:08x}"
+                 for addr,image in rollback.sectors}
+            result["rollback_app_sha256"]=rollback.hex_sha256
+            result["rollback_manufacturer_sha256"]=stock.VENDOR_SHA
+            result["stock_rollback_matching_sector_count"] = sum(
+                current.get(addr)==crc for addr,crc in rollback_expected.items())
+            result["stock_rollback_sector_count"]=len(rollback_expected)
+            previous=result.pop("approval_digest")
+            strict.check(bool(previous),"MISSING_PREFLIGHT_TOKEN")
+            result["approval_digest"]=strict.sha(strict.canonical(result))
+            return result
+        # Live mutation is possible only here, with the exact offline image
+        # and stock rollback sources pinned in the separately approved document.
+        return await strict.write_checked(
+            rom,bundle,approval,args.approve_digest,args.device,
+            allow_resume=args.resume)
+
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--phase",choices=("offline","inspect","flash"),default="offline")
+    p.add_argument("--target-image",choices=("candidate","stock"),default="candidate",
+                   help="For rollback: select stock, inspect damaged radio, then flash using new approval digest")
+    p.add_argument("--app-only-hex",type=Path,required=True)
+    p.add_argument("--full-image-evidence",type=Path,required=True)
+    p.add_argument("--sector-plan",type=Path,required=True)
+    p.add_argument("--official-stock-bin",type=Path,required=True)
+    p.add_argument("--rollback-app-hex",type=Path,required=True)
+    p.add_argument("--rollback-receipt",type=Path,required=True)
+    p.add_argument("--device",help="Exact COM, /dev/tty or socket://HOST:6638 target; NEVER production MR4U")
+    p.add_argument("--isolated-spare-only",action="store_true")
+    p.add_argument("--execute-radio-write",action="store_true")
+    p.add_argument("--rom-bsl-reentry-twice-confirmed",action="store_true")
+    p.add_argument("--stock-rollback-available",action="store_true")
+    p.add_argument("--approval-file",type=Path)
+    p.add_argument("--approve-digest",help="Exact digest printed by independent inspect run")
+    p.add_argument("--resume",action="store_true")
+    p.add_argument("--accept-interrupted-sector-reerase",action="store_true")
+    p.add_argument("--out",type=Path,required=True)
+    a=p.parse_args()
+    try:
+        result=asyncio.run(run(a))
+    except (ValueError,OSError,RuntimeError) as exc:
+        reason=str(exc) if isinstance(exc,strict.StrictError) else "RUNTIME_OR_CONNECTION_FAILED"
+        result={"qualification":"FAIL_CLOSED","flash_authorized":False,
+                "error_code":reason,"radio_reset_issued":False}
+        json_write(a.out,result)
+        print(json.dumps(result,sort_keys=True))
+        raise SystemExit(2)
+    json_write(a.out,result)
+    print(json.dumps(result,sort_keys=True))
+
+
+if __name__=="__main__":
+    main()

@@ -1,0 +1,3 @@
+# Only transport dependencies. No smlight-cc-flasher, gpiod or high-level erase CLI.
+pyserial-asyncio==0.6
+pysmlight==0.5.3
