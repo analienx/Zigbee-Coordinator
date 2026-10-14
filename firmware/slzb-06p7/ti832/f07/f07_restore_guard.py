@@ -26,13 +26,17 @@ static uint8_t p7_f07_nv_restore_preflight(void)
 {
     nwkIB_t *copy;
     uint8_t readable;
+    NVINTF_itemID_t id;
     if (pZStackCfg == NULL ||
         pZStackCfg->nvFps.getItemLen == 0 ||
         pZStackCfg->nvFps.readItem == 0)
     {
         return FALSE;
     }
-    if (osal_nv_item_len(ZCD_NV_NIB) != sizeof(nwkIB_t))
+    id.systemID = NVINTF_SYSID_ZSTACK;
+    id.itemID = ZCD_NV_EX_LEGACY;
+    id.subID = ZCD_NV_NIB;
+    if (pZStackCfg->nvFps.getItemLen(id) != sizeof(nwkIB_t))
     {
         return FALSE;
     }
@@ -41,7 +45,8 @@ static uint8_t p7_f07_nv_restore_preflight(void)
     {
         return FALSE;
     }
-    readable = (osal_nv_read(ZCD_NV_NIB, 0, sizeof(nwkIB_t), copy) == SUCCESS);
+    /* osal_nv_read_ex() can convert NVINTF_NOTFOUND to false SUCCESS. */
+    readable = (pZStackCfg->nvFps.readItem(id, 0, sizeof(nwkIB_t), copy) == NVINTF_SUCCESS);
     OsalPort_free(copy);
     return readable;
 }
