@@ -125,10 +125,13 @@ def main():
     a=p.parse_args()
     try:
         result=asyncio.run(run(a))
-    except (ValueError,OSError,RuntimeError) as exc:
+    except Exception as exc:
+        # Connection, dependency and unexpected driver errors fail closed too;
+        # do not leak raw serial reads, private IEEE or management responses.
         reason=str(exc) if isinstance(exc,strict.StrictError) else "RUNTIME_OR_CONNECTION_FAILED"
         result={"qualification":"FAIL_CLOSED","flash_authorized":False,
-                "error_code":reason,"radio_reset_issued":False}
+                "error_code":reason,"post_flash_radio_reset_issued":False,
+                "bsl_entry_may_have_reset_spare_radio":a.phase!="offline"}
         json_write(a.out,result)
         print(json.dumps(result,sort_keys=True))
         raise SystemExit(2)

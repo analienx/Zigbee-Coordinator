@@ -255,7 +255,7 @@ async def write_checked(rom: Rom, bundle: Bundle, approval: dict,
             "app_hex_sha256": bundle.hex_sha256,
             "approval_digest": token,
             "never_bank_erase": True,
-            "radio_reset_issued": False,
+            "post_flash_radio_reset_issued": False,
             "network_restore_qualified": False}
 
 
