@@ -10,16 +10,16 @@ sys.path.insert(0, str(ROOT / "firmware/slzb-06p7/ti832/g4"))
 from verify_capacity import compiler_defaults, linked_values, verify
 
 NAMES = ["gMAX_RTG_SRC_ENTRIES", "gMAX_NEIGHBOR_ENTRIES",
-         "gMAX_RTG_ENTRIES", "gMAX_RREQ_ENTRIES", "rtgSrcTable"]
+         "gMAX_RTG_ENTRIES", "gMAX_RREQ_ENTRIES", "rtgSrcTable", "neighborTable"]
 SPEC = b'''<projectSpec><project compilerBuildOptions="
- -DMAX_RTG_SRC_ENTRIES=192 -DCONCENTRATOR_ENABLE=1
+ -DMAX_RTG_SRC_ENTRIES=192 -DMAX_NEIGHBOR_ENTRIES=64 -DCONCENTRATOR_ENABLE=1
  -DCONCENTRATOR_ROUTE_CACHE=1 -DCONCENTRATOR_DISCOVERY_TIME=60
 " /></projectSpec>'''
 
 
 def fixture(ram_data=False):
     # A real ELF32 layout, with distinct RAM run/flash load addresses when
-    # requested. .bss holds the allocated 192 x 8-byte source-route table.
+    # requested. .bss holds 192 x 8-byte routes and 64 x 28-byte neighbors.
     blob = bytearray(0x900)
     blob[:7] = b"\x7fELF\x01\x01\x01"
     struct.pack_into("<HHIIIIIHHHHHH", blob, 16, 2, 40, 1, 0x101,
@@ -27,20 +27,21 @@ def fixture(ram_data=False):
     address = 0x20000000 if ram_data else 0x4000
     struct.pack_into("<8I", blob, 52, 1, 0x100, address, 0x4000, 4, 4, 4, 4)
     struct.pack_into("<8I", blob, 84, 1, 0x104, 0x20001000,
-                     0x20001000, 0, 1536, 6, 4)
-    blob[0x100:0x104] = bytes([192, 16, 128, 16])
+                     0x20001000, 0, 3328, 6, 4)
+    blob[0x100:0x104] = bytes([192, 64, 128, 16])
     strings = b"\0" + b"".join(name.encode() + b"\0" for name in NAMES)
     blob[0x200:0x200 + len(strings)] = strings
     for i, name in enumerate(NAMES):
         struct.pack_into("<IIIBBH", blob, 0x410 + i * 16,
-                         strings.index(name.encode()), address + i if i < 4 else 0x20001000,
-                         1 if i < 4 else 1536, 17, 0, 1 if i < 4 else 2)
+                         strings.index(name.encode()), address + i if i < 4 else
+                         (0x20001000 if i == 4 else 0x20001600),
+                         1 if i < 4 else (1536 if i == 4 else 1792), 17, 0, 1 if i < 4 else 2)
     for i, fields in enumerate([
         (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
         (0, 1, 2, address, 0x100, 4, 0, 0, 1, 0),
-        (0, 8, 3, 0x20001000, 0x104, 1536, 0, 0, 4, 0),
+        (0, 8, 3, 0x20001000, 0x104, 3328, 0, 0, 4, 0),
         (0, 3, 0, 0, 0x200, len(strings), 0, 0, 1, 0),
-        (0, 2, 0, 0, 0x400, 6 * 16, 3, 1, 4, 16),
+        (0, 2, 0, 0, 0x400, 7 * 16, 3, 1, 4, 16),
     ]):
         struct.pack_into("<10I", blob, 0x800 + i * 40, *fields)
     return blob
@@ -54,14 +55,15 @@ class CapacityTests(unittest.TestCase):
     def test_flash_and_ram_initialized_objects(self):
         for ram in (False, True):
             report = verify(fixture(ram), SPEC)
-            self.assertEqual(report["linked_initial_values"], dict(zip(NAMES, [192, 16, 128, 16])))
+            self.assertEqual(report["linked_initial_values"], dict(zip(NAMES, [192, 64, 128, 16])))
             self.assertEqual(report["rtgSrcTable_bytes"], 1536)
+            self.assertEqual(report["neighborTable_bytes"], 1792)
             self.assertEqual(report["compiler_defaults"]["CONCENTRATOR_ENABLE"], 1)
             self.assertFalse(report["concentrator_runtime_verified"])
             self.assertEqual(len(report["elf_sha256"]), 64)
 
     def test_old_twelve_entry_capacity_and_each_wrong_value(self):
-        for i, value in enumerate([12, 96, 127, 15]):
+        for i, value in enumerate([12, 16, 127, 15]):
             blob = fixture()
             blob[0x100 + i] = value
             self.rejected(blob, "CAPACITY_MISMATCH_" + NAMES[i])
@@ -71,8 +73,8 @@ class CapacityTests(unittest.TestCase):
         struct.pack_into("<I", blob, 0x410, 0)
         self.rejected(blob, "MISSING_SYMBOL_" + NAMES[0])
         blob = fixture()
-        blob[0x460:0x470] = blob[0x410:0x420]
-        struct.pack_into("<I", blob, 0x800 + 4 * 40 + 20, 7 * 16)
+        blob[0x470:0x480] = blob[0x410:0x420]
+        struct.pack_into("<I", blob, 0x800 + 4 * 40 + 20, 8 * 16)
         self.rejected(blob, "DUPLICATE_SYMBOL_" + NAMES[0])
 
     def test_source_route_storage_and_object_width(self):
@@ -85,6 +87,14 @@ class CapacityTests(unittest.TestCase):
         blob = fixture()
         struct.pack_into("<I", blob, 0x410 + 8, 2)
         self.rejected(blob, "EXPECTED_INITIALIZED_BYTE_" + NAMES[0])
+
+    def test_neighbor_storage_allocation(self):
+        blob = fixture()
+        struct.pack_into("<I", blob, 0x460 + 8, 16 * 28)
+        self.rejected(blob, "NEIGHBOR_TABLE_SIZE_MISMATCH")
+        blob = fixture()
+        struct.pack_into("<I", blob, 84 + 20, 1536)
+        self.rejected(blob, "NEIGHBOR_TABLE_NOT_ALLOCATED")
 
     def test_noload_is_not_initialized_data(self):
         blob = fixture(True)
@@ -119,7 +129,7 @@ class CapacityTests(unittest.TestCase):
 
     def test_recorded_compiler_defines_are_unique_and_explicit(self):
         text = SPEC.decode()
-        for name, value in [("MAX_RTG_SRC_ENTRIES", 192), ("CONCENTRATOR_ENABLE", 1),
+        for name, value in [("MAX_RTG_SRC_ENTRIES", 192), ("MAX_NEIGHBOR_ENTRIES", 64), ("CONCENTRATOR_ENABLE", 1),
                             ("CONCENTRATOR_ROUTE_CACHE", 1), ("CONCENTRATOR_DISCOVERY_TIME", 60)]:
             original = "-D" + name + "=" + str(value)
             for replacement in ("", "-D" + name + "=12", original + " " + original,

@@ -7,10 +7,13 @@ authorize a reset, erase or flash.
 
 ## Candidate changes
 
-CAP192 explicitly sets `MAX_RTG_SRC_ENTRIES=192`, `CONCENTRATOR_ENABLE=1`,
+CAP192 explicitly sets `MAX_RTG_SRC_ENTRIES=192`, `MAX_NEIGHBOR_ENTRIES=64`, `CONCENTRATOR_ENABLE=1`,
 `CONCENTRATOR_ROUTE_CACHE=1` and `CONCENTRATOR_DISCOVERY_TIME=60` in the compiler
 options. TC 192, direct children 96, routing 128 and route requests 16 are unchanged.
-Neighbors remain 16: they represent direct radio neighbors, not all mesh routers.
+The 64-neighbor allocation restores the original P7 CAP192 target. Earlier MG24
+evidence recorded 26/26 occupancy and churn (#19/#28); occupancy alone did not
+establish causation, but retaining TI's 16-entry default misses the intended
+capacity. Neighbors represent direct radio neighbors, not all mesh routers.
 
 [TI's pinned SDK network guide](https://software-dl.ti.com/simplelink/esd/simplelink_cc13xx_cc26xx_sdk/8.32.00.07/exports/docs/zigbee/html/zigbee/network_configuration.html)
 recommends source-route capacity covering the network's nodes and caching when RAM
@@ -20,13 +23,23 @@ The repository-pinned herdsman commit `0968f979d558874b17396c96b66382d4236bbdcd`
 does not configure these NV items during normal startup. Its per-device route
 discovery is not periodic many-to-one discovery.
 
-The fixed source-route table grows from 96 to 1,536 bytes (+1,440 SRAM). Relay lists
+The fixed source-route table grows from 96 to 1,536 bytes (+1,440 SRAM), and the
+neighbor table grows from 448 to 1,792 bytes (+1,344 SRAM): +2,784 bytes together.
+Relay lists
 also allocate heap as routes are learned. A successful link or unused heap region
 does not qualify memory under load. Native CI checks the actual linked capacity
 constants and table size, and separately checks compiler defaults. Concentrator
 globals use TI compressed startup initialization and are subsequently loaded from
 NV: compiled defaults are **not a runtime NV readback**. Before a network trial,
 read NV items enable `0x32`, discovery `0x33`, cache `0x36` and confirm 1/60/1.
+
+The linked TI neighbor routines use the configured count, and Link Status sends
+multiple frames; 64 does not require one oversized frame. A separate inherited
+32-bit broadcast-hold mask indexes **association slots**, not neighbors. The
+96-child profile therefore still needs explicit testing of `0xFFFF` broadcasts
+to sleepy children at association slot 32 or later. Increasing neighbor capacity
+does not resolve or worsen that limitation; do not infer full sleepy-broadcast
+capacity from the table-size audit.
 
 ## Before any write
 

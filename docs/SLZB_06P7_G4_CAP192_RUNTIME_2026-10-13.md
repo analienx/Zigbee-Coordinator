@@ -1,5 +1,14 @@
 # SLZB-06P7 G4 CAP192 runtime ledger (2026-10-13)
 
+**15 Oct routing update:** The current CAP192 overlay also stages the NV5
+projectspec with compiler defaults source routes 192, neighbors 64, concentrator
+enable/cache 1/1 and discovery 60 seconds. Every CAP192 native workflow consumes
+that projectspec. `verify_capacity.py` checks real ELF capacity bytes and allocated
+tables; compiler defaults are reported separately from runtime NV. The historical
+F04 source-route/neighbor BLOCKED status below is superseded for source/build
+configuration only. Hops/conflicts and hardware routing remain unqualified. See
+[the only-unit R2 plan](../firmware/slzb-06p7u/qualification/R2_FIRST_SINGLE_UNIT.md).
+
 **Qualification: source + linked evidence only, hosted CCS at exact SHA. NOT_FLASHABLE. No hardware/flash/NV/CCFG/radio/HA/Z2M/P10 access. All 36 `feature-parity.json` flags stay `false` (`p7_implemented`/`p7_tested`/`release_qualified` unchanged); this ledger never flips them.**
 
 Build tracks in `slzb-06p7-g4-cap192-native.yml`: **BASE** (pristine pinned ZNP), **CAP192** (NV5 5-page geometry + CAP192 capacity SysConfig via `g4/cap192_overlay.py`, fail-closed), **CAP192+DIAG** (CAP192 + G5 `diag_overlay.py`). CI emits `BASE-VS-CAP192.json` / `BASE-VS-CAP192DIAG.json` map+heap deltas (`g4/cap192_compare.py`) and the effective-header audit (`cap192_capacity.py --generated`). Startup guard: the CAP192 overlay patches only `znp.syscfg`, asserts no wipe/format token and never modifies `zd_app.c`/`nvocmp.c` (`audit_no_wipe` + CI grep of the SDK diff); the DIAG NV callsite only reads the already-decoded `networkStateNV`.

@@ -14,11 +14,12 @@ import struct
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-EXPECTED = {"gMAX_RTG_SRC_ENTRIES": 192, "gMAX_NEIGHBOR_ENTRIES": 16,
+EXPECTED = {"gMAX_RTG_SRC_ENTRIES": 192, "gMAX_NEIGHBOR_ENTRIES": 64,
             "gMAX_RTG_ENTRIES": 128, "gMAX_RREQ_ENTRIES": 16}
-DEFAULTS = {"MAX_RTG_SRC_ENTRIES": 192, "CONCENTRATOR_ENABLE": 1,
+DEFAULTS = {"MAX_RTG_SRC_ENTRIES": 192, "MAX_NEIGHBOR_ENTRIES": 64, "CONCENTRATOR_ENABLE": 1,
             "CONCENTRATOR_ROUTE_CACHE": 1, "CONCENTRATOR_DISCOVERY_TIME": 60}
-TABLE = "rtgSrcTable"
+TABLES = {"rtgSrcTable": (192 * 8, "SOURCE_ROUTE"),
+          "neighborTable": (64 * 28, "NEIGHBOR")}
 
 
 def must(condition: bool, reason: str) -> None:
@@ -62,21 +63,22 @@ def linked_values(blob: bytes) -> dict:
             end = names.find(b"\0", symbol[0])
             must(end >= 0, "UNTERMINATED_SYMBOL_NAME")
             name = names[symbol[0]:end].decode("ascii", errors="replace")
-            if name in EXPECTED or name == TABLE:
+            if name in EXPECTED or name in TABLES:
                 must(name not in symbols, "DUPLICATE_SYMBOL_" + name)
                 symbols[name] = symbol
     values = {}
-    for name in (*EXPECTED, TABLE):
+    for name in (*EXPECTED, *TABLES):
         must(name in symbols, "MISSING_SYMBOL_" + name)
         _, address, size, info, _, index = symbols[name]
         must(info & 15 == 1 and 0 < index < len(sections), "INVALID_OBJECT_" + name)
         section = sections[index]
         must(section[2] & 2 and section[3] <= address and
              address + size <= section[3] + section[5], "OBJECT_OUT_OF_SECTION_" + name)
-        if name == TABLE:
-            must(size == 192 * 8, "SOURCE_ROUTE_TABLE_SIZE_MISMATCH")
+        if name in TABLES:
+            expected_size, label = TABLES[name]
+            must(size == expected_size, label + "_TABLE_SIZE_MISMATCH")
             must(any(p[2] <= address and address + size <= p[2] + p[5]
-                     for p in loads), "SOURCE_ROUTE_TABLE_NOT_ALLOCATED")
+                     for p in loads), label + "_TABLE_NOT_ALLOCATED")
             continue
         must(size == 1 and section[1] == 1, "EXPECTED_INITIALIZED_BYTE_" + name)
         matches = [p for p in loads if p[2] <= address and address + size <= p[2] + p[4]]
@@ -87,7 +89,8 @@ def linked_values(blob: bytes) -> dict:
         value = blob[offset]
         must(value == EXPECTED[name], "CAPACITY_MISMATCH_" + name)
         values[name] = value
-    return {"linked_initial_values": values, "rtgSrcTable_bytes": symbols[TABLE][2]}
+    return {"linked_initial_values": values,
+            **{name + "_bytes": symbols[name][2] for name in TABLES}}
 
 
 def compiler_defaults(projectspec: str) -> dict:

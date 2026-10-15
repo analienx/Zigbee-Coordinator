@@ -159,7 +159,7 @@ jobs:
           "$(dirname "$TIARMCLANG")/tiarmobjcopy" "$OUT" --output-target ihex bundle-base/BASE-NOT-FLASHABLE.hex
           printf '%s\n' 'BASE_NOT_FLASHABLE' 'NO_DIAG_INSTRUMENTATION' > bundle-base/NOT_FLASHABLE.txt
           { echo "BASE_OUT=$OUT"; echo "BASE_MAP=$MAP"; } >> "$GITHUB_ENV"
-      - name: Apply NV5+CAP192 overlay (syscfg only, no-wipe guard)
+      - name: Apply NV5+CAP192 overlay (SysConfig and compiler defaults, no-wipe guard)
         shell: bash
         run: |
           set -euo pipefail
