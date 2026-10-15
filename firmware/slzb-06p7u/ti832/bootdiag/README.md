@@ -76,3 +76,40 @@ not conclusive. Neither RAM read after reset nor post-reset watermark retention
 is required or assumed. Remove this overlay and all temporary output from the
 final corrected candidate, then require normal ping/version/health/settings,
 three successful restarts and isolated Zigbee2MQTT connection.
+
+## Native candidate measured on 15 October 2026
+
+[Pinned TI native build 38789101355](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38789101355)
+passes at source commit `671b3d2d92a64f3fde2b8b06eeac522daadf8450`.
+The normal R2 app reproduced its installed source SHA exactly before the
+temporary overlay was applied. Both variants pass the linked capacity, G6/G7,
+F07/persistence, NV reservation, CCFG and ELF/HEX audits.
+
+- Diagnostic application: 189,628 initialized bytes, end `0x2E4BC`; 1,328 bytes
+  above normal R2. It requires 24 sectors ending `0x30000`, leaving 6,980 bytes
+  inside that envelope. No initialized NV bytes are present.
+- Diagnostic app HEX SHA-256:
+  `058ec30b34e0f238f89fd0ef28e612a10dba62316d3c3026c0b8f6cfbfea8574`.
+- Linked C/interrupt stack: 4096 bytes at `0x20023000..0x20023FFF`.
+  Linked SRAM increases by 3084 bytes, chiefly the additional 3072-byte stack.
+- `main` retains a 32-byte frame in both builds. All 44 named NV-driver function
+  frame sizes match. `NVOCMP_initNvApi` retains 144 bytes. NV-driver source hash
+  matches the normal R2 evidence exactly; it was not instrumented or changed.
+- The measurement result helper uses 24 bytes and its watermark sampler 16;
+  the paint helper has a zero-byte frame. UART logging follows NV measurement.
+  These observations support interpreting the measurement, but do not close
+  the unresolved indirect/combined nodes in the static call graph.
+
+The separate diagnostic writer and paired original-stock cleanup pass the
+[three operator CI jobs](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38790060409)
+at operator commit `97302e6838c0b5be033e2c913177f08293da2197`. The default
+23-sector ROM/writer/package path is unchanged. The temporary profile admits
+exactly 24 sectors, rejects `0x30000` and all NV/CCFG writes, binds NV CRCs into
+its plan and verifies them after programming. Full simulated diagnostic write
+and paired cleanup preserve all bytes beyond `0x30000`; both pinned vendor
+sources have FF cleanup through both tail sectors. Native artifacts and paired
+images were rederived and rehashed offline in a private 51-file operator packet.
+
+This candidate has not been written to the P7U. Fresh installed inspection,
+boot-stage/NV return/stack readout and normal ZNP qualification remain pending.
+Neither the NV-failure hypothesis nor original-stack exhaustion is confirmed.
