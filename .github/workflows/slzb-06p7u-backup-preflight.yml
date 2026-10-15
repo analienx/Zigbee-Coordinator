@@ -7,6 +7,8 @@ on:
       - '.github/workflows/slzb-06p7u-backup-preflight.yml'
       - 'firmware/slzb-06p7u/qualification/**'
       - 'tests/p7u-backup-gate/**'
+      - 'tests/p7-diagnostics-host/test_p7u_p10_migration_authority.py'
+      - 'tests/p7-diagnostics-host/test_p7u_original_radio_escrow.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,4 +25,8 @@ jobs:
           set -euo pipefail
           python3 -m py_compile firmware/slzb-06p7u/qualification/verify_z2m_backup.py
           python3 tests/p7u-backup-gate/test_backup_gate.py
-          echo "BACKUP_INVENTORY_GATE_PASSED_BUT_NEVER_FLASH_AUTHORIZED"
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_p10_migration_authority.py
+          python3 tests/p7-diagnostics-host/test_p7u_p10_migration_authority.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_original_radio_escrow.py
+          python3 tests/p7-diagnostics-host/test_p7u_original_radio_escrow.py
+          echo "BACKUP_INVENTORY_AND_P10_COUNTER_PLAN_PASSED_BUT_NEVER_FLASH_AUTHORIZED"
