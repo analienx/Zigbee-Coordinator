@@ -121,3 +121,26 @@ coordinator network, even though its current USB radio is not plugged into HA.
 The new optional extension and the current PR #82/#83 must remain draft
 until their own hardware acceptance is complete. Firmware software CI does
 not assert that the single physical P7U can always be recovered.
+
+
+## Later 15 October update — physical R2 first flash completed
+
+The preceding sections are a dated *preflash* snapshot, not the final P7U state.
+Later on 15 October the operator captured all 88 sectors of the stock 20240316
+radio, preserved an independently verified copy off-device, and performed the
+approved NV5 five-sector preparation (three sector erases; all five blank).
+A fresh post-NV5 R2 plan then programmed all 23 application sectors, verified
+each by ROM CRC, and preserved the full CCFG sector. Installed candidate HEX
+SHA-256: 16837972afeb3a502e03505e2998c5d2b2b8a1ce61ce91450f5999e175e908de.
+
+The management radio-restart command was acknowledged; bidirectional ZNP
+boot and SYS_VERSION are still unverified. The postboot read-only probe was
+blocked at platform pre-dispatch. Do not evade that refusal via other transports.
+No network restoration, Zigbee2MQTT startup or production migration has occurred.
+
+The latest offline missing_device_triage extension is private-only and identifies
+per-device remediation for DB members missing a coordinator security record.
+Historic key presence is not proof of validity and cannot authorize silent
+key insertion. Missing entries may require controlled rejoin/re-pair after
+verified radio boot, source-network quiescence, safe counter floors, and a
+validated restore plan. This remains a DRAFT / NOT RESTORE READY PR.
