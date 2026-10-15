@@ -18,6 +18,11 @@ import p7u_rc1_native_provenance as native
 
 VERSION = "0.1.0-rc1"
 PROFILES = ("p7u-f07-stock", "p7u-cap192-f07")
+KIT_FILES = frozenset((
+    "candidate.APP-ONLY-NOT-FLASHABLE.hex", "candidate.source.json", "candidate.plan.json",
+    "stock-20240710.APP-ONLY-ROLLBACK-NOT-FLASHABLE.hex", "stock-20240710.source.json",
+    "stock-20240710.plan.json", "stock-20240710.receipt.json",
+))
 
 
 def require(condition, error):
@@ -99,16 +104,22 @@ def build(full_hex: bytes, official_vendor: bytes, profile: str, git_sha: str) -
 
 def verify_directory(directory: Path) -> dict:
     manifest=json.loads((directory/"RC1-MANIFEST.json").read_text())
+    require(type(manifest) is dict and type(manifest.get("files")) is dict,
+            "RC1_MANIFEST_SCHEMA_INVALID")
     require(manifest["flash_authorized"] is False,"RC1_PACKAGE_FLASH_PERMISSION")
     require(manifest["qualification"] ==
             "SOFTWARE_RELEASE_CANDIDATE_READY_FOR_SPARE_P7U_HARDWARE_QUALIFICATION_ONLY",
             "RC1_NOT_SOFTWARE_ONLY")
     file_names=set(manifest["files"])
+    require(file_names == KIT_FILES,"RC1_REQUIRED_FILE_SET_CHANGED")
     require(file_names == {p.name for p in directory.iterdir()}-{"RC1-MANIFEST.json","SHA256SUMS"},
             "RC1_DIRECTORY_CONTAINS_UNDECLARED_FILE")
     for name, entry in manifest["files"].items():
+        require((directory/name).is_file() and not (directory/name).is_symlink(),
+                "RC1_PACKAGE_FILE_NOT_REGULAR")
         data=(directory/name).read_bytes()
-        require(core.sha(data)==entry["sha256"] and len(data)==entry["size"],
+        require(type(entry) is dict and core.sha(data)==entry.get("sha256")
+                and len(data)==entry.get("size"),
                 "RC1_PACKAGE_HASH_MISMATCH")
     expected="".join(f"{manifest['files'][name]['sha256']}  {name}\n"
                      for name in sorted(file_names))
@@ -116,8 +127,57 @@ def verify_directory(directory: Path) -> dict:
             "RC1_SHA256SUMS_MISMATCH")
     # Fail if a manifest from another radio, build, or profile is substituted.
     require(manifest["model"]=="SMLIGHT_SLZB_06P7U" and
-            manifest["profile"] in PROFILES and manifest["release"]==VERSION,
+            manifest["profile"] in PROFILES and manifest["release"]==VERSION
+            and manifest.get("radio")=="CC2652P7"
+            and manifest.get("schema")=="slzb-06p7u-internal-software-first-release-rc1-v1",
             "RC1_PACKAGE_IDENTITY_CHANGED")
+    require(all(manifest.get(key) is False for key in (
+        "isolated_p7u_rom_bsl_entered_in_hardware", "physical_firmware_write_performed",
+        "physical_stock_restore_verified", "production_network_migration_qualified")),
+        "RC1_UNSUPPORTED_HARDWARE_QUALIFICATION_CLAIM")
+    candidate = core.load_bundle(
+        (directory/"candidate.APP-ONLY-NOT-FLASHABLE.hex").read_bytes(),
+        core.load_json(directory/"candidate.source.json"),
+        core.load_json(directory/"candidate.plan.json"))
+    fallback = core.load_bundle(
+        (directory/"stock-20240710.APP-ONLY-ROLLBACK-NOT-FLASHABLE.hex").read_bytes(),
+        core.load_json(directory/"stock-20240710.source.json"),
+        core.load_json(directory/"stock-20240710.plan.json"))
+    require(candidate.profile == fallback.profile == manifest["profile"],
+            "RC1_PACKAGE_PROFILE_MISMATCH")
+    require([addr for addr, _ in candidate.sectors] ==
+            [addr for addr, _ in fallback.sectors] == list(range(0,23*core.gate.SECTOR,core.gate.SECTOR))
+            and manifest.get("fully_covered_application_sectors")==23,
+            "RC1_NOT_EXACTLY_23_SECTORS")
+    require(fallback.hex_sha256 == stock.ROLLBACK_APP_SHA256
+            and manifest.get("vendor_original_SHA256") == stock.VENDOR_SHA,
+            "RC1_STOCK_ROLLBACK_NOT_PINNED")
+    require(manifest.get("release_custom_app_hex_sha256") == candidate.hex_sha256
+            and manifest.get("release_stock_restore_app_hex_sha256") == fallback.hex_sha256,
+            "RC1_MANIFEST_IMAGE_HASH_MISMATCH")
+    receipt = core.load_json(directory/"stock-20240710.receipt.json")
+    require(receipt.get("profile")==manifest["profile"]
+            and receipt.get("manufacturer_container_sha256")==stock.VENDOR_SHA
+            and receipt.get("rollback_app_only_hex_sha256")==fallback.hex_sha256
+            and receipt.get("sector_plan_sha256")==fallback.plan_sha256
+            and receipt.get("custom_tail_cleanup_sector_start")=="0x2C000"
+            and receipt.get("custom_tail_cleanup_erased_to_all_ff") is True
+            and receipt.get("rom_rollback_physically_tested") is False
+            and receipt.get("flash_authorized") is False,
+            "RC1_STOCK_RECEIPT_MISMATCH")
+    provenance = manifest.get("native_ccs_provenance")
+    require(type(provenance) is dict
+            and provenance.get("native_build_commit")==manifest.get("git_commit")
+            and type(manifest.get("git_commit")) is str and len(manifest["git_commit"])==40
+            and all(c in "0123456789abcdef" for c in manifest["git_commit"])
+            and provenance.get("native_app_hex_sha256")==candidate.hex_sha256
+            and provenance.get("native_sector_plan_sha256")==candidate.plan_sha256
+            and provenance.get("candidate_origin_exact_ccs_native") is True
+            and provenance.get("native_g7_f07_guards_verified") is True
+            and provenance.get("ccfg_and_bsl_exact_native") is True
+            and provenance.get("hardware_qualification") is False
+            and provenance.get("flash_authorized") is False,
+            "RC1_NATIVE_PROVENANCE_MISMATCH")
     return {"status":"RC1_PACKAGE_SELF_VERIFIED_SOFTWARE_ONLY",
             "profile":manifest["profile"],"files":len(file_names),
             "flash_authorized":False}

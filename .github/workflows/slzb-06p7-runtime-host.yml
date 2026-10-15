@@ -1,0 +1,52 @@
+name: P7 runtime NV, security and AF regressions (NO DEVICE)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7/ti832/hardening/**'
+      - 'firmware/slzb-06p7/ti832/g5/p7_crashdiag.*'
+      - 'tests/p7-runtime-host/**'
+      - '.github/workflows/slzb-06p7-runtime-host.yml'
+      - '.github/workflows/slzb-06p7-g7-f07-integration-native.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime-sanitizers:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: TexasInstruments/simplelink-lowpower-f2-sdk
+          ref: 6499c3f53fc5fb5806213be695450a7b43fbaf3d
+          path: sdk
+          persist-credentials: false
+          sparse-checkout: |
+            source/ti/zstack
+            source/ti/common/nv
+            source/ti/ti154stack/common/osal_port
+            source/ti/drivers/cryptoutils/cryptokey
+      - name: Compile genuine source and reject NV failures and AF heap faults
+        run: |
+          set -euo pipefail
+          test "$(git -C sdk rev-parse HEAD)" = '6499c3f53fc5fb5806213be695450a7b43fbaf3d'
+          python3 tests/p7-runtime-host/test_runtime.py --sdk sdk --out /tmp/p7-runtime-host
+          python3 tests/p7-runtime-host/test_nv_driver.py --sdk sdk --out /tmp/p7-nv-host
+          python3 tests/p7-runtime-host/test_security.py --sdk sdk --out /tmp/p7-security-host
+          python3 tests/p7-runtime-host/test_mac_boundary.py --sdk sdk --out /tmp/p7-mac-host
+          python3 tests/p7-runtime-host/test_af_incoming.py --sdk sdk --out /tmp/p7-af-incoming-host
+          python3 tests/p7-runtime-host/test_nv_host_commands.py --sdk sdk --out /tmp/p7-nv-command-host
+          python3 tests/p7-runtime-host/test_endpoint.py --sdk sdk --out /tmp/p7-endpoint-host
+          python3 tests/p7-runtime-host/test_af_packet.py --sdk sdk --out /tmp/p7-af-packet-host
+          python3 tests/p7-runtime-host/test_osal_timers.py --sdk sdk --out /tmp/p7-osal-timer-host
+          python3 tests/p7-runtime-host/test_mt_bounds.py --sdk sdk --out /tmp/p7-mt-bounds-host
+          python3 tests/p7-runtime-host/test_startup_marker.py --sdk sdk --out /tmp/p7-startup-marker-host
+          python3 tests/p7-runtime-host/test_zdo_packets.py --sdk sdk --out /tmp/p7-zdo-packet-host
+          python3 tests/p7-runtime-host/test_key_entropy.py --sdk sdk --out /tmp/p7-key-entropy-host
+          python3 tests/p7-runtime-host/test_interpan_binding.py --sdk sdk --out /tmp/p7-interpan-binding-host
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=thread -no-pie -pthread \
+            tests/p7-runtime-host/diag_concurrency.c firmware/slzb-06p7/ti832/g5/p7_crashdiag.c \
+            -o /tmp/p7-diag-concurrency
+          setarch x86_64 -R /tmp/p7-diag-concurrency

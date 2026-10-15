@@ -62,14 +62,32 @@ async def main():
     for method,expected in (
         ("erase_sector",host_frame(SECTOR_ERASE,0x2000)),
         ("begin_download",host_frame(DOWNLOAD,0x2000,8192)),
-        ("send_data",host_frame(SEND_DATA,extra=b"\x12"*252)),
     ):
         rom,writer=stub(ACK+ACK+packet(b"\x40"))
         if method=="erase_sector":ok=await rom.erase_sector(0x2000)
         elif method=="begin_download":ok=await rom.begin_download(0x2000,8192)
-        else:ok=await rom.send_data(b"\x12"*252)
         assert ok is True
         assert writer.sent==[expected,host_frame(GET_STATUS),ACK]
+
+    # Only one approved, sector-aligned 8KiB download can accept SEND_DATA.
+    rom,writer=stub((ACK+ACK+packet(b"\x40"))*34)
+    await reject(rom.send_data(b"\x12"*4),"BSL_SEND_DATA_OUTSIDE_DOWNLOAD")
+    assert writer.sent==[]
+    assert await rom.begin_download(0x2C000,8192)
+    for _ in range(32):
+        assert await rom.send_data(b"\x12"*252)
+    assert await rom.send_data(b"\x12"*128)
+    sent=len(writer.sent)
+    await reject(rom.send_data(b"\x12"*4),"BSL_SEND_DATA_OUTSIDE_DOWNLOAD")
+    assert len(writer.sent)==sent
+    assert writer.sent[3]==host_frame(SEND_DATA,extra=b"\x12"*252)
+
+    rom,writer=stub(ACK+ACK+packet(b"\x40")+NACK)
+    assert await rom.begin_download(0,8192)
+    await reject(rom.send_data(b"\xff"*4),"BSL_NACK")
+    sent=len(writer.sent)
+    await reject(rom.send_data(b"\xff"*4),"BSL_SEND_DATA_OUTSIDE_DOWNLOAD")
+    assert len(writer.sent)==sent
 
     # Error/garbage handling. Never call an unlisted command on failure.
     rom,writer=stub(NACK)
@@ -86,6 +104,9 @@ async def main():
     await reject(rom.get_chip_id(),"BSL_CHIP_ID_WRONG_LENGTH")
 
     rom,writer=stub(b"")
+    await reject(rom.begin_download(4,8192),"BSL_DOWNLOAD_BAD_GEOMETRY")
+    await reject(rom.begin_download(0x2E000,8192),"BSL_DOWNLOAD_PROTECTED_RANGE")
+    await reject(rom.erase_sector(0x2E000),"BSL_ERASE_NOT_IN_P7U_APP_ALLOWLIST")
     await reject(rom.erase_sector(0xA4000),"BSL_ERASE_NOT_IN_P7U_APP_ALLOWLIST")
     await reject(rom.begin_download(0xA4000,8192),"BSL_DOWNLOAD_PROTECTED_RANGE")
     await reject(rom.send_data(b"\xff"*253),"BSL_SEND_DATA_BAD_SIZE")

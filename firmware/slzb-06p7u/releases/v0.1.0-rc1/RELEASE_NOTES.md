@@ -33,6 +33,8 @@ Re-run with profile `p7u-cap192-f07` and its exact native artifacts for R2. Per 
 
 See `firmware/slzb-06p7u/qualification/STRICT_SPARE_P7U_FLASH_ROLLBACK.md` for two-phase read-only inspection and separately operator-authorized write/rollback.
 
+Post-RC1 review hardening also requires the fixed seven-file kit, re-derives both sector plans, pins the deterministic stock rollback HEX, and cross-checks the profile, image hashes and native provenance fields. Missing files and inconsistent or unsupported hardware claims are rejected. These are integrity/consistency checks; compare the manifest with independent native CI evidence for source authenticity. The original source tag and archived private kits remain unchanged.
+
 ## Remaining hardware/release gates (cannot be closed by source tests)
 
 1. Identify **actual spare** P7U fitted board, SLZB-OS bridge, model and management MAC; obtain stock `SYS_PING/SYS_VERSION`, 88B installed CCFG and private IEEE/NV snapshot, original firmware and backup. Confirm this is NOT active MR4U/P10.
