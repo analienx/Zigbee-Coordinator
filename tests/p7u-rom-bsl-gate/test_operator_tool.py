@@ -220,5 +220,40 @@ class OperatorTests(unittest.TestCase):
                 asyncio.run(tool.inspect_installed(target, args))
             inspect.assert_not_awaited()
 
+
+    def test_installed_inspection_binds_usb_identity_to_original_rom_capture(self):
+        args = self.args("inspect-installed", "--unused-p7u", "--already-in-rom-bsl")
+        target = tool.load_target(self.path)
+        actual = {"factory_id_digest": "a" * 64, "ccfg_sha256": "b" * 64}
+        blank_crc = format(binascii.crc32(bytes([255]) * core.gate.SECTOR) & 0xffffffff, "08x")
+        evidence = {"application_classification": "r2", "exact_image_matches": ["r2"],
+                    "installed_vectors": {"plausible_cc26x2_vector": True},
+                    "nv5_pages": [{"header_all_ff": True, "sector_crc32": blank_crc}]}
+        class FakeSession:
+            async def __aenter__(self):
+                return object()
+            async def __aexit__(self, *ignored):
+                return False
+        with patch.object(tool, "identify", return_value={"status": "P7U_MANAGEMENT_IDENTITY_MATCHED"}), \
+             patch.object(tool, "expected_application_images", return_value={}), \
+             patch.object(tool, "LiveSmlightSession", return_value=FakeSession()), \
+             patch.object(core, "observe", return_value=actual), \
+             patch.object(tool, "inspect_installed_rom", new_callable=AsyncMock) as inspect:
+            inspect.return_value = evidence
+            with self.assertRaisesRegex(core.StrictError, "INSPECT_ORIGINAL_RADIO_IDENTITY_PIN_REQUIRED"):
+                asyncio.run(tool.inspect_installed(target, args))
+            inspect.assert_not_awaited()
+            target["radio_factory_id_digest"] = "c" * 64
+            target["radio_ccfg_sha256"] = "b" * 64
+            with self.assertRaisesRegex(core.StrictError, "INSPECT_WRONG_RADIO_OR_CCFG_CHANGED"):
+                asyncio.run(tool.inspect_installed(target, args))
+            inspect.assert_not_awaited()
+            target["radio_factory_id_digest"] = actual["factory_id_digest"]
+            result = asyncio.run(tool.inspect_installed(target, args))
+            self.assertEqual(result["application_classification"], "r2")
+            self.assertFalse(result["flash_write_or_erase_performed"])
+            self.assertTrue(args.out.exists())
+            self.assertEqual(inspect.await_count, 1)
+
 if __name__ == "__main__":
     unittest.main()
