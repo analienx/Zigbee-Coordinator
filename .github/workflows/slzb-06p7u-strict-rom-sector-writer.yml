@@ -25,6 +25,19 @@ on:
 permissions:
   contents: read
 jobs:
+  python314-usb-transport:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: '3.14'}
+      - name: Actual pinned USB transport on HA's Python family; PTY only
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pyserial==3.5 pyserial-asyncio==0.6
+          python tests/p7u-rom-bsl-gate/test_serial_asyncio_transport.py
   simulated-rom-hostile-faults:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
