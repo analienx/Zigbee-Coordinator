@@ -17,7 +17,9 @@ The existing endpoint request is exactly:
 - Response: standard **SRSP SYS 0xF0**, versioned **`P7G6`** envelope,
   wrapped around a CRC-checked **`P7D1`** snapshot containing the
   latest eight of 64 volatile RAM events, tick period, known NV state,
-  reset source if available, event totals and recorder contention drops.
+  event totals and recorder contention drops. **Reset cause is not actually
+  collected in the current image** (`p7_diag_init(1, 0, 0)`) and boot
+  generation repeats as 1; neither is presented as reboot evidence.
 - G6 negative statuses are LENGTH, VERSION, OPERATION, BUSY and
   WRONG_COMMAND_TYPE. Missing data is not a healthy zero.
 
@@ -43,8 +45,13 @@ owner alongside running Zigbee2MQTT.
   confirmation that Zigbee2MQTT has been stopped. Reads and verifies
   `SYS_GET_EXTADDR` **before** issuing SYS F0. Fails on a different
   coordinator IEEE, malformed responses, timeout or existing output
-  file. No radio reset or NV/CCFG/ESP/flash operation. It cannot
-  independently prove board model: visually verify the one P7U first.
+  file. Valid unsolicited AREQ frames are skipped with CRC + strict cap;
+  unexpected SRSP and corrupt traffic fail closed. Transient G6 BUSY
+  retries at most twice. No deliberate radio reset or NV/CCFG/ESP/flash
+  operation is issued. RTS/DTR are requested disabled *before opening*,
+  but USB bridge line glitches/reset effects remain **unverified hardware
+  risk**. It cannot independently prove board model: visually verify
+  the one P7U first.
 - `tests/p7-diagnostics-host/test_r2_diag_endpoint.py`: hostile
   protocol/identity/response validation, existing-G6 linked/source
   gate, pinned herdsman collision acceptance. Real native CI runs
@@ -81,3 +88,47 @@ Bench acceptance: confirm P7U model and exclusive serial bridge, ordinary
 SYS PING / VERSION / Z2M operation, F0 response with both checksums valid,
 normal non-destructive event change, and no regression under small network
 traffic. No physical device has been contacted or flashed for this software.
+
+## Optional Zigbee2MQTT in-service diagnostics (NOT DEPLOYED)
+
+The live network **must** be queried through the ZNP connection already
+owned by Zigbee2MQTT; opening a second direct socket corrupts request/response
+ownership. The existing zigbee-herdsman command table cannot decode variable
+length P7G6 raw SYS/F0 replies using a simple `BUFFER` field: it assumes a
+preceding length field that G6 does not send.
+
+To avoid that unsafe workaround, there are two opt-in, separately qualified
+pieces:
+
+1. `firmware/slzb-06p7/ti832/g7/r2_herdsman_inprocess_overlay.py`
+   stages **three small pinned-herdsman** TypeScript changes in a *separate
+   output directory*. They register read-only SYS F0, pass its raw SRSP
+   payload without assuming a length field, and expose
+   `ZStackAdapter.getP7UDiagnosticSnapshot()`. This calls the existing
+   `znp.requestWithReply` **through herdsman's transaction queue**.
+   It fails if the upstream checkout is not the exact pinned SHA
+   `0968f979d558874b17396c96b66382d4236bbdcd` or if SYS F0 collides.
+   The script never changes an installed Zigbee2MQTT package.
+2. `firmware/slzb-06p7u/qualification/r2_z2m_existing_owner.mjs` is
+   a Zigbee2MQTT external extension, **disabled by default**. It requires
+   both `P7U_DIAG_BRIDGE_ENABLE=I_ACCEPT_PINNED_P7U_OWNER` and
+   `P7U_DIAG_COORDINATOR_IEEE=<previously verified P7U IEEE>`, rejects
+   other adapters and unknown owner method, then accepts exactly
+   `{"action":"snapshot"}` at
+   `zigbee2mqtt/bridge/request/p7u_diag_snapshot`. It publishes a bounded
+   G6 diagnostic status and raw P7G6 hex to
+   `zigbee2mqtt/bridge/response/p7u_diag_snapshot`, with a five-second
+   request throttle, one in-flight query and bounded BUSY retry. It validates
+   the G6 and P7D1 CRCs and makes **no** NV/flash/permit-join changes.
+
+Both pieces have automated host-level regression tests. **Neither has been
+installed or tested inside a real running Zigbee2MQTT/P7U process.** The
+live implementation uses pinned herdsman internals and must be compiled and
+smoke-tested against the exact intended Zigbee2MQTT installation in an
+isolated pilot before opt-in. Extension loading is disabled by default on
+new Zigbee2MQTT installations since v2.11; do not enable external JS on the
+production MR4U merely to run these tests.
+
+No secret network keys or payloads are returned by this endpoint. The
+response remains a volatile eight-event snapshot, not a routing/AF lifetime
+counter. Do not conflate software unit tests with field acceptance.

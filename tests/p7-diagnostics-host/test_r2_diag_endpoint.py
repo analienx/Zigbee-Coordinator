@@ -34,6 +34,10 @@ def run():
     assert len(result["actionable_recent_events"])==2
     assert result["total_recorded_events"]==4
     assert result["cross_boot_duration_ms"] is None
+    assert result["boot_generation_reboot_unique"] is False
+    assert result["reset_cause_instrumented_in_current_firmware"] is False
+    assert result["available_metrics"]["reset_cause_if_known"] is False
+    assert result["reset_source"] is None and result["reset_source_raw"] is None
     assert result["available_metrics"]["nwk_source_route_failures"] is False
     assert result["available_metrics"]["af_cca_failures"] is False
     assert result["available_metrics"]["recent_uart_npi_errors"] is True
@@ -92,6 +96,65 @@ def capture_tests():
     try:capture(Fake(bytes(corrupt)+good),full_ieee)
     except ValueError:pass
     else:raise AssertionError("CORRUPT_IEEE_FRAME_ACCEPTED")
+
+    # Valid asynchronous indication can precede BOTH responses, without
+    # hijacking the waiter. Unrelated SRSP remains a hard error.
+    async_frame=mt_frame(b"\\x01",0x45)  # synthetic AREQ subsystem ZDO
+    f=Fake(async_frame+address_frame()+async_frame+good)
+    assert capture(f,full_ieee)["status"]=="OK"
+    assert f.tx==[IDENTITY_REQUEST,QUERY_FRAME]
+    wrong_srsp=bytearray(mt_frame(bytes((0,)),0x61))
+    wrong_srsp[3]=0x02  # unrelated SYS VERSION SRSP instead of SYS F0
+    wrong_srsp[-1]^=0xF0^0x02
+    wrong_srsp=bytes(wrong_srsp)
+    for payload in (wrong_srsp+address_frame()+good,
+                    address_frame()+wrong_srsp+good):
+        try:capture(Fake(payload),full_ieee)
+        except ValueError as e:assert str(e)=="ZNP_UNEXPECTED_FRAME_TYPE"
+        else:raise AssertionError("UNRELATED_SRSP_ACCEPTED")
+    # Bound valid AREQ floods; never loop forever.
+    from r2_diag_capture import MAX_UNSOLICITED,MAX_BUSY_RETRIES,read_response,open_serial_exclusive
+    try:read_response(Fake(async_frame*(MAX_UNSOLICITED+1)+address_frame()),0x04)
+    except ValueError as e:assert str(e)=="ZNP_UNSOLICITED_LIMIT"
+    else:raise AssertionError("UNBOUNDED_UNSOLICITED")
+    # RESET_IND means the identity check cannot be trusted across reset.
+    reset=bytearray(mt_frame(bytes((1,)),0x41));reset[3]=0x80
+    reset[-1]^=0xF0^0x80
+    try:read_response(Fake(bytes(reset)+address_frame()),0x04)
+    except ValueError as e:assert str(e)=="ZNP_RESET_INDICATION_ABORT"
+    else:raise AssertionError("RESET_INDICATION_SWALLOWED")
+    bad_async=bytearray(async_frame);bad_async[-1]^=1
+    try:read_response(Fake(bytes(bad_async)+address_frame()),0x04)
+    except ValueError as e:assert str(e)=="ZNP_BAD_RESPONSE_FCS"
+    else:raise AssertionError("CORRUPT_ASYNC_ACCEPTED")
+
+    # Recover only transient BUSY, with capped retries; unknown errors fail.
+    busy=mt_frame(g6_envelope(status=4),0x61)
+    sleeps=[]
+    f=Fake(address_frame()+busy+good)
+    assert capture(f,full_ieee,sleep=sleeps.append)["status"]=="OK"
+    assert f.tx==[IDENTITY_REQUEST,QUERY_FRAME,QUERY_FRAME]
+    assert sleeps==[0.15]
+    f=Fake(address_frame()+busy*(MAX_BUSY_RETRIES+1))
+    assert capture(f,full_ieee,sleep=sleeps.append)["status"]=="BUSY"
+    assert len(f.tx)==MAX_BUSY_RETRIES+2  # identity plus max F0 queries
+    f=Fake(address_frame()+mt_frame(g6_envelope(status=2),0x61)+good)
+    assert capture(f,full_ieee,sleep=sleeps.append)["status"]=="VERSION_ERROR"
+    assert len(f.tx)==2
+
+    # The writer does not open with default RTS/DTR asserted. No real port.
+    class SerialStub:
+        def __init__(self,**kwargs):
+            assert kwargs["port"] is None and not kwargs["rtscts"] and not kwargs["dsrdtr"]
+            self.dtr=True;self.rts=True;self.port=None;self.events=[]
+        def open(self):
+            assert self.port=="COM17" and self.dtr is False and self.rts is False
+            self.events.append("open_safe_lines_requested")
+        def close(self):self.events.append("close")
+    class SerialModule:
+        Serial=SerialStub
+    serial_port=open_serial_exclusive(SerialModule,"COM17")
+    assert serial_port.events==["open_safe_lines_requested"]
 
 
 def main():
