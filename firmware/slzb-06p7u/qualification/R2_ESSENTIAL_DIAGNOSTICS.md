@@ -114,10 +114,11 @@ pieces:
    both `P7U_DIAG_BRIDGE_ENABLE=I_ACCEPT_PINNED_P7U_OWNER` and
    `P7U_DIAG_COORDINATOR_IEEE=<previously verified P7U IEEE>`, rejects
    other adapters and unknown owner method, then accepts exactly
-   `{"action":"snapshot"}` at
-   `zigbee2mqtt/bridge/request/p7u_diag_snapshot`. It publishes a bounded
-   G6 diagnostic status and raw P7G6 hex to
-   `zigbee2mqtt/bridge/response/p7u_diag_snapshot`, with a five-second
+   `{"action":"snapshot"}` at `<mqtt.base_topic>/bridge/request/p7u_diag_snapshot`.
+   It publishes a bounded G6 diagnostic status and raw P7G6 hex via the
+   **relative** `bridge/response/p7u_diag_snapshot` topic (Zigbee2MQTT's
+   MQTT publisher prepends the configured base exactly once), yielding
+   `<mqtt.base_topic>/bridge/response/p7u_diag_snapshot`, with a five-second
    request throttle, one in-flight query and bounded BUSY retry. It validates
    the G6 and P7D1 CRCs and makes **no** NV/flash/permit-join changes.
 
@@ -132,3 +133,14 @@ production MR4U merely to run these tests.
 No secret network keys or payloads are returned by this endpoint. The
 response remains a volatile eight-event snapshot, not a routing/AF lifetime
 counter. Do not conflate software unit tests with field acceptance.
+
+## Independent pre-flash review — 15 October 2026
+
+- **Software at 516edb9:** nine of nine GitHub CI workflows passed, including native TI CCS three-profile acceptance. Software CI is not physical flash authorization.
+- **New critical live-debug defect fixed in PR #83:** Zigbee2MQTT's `mqtt.publish()` adds `mqtt.base_topic`. The external extension previously provided a fully qualified topic and therefore duplicated the base. The request now matches the configured full topic, and the publisher receives only a relative topic. Host tests cover default and custom bases. Verified against actual Zigbee2MQTT MQTT and external-extension sources, not only mocks.
+- **Real pinned herdsman compilation:** `Koenkk/zigbee-herdsman` at `0968f979d558874b17396c96b66382d4236bbdcd` (10.9.1) was checked out independently. The three staged TypeScript overlay source files passed `corepack pnpm install --frozen-lockfile --ignore-scripts` and `corepack pnpm run build` (`tsc`) in a separate review worktree. No installed Zigbee2MQTT package was modified.
+- **Hardware access BLOCKED:** read-only Zephyrus pyserial enumeration showed **zero serial ports**. No attached P7U ROM BSL, installed CCFG, vendor app, UART bridge, radio identity or successful stock rollback has been physically established.
+- **Initial NV5 BLOCKED:** the stock P7U's nonblank NV2 overlaps the R2 NV5 region. The strict writer correctly rejects nonblank NV5. A separately approved same-device NV5 preparation and restoration path backed by verified original bytes is not yet available. Never bypass blank-state checks or substitute a bank/chip erase.
+- **Field test OPEN:** the same-process Zigbee2MQTT bridge remains disabled, not installed, and unqualified with the P7U. No network/HA/MR4U changes or any radio flash were performed.
+
+**Pre-flash decision: STOP.** First establish and verify repeated ROM BSL entry and original-state recovery on the sole P7U, then separately review the identity-bound NV5 operation and exact R2/stock rollback pair. Keep issue #80 physical checkboxes unchecked.
