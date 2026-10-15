@@ -5,6 +5,14 @@ This plan supersedes the spare-unit/R1-first sequence for issue #80. There is
 intermediate flash. Physical qualification remains open. This document does not
 authorize a reset, erase or flash.
 
+**15 October status:** R2 was subsequently programmed, with 23/23 application
+sector CRCs verified at write time and CCFG unchanged. Normal ZNP startup has
+not passed: later raw SYS_PING tests received zero bytes, although ROM identity
+reads worked. A fresh live application CRC comparison and actual stock rollback
+remain unverified. Follow the [independent recovery review](R2_RECOVERY_REVIEW_2026-10-15.md)
+before selecting another action; the first-install steps below are historical
+procedure, not instructions to repeat an already completed flash.
+
 **Current implementation update:** [NV5_RECOVERY.md](NV5_RECOVERY.md) provides the separate raw backup, timing probe, five-sector preparation and original-NV restoration tool. The native R2 image fits the original 23-sector application/stock-cleanup contract, which remains unchanged. Physical proof remains pending. The [essential milestone policy](../../slzb-06p7/ti832/phase0/R2_ACCEPTANCE_MATRIX.md) separates the first small trial from household migration and optional features.
 
 ## Candidate changes
