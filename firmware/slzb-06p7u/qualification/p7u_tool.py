@@ -158,6 +158,8 @@ def expected_application_images(target: dict, args) -> dict[str, core.Bundle]:
     # selected original happens to be the kit's 20240710 fallback.
     old_stock = target["packet"] / "official-stock-20240316.bin"
     core.check(old_stock.is_file(), "INSPECT_PINNED_20240316_REQUIRED")
+    core.check(core.sha(old_stock.read_bytes()) == nv.stock.ORIGINAL_20240316_SHA,
+               "INSPECT_PINNED_20240316_HASH_MISMATCH")
     image, source, plan, _receipt = nv.stock.extract_original(
         old_stock.read_bytes(), "p7u-cap192-f07")
     stock_20240316 = core.load_bundle(image, source, plan)
@@ -170,8 +172,10 @@ def _vector_record(raw: bytes) -> dict:
     msp = int.from_bytes(raw[:4], "little")
     reset = int.from_bytes(raw[4:], "little")
     reset_address = reset & ~1
-    valid = (msp % 8 == 0 and 0x20000000 <= msp <= 0x20040000
-             and reset & 1 == 1 and 0x100 <= reset_address < core.gate.NV5_BASE)
+    # The pinned P7 linker supplies SRAM 0x20000000..0x20023FFF.
+    # MSP may point one byte past that region; ResetISR must be in the app envelope.
+    valid = (msp % 8 == 0 and 0x20000000 < msp <= 0x20024000
+             and reset & 1 == 1 and 0x100 <= reset_address < 23 * core.gate.SECTOR)
     return {"msp": f"0x{msp:08X}", "reset_vector": f"0x{reset:08X}",
             "plausible_cc26x2_vector": valid}
 
@@ -198,11 +202,13 @@ async def inspect_installed_rom(rom, identity: dict, images: dict[str, core.Bund
         core.check(type(crc) is int and 0 <= crc <= 0xffffffff, "INSPECT_ROM_CRC_INVALID")
         actual[addr] = f"{crc:08x}"
 
-    vectors = _vector_record(await core.read_exact(rom, 0, 8))
+    vector_bytes = await core.read_exact(rom, 0, 8)
+    vectors = _vector_record(vector_bytes)
     expected_vectors = {name: _vector_record(bundle.sectors[0][1][:8])
                         for name, bundle in images.items()}
     exact_matches = [name for name, crcs in expected.items()
-                     if all(actual[addr] == crcs[addr] for addr in addresses)]
+                     if all(actual[addr] == crcs[addr] for addr in addresses)
+                     and vector_bytes == images[name].sectors[0][1][:8]]
     nv_pages = []
     for addr in range(core.gate.NV5_BASE, core.gate.CCFG_SECTOR, core.gate.SECTOR):
         header = await core.read_exact(rom, addr, 16)
@@ -211,6 +217,9 @@ async def inspect_installed_rom(rom, identity: dict, images: dict[str, core.Bund
                    "INSPECT_NV5_ROM_CRC_INVALID")
         nv_pages.append({"address": f"0x{addr:05X}",
                          "header_prefix_hex": header.hex(),
+                         "page_state": header[0], "cycle": header[1],
+                         "all_active_bits": header[2] & 3,
+                         "format_version": header[2] >> 2, "signature": header[3],
                          "header_bytes_sha256": core.sha(header),
                          "header_all_ff": header == b"\xff" * 16,
                          "header_all_00": header == b"\x00" * 16,
@@ -237,9 +246,13 @@ async def inspect_installed(target: dict, args) -> dict:
     core.check(args.already_in_rom_bsl, "P7U_MUST_ALREADY_BE_IN_ROM_BSL")
     core.check(not target["device"].startswith("socket://"),
                "INSPECT_INSTALLED_USB_ONLY_NO_MANAGEMENT_RESET")
+    for key in ("factory_id_digest", "ccfg_sha256"):
+        pinned = target.get("radio_" + key)
+        core.check(type(pinned) is str and re.fullmatch(r"[0-9a-f]{64}", pinned) is not None,
+                   "INSPECT_ORIGINAL_RADIO_IDENTITY_PIN_REQUIRED")
+    images = expected_application_images(target, args)
     # Read-only management identity first; this command never asks management to enter BSL.
     management_identity = identify(target)
-    images = expected_application_images(target, args)
     async with LiveSmlightSession(target["device"]) as rom:
         # Validate the actual TI silicon, full CCFG and factory IEEE in ROM;
         # the SMLIGHT management MAC alone is not the radio identity.
@@ -247,13 +260,12 @@ async def inspect_installed(target: dict, args) -> dict:
         # Management MAC does not independently bind the USB radio. Reuse
         # pinned identities from the independently verified original capture.
         for key in ("factory_id_digest", "ccfg_sha256"):
-            pinned = target.get("radio_" + key)
-            core.check(type(pinned) is str and re.fullmatch(r"[0-9a-f]{64}", pinned) is not None,
-                       "INSPECT_ORIGINAL_RADIO_IDENTITY_PIN_REQUIRED")
-            core.check(rom_identity[key] == pinned, "INSPECT_WRONG_RADIO_OR_CCFG_CHANGED")
+            core.check(rom_identity[key] == target["radio_" + key], "INSPECT_WRONG_RADIO_OR_CCFG_CHANGED")
         evidence = await inspect_installed_rom(
             rom, {"management": management_identity, "radio": rom_identity},
             images, target["device"])
+        core.check(await core.observe(rom) == rom_identity,
+                   "INSPECT_IDENTITY_OR_CCFG_CHANGED_DURING_READ")
     app.json_write(args.out, evidence)
     blank_crc = f"{binascii.crc32(bytes([0xff]) * core.gate.SECTOR) & 0xffffffff:08x}"
     return {"status": "P7U_INSTALLED_INSPECTION_COMPLETE",

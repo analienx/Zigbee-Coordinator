@@ -46,9 +46,11 @@ startup task ordering or the live unit passes those paths.
 
 ## Next diagnostic decision
 
-After the refused live diagnostic has an available supported execution/review
-path, compare all 23 current application-sector CRCs against the exact candidate
-and pinned original, verify vectors and unchanged CCFG/IEEE, with no writes.
+Use `p7u_tool.py inspect-installed` to compare all 23 current application-sector
+CRCs against the exact R2 candidate and both pinned stock images, verify vectors
+and unchanged CCFG/IEEE, and capture the five NV5 page headers/CRCs without writes.
+It binds the USB radio to the original factory IEEE/CCFG fingerprints and checks
+that identity again after the inspection. Detailed evidence stays private.
 Do not infer installed bytes from an offline image or repeat the R2 write merely
 because ZNP is silent.
 
@@ -57,7 +59,23 @@ and board power/clock setup), plus the bridge/serial path. If they differ,
 preserve the discrepancy before deciding on a repair. More capacity tuning or
 additional telemetry is not a prerequisite for this diagnosis.
 
-For original-unit recovery, use the already implemented `restore-app` path with
+The leading unproven explanation is an early initialization failure: unlike the
+retained P10 diagnostic path, R2 checks `initNV` and halts before creating NPI
+on an error. The pinned TI startup order already initializes NV before BIOS;
+moving it into a task is not a justified correction. Blank NV5 was verified
+before programming, so residual stock NV2 is not the leading explanation.
+
+There is also a concrete headroom difference to investigate: the retained P10
+control patch explicitly reserves a 4096-byte C/interrupt stack, while the
+actual R2 map records `.stack` and `__STACK_SIZE` as `0x400` (1024 bytes).
+That is evidence of a difference, not evidence of stack exhaustion. The
+priority-5 stack initialization can also prevent priority-4 NPI from opening
+UART. G7 can suppress all replies after a timer/UART fault. Temporary bounded
+startup records should distinguish these paths if installed R2 is confirmed.
+Do not weaken the NV guard, increase the stack, or change pins without evidence.
+
+Stock restoration is an optional diagnostic fallback, not a required step before
+investigating R2. If original-unit recovery becomes necessary, use `restore-app` with
 the exact captured 20240316 source, two verified same-unit backup copies and a
 fresh inspection plan. Restore the original NV5 region separately while still
 in ROM BSL, after the original application has been verified, then restart and

@@ -202,10 +202,30 @@ class OperatorTests(unittest.TestCase):
         with self.assertRaisesRegex(core.StrictError, "INSPECT_INSTALLED_USB_ONLY_NO_MANAGEMENT_RESET"):
             asyncio.run(tool.inspect_installed(target, args))
 
+    def test_vector_limits_follow_linked_p7_sram_and_application_envelope(self):
+        for msp, reset, valid in ((0x20024000, 0x101, True),
+                                  (0x20024008, 0x101, False),
+                                  (0x20000000, 0x101, False),
+                                  (0x20010004, 0x101, False),
+                                  (0x20010000, 0x2E001, False),
+                                  (0x20010000, 0x100, False)):
+            raw = msp.to_bytes(4, "little") + reset.to_bytes(4, "little")
+            self.assertEqual(tool._vector_record(raw)["plausible_cc26x2_vector"], valid)
+
+    def test_20240316_filename_cannot_substitute_another_stock_source(self):
+        target = tool.load_target(self.path)
+        target["packet"].mkdir()
+        (target["packet"] / "official-stock-20240316.bin").write_bytes(b"not the pinned original")
+        with patch.object(tool.app, "load_request", return_value=(object(), object())):
+            with self.assertRaisesRegex(core.StrictError, "INSPECT_PINNED_20240316_HASH_MISMATCH"):
+                tool.expected_application_images(target, self.args("inspect-installed"))
+
 
     def test_inspection_fails_closed_if_actual_radio_identity_is_wrong(self):
         args = self.args("inspect-installed", "--unused-p7u", "--already-in-rom-bsl")
         target = tool.load_target(self.path)
+        target["radio_factory_id_digest"] = "a" * 64
+        target["radio_ccfg_sha256"] = "b" * 64
         class FakeSession:
             async def __aenter__(self):
                 return object()
