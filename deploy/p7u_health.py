@@ -75,7 +75,7 @@ class DiagnosticClient:
             decoded=decode_frame(raw)
             if decoded["version"]!=version: raise ValueError("UNMATCHED_DIAGNOSTIC_VERSION")
             result.update(result="response",diagnostic=decoded)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             self.poisoned=True
             result.update(result="timeout",requires_session_boundary=True)
         except (ValueError,TypeError):

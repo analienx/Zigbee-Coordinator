@@ -75,6 +75,8 @@ erased a radio. All physical milestones remain open.
   adapter; version 2 requires the actual 118-byte schema, or an 18-byte error.
 - Updated the independent runtime-NV test to consume the actual C health
   schema after the bounded heap fields were added.
+- Catch asyncio's timeout type explicitly: Python 3.10 does not alias it to
+  the built-in TimeoutError, so the initial host client leaked that exception.
 - Reduced the initially proposed 32-sector envelope to 24 and changed every
   writer/plan/package/stock-cleanup boundary together. Fault tests cover the
   upper sector, complete tail cleanup and rejection of the next sector.
