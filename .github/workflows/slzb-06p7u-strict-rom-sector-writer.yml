@@ -94,7 +94,7 @@ jobs:
             'https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240316.bin' \
             -o /tmp/p7u-stock/original-20240316.bin
           echo '3d0addd3d9c5920b9a23083f648cd506802d664706da6c0f2728f78cc94b99f9  /tmp/p7u-stock/original-20240316.bin' | sha256sum --check
-          python3 tests/p7u-rom-bsl-gate/test_original_rollback.py --vendor /tmp/p7u-stock/original-20240316.bin
+          python3 tests/p7u-rom-bsl-gate/test_original_rollback.py --vendor /tmp/p7u-stock/original-20240316.bin --paired-vendor /tmp/p7u-stock/vendor.bin
           python3 - <<'PY'
           import json
           from pathlib import Path

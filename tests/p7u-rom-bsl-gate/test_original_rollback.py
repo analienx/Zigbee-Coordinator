@@ -39,17 +39,23 @@ def reseal(plan):
 
 
 async def tests(vendor):
+    legacy = core.sha(vendor) == stock.ORIGINAL_20240316_SHA
+    length = 172240 if legacy else stock.APP_BYTES
     image, source, plan, receipt = stock.extract_original(vendor, "p7u-cap192-f07")
-    assert receipt["version"] == "20240316" and receipt["app_payload_bytes"] == 172240
-    assert receipt["manufacturer_container_sha256"] == stock.ORIGINAL_20240316_SHA
-    assert core.sha(vendor[28+172240:]) == stock.ORIGINAL_20240316_CCFG_SHA
-    reject(lambda: stock.extract(vendor, "p7u-cap192-f07"), "STOCK_VENDOR_SOURCE_HASH_MISMATCH")
+    assert receipt["version"] == ("20240316" if legacy else "20240710")
+    assert receipt["app_payload_bytes"] == length
+    assert receipt["manufacturer_container_sha256"] == (stock.ORIGINAL_20240316_SHA if legacy else stock.VENDOR_SHA)
+    assert core.sha(vendor[28+length:]) == (stock.ORIGINAL_20240316_CCFG_SHA if legacy else core.gate.VENDOR_CCFG_SHA256)
+    if legacy:
+        reject(lambda: stock.extract(vendor, "p7u-cap192-f07"), "STOCK_VENDOR_SOURCE_HASH_MISMATCH")
+    else:
+        assert stock.extract(vendor, "p7u-cap192-f07") == (image, source, plan, receipt)
     reject(lambda: stock.extract_original(vendor[:-1], "p7u-cap192-f07"), "STOCK_VENDOR_SOURCE_HASH_MISMATCH")
     corrupt = bytearray(vendor); corrupt[100] ^= 1
     reject(lambda: stock.extract_original(bytes(corrupt), "p7u-cap192-f07"), "STOCK_VENDOR_SOURCE_HASH_MISMATCH")
     rom = FakeROM()
-    rom.flash[:172240] = vendor[28:28+172240]
-    rom.flash[core.gate.CCFG_START:core.gate.CCFG_END] = vendor[28+172240:]
+    rom.flash[:length] = vendor[28:28+length]
+    rom.flash[core.gate.CCFG_START:core.gate.CCFG_END] = vendor[28+length:]
     rom.flash[nv.NV_START:nv.NV_END] = bytes((i * 17) % 251 for i in range(nv.NV_END-nv.NV_START))
     pristine = bytes(rom.flash)
     descriptor = nv.target_descriptor(nv.MODEL, "1.73", "v3.2.6.dev3", "01:23:45:67:89:AB")
@@ -60,8 +66,8 @@ async def tests(vendor):
         shutil.copytree(one, two)
         bundle, verified, proof = original.original_bundle(one, two, vendor)
         assert manifest == verified
-        assert proof["manufacturer_sha256"] == stock.ORIGINAL_20240316_SHA
-        assert proof["original_app_bytes"] == 172240
+        assert proof["manufacturer_sha256"] == receipt["manufacturer_container_sha256"]
+        assert proof["original_app_bytes"] == length
         assert tuple(a for a, _ in bundle.sectors) == core.APP_SECTOR_ADDRESSES
         assert b"".join(b for _, b in bundle.sectors) == pristine[:0x2E000]
 
@@ -126,10 +132,14 @@ async def tests(vendor):
         await nv.execute(nrom,one,two,"COM31",nvplan,nvplan["digest"],nv.QUIESCENT,vendor)
         assert bytes(nrom.flash) == pristine
         assert set(nrom.erases) == set(nv.NV_SECTORS)
-    print("P7U_PINNED_20240316_ORIGINAL_APP_THEN_NV_RESTORE_PASS_NO_HARDWARE")
+    print(f"P7U_PINNED_{receipt['version']}_ORIGINAL_APP_THEN_NV_RESTORE_PASS_NO_HARDWARE")
 
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser()
     parser.add_argument("--vendor",type=Path,required=True)
-    asyncio.run(tests(parser.parse_args().vendor.read_bytes()))
+    parser.add_argument("--paired-vendor",type=Path)
+    args=parser.parse_args()
+    asyncio.run(tests(args.vendor.read_bytes()))
+    if args.paired_vendor:
+        asyncio.run(tests(args.paired_vendor.read_bytes()))
