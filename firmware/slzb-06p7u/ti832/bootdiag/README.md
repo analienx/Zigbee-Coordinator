@@ -33,6 +33,36 @@ after that point.
 
 ## Capture and interpret
 
+First exclude remaining in ROM BSL after the intended application reset. Our
+ROM sessions deliberately leave the radio in BSL when they close; management
+`ok` acknowledges a reset request, not application execution. TI's
+[boot flow](https://www.ti.com/lit/pdf/swra466) selects ROM when the image-valid
+configuration rejects the application or the enabled backdoor pin is active
+at reset. The independently captured original configuration selects DIO15,
+active low. Do not substitute TI LaunchPad example pin assignments.
+
+The next hardware diagnosis should identify the protocol after an intended
+application reset, without issuing another BSL-entry command: capture startup
+and try bounded ZNP ping first; if silent, a bounded ROM identification
+challenge can establish whether ROM is serving commands. Require a valid
+framed chip-ID/status response, not silence or an isolated ACK. A timeout is
+inconclusive, particularly because a synchronized ROM session may not accept
+another autobaud exchange. This challenge changes ROM protocol state even
+though it performs no erase/program; reset again before testing application
+startup. Never use the existing network ROM session for this discrimination:
+it explicitly enters BSL before opening the port and would prove only that
+requested entry works.
+
+If ROM responds after the intended application reset, investigate BSL release,
+reset semantics and actual USB line-control forwarding before another flash.
+The manufacturer's
+[06xU revision 1.73 hardware definition](https://github.com/smlight-tech/slzb-esphome/blob/main/hw_defs/06xu/r1_73.yaml)
+assigns separate inverted ESP GPIO16/21 controls to BSL/reset. This is hardware
+reference evidence, not proof of installed SLZB-OS behavior. Do not assume
+generic USB DTR/RTS wiring or change CCFG to force an exit. The earlier stock
+round trip proves exit worked previously, not that the latest R2 attempt left
+ROM. No-stage silence alone cannot distinguish ROM from an early app failure.
+
 Before any further flash, use `p7u_tool.py inspect-installed` to verify the
 current R2 bytes/vectors and original CCFG/IEEE fingerprints, retaining private
 NV5 metadata/CRCs. The native diagnostic artifact must fit at most 24 app

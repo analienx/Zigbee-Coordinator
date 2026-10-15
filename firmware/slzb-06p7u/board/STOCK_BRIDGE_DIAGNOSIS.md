@@ -1,5 +1,24 @@
 # Stock P7U USB/ZNP evidence — unresolved
 
+## Later physical evidence and outstanding boot-mode check (15 October 2026)
+
+The initial observations below are historical. Subsequent private evidence
+established working stock ping/version after a management radio reset and
+startup wait, repeated stock/ROM round trips, a complete original backup, and
+an R2 write with all 23 application-sector CRCs verified and CCFG unchanged.
+R2 ZNP attempts then received zero bytes. This does not establish whether the
+radio was executing R2 or still serving ROM after the intended reset.
+
+ROM transport sessions intentionally leave BSL active on close. Management
+reset acknowledgement does not prove application execution. Before any further
+diagnostic flash, distinguish boot mode without requesting BSL entry again;
+the [boot diagnostic procedure](../ti832/bootdiag/README.md#capture-and-interpret)
+describes the positive ROM identification evidence and timeout limitations.
+No such discriminating post-reset ROM challenge has been performed. USB
+DTR/RTS forwarding remains unverified; generic dongle wiring is not assumed.
+
+## Initial observations
+
 The current user-supplied dashboard identifies USB Device/coordinator mode,
 corev3.2.6.dev3, AP-only networking, stock metadata20240316 and the label HW & SW.
 This does not state UART baud or establish line-control behavior. Earlier HA
