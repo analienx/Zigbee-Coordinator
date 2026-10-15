@@ -19,7 +19,9 @@ Create a private `target.json` beside the packet; do not commit real identities:
   "device": "/dev/ttyACM0",
   "packet": ".",
   "original_stock_file": "official-stock-20240316.bin",
-  "candidate_sha256": "EXACT_APP_HEX_SHA256_FROM_VERIFIED_KIT"
+  "candidate_sha256": "EXACT_APP_HEX_SHA256_FROM_VERIFIED_KIT",
+  "radio_factory_id_digest": "64-CHAR-SHA256-FROM-INDEPENDENT-ORIGINAL-ROM-CAPTURE",
+  "radio_ccfg_sha256": "64-CHAR-SHA256-FROM-INDEPENDENT-ORIGINAL-ROM-CAPTURE"
 }
 ```
 
@@ -57,7 +59,11 @@ probe, inspection and approved execution. `inspect-installed` is read-only: it
 requires the USB radio to already be in ROM BSL and reads all 23 application
 sector CRCs, vectors, each of the five NV5 16-byte header prefixes/sector CRCs,
 and silicon/CCFG/factory IEEE fingerprints through the ROM identity reader. It compares the app against the exact R2 candidate
-and both pinned stock apps. It does not command management BSL entry or reset,
+and both pinned stock apps. It requires both original-ROM radio fingerprint
+hashes in the private target file to bind the USB radio to the captured unit;
+management MAC alone is insufficient. The 20240316 manufacturer container is
+required for this inspection regardless of the selected rollback version.
+It does not command management BSL entry or reset,
 erase/program, read NV payloads, or write CCFG. Its JSON output contains detailed
 sector evidence; keep that file with the private hardware records. An unmatched
 classification is evidence to preserve and investigate, not permission to
