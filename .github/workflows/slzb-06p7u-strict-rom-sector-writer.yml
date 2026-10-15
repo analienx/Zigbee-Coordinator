@@ -82,9 +82,9 @@ jobs:
               p=json.loads((d/(label+".plan.json")).read_text())
               assert r["ccfg_bytes_in_derived_hex"]==0
               assert r["nv_bytes_in_derived_hex"]==0
-              assert p["explicit_application_sector_erase_addresses"][-1]=="0x2E000"
-              assert p["sector_count"]==24 and p["flash_authorized"] is False
-              print(label,"PINNED_STOCK_APP_ROLLBACK_24_SECTORS_VERIFIED_OFFLINE")
+              assert p["explicit_application_sector_erase_addresses"][-1]=="0x2C000"
+              assert p["sector_count"]==23 and p["flash_authorized"] is False
+              print(label,"PINNED_STOCK_APP_ROLLBACK_23_SECTORS_VERIFIED_OFFLINE")
           PY
           rm -rf /tmp/p7u-stock
           echo "NO_VENDOR_FIRMWARE_BINARY_PUBLISHED_NO_FLASH"

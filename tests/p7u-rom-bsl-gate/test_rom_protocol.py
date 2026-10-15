@@ -105,8 +105,8 @@ async def main():
 
     rom,writer=stub(b"")
     await reject(rom.begin_download(4,8192),"BSL_DOWNLOAD_BAD_GEOMETRY")
-    await reject(rom.begin_download(0x30000,8192),"BSL_DOWNLOAD_PROTECTED_RANGE")
-    await reject(rom.erase_sector(0x30000),"BSL_ERASE_NOT_IN_P7U_APP_ALLOWLIST")
+    await reject(rom.begin_download(0x2E000,8192),"BSL_DOWNLOAD_PROTECTED_RANGE")
+    await reject(rom.erase_sector(0x2E000),"BSL_ERASE_NOT_IN_P7U_APP_ALLOWLIST")
     await reject(rom.erase_sector(0xA4000),"BSL_ERASE_NOT_IN_P7U_APP_ALLOWLIST")
     await reject(rom.begin_download(0xA4000,8192),"BSL_DOWNLOAD_PROTECTED_RANGE")
     await reject(rom.send_data(b"\xff"*253),"BSL_SEND_DATA_BAD_SIZE")

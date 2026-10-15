@@ -7,7 +7,7 @@ state backups and a separately reviewed NV preparation/recovery operation if NV
 is nonblank. The historical `spare` filenames/flags acknowledge isolation; they
 do not establish that replacement hardware exists. No physical action is authorized.
 
-**Current contract:** See [APPLICATION_CONTRACT_V2.md](APPLICATION_CONTRACT_V2.md) for the jointly reviewed 24-sector application/stock cleanup envelope, and [NV5_RECOVERY.md](NV5_RECOVERY.md) for the separate five-sector NV tool. The 23-sector instructions retained below describe the historical RC1 implementation; use the current procedures and freshly matched kit.
+**Current contract:** The original 23-sector application/stock-cleanup boundary remains unchanged. See [NV5_RECOVERY.md](NV5_RECOVERY.md) for the separate five-sector NV tool. Use [R2_FIRST_SINGLE_UNIT.md](R2_FIRST_SINGLE_UNIT.md) for the current one-unit sequence and a freshly matched kit; the R1-first assumption below is historical.
 
 **Status:** Implementation complete in source with simulated ROM tests; actual physical P7U BSL/flash/rollback is NOT yet qualified. This code must **never** target the active SMLIGHT MR4U/P10, and does not touch ESP32-S3/SLZB-OS firmware, Home Assistant or Zigbee2MQTT. P7U flash is **not already authorized**.
 

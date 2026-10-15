@@ -26,8 +26,7 @@ CRC32=0x27
 GET_CHIP_ID=0x28
 MEMORY_READ=0x2A
 APP_SECTOR_SIZE = 8192
-APP_ERASE_END = 0x30000  # reviewed application contract v2; still below NV5 0xA4000
-APP_SECTOR_ADDRESSES = tuple(range(0, APP_ERASE_END, APP_SECTOR_SIZE))
+APP_SECTOR_ADDRESSES = tuple(range(0, 0x2E000, APP_SECTOR_SIZE))
 # BANK_ERASE 0x2C intentionally HAS NO implementation.
 # SET_CCFG 0x2D, MEMORY_WRITE 0x2B and RESET 0x25 are also omitted.
 

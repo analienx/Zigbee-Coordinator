@@ -47,13 +47,14 @@ def build(full_hex: bytes, official_vendor: bytes, profile: str, git_sha: str) -
     stock_bundle=core.load_bundle(fallback,source,stock_plan)
     require(custom_bundle.hex_sha256 != stock_bundle.hex_sha256,
             "RC1_CANDIDATE_EQUALS_STOCK")
-    require(23 <= len(custom_bundle.sectors) <= len(core.APP_SECTOR_ADDRESSES)
-            and [a for a,_ in custom_bundle.sectors] ==
-                list(core.APP_SECTOR_ADDRESSES[:len(custom_bundle.sectors)])
-            and [a for a,_ in stock_bundle.sectors] == list(core.APP_SECTOR_ADDRESSES),
-            "APPLICATION_AND_ROLLBACK_CONTRACT_MISMATCH")
-    require(all(image == b"\xff"*core.gate.SECTOR for addr,image in stock_bundle.sectors
-                if addr >= 0x2C000), "RC1_STOCK_TAIL_NOT_CLEARED_TO_FF")
+    require(len(custom_bundle.sectors) == 23 and len(stock_bundle.sectors) == 23,
+            "RC1_NOT_EXACTLY_23_SECTORS")
+    require([a for a,_ in custom_bundle.sectors] ==
+            [a for a,_ in stock_bundle.sectors] ==
+            list(range(0,23*core.gate.SECTOR,core.gate.SECTOR)),
+            "RC1_STOCK_CUSTOM_SECTOR_SET_MISMATCH")
+    require(stock_bundle.sectors[-1] == (0x2C000, b"\xff"*core.gate.SECTOR),
+            "RC1_STOCK_TAIL_NOT_CLEARED_TO_FF")
     require(max(a for a,_ in custom_bundle.sectors)+core.gate.SECTOR <= core.gate.NV5_BASE,
             "RC1_SECTOR_TOUCHES_NV5")
     require(qualified["ccfg_sha256"] == core.gate.VENDOR_CCFG_SHA256,
@@ -85,9 +86,8 @@ def build(full_hex: bytes, official_vendor: bytes, profile: str, git_sha: str) -
         "vendor_20240710_verified_and_extracted":True,
         "release_custom_app_hex_sha256":core.sha(custom),
         "release_stock_restore_app_hex_sha256":core.sha(fallback),
-        "fully_covered_application_sectors":len(core.APP_SECTOR_ADDRESSES),
-        "candidate_application_sectors":len(custom_bundle.sectors),
-        "stock_extra_tail_sector_erased": f"0x{core.APP_SECTOR_ADDRESSES[-1]:05X}",
+        "fully_covered_application_sectors":23,
+        "stock_extra_tail_sector_erased": "0x2C000",
         "configured_4KiB_or_8KiB_flash_sector":"8KiB_P7U_ONLY",
         "never_program_ccfg_or_nv":True,
         "rom_backdoor_code_checked":True,
@@ -145,14 +145,10 @@ def verify_directory(directory: Path) -> dict:
         core.load_json(directory/"stock-20240710.plan.json"))
     require(candidate.profile == fallback.profile == manifest["profile"],
             "RC1_PACKAGE_PROFILE_MISMATCH")
-    require(23 <= len(candidate.sectors) <= len(core.APP_SECTOR_ADDRESSES)
-            and [addr for addr, _ in candidate.sectors] ==
-                list(core.APP_SECTOR_ADDRESSES[:len(candidate.sectors)])
-            and [addr for addr, _ in fallback.sectors] == list(core.APP_SECTOR_ADDRESSES)
-            and manifest.get("fully_covered_application_sectors")==len(core.APP_SECTOR_ADDRESSES)
-            and manifest.get("candidate_application_sectors")==len(candidate.sectors)
-            and manifest.get("stock_extra_tail_sector_erased")==f"0x{core.APP_SECTOR_ADDRESSES[-1]:05X}",
-            "APPLICATION_AND_ROLLBACK_CONTRACT_MISMATCH")
+    require([addr for addr, _ in candidate.sectors] ==
+            [addr for addr, _ in fallback.sectors] == list(range(0,23*core.gate.SECTOR,core.gate.SECTOR))
+            and manifest.get("fully_covered_application_sectors")==23,
+            "RC1_NOT_EXACTLY_23_SECTORS")
     require(fallback.hex_sha256 == stock.ROLLBACK_APP_SHA256
             and manifest.get("vendor_original_SHA256") == stock.VENDOR_SHA,
             "RC1_STOCK_ROLLBACK_NOT_PINNED")
@@ -165,9 +161,6 @@ def verify_directory(directory: Path) -> dict:
             and receipt.get("rollback_app_only_hex_sha256")==fallback.hex_sha256
             and receipt.get("sector_plan_sha256")==fallback.plan_sha256
             and receipt.get("custom_tail_cleanup_sector_start")=="0x2C000"
-            and receipt.get("custom_tail_cleanup_end_exclusive")==f"0x{core.APP_SECTOR_ADDRESSES[-1]+core.gate.SECTOR:05X}"
-            and receipt.get("custom_tail_cleanup_sectors")==[f"0x{a:05X}" for a in core.APP_SECTOR_ADDRESSES if a>=0x2C000]
-            and all(image==b"\xff"*core.gate.SECTOR for addr,image in fallback.sectors if addr>=0x2C000)
             and receipt.get("custom_tail_cleanup_erased_to_all_ff") is True
             and receipt.get("rom_rollback_physically_tested") is False
             and receipt.get("flash_authorized") is False,

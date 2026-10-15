@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Exercise the extended app envelope and matching stock cleanup, no hardware."""
+"""Exercise the preserved app envelope and matching stock cleanup, no hardware."""
 import asyncio
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]/"firmware/slzb-06p7u/qualification"))
 import p7u_strict_sector_writer as s
-from p7u_rom_lowlevel import APP_SECTOR_ADDRESSES, APP_ERASE_END
+from p7u_rom_lowlevel import APP_SECTOR_ADDRESSES
 from test_strict_sector_writer import FakeROM, make_bundle
+APP_ERASE_END = APP_SECTOR_ADDRESSES[-1] + s.gate.SECTOR
 
 
 async def main():
-    assert APP_ERASE_END == 0x30000 and len(APP_SECTOR_ADDRESSES) == 24
+    assert APP_ERASE_END == 0x2E000 and len(APP_SECTOR_ADDRESSES) == 23
     _, raw, source, _ = make_bundle()
     data = s.gate.parse_hex(raw)
     for address in APP_SECTOR_ADDRESSES:
@@ -25,9 +26,9 @@ async def main():
     outside = bytes(rom.flash[APP_ERASE_END:])
     approval = await s.preflight(rom, bundle, "COM31")
     result = await s.write_checked(rom, bundle, approval, approval["approval_digest"], "COM31")
-    assert result["sectors_written"] == 24
+    assert result["sectors_written"] == 23
     assert rom.erases == list(APP_SECTOR_ADDRESSES[1:])+[0]
-    assert rom.flash[0x2E000] == 0x42 and bytes(rom.flash[APP_ERASE_END:]) == outside
+    assert rom.flash[0x2C000] == 0x42 and bytes(rom.flash[APP_ERASE_END:]) == outside
     # A populated custom tail must be removed in its entirety by paired cleanup.
     cleanup = dict(data)
     for address in range(0x2C000, APP_ERASE_END):
@@ -48,10 +49,10 @@ async def main():
     try:
         s.sector.plan(bad, {**source, "derived_app_only_hex_sha256": s.sha(bad)})
     except ValueError as exc:
-        assert str(exc) == "PLAN_OUTSIDE_REVIEWED_24_SECTOR_APPLICATION_CONTRACT"
+        assert str(exc) == "PLAN_OUTSIDE_REVIEWED_23_SECTOR_APPLICATION_CONTRACT"
     else:
         raise AssertionError("Application boundary bypassed")
-    print("P7U_APP24_AND_STOCK_TAIL_ROUNDTRIP_PASS_NO_DEVICE")
+    print("P7U_APP23_AND_STOCK_TAIL_ROUNDTRIP_PASS_NO_DEVICE")
 
 
 if __name__ == "__main__":

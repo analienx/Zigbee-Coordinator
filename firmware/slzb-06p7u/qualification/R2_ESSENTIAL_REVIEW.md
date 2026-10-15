@@ -27,9 +27,9 @@ reimplementing the historical 36-feature P10 inventory.
   Keep the existing v1 snapshot unchanged. Use the existing ZNP owner for live
   queries; preserve evidence before an operator chooses recovery.
 
-The app writer and stock tail cleanup share a fixed 24-sector envelope ending
-at 0x30000. A native-matched kit must prove the candidate fits. This is one
-additional sector beyond the previous contract, not a general flash-size guard.
+The app writer and stock tail cleanup retain their original 23-sector envelope
+ending at 0x2E000. The native image fits with 116 bytes to this artificial boundary;
+there is no need to extend it for this candidate. Silicon flash is not exhausted.
 
 ## Defer or qualify only when used
 
@@ -77,9 +77,10 @@ erased a radio. All physical milestones remain open.
   schema after the bounded heap fields were added.
 - Catch asyncio's timeout type explicitly: Python 3.10 does not alias it to
   the built-in TimeoutError, so the initial host client leaked that exception.
-- Reduced the initially proposed 32-sector envelope to 24 and changed every
-  writer/plan/package/stock-cleanup boundary together. Fault tests cover the
-  upper sector, complete tail cleanup and rejection of the next sector.
+- Retained the original 23-sector writer and stock-cleanup boundary after the
+  actual native image proved it fits. The offline planner now also rejects the
+  next sector, matching the writer's existing limit. Boundary/cleanup fault
+  tests verify the upper sector and unchanged bytes outside the envelope.
 - Removed an unsubstantiated 16-hop change; native capacity checks now verify
   the retained 12-hop constant and 24-byte relay list rather than requiring
   numerical parity without a demonstrated need.
