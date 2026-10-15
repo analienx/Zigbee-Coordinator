@@ -45,7 +45,10 @@ static void check_wire(void) {
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (!strcmp(argv[1], "normal") || !strcmp(argv[1], "unused")) {
+        p7_bootdiag_arm_stack();
+        bd_test_stack[4096 - 1200] = 0;
         p7_bootdiag_begin();
+        assert(wire[2] == P7BD_BOARD && wire[3] == 3 && wire[5] == (1200 & 255) && wire[6] == (1200 >> 8));
         p7_bootdiag_stage(P7BD_BEFORE_NV, 0, 0);
         p7_bootdiag_arm_stack();
         if (!strcmp(argv[1], "normal")) bd_test_stack[4096 - 1400] = 0;

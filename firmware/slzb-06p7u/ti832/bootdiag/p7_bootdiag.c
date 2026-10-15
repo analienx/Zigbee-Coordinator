@@ -29,6 +29,19 @@ static uint8_t bd_owner, bd_tx_fault, bd_armed;
 volatile uint16_t p7_bootdiag_nv_stack_used;
 volatile uint8_t p7_bootdiag_nv_status, p7_bootdiag_stack_flags;
 
+static inline uint16_t bd_sample_stack(uint8_t *flags)
+{
+    uintptr_t p, base = BD_STACK_END - P7_BD_STACK_BYTES;
+    *flags = 0;
+    if (!bd_armed) return 0;
+    for (p = base; p < bd_painted_top; ++p)
+        if (*(volatile uint8_t *)p != 0xbe) break;
+    *flags = 1;
+    if (BD_STACK_END - p > P7_BD_OLD_STACK_BYTES) *flags |= 2;
+    if (*(volatile uint8_t *)base != 0xbe) *flags |= 4;
+    return (uint16_t)(BD_STACK_END - p);
+}
+
 /* Fixed eight-byte record; bounded FIFO progress and busy polling. This never
  * calls UART2_write/printf, allocates, or assumes BIOS ticks are running. */
 void p7_bootdiag_stage(uint8_t stage, uint16_t arg, uint16_t value)
@@ -54,6 +67,9 @@ void p7_bootdiag_stage(uint8_t stage, uint16_t arg, uint16_t value)
 void p7_bootdiag_begin(void)
 {
     UART2_Params params;
+    uint8_t flags;
+    /* Save the board-startup window BEFORE diagnostic UART initialization. */
+    uint16_t board_used = bd_sample_stack(&flags);
     UART2_Params_init(&params);
     params.baudRate = 115200;
     params.dataLength = UART2_DataLen_8;
@@ -63,7 +79,7 @@ void p7_bootdiag_begin(void)
     if (bd_uart) {
         Power_setConstraint(PowerCC26XX_DISALLOW_STANDBY);
         bd_owner = 1;
-        p7_bootdiag_stage(P7BD_BOARD, 1, P7_BD_STACK_BYTES);
+        p7_bootdiag_stage(P7BD_BOARD, flags, board_used);
     }
 }
 
@@ -81,20 +97,12 @@ void p7_bootdiag_arm_stack(void)
 
 void p7_bootdiag_nv_result(uint8_t status)
 {
-    uintptr_t p, base = BD_STACK_END - P7_BD_STACK_BYTES;
-    uint16_t used = 0, first_failure = 0;
+    uint16_t used, first_failure = 0;
     uint8_t flags = 0;
     unsigned i, count;
     /* Sample BEFORE scanning diagnostics or transmitting. Watermarks are a
      * lower bound; published values include instrumented main/sampler frames. */
-    if (bd_armed) {
-        for (p = base; p < bd_painted_top; ++p)
-            if (*(volatile uint8_t *)p != 0xbe) break;
-        used = (uint16_t)(BD_STACK_END - p);
-        flags = 1;
-        if (used > P7_BD_OLD_STACK_BYTES) flags |= 2;
-        if (*(volatile uint8_t *)base != 0xbe) flags |= 4;
-    }
+    used = bd_sample_stack(&flags);
     p7_bootdiag_nv_status = status;
     p7_bootdiag_nv_stack_used = used;
     p7_bootdiag_stack_flags = flags;

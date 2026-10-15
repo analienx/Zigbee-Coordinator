@@ -478,6 +478,8 @@ jobs:
             build-evidence/*.log
             diag-staged/*.txt
             diag-staged/*.log
+            bundle-bootdiag/BOOTDIAG-SOURCE.json
+            bundle-bootdiag/*STACK-CALL-GRAPH.xml
           retention-days: 7
           if-no-files-found: warn
 

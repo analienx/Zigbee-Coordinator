@@ -25,6 +25,7 @@ def patch(texts):
         raise ValueError("BOOTDIAG_ALREADY_APPLIED")
     main = replace(out[MAIN], '#include "ti_zstack_config.h"\n',
                    '#include "ti_zstack_config.h"\n#include "p7_bootdiag.h"\n', "bd_main_include")
+    main = replace(main, "int main()\n{\n", "int main()\n{\n    p7_bootdiag_arm_stack();\n", "bd_early_stack")
     main = replace(main, "    Board_initGeneral();", "    Board_initGeneral();\n    p7_bootdiag_begin();", "bd_board")
     guard = '''    p7_bootdiag_stage(P7BD_BEFORE_NV, 0, 0);
     p7_bootdiag_arm_stack();
