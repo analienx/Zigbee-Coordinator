@@ -19,7 +19,13 @@ on:
       - 'tests/p7-crashdiag-host/**'
       - 'firmware/slzb-06p7/ti832/hardening/**'
       - 'tests/p7-runtime-host/**'
+      - 'tests/p7u-bootdiag-host/**'
   workflow_dispatch:
+    inputs:
+      bootdiag:
+        description: 'Build temporary R2 startup UART/4KiB stack diagnostics after normal R2 acceptance'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -29,7 +35,8 @@ jobs:
   native-base-vs-diag:
     strategy:
       fail-fast: false
-      matrix: {profile: [p7u-f07-stock, cap192-f07, p7u-cap192-f07]}
+      matrix:
+        profile: ${{ inputs.bootdiag && fromJSON('["p7u-cap192-f07"]') || fromJSON('["p7u-f07-stock","cap192-f07","p7u-cap192-f07"]') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 150
     steps:
@@ -90,6 +97,7 @@ jobs:
           python3 tests/p7-g7-host/test_alignment.py
           python3 tests/p7u-ccfg-host/test_ccfg_overlay.py
           python3 tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
+          python3 tests/p7u-bootdiag-host/test_bootdiag.py --sdk ../sdk --examples ../examples
           python3 tests/p7-f07-host/test_f07.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_restore.py --sdk ../sdk
           python3 tests/p7-f07-host/test_f07_counter_escrow.py --sdk ../sdk
@@ -418,6 +426,43 @@ jobs:
             rm -rf "$RC_TMP"
             echo 'RC1_SOURCE_AND_STOCK_ROLLBACK_LINKED_TO_NATIVE_BUILD_NOT_FLASHABLE'
           fi
+      - name: Build opt-in temporary R2 startup diagnostics and original stack call graph
+        if: inputs.bootdiag && matrix.profile == 'p7u-cap192-f07'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle-bootdiag ccs-workspace-bootdiag
+          # The normal R2 must reproduce the exact installed candidate first.
+          echo '16837972afeb3a502e03505e2998c5d2b2b8a1ce61ce91450f5999e175e908de  bundle-compare/P7U-APP-ONLY-SOURCE-NOT-FLASHABLE.hex' | sha256sum --check
+          "$(dirname "$TIARMCLANG")/tiarmofd" --call_graph bundle-diag/DIAG-NOT-FLASHABLE.out > bundle-bootdiag/ORIGINAL-R2-STACK-CALL-GRAPH.xml
+          python3 repo/firmware/slzb-06p7u/ti832/bootdiag/overlay.py --sdk sdk --examples examples --out bundle-bootdiag
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-bootdiag" -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$GITHUB_WORKSPACE/sdk;$HOME/ti/sysconfig_1.21.1" 2>&1 | tee build-evidence/ccs-bootdiag-register.log
+          SPEC="$GITHUB_WORKSPACE/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec"
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-bootdiag" -application com.ti.ccstudio.apps.projectCreate -ccs.projectSpec "$SPEC" -ccs.overwrite 2>&1 | tee build-evidence/ccs-bootdiag-import.log
+          xvfb-run -a "$CCS_ECLIPSE" -noSplash -data "$GITHUB_WORKSPACE/ccs-workspace-bootdiag" -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang -ccs.configuration default 2>&1 | tee build-evidence/ccs-bootdiag-build.log
+          if grep -E 'error:|^ERROR:' build-evidence/ccs-bootdiag-build.log; then exit 1; fi
+          OUT=$(find ccs-workspace-bootdiag -type f -name '*.out' -print -quit)
+          MAP=$(find ccs-workspace-bootdiag -type f -name '*.map' -print -quit)
+          test -s "$OUT" && test -s "$MAP"
+          cp "$OUT" bundle-bootdiag/DIAG-NOT-FLASHABLE.out
+          cp "$MAP" bundle-bootdiag/DIAG-NOT-FLASHABLE.map
+          "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-bootdiag/DIAG-symbols.txt
+          "$(dirname "$TIARMCLANG")/tiarmobjdump" -d "$OUT" > bundle-bootdiag/DIAG-disassembly.txt
+          "$(dirname "$TIARMCLANG")/tiarmofd" --call_graph "$OUT" > bundle-bootdiag/BOOTDIAG-STACK-CALL-GRAPH.xml
+          python3 repo/firmware/slzb-06p7/ti832/g6/elf_load_hex.py --elf "$OUT" --hex bundle-bootdiag/DIAG-NOT-FLASHABLE.hex
+          cp "$SPEC" bundle-bootdiag/BOOTDIAG-build.projectspec
+          python3 repo/firmware/slzb-06p7/ti832/g4/verify_capacity.py --elf "$OUT" --projectspec "$SPEC" --out bundle-bootdiag/CAPACITY-LINKED-AUDIT.json
+          python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-bootdiag --profile p7u-cap192 --out bundle-bootdiag/G6-BINARY-EVIDENCE.json
+          python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-bootdiag --out bundle-bootdiag/G7-LINKED-EVIDENCE.json
+          python3 repo/firmware/slzb-06p7/ti832/f07/verify_composed_native.py --candidate bundle-bootdiag --source sdk/source/ti/zstack/stack/zdo/zd_app.c --profile p7u-cap192-f07 --out bundle-bootdiag/F07-INTEGRATION-EVIDENCE.json
+          python3 repo/firmware/slzb-06p7/ti832/hardening/verify_native.py --candidate bundle-bootdiag --sdk sdk --out bundle-bootdiag/RUNTIME-SECURITY-LINKED-EVIDENCE.json
+          python3 repo/firmware/slzb-06p7u/ti832/bootdiag/verify_native.py --baseline bundle-diag --candidate bundle-bootdiag --sdk sdk --out bundle-bootdiag/BOOTDIAG-LINKED.json
+          git -C repo rev-parse HEAD > bundle-bootdiag/candidate-sha.txt
+          printf '%s\n' 'TEMPORARY_STARTUP_DIAGNOSTICS' 'NOT_A_RELEASE_CANDIDATE' 'NO_DEVICE_OPERATION' > bundle-bootdiag/NOT_FLASHABLE.txt
+          sha256sum bundle-bootdiag/* > bundle-compare/BOOTDIAG-SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: inputs.bootdiag && matrix.profile == 'p7u-cap192-f07'
+        with: {name: 'p7u-R2-TEMPORARY-BOOTDIAG', path: bundle-bootdiag/, retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: {name: 'p7u-g7-f07-${{ matrix.profile }}-BASE-NOT-FLASHABLE', path: bundle-base/, retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
