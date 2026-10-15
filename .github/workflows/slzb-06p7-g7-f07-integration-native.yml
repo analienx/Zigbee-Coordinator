@@ -17,6 +17,7 @@ on:
       - 'tests/p7-g6-host/**'
       - 'firmware/slzb-06p7/ti832/g5/**'
       - 'tests/p7-crashdiag-host/**'
+      - 'tests/p7-diagnostics-host/**'
       - 'firmware/slzb-06p7/ti832/hardening/**'
       - 'tests/p7-runtime-host/**'
   workflow_dispatch:
@@ -88,6 +89,8 @@ jobs:
           python3 tests/p7-g4-host/test_linked_capacity.py
           python3 tests/p7-g6-host/test_elf_load_hex.py
           python3 tests/p7-g7-host/test_alignment.py
+          python3 tests/p7-diagnostics-host/test_r2_diag_endpoint.py --sdk ../sdk --herdsman ../herdsman
+          python3 firmware/slzb-06p7/ti832/g7/r2_diag_gate.py --selftest
           python3 tests/p7u-ccfg-host/test_ccfg_overlay.py
           python3 tests/p7u-rom-bsl-gate/test_rom_bsl_gate.py
           python3 tests/p7-f07-host/test_f07.py --sdk ../sdk
@@ -379,6 +382,11 @@ jobs:
               --out bundle-compare/P7U-SECTOR-ONLY-PLAN-NO-EXECUTION.json
           fi
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-diag --out bundle-compare/G7-LINKED-EVIDENCE.json
+          if [ "$G6_PROFILE" = "p7u-cap192-f07" ]; then
+            python3 repo/firmware/slzb-06p7/ti832/g7/r2_diag_gate.py \
+              --disassembly bundle-diag/DIAG-disassembly.txt \
+              --symbols bundle-diag/DIAG-symbols.txt
+          fi
           python3 repo/firmware/slzb-06p7/ti832/f07/verify_composed_native.py \
             --candidate bundle-diag \
             --source sdk/source/ti/zstack/stack/zdo/zd_app.c \
