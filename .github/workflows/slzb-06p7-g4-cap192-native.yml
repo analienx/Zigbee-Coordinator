@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g4-cap192-native.yml'
+      - 'tests/p7-g4-host/**'
       - 'firmware/slzb-06p7/ti832/g5/**'
       - 'firmware/slzb-06p7/ti832/g4/**'
       - 'firmware/slzb-06p7/ti832/g3/nv5_layout.py'
@@ -67,6 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           cd repo
+          python3 tests/p7-g4-host/test_linked_capacity.py
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
           python3 firmware/slzb-06p7/ti832/g5/diag_overlay.py --selftest
           python3 firmware/slzb-06p7/ti832/g5/diag_build_compare.py --selftest
@@ -169,7 +171,7 @@ jobs:
           import shutil
           from pathlib import Path
           shutil.copy2("cap-staged/nv5/sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd", "sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd")
-          shutil.copy2("cap-staged/nv5/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec")
+          shutil.copy2("cap-staged/cap/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec")
           shutil.copy2("cap-staged/cap/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
           print("NV5_CAP192_STAGED_COPIED")
           PY
@@ -194,6 +196,8 @@ jobs:
           "$(dirname "$TIARMCLANG")/tiarmnm" "$OUT" > bundle-cap192/CAP192-symbols.txt || true
           HEXF=$(find ccs-workspace-cap -type f -name '*.hex' -print -quit); test -s "$HEXF"; cp "$HEXF" bundle-cap192/CAP192-NOT-FLASHABLE.hex
           python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py --generated "$GENH" | tee bundle-cap192/CAPACITY-EFFECTIVE-AUDIT.json
+          cp examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec bundle-cap192/CAP192-build.projectspec
+          python3 repo/firmware/slzb-06p7/ti832/g4/verify_capacity.py --elf bundle-cap192/CAP192-NOT-FLASHABLE.out --projectspec bundle-cap192/CAP192-build.projectspec --out bundle-cap192/CAPACITY-LINKED-AUDIT.json
           python3 -c "import re; m=open('bundle-cap192/CAP192-NOT-FLASHABLE.map').read(); assert 'FLASH_NV' in m; print('CAP192_MAP_FLASH_NV_PRESENT')"
           if grep -E 'p7_diag_record' bundle-cap192/CAP192-symbols.txt; then echo "::error::diag leaked into CAP192"; exit 1; fi
           printf '%s\n' 'CAP192_NOT_FLASHABLE' 'RUNTIME_NOT_QUALIFIED' > bundle-cap192/NOT_FLASHABLE.txt

@@ -1,5 +1,12 @@
 # Isolated SLZB-06P7U restricted ROM BSL first flash + stock rollback
 
+**Only-one-unit correction (15 Oct 2026):** For issue #80 there is no spare.
+Follow [R2_FIRST_SINGLE_UNIT.md](R2_FIRST_SINGLE_UNIT.md) before this tool procedure.
+R2 may be the first custom image, but requires proven blank NV5, private original
+state backups and a separately reviewed NV preparation/recovery operation if NV
+is nonblank. The historical `spare` filenames/flags acknowledge isolation; they
+do not establish that replacement hardware exists. No physical action is authorized.
+
 **Status:** Implementation complete in source with simulated ROM tests; actual physical P7U BSL/flash/rollback is NOT yet qualified. This code must **never** target the active SMLIGHT MR4U/P10, and does not touch ESP32-S3/SLZB-OS firmware, Home Assistant or Zigbee2MQTT. P7U flash is **not already authorized**.
 
 ## Why NOT `smlight-cc-flasher -w` or `-ewv`
@@ -37,7 +44,7 @@ Use `p7u-f07-stock` for the R1 NV2 build. All four files must share the profile.
 
 ## Physical BSL inspection (requires isolated target, not P10)
 
-The radio target must be a **separate SLZB-06P7U with an unused/disposable network**. The installed manufacturer's ESP SLZB-OS remains untouched. The fitted PCB and real P7 radio were not connected to Zephyrus when this was authored. Source defines ESP flash/BSL GPIO16 active-low, reset GPIO21 active-low, USB/host bridge; TI's ROM UART uses TI DIO12/DIO13, not ESP GPIO17/18. Verify actual wired bootloader access on this board.
+The radio target must be an **explicitly identified SLZB-06P7U isolated from its operational network**. The installed manufacturer's ESP SLZB-OS remains untouched. The fitted PCB and real P7 radio were not connected to Zephyrus when this was authored. Source defines ESP flash/BSL GPIO16 active-low, reset GPIO21 active-low, USB/host bridge; TI's ROM UART uses TI DIO12/DIO13, not ESP GPIO17/18. Verify actual wired bootloader access on this board.
 
 The restricted `p7u_rom_lowlevel.py` implements ONLY a small allowlist of TI ROM UART commands with framing matched to SMLIGHT source commit `9a1d33571c1cdaedc9dfcdcf2df5b5a5fece0b1c` (`command.py` SHA-256 `9fb42418ffa2301be52bfa2fe1208fb465138c2cc4cf432a767df2f6860ee25a`). This **does not import** the high-level SMLIGHT flasher, its unsafe implicit BANK_ERASE, or its non-installable Windows `gpiod>=2.4.0` dependency. Protocol tests check actual ACK/NACK, checksums, command bytes, big-endian addresses and CRC responses against the pinned implementation. Runtime dependencies are only `pyserial-asyncio==0.6` and `pysmlight==0.5.3`, in `requirements-p7u-spare-serial.txt`.
 

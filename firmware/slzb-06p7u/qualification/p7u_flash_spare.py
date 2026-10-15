@@ -19,6 +19,33 @@ from p7u_rom_lowlevel import APP_SECTOR_ADDRESSES
 from p7u_rom_transport import LiveSmlightSession, normalized_mac
 
 
+NV5_BYTES = strict.gate.CCFG_SECTOR - strict.gate.NV5_BASE
+BLANK_NV5 = {
+    "address": f"0x{strict.gate.NV5_BASE:05X}",
+    "length": NV5_BYTES,
+    "sha256": strict.sha(b"\xff" * NV5_BYTES),
+    "all_ff": True,
+}
+
+
+def needs_blank_nv5(args, bundle: strict.Bundle) -> bool:
+    # This CLI qualifies an initial R2 installation, not an existing NV5 network
+    # update. App-only rollback and R1 must remain possible with nonblank NV.
+    return args.target_image == "candidate" and bundle.profile == "p7u-cap192-f07"
+
+
+async def observe_nv5(rom: strict.Rom) -> dict:
+    """Read all five pages; publish only their digest and blank status."""
+    digest = hashlib.sha256()
+    blank = True
+    for addr in range(strict.gate.NV5_BASE, strict.gate.CCFG_SECTOR, strict.gate.SECTOR):
+        page = await strict.read_exact(rom, addr, strict.gate.SECTOR)
+        digest.update(page)
+        blank = blank and page == b"\xff" * strict.gate.SECTOR
+    return {"address": f"0x{strict.gate.NV5_BASE:05X}", "length": NV5_BYTES,
+            "sha256": digest.hexdigest(), "all_ff": blank}
+
+
 def json_write(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True,exist_ok=True)
     # Preserve prior receipts and recovery artifacts, including symlink/hardlink aliases.
@@ -98,6 +125,9 @@ async def run(args):
         strict.check(approval.get("rollback_app_sha256")==rollback.hex_sha256
                      and approval.get("rollback_manufacturer_sha256")==stock.VENDOR_SHA,
                      "STOCK_ROLLBACK_NOT_BOUND_TO_APPROVAL")
+        if needs_blank_nv5(args, bundle):
+            strict.check(approval.get("initial_nv5") == BLANK_NV5,
+                         "R2_INITIAL_NV5_NOT_PROVEN_BLANK")
         # Authorization digest of preflight includes rollback fields; validated
         # independently in write_checked(), never inferred from CLI flags alone.
         if args.resume:
@@ -116,10 +146,17 @@ async def run(args):
             result["stock_rollback_matching_sector_count"] = sum(
                 current.get(addr)==crc for addr,crc in rollback_expected.items())
             result["stock_rollback_sector_count"]=len(rollback_expected)
+            if needs_blank_nv5(args, bundle):
+                result["initial_nv5"] = await observe_nv5(rom)
             previous=result.pop("approval_digest")
             strict.check(bool(previous),"MISSING_PREFLIGHT_TOKEN")
             result["approval_digest"]=strict.sha(strict.canonical(result))
             return result
+        if needs_blank_nv5(args, bundle):
+            strict.check(await strict.observe(rom) == approval["identity"],
+                         "TARGET_IDENTITY_OR_CCFG_CHANGED")
+            strict.check(await observe_nv5(rom) == BLANK_NV5,
+                         "R2_INITIAL_NV5_CHANGED_OR_NOT_BLANK")
         # Live mutation is possible only here, with the exact offline image
         # and stock rollback sources pinned in the separately approved document.
         return await strict.write_checked(

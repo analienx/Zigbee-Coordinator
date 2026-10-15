@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/slzb-06p7-g7-native.yml'
+      - 'tests/p7-g4-host/**'
+      - 'firmware/slzb-06p7/ti832/g4/**'
       - 'firmware/slzb-06p7/ti832/g7/**'
       - 'tests/p7-g7-host/**'
       - 'firmware/slzb-06p7/ti832/g6/**'
@@ -77,6 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           cd repo
+          python3 tests/p7-g4-host/test_linked_capacity.py
           python3 tests/p7-g6-host/test_elf_load_hex.py
           python3 tests/p7-g7-host/test_alignment.py
           python3 -m py_compile firmware/slzb-06p7/ti832/g5/diag_overlay.py firmware/slzb-06p7/ti832/g5/diag_build_compare.py firmware/slzb-06p7/ti832/g5/p7_diag_decode.py firmware/slzb-06p7/ti832/g5/crashdiag_overlay.py
@@ -177,7 +180,7 @@ jobs:
           import shutil
           from pathlib import Path
           shutil.copy2("cap-staged/nv5/sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd", "sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd")
-          shutil.copy2("cap-staged/nv5/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec")
+          shutil.copy2("cap-staged/cap/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec")
           shutil.copy2("cap-staged/cap/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg", "examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg")
           print("NV5_CAP192_STAGED_COPIED")
           PY
@@ -270,6 +273,8 @@ jobs:
             test -s "$GENH"
             cp "$GENH" bundle-diag/generated-ti_zstack_config.h
             python3 repo/firmware/slzb-06p7/ti832/g4/cap192_capacity.py --generated "$GENH" | tee bundle-compare/CAPACITY-EFFECTIVE-AUDIT.json
+            cp examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec bundle-diag/CAP192-build.projectspec
+            python3 repo/firmware/slzb-06p7/ti832/g4/verify_capacity.py --elf bundle-diag/DIAG-NOT-FLASHABLE.out --projectspec bundle-diag/CAP192-build.projectspec --out bundle-compare/CAPACITY-LINKED-AUDIT.json
           fi
           python3 repo/firmware/slzb-06p7/ti832/g6/verify_native.py --base bundle-base --candidate bundle-diag --profile "$G6_PROFILE" --out bundle-compare/G6-BINARY-EVIDENCE.json
           python3 repo/firmware/slzb-06p7/ti832/g7/verify_native.py --candidate bundle-diag --out bundle-compare/G7-LINKED-EVIDENCE.json
