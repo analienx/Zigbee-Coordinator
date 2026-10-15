@@ -9,6 +9,7 @@ on:
       - 'tests/p7u-backup-gate/**'
       - 'tests/p7-diagnostics-host/test_p7u_p10_migration_authority.py'
       - 'tests/p7-diagnostics-host/test_p7u_original_radio_escrow.py'
+      - 'tests/p7-diagnostics-host/test_p7u_nv5_preservation_plan.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,4 +30,6 @@ jobs:
           python3 tests/p7-diagnostics-host/test_p7u_p10_migration_authority.py
           python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_original_radio_escrow.py
           python3 tests/p7-diagnostics-host/test_p7u_original_radio_escrow.py
+          python3 -m py_compile firmware/slzb-06p7u/qualification/p7u_nv5_preservation_plan.py
+          python3 tests/p7-diagnostics-host/test_p7u_nv5_preservation_plan.py
           echo "BACKUP_INVENTORY_AND_P10_COUNTER_PLAN_PASSED_BUT_NEVER_FLASH_AUTHORIZED"

@@ -100,6 +100,15 @@ coordinator network, even though its current USB radio is not plugged into HA.
    `0xA4000/0xA6000/0xA8000/0xAA000/0xAC000` while keeping the CCFG
    sector `0xAE000` strictly protected. The existing writer must continue
    to refuse nonblank initial NV5; no automatic erase or bank erase.
+   New `p7u_nv5_preservation_plan.py` validates the **actual private 704-KiB
+   same-device image and readback receipt** (whole-flash SHA, every sector
+   hash, factory silicon/CCFG readback, all five sectors individually),
+   then emits a no-secrets, per-sector preparation and original-NV2 rollback
+   evidence document to a private location. Synthetic negative tests cover
+   tampered image/receipt/sector/CCFG/identity and nonblank-to-blank
+   misclassification. It contains **no code path for sector erase**.
+   Actual nonblank NV5 remains a release blocker until target-specific,
+   reviewed and approved preparation plus rollback are physically proven.
 4. Resolve the **3 missing DB security records** (especially the router),
    verify latest actual P10/source on-air security counters if available, and
    prepare sealed high-water-adjusted private restoration material only
