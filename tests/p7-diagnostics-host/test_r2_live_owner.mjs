@@ -37,7 +37,7 @@ function statusSnap(status){
     const e=Buffer.alloc(16);e.write('P7G6');e[4]=1;e[5]=status;e[6]=1;e.writeUInt32LE(1000,8);
     return wrap(e);
 }
-function mocks(snapshot) {
+function mocks(snapshot, base='zigbee2mqtt') {
     const published=[];
     const listeners=[];
     class ZStackAdapter {
@@ -46,10 +46,10 @@ function mocks(snapshot) {
     }
     const adapter=new ZStackAdapter();
     const zigbee={zhController:{adapter,getDevicesByType:(t)=>t==='Coordinator' ? [{ieeeAddr:'0x8877665544332211'}] : []}};
-    const mqtt={async publish(t,s){published.push([t,JSON.parse(s)]);}};
+    const mqtt={async publish(t,s){published.push([`${base}/${t}`,JSON.parse(s)]);}};
     const bus={onMQTTMessage(_this,fn){listeners.push(fn);},removeListeners(){listeners.length=0;}};
     const logger={info(){},error(){}};
-    const ext=new Extension(zigbee,mqtt,null,null,bus,null,null,null,null,logger);
+    const ext=new Extension(zigbee,mqtt,null,null,bus,null,null,null,{get:()=>({mqtt:{base_topic:base}})},logger);
     return {ext,published,listeners,adapter};
 }
 test('decode valid v1 with two CRCs and bounded events',()=>{
@@ -83,15 +83,15 @@ test('sole-owner on-demand request, rate limit and no serial API',async()=>{
     const m=mocks(validSnapshot);
     await m.ext.start();
     assert.equal(m.listeners.length,1);
-    await m.ext.onMessage({topic:REQUEST_TOPIC,message:JSON.stringify({action:'snapshot'})});
+    await m.ext.onMessage({topic:`zigbee2mqtt/${REQUEST_TOPIC}`,message:JSON.stringify({action:'snapshot'})});
     assert.equal(m.adapter.called,1);
     assert.equal(m.published.length,1);
-    assert.equal(m.published[0][0],RESPONSE_TOPIC);
+    assert.equal(m.published[0][0],`zigbee2mqtt/${RESPONSE_TOPIC}`);
     assert.equal(m.published[0][1].status,'OK');
     assert.equal(m.published[0][1].fromExistingZnpOwner,true);
-    await m.ext.onMessage({topic:REQUEST_TOPIC,message:JSON.stringify({action:'snapshot'})});
+    await m.ext.onMessage({topic:`zigbee2mqtt/${REQUEST_TOPIC}`,message:JSON.stringify({action:'snapshot'})});
     assert.equal(m.adapter.called,1);
-    await m.ext.onMessage({topic:REQUEST_TOPIC,message:'{"action":"reset"}'});
+    await m.ext.onMessage({topic:`zigbee2mqtt/${REQUEST_TOPIC}`,message:'{"action":"reset"}'});
     assert.equal(m.adapter.called,1);
     await m.ext.stop();
     assert.equal(m.listeners.length,0);
@@ -109,7 +109,19 @@ test('invalid frames fail closed without host shutdown',async()=>{
     process.env.P7U_DIAG_COORDINATOR_IEEE='8877665544332211';
     const m=mocks(()=>Buffer.from('P7G6'));
     await m.ext.start();
-    await m.ext.onMessage({topic:REQUEST_TOPIC,message:'{"action":"snapshot"}'});
+    await m.ext.onMessage({topic:`zigbee2mqtt/${REQUEST_TOPIC}`,message:'{"action":"snapshot"}'});
     assert.equal(m.published[0][1].status,'ERROR');
     assert.equal(m.published[0][1].flashAuthorized,false);
+});
+
+test('custom MQTT base topic uses full incoming topic but publishes relative response',async()=> {
+    process.env.P7U_DIAG_BRIDGE_ENABLE='I_ACCEPT_PINNED_P7U_OWNER';
+    process.env.P7U_DIAG_COORDINATOR_IEEE='8877665544332211';
+    const m=mocks(validSnapshot,'test/staging');
+    await m.ext.start();
+    await m.ext.onMessage({topic:`zigbee2mqtt/${REQUEST_TOPIC}`,message:'{"action":"snapshot"}'});
+    assert.equal(m.adapter.called,0);
+    await m.ext.onMessage({topic:`test/staging/${REQUEST_TOPIC}`,message:'{"action":"snapshot"}'});
+    assert.equal(m.adapter.called,1);
+    assert.equal(m.published[0][0],`test/staging/${RESPONSE_TOPIC}`);
 });
