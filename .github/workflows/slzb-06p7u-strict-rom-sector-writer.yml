@@ -7,6 +7,8 @@ on:
       - 'firmware/slzb-06p7u/qualification/p7u_rom_lowlevel.py'
       - 'firmware/slzb-06p7u/qualification/requirements-p7u-spare-serial.txt'
       - 'firmware/slzb-06p7u/qualification/p7u_flash_spare.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_tool.py'
+      - 'firmware/slzb-06p7u/qualification/P7U_TOOL.md'
       - 'firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py'
       - 'firmware/slzb-06p7u/qualification/p7u_nv_recovery.py'
       - 'firmware/slzb-06p7u/qualification/p7u_nv_rom_transport.py'
@@ -62,6 +64,7 @@ jobs:
           python3 tests/p7u-rom-bsl-gate/test_spare_management_gate.py
           python3 tests/p7u-rom-bsl-gate/test_flash_cli_guards.py
           python3 tests/p7u-rom-bsl-gate/test_application_contract.py
+          python3 tests/p7u-rom-bsl-gate/test_operator_tool.py
           echo "P7U_FAKE_ROM_ONLY_NO_FIRMWARE_WRITE"
   official-vendor-rollback-offline:
     runs-on: ubuntu-22.04
