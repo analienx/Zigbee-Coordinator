@@ -2,6 +2,13 @@
 
 **Target only:** SMLIGHT SLZB-06P7U CC2652P7 radio, with a separate ESP32-S3 running SLZB-OS. Source/image preflight does not program either chip. The parent #61 stays draft. Nothing here can promise an unbrickable product without a real isolated-target end-to-end BSL recovery demonstration.
 
+**Current one-unit procedure:** [R2_FIRST_SINGLE_UNIT.md](R2_FIRST_SINGLE_UNIT.md)
+supersedes this original design sequence. There is one unused P7U and no spare.
+Use the reviewed good R2 candidate and stock rollback to prove recovery; never
+deliberately corrupt its application. The separate backup/NV operations are in
+[NV5_RECOVERY.md](NV5_RECOVERY.md). Historical implementation notes below do not
+describe the current tool inventory.
+
 ## Reprioritization requested by the user
 
 Rebuilding a Zigbee network from an **independently verified, complete, usable** `zigpy/open-coordinator-backup` plus Z2M device roster is an acceptable fallback to perfect source NV2→NV5 migration. It does not make backup restoration guaranteed (coordinator IEEE, Trust Center, keys and counter floors remain compatibility requirements). For an **isolated spare P7U test**, Zigbee network re-pair risk is not the same as losing the ability to flash the CC2652P7 radio. We prioritize **never locking ourselves out of the radio bootloader** and proving an actual rollback before shipping/deploying.
@@ -52,7 +59,7 @@ The same pinned library exposes `cmdEraseSector(addr)` separately in `smlight_cc
 3. Prove independent **re-enter ROM BSL repeatedly after normal stock ZNP boots**, via actual SLZB-OS bridge/USB or isolated Ethernet; verify TI `GET_CHIP_ID`, `PING`, read-only safe sector fingerprint/CRC if supported, then return to stock ZNP with no configuration or NV change. Some of these access checks reset the **spare** radio; coordinate with its owner. They are not permitted on active network.
 4. Verify original installed CCFG 88 bytes; if per-device identity differs from the vendor template, **do not flash** a generic CCFG without an audited machine-specific preservation strategy.
 5. Inspect the actual selected flash backend's **sector erase plan**, prohibit full-bank/mass erase unless original complete radio state is backed up and deliberately accepted as disposable. Enumerate sectors `0xA4000..0xADFFF` and `0xAE000..0xAFFFF` explicitly.
-6. On isolated unit only after separate authorization: prove re-enter-BSL and **restore the exact original stock image** after a deliberately invalid/nonfunctional *application-only* candidate while leaving bridge/ROM backdoor intact; confirm stock `SYS_PING`/`SYS_VERSION` again. If original-image rollback was not physically demonstrated, do not use the active coordinator.
+6. On the unused unit, after its backup and the concrete write plan are approved: install the reviewed good R2 application, prove BSL reentry, and **restore the exact original stock application** while leaving bridge/ROM backdoor intact; confirm stock `SYS_PING`/`SYS_VERSION` again. Verify original NV recovery separately. Never deliberately write an invalid application on the only P7U. Actual rollback remains required before household migration.
 
 ## Recovery paths, not assumptions
 
@@ -66,4 +73,6 @@ The same pinned library exposes `cmdEraseSector(addr)` separately in `smlight_cc
 
 Physical stock handshake, fitted board TI UART mapping, RF/PA + oscillator, BSL entry/reentry/return without destructive writes, actual selected SLZB-OS management-console erase policy, installed CCFG identity readback, original image rollback proof, APS/TCLK security state, cold power-cut and full-scale (>100 devices) load soak. Work that fundamentally requires hardware cannot be credibly marked COMPLETE via GitHub CI.
 
-There is deliberately **no flash command or production migration implementation** in this tranche.
+The original design tranche contained no flash command. The current restricted
+application writer and separate backed-up NV tool are documented by the linked
+one-unit procedure; neither establishes physical recovery until demonstrated.
