@@ -38,6 +38,8 @@ FCFG_PRIMARY_IEEE = FCFG_BASE + 0x2F0
 FLASH_SIZE_REG = 0x40030000 + 0x2C
 FAMILY_WAFER_ID = 0xBB77  # CC13x2x7/CC26x2x7, from pinned SMLIGHT CC26xx.async_init
 PACKET = 252  # BSL SEND_DATA payload ceiling; multiple of 4
+BOOTDIAG_PROFILE = "p7u-temporary-bootdiag24"
+BOOTDIAG_SECTOR_ADDRESSES = APP_SECTOR_ADDRESSES + (0x2E000,)
 
 
 class StrictError(ValueError):
@@ -183,6 +185,10 @@ async def preflight(rom: Rom, bundle: Bundle, endpoint: str) -> dict:
 def validate_approval(bundle: Bundle, approval: dict,
                       supplied_digest: str, endpoint: str) -> str:
     """Validate the complete offline approval before any management BSL reset."""
+    if bundle.profile == BOOTDIAG_PROFILE:
+        check(tuple(addr for addr, _ in bundle.sectors) == BOOTDIAG_SECTOR_ADDRESSES
+              and all(len(data) == gate.SECTOR for _, data in bundle.sectors),
+              "BOOTDIAG_REQUIRES_EXACT_24_APP_SECTORS")
     raw = dict(approval)
     token = raw.pop("approval_digest", None)
     check(type(token) is str and len(token) == 64 and token == sha(canonical(raw)),
@@ -248,7 +254,9 @@ async def write_checked(rom: Rom, bundle: Bundle, approval: dict,
         if old_crc == desired_crc:
             skipped += 1
             continue
-        check(addr in APP_SECTOR_ADDRESSES and addr % gate.SECTOR == 0
+        allowed = (BOOTDIAG_SECTOR_ADDRESSES if bundle.profile == BOOTDIAG_PROFILE
+                   else APP_SECTOR_ADDRESSES)
+        check(addr in allowed and addr % gate.SECTOR == 0
               and 0 <= addr < gate.NV5_BASE
               and addr + gate.SECTOR <=
               (gate.NV2_BASE if bundle.profile == "p7u-f07-stock" else gate.NV5_BASE),

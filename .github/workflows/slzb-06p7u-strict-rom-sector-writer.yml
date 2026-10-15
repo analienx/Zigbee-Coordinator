@@ -8,6 +8,7 @@ on:
       - 'firmware/slzb-06p7u/qualification/requirements-p7u-spare-serial.txt'
       - 'firmware/slzb-06p7u/qualification/p7u_flash_spare.py'
       - 'firmware/slzb-06p7u/qualification/p7u_tool.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_bootdiag.py'
       - 'firmware/slzb-06p7u/qualification/p7u_original_rollback.py'
       - 'firmware/slzb-06p7u/qualification/P7U_TOOL.md'
       - 'firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py'
@@ -66,6 +67,7 @@ jobs:
           python3 tests/p7u-rom-bsl-gate/test_flash_cli_guards.py
           python3 tests/p7u-rom-bsl-gate/test_application_contract.py
           python3 tests/p7u-rom-bsl-gate/test_operator_tool.py
+          python3 tests/p7u-rom-bsl-gate/test_bootdiag_contract.py
           echo "P7U_FAKE_ROM_ONLY_NO_FIRMWARE_WRITE"
   official-vendor-rollback-offline:
     runs-on: ubuntu-22.04
@@ -95,6 +97,8 @@ jobs:
             -o /tmp/p7u-stock/original-20240316.bin
           echo '3d0addd3d9c5920b9a23083f648cd506802d664706da6c0f2728f78cc94b99f9  /tmp/p7u-stock/original-20240316.bin' | sha256sum --check
           python3 tests/p7u-rom-bsl-gate/test_original_rollback.py --vendor /tmp/p7u-stock/original-20240316.bin --paired-vendor /tmp/p7u-stock/vendor.bin
+          python3 tests/p7u-rom-bsl-gate/test_bootdiag_contract.py --vendor /tmp/p7u-stock/original-20240316.bin
+          python3 tests/p7u-rom-bsl-gate/test_bootdiag_contract.py --vendor /tmp/p7u-stock/vendor.bin
           python3 - <<'PY'
           import json
           from pathlib import Path

@@ -26,7 +26,7 @@ from p7u_rom_lowlevel import RomWireError
 
 COMMANDS = ("check", "identify", "enter-bsl", "restart-radio", "probe", "backup",
             "verify-backup", "prepare-nv5", "restore-nv5", "flash", "rollback", "restore-app",
-            "inspect-installed")
+            "inspect-installed", "bootdiag")
 
 
 def load_target(path: Path) -> dict:
@@ -279,7 +279,7 @@ async def inspect_installed(target: dict, args) -> dict:
 
 
 async def run(args) -> dict:
-    core.check(not args.write or args.command in ("flash", "rollback", "prepare-nv5", "restore-nv5", "restore-app"),
+    core.check(not args.write or args.command in ("flash", "rollback", "prepare-nv5", "restore-nv5", "restore-app", "bootdiag"),
                "P7U_WRITE_NOT_VALID_FOR_COMMAND")
     core.check(not args.resume or args.command == "backup", "P7U_RESUME_BACKUP_ONLY")
     if args.write:
@@ -308,6 +308,36 @@ async def run(args) -> dict:
         return result
     if args.command == "inspect-installed":
         return await inspect_installed(target, args)
+    if args.command == "bootdiag":
+        import p7u_bootdiag as bd
+        core.check(args.unused_p7u and args.already_in_rom_bsl, "BOOTDIAG_UNUSED_USB_ALREADY_IN_BSL_REQUIRED")
+        core.check(args.bootdiag_native is not None and args.bootdiag_commit,
+                   "BOOTDIAG_NATIVE_ARTIFACT_AND_COMMIT_REQUIRED")
+        for key in ("factory_id_digest", "ccfg_sha256"):
+            pinned = target.get("radio_" + key)
+            core.check(type(pinned) is str and re.fullmatch(r"[0-9a-f]{64}", pinned) is not None,
+                       "INSPECT_ORIGINAL_RADIO_IDENTITY_PIN_REQUIRED")
+        baseline, _fallback = app.load_request(app_request(target, args))
+        candidate, stock = bd.paired_images(args.bootdiag_native, original_vendor(target).read_bytes(),
+                                             baseline, args.bootdiag_commit)
+        selected = stock if args.bootdiag_stock else candidate
+        plan = core.load_json(args.plan) if args.write else None
+        if args.write:
+            core.validate_approval(selected, plan, args.approve, target["device"])
+        bd.Session(target["device"])  # Reject socket/implicit reset before any contact.
+        identify(target)
+        async with bd.Session(target["device"]) as rom:
+            if args.write:
+                result = await bd.execute(rom, selected, baseline, target["device"], target,
+                                          plan, args.approve, diagnostic=not args.bootdiag_stock)
+            else:
+                result = await bd.inspect(rom, selected, baseline, target["device"], target,
+                                          diagnostic=not args.bootdiag_stock)
+        app.json_write(args.out, result)
+        return {"status": result.get("status", "BOOTDIAG24_READ_ONLY_PLAN_CREATED"),
+                "evidence_file": str(args.out), "application_sectors": 24,
+                "approval_digest": result.get("approval_digest"),
+                "flash_performed": bool(args.write), "temporary_diagnostic_profile": True}
     if args.command in ("flash", "rollback"):
         if not target["device"].startswith("socket://"):
             core.check(args.already_in_rom_bsl, "P7U_USB_MUST_ALREADY_BE_IN_ROM_BSL")
@@ -348,6 +378,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--approve", help="Exact digest from the separate inspected plan")
     p.add_argument("--original-network-quiescent", action="store_true")
     p.add_argument("--resume", action="store_true", help="Resume an interrupted read-only backup only")
+    p.add_argument("--bootdiag-native", type=Path, help="Exact temporary bootdiag native artifact directory")
+    p.add_argument("--bootdiag-commit", help="Exact commit recorded by that native CI build")
+    p.add_argument("--bootdiag-stock", action="store_true", help="Inspect/execute paired original stock cleanup through 0x30000")
     p.epilog = ("inspect-installed is read-only: require --unused-p7u and --already-in-rom-bsl; "
                 "it never commands a reset, erase, program, NV restore or CCFG write.")
     return p

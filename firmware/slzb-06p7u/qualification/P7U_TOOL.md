@@ -124,3 +124,33 @@ Only app sectors `0x00000..0x2C000` or separately five NV sectors
 Commands leave the radio in ROM; `restart-radio` is explicit. An HTTP `ok`
 acknowledges a command; it does not prove ROM access or ZNP startup. There is no
 automatic retry, interrupted-write resume or implied migration qualification.
+
+## Temporary startup build
+
+The separate `bootdiag` command accepts the exact native startup-diagnostic
+artifact and commit. It keeps the existing R2 packet as the baseline and adds
+one explicitly bounded application sector, ending at `0x30000`, with paired
+original-stock cleanup through the same boundary. Default R2/RC1 and original
+ROM adapters retain their 23-sector limit. The diagnostic loader rederives
+ELF/HEX identity, vendor CCFG/NV exclusion, baseline R2 identity, and both stock
+tail cleanup sectors. It accepts no arbitrary full image or configurable limit.
+
+First run the installed inspection above. The diagnostic plan independently
+requires all 23 installed R2 CRCs/vectors to match and the additional sector to
+be blank; a mismatch is preserved for investigation. Five NV5 CRCs are bound
+into the inspected plan and must remain unchanged before/after application
+programming. No blank-NV requirement is imposed on this existing R2 update;
+there is no NV preparation or erase operation in this command.
+
+```text
+python p7u_tool.py bootdiag --target target.json --unused-p7u --already-in-rom-bsl --bootdiag-native EXACT_NATIVE_DIRECTORY --bootdiag-commit EXACT_CI_COMMIT --out bootdiag-plan.json
+```
+
+Execution uses the existing separate plan/digest/recovery flags and a fresh
+output, as for application writes. It leaves the radio in ROM; capture must
+start before the explicit management restart. `--bootdiag-stock` selects the
+paired original-stock app and 24-sector cleanup for optional recovery, with a
+separately inspected plan. Use that cleanup before any original-NV restoration
+after this temporary 24-sector build. See the [temporary diagnostic protocol
+and interpretation](../ti832/bootdiag/README.md). The diagnostic image is never
+a release candidate; remove instrumentation from the eventual corrected R2.
