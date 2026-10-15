@@ -244,6 +244,13 @@ async def inspect_installed(target: dict, args) -> dict:
         # Validate the actual TI silicon, full CCFG and factory IEEE in ROM;
         # the SMLIGHT management MAC alone is not the radio identity.
         rom_identity = await core.observe(rom)
+        # Management MAC does not independently bind the USB radio. Reuse
+        # pinned identities from the independently verified original capture.
+        for key in ("factory_id_digest", "ccfg_sha256"):
+            pinned = target.get("radio_" + key)
+            core.check(type(pinned) is str and re.fullmatch(r"[0-9a-f]{64}", pinned) is not None,
+                       "INSPECT_ORIGINAL_RADIO_IDENTITY_PIN_REQUIRED")
+            core.check(rom_identity[key] == pinned, "INSPECT_WRONG_RADIO_OR_CCFG_CHANGED")
         evidence = await inspect_installed_rom(
             rom, {"management": management_identity, "radio": rom_identity},
             images, target["device"])
