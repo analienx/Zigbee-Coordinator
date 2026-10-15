@@ -4,8 +4,8 @@
  * Depends on the pinned-herdsman in-process owner source patch, NOT a
  * generic zigbee-herdsman API. Do not activate on a production P10.
  */
-const REQUEST_TOPIC='zigbee2mqtt/bridge/request/p7u_diag_snapshot';
-const RESPONSE_TOPIC='zigbee2mqtt/bridge/response/p7u_diag_snapshot';
+const REQUEST_TOPIC='bridge/request/p7u_diag_snapshot'; // relative to configured MQTT base
+const RESPONSE_TOPIC='bridge/response/p7u_diag_snapshot'; // mqtt.publish prepends base
 const MIN_INTERVAL_MS=5000;
 const STATUS=['OK','LENGTH_ERROR','VERSION_ERROR','OPERATION_ERROR','BUSY','WRONG_COMMAND_TYPE'];
 
@@ -55,6 +55,8 @@ function normalizeIEEE(s) {
 
 export default class P7UDiagnosticOwnerExtension {
     constructor(zigbee,mqtt,state,publishEntityState,eventBus,enableDisableExtension,restartCallback,addExtension,settings,logger) {
+        const base=typeof settings?.get==='function' ? settings.get()?.mqtt?.base_topic : undefined;
+        this.requestTopic=typeof base==='string' && base.length>0 ? `${base}/${REQUEST_TOPIC}` : null;
         this.zigbee=zigbee;
         this.mqtt=mqtt;
         this.eventBus=eventBus;
@@ -71,7 +73,7 @@ export default class P7UDiagnosticOwnerExtension {
         const controller=this.zigbee?.zhController;
         const actual=normalizeIEEE(controller?.getDevicesByType?.('Coordinator')?.[0]?.ieeeAddr);
         const adapter=controller?.adapter;
-        if (!expected || !actual || expected!==actual ||
+        if (!this.requestTopic || !expected || !actual || expected!==actual ||
             typeof adapter?.getP7UDiagnosticSnapshot!=='function' ||
             adapter?.constructor?.name!=='ZStackAdapter') {
             this.logger.error('P7U diagnostic owner compatibility/identity gate failed; extension remains OFF');
@@ -86,7 +88,7 @@ export default class P7UDiagnosticOwnerExtension {
     }
 
     async onMessage(data) {
-        if (!this.enabled || data?.topic!==REQUEST_TOPIC) return;
+        if (!this.enabled || data?.topic!==this.requestTopic) return;
         let request;
         try {request=JSON.parse(data.message);} catch {return;}
         if (!request || Object.keys(request).sort().join(',')!=='action' ||
