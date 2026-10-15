@@ -53,7 +53,9 @@ def verify(base,cand,profile):
         if cr!=br:raise ValueError("CCFG_CHANGED")
         vendor_ccfg=None
     if any(nv_base<=a<0xae000 for a in cmem):raise ValueError("NV_IMAGE_WRITE")
-    required={"p7_g6_now","p7_g6_record","p7_g6_response","p7_g6_rx_resync", "p7_g6_reset_parser",
+    required={"p7_g6_now","p7_g6_record","p7_g6_response","p7_g6_health_snapshot",
+              "HEAPMGR_SIZE","heapmgrMemFreeTotal","heapmgrMemFreeError",
+              "p7_g6_rx_resync", "p7_g6_reset_parser",
               "p7_g6_discard_ring","p7_g6_discard_tl"}
     if not required<=syms:raise ValueError("G6_SYMBOLS_MISSING:"+str(required-syms))
     # Actual approved P7 BASE symbol artifact uses TI's namespaced API symbol.
@@ -61,6 +63,9 @@ def verify(base,cand,profile):
     clocks={"Clock_getTicks","ti_sysbios_knl_Clock_getTicks"}&syms
     if not clocks:raise ValueError("LINKED_CLOCK_API_MISSING")
     dis=(cand/"DIAG-disassembly.txt").read_text()
+    af=re.search(r'<MT_AfDataConfirm>:(.*?)(?=^\s*[0-9a-fA-F]+\s+<|\Z)',dis,re.S|re.M)
+    if not af or not re.search(r'\b(?:b(?:\.[wn])?|bl(?:\.w)?|blx)\s+[^\n]*<p7_g6_record>',af.group(1)):
+        raise ValueError("AF_CONFIRM_HEALTH_OBSERVER_NOT_LINKED")
     body=re.search(r'<p7_g6_now>:(.*?)(?=^\s*[0-9a-fA-F]+\s+<|\Z)',dis,re.S|re.M)
     if not body or not any(re.search(r'\b(?:b(?:\.[wn])?|bl(?:\.w)?|blx)\s+[^\n]*<'+
             re.escape(clock)+r'>',body.group(1)) for clock in clocks):
@@ -77,6 +82,8 @@ def verify(base,cand,profile):
         "p7u_vendor_ccfg_evidence":vendor_ccfg,
         "g6_symbols":sorted(required),"clock_symbols":sorted(clocks),
         "clock_call_from_g6_getter_verified":True,"candidate_resources":region,
+        "af_confirm_health_observer_linked":True,
+        "heap_snapshot_symbols_linked":True,
         "clock_and_uart_runtime_on_original_board":"UNPROVEN"}
 
 if __name__=="__main__":

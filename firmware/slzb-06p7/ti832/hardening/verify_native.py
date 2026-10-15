@@ -23,7 +23,8 @@ EDGES={"ZMacDataReqSec":"p7_security_persistence_ok",
        "p7_security_persistence_ok":"p7_nv_persistence_ok",
        "zgInit":"p7_security_latch_failure",
        "bdb_StartCommissioning":"p7_security_persistence_ok",
-       "bdb_setNodeIsOnANetwork":"p7_security_persistence_ok"}
+       "bdb_setNodeIsOnANetwork":"p7_security_persistence_ok",
+       "p7_nv_diag_status":"p7_diag_record"}
 
 def verify_source(sdk:Path):
     sec,zdo,mac,nv=((sdk/p).read_text() for p in (SEC,ZDO,MAC,NV))

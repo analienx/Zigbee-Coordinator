@@ -1,4 +1,4 @@
-name: SLZB-06P7 G0 frozen source inventory (offline)
+name: P7 feature acceptance matrix and frozen source lineage (offline)
 on:
   push:
     branches:
@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2 SHA pinned by repository precedent
-      - name: Validate frozen manifest and ten negative controls
+      - name: Validate 36 feature stages, evidence paths and negative controls
         run: python3 firmware/slzb-06p7/ti832/phase0/validate_inventory.py --selftest
       - name: Show non-hardware evidence boundary
         run: |

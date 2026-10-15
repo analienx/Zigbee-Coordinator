@@ -64,7 +64,7 @@ def load_backup(path: Path) -> dict:
 
 
 def check_backup(data: dict, expected_ieee: str, now: datetime,
-                 max_age_h: float) -> dict:
+                 max_age_h: float, *, require_zstack: bool = True) -> dict:
     metadata=data.get("metadata")
     require(type(metadata) is dict,"BACKUP_METADATA_MISSING")
     require(metadata.get("format")=="zigpy/open-coordinator-backup"
@@ -101,9 +101,10 @@ def check_backup(data: dict, expected_ieee: str, now: datetime,
     # Trust-Center link-key material. A generic format permits omission, but
     # this stricter same-family preflash gate intentionally does not.
     stack=data.get("stack_specific")
-    require(type(stack) is dict and type(stack.get("zstack")) is dict,
-            "ZSTACK_SECURITY_STATE_MISSING")
-    hex_key(stack["zstack"].get("tclk_seed"),"ZSTACK_TCLK_SEED")
+    if require_zstack:
+        require(type(stack) is dict and type(stack.get("zstack")) is dict,
+                "ZSTACK_SECURITY_STATE_MISSING")
+        hex_key(stack["zstack"].get("tclk_seed"),"ZSTACK_TCLK_SEED")
     devices=data.get("devices")
     require(type(devices) is list and len(devices)>0,"BACKUP_DEVICE_INVENTORY_EMPTY")
     by_ieee={}
@@ -129,6 +130,53 @@ def check_backup(data: dict, expected_ieee: str, now: datetime,
             "coordinator_ieee":coord,
             "extended_pan_id":data["extended_pan_id"].lower(),
             "network_key_sequence":network_key["sequence_number"]}
+
+
+def migration_inventory(backup: Path, database: Path, now: datetime|None=None,
+                        expected_ieee: str|None=None) -> dict:
+    """Count recovery material in a retained backup without claiming a restore.
+
+    Unlike the fresh same-family gate, this accepts an old/cross-stack source for
+    assessment. A device DB row or a shared NWK key does not prove its individual
+    Trust Center relationship. No key/address is returned, including on errors.
+    """
+    data = load_backup(backup)
+    now = now or datetime.now(timezone.utc)
+    parsed = check_backup(data, expected_ieee or normalized_ieee(data.get("coordinator_ieee")),
+                          now, 100*365*24, require_zstack=False)
+    roster = read_database(database)
+    devices = parsed["devices"]
+    key_rows = {ieee for ieee, row in devices.items() if row.get("link_key") is not None}
+    stack = data.get("stack_specific")
+    zstack = stack.get("zstack") if type(stack) is dict else None
+    seed = zstack.get("tclk_seed") if type(zstack) is dict else None
+    if seed is not None:
+        hex_key(seed, "ZSTACK_TCLK_SEED")
+    source_stack = "zstack" if type(zstack) is dict else (
+        "ember" if type(stack) is dict and any(k in stack for k in ("ezsp", "ember")) else "unknown")
+    # Coverage is inventory only: some Z-Stack keys are derived from the TC seed,
+    # while other relationships require explicit rows. Do not treat absence of a
+    # row as proof of a missing key, or presence of one as an end-to-end restore.
+    return {
+        "qualification": "MIGRATION_MATERIAL_INVENTORY_ONLY",
+        "source_stack": source_stack,
+        "backup_sha256": hashlib.sha256(backup.read_bytes()).hexdigest(),
+        "database_sha256": hashlib.sha256(database.read_bytes()).hexdigest(),
+        "backup_age_hours": round((now-parse_time(data["metadata"]["internal"]["date"])).total_seconds()/3600, 2),
+        "backup_devices": len(devices), "database_devices": len(roster),
+        "database_devices_missing_from_backup": len(roster-set(devices)),
+        "backup_devices_missing_from_database": len(set(devices)-roster),
+        "devices_with_explicit_link_key_and_counters": len(roster & key_rows),
+        "devices_without_explicit_link_key_record": len(roster-key_rows),
+        "zstack_tc_seed_present": seed is not None,
+        "nwk_counter_has_headroom": parsed["nwk_counter"] < UINT32_MAX,
+        "individual_security_relationships_verified": False,
+        "same_network_restore_qualified": False,
+        "counter_floor_after_last_transmission_known": False,
+        "full_z2m_data_bundle_verified": False,
+        "repair_policy": "Inventory missing relationships privately; prove restore per device or re-pair. Preserve source backup.",
+        "hardware_contacted": False, "flash_authorized": False,
+    }
 
 
 def read_database(path: Path) -> set[str]:
@@ -213,13 +261,16 @@ def main() -> int:
     p.add_argument("--backup",type=Path,required=True)
     p.add_argument("--database",type=Path,required=True)
     p.add_argument("--expected-ieee",required=True)
+    p.add_argument("--migration-inventory",action="store_true",
+                   help="Assess retained/cross-stack backup material only; never qualifies a restore")
     p.add_argument("--previous-backup",type=Path)
     p.add_argument("--max-age-hours",type=float,default=24)
     p.add_argument("--out",type=Path)
     a=p.parse_args()
     try:
-        result=qualify(a.backup,a.database,a.expected_ieee,
-                       a.previous_backup,a.max_age_hours)
+        result=(migration_inventory(a.backup,a.database,expected_ieee=a.expected_ieee) if a.migration_inventory else
+                qualify(a.backup,a.database,a.expected_ieee,
+                        a.previous_backup,a.max_age_hours))
         message=json.dumps(result,indent=2)+"\n"
         if a.out:
             a.out.write_text(message,encoding="utf8")

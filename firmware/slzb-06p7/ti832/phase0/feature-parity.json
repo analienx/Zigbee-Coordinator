@@ -1,8 +1,8 @@
 {
-  "schema_version": 1,
-  "inventory_status": "G0_SOURCE_FROZEN",
+  "schema_version": 2,
+  "inventory_status": "R2_RELEASE_ACCEPTANCE_TRACKED",
   "project": "slzb-06p7",
-  "scope": "PHASE0_SOURCE_ONLY",
+  "scope": "SOURCE_LINKED_HOST_AND_PHYSICAL_STAGES",
   "created": "2026-10-12",
   "baseline_main_sha": "a48fa9deda36a9fc44624fcd142d5fa1533a449a",
   "authority": {
@@ -69,7 +69,7 @@
       "sysconfig": "1.21.1.3772",
       "xdctools": "3.62.01.16",
       "host": "GitHub-hosted Ubuntu",
-      "proof": "firmware/t832/min upstream CI; P7 has not built"
+      "proof": "Pinned native CCS P7U R1/R2 builds and independent source/ELF/HEX audits; exact final candidate results remain attached to PR #82."
     }
   },
   "cap192_source_delta": {
@@ -173,7 +173,7 @@
     "heapmgr_size": "0x00"
   },
   "controls": {
-    "build_authorized": false,
+    "build_authorized": true,
     "flash_authorized": false,
     "network_actions_authorized": false,
     "hardware_qualified": false,
@@ -193,8 +193,22 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Pin all nine bytes and distinguish P7 revision; Herdsman decoder accepts exact 9-byte payload.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/check_compatibility.py",
+        "firmware/slzb-06p7/ti832/g2/verify_vanilla.py"
+      ],
+      "decision": "Retain TI ZNP version ABI; exact fitted-unit SYS_VERSION and host decoding remain acceptance, not an invented P7 product revision.",
+      "acceptance_cases": [
+        "HOST",
+        "RF"
+      ],
       "release_qualified": false
     },
     {
@@ -206,8 +220,24 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Compare *effective* compiler flags and ZNP command behavior; no inferred compatibility.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/hardening/mt_overlay.py",
+        "tests/p7-runtime-host/test_nv_host_commands.py"
+      ],
+      "decision": "Enabled ZNP/NV/AF command paths have source bounds and actual-body tests; extended host restore and multicast semantics need end-to-end proof.",
+      "acceptance_cases": [
+        "HOST",
+        "BIND",
+        "GROUP",
+        "MIGRATE"
+      ],
       "release_qualified": false
     },
     {
@@ -219,8 +249,24 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Audit generated constants, actual live NV driver fill/compaction, 192 keys; 298 is derived, not physical proof.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g4/cap192_capacity.py",
+        "firmware/slzb-06p7/ti832/g4/verify_capacity.py",
+        "tests/p7-nv5-host/nv5_stress.c"
+      ],
+      "decision": "TC 192 / children 96 / addresses 298 / bindings 4 are configured. Synthetic representative NV population is not 192 real security relationships.",
+      "acceptance_cases": [
+        "NV",
+        "LOAD",
+        "MIGRATE"
+      ],
       "release_qualified": false
     },
     {
@@ -232,8 +278,29 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Assert actual imported defines and generated headers; quantify memory and runtime occupancy.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g4/cap192_overlay.py",
+        "firmware/slzb-06p7/ti832/g4/verify_capacity.py",
+        "deploy/p7u_runtime_settings.py"
+      ],
+      "decision": "Retain routes 128/RREQ 16; fix source-route cache 192 and neighbors 64. Keep inherited 12-relay and 3-conflict limits; historical 16/8 targets are deferred until observed paths or churn justify them. Runtime concentrator and delivery require hardware evidence.",
+      "acceptance_cases": [
+        "ROUTE",
+        "CONCENTRATOR",
+        "SLEEP32",
+        "LOAD",
+        "BIND",
+        "GROUP",
+        "OTA",
+        "SLEEPREJOIN"
+      ],
       "release_qualified": false
     },
     {
@@ -245,8 +312,22 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Assert exactly four modified constants, real allocator use and no saturation regression.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "intentionally_excluded",
+        "linked": "not_applicable",
+        "host": "not_applicable",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "retained_default",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/phase0/R2_ACCEPTANCE_MATRIX.md"
+      ],
+      "decision": "Retain TI NWK buffers 8/5/5/12 for first R2. Numeric 16/8/8/24 target is deferred until measured queue pressure and heap evidence justify the extra dynamically allocated messages.",
+      "acceptance_cases": [
+        "BURST",
+        "HEAP",
+        "SLEEP32"
+      ],
       "release_qualified": false
     },
     {
@@ -258,8 +339,22 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Decode P7 HEAPMGR_CONFIG=0x80 / HEAPMGR_SIZE=0; compare linked symbol, free/largest block and stack budget.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g3/analyze_memory.py",
+        "firmware/slzb-06p7/ti832/g6/verify_native.py"
+      ],
+      "decision": "Use P7 automatic heap rather than P10 fixed 32 KiB. Linked static free region is measured; it is not current free heap or fragmentation.",
+      "acceptance_cases": [
+        "HEAP",
+        "LOAD"
+      ],
       "release_qualified": false
     },
     {
@@ -271,8 +366,25 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Verify durable NIB/status propagation before state9; examine blocking and R10 no-destructive-startup guard.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/f07/f07_nib_gate.py",
+        "firmware/slzb-06p7/ti832/f07/f07_restore_guard.py",
+        "tests/p7-f07-host/test_f07.py",
+        "tests/p7-f07-host/test_f07_restore.py"
+      ],
+      "decision": "Durable NIB-before-ready and non-destructive restore guards are implemented and host-fault-tested.",
+      "acceptance_cases": [
+        "NV",
+        "POWER",
+        "MIGRATE"
+      ],
       "release_qualified": false
     },
     {
@@ -284,8 +396,23 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Audit CC26x2 UART2 event support, owner-free lifecycle, callback order, no accepted-frame retransmit.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/g6_overlay.py",
+        "firmware/slzb-06p7/ti832/g7/g7_transport_overlay.py",
+        "tests/p7-g7-host/test_transport.py"
+      ],
+      "decision": "UART2 physical-idle event is distinguished from accepted/FIFO-loaded writes; source callbacks and ownership are tested.",
+      "acceptance_cases": [
+        "HOST",
+        "BURST"
+      ],
       "release_qualified": false
     },
     {
@@ -297,8 +424,23 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Prove RAM/stack headroom and packet-burst behavior; do not copy values without memory evidence.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "intentionally_excluded",
+        "linked": "not_applicable",
+        "host": "not_applicable",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "retained_default",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g7/README.md",
+        "firmware/slzb-06p7/ti832/phase0/R2_ACCEPTANCE_MATRIX.md"
+      ],
+      "decision": "Keep pinned UART ISR 32 / TL 270 buffers; historical 128/1080 increase is not implemented. MT framing and bounded queue/RX recovery replace assumptions that larger buffers alone fix transport.",
+      "acceptance_cases": [
+        "HOST",
+        "BURST",
+        "HEAP"
+      ],
       "release_qualified": false
     },
     {
@@ -310,8 +452,24 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Compile actual patched C bodies; zero leak/double-free across 512 injected cycles.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/g6_overlay.py",
+        "firmware/slzb-06p7/ti832/g7/g7_task_overlay.py",
+        "tests/p7-g6-host/test_g6.py",
+        "tests/p7-g7-host/test_task.py"
+      ],
+      "decision": "Actual source allocation/enqueue/rejected-submit ownership repairs are composed and fault tested.",
+      "acceptance_cases": [
+        "BURST",
+        "HEAP"
+      ],
       "release_qualified": false
     },
     {
@@ -323,8 +481,23 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Inject rejected versus accepted/ambiguous writes, bounded timer, non-spin and ownership.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g7/p7_tx_policy.c",
+        "firmware/slzb-06p7/ti832/g7/p7_g7_task.inc",
+        "tests/p7-g7-host/test_task.py"
+      ],
+      "decision": "At most three attempts in a 50 ms tick-domain budget; only proven pre-DMA rejection retries, accepted/ambiguous writes never retransmit. Missing callback latches bounded fault.",
+      "acceptance_cases": [
+        "HOST",
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -336,8 +509,22 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Preserve ordering, ensure pending AREQ is serviced after four accepted SRSPs; failure fallback bounded.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g7/p7_g7_task.inc",
+        "tests/p7-g7-host/test_task.py"
+      ],
+      "decision": "Bounded dual FIFO with 4:1 submitted-attempt fairness is implemented. Allocating SRSP can still fail; no allocation-free response is claimed.",
+      "acceptance_cases": [
+        "BURST",
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -349,8 +536,23 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Exact 102-byte versioned response, zero-length query, opcode-collision audit, no secrets/side effects.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/p7_g6.c",
+        "firmware/slzb-06p7/ti832/g6/p7_g6_decode.py",
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md"
+      ],
+      "decision": "P7 versioned request 1 snapshot and request 2 health replace exact P10 102-byte v2 ABI. F0 endpoint is enabled by G6; legacy wire ABI remains intentionally unsupported.",
+      "acceptance_cases": [
+        "HOST",
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -362,8 +564,23 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "8 counters; 0x11/0x10/0x13/0xE1 stages classified without claiming root cause.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md",
+        "tests/p7-network-host/test_runtime_settings.py"
+      ],
+      "decision": "Health adds AF confirmation success/no-route/CCA/noACK/other counters. They classify returned status, not closed-stack root cause, route-cache occupancy or physical delivery.",
+      "acceptance_cases": [
+        "ROUTE",
+        "HEALTH",
+        "BURST"
+      ],
       "release_qualified": false
     },
     {
@@ -375,8 +592,22 @@
       "disposition": "BASE_MANDATORY",
       "acceptance": "Discard invalid batch, free partial buffer once, reset SOP/length/FCS and pass next clean frame.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/g6_overlay.py",
+        "tests/p7-g6-host/test_g6.py"
+      ],
+      "decision": "Overflow recovery drops invalid buffered bytes and resets partial parser ownership; next clean MT frame can proceed.",
+      "acceptance_cases": [
+        "HOST",
+        "BURST"
+      ],
       "release_qualified": false
     },
     {
@@ -388,8 +619,23 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Build P7 8KiB-sector geometrical audit; protect last CCFG sector, reject bank erase and NV overlap.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py",
+        "tests/p7u-rom-bsl-gate/test_strict_sector_writer.py"
+      ],
+      "decision": "P7-native strict HEX/sector writer and matching stock cleanup protect CCFG/NV; erase envelope changes require joint plan/rollback revalidation.",
+      "acceptance_cases": [
+        "RECOVERY",
+        "BACKUP",
+        "NV"
+      ],
       "release_qualified": false
     },
     {
@@ -401,8 +647,23 @@
       "disposition": "TOOLING",
       "acceptance": "P7 independent real CCS build, immutable source allowlist, exact SHA, test and artifact proofs.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g3/toolchain-lock.json",
+        "firmware/slzb-06p7/ti832/hardening/verify_native.py",
+        ".github/workflows/slzb-06p7-g7-f07-integration-native.yml"
+      ],
+      "decision": "Pinned genuine native compiler, source allowlists, binary audits and original-code negative controls are required for each changed candidate.",
+      "acceptance_cases": [
+        "HOST",
+        "RF"
+      ],
       "release_qualified": false
     },
     {
@@ -414,8 +675,23 @@
       "disposition": "TOOLING",
       "acceptance": "Port actual-driver NV test methodology to P7 8KiB sectors, not R6 wrong P10 5-page layout.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "tests/p7-runtime-host/test_nv_driver.py",
+        "tests/p7-nv5-host/nv5_stress.c"
+      ],
+      "decision": "Complete pinned NVOCMP/CRC driver tested for NV2/NV5 normal/compaction/reopen and injected failures; representative population is not a live network.",
+      "acceptance_cases": [
+        "NV",
+        "POWER",
+        "LOAD"
+      ],
       "release_qualified": false
     },
     {
@@ -427,8 +703,25 @@
       "disposition": "P10_ONLY_WITH_ALTERNATIVE",
       "acceptance": "Do not reuse physical coordinates; derive P7-native capacity/sector policy and migration.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g3/nv5_layout.py",
+        "firmware/slzb-06p7/ti832/g3/nv5_verify_linked.py",
+        "firmware/slzb-06p7u/qualification/p7u_nv_recovery.py",
+        "tests/p7u-rom-bsl-gate/test_nv_recovery.py"
+      ],
+      "decision": "P7 uses 5 x 8 KiB at 0xA4000-0xAE000, never P10 coordinates. Deliberate backup-bound preparation is separate from app writer.",
+      "acceptance_cases": [
+        "BACKUP",
+        "NV",
+        "RECOVERY"
+      ],
       "release_qualified": false
     },
     {
@@ -440,8 +733,22 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Test actual P7 NVOCMP behavior and interrupted writes; patch only after exact source review.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "tests/p7-runtime-host/test_nv_driver.py",
+        "tests/p7-nv5-host/nv5_stress.c"
+      ],
+      "decision": "Host NOR fault injection and reopen are implemented; arbitrary silicon power interruption and wear are not physically tested.",
+      "acceptance_cases": [
+        "POWER",
+        "NV"
+      ],
       "release_qualified": false
     },
     {
@@ -453,8 +760,22 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Keep valid copy under torn compaction; hash/write/readback/reopen failures must fail.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/hardening/nv_overlay.py",
+        "tests/p7-runtime-host/test_nv_driver.py"
+      ],
+      "decision": "Actual driver length/CRC/readback/reopen and preservation behavior are tested; real power-cut/torn-program acceptance remains.",
+      "acceptance_cases": [
+        "POWER",
+        "NV"
+      ],
       "release_qualified": false
     },
     {
@@ -466,8 +787,23 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Preserve NV state; fail closed without silent wipe/reformat; verify allowed clean boot.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/hardening/nv_overlay.py",
+        "firmware/slzb-06p7/ti832/hardening/startup_overlay.py",
+        "tests/p7-runtime-host/test_startup_marker.py"
+      ],
+      "decision": "Unsupported/ambiguous nonblank NV startup holds rather than silently formatting; existing network marker and keys are preserved.",
+      "acceptance_cases": [
+        "NV",
+        "MIGRATE"
+      ],
       "release_qualified": false
     },
     {
@@ -479,8 +815,24 @@
       "disposition": "P7_REDESIGN",
       "acceptance": "Reject failed init; do not hide failure behind state9, reject diagnostic must be bounded/non-secret.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/hardening/p7_security.h",
+        "firmware/slzb-06p7/ti832/hardening/startup_overlay.py",
+        "tests/p7-runtime-host/test_security.py"
+      ],
+      "decision": "Checked startup/persistence results feed sticky hold before unsafe radio transmission. Bounded numeric witness exists; no automatic reset.",
+      "acceptance_cases": [
+        "NV",
+        "HEALTH",
+        "POWER"
+      ],
       "release_qualified": false
     },
     {
@@ -492,8 +844,21 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "Maintain exact DEBUG framing, 20B record groups, strict decoder; not a substitute for SYS F0.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "intentionally_excluded",
+        "linked": "not_applicable",
+        "host": "not_applicable",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/p7_g6.h",
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md"
+      ],
+      "decision": "Legacy T832D2 DEBUG framing/events 1-50 are not ported. P7 bounded query/snapshot uses its own explicitly versioned ABI without unsolicited export.",
+      "acceptance_cases": [
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -505,8 +870,22 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "Coherent first failure, explicit init/compact phase, strict event51 decoder and negative tests.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/p7_crashdiag.c",
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md"
+      ],
+      "decision": "Numeric first-failure/current-boot evidence replaces event 51; exact P10 operation/site coverage is not equivalent and unavailable vendor-library failures cannot be attributed.",
+      "acceptance_cases": [
+        "NV",
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -518,8 +897,22 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "Port 8 entry/exit/confirm sites in P7 ZStack call graph; SRAM not reset-retentive.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/diag_overlay.py",
+        "firmware/slzb-06p7/ti832/g6/g6_overlay.py"
+      ],
+      "decision": "P7 startup/NV/device-state hooks record source-visible sites; all eight P10 POD/event 52 semantics are not ported or claimed.",
+      "acceptance_cases": [
+        "HEALTH",
+        "MIGRATE"
+      ],
       "release_qualified": false
     },
     {
@@ -531,8 +924,22 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "Atomic snapshots, 30/60-second rates, legacy fair export, failure and saturation semantics.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md",
+        "deploy/p7u_health.py"
+      ],
+      "decision": "Host compares bounded snapshots/progress in one transport session. No unsolicited 30/60-second legacy exporter or previous-boot continuity is claimed.",
+      "acceptance_cases": [
+        "HEALTH",
+        "LOAD"
+      ],
       "release_qualified": false
     },
     {
@@ -544,8 +951,23 @@
       "disposition": "TOOLING",
       "acceptance": "Offline C-to-Herdsman-to-decoder chain; reject torn, bad version, incomplete group.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/p7_diag_decode.py",
+        "firmware/slzb-06p7/ti832/g6/p7_g6_decode.py",
+        "tests/p7-g6-host/test_g6.py"
+      ],
+      "decision": "Strict P7 CRC/version/length decoder and C-to-decoder vectors replace legacy T832D2 chain; named Herdsman commands need owner adapter.",
+      "acceptance_cases": [
+        "HOST",
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -557,8 +979,25 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "Port bounded observability without P10-only Task_Stat assumptions; never conflate counter ages with physical receipt.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/diag_overlay.py",
+        "firmware/slzb-06p7/ti832/g6/g6_overlay.py",
+        "firmware/slzb-06p7/ti832/g7/p7_g7_task.inc",
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md"
+      ],
+      "decision": "Task/queue/transport/RX/AF status series are source-visible. Closed NWK occupancy/cause and physical host reception remain unknown.",
+      "acceptance_cases": [
+        "HEALTH",
+        "ROUTE",
+        "BURST"
+      ],
       "release_qualified": false
     },
     {
@@ -570,8 +1009,20 @@
       "disposition": "RESEARCH_GATE",
       "acceptance": "CC2674P10 AUX address is not P7; prove ownership/power/reset retention or design safe alternative.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "intentionally_excluded",
+        "linked": "not_applicable",
+        "host": "not_applicable",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "deferred",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/p7_crashdiag.h"
+      ],
+      "decision": "No P10 AUX/MMIO journal port. Ownership/reset/power retention is unproven; ordinary RAM recorder is explicitly current-boot only.",
+      "acceptance_cases": [
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -583,8 +1034,21 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "P7 call graph + clock safety; no startup semantic change or blind MMIO.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "deferred",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/diag_overlay.py",
+        "firmware/slzb-06p7/ti832/g5/p7_crashdiag.h"
+      ],
+      "decision": "Source-visible ZDO/MT startup boundaries exist; R12 early pre-overwrite retained read and clock-domain semantics are not implemented.",
+      "acceptance_cases": [
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -596,8 +1060,22 @@
       "disposition": "DIAG_MANDATORY",
       "acceptance": "Only if retention proven; otherwise explicitly unavailable with protocol capability bit.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "intentionally_excluded",
+        "linked": "not_applicable",
+        "host": "not_applicable",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "deferred",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/p7_crashdiag.h",
+        "firmware/slzb-06p7/ti832/g6/MT_HEALTH_ENDPOINT.md"
+      ],
+      "decision": "Production previous-boot retention/event 54 is unavailable. Never infer retention from host-tested seal routines or RAM/noinit alone.",
+      "acceptance_cases": [
+        "HEALTH",
+        "POWER"
+      ],
       "release_qualified": false
     },
     {
@@ -609,8 +1087,20 @@
       "disposition": "RESEARCH_GATE",
       "acceptance": "Reject corrupt/foreign epoch; event55 not proof network commissioned; no live use until retention proven.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "intentionally_excluded",
+        "linked": "not_applicable",
+        "host": "not_applicable",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "deferred",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/p7_crashdiag.h"
+      ],
+      "decision": "No A1 retained old-epoch/arm path without proven memory retention; legacy event 55 is not a commissioning witness.",
+      "acceptance_cases": [
+        "HEALTH"
+      ],
       "release_qualified": false
     },
     {
@@ -622,8 +1112,25 @@
       "disposition": "TOOLING",
       "acceptance": "Prove full NIB+key+counter preservation pre/post flash; no automatic startup/reset.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "partial",
+        "linked": "partial",
+        "host": "partial",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7u/qualification/R2_FIRST_SINGLE_UNIT.md",
+        "tests/p7u-rom-bsl-gate/test_flash_cli_guards.py",
+        "firmware/slzb-06p7u/qualification/p7u_nv_recovery.py",
+        "tests/p7u-rom-bsl-gate/test_nv_recovery.py"
+      ],
+      "decision": "Two-phase single-unit approvals, protected app writer and separate deliberate NV5 operation replace P10 A1 arm sequencing. No automatic startup/reset.",
+      "acceptance_cases": [
+        "BACKUP",
+        "RECOVERY",
+        "NV"
+      ],
       "release_qualified": false
     },
     {
@@ -635,8 +1142,26 @@
       "disposition": "TOOLING",
       "acceptance": "Offline read-only forensic analysis, sanitized digest only, never public raw keys.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "not_applicable",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "essential",
+      "p7_evidence": [
+        "firmware/slzb-06p7u/qualification/p7u_nv_recovery.py",
+        "firmware/slzb-06p7/ti832/phase0/R2_ACCEPTANCE_MATRIX.md",
+        "firmware/slzb-06p7u/qualification/NV5_RECOVERY.md",
+        "tests/p7u-rom-bsl-gate/test_nv_recovery.py",
+        "firmware/slzb-06p7u/qualification/verify_z2m_backup.py"
+      ],
+      "decision": "Complete same-device flash/NV capture, independently verified copy, sector digests and original-state restoration plans are implemented and host tested. P10 raw-NVS logical forensics is not certified for P7 NV5.",
+      "acceptance_cases": [
+        "BACKUP",
+        "NV",
+        "MIGRATE"
+      ],
       "release_qualified": false
     },
     {
@@ -648,20 +1173,37 @@
       "disposition": "TOOLING",
       "acceptance": "Separate diagnostics/runtime profiles, hashes, no false hardware_qualified claim.",
       "source_audited": true,
-      "p7_implemented": false,
-      "p7_tested": false,
+      "verification": {
+        "source": "implemented",
+        "linked": "verified",
+        "host": "tested",
+        "physical": "not_tested"
+      },
+      "r2_disposition": "alternative",
+      "p7_evidence": [
+        "firmware/slzb-06p7/ti832/g5/diag_build_compare.py",
+        "firmware/slzb-06p7/ti832/g6/g6_build_compare.py",
+        ".github/workflows/slzb-06p7-g7-f07-integration-native.yml"
+      ],
+      "decision": "Independent inherited BASE/DIAG comparisons plus integrated R1/R2 source/hashes exist. Public artifacts contain no installed network secrets; retention/physical qualification remain false.",
+      "acceptance_cases": [
+        "BACKUP",
+        "HEALTH"
+      ],
       "release_qualified": false
     }
   ],
   "unresolved": [
-    "P7 actual SMLIGHT pin/PA UART GPIO and BSL board details unavailable; TI LaunchPad != board proof",
-    "P7 8KiB-sector NVOCMP driver usable page count/capacity/compaction not proven",
-    "R11/R12 P10 AUX retention address and clock assumptions not portable to P7",
-    "P10 NV inaccessible after no-erase flash; physical erase versus index loss unresolved #53",
-    "Original-network security counters and backup are private, not part of this public G0",
-    "P10 CAP192 RF/bridge soak unperformed; no P7 hardware evidence",
-    "Zephyrus checked selected tracked worktrees read-only: R11, R12 and A1 clean; older MIN-v4 has three modified deployment/CI files; primary experimental checkout has older modified/untracked utilities. No newer local runtime firmware source superseding published PR #60 was established. Untracked primary contents were not audited line by line.",
-    "ZNP SYS F0 command 0xF0 potential vendor collision on P7 not yet checked"
+    "One unused P7U and backup-only network: physical BSL/bridge access, same-device backup read reliability, application rollback and NV restoration remain unproven.",
+    "Actual fitted UART/RF/oscillator/host-bridge mappings are not certified by LaunchPad compilation or dashboard metadata.",
+    "NV5 normal population/compaction/reopen has actual-driver host evidence; silicon power interruption, wear and full live security-table population remain unqualified.",
+    "The 32-bit broadcast hold mask with 96 association entries requires exact-SDK sleepy 0xFFFF tests at slots 31/32/63/95. Do not claim delivery from CAP192 sizes or widen a source array against the closed-library ABI.",
+    "Runtime RAM and persisted concentrator configuration must be checked after startup/restore; compiler defaults are insufficient.",
+    "NWK buffers 16/8/8/24, UART buffers 128/1080, conflict table 8, broadcast table 30 and data retries 4 remain deferred numerical tuning targets pending congestion/heap evidence.",
+    "P7 health/snapshot is a separate ABI from P10 SYS F0 v2 and T832D2; previous-boot/AUX retention is not implemented.",
+    "Closed TI NWK/APS/MAC/security libraries and ROM internals are outside source certification; source-route occupancy and hidden queue root cause are not exposed.",
+    "Network backup may omit per-device APS/TCLK security records. No same-network compatibility claim follows without private completeness audit and device rejoin/traffic evidence; re-pair remains explicit fallback.",
+    "The inherited F07 checkpoint rejects active/persisted NWK key mismatch; coordinated key rotation is not qualified."
   ],
   "local_provenance": {
     "source": "read-only RDC git status and worktree list on ZephyrusG16",
@@ -700,5 +1242,92 @@
       }
     ],
     "limits": "Git status does not prove no untracked new firmware features in all other worktrees; no unpublished file contents copied to this public repo."
+  },
+  "updated": "2026-10-15",
+  "historical_scope": "The immutable authority, P10 intent, evidence_path and original acceptance strings below are the G0 source audit, not current P7 completion flags.",
+  "software_evidence": {
+    "last_native_head": "e9bffb0ec0597b4db3d6101f8b4ab1877f6200a3",
+    "pull_request": 82,
+    "qualification": "Source/host work following that candidate requires a fresh native build; stage labels never qualify hardware.",
+    "matrix": "firmware/slzb-06p7/ti832/phase0/R2_ACCEPTANCE_MATRIX.md"
+  },
+  "current_capacity": {
+    "trust_center": 192,
+    "direct_children": 96,
+    "address_manager_derived": 298,
+    "binding": 4,
+    "routing_table": 128,
+    "source_routes": 192,
+    "neighbors": 64,
+    "route_requests": 16,
+    "source_relays": 12,
+    "broadcast_table": 9,
+    "broadcast_queue": 10,
+    "nwk_data_retries": 2,
+    "nwk_buffers_waiting": 8,
+    "nwk_buffers_scheduled": 5,
+    "nwk_buffers_confirmed": 5,
+    "nwk_buffers_total": 12,
+    "note": "Retain 12 source relays, broadcast 9/10, retries 2 and existing NWK buffers. No measured path-length or congestion evidence justifies changing these defaults. Source-route cache 192 and neighbors 64 address the established capacity gap."
+  },
+  "acceptance_cases": {
+    "RECOVERY": "Repeat actual ROM BSL entry/exit and stock ZNP checks on this unit. Verify candidate/stock application CRCs, unchanged CCFG/IEEE, genuine stock rollback and BSL reentry.",
+    "BACKUP": "Two independent complete same-device flash/NV reads must agree with ROM sector CRCs and hashes. Verify an off-device copy, interruption/resume and original-NV restore plan before destructive NV preparation.",
+    "NV": "Use explicit backed-up five-sector NV5 preparation, then qualify initial boot, compaction and reopen. Stock-application rollback and original-NV restoration are separate operations.",
+    "HOST": "Through the existing transport owner, verify ZNP/Herdsman startup, version, ping, AF/ZDO framing and unsolicited AREQ coexistence. Test the actual USB or TCP bridge and flow control; no second serial owner.",
+    "RF": "Confirm fitted P7U revision, installed CCFG, UART, PA, clock and power identity. Prove bidirectional device traffic at the channels/powers in use; do not infer pins from a LaunchPad build.",
+    "CONCENTRATOR": "After new formation and backup restore, read persisted NV 0x32/33/34/36 and live RAM. Require enable/cache/discovery/radius = 1/1/60/10, then observe many-to-one, route-record and routed delivery over air.",
+    "ROUTE": "Start with representative multihop traffic, route records and rerouting; then exercise more than 12 active source routes. Keep the inherited 12-relay limit until observed paths justify change. The intended 60+ router network is a later load gate. AF status alone does not measure cache occupancy.",
+    "SLEEP32": "Identify actual SDK association indices 30/31/32/33/63/64/95, rather than join count, then poll held broadcasts sent to 0xFFFF. Compare 0xFFFC/0xFFFD and unicast controls, rejoin and slot reuse. Failure blocks the sleepy-broadcast claim.",
+    "BURST": "Run concurrent unicast, broadcast/group and ZDO traffic plus an SRSP storm. Measure queue backpressure, AF status, host latency and RX recovery. Compare current table/queue/retry values 9/10/2 before considering 30/10/4.",
+    "HEAP": "Sample current free heap and observed failures after join, traffic and clean restart. Watch for a downward trend and AF delivery errors. Largest-block scans, fragmentation profiling and instrumentation for every internal queue are deferred unless measurements reveal a problem. Static linker headroom alone cannot pass.",
+    "HEALTH": "Read v1/v2 diagnostics through the existing transport owner. Establish normal progress and exercise disconnect plus still-connected silent failures. Require bounded alarms/evidence and operator-controlled recovery; recorder evidence is current-boot only.",
+    "BIND": "Exercise direct RODRET button-to-actuator bindings and coordinator bindings: add/read/delete, operate with host disconnected, survive restart/restore. Distinguish the local four-entry table from remote binding tables.",
+    "GROUP": "Create/read/remove groups. Observe groupcast delivery at Tuya actuators/breakers and mixed routers under load; successful AF submission alone cannot pass.",
+    "OTA": "Use actual Zigbee2MQTT OTA query/download/abort/resume on representative battery and router devices while normal traffic continues. Preserve bindings, security state and counters.",
+    "SLEEPREJOIN": "Qualify RODRET and other battery devices with sleeping polls/reports, long sleep/rejoin, router-parent loss and coordinator restart. Prove commissioning and security relationships per device.",
+    "MIGRATE": "Privately inventory coordinator backup plus device database and all available per-router/end-device APS/TCLK keys/counters. Identify missing records and explicit repair/re-pair fallback. Verify PAN, NWK key, IEEE and monotonic counters before RF use.",
+    "LOAD": "After recovery and small trials, increase toward the intended 60+ routers/100+ devices. Before household cutover, require at least 24 h at the stable intended cohort with normal bursts and rejoin. No hang, uncommanded reset, counter rollback or unexplained persistent failure. OTA is conditional, not imposed.",
+    "POWER": "Only after actual stock recovery, interrupt power during ordinary writes and compaction. Reopen without network wipe or key/counter rollback. Preserve the original private backup; host tests do not establish silicon retention."
+  },
+  "acceptance_policy": {
+    "scope": "ESSENTIALS_ONLY_NOT_ALL_36_FEATURES",
+    "before_first_write": [
+      "RECOVERY",
+      "BACKUP",
+      "NV"
+    ],
+    "small_disposable_trial": [
+      "HOST",
+      "RF",
+      "CONCENTRATOR",
+      "ROUTE",
+      "HEALTH",
+      "BIND",
+      "GROUP",
+      "SLEEPREJOIN"
+    ],
+    "before_household_cutover": [
+      "MIGRATE",
+      "BURST",
+      "HEAP",
+      "LOAD"
+    ],
+    "conditional_capability": [
+      "SLEEP32",
+      "OTA"
+    ],
+    "deferred_after_recovery": [
+      "POWER"
+    ],
+    "notes": {
+      "RECOVERY": "Before writing: repeated BSL/stock startup and an independently verified compatible stock writer. Actual custom-to-stock rollback follows first trial, before migration.",
+      "NV": "Before NV erase: original capture/copy and explicit five-sector plan. After writing: first boot/restart. Compaction remains later persistence qualification.",
+      "ROUTE": "Trial: representative multihop traffic and rerouting, not all 192 entries. Intended 60+ router load is the later LOAD gate.",
+      "HEAP": "Use inexpensive current free-heap samples, AF errors and observed delivery. Largest-block scans, fragmentation profiling and a new allocator are deferred unless failure evidence calls for them.",
+      "SLEEP32": "Required only to claim 0xFFFF delivery to sleeping direct children above association slot 31. Determine whether actual household traffic needs it; do not silently claim it works.",
+      "OTA": "Required only before relying on OTA on this candidate. It is not a first-flash or basic coordination gate.",
+      "POWER": "Ordinary clean restart persistence is essential; deliberate cuts during writes/compaction are deferred on the only P7U until recovery is proven."
+    }
   }
 }

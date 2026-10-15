@@ -85,9 +85,11 @@ def load_request(args):
     rollback=validate_stock(args.official_stock_bin,args.rollback_app_hex,args.rollback_receipt,bundle.profile)
     strict.check(rollback.hex_sha256!=bundle.hex_sha256,
                  "CANDIDATE_IS_IDENTICAL_TO_ROLLBACK")
-    strict.check(tuple(addr for addr, _ in bundle.sectors) ==
-                 tuple(addr for addr, _ in rollback.sectors) == APP_SECTOR_ADDRESSES,
-                 "RC1_REQUIRES_EXACT_23_APPLICATION_SECTORS")
+    strict.check(23 <= len(bundle.sectors) <= len(APP_SECTOR_ADDRESSES)
+                 and tuple(addr for addr, _ in bundle.sectors) ==
+                     APP_SECTOR_ADDRESSES[:len(bundle.sectors)]
+                 and tuple(addr for addr, _ in rollback.sectors) == APP_SECTOR_ADDRESSES,
+                 "APPLICATION_AND_ROLLBACK_CONTRACT_MISMATCH")
     return bundle,rollback
 
 

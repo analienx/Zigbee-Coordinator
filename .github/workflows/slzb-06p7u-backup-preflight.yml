@@ -23,4 +23,5 @@ jobs:
           set -euo pipefail
           python3 -m py_compile firmware/slzb-06p7u/qualification/verify_z2m_backup.py
           python3 tests/p7u-backup-gate/test_backup_gate.py
+          python3 tests/p7u-backup-gate/test_migration_inventory.py
           echo "BACKUP_INVENTORY_GATE_PASSED_BUT_NEVER_FLASH_AUTHORIZED"

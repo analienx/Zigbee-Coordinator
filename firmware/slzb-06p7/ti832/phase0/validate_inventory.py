@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only G0 inventory validator. Does not import SDK, touch hardware, or read keys.
+"""Validate current acceptance stages and frozen source lineage for 36 items.
 
-This validates frozen-source bookkeeping and explicit no-flash policy only.
-It does NOT validate that the P7 firmware is implemented, builds, or works.
+This checks evidence paths and bookkeeping, not hardware behavior. It imports
+no SDK, contacts no device and reads no keys.
 """
 from __future__ import annotations
 import argparse
@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 SOURCE = Path(__file__).with_name("feature-parity.json")
+ROOT = Path(__file__).resolve().parents[4]
 EXPECTED = {f"F{i:02d}" for i in range(1, 18)} | {f"D{i:02d}" for i in range(1, 20)}
 SCOPES = {
     "BASE_MANDATORY", "DIAG_MANDATORY", "P7_REDESIGN",
@@ -51,9 +52,9 @@ EXPECTED_COUNTERS = (
 )
 
 def check(doc: dict) -> None:
-    assert doc["schema_version"] == 1
-    assert doc["inventory_status"] == "G0_SOURCE_FROZEN"
-    assert doc["scope"] == "PHASE0_SOURCE_ONLY"
+    assert doc["schema_version"] == 2
+    assert doc["inventory_status"] == "R2_RELEASE_ACCEPTANCE_TRACKED"
+    assert doc["scope"] == "SOURCE_LINKED_HOST_AND_PHYSICAL_STAGES"
     assert doc["project"] == "slzb-06p7"
     assert re.fullmatch(r"[0-9a-f]{40}", doc["baseline_main_sha"])
     authority = doc["authority"]
@@ -100,7 +101,28 @@ def check(doc: dict) -> None:
     assert p7["nv_start"] == 0xAA000 and p7["nv_end"] == 0xAE000
     assert p7["ccfg_start"] == 0xAE000 and p7["ccfg_end"] == 0xB0000
     assert p7["sram_bytes"] == 0x24000
-    assert all(value is False for value in doc["controls"].values())
+    assert doc["controls"]["build_authorized"] is True
+    assert all(value is False for key, value in doc["controls"].items()
+               if key != "build_authorized")
+    assert re.fullmatch(r"[0-9a-f]{40}", doc["software_evidence"]["last_native_head"])
+    cases = doc["acceptance_cases"]
+    required_cases = {"RECOVERY", "BACKUP", "NV", "HOST", "RF", "CONCENTRATOR",
+                      "ROUTE", "SLEEP32", "BURST", "HEAP", "HEALTH", "BIND",
+                      "GROUP", "OTA", "SLEEPREJOIN", "MIGRATE", "LOAD", "POWER"}
+    assert set(cases) == required_cases and all(cases.values())
+    capacity = doc["current_capacity"]
+    assert (capacity["neighbors"], capacity["source_routes"], capacity["source_relays"]) == (64, 192, 12)
+    assert (capacity["broadcast_table"], capacity["broadcast_queue"], capacity["nwk_data_retries"]) == (9, 10, 2)
+    policy = doc["acceptance_policy"]
+    assert policy["scope"] == "ESSENTIALS_ONLY_NOT_ALL_36_FEATURES"
+    phases = ("before_first_write", "small_disposable_trial", "before_household_cutover",
+              "conditional_capability", "deferred_after_recovery")
+    assigned = [case for phase in phases for case in policy[phase]]
+    assert len(assigned) == len(set(assigned)) and set(assigned) == required_cases
+    assert policy["before_first_write"] == ["RECOVERY", "BACKUP", "NV"]
+    assert set(policy["conditional_capability"]) == {"SLEEP32", "OTA"}
+    assert policy["deferred_after_recovery"] == ["POWER"]
+    assert all(policy["notes"].values())
     rows = doc["features"]
     assert len(rows) == 36 and {row["id"] for row in rows} == EXPECTED
     assert len({row["id"] for row in rows}) == len(rows)
@@ -109,8 +131,22 @@ def check(doc: dict) -> None:
         assert row["acceptance"] and row["reference"] in authority
         assert row["disposition"] in SCOPES
         assert row["source_audited"] is True
-        assert row["p7_implemented"] is False
-        assert row["p7_tested"] is False
+        assert "p7_implemented" not in row and "p7_tested" not in row
+        stage = row["verification"]
+        assert set(stage) == {"source", "linked", "host", "physical"}
+        assert stage["source"] in {"implemented", "partial", "not_implemented", "intentionally_excluded"}
+        assert stage["linked"] in {"verified", "partial", "not_verified", "not_applicable"}
+        assert stage["host"] in {"tested", "partial", "not_tested", "not_applicable"}
+        assert stage["physical"] == "not_tested"
+        assert row["r2_disposition"] in {"essential", "alternative", "retained_default", "deferred", "blocked"}
+        assert row["decision"] and row["p7_evidence"]
+        assert row["acceptance_cases"] and set(row["acceptance_cases"]) <= required_cases
+        for evidence in row["p7_evidence"]:
+            path = (ROOT / evidence).resolve()
+            assert ROOT in path.parents and path.is_file(), evidence
+        if stage["source"] == "intentionally_excluded":
+            assert stage["linked"] == stage["host"] == "not_applicable"
+            assert row["r2_disposition"] in {"alternative", "retained_default", "deferred"}
         assert row["release_qualified"] is False
     assert len(doc["unresolved"]) >= 6
 
@@ -123,7 +159,15 @@ def selftest(doc: dict) -> None:
         lambda d: d["authority"]["CAP192"].update(sha="unfrozen"),
         lambda d: d["authority"]["ti_sdk"].update(sha="0"*40),
         lambda d: d["controls"].update(flash_authorized=True),
-        lambda d: d["features"][0].update(p7_implemented=True),
+        lambda d: d["features"][0]["verification"].update(physical="tested"),
+        lambda d: d["features"][0]["verification"].update(host="PASS"),
+        lambda d: d["features"][0].update(release_qualified=True),
+        lambda d: d["features"][0].update(decision=""),
+        lambda d: d["features"][0].update(p7_evidence=["missing-evidence.py"]),
+        lambda d: d["features"][0].update(acceptance_cases=["ASSUMED_FROM_CI"]),
+        lambda d: d["acceptance_cases"].pop("SLEEP32"),
+        lambda d: d["current_capacity"].update(neighbors=16),
+        lambda d: d["acceptance_policy"]["before_first_write"].append("OTA"),
         lambda d: d["host_protocol"]["mt_sys_f0"]["counters"].pop(),
         lambda d: d["cap192_source_delta"]["sdk_modified"].pop(),
         lambda d: d["p7_stock_reference"].update(nv_start=0xF9800),
@@ -137,7 +181,7 @@ def selftest(doc: dict) -> None:
             pass
         else:
             raise AssertionError(f"mutation {index} was not rejected")
-    print(f"PASS G0 negative controls: {len(mutations)} fail-closed mutations")
+    print(f"PASS parity negative controls: {len(mutations)} rejected evidence/stage mutations")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -148,5 +192,6 @@ if __name__ == "__main__":
     check(record)
     if args.selftest:
         selftest(record)
-    print(f"PASS G0 source inventory: {len(record['features'])} frozen items, "
-          "25 ordered counters, 18 SDK changes, 2 project changes; no-flash")
+    print(f"PASS current parity ledger: {len(record['features'])} unique requirements, "
+          f"{len(record['acceptance_cases'])} physical acceptance cases; "
+          "historical lineage preserved, hardware not tested")

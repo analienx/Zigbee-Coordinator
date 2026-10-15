@@ -2,6 +2,21 @@
 
 **Status: candidate utility. No flash or migration authorization is provided.**
 
+For the retained backup-only network, `--migration-inventory` assesses an old or
+cross-stack backup without passing the fresh same-family gate. It compares the
+independent DB roster, counts explicit per-device link-key/counter records,
+reports whether a Z-Stack TC seed exists and flags counter exhaustion. Outputs
+contain counts/hashes, never keys or addresses. Missing explicit rows can be
+derived relationships on some stacks; their absence is a review requirement,
+not automatic proof of either loss or completeness. Prove same-network restore
+per device or use deliberate re-pairing. Preserve the original full Z2M data
+bundle (groups/bindings/configuration as well as this DB); this inventory does
+not establish the bundle's completeness or the last transmitted counter floor.
+
+For original raw radio recovery and deliberate NV5 preparation, use the separate
+[NV5 recovery procedure](NV5_RECOVERY.md). Logical coordinator backup inventory
+and exact same-radio raw-state recovery are different operations.
+
 The painful failure mode addressed here is proceeding with coordinator firmware/cutover from a missing, stale or incomplete backup and discovering later that the coordinator NV security state or device roster cannot be reconstructed.
 
 ## Canonical inputs

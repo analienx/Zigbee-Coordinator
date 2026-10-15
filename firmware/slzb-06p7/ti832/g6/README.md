@@ -1,9 +1,12 @@
-# P7 G6 offline software candidate — NOT FLASHABLE
+# P7 G6 software diagnostics
 
-This overlay extends the completed G5 recorder in an isolated P7 feature branch.
-The original SLZB-06P7 board, RF, CCFG, BSL and security-state migration remain
-unqualified. All 36 parity/release flags remain false. No hardware interaction,
-local tests/builds, NV reads, flash, migration, or mainline merge is authorized.
+This overlay extends the G5 recorder and is composed into the P7U R2 candidate.
+G5 alone has no MT dispatcher; G6 installs the versioned read-only SYS `0xF0`
+handler. The standalone G5 disabled flag does not describe the G6/R2 firmware.
+Physical board/RF/BSL, load and security-state migration acceptance remain
+separate from the software evidence. The authoritative feature status is the
+[36-feature ledger](../phase0/feature-parity.json), not the former all-false
+historical flags.
 
 ## Actual source changes
 
@@ -25,12 +28,14 @@ local tests/builds, NV reads, flash, migration, or mainline merge is authorized.
   `UART2_EVENT_TX_FINISHED` using the pinned driver's EOT path. It can describe
   several consecutive writes reaching UART idle; it does not correlate an
   individual frame, measure that frame's duration, or prove host reception.
-* A3: SYS SREQ command `0xF0` is available **only in this offline G6 candidate**.
+* A3: SYS SREQ command `0xF0` is installed by this G6 overlay, including R2.
   Actual pinned TI SYS cases and Herdsman SYS `ID` fields have no collision.
   Prior broad grep hits were MAC status values, nibble masks and 240-byte block
   sizes. Stock Herdsman's named-command API has no G6 definition; raw MT tooling
-  or a separately reviewed host adapter is required. No production client or
-  live endpoint probing is included.
+  or an existing-owner adapter is required. The bounded read-only integration
+  in [`deploy/p7u_health.py`](../../../../deploy/p7u_health.py) provides strict
+  framing, saved-frame assessment and an injected async exchange interface. It
+  opens no serial/TCP connection and performs no recovery action.
 * A4/F10: outbound partial-allocation and unsupported-enqueue ownership,
   ingress partial allocations, inbound payload-allocation and rejected
   `OsalPort_msgSend` all release only allocations still owned by the caller.
@@ -44,8 +49,8 @@ local tests/builds, NV reads, flash, migration, or mainline merge is authorized.
   and then clears the latch. An already-complete valid pre-loss frame may finish
   dispatch; bytes on opposite sides of a loss cannot be stitched into a frame.
 
-F07 durable NIB/NV startup behavior and F11/F12 retry/priority/fairness are not
-implemented by this tranche. G6 does not claim complete CAP192 runtime parity.
+The later F07 and G7 overlays supply their separately tested persistence and
+transport policies. G6 alone does not claim complete CAP192 runtime parity.
 
 ## Endpoint contract
 
@@ -64,10 +69,17 @@ version 1, operation 0 = snapshot. Response is bounded to **144 bytes**.
 | 16 | variable | Existing G5 `P7D1` snapshot (at most eight events) on success |
 | last 2 | 2 | Little-endian CRC16-CCITT over the entire preceding envelope |
 
+Request `[2,0]` adds a separate **118-byte** health reply without changing the
+version-1 contract: cumulative AF status/transport/NV counters, a first numeric
+fault/site, actual RAM concentrator settings and current heap samples. `[2,1]`
+adds a one-byte length prefix for the existing Herdsman public response parser.
+See the full
+[health endpoint and recovery contract](MT_HEALTH_ENDPOINT.md).
+
 The inner G5 snapshot retains its own CRC. Error replies are 18 bytes with no
 snapshot. Length is checked before reading request data. There is no NV, write,
-reset, seal, key, or counter export operation. Busy snapshots retry a fixed eight
-times in the recorder and return status 4. The response buffer is on the MT task
+reset, seal or key export operation. Busy snapshots make one ownership claim
+and return status 4. The response buffer is on the MT task
 stack and never shared with ISR writers. SRAM/stack resource costs must be read
 from native linked evidence; actual stack high-water is unproven.
 

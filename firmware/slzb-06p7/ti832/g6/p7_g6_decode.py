@@ -4,17 +4,44 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"g5"))
 import p7_diag_decode as g5
 
+HEALTH_COUNTERS=("af_success", "af_no_route", "af_cca_failure", "af_no_ack",
+    "af_other_failure", "uart_rejected", "queue_rejected", "rx_overflow",
+    "parse_error", "fcs_error", "nv_ambiguous", "nv_failure", "queue_accepted",
+    "uart_tx_idle", "af_confirm_total", "zdo_dispatch")
+
 def decode(raw):
-    if len(raw)<18 or raw[:4]!=b"P7G6" or raw[4]!=1: raise ValueError("BAD_G6_HEADER")
+    if len(raw)<18 or len(raw)>144 or raw[:4]!=b"P7G6" or raw[4] not in (1,2): raise ValueError("BAD_G6_HEADER")
     if struct.unpack_from("<H",raw,len(raw)-2)[0]!=g5.crc16(raw[:-2]):raise ValueError("G6_CRC_MISMATCH")
     if raw[6]!=1 or raw[7]!=0 or raw[12:16]!=bytes(4): raise ValueError("UNSUPPORTED_CLOCK_EPOCH")
     period=struct.unpack_from("<I",raw,8)[0]
     if not period: raise ValueError("UNKNOWN_CLOCK_PERIOD")
     if raw[5]:
         if raw[5]>5 or len(raw)!=18: raise ValueError("BAD_G6_STATUS")
-        return {"status":raw[5],"tick_period_us":period,"reboot_identity":None}
+        return {"version":raw[4],"status":raw[5],"tick_period_us":period,"reboot_identity":None}
+    if raw[4]==2:
+        if len(raw)!=118: raise ValueError("BAD_HEALTH_LENGTH")
+        body=raw[16:-2]
+        if body[0]!=len(HEALTH_COUNTERS) or body[1] not in (0,1) or body[2:4]!=bytes(2):
+            raise ValueError("BAD_HEALTH_METADATA")
+        values=struct.unpack_from("<16I",body,4)
+        kind,arg,tick,now,contention=struct.unpack_from("<HHIII",body,68)
+        if (body[1]==0 and (kind or arg or tick)) or (body[1] and kind not in (15,26)):
+            raise ValueError("BAD_FIRST_FAULT")
+        if kind==26 and not arg>>8: raise ValueError("MISSING_NV_FAILURE_SITE")
+        if body[84] not in (0,1) or body[85] not in (0,1):
+            raise ValueError("BAD_RUNTIME_CONCENTRATOR")
+        heap_total,heap_free,heap_errors=struct.unpack_from("<III",body,88)
+        return {"version":2,"status":0,"tick_period_us":period,"reboot_identity":None,
+            "counters":dict(zip(HEALTH_COUNTERS,values)),"sample_tick":now,
+            "writer_contention_dropped":contention,
+            "first_fault":({"kind":g5.KINDS[kind],"arg":arg,"tick":tick,
+                **({"status":arg&255,"site":arg>>8} if kind==26 else {})} if body[1] else None),
+            "runtime_concentrator":{"enable":body[84],"route_cache":body[85],
+                "discovery_seconds":body[86],"radius":body[87]},
+            "heap":{"total_bytes":heap_total,"free_bytes":heap_free,"free_error_count":heap_errors,
+                "accounting_consistent":heap_free<=heap_total}}
     snap=g5.decode(raw[16:-2])
-    return {"status":0,"tick_period_us":period,"reboot_identity":None,"snapshot":snap}
+    return {"version":1,"status":0,"tick_period_us":period,"reboot_identity":None,"snapshot":snap}
 
 def elapsed_ms(begin, end, period_us, *, same_boot):
     if same_boot is not True: raise ValueError("BOOT_BOUNDARY_UNKNOWN")

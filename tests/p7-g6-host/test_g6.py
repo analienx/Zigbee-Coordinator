@@ -54,6 +54,9 @@ static uint32_t npiServiceTaskEvents; static uint16_t TRANSPORT_RX_ISR_EVENT_FLA
 static int npiSemHandle, npiTxQueue, npiSyncTxQueue, npiRxQueue, MTServiceTaskID;
 static uint8_t npiRxBuf[NPI_TL_BUF_SIZE]; static uint16_t npiRxBufHead,npiRxBufTail;
 uint32_t fake_ticks; const uint32_t Clock_tickPeriod=1000;
+uint8_t zgConcentratorEnable=1,zgConcentratorRC=1;
+uint8_t zgConcentratorDiscoveryTime=60,zgConcentratorRadius=10;
+uint32_t HEAPMGR_SIZE=115180,heapmgrMemFreeTotal=100000,heapmgrMemFreeError=0;
 uint32_t Clock_getTicks(void) { return fake_ticks; }
 static void *alloc(size_t n) {
     if (++alloc_calls==fail_at) return NULL;
@@ -69,10 +72,10 @@ static void release(void *p) {
 #define OsalPort_msgAllocate alloc
 #define OsalPort_free release
 #define OsalPort_msgDeallocate release
-static uint32_t OsalPort_enterCS(void) { return 0; }
+uint32_t OsalPort_enterCS(void) { return 0; }
 static void (*leave_hook)(void);
 static unsigned leave_counter, inject_at;
-static void OsalPort_leaveCS(uint32_t k) {
+void OsalPort_leaveCS(uint32_t k) {
     (void)k;
     if(leave_hook && ++leave_counter==inject_at) {
         void (*hook)(void)=leave_hook; leave_hook=NULL; hook();
@@ -179,14 +182,26 @@ int main(int argc,char **argv) {
 ENDPOINT_MAIN=r'''
 static uint8_t sent[P7_G6_MAX]; static size_t sent_len; static unsigned responses;
 static void MT_BuildAndSendZToolResponse(uint8_t cmd0,uint8_t cmd1,uint8_t len,uint8_t *p) {
+    if(cmd0==0x44 && cmd1==0x80) { assert(len==3 && p[1]==0xAB && p[2]==0xCD); return; }
     assert(cmd0==0x61 && cmd1==0xf0); assert(len<=P7_G6_MAX);
     memcpy(sent,p,len); sent_len=len; responses++;
 }
+#define MT_RPC_CMD_AREQ 0x40
+#define MT_RPC_SYS_AF 4
+#define MT_AF_DATA_CONFIRM 0x80
+typedef struct { struct {uint8_t status;} hdr; uint8_t endpoint,transID; } afDataConfirm_t;
+AF_CONFIRM_BODY
 static void dispatch(uint8_t *pBuf) { ENDPOINT_BODY }
 static void busy_hook(void) {
     uint8_t req[2]={1,0}, out[P7_G6_MAX];
     assert(p7_g6_response(req,2,1,out,sizeof out)==P7_G6_HDR+2);
     assert(out[5]==P7_G6_BUSY);
+    req[0]=2;
+    assert(p7_g6_response(req,2,1,out,sizeof out)==P7_G6_HDR+2);
+    assert(out[4]==2 && out[5]==P7_G6_BUSY);
+    req[1]=1;
+    assert(p7_g6_response(req,2,1,out,sizeof out)==P7_G6_HDR+3);
+    assert(out[0]==18 && out[5]==2 && out[6]==P7_G6_BUSY);
 }
 static void race_hook(void) {
     fake_ticks=101; p7_g6_uart_event(NULL,UART2_EVENT_TX_FINISHED,0,NULL);
@@ -227,6 +242,38 @@ int main(void) {
     p7_g6_record(P7D_MT_RX,0); p7_diag_preempt_hook=NULL;
     fake_ticks=102; p7_g6_record(P7_G6_SRSP_SEND_ATTEMPTED,0);
     assert(p7_diag_contention_dropped==1); print_hex("POST_RACE_HEX");
+    /* The actual AF confirmation forwards its exact payload unchanged and
+     * counts only status. No network address, endpoint, transaction or key. */
+    p7_diag_init(1,0,0);
+    for(unsigned i=0;i<5;++i) {
+        const uint8_t statuses[]={0,0xcd,0xe1,0xe9,0xf0};
+        afDataConfirm_t m={{statuses[i]},0xAB,0xCD}; MT_AfDataConfirm(&m);
+    }
+    p7_diag_record(P7D_NV_FAILURE,0x0107,0); /* early/pre-BIOS site + status */
+    for(unsigned i=0;i<200;++i) p7_g6_record(P7D_NPI_Q_ACCEPT,1);
+    p7_diag_record(P7D_NV_FAILURE,0x0208,0); /* first failure survives ring eviction */
+    uint8_t health_req[2]={2,0};
+    size_t health_len=p7_g6_response(health_req,2,1,sent,sizeof sent);
+    assert(health_len==118 && sent[4]==2 && sent[5]==0);
+    const uint8_t *h=sent+P7_G6_HDR;
+    assert(h[0]==16 && h[1]==1 && h[68]==P7D_NV_FAILURE && h[70]==7);
+    for(unsigned i=0;i<5;++i)assert(h[4+4*i]==1);
+    assert(h[4+4*11]==2 && h[4+4*12]==200 && h[4+4*14]==5);
+    assert(h[84]==1 && h[85]==1 && h[86]==60 && h[87]==10);
+    zgConcentratorEnable=0; zgConcentratorRC=0; zgConcentratorDiscoveryTime=3;
+    heapmgrMemFreeTotal=80000; heapmgrMemFreeError=2;
+    assert(p7_g6_response(health_req,2,1,sent,sizeof sent)==118);
+    assert(h[84]==0 && h[85]==0 && h[86]==3); /* RAM, not compile defaults */
+    printf("HEALTH_HEX="); for(size_t i=0;i<health_len;i++)printf("%02x",sent[i]);puts("");
+    uint8_t raw_health[P7_G6_MAX];memcpy(raw_health,sent,health_len);
+    health_req[1]=1;
+    assert(p7_g6_response(health_req,2,1,sent,sizeof sent)==119);
+    assert(sent[0]==118 && !memcmp(sent+1,raw_health,health_len));
+    health_req[1]=2;
+    assert(p7_g6_response(health_req,2,1,sent,sizeof sent)==18 && sent[5]==P7_G6_OPERATION);
+    health_req[1]=0;
+    p7_diag_init(1,0,0);assert(p7_g6_response(health_req,2,1,sent,sizeof sent)==118);
+    assert(h[1]==0 && h[70]==0 && h[4+4*14]==0); /* explicit new boot */
     puts("PASS actual SYS endpoint framing, length/version/operation/type, UART event"); return 0;
 }
 '''
@@ -247,6 +294,8 @@ def run_suite(sdk,output):
     with tempfile.TemporaryDirectory() as td:
         d=Path(td); (d/"ti/sysbios/knl").mkdir(parents=True)
         (d/"ti/sysbios/knl/Clock.h").write_text("#include <stdint.h>\nextern const uint32_t Clock_tickPeriod;\nuint32_t Clock_getTicks(void);\n")
+        (d/"osal_port.h").write_text("#include <stdint.h>\nuint32_t OsalPort_enterCS(void);\nvoid OsalPort_leaveCS(uint32_t);\n")
+        (d/"zglobals.h").write_text("#include <stdint.h>\nextern uint8_t zgConcentratorEnable,zgConcentratorRC,zgConcentratorDiscoveryTime,zgConcentratorRadius;\n")
         recorder=d/"p7_clock_recorder.c"; recorder.write_text(g.clock_recorder((g.G5/"p7_crashdiag.c").read_text()))
         def build(name,body):
             c=d/(name+".c"); c.write_text(COMMON.replace("PINNED_NPI_BUF_SIZE",str(native_rx_size))+body)
@@ -295,9 +344,21 @@ def run_suite(sdk,output):
         # Keep the exact case body but remove its switch-only break statement.
         endpoint=endpoint.replace("      break;\n","")
         uart=g.function(t[g.UART],"p7_g6_uart_event")
-        exe=build("endpoint",uart+"\n"+ENDPOINT_MAIN.replace("ENDPOINT_BODY",endpoint))
+        af_original=(sdk/g.AF).read_text()
+        af=g.function(g.af_telemetry(af_original),"MT_AfDataConfirm")
+        statuses=(sdk/"source/ti/zstack/stack/sys/zcomdef.h").read_text()
+        for name,value in (("ZNwkNoRoute","cd"),("ZMacChannelAccessFailure","e1"),("ZMacNoACK","e9")):
+            assert re.search(r"#define\s+"+name+r"\s+0x"+value+r"\b",statuses,re.I)
+        exe=build("endpoint",uart+"\n"+ENDPOINT_MAIN.replace("ENDPOINT_BODY",endpoint).replace("AF_CONFIRM_BODY",af))
         r=subprocess.run([str(exe)],capture_output=True,text=True,check=True); print(r.stdout)
         (output/"g6-snapshot.txt").write_text(r.stdout)
+        import p7_g6_decode
+        health=next(line.split("=",1)[1] for line in r.stdout.splitlines() if line.startswith("HEALTH_HEX="))
+        decoded=p7_g6_decode.decode(bytes.fromhex(health))
+        assert decoded["first_fault"]=={"kind":"NV_FAILURE","arg":0x0107,"tick":0,"status":7,"site":1}
+        assert decoded["counters"]["af_no_route"]==decoded["counters"]["af_cca_failure"]==1
+        assert decoded["runtime_concentrator"]=={"enable":0,"route_cache":0,"discovery_seconds":3,"radius":10}
+        assert decoded["heap"]=={"total_bytes":115180,"free_bytes":80000,"free_error_count":2,"accounting_consistent":True}
         checks.append({"test":"compiled_SYS_F0_and_UART_event","returncode":r.returncode})
         # Missing and duplicated anchors must fail before any write.
         for variant in (dict(stage,**{g.TASK:"missing"}),dict(stage,**{g.SYS:stage[g.SYS]+stage[g.SYS]})):

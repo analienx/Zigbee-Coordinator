@@ -16,6 +16,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from p7u_rom_lowlevel import APP_SECTOR_ADDRESSES
 
 HERE = Path(__file__).resolve().parent
 
@@ -85,7 +86,7 @@ def load_bundle(app_hex: bytes, source_evidence: dict, plan_file: dict) -> Bundl
           and expected_plan["flash_authorized"] is False,
           "UNEXPECTED_AUTHORIZATION_IN_SOURCE_PLAN")
     starts = [int(x, 16) for x in expected_plan["explicit_application_sector_erase_addresses"]]
-    check(starts and len(starts) <= 23, "SECTOR_COUNT_OUT_OF_BOUNDS")
+    check(starts and all(s in APP_SECTOR_ADDRESSES for s in starts), "SECTOR_COUNT_OUT_OF_BOUNDS")
     check(starts == list(range(0, starts[-1] + gate.SECTOR, gate.SECTOR)),
           "SPARSE_SECTORS_NEED_EXPLICIT_REVIEW")
     limit = gate.NV2_BASE if expected_plan["profile"] == "p7u-f07-stock" else gate.NV5_BASE
@@ -247,7 +248,7 @@ async def write_checked(rom: Rom, bundle: Bundle, approval: dict,
         if old_crc == desired_crc:
             skipped += 1
             continue
-        check(addr % gate.SECTOR == 0
+        check(addr in APP_SECTOR_ADDRESSES and addr % gate.SECTOR == 0
               and 0 <= addr < gate.NV5_BASE
               and addr + gate.SECTOR <=
               (gate.NV2_BASE if bundle.profile == "p7u-f07-stock" else gate.NV5_BASE),

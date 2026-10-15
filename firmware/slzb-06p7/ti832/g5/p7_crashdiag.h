@@ -31,9 +31,10 @@
  * Wire format: schema 1, unchanged layout. Event kinds 17-22 extend
  * the original 1-16 without changing the frame; decoders must accept
  * the extended set (p7_diag_decode.py does).
- * MT SYS vendor endpoint: candidate 0xF0, endpoint DISABLED until the
- * pinned-SDK grep plus the pinned Herdsman SYS-handler check at exact
- * SHAs are reviewed by a human. */
+ * G5 alone has no MT handler. The composed G6/R2 profile implements its
+ * separately versioned read-only SYS 0xF0 handler (see g6/README.md and
+ * the pinned native collision/linked evidence); this G5 flag does not
+ * describe that later profile. */
 #ifndef P7_CRASHDIAG_H
 #define P7_CRASHDIAG_H
 #include <stdint.h>
@@ -43,7 +44,7 @@
 #define P7_DIAG_RING 64u
 #define P7_DIAG_HDR 28u
 #define P7_DIAG_MT_CMD_CANDIDATE 0xF0u
-#define P7_DIAG_MT_ENDPOINT_ENABLED 0 /* gated disabled */
+#define P7_DIAG_MT_ENDPOINT_ENABLED 0 /* G5-only proposal, no dispatcher */
 #define P7_DIAG_SNAPSHOT_EVENTS 8u /* bounded: fits one MT SRSP payload */
 enum p7_diag_kind {
   P7D_BOOT_ENTER=1, P7D_NV_READ_BEGIN=2, P7D_NV_RESTORED=3, P7D_NV_NEW=4,
@@ -57,7 +58,9 @@ enum p7_diag_kind {
    * (TI SDK 8.32 UART2 docs), NOT physical TX-pin completion. Only a
    * subscribed UART2_EVENT_TX_FINISHED event may record kind 12;
    * until that integration exists, wire completion stays UNKNOWN. */
-  P7D_UART_FIFO_LOADED=23
+  P7D_UART_FIFO_LOADED=23,
+  P7D_AF_CONFIRM=25, /* numeric ZStatus only; never endpoint/address/payload */
+  P7D_NV_FAILURE=26 /* first observed fatal driver status, never NV contents */
 };
 enum p7_diag_nv { P7D_NVSTATE_UNKNOWN=0, P7D_NVSTATE_RESTORED=1, P7D_NVSTATE_NEW=2, P7D_NVSTATE_AMBIGUOUS=3 };
 typedef struct { uint32_t seq; uint32_t tick; uint16_t kind; uint16_t arg; } p7_diag_event_t; /* 12 B, numeric only */

@@ -17,7 +17,7 @@ import p7u_strict_sector_writer as strict
 
 VENDOR_SHA = "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b"
 # Deterministic extract() output for the pinned vendor APP plus FF-only tail.
-ROLLBACK_APP_SHA256 = "fc58a392f2ebaa875cbd5e79a37d5823b4dca7daf3ca29706952eb5ce12b35aa"
+ROLLBACK_APP_SHA256 = "b1d63aea8201203064a501b8af13ecf230ae130b952fd920617aa88e138da1b7"
 VENDOR_BYTES = 179804
 APP_BYTES = 179688
 MODEL = "SLZB-06P7U"
@@ -42,12 +42,13 @@ def extract(blob: bytes, profile: str) -> tuple[bytes, dict, dict, dict]:
     strict.check(strict.sha(ccfg) == strict.gate.VENDOR_CCFG_SHA256,
                  "STOCK_CCFG_DIGEST_MISMATCH")
     full={i:b for i,b in enumerate(app)}
-    # Stock app occupies 22 sectors; our verified custom build occupies 23.
-    # Force one FF-only APP sector into derived rollback to explicitly erase
-    # any leftover custom code at 0x2C000 (safe below both NV2 and NV5).
+    # Cover every reviewed application sector, including the new diagnostics
+    # envelope. App writer and stock cleanup always share this exact boundary.
     cleanup_sector=0x2C000
     strict.check(len(app)<cleanup_sector,"STOCK_TAIL_CLEANUP_OVERLAPS_VENDOR")
-    full[cleanup_sector]=0xff
+    cleanup_sectors=[s for s in strict.APP_SECTOR_ADDRESSES if s>=cleanup_sector]
+    for address in cleanup_sectors:
+        full[address]=0xff
     full.update({strict.gate.CCFG_START+i:b for i,b in enumerate(ccfg)})
     source=strict.gate.candidate_audit(full,profile)
     result=strict.gate.application_only_hex(full,profile)
@@ -63,6 +64,8 @@ def extract(blob: bytes, profile: str) -> tuple[bytes, dict, dict, dict]:
        "app_payload_bytes":len(app),
        "app_payload_crc32":f"{a_crc:08x}",
        "custom_tail_cleanup_sector_start":"0x2C000",
+       "custom_tail_cleanup_end_exclusive":f"0x{strict.APP_SECTOR_ADDRESSES[-1]+strict.gate.SECTOR:05X}",
+       "custom_tail_cleanup_sectors":[f"0x{s:05X}" for s in cleanup_sectors],
        "custom_tail_cleanup_erased_to_all_ff":True,
        "stock_vendor_ccfg_sha256":strict.sha(ccfg),
        "ccfg_bytes_in_derived_hex":0,

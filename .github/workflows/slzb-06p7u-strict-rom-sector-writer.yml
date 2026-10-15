@@ -7,6 +7,9 @@ on:
       - 'firmware/slzb-06p7u/qualification/p7u_rom_lowlevel.py'
       - 'firmware/slzb-06p7u/qualification/requirements-p7u-spare-serial.txt'
       - 'firmware/slzb-06p7u/qualification/p7u_flash_spare.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_nv_recovery.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_nv_rom_transport.py'
       - 'firmware/slzb-06p7u/qualification/p7u_stock_rollback.py'
       - 'firmware/slzb-06p7u/qualification/p7u_rc1_package.py'
       - 'firmware/slzb-06p7u/qualification/p7u_rc1_verify.py'
@@ -45,6 +48,7 @@ jobs:
           python3 tests/p7u-rom-bsl-gate/test_rom_protocol.py
           python3 tests/p7u-rom-bsl-gate/test_spare_management_gate.py
           python3 tests/p7u-rom-bsl-gate/test_flash_cli_guards.py
+          python3 tests/p7u-rom-bsl-gate/test_application_contract.py
           echo "P7U_FAKE_ROM_ONLY_NO_FIRMWARE_WRITE"
   official-vendor-rollback-offline:
     runs-on: ubuntu-22.04
@@ -68,6 +72,7 @@ jobs:
             --official-vendor-bin /tmp/p7u-stock/vendor.bin \
             --profile p7u-cap192-f07 --output-prefix /tmp/p7u-stock/r2
           python3 tests/p7u-rom-bsl-gate/test_rc1_release_package.py --vendor /tmp/p7u-stock/vendor.bin
+          python3 tests/p7u-rom-bsl-gate/test_nv_recovery.py --vendor /tmp/p7u-stock/vendor.bin
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -77,9 +82,9 @@ jobs:
               p=json.loads((d/(label+".plan.json")).read_text())
               assert r["ccfg_bytes_in_derived_hex"]==0
               assert r["nv_bytes_in_derived_hex"]==0
-              assert p["explicit_application_sector_erase_addresses"][-1]=="0x2C000"
-              assert p["sector_count"]==23 and p["flash_authorized"] is False
-              print(label,"PINNED_STOCK_APP_ROLLBACK_23_SECTORS_VERIFIED_OFFLINE")
+              assert p["explicit_application_sector_erase_addresses"][-1]=="0x2E000"
+              assert p["sector_count"]==24 and p["flash_authorized"] is False
+              print(label,"PINNED_STOCK_APP_ROLLBACK_24_SECTORS_VERIFIED_OFFLINE")
           PY
           rm -rf /tmp/p7u-stock
           echo "NO_VENDOR_FIRMWARE_BINARY_PUBLISHED_NO_FLASH"

@@ -11,7 +11,7 @@ KINDS={1:"BOOT_ENTER",2:"NV_READ_BEGIN",3:"NV_RESTORED",4:"NV_NEW",5:"NV_AMBIGUO
  6:"ZDO_INIT_ENTER",7:"ZDO_INIT_EXIT",8:"DEV_STATE",9:"MT_RX",10:"SRSP_QUEUED",
  11:"UART_ACCEPTED",12:"UART_TX_FINISHED",13:"UART_REJECTED",14:"QUEUE_DEPTH",15:"FAULT",16:"RESET_SOURCE",
  17:"ZDO_DISPATCH",18:"NPI_Q_ACCEPT",19:"NPI_Q_REJECT",20:"PARSE_ERR",21:"FCS_ERR",22:"OVERFLOW",23:"UART_FIFO_LOADED",
- 24:"SRSP_SEND_ATTEMPTED"}
+ 24:"SRSP_SEND_ATTEMPTED",25:"AF_CONFIRM",26:"NV_FAILURE"}
 NV_NAMES={0:"unknown",1:"restored",2:"new",3:"ambiguous"}
 
 def crc16(data: bytes) -> int:
@@ -61,7 +61,12 @@ def decode(raw: bytes) -> dict:
         if b["seq"]!=want: raise ValueError("SEQ_NOT_CONTIGUOUS")
         # Clock_getTicks is modulo 2^32. Only intervals below half its range
         # have an unambiguous direction; a BOOT_ENTER starts a new epoch.
-        if ((b["tick"]-a["tick"])&0xFFFFFFFF)>=0x80000000 and b["kind"]!="BOOT_ENTER":
+        # Fatal NV observations must also work before BIOS and deliberately
+        # use the direct recorder with tick zero. Their order is sequenced,
+        # but zero is not a sampled time or a reboot. Runtime hardening's
+        # untimed NV_AMBIGUOUS path has the same convention.
+        untimed=lambda e:e["tick"]==0 and e["kind"] in ("NV_FAILURE","NV_AMBIGUOUS")
+        if not untimed(a) and not untimed(b) and ((b["tick"]-a["tick"])&0xFFFFFFFF)>=0x80000000 and b["kind"]!="BOOT_ENTER":
             raise ValueError("TICK_REGRESSION")
     if events and any(e["seq"]==0xFFFFFFFF for e in events) and total!=0xFFFFFFFF:
         raise ValueError("TOTAL_MISMATCH_WRAP")
@@ -134,6 +139,7 @@ def selftest() -> None:
     M=4294967295
     wrap=decode(encode([(s,s,1,0) for s in (M-6,M-5,M-4,M-3,M-2,M-1,M,1)],total=M,dropped=M)); must(wrap["events"][-1]["seq"]==1,"SEQ_WRAP")
     ext=decode(encode([(1,0,17,0),(2,1,18,0),(3,2,21,0)])); must([e["kind"] for e in ext["events"]]==["ZDO_DISPATCH","NPI_Q_ACCEPT","FCS_ERR"],"EXTENDED_KINDS")
+    decode(encode([(1,0xFFFFFFE0,9,0),(2,0,26,7),(3,0xFFFFFFF0,12,0)]))
     for bad in (b"",b"P7D1",raw[:-1],raw+b"\x00",raw[:4]+b"\x02"+raw[5:],
                 raw[:6]+b"\x09"+raw[7:],raw[:-2]+b"\x00\x00",
                 encode([(1,0,1,0)],nv_state=99),encode([(0,0,1,0)])):

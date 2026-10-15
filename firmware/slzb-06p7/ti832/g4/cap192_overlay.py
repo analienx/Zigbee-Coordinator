@@ -5,10 +5,9 @@ Combines the proven G3 NV5 syscfg geometry patch and the G4 capacity
 patch on one znp.syscfg, fail-closed. The example projectspec also supplies
 source-route/concentrator compiler defaults absent from TI's SysConfig UI.
 It never touches zd_app.c, nvocmp, NPI or UART sources, so it cannot
-enable an NV-wipe fallback. Features without a proven safe anchor on the
-pinned SDK (F05,F07,F08,F10,F11,F12,F15 patches, F09 buffer copies) stay
-BLOCKED in the ledger docs/SLZB_06P7_G4_CAP192_RUNTIME_2026-10-13.md and
-are never invented here. All 36 parity flags stay false.
+enable an NV-wipe fallback. Later G6/G7/F07 and hardening overlays supply
+transport, diagnostics and persistence changes. Current stage-by-stage parity
+is recorded in phase0; the historical G4 ledger is not the final profile.
 """
 from __future__ import annotations
 import argparse, hashlib, json, sys

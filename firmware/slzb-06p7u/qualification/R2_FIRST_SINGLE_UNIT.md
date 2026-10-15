@@ -5,6 +5,8 @@ This plan supersedes the spare-unit/R1-first sequence for issue #80. There is
 intermediate flash. Physical qualification remains open. This document does not
 authorize a reset, erase or flash.
 
+**Current implementation update:** [NV5_RECOVERY.md](NV5_RECOVERY.md) provides the separate raw backup, timing probe, five-sector preparation and original-NV restoration tool. [APPLICATION_CONTRACT_V2.md](APPLICATION_CONTRACT_V2.md) jointly expands the app writer and paired stock cleanup to 24 sectors. Physical proof remains pending. The [essential milestone policy](../../slzb-06p7/ti832/phase0/R2_ACCEPTANCE_MATRIX.md) separates the first small trial from household migration and optional features.
+
 ## Candidate changes
 
 CAP192 explicitly sets `MAX_RTG_SRC_ENTRIES=192`, `MAX_NEIGHBOR_ENTRIES=64`, `CONCENTRATOR_ENABLE=1`,
@@ -79,9 +81,10 @@ therefore remains blocked; there is no automatic conversion or wipe. R1 and
 stock-app rollback retain their existing nonblank-NV behavior.
 
 If NV5 is not already entirely FF, a separate reviewed, identity-bound NV operation
-and its same-device recovery procedure must be prepared and approved after the
-backups above. **That operation is not implemented or authorized here.** Do not use
-a generic bank-erase flasher or weaken the application allowlist. The blank
+must follow the backups above. The separate `p7u_nv_recovery.py` implements it
+with verified original/copy backups and a fresh approval plan; see
+[NV5_RECOVERY.md](NV5_RECOVERY.md). Do not use a generic bank-erase flasher or
+weaken the application allowlist. The blank
 gate is deliberately unsuitable for updating an already formed NV5 network.
 
 Stock application rollback restores firmware only. Once R2 has initialized NV5,
@@ -93,8 +96,8 @@ over R2 NV5 does not establish recovery of the old network.
 
 Use a fresh native-matched candidate and paired stock cleanup plan. The historical
 RC1 tag/archive predates the review fixes and must not be selected. Keep the exact
-23-sector application allowlist, sector CRC verification, vector sector last and
-unchanged installed CCFG/IEEE checks. A future image beyond `0x2E000` requires a
+24-sector application allowlist, sector CRC verification, vector sector last and
+unchanged installed CCFG/IEEE checks. A future image beyond `0x30000` requires a
 joint update/review of candidate writing and stock tail cleanup; do not remove the
 guard. This boundary is a recovery contract, not exhaustion of silicon flash.
 
@@ -105,9 +108,9 @@ network-state recovery. A later R2 reinstall must satisfy the NV prerequisite
 again; stock app rollback does not make NV5 blank.
 
 Then grow a fresh disposable network in stages from a few representative devices
-toward the intended 60+ routers/100+ devices. Measure route/cache occupancy, MTO and
-transmit failures, Z2M timeouts, live heap low-water/fragmentation/allocation errors,
-queues and NV occupancy/compaction. Check counter persistence across orderly
+toward the intended 60+ routers/100+ devices. Observe routed delivery, AF failures,
+Z2M timeouts and the current free-heap trend. Add deeper instrumentation only if
+these measurements reveal a problem. Check counter persistence across orderly
 restarts. Defer destructive power-cut and failure-injection tests on the only unit
 until ordinary recovery is established. Hardware/RF wiring, sustained capacity,
 power-loss recovery and coordinated NWK key rotation remain unqualified.

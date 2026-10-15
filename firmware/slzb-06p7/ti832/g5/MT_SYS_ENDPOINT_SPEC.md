@@ -1,6 +1,9 @@
 # G5 MT SYS vendor endpoint spec (DISABLED)
 
-Status: **SPEC ONLY — `P7_DIAG_MT_ENDPOINT_ENABLED=0`, not wired, NOT_FLASHABLE.**
+Status of **G5 alone**: `P7_DIAG_MT_ENDPOINT_ENABLED=0`, no dispatcher.
+The later composed G6/R2 profile **does install SYS `0xF0`** with different
+versioned requests; see [its current contract](../g6/MT_HEALTH_ENDPOINT.md).
+The proposal below documents historical G5 design, not current R2 enablement.
 
 | Item | Value |
 | --- | --- |

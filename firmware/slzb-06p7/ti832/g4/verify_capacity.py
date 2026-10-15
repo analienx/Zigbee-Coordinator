@@ -15,11 +15,17 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 EXPECTED = {"gMAX_RTG_SRC_ENTRIES": 192, "gMAX_NEIGHBOR_ENTRIES": 64,
-            "gMAX_RTG_ENTRIES": 128, "gMAX_RREQ_ENTRIES": 16}
-DEFAULTS = {"MAX_RTG_SRC_ENTRIES": 192, "MAX_NEIGHBOR_ENTRIES": 64, "CONCENTRATOR_ENABLE": 1,
+            "gMAX_RTG_ENTRIES": 128, "gMAX_RREQ_ENTRIES": 16,
+            "gMAX_SOURCE_ROUTE": 12, "gMAX_BCAST": 9,
+            "gMAX_BROADCAST_QUEUED": 10, "gNWK_MAX_BINDING_ENTRIES": 4,
+            "gNWK_MAX_DATABUFS_WAITING": 8, "gNWK_MAX_DATABUFS_SCHEDULED": 5,
+            "gNWK_MAX_DATABUFS_TOTAL": 12, "gNWK_INDIRECT_MSG_MAX_ALL": 9}
+DEFAULTS = {"MAX_RTG_SRC_ENTRIES": 192, "MAX_NEIGHBOR_ENTRIES": 64,
+            "CONCENTRATOR_ENABLE": 1,
             "CONCENTRATOR_ROUTE_CACHE": 1, "CONCENTRATOR_DISCOVERY_TIME": 60}
 TABLES = {"rtgSrcTable": (192 * 8, "SOURCE_ROUTE"),
-          "neighborTable": (64 * 28, "NEIGHBOR")}
+          "neighborTable": (64 * 28, "NEIGHBOR"),
+          "rtgSrcRelayList": (12 * 2, "SOURCE_RELAY")}
 
 
 def must(condition: bool, reason: str) -> None:
@@ -112,6 +118,9 @@ def verify(elf: bytes, projectspec: bytes) -> dict:
     result.update({"status": "CAP192_LINKED_CAPACITY_PASS",
                    "compiler_defaults": compiler_defaults(projectspec.decode("utf-8")),
                    "concentrator_runtime_verified": False,
+                   "network_behavior_verified": False,
+                   "source_only_constants": {"NWK_MAX_DATABUFS_CONFIRMED": 5},
+                   "source_only_note": "Pinned source default; not required as a linked object because the TI linker discards the unused constant",
                    "compiler_defaults_source": "recorded projectspec; not decoded .cinit or NV",
                    "elf_sha256": hashlib.sha256(elf).hexdigest(),
                    "projectspec_sha256": hashlib.sha256(projectspec).hexdigest()})

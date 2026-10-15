@@ -98,6 +98,18 @@ int_fast16_t NVS_erase(NVS_Handle h,size_t off,size_t len) {
   assert(h && off%8192==0 && len==8192 && off+len<=sizeof(flash));
   erases++;if(fail_erase)return -1;memset(flash+off,0xFF,len);return 0;
 }
+#include "ti/common/nv/nvintf.h"
+static unsigned diagnostic_failures;
+static uint8_t diagnostic_first_status;
+static uint8_t diagnostic_first_site;
+static void fixture_failure(uint8_t status,uint8_t site) {
+  if(status!=NVINTF_SUCCESS && status!=NVINTF_NOTREADY) {
+    assert(site>=1 && site<=16);
+    if(!diagnostic_failures) {diagnostic_first_status=status;diagnostic_first_site=site;}
+    diagnostic_failures++;
+  }
+}
+#define P7_NV_DIAG_FAILURE(status,site) fixture_failure(status,site)
 #include "driver.c"
 #define NV_OPER_FAILED 10
 #define NV_ITEM_UNINIT 9
@@ -128,6 +140,9 @@ int main(int argc,char **argv) {
   if(startup_fault) {
     assert(status!=NVINTF_SUCCESS && writes==0 && erases==0);
     assert(!memcmp(saved,flash,sizeof(flash)));
+#ifdef PATCHED
+    assert(diagnostic_failures>0 && diagnostic_first_status==status && diagnostic_first_site>0);
+#endif
     puts("NV_BAD_STARTUP_PRESERVED_PASS");return 0;
   }
   assert(status==NVINTF_SUCCESS);
@@ -160,8 +175,15 @@ int main(int argc,char **argv) {
       fail_read=1;assert(api.readItem(id,0,sizeof(out),out)!=NVINTF_SUCCESS);fail_read=0;
     }
     assert(!p7_nv_persistence_ok());unsigned old_writes=writes,old_erases=erases;
+#ifdef PATCHED
+    assert(diagnostic_failures>0 && diagnostic_first_status==NVOCMP_failF && diagnostic_first_site>0);
+    uint8_t original_failure=diagnostic_first_status;
+#endif
     assert(api.updateItem(id,sizeof(data),data)!=NVINTF_SUCCESS);
     assert(writes==old_writes && erases==old_erases);
+#ifdef PATCHED
+    assert(diagnostic_first_status==original_failure);
+#endif
     puts("NV_PHYSICAL_FAILURE_LATCHES_AND_REFUSES_LATER_MUTATIONS_PASS");return 0;
   }
   if(!strncmp(mode,"content-",8)) {
@@ -238,7 +260,9 @@ def main():
              "mock_vims.h":VIMS_HEADER}
     for name,body in headers.items():
         file=a.out/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text(body)
-    original=(a.sdk/nv_overlay.SOURCE).read_text();patched=nv_overlay.patch(original)
+    original=(a.sdk/nv_overlay.SOURCE).read_text();sites={};patched=nv_overlay.patch(original,sites=sites)
+    assert set(sites)==set(range(1,17)) and sites[1]["function_or_macro"]=="NVOCMP_FLASHACCESS"
+    (a.out/"nv-failure-sites.json").write_text(json.dumps(sites,indent=2)+"\n")
     results=[]
     for version,driver in (("pre",original),("post",patched)):
         (a.out/"driver.c").write_text(driver)

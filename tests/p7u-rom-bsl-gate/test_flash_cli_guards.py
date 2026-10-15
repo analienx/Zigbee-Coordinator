@@ -107,8 +107,8 @@ async def approval_checks(folder):
             raise AssertionError("Tampered approval accepted")
         assert entered==[]
 
-    # A generic smaller application passes core geometry but is outside RC1's
-    # reviewed 23-sector contract, so the physical CLI must refuse it offline.
+    # A generic tiny application passes core geometry but cannot qualify as the
+    # reviewed coordinator or provide the full stock cleanup contract.
     args.app_only_hex.write_bytes(raw)
     args.full_image_evidence.write_text(json.dumps(source))
     args.sector_plan.write_text(json.dumps(plan))
@@ -116,7 +116,7 @@ async def approval_checks(folder):
         try:
             cli.load_request(args)
         except core.StrictError as exc:
-            assert str(exc)=="RC1_REQUIRES_EXACT_23_APPLICATION_SECTORS"
+            assert str(exc)=="APPLICATION_AND_ROLLBACK_CONTRACT_MISMATCH"
         else:
             raise AssertionError("Non-RC1 application accepted by physical CLI")
 

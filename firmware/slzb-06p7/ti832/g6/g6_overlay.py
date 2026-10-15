@@ -19,6 +19,7 @@ RX="source/ti/zstack/npi/npi_rxbuf.c"
 TL="source/ti/zstack/npi/npi_tl.c"
 SYS="source/ti/zstack/mt/mt_sys.c"
 CLIENT="source/ti/zstack/npi/npi_client_mt.c"
+AF="source/ti/zstack/mt/mt_af.c"
 INC='#include "p7_g6.h" /* P7G6 */\n'
 
 def replace(text, anchor, value, label):
@@ -159,17 +160,91 @@ def patch(texts):
 
 def clock_recorder(source):
     if "void p7_g6_record(" in source:raise ValueError("CLOCK_RECORDER_ALREADY_PATCHED")
-    return source+'\n#include "p7_g6.h"\n'+'''void p7_g6_record(uint16_t kind, uint16_t arg) {
+    # Aggregate inside the existing guard, including early p7_diag_record
+    # callers. This preserves a first failure after the eight-event window
+    # has rolled away, without writing NV or relying on retained SRAM.
+    source=replace(source,'#include "p7_crashdiag.h"\n',
+        '#include "p7_crashdiag.h"\n#include "p7_g6.h"\n'+HEALTH_STATE,"health_state")
+    source=replace(source,'  fold_event(e);',
+        '  p7_health_record(kind,arg,tick);\n  fold_event(e);',"health_record")
+    source=replace(source,'  memset(p7_diag_ring,0,sizeof p7_diag_ring);',
+        '  memset(p7_diag_ring,0,sizeof p7_diag_ring);\n'
+        '  memset(p7_health_counts,0,sizeof p7_health_counts);\n'
+        '  p7_health_first_kind=0; p7_health_first_arg=0; p7_health_first_tick=0;',"health_init")
+    return source+'\n'+'''void p7_g6_record(uint16_t kind, uint16_t arg) {
     if (!writer_try_claim(1)) return;
     record_common(kind, arg, p7_g6_now()); /* sample inside writer ownership */
     writer_release();
 }
+'''+HEALTH_SNAPSHOT
+
+
+HEALTH_STATE='''
+static uint32_t p7_health_counts[P7_G6_HEALTH_COUNTERS];
+static uint16_t p7_health_first_kind, p7_health_first_arg;
+static uint32_t p7_health_first_tick;
+static void p7_health_record(uint16_t kind,uint16_t arg,uint32_t tick) {
+    unsigned slot=P7_G6_HEALTH_COUNTERS;
+    switch(kind) {
+    case P7D_AF_CONFIRM:
+        if (p7_health_counts[14]!=UINT32_MAX) ++p7_health_counts[14];
+        /* Pinned zcomdef.h: success=0, ZNwkNoRoute=cd,
+         * ZMacChannelAccessFailure=e1, ZMacNoACK=e9. Other stays other. */
+        slot=arg==0?0:arg==0xcd?1:arg==0xe1?2:arg==0xe9?3:4; break;
+    case P7D_UART_REJECTED: slot=5; break;
+    case P7D_NPI_Q_REJECT: slot=6; break;
+    case P7D_OVERFLOW: slot=7; break;
+    case P7D_PARSE_ERR: slot=8; break;
+    case P7D_FCS_ERR: slot=9; break;
+    case P7D_NV_AMBIGUOUS: slot=10; break;
+    case P7D_NV_FAILURE: slot=11; break;
+    case P7D_NPI_Q_ACCEPT: slot=12; break;
+    case P7D_UART_TX_FINISHED: slot=13; break;
+    case P7D_ZDO_DISPATCH: slot=15; break;
+    }
+    if(slot<P7_G6_HEALTH_COUNTERS && p7_health_counts[slot]!=UINT32_MAX)
+        ++p7_health_counts[slot];
+    if (!p7_health_first_kind &&
+        (kind==P7D_NV_FAILURE || kind==P7D_FAULT)) {
+        p7_health_first_kind=kind; p7_health_first_arg=arg;
+        p7_health_first_tick=tick; /* zero may be pre-BIOS/unknown */
+    }
+}
 '''
+
+HEALTH_SNAPSHOT='''
+size_t p7_g6_health_snapshot(uint8_t *out,size_t cap) {
+    if(!out || cap<P7_G6_HEALTH_BYTES || !writer_try_claim(0)) return 0;
+    if(!p7_diag_state.count) { writer_release(); return 0; }
+    memset(out,0,P7_G6_HEALTH_BYTES);
+    out[0]=P7_G6_HEALTH_COUNTERS;
+    out[1]=p7_health_first_kind?1u:0u;
+    for(unsigned i=0;i<P7_G6_HEALTH_COUNTERS;++i)
+        put32(out+4u+4u*i,p7_health_counts[i]);
+    put16(out+68,p7_health_first_kind); put16(out+70,p7_health_first_arg);
+    put32(out+72,p7_health_first_tick); put32(out+76,p7_g6_now());
+    put32(out+80,p7_diag_contention_dropped);
+    writer_release();
+    return P7_G6_HEALTH_BYTES;
+}
+'''
+
+
+def af_telemetry(source):
+    source=replace(source,'#include "mt_af.h"\n',
+        '#include "mt_af.h"\n'+INC,"af_health_include")
+    return replace(source,'void MT_AfDataConfirm(afDataConfirm_t *pMsg)\n{',
+        'void MT_AfDataConfirm(afDataConfirm_t *pMsg)\n{\n'
+        '  p7_g6_record(P7D_AF_CONFIRM, pMsg->hdr.status); /* P7G6:status only */',
+        "af_health_confirm")
 
 def apply(sdk, examples, output):
     paths=sorted({p[0] for p in diag.PATCHES}|{RX,TL,SYS,CLIENT})
     original={p:(sdk/p).read_text() for p in paths}
     patched=patch(original) # all exact anchors validated before writes
+    original[AF]=(sdk/AF).read_text()
+    patched[AF]=af_telemetry(original[AF])
+    paths.append(AF)
     spec=examples/diag.PROJECTSPEC
     text=spec.read_text()
     entry=diag.DIAG_FILE_ENTRY.replace("p7_crashdiag.c","p7_g6.c")

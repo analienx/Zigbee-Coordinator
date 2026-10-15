@@ -9,6 +9,11 @@ from pathlib import Path
 from runtime_overlay import replace, function
 
 SOURCE="source/ti/common/nv/nvocmp.c"
+NV_FAILURE_OPERATIONS=("voltage_check", "initial_success_not_a_failure",
+    "pthread_mutex_attributes", "pthread_mutex_create", "gate_mutex_create",
+    "nvs_open", "nvs_geometry", "nvs_region_base", "legacy_geometry_check",
+    "legacy_handle_check", "nv_format_precheck", "ambiguous_force_clean",
+    "nv2_page_scan", "nvs_read", "nvs_write", "nvs_erase")
 GUARD=r'''
 /* P7: inspect every page before scanPage is allowed to format even a blank
  * page. An unsupported nonblank page must preserve the entire NV image. */
@@ -53,7 +58,7 @@ static uint8_t p7_nv_precheck(void)
 '''
 
 
-def patch(source: str) -> str:
+def patch(source: str, *, sites=None) -> str:
     if "p7_nv_precheck" in source: raise ValueError("NV_HARDENING_ALREADY_PATCHED")
     source=replace(source,
         "    { if (!NVOCMP_voltCheckFptr()) { err = NVINTF_LOWPOWER;}}}",
@@ -168,17 +173,48 @@ def patch(source: str) -> str:
                    "          NVOCMP_readHeader(p, ofs, &iHdr, false);\n"
                    "          if (NVOCMP_failF != NVINTF_SUCCESS) return NVOCMP_failF;",
                    "nv_find_stops_on_failed_header_read")
+    # Numeric-only evidence when a fatal status is assigned, including early
+    # initialization before BIOS starts. No clock call, NV read or allocation.
+    # Independent driver tests supply the observer macro and still execute the
+    # complete real driver; native builds use the existing recorder guard.
+    source=replace(source,'#include "ti/common/nv/crc.h"\n',
+        '#include "ti/common/nv/crc.h"\n'
+        '#ifndef P7_NV_DIAG_FAILURE\n#include "p7_crashdiag.h"\n'
+        '#define P7_NV_DIAG_FAILURE(status, site) do { if ((status) != NVINTF_SUCCESS && '
+        '(status) != NVINTF_NOTREADY) p7_diag_record(P7D_NV_FAILURE, '
+        '((uint16_t)(site) << 8) | (uint8_t)(status), 0); } while (0)\n'
+        '#endif\n'
+        'static __attribute__((noinline)) uint8_t p7_nv_diag_status(uint8_t status, uint8_t site) { P7_NV_DIAG_FAILURE(status, site); return status; }\n',"nv_failure_observer")
+    observations=0
+    site_map={}
+    def observe(match):
+        nonlocal observations
+        prefix=source[:match.start()].rsplit("\n",1)[-1]
+        if "static uint8_t" in prefix: return match.group(0)
+        observations+=1
+        definitions=re.findall(r'(?m)^(?:static\s+)?(?:inline\s+)?(?:void|uint8_t|uint16_t|uint32_t|int)\s+'
+            r'(NVOCMP_\w+)\s*\([^;{}]*\)\s*\{',source[:match.start()])
+        owner=definitions[-1] if definitions else "NVOCMP_FLASHACCESS"
+        site_map[observations]={"function_or_macro":owner,
+            "operation":NV_FAILURE_OPERATIONS[observations-1],
+            "status_expression":" ".join(match.group(1).split())}
+        return "NVOCMP_failF = p7_nv_diag_status("+match.group(1).strip()+", "+str(observations)+");"
+    source=re.sub(r'\bNVOCMP_failF\s*=(?!=)([^;]+);',observe,source)
+    if observations!=16: raise ValueError("NV_FAILURE_ASSIGNMENT_COVERAGE_CHANGED")
+    if sites is not None: sites.update(site_map)
     source+="\n__attribute__((noinline)) uint8_t p7_nv_persistence_ok(void) { return NVOCMP_failF == NVINTF_SUCCESS; }\n"
     return source
 
 
 def apply(sdk:Path,output:Path):
-    path=sdk/SOURCE;original=path.read_text();changed=patch(original)
+    path=sdk/SOURCE;original=path.read_text();sites={};changed=patch(original,sites=sites)
     path.write_text(changed)
     report={"qualification":"P7_NV_UNKNOWN_FORMAT_PRESERVATION_SOURCE_ONLY",
             "flash_authorized":False,"source":SOURCE,
             "input_sha256":hashlib.sha256(original.encode()).hexdigest(),
-            "output_sha256":hashlib.sha256(changed.encode()).hexdigest()}
+            "output_sha256":hashlib.sha256(changed.encode()).hexdigest(),
+            "nv_failure_argument":"high byte=site ID; low byte=NVINTF status; timestamp unavailable",
+            "nv_failure_sites":sites}
     output.mkdir(parents=True,exist_ok=True)
     (output/"NV-HARDENING-SOURCE.json").write_text(json.dumps(report,indent=2)+"\n")
     return report

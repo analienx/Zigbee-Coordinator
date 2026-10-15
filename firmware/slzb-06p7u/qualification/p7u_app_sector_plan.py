@@ -45,6 +45,8 @@ def plan(app_bytes: bytes, evidence: dict) -> dict:
     sectors = sorted({(x // gate.SECTOR) * gate.SECTOR for x in app})
     gate.require(len(sectors)>0 and all(s+gate.SECTOR<=limit for s in sectors),
                  "PLAN_TOUCHES_PROTECTED_SECTOR")
+    gate.require(sectors[-1]+gate.SECTOR<=0x30000,
+                 "PLAN_OUTSIDE_REVIEWED_24_SECTOR_APPLICATION_CONTRACT")
     # Stronger than checked image bytes: plan's entire ERASE sector must be
     # within application space, even across sparse/split HEX segments.
     return {

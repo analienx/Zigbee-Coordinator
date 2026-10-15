@@ -3,7 +3,7 @@ on:
   push:
     branches: ['codex/p7-g6-*']
   pull_request:
-    paths: ['firmware/slzb-06p7/ti832/g6/**', 'tests/p7-g6-host/**', '.github/workflows/slzb-06p7-g6-*.yml']
+    paths: ['firmware/slzb-06p7/ti832/g6/**', 'firmware/slzb-06p7/ti832/g5/**', 'tests/p7-g6-host/**', 'tests/p7-network-host/**', 'deploy/p7u_health.py', 'deploy/p7u_runtime_settings.py', 'deploy/p7u_herdsman_diagnostics.mjs', '.github/workflows/slzb-06p7-g6-*.yml']
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
@@ -40,6 +40,8 @@ jobs:
           python3 repo/tests/p7-g6-host/test_elf_load_hex.py | tee evidence/elf-load-hex.log
           python3 repo/tests/p7-g6-host/test_g6.py --sdk sdk --out evidence | tee evidence/host.log
           python3 repo/firmware/slzb-06p7/ti832/g6/p7_g6_decode.py --selftest | tee evidence/timing.log
+          python3 -m unittest discover -s repo/tests/p7-g6-host -p test_health.py -v
+          python3 -m unittest discover -s repo/tests/p7-network-host -v
           python3 - <<'PY'
           import sys
           from pathlib import Path
@@ -66,6 +68,13 @@ jobs:
           assert timing_report(post,same_boot=True)['stage_durations_ms']=={}
           print('PASS actual C snapshot cross-decodes with Clock metadata')
           PY
+      - name: Actual pinned Herdsman owner protocol (no device)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/p7-owner" --ignore-scripts --no-audit --no-fund zigbee-herdsman@10.9.1
+          export P7_HERDSMAN_ROOT="$RUNNER_TEMP/p7-owner/node_modules/zigbee-herdsman"
+          node --test repo/tests/p7-network-host/test_herdsman_owner.mjs | tee evidence/herdsman-owner.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with: {name: p7-g6-host-evidence, path: evidence/, if-no-files-found: error}

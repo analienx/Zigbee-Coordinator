@@ -49,7 +49,7 @@ def main():
     m=stock.extract(blob,"p7u-f07-stock")
     assert m[3]["custom_tail_cleanup_erased_to_all_ff"]
     assert m[3]["app_payload_bytes"]==179688
-    assert m[2]["sector_count"]==23
+    assert m[2]["sector_count"]==24
 
     # Build tests use genuine CCS native full image rather than inventing authority
     if a.native_full_hex is None:
@@ -64,8 +64,8 @@ def main():
     for profile in ("p7u-f07-stock",):  # profile of supplied native image
         r,files=rc.build(native_hex,blob,profile,COMMIT)
         assert r["flash_authorized"] is False
-        assert r["fully_covered_application_sectors"]==23
-        assert r["stock_extra_tail_sector_erased"]=="0x2C000"
+        assert r["fully_covered_application_sectors"]==24
+        assert r["stock_extra_tail_sector_erased"]=="0x2E000"
         assert r["vendor_20240710_verified_and_extracted"]
     prove=native.qualify(evidence,native_hex,"p7u-f07-stock",COMMIT)
     r["native_ccs_provenance"]=prove
