@@ -65,6 +65,26 @@ with tempfile.TemporaryDirectory(prefix="p7u-p10-migrate-") as td:
     assert proposal["devices"][1]["link_key"]["key"]=="d4"*16
     assert latest["network_key"]["frame_counter"]==12000  # source is immutable
     assert report["restoration_authorized"] is False
+    # Missing database members get explicit repair triage, not synthesized keys.
+    triage=m.missing_device_triage(pa,[old])
+    assert len(triage)==1
+    assert triage[0]["ieee_address"]=="0102030405060708"
+    assert triage[0]["older_backup_key_candidates"]==0
+    assert triage[0]["automatically_restore"] is False
+    assert triage[0]["recommended_action"]=="PLAN_CONTROLLED_REPAIR_OR_REJOIN"
+    earlier_extra=copy.deepcopy(prior)
+    earlier_extra["devices"].append({
+        "ieee_address":"0102030405060708","nwk_address":"abcd","is_child":False,
+        "link_key":{"key":"f7"*16,"rx_counter":50,"tx_counter":100}
+    })
+    earlier_extra_file=root/"prior-extra.json"
+    earlier_extra_file.write_text(json.dumps(earlier_extra),encoding="utf8")
+    historical=m.missing_device_triage(pa,[old,earlier_extra_file])
+    assert len(historical)==1
+    assert historical[0]["older_backup_key_candidates"]==1
+    assert historical[0]["historical_key_is_currently_verified"] is False
+    assert historical[0]["recommended_action"]=="VERIFY_CURRENT_KEY_OR_PLAN_REPAIR"
+    assert "key" not in historical[0]  # no historical key material in triage
     mustfail("AUTHORITATIVE_BACKUP_SHA_MISMATCH",lambda:m.analyze(pa,[old],"0"*64,ds))
     mustfail("AUTHORITATIVE_DATABASE_SHA_MISMATCH",lambda:m.analyze(pa,[old],bs,"0"*64))
     mustfail("COUNTER_MARGIN_POLICY_INVALID",lambda:m.analyze(pa,[old],bs,ds,1))
