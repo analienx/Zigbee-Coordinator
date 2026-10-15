@@ -207,13 +207,14 @@ def verified_pair(original: Path, copy: Path) -> tuple[dict, bytes]:
 
 def known_original_application(data: bytes, vendor: bytes) -> dict:
     """Prove existing app can be rebuilt by the pinned stock app-only writer."""
-    _, _, plan, receipt = stock.extract(vendor, "p7u-cap192-f07")
-    expected = vendor[28:28 + stock.APP_BYTES]
-    s.check(data[:stock.APP_BYTES] == expected, "NV_CAPTURED_ORIGINAL_APP_NOT_PINNED_STOCK")
-    s.check(data[stock.APP_BYTES:NV_START] == b"\xff" * (NV_START - stock.APP_BYTES),
+    _, _, plan, receipt = stock.extract_original(vendor, "p7u-cap192-f07")
+    length = receipt["app_payload_bytes"]
+    expected = vendor[28:28 + length]
+    s.check(data[:length] == expected, "NV_CAPTURED_ORIGINAL_APP_NOT_PINNED_STOCK")
+    s.check(data[length:NV_START] == b"\xff" * (NV_START - length),
             "NV_CAPTURED_ORIGINAL_HAS_UNRECOVERABLE_APP_GAP_DATA")
-    return {"manufacturer_sha256": stock.VENDOR_SHA, "original_app_sha256": s.sha(expected),
-            "original_app_bytes": stock.APP_BYTES, "original_gap_to_nv5_all_ff": True,
+    return {"manufacturer_sha256": receipt["manufacturer_container_sha256"], "original_app_sha256": s.sha(expected),
+            "original_app_bytes": length, "original_gap_to_nv5_all_ff": True,
             "stock_app_only_hex_sha256": receipt["rollback_app_only_hex_sha256"],
             "stock_app_only_plan_sha256": s.sha(s.canonical(plan)),
             "original_application_rebuildable_by_pinned_app_writer": True}

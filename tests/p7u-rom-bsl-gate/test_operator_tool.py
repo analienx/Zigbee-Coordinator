@@ -80,7 +80,7 @@ class OperatorTests(unittest.TestCase):
     def test_existing_output_and_unapproved_writes_stop_before_contact(self):
         with patch.object(tool, "validate_packet", return_value={}), \
              patch.object(tool, "management_get") as get, patch.object(tool.app, "run") as app:
-            for command in ("flash", "rollback", "prepare-nv5", "restore-nv5"):
+            for command in ("flash", "rollback", "prepare-nv5", "restore-nv5", "restore-app"):
                 with self.assertRaises(tool.core.StrictError): self.run_tool(self.args(command, "--write"))
             self.args().out.write_bytes(b"preserve backup")
             with self.assertRaises(tool.core.StrictError):

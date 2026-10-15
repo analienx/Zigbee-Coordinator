@@ -18,12 +18,18 @@ Create a private `target.json` beside the packet; do not commit real identities:
   "host_version": "ACTUAL_SLZB_OS_VERSION",
   "device": "/dev/ttyACM0",
   "packet": ".",
+  "original_stock_file": "official-stock-20240316.bin",
   "candidate_sha256": "EXACT_APP_HEX_SHA256_FROM_VERIFIED_KIT"
 }
 ```
 
 The packet contains unmodified `kit/` and the full manufacturer container
 `official-stock-20240710.bin`. Packet paths resolve against the target file.
+If the actual original is 20240316, also include its full manufacturer container
+as `official-stock-20240316.bin` and select it with `original_stock_file` above.
+Omitting that field retains the original 20240710-only behavior. Only those two
+explicitly hash-pinned manufacturer versions are accepted. The R2 kit and its
+paired 20240710 fallback remain unchanged.
 Offline checking and HTTP control need only Python's standard library. Radio
 operations use the pinned requirements of the underlying tools.
 
@@ -59,7 +65,7 @@ before NV preparation. The original application must match the pinned recovery
 source; the management firmware date alone is insufficient. A mismatch stops NV
 preparation and requires a reviewed rollback for the actual installed firmware.
 
-`prepare-nv5`, `restore-nv5`, `flash` and `rollback` **inspect by default**.
+`prepare-nv5`, `restore-nv5`, `flash`, `rollback` and `restore-app` **inspect by default**.
 NV plans use a new output directory; app plans use a new JSON file:
 
 ```text
@@ -76,10 +82,21 @@ means stock -> ROM -> stock -> ROM has actually been proved and the pinned
 stock rollback is available. Review and approve the concrete first-write plan
 as described in [the hardware plan](R2_FIRST_SINGLE_UNIT.md).
 
-`rollback` selects the stock app and clears the same 23 app sectors. After R2
-has used NV5, restore the original NV with `restore-nv5` **while still in ROM**,
-after stock app CRC verification, before restarting stock. Firmware rollback
-alone does not restore the old network. See [NV5_RECOVERY.md](NV5_RECOVERY.md).
+`rollback` selects the kit's 20240710 stock app. `restore-app` instead restores
+the exact original application (20240316 or 20240710), requiring two verified
+same-device backups AND the matching pinned manufacturer source. It checks all
+65 sectors outside the app before and after execution, leaves NV/CCFG untouched,
+and verifies the same 23 app sectors, with the vector sector programmed last.
+Use the backup/copy arguments from NV preparation:
+
+```text
+python p7u_tool.py restore-app --target target.json --unused-p7u --already-in-rom-bsl --backup original --copy INDEPENDENT_COPY --independent-copy --out original-app-plan.json
+```
+
+After R2 has used NV5, restore the original app, enter BSL freshly, then restore
+the original NV with `restore-nv5` **while still in ROM**, before restarting stock.
+NV restore checks every original app/gap sector first. Firmware rollback alone
+does not restore the old network. See [NV5_RECOVERY.md](NV5_RECOVERY.md).
 
 Only app sectors `0x00000..0x2C000` or separately five NV sectors
 `0xA4000..0xAC000` can be written. The CCFG sector at `0xAE000` stays protected.

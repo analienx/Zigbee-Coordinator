@@ -16,6 +16,7 @@ import urllib.request
 
 import p7u_flash_spare as app
 import p7u_nv_recovery as nv
+import p7u_original_rollback as original
 import p7u_rc1_package as kit
 import p7u_strict_sector_writer as core
 from p7u_rom_transport import normalized_mac, BslConnectionError
@@ -23,7 +24,7 @@ from p7u_rom_lowlevel import RomWireError
 
 
 COMMANDS = ("check", "identify", "enter-bsl", "restart-radio", "probe", "backup",
-            "verify-backup", "prepare-nv5", "restore-nv5", "flash", "rollback")
+            "verify-backup", "prepare-nv5", "restore-nv5", "flash", "rollback", "restore-app")
 
 
 def load_target(path: Path) -> dict:
@@ -73,7 +74,15 @@ def validate_packet(target: dict, args) -> dict:
     core.check(manifest["release_custom_app_hex_sha256"] == target.get("candidate_sha256"),
                "P7U_TARGET_CANDIDATE_CHANGED")
     app.load_request(app_request(target, args))  # Re-derive official fallback too.
+    nv.stock.extract_original(original_vendor(target).read_bytes(), "p7u-cap192-f07")
     return result
+
+
+def original_vendor(target: dict) -> Path:
+    name = target.get("original_stock_file", "official-stock-20240710.bin")
+    core.check(name in ("official-stock-20240316.bin", "official-stock-20240710.bin"),
+               "P7U_ORIGINAL_SOURCE_MUST_BE_PINNED_REVISION")
+    return target["packet"] / name
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -128,7 +137,7 @@ def nv_request(target: dict, args) -> SimpleNamespace:
                else "execute" if args.write else "inspect")
     return SimpleNamespace(
         command=command, backup_dir=args.backup, backup_copy_dir=args.copy,
-        official_stock_bin=target["packet"] / "official-stock-20240710.bin",
+        official_stock_bin=original_vendor(target),
         independent_copy_confirmed=args.independent_copy,
         device=target["device"], management_mac=target["management_mac"],
         unused_p7u=args.unused_p7u, already_in_rom_bsl=args.already_in_rom_bsl,
@@ -141,7 +150,7 @@ def nv_request(target: dict, args) -> SimpleNamespace:
 
 
 async def run(args) -> dict:
-    core.check(not args.write or args.command in ("flash", "rollback", "prepare-nv5", "restore-nv5"),
+    core.check(not args.write or args.command in ("flash", "rollback", "prepare-nv5", "restore-nv5", "restore-app"),
                "P7U_WRITE_NOT_VALID_FOR_COMMAND")
     core.check(not args.resume or args.command == "backup", "P7U_RESUME_BACKUP_ONLY")
     if args.write:
@@ -172,6 +181,17 @@ async def run(args) -> dict:
         if not target["device"].startswith("socket://"):
             core.check(args.already_in_rom_bsl, "P7U_USB_MUST_ALREADY_BE_IN_ROM_BSL")
         result = await app.run(app_request(target, args))
+        app.json_write(args.out, result)
+        return result
+    if args.command == "restore-app":
+        request = SimpleNamespace(
+            backup_dir=args.backup, backup_copy_dir=args.copy,
+            independent_copy_confirmed=args.independent_copy,
+            official_stock_bin=original_vendor(target), unused_p7u=args.unused_p7u,
+            already_in_rom_bsl=args.already_in_rom_bsl, device=target["device"],
+            management_mac=target["management_mac"], out=args.out, write=args.write,
+            recovery_proven=args.recovery_proven, plan=args.plan, approve_digest=args.approve)
+        result = await original.run(request)
         app.json_write(args.out, result)
         return result
     # NV core owns its capture/plan/receipt directories and all existing guards.

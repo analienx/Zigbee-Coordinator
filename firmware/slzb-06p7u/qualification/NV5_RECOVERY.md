@@ -2,8 +2,10 @@
 
 This tool implements the missing **software** operations. They have been tested
 against a byte-addressable fake ROM, including interrupted erases and writes.
-The actual one available P7U has not been contacted. ROM entry/reentry, bridge
-reliability, physical recovery and elapsed capture time remain hardware gates.
+Physical preflight on 15 October 2026 verified stock ZNP, repeated ROM entry and
+stock return on the one P7U (board 1.73, SLZB-OS v3.2.6.dev3). A repeated-read
+8KiB page matched ROM CRCs in 32.82 seconds. Complete capture/independent copies,
+NV preparation and stock recovery after a firmware write remain separate gates.
 No second P7U is assumed. The user's intended network exists only in backup;
 this unused radio's original raw state is a separate recovery artifact.
 
@@ -30,7 +32,9 @@ also precedes opening the radio stream; Ethernet availability is not assumed.
    extrapolation. The latter is an estimate excluding filesystem overhead and
    later bridge variability; a successful small sample cannot certify a full
    backup. No bytes or raw factory IEEE are printed, and no erase/reset occurs.
-2. Keep the radio in ROM BSL. Close other radio clients. Run `backup` to a
+2. Enter ROM BSL freshly for each separate invocation; a second autobaud sync
+   into an already synchronized session timed out on this unit. Close other
+   radio clients. Run `backup` to a
    **new private directory outside the repository**, using `--backup-dir`,
    `--device`, `--management-mac`, `--board-revision`, `--host-version`,
    `--unused-p7u` and `--already-in-rom-bsl`.
@@ -67,7 +71,8 @@ identity checks complete.
 `inspect` requires the verified original directory and independent copy, explicit
 endpoint/MAC, `--independent-copy-confirmed`, `--unused-p7u`,
 `--already-in-rom-bsl`, `--official-stock-bin` pointing to the SHA-pinned
-manufacturer 20240710 container, a **new** `--out-dir`, and one action:
+manufacturer container matching the captured original (20240316 or 20240710),
+a **new** `--out-dir`, and one action:
 
 | Action | Desired bytes |
 | --- | --- |

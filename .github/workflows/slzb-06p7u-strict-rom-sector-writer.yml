@@ -8,6 +8,7 @@ on:
       - 'firmware/slzb-06p7u/qualification/requirements-p7u-spare-serial.txt'
       - 'firmware/slzb-06p7u/qualification/p7u_flash_spare.py'
       - 'firmware/slzb-06p7u/qualification/p7u_tool.py'
+      - 'firmware/slzb-06p7u/qualification/p7u_original_rollback.py'
       - 'firmware/slzb-06p7u/qualification/P7U_TOOL.md'
       - 'firmware/slzb-06p7u/qualification/p7u_app_sector_plan.py'
       - 'firmware/slzb-06p7u/qualification/p7u_nv_recovery.py'
@@ -89,6 +90,11 @@ jobs:
             --profile p7u-cap192-f07 --output-prefix /tmp/p7u-stock/r2
           python3 tests/p7u-rom-bsl-gate/test_rc1_release_package.py --vendor /tmp/p7u-stock/vendor.bin
           python3 tests/p7u-rom-bsl-gate/test_nv_recovery.py --vendor /tmp/p7u-stock/vendor.bin
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 \
+            'https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/CC1352P7_coordinator_20240316.bin' \
+            -o /tmp/p7u-stock/original-20240316.bin
+          echo '3d0addd3d9c5920b9a23083f648cd506802d664706da6c0f2728f78cc94b99f9  /tmp/p7u-stock/original-20240316.bin' | sha256sum --check
+          python3 tests/p7u-rom-bsl-gate/test_original_rollback.py --vendor /tmp/p7u-stock/original-20240316.bin
           python3 - <<'PY'
           import json
           from pathlib import Path

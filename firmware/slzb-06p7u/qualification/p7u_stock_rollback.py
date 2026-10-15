@@ -22,24 +22,41 @@ VENDOR_BYTES = 179804
 APP_BYTES = 179688
 MODEL = "SLZB-06P7U"
 REVISION = "20240710"
+ORIGINAL_20240316_SHA = "3d0addd3d9c5920b9a23083f648cd506802d664706da6c0f2728f78cc94b99f9"
+ORIGINAL_20240316_CCFG_SHA = "8cf2093479643cf529f7915c5eff59d360f7d75d05d6e4bab40ac30605e90edd"
 
 
 def extract(blob: bytes, profile: str) -> tuple[bytes, dict, dict, dict]:
-    strict.check(len(blob) == VENDOR_BYTES and strict.sha(blob) == VENDOR_SHA,
+    """The existing R2 paired fallback remains exactly the pinned 20240710."""
+    return _extract(blob, profile, VENDOR_SHA, VENDOR_BYTES, APP_BYTES, REVISION,
+                    strict.gate.VENDOR_CCFG_SHA256)
+
+
+def extract_original(blob: bytes, profile: str) -> tuple[bytes, dict, dict, dict]:
+    """Only the two explicitly pinned manufacturer originals, never arbitrary raw images."""
+    if strict.sha(blob) == ORIGINAL_20240316_SHA:
+        return _extract(blob, profile, ORIGINAL_20240316_SHA, 172356, 172240,
+                        "20240316", ORIGINAL_20240316_CCFG_SHA)
+    return extract(blob, profile)
+
+
+def _extract(blob: bytes, profile: str, vendor_sha: str, vendor_bytes: int,
+             app_bytes: int, revision: str, ccfg_sha: str) -> tuple[bytes, dict, dict, dict]:
+    strict.check(len(blob) == vendor_bytes and strict.sha(blob) == vendor_sha,
                  "STOCK_VENDOR_SOURCE_HASH_MISMATCH")
     strict.check(blob[:4] == b"SLZB", "STOCK_CONTAINER_HEADER_CHANGED")
     a_addr, a_size, a_crc = struct.unpack_from(">III", blob, 4)
     c_addr, c_size, c_crc = struct.unpack_from(">III", blob, 16)
     strict.check((a_addr,a_size,c_addr,c_size)==
-                 (0,APP_BYTES,strict.gate.CCFG_START,strict.gate.CCFG_SIZE),
+                 (0,app_bytes,strict.gate.CCFG_START,strict.gate.CCFG_SIZE),
                  "STOCK_CONTAINER_SEGMENTS_CHANGED")
-    app = blob[28:28 + APP_BYTES]
-    ccfg = blob[28 + APP_BYTES:]
+    app = blob[28:28 + app_bytes]
+    ccfg = blob[28 + app_bytes:]
     strict.check(len(ccfg)==strict.gate.CCFG_SIZE and
                  zlib.crc32(app) & 0xffffffff == a_crc and
                  zlib.crc32(ccfg) & 0xffffffff == c_crc,
                  "STOCK_CONTAINER_CRC_MISMATCH")
-    strict.check(strict.sha(ccfg) == strict.gate.VENDOR_CCFG_SHA256,
+    strict.check(strict.sha(ccfg) == ccfg_sha,
                  "STOCK_CCFG_DIGEST_MISMATCH")
     full={i:b for i,b in enumerate(app)}
     # Stock app occupies 22 sectors; our verified custom build occupies 23.
@@ -49,7 +66,7 @@ def extract(blob: bytes, profile: str) -> tuple[bytes, dict, dict, dict]:
     strict.check(len(app)<cleanup_sector,"STOCK_TAIL_CLEANUP_OVERLAPS_VENDOR")
     full[cleanup_sector]=0xff
     full.update({strict.gate.CCFG_START+i:b for i,b in enumerate(ccfg)})
-    source=strict.gate.candidate_audit(full,profile)
+    source=strict.gate.candidate_audit(full,profile,expected_ccfg_digest=ccfg_sha)
     result=strict.gate.application_only_hex(full,profile)
     source["derived_app_only_hex_sha256"] = strict.sha(result)
     source["derived_app_only_never_flash_with_bank_erase"] = True
@@ -57,8 +74,8 @@ def extract(blob: bytes, profile: str) -> tuple[bytes, dict, dict, dict]:
     planned = strict.sector.plan(result,source)
     receipt={
        "schema":"smlight-p7u-stock-rollback-app-v1",
-       "model":MODEL, "version":REVISION,
-       "manufacturer_container_sha256":VENDOR_SHA,
+       "model":MODEL, "version":revision,
+       "manufacturer_container_sha256":vendor_sha,
        "official_container_bytes":len(blob),
        "app_payload_bytes":len(app),
        "app_payload_crc32":f"{a_crc:08x}",
