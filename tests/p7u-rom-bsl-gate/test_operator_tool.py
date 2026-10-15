@@ -67,6 +67,10 @@ class OperatorTests(unittest.TestCase):
                 self.assertEqual(get.call_args.args[1], "/ha_info")
 
     def test_control_only_uses_ti_radio_commands_after_identity(self):
+        with patch.object(tool, "management_get") as get:
+            with self.assertRaises(tool.core.StrictError):
+                tool.radio_control(tool.load_target(self.path), "reboot-esp")
+            get.assert_not_called()
         for command, code in (("enter-bsl", 2), ("restart-radio", 1)):
             with patch.object(tool, "management_get", side_effect=[json.dumps(self.info).encode(), b"ok"]) as get:
                 result = tool.radio_control(tool.load_target(self.path), command)

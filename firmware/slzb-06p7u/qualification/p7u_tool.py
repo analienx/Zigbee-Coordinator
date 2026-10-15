@@ -18,7 +18,8 @@ import p7u_flash_spare as app
 import p7u_nv_recovery as nv
 import p7u_rc1_package as kit
 import p7u_strict_sector_writer as core
-from p7u_rom_transport import normalized_mac
+from p7u_rom_transport import normalized_mac, BslConnectionError
+from p7u_rom_lowlevel import RomWireError
 
 
 COMMANDS = ("check", "identify", "enter-bsl", "restart-radio", "probe", "backup",
@@ -108,6 +109,7 @@ def identify(target: dict) -> dict:
 
 
 def radio_control(target: dict, command: str) -> dict:
+    core.check(command in ("enter-bsl", "restart-radio"), "P7U_UNKNOWN_RADIO_CONTROL")
     result = identify(target)  # Must match immediately before every command.
     # Manufacturer pysmlight v0.5.3: action=4, CMD_ZB_BSL=2 / CMD_ZB_RST=1.
     # Never invoke ESP reset/update, radio OTA, settings, bank erase or IEEE write.
@@ -152,8 +154,9 @@ async def run(args) -> dict:
                 "hardware_contacted": False, "flash_performed": False}
     if args.command == "identify":
         return identify(target)
-    core.check(args.out is not None, "P7U_NEW_OUTPUT_REQUIRED")
-    core.check(not args.out.exists() and not args.out.is_symlink(), "P7U_OUTPUT_MUST_BE_NEW")
+    if args.command != "backup":  # Backup core exclusively creates its own directory.
+        core.check(args.out is not None, "P7U_NEW_OUTPUT_REQUIRED")
+        core.check(not args.out.exists() and not args.out.is_symlink(), "P7U_OUTPUT_MUST_BE_NEW")
     if args.command in ("enter-bsl", "restart-radio"):
         core.check(args.unused_p7u, "P7U_UNUSED_UNIT_ACK_REQUIRED")
         # Reserve the receipt before issuing a radio command, never overwrite a backup.
@@ -202,7 +205,8 @@ def main():
     try:
         print(json.dumps(asyncio.run(run(args)), sort_keys=True))
     except Exception as exc:
-        reason = str(exc) if isinstance(exc, core.StrictError) else "P7U_INPUT_IO_OR_PROTOCOL_FAILED"
+        reason = (str(exc) if isinstance(exc, (core.StrictError, RomWireError, BslConnectionError))
+                  else "P7U_INPUT_IO_OR_PROTOCOL_FAILED")
         print(json.dumps({"status": "FAIL_CLOSED", "error_code": reason,
                           "automatic_retry_or_reset_issued": False}, sort_keys=True))
         raise SystemExit(2) from None

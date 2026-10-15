@@ -32,7 +32,8 @@ python p7u_tool.py --target target.json
 python p7u_tool.py identify --target target.json
 python p7u_tool.py enter-bsl --target target.json --unused-p7u --out bsl-entry.json
 python p7u_tool.py probe --target target.json --unused-p7u --already-in-rom-bsl --out probe-1
-python p7u_tool.py backup --target target.json --unused-p7u --already-in-rom-bsl --backup original --out capture-1
+python p7u_tool.py enter-bsl --target target.json --unused-p7u --out bsl-before-backup.json
+python p7u_tool.py backup --target target.json --unused-p7u --already-in-rom-bsl --backup original
 python p7u_tool.py verify-backup --target target.json --backup original --copy INDEPENDENT_COPY --out backup-check.json
 python p7u_tool.py restart-radio --target target.json --unused-p7u --out radio-restart.json
 ```
@@ -43,6 +44,14 @@ the same tool/packet on each, with target files naming the local packet path;
 issue management commands from the computer with P7U Wi-Fi access. This tool
 does not install packages, stop integrations or create a serial proxy. Confirm
 exclusive ownership before opening the port. Never run two readers.
+
+Enter ROM BSL freshly before **each separate ROM invocation**, including backup,
+probe, inspection and approved execution. This unit acknowledges synchronization
+after fresh entry, but a second process sending autobaud sync into an already
+synchronized ROM session timed out in physical testing. Do not retry commands
+into that stream. Reenter BSL explicitly, then start a new operation. Following
+`restart-radio`, allow stock startup to finish before sending a ZNP request; an
+immediate request can be lost while startup is still running.
 
 Backup runs two independent reads and ROM CRC checks for every sector. `--resume`
 only resumes interrupted read-only capture. Verify an independently stored copy
