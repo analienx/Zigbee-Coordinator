@@ -36,6 +36,7 @@ operations use the pinned requirements of the underlying tools.
 ```text
 python p7u_tool.py --target target.json
 python p7u_tool.py identify --target target.json
+python p7u_tool.py inspect-installed --target target.json --unused-p7u --already-in-rom-bsl --out installed-inspection.json
 python p7u_tool.py enter-bsl --target target.json --unused-p7u --out bsl-entry.json
 python p7u_tool.py probe --target target.json --unused-p7u --already-in-rom-bsl --out probe-1
 python p7u_tool.py enter-bsl --target target.json --unused-p7u --out bsl-before-backup.json
@@ -52,7 +53,17 @@ does not install packages, stop integrations or create a serial proxy. Confirm
 exclusive ownership before opening the port. Never run two readers.
 
 Enter ROM BSL freshly before **each separate ROM invocation**, including backup,
-probe, inspection and approved execution. This unit acknowledges synchronization
+probe, inspection and approved execution. `inspect-installed` is read-only: it
+requires the USB radio to already be in ROM BSL and reads all 23 application
+sector CRCs, vectors, each of the five NV5 16-byte header prefixes/sector CRCs,
+and silicon/CCFG/factory IEEE fingerprints through the ROM identity reader. It compares the app against the exact R2 candidate
+and both pinned stock apps. It does not command management BSL entry or reset,
+erase/program, read NV payloads, or write CCFG. Its JSON output contains detailed
+sector evidence; keep that file with the private hardware records. An unmatched
+classification is evidence to preserve and investigate, not permission to
+rewrite the radio.
+
+This unit acknowledges synchronization
 after fresh entry, but a second process sending autobaud sync into an already
 synchronized ROM session timed out in physical testing. Do not retry commands
 into that stream. Reenter BSL explicitly, then start a new operation. Following
@@ -77,10 +88,14 @@ Execution adds `--write --plan PLAN --approve DIGEST --recovery-proven` to a
 separate invocation with a new output. NV execution also needs the same backup
 arguments and `--original-network-quiescent`. These attestations are never
 inferred from HTTP acknowledgements or builds. Existing cores validate every
-plan, exact endpoint, current identity and pre-write CRC. `--recovery-proven`
-means stock -> ROM -> stock -> ROM has actually been proved and the pinned
-stock rollback is available. Review and approve the concrete first-write plan
-as described in [the hardware plan](R2_FIRST_SINGLE_UNIT.md).
+plan, exact endpoint, current identity and pre-write CRC. A stock firmware
+restore is not a diagnostic step required to investigate the currently silent
+R2 image; it remains an optional A/B recovery if later evidence calls for it.
+The current write gate still requires `--recovery-proven`, whose existing
+definition is a demonstrated stock -> ROM -> stock -> ROM route plus an
+available pinned fallback. This read-only diagnosis does not invoke that gate.
+Review and approve any later concrete write plan as described in [the hardware
+plan](R2_FIRST_SINGLE_UNIT.md).
 
 `rollback` selects the kit's 20240710 stock app. `restore-app` instead restores
 the exact original application (20240316 or 20240710), requiring two verified
