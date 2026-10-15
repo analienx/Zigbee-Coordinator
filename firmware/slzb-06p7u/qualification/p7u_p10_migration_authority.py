@@ -80,6 +80,38 @@ def db_roster(raw:bytes)->dict[str,str]:
     need(len(out)>0,"DATABASE_NO_ZIGBEE_DEVICES")
     return out
 
+def missing_device_triage(source_archive:Path,prior_paths:list[Path])->list[dict]:
+    """Private-only action list for DB devices absent from latest coordinator backup.
+
+    Historical key presence is NOT proof that an old key is still valid.
+    Never graft old key bytes into a restore candidate.
+    """
+    current,_=load(source_archive,True)
+    info=validated(current)
+    db=db_roster(extract_bytes(source_archive,"database.db"))
+    missing=sorted(set(db)-set(info["devices"]))
+    historical={ieee:0 for ieee in missing}
+    for path in prior_paths:
+        old,_=load(path,path.suffix.lower()==".zip")
+        previous=validated(old)
+        need(same_identity(current,old),"PRIOR_BACKUP_NETWORK_IDENTITY_MISMATCH")
+        need(gate.parse_time(old["metadata"]["internal"]["date"])<=
+             gate.parse_time(current["metadata"]["internal"]["date"]),
+             "PRIOR_BACKUP_NEWER_THAN_SOURCE")
+        for ieee in missing:
+            if previous["devices"].get(ieee,{}).get("link_key"):
+                historical[ieee]+=1
+    return [{
+        "ieee_address":ieee,
+        "device_type":db[ieee],
+        "older_backup_key_candidates":historical[ieee],
+        "historical_key_is_currently_verified":False,
+        "recommended_action":("VERIFY_CURRENT_KEY_OR_PLAN_REPAIR"
+                              if historical[ieee] else "PLAN_CONTROLLED_REPAIR_OR_REJOIN"),
+        "automatically_restore":False,
+    } for ieee in missing]
+
+
 def same_identity(a:dict,b:dict)->bool:
     fields=("coordinator_ieee","pan_id","extended_pan_id","channel","security_level","nwk_update_id")
     if any(str(a.get(k)).lower()!=str(b.get(k)).lower() for k in fields):return False
@@ -174,7 +206,7 @@ def analyze(source_archive:Path,prior_paths:list[Path],expected_backup_sha:str,
     }
     return report,proposed
 
-def stage_private(folder:Path,report:dict,proposal:dict)->dict:
+def stage_private(folder:Path,report:dict,proposal:dict,missing_triage:list[dict]|None=None)->dict:
     # Only stage under user's existing private workspace, no public Git paths.
     resolved=folder.resolve()
     private=Path(r"C:\Workspace\.analienx\sonoff-private").resolve()
@@ -188,6 +220,17 @@ def stage_private(folder:Path,report:dict,proposal:dict)->dict:
     receipt["private_candidate_sha256"]=sha(payload)
     receipt["private_candidate_filename"]=name
     (folder/"PLAN_NOT_FLASHABLE.json").write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n")
+    if missing_triage is not None:
+        need(len(missing_triage)==report["missing_db_router_security"]+
+             report["missing_db_end_device_security"],"MISSING_TRIAGE_COUNT_CHANGED")
+        # Private IEEE identities are intentionally never written to CLI stdout.
+        with (folder/"MISSING_DEVICE_TRIAGE_NOT_RESTORE_READY.json").open("x",encoding="utf8") as out:
+            json.dump({"schema":"p7u-missing-device-triage-v1",
+                       "source_backup_sha256":report["source_backup_sha256"],
+                       "devices":missing_triage,
+                       "restore_approved":False,
+                       "device_repair_required":bool(missing_triage)},out,indent=2,sort_keys=True)
+            out.write("\n")
     return {"private_stage_created":True,"private_candidate_sha256":sha(payload),
             "restoration_authorized":False,"flash_authorized":False}
 
@@ -202,7 +245,9 @@ def main():
     try:
         report,proposal=analyze(args.source_archive,args.prior,
             args.expected_backup_sha256,args.expected_database_sha256)
-        if args.stage_private:report["staged_candidate"]=stage_private(args.stage_private,report,proposal)
+        if args.stage_private:
+            triage=missing_device_triage(args.source_archive,args.prior)
+            report["staged_candidate"]=stage_private(args.stage_private,report,proposal,triage)
         print(json.dumps(report,indent=2,sort_keys=True))
     except (MigrationError,OSError) as e:
         print(json.dumps({"qualification":"FAIL_CLOSED","reason":str(e),
