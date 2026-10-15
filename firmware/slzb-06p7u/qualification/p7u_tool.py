@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import binascii
 import json
 from pathlib import Path
 import re
@@ -19,12 +20,13 @@ import p7u_nv_recovery as nv
 import p7u_original_rollback as original
 import p7u_rc1_package as kit
 import p7u_strict_sector_writer as core
-from p7u_rom_transport import normalized_mac, BslConnectionError
+from p7u_rom_transport import normalized_mac, BslConnectionError, LiveSmlightSession
 from p7u_rom_lowlevel import RomWireError
 
 
 COMMANDS = ("check", "identify", "enter-bsl", "restart-radio", "probe", "backup",
-            "verify-backup", "prepare-nv5", "restore-nv5", "flash", "rollback", "restore-app")
+            "verify-backup", "prepare-nv5", "restore-nv5", "flash", "rollback", "restore-app",
+            "inspect-installed")
 
 
 def load_target(path: Path) -> dict:
@@ -149,6 +151,114 @@ def nv_request(target: dict, args) -> SimpleNamespace:
         original_network_declaration=nv.QUIESCENT if args.original_network_quiescent else None)
 
 
+def expected_application_images(target: dict, args) -> dict[str, core.Bundle]:
+    """Re-derive R2 and both pinned stock apps from validated local sources."""
+    candidate, stock_20240710 = app.load_request(app_request(target, args))
+    # Compare both independently pinned vendor images, even if the target's
+    # selected original happens to be the kit's 20240710 fallback.
+    old_stock = target["packet"] / "official-stock-20240316.bin"
+    core.check(old_stock.is_file(), "INSPECT_PINNED_20240316_REQUIRED")
+    image, source, plan, _receipt = nv.stock.extract_original(
+        old_stock.read_bytes(), "p7u-cap192-f07")
+    stock_20240316 = core.load_bundle(image, source, plan)
+    return {"r2": candidate, "stock_20240710": stock_20240710,
+            "stock_20240316": stock_20240316}
+
+
+def _vector_record(raw: bytes) -> dict:
+    core.check(len(raw) == 8, "INSTALLED_VECTOR_READ_INVALID")
+    msp = int.from_bytes(raw[:4], "little")
+    reset = int.from_bytes(raw[4:], "little")
+    reset_address = reset & ~1
+    valid = (msp % 8 == 0 and 0x20000000 <= msp <= 0x20040000
+             and reset & 1 == 1 and 0x100 <= reset_address < core.gate.NV5_BASE)
+    return {"msp": f"0x{msp:08X}", "reset_vector": f"0x{reset:08X}",
+            "plausible_cc26x2_vector": valid}
+
+
+async def inspect_installed_rom(rom, identity: dict, images: dict[str, core.Bundle], endpoint: str) -> dict:
+    """Read application CRCs, vectors, NV5 page fingerprints and CCFG identity only."""
+    core.check(set(images) == {"r2", "stock_20240710", "stock_20240316"},
+               "INSPECT_IMAGE_SET_INCOMPLETE")
+    core.check(all(len(bundle.sectors) == 23 for bundle in images.values()),
+               "INSPECT_IMAGE_NOT_23_SECTORS")
+    addresses = [addr for addr, _ in images["r2"].sectors]
+    core.check(addresses == list(range(0, 23 * core.gate.SECTOR, core.gate.SECTOR))
+               and all([addr for addr, _ in bundle.sectors] == addresses
+                       for bundle in images.values()), "INSPECT_IMAGE_SECTOR_SET_MISMATCH")
+
+    expected = {
+        name: {addr: f"{binascii.crc32(data) & 0xffffffff:08x}"
+               for addr, data in bundle.sectors}
+        for name, bundle in images.items()
+    }
+    actual = {}
+    for addr in addresses:
+        crc = await rom.crc32(addr, core.gate.SECTOR)
+        core.check(type(crc) is int and 0 <= crc <= 0xffffffff, "INSPECT_ROM_CRC_INVALID")
+        actual[addr] = f"{crc:08x}"
+
+    vectors = _vector_record(await core.read_exact(rom, 0, 8))
+    expected_vectors = {name: _vector_record(bundle.sectors[0][1][:8])
+                        for name, bundle in images.items()}
+    exact_matches = [name for name, crcs in expected.items()
+                     if all(actual[addr] == crcs[addr] for addr in addresses)]
+    nv_pages = []
+    for addr in range(core.gate.NV5_BASE, core.gate.CCFG_SECTOR, core.gate.SECTOR):
+        header = await core.read_exact(rom, addr, 16)
+        crc = await rom.crc32(addr, core.gate.SECTOR)
+        core.check(type(crc) is int and 0 <= crc <= 0xffffffff,
+                   "INSPECT_NV5_ROM_CRC_INVALID")
+        nv_pages.append({"address": f"0x{addr:05X}",
+                         "header_prefix_hex": header.hex(),
+                         "header_bytes_sha256": core.sha(header),
+                         "header_all_ff": header == b"\xff" * 16,
+                         "header_all_00": header == b"\x00" * 16,
+                         "sector_crc32": f"{crc:08x}"})
+    return {
+        "schema": "p7u-installed-inspection-v1", "endpoint": endpoint,
+        "identity": identity, "application_sector_count": len(addresses),
+        "images": {name: {"sha256": bundle.hex_sha256,
+                          "matches_all_sectors": name in exact_matches,
+                          "sector_crc32": expected[name]}
+                   for name, bundle in images.items()},
+        "installed_sector_crc32": {f"0x{addr:05X}": actual[addr] for addr in addresses},
+        "installed_vectors": vectors, "expected_vectors": expected_vectors,
+        "exact_image_matches": exact_matches,
+        "application_classification": exact_matches[0] if len(exact_matches) == 1
+            else "unmatched" if not exact_matches else "ambiguous_exact_match",
+        "nv5_pages": nv_pages,
+        "flash_write_or_erase_performed": False,
+    }
+
+
+async def inspect_installed(target: dict, args) -> dict:
+    core.check(args.unused_p7u, "P7U_UNUSED_UNIT_ACK_REQUIRED")
+    core.check(args.already_in_rom_bsl, "P7U_MUST_ALREADY_BE_IN_ROM_BSL")
+    core.check(not target["device"].startswith("socket://"),
+               "INSPECT_INSTALLED_USB_ONLY_NO_MANAGEMENT_RESET")
+    # Read-only management identity first; this command never asks management to enter BSL.
+    management_identity = identify(target)
+    images = expected_application_images(target, args)
+    async with LiveSmlightSession(target["device"]) as rom:
+        # Validate the actual TI silicon, full CCFG and factory IEEE in ROM;
+        # the SMLIGHT management MAC alone is not the radio identity.
+        rom_identity = await core.observe(rom)
+        evidence = await inspect_installed_rom(
+            rom, {"management": management_identity, "radio": rom_identity},
+            images, target["device"])
+    app.json_write(args.out, evidence)
+    blank_crc = f"{binascii.crc32(bytes([0xff]) * core.gate.SECTOR) & 0xffffffff:08x}"
+    return {"status": "P7U_INSTALLED_INSPECTION_COMPLETE",
+            "evidence_file": str(args.out),
+            "application_classification": evidence["application_classification"],
+            "exact_image_matches": evidence["exact_image_matches"],
+            "installed_vectors_plausible": evidence["installed_vectors"]["plausible_cc26x2_vector"],
+            "nv5_all_ff": all(page["header_all_ff"] and page["sector_crc32"] == blank_crc
+                               for page in evidence["nv5_pages"]),
+            "flash_write_or_erase_performed": False}
+
+
 async def run(args) -> dict:
     core.check(not args.write or args.command in ("flash", "rollback", "prepare-nv5", "restore-nv5", "restore-app"),
                "P7U_WRITE_NOT_VALID_FOR_COMMAND")
@@ -177,6 +287,8 @@ async def run(args) -> dict:
             receipt.truncate()
             receipt.write(json.dumps(result, sort_keys=True) + "\n")
         return result
+    if args.command == "inspect-installed":
+        return await inspect_installed(target, args)
     if args.command in ("flash", "rollback"):
         if not target["device"].startswith("socket://"):
             core.check(args.already_in_rom_bsl, "P7U_USB_MUST_ALREADY_BE_IN_ROM_BSL")
@@ -217,6 +329,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--approve", help="Exact digest from the separate inspected plan")
     p.add_argument("--original-network-quiescent", action="store_true")
     p.add_argument("--resume", action="store_true", help="Resume an interrupted read-only backup only")
+    p.epilog = ("inspect-installed is read-only: require --unused-p7u and --already-in-rom-bsl; "
+                "it never commands a reset, erase, program, NV restore or CCFG write.")
     return p
 
 
