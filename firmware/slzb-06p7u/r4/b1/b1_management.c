@@ -62,6 +62,14 @@ void b1_management_transport_failed(uint8_t reason)
                        reason != 0u ? reason : B1_ERROR_UART_OPEN);
 }
 
+int b1_management_transport_unavailable(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int unavailable = (b1_management_flags & B1_FLAG_HOLD_TRANSPORT) != 0u;
+    B1_CS_LEAVE(key);
+    return unavailable;
+}
+
 void b1_management_note_uart_opened(void)
 {
     uintptr_t key = B1_CS_ENTER();
