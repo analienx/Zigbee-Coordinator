@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'tools/b2_source_evidence.py'
+      - 'tools/b2_route_body_inventory.py'
       - '.github/workflows/test-r4-b2-source-evidence.yml'
       - 'docs/r4/b2/**'
 permissions:
@@ -45,6 +46,7 @@ jobs:
             --out /tmp/b2-source-data \
             --repo-sha "$(git rev-parse HEAD)" \
             --run-id "$GITHUB_RUN_ID"
+          python tools/b2_route_body_inventory.py --sdk /tmp/b2-upstream/sdk --out /tmp/b2-source-data
           python - <<'PY'
           import json
           from pathlib import Path
@@ -56,7 +58,7 @@ jobs:
           assert all(v['tables'][k]['source_declarations'] for k in ('source_routes','neighbors','nwk_routes','children'))
           print('SOURCE INDEX ONLY — linked evidence remains fail-closed.')
           PY
-          (cd /tmp/b2-source-data && sha256sum B2_*.json SOURCE_CALL_GRAPH.md DATA_STATUS.md > SHA256SUMS.txt)
+          (cd /tmp/b2-source-data && sha256sum *.json *.md > SHA256SUMS.txt)
           cat /tmp/b2-source-data/DATA_STATUS.md >> "$GITHUB_STEP_SUMMARY"
           echo 'Source index generated; not accepted as B2 native readiness.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload reproducible source evidence (non-secret)
