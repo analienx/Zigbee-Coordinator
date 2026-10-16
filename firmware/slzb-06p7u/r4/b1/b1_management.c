@@ -21,6 +21,7 @@ static uint8_t b1_management_current_error;
 static uint8_t b1_management_stage;
 static uint8_t b1_management_nv_probe;
 static uint8_t b1_network_ready_attested;
+static uint8_t b1_network_needs_fresh_validation;
 
 static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
 {
@@ -127,13 +128,17 @@ void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore
     uintptr_t key = B1_CS_ENTER();
     if (!coordinator)
     {
+        /* Once an attested restored coordinator leaves the role, a later
+         * ZDO callback cannot reuse stale boot-time security/counter proof. */
+        if (b1_network_ready_attested) b1_network_needs_fresh_validation = 1u;
         b1_network_ready_attested = 0u;
         if ((b1_management_flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
                                    B1_FLAG_HOLD_TRANSPORT)) == 0u)
             b1_management_stage = (b1_management_flags & B1_FLAG_NV_HEADER_CANDIDATE)
                 ? B1_STAGE_NV_HEADER_CANDIDATE : B1_STAGE_PRE_BOOT;
     }
-    else if (persisted_restore_ok && b1_management_first_error == 0u &&
+    else if (persisted_restore_ok && !b1_network_needs_fresh_validation &&
+             b1_management_first_error == 0u &&
              (b1_management_flags & (B1_FLAG_NV_HEADER_CANDIDATE | B1_FLAG_MT_REGISTERED)) ==
              (B1_FLAG_NV_HEADER_CANDIDATE | B1_FLAG_MT_REGISTERED) &&
              (b1_management_flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
