@@ -123,11 +123,10 @@ def validate_inventory(doc):
         if tool.get(field) != EXPECTED_PINS[pin]:
             errors.append("inventory toolchain %s mismatch" % field)
     for field in TOOLCHAIN_DOWNLOAD_DIGEST_FIELDS:
-        from b0_fetch_ti import VENDOR_SHA256
         expected = {
-            "ccs_download_sha256": VENDOR_SHA256["ccs"],
-            "sysconfig_download_sha256": VENDOR_SHA256["sysconfig"],
-            "ti_arm_clang_download_sha256": VENDOR_SHA256["clang"],
+            "ccs_download_sha256": "fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d",
+            "sysconfig_download_sha256": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
+            "ti_arm_clang_download_sha256": "2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9",
         }[field]
         if tool.get(field) != expected:
             errors.append("inventory toolchain %s must match TI-published SHA-256" % field)
