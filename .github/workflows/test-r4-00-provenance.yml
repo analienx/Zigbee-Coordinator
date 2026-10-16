@@ -13,10 +13,19 @@ jobs:
   r4-00-contracts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # PR runs check out the exact PR head SHA (never the merge commit);
+      # push runs use the pushed SHA.
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Compile R4-00 tools and tests
@@ -26,3 +35,7 @@ jobs:
         run: python -m unittest -v tests.test_r4_00_provenance
       - name: Run R4-00 parity tests
         run: python -m unittest -v tests.test_r4_00_parity
+      - name: Run R4-00 validator CLI against real manifests
+        run: python firmware/slzb-06p7u/r4/tools/r4_provenance_validate.py firmware/slzb-06p7u/r4
+      - name: Run R4-00 audit CLI against real manifests
+        run: python firmware/slzb-06p7u/r4/tools/r4_parity_audit.py firmware/slzb-06p7u/r4
