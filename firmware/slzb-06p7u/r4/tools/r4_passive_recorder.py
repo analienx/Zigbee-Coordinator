@@ -87,8 +87,10 @@ class PassiveR4Recorder:
         self.pending.append(record)
         return True
 
-    def drain(self, limit=128):
+    def drain(self, limit=None):
         """Bounded worker step. No serial/adapter interactions."""
+        if limit is None:
+            limit = min(128, self.max_pending)
         if type(limit) is not int or not 1 <= limit <= self.max_pending:
             raise ValueError("bad drain limit")
         count = 0
