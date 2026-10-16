@@ -13,6 +13,8 @@ import re
 import stat
 import sys
 import zipfile
+import zlib
+from datetime import datetime
 
 SCHEMA = "r4-b3-synthetic-v1"
 MEMBERS = ("manifest.json", "coordinator_backup.json", "z2m_database.json", "z2m_config.json")
@@ -61,9 +63,9 @@ def validate_archive(raw, expected_sha):
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             names = archive.namelist()
+            require(len(names) == len(set(names)), "ZIP_DUPLICATE_MEMBER")
             require(len(names) == len(MEMBERS) and set(names) == set(MEMBERS),
                     "ZIP_MEMBER_SELECTION")
-            require(len(names) == len(set(names)), "ZIP_DUPLICATE_MEMBER")
             contents = {}
             for entry in archive.infolist():
                 mode = entry.external_attr >> 16
@@ -74,12 +76,12 @@ def validate_archive(raw, expected_sha):
                 try:
                     with archive.open(entry, "r") as fd:
                         data = fd.read(MAX_MEMBER + 1)
-                except (OSError, RuntimeError, zipfile.BadZipFile, EOFError):
+                except (OSError, RuntimeError, zipfile.BadZipFile, EOFError, zlib.error, ValueError):
                     raise EvidenceError("ZIP_CRC_FAILURE") from None
                 require(len(data) == entry.file_size and len(data) <= MAX_MEMBER,
                         "ZIP_BOMB_LIMIT")
                 contents[entry.filename] = data
-    except (zipfile.BadZipFile, EOFError, OSError):
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, OSError, zlib.error, ValueError):
         raise EvidenceError("INVALID_ARCHIVE") from None
 
     manifest = json_strict(contents["manifest.json"])
@@ -151,10 +153,15 @@ def evaluate(manifest, data):
         require(isinstance(snap["captured_utc"], str)
                 and bool(re.fullmatch(r"20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
                                       snap["captured_utc"])), "INVALID_SNAPSHOT_TIME")
+        try:
+            datetime.fromisoformat(snap["captured_utc"].replace("Z", "+00:00"))
+        except ValueError:
+            raise EvidenceError("INVALID_SNAPSHOT_TIME") from None
         dates.append(snap["captured_utc"])
         radio = sim(snap["source_radio"])
         require(type(snap["online"]) is bool, "INVALID_ONLINE_FLAG")
-        require(snap["layout"] in ALLOWED_LAYOUTS, "UNKNOWN_NV_LAYOUT")
+        require(isinstance(snap["layout"], str) and snap["layout"] in ALLOWED_LAYOUTS,
+                "UNKNOWN_NV_LAYOUT")
         if snap["online"]:
             observed[radio] = True
         rows = snap["security"]
@@ -197,7 +204,8 @@ def evaluate(manifest, data):
             if max_tx == MAX_COUNTER:
                 findings.add("COUNTER_OVERFLOW")
     layout = manifest.get("target_layout")
-    require(layout in ALLOWED_LAYOUTS, "UNKNOWN_TARGET_LAYOUT")
+    require(isinstance(layout, str) and layout in ALLOWED_LAYOUTS,
+            "UNKNOWN_TARGET_LAYOUT")
     if latest["layout"] != layout:
         findings.add("NV_LAYOUT_MISMATCH")
     # Digest binding cannot authenticate origin. This is merely an offline
@@ -218,6 +226,8 @@ def judge(raw, expected_sha):
     try:
         manifest, data = validate_archive(raw, expected_sha)
         return evaluate(manifest, data)
+    except (KeyError, TypeError, OverflowError, RecursionError):
+        exc = EvidenceError("INVALID_INPUT_STRUCTURE")
     except EvidenceError as exc:
         return {"schema": "r4-b3-restore-decision-v1", "status": "NOT_RESTORE_READY",
                 "reason_codes": [exc.code], "synthetic_only": True,
