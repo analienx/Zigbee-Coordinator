@@ -189,7 +189,7 @@ def main():
     # healthy/fault ordering assertion, not merely fail a text regex.
     mutation(generated["startup_security"],
              "if (!b1_sec_validate_restored()) return;",
-             "if (0) return;", "mutant_startup_pre_mac",
+             "if (!b1_sec_validate_restored() && 0) return;", "mutant_startup_pre_mac",
              "checks==1 && mac_calls==0 && sem_calls==0")
     # Regression to the donor's only-check-NVINTF_FAILURE would silently
     # accept other non-success read statuses as valid data.
