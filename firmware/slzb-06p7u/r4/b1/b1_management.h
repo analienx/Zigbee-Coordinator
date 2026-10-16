@@ -49,6 +49,9 @@ enum {
 void b1_management_hold_nv(uint8_t reason);
 void b1_security_runtime_hold_latch(void);
 int b1_management_get_hold_active(void);
+/* RF/persistence safety depends on NV or security HOLD, not a lost host UART.
+ * Transport HOLD continues to gate only management/NPI visibility. */
+int b1_management_nv_security_hold_active(void);
 void b1_management_note_nv_candidate(void);
 void b1_management_note_nv_probe(uint8_t code);
 void b1_management_transport_failed(uint8_t reason);
