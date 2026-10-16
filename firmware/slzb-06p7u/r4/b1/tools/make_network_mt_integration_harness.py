@@ -86,7 +86,13 @@ def main():
     marker="int main(int argc,char **argv) {"
     if npi.count(marker)!=1:
         raise RuntimeError("NPI real harness main changed")
-    npi=npi.replace(marker,SUPPORT+body+"\n"+marker+SCENARIO,1)
+    npi=npi.replace(marker,SUPPORT+body+"\n"+marker,1)
+    # The original main first binds argc and the scenario variable and
+    # registers the real MT SYS dispatcher. Branch only AFTER that point.
+    init='    assert(argc==2); const char *s=argv[1]; init_dispatch();'
+    if npi.count(init)!=1:
+        raise RuntimeError("Expected original NPI main initialization changed")
+    npi=npi.replace(init,init+"\n"+SCENARIO,1)
     a.output.write_text(npi,encoding="utf-8")
     print("B1_ZDO_NPI_MT_SOURCE_EMBEDDED_NO_HARDWARE")
 
