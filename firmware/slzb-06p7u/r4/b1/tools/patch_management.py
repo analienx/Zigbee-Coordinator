@@ -119,6 +119,96 @@ def patch_npi(text):
         OsalPort_free(pMsg);
         return 0;
     }""", "NPI hold stays in existing owner")
+    # Stock TI flow-off RX callback spins forever when the ring buffer fills.
+    # The parser cannot safely re-synchronize after losing an arbitrary byte.
+    # Stop receiving/parsing; do not form an unbounded ISR busy-loop and do
+    # not claim management status is observable after transport corruption.
+    text = once(text,
+        "static void NPITask_transportRXCallBack(int size)\n{",
+        "static void NPITask_transportRXCallBack(int size)\n{\n"
+        "    if (b1_management_transport_unavailable()) return;\n"
+        "    if (size <= 0)\n"
+        "    {\n"
+        "        if (size < 0)\n"
+        "            b1_management_transport_failed(B1_ERROR_NPI_RX_OVERFLOW);\n"
+        "        return;\n"
+        "    }", "NPI RX callback refuses invalid/failed input")
+    text = once(text,
+        "        // Trap here for pending buffer overflow. If NPI_FLOW_CTRL is\n"
+        "        // enabled, increase size of RxBuf to handle larger frames from host.\n"
+        "        for(;;);",
+        "        /* Lost bytes make the parser unsafe. Sticky transport HOLD:\n"
+        "         * drop remaining traffic instead of spinning in an ISR. */\n"
+        "        b1_management_transport_failed(B1_ERROR_NPI_RX_OVERFLOW);\n"
+        "        return;",
+        "NPI overflow no infinite loop")
+    # Do not parse incomplete bytes or repeatedly repost the RX event once
+    # the transport is irreversibly unavailable.
+    text = once(text,
+        "                NPIFrame_collectFrameData();\n\n"
+        "                if (NPIRxBuf_GetRxBufCount() == 0)",
+        "                if (b1_management_transport_unavailable())\n"
+        "                {\n"
+        "                    npiServiceTaskEvents &= ~NPITASK_TRANSPORT_RX_EVENT;\n"
+        "                }\n"
+        "                else\n"
+        "                {\n"
+        "                    NPIFrame_collectFrameData();\n"
+        "                }\n\n"
+        "                if (b1_management_transport_unavailable() ||\n"
+        "                    NPIRxBuf_GetRxBufCount() == 0)",
+        "NPI parser cannot resume after lost bytes")
+    # An already-queued framed request must not be sent to MT/stack after
+    # a transport corruption event. Return ownership to the original queue.
+    text = once(text,
+        "    recPtr = Queue_dequeue(npiRxQueue);\n\n"
+        "    if (recPtr != NULL)",
+        "    recPtr = Queue_dequeue(npiRxQueue);\n\n"
+        "    if (recPtr != NULL && b1_management_transport_unavailable())\n"
+        "    {\n"
+        "        OsalPort_msgDeallocate(recPtr->npiMsg->pBuf);\n"
+        "        OsalPort_free(recPtr->npiMsg);\n"
+        "        OsalPort_free(recPtr);\n"
+        "        return;\n"
+        "    }\n"
+        "    if (recPtr != NULL)",
+        "NPI queued frame ownership on transport loss")
+    text = once(text,
+        "static void NPITask_incomingFrameCB(uint8_t frameSize, uint8_t *pFrame,\n"
+        "                                    NPIMSG_Type msgType)\n{",
+        "static void NPITask_incomingFrameCB(uint8_t frameSize, uint8_t *pFrame,\n"
+        "                                    NPIMSG_Type msgType)\n{\n"
+        "    if (b1_management_transport_unavailable())\n"
+        "    {\n"
+        "        OsalPort_msgDeallocate(pFrame);\n"
+        "        return;\n"
+        "    }",
+        "NPI drop incoming framed data after transport loss")
+    # With only one allocation succeeding, stock TI leaked the other
+    # object and the incoming frame. The bounded failure is sticky instead.
+    text = once(text,
+        "    if ((recPtr != NULL) && (npiMsgPtr != NULL))",
+        "    if ((recPtr != NULL) && (npiMsgPtr != NULL))",
+        "NPI callback allocation exact-body anchor")
+    start = "static void NPITask_incomingFrameCB(uint8_t frameSize, uint8_t *pFrame,\n                                    NPIMSG_Type msgType)\n{"
+    end = "// -----------------------------------------------------------------------------\n//! \\brief      RX Callback provided to Transport Layer for RX Event"
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise RuntimeError("BLOCKED: NPI callback end boundaries changed")
+    before, after = text.split(end, 1)
+    old = "    }\n}\n\n"
+    replacement = ("    }\n"
+        "    else\n"
+        "    {\n"
+        "        if (recPtr != NULL) OsalPort_free(recPtr);\n"
+        "        if (npiMsgPtr != NULL) OsalPort_free(npiMsgPtr);\n"
+        "        OsalPort_msgDeallocate(pFrame);\n"
+        "        b1_management_transport_failed(B1_ERROR_NPI_QUEUE);\n"
+        "    }\n"
+        "}\n\n")
+    start_index = before.rfind(start)
+    if start_index < 0 or before[start_index:].count(old) != 1 or not before.endswith(old):
+        raise RuntimeError("BLOCKED: NPI callback terminator changed")
+    text = before[:-len(old)] + replacement + end + after
     return text
 
 
