@@ -1,1 +1,128 @@
-{"abi": {"extra_serial_owner": false, "nv_migration": false, "rf_auto_formation": false, "status": "SOURCE_CONFIRMED", "sys_commands": ["SYS_PING", "SYS_VERSION"]}, "board": {"model": "SLZB-06P7U", "note": "P7U R1.73 identity is prior-research supported; fitted-unit RF/PA/startup/NV parity with stock 20260310 remains PHYSICAL_UNVERIFIED (see open_items).", "rev": "R1.73", "status": "PHYSICAL_UNVERIFIED"}, "claims": [{"id": "uart-rx", "status": "PHYSICAL_UNVERIFIED", "value": "DIO12"}, {"id": "uart-tx", "status": "PHYSICAL_UNVERIFIED", "value": "DIO13"}, {"id": "uart-baud", "status": "PHYSICAL_UNVERIFIED", "value": 115200}, {"id": "uart-flow", "status": "PHYSICAL_UNVERIFIED", "value": "OFF"}, {"id": "target-part", "status": "SOURCE_CONFIRMED", "value": "CC1352P7"}, {"id": "nv-pages", "status": "SOURCE_CONFIRMED", "value": 2}, {"id": "nvs-base", "status": "SOURCE_CONFIRMED", "value": "0xAA000"}, {"id": "nvs-size", "status": "SOURCE_CONFIRMED", "value": "0x4000"}], "forbidden_claims": ["custom scheduler", "custom UART driver", "custom NV driver", "diagnostics in B0", "G7 port", "routing tweaks", "NV page-count change"], "issue": 90, "open_items": ["P7U board UART DIO12/DIO13 mapping vs running 20260310 image not confirmed by fresh installed-image comparison", "C/IRQ stack 1024 (donor default) vs 4096 (Koenkk comparison patch): apply 4096 only if native map proof supports it; decision OPEN", "Stock 20260310 RF/PA table, CCFG deltas, NV layout (NV2 vs NV5) and key/counter behavior: UNKNOWN; production-stock-NV boot PROHIBITED until read-only compatibility proof plus authorized disposable-device trial", "Native ZNP CCS link and ELF/XML/HEX/BIN audit must be proven by hosted CI; TI download SHA-256 pins are verified and provisionable. Build success does not prove P7U hardware compatibility"], "phase": "R4-B0", "schema": "r4-b0-board-contract-v1", "status_vocabulary": ["SOURCE_CONFIRMED", "PHYSICAL_UNVERIFIED", "OPEN"]}
+{
+  "abi": {
+    "extra_serial_owner": false,
+    "nv_migration": false,
+    "rf_auto_formation": false,
+    "status": "SOURCE_CONFIRMED",
+    "sys_commands": [
+      "SYS_PING",
+      "SYS_VERSION"
+    ]
+  },
+  "board": {
+    "model": "SLZB-06P7U",
+    "note": "Fitted P7U R1.73 and USB/ROM service proven on original stock; evidence #80 6193390974/6194649397. Does not establish that NEW R4 image boots, or stock 20260311/20260310 NV/RF parity.",
+    "rev": "R1.73",
+    "status": "HARDWARE_OPERATIONALLY_PROVEN"
+  },
+  "claims": [
+    {
+      "id": "uart-rx",
+      "status": "HARDWARE_OPERATIONALLY_PROVEN",
+      "value": "DIO12",
+      "evidence": "Issue #80 comment 6198198498: actual R2 ELF UART2_config + pinned manufacturer 20240710 same UART0 pins/115200/no HWFC; #90 comment 6215896717."
+    },
+    {
+      "id": "uart-tx",
+      "status": "HARDWARE_OPERATIONALLY_PROVEN",
+      "value": "DIO13",
+      "evidence": "Issue #80 comment 6198198498: actual R2 ELF UART2_config + pinned manufacturer 20240710 same UART0 pins/115200/no HWFC; #90 comment 6215896717."
+    },
+    {
+      "id": "uart-baud",
+      "status": "HARDWARE_OPERATIONALLY_PROVEN",
+      "value": 115200,
+      "evidence": "Issue #80 comment 6198198498: actual R2 ELF UART2_config + pinned manufacturer 20240710 same UART0 pins/115200/no HWFC; #90 comment 6215896717."
+    },
+    {
+      "id": "uart-flow",
+      "status": "HARDWARE_OPERATIONALLY_PROVEN",
+      "value": "OFF",
+      "evidence": "Issue #80 comment 6198198498: actual R2 ELF UART2_config + pinned manufacturer 20240710 same UART0 pins/115200/no HWFC; #90 comment 6215896717."
+    },
+    {
+      "id": "target-part",
+      "status": "HARDWARE_OPERATIONALLY_PROVEN",
+      "value": "CC1352P7",
+      "evidence": "Issue #80 comment 6193390974 fitted SLZB-06P7U R1.73 ESP32-S3/CC2652P7, ROM geometry #80 6194649397."
+    },
+    {
+      "id": "nv-pages",
+      "status": "SOURCE_CONFIRMED",
+      "value": 2
+    },
+    {
+      "id": "nvs-base",
+      "status": "SOURCE_CONFIRMED",
+      "value": "0xAA000"
+    },
+    {
+      "id": "nvs-size",
+      "status": "SOURCE_CONFIRMED",
+      "value": "0x4000"
+    }
+  ],
+  "forbidden_claims": [
+    "custom scheduler",
+    "custom UART driver",
+    "custom NV driver",
+    "diagnostics in B0",
+    "G7 port",
+    "routing tweaks",
+    "NV page-count change"
+  ],
+  "issue": 90,
+  "open_items": [
+    "R4 8.33 generated CONFIG_DISPLAY_UART must be proved UART0 RX DIO12 / TX DIO13 115200 flow off; historical fitted pinout is ALREADY PROVEN.",
+    "R4 image CCFG DCDC disabled via deliberate source overlay; linked 88-byte audit and BSL DIO15 preservation remain to prove. Historical vendor 20240710 delta is established.",
+    "R4 image RF/PA/clock versus fitted P7U and 20260311/20260310 installed stock remains unproven.",
+    "R4 donor NV2 FLASH_NV AA000/4000 is NOT established compatible with earlier R2 NV5 A4000/A000 or current stock counters/keys.",
+    "C/IRQ stack donor 1024 versus Koenkk comparison 4096 requires native-map and runtime sizing; keep donor default pending proof.",
+    "R4 image native CCS link, generated UART/CCFG inspection, and eventual separately authorized isolated SYS_PING/roll-back pilot remain OPEN."
+  ],
+  "phase": "R4-B0",
+  "schema": "r4-b0-board-contract-v1",
+  "status_vocabulary": [
+    "SOURCE_CONFIRMED",
+    "HARDWARE_OPERATIONALLY_PROVEN",
+    "PHYSICAL_UNVERIFIED",
+    "R4_IMAGE_UNVERIFIED",
+    "OPEN"
+  ],
+  "hardware_evidence": {
+    "status": "HARDWARE_OPERATIONALLY_PROVEN",
+    "source_issue_comment": "https://github.com/analienx/Zigbee-Coordinator/issues/90#issuecomment-6215896717",
+    "fitted_board": "SLZB-06P7U r1.73; ESP32-S3 + CC2652P7",
+    "historical_stock_uart": "UART0 RX DIO12 TX DIO13 115200 no HWFC; R2 ELF and 20240710 vendor",
+    "stock_usb_bridge_service": "original 20240316 SYS_PING/SYS_VERSION/IEEE previously responded",
+    "flash_readback": "two independent full 704KiB ROM reads; 88/88 sectors; original CCFG unchanged",
+    "manufacturer_esp_board_def": {
+      "repo": "smlight-tech/slzb-esphome",
+      "commit": "3397f6ffe7b0a58cf1546c8293bfa644235a9769",
+      "path": "hw_defs/06xu/r1_73.yaml",
+      "esp_tx_to_radio_rx": "GPIO17 -> radio DIO12",
+      "radio_tx_to_esp_rx": "radio DIO13 -> GPIO18",
+      "bsl": "ESP GPIO16 active low",
+      "reset": "ESP GPIO21 active low",
+      "hardware_flow": "GPIO15/14 declared but active HWFC unproven"
+    }
+  },
+  "vendor_20240710_ccfg": {
+    "status": "SOURCE_CONFIRMED",
+    "vendor_digest_sha256": "1defedbd2f474ee8b7385476801a63de95f55c3dd51115e29f97c69196049af7",
+    "only_known_delta_vs_ti_reference": "MODE_CONF_DCDC_RECHARGE and MODE_CONF_DCDC_ACTIVE disabled",
+    "syscfg_override": "device.enableDCDC = false;",
+    "bsl": "DIO15 active-low retained",
+    "applicability": "20240710 only; no 20260311 or 20260310 parity claim"
+  },
+  "r4_image": {
+    "status": "R4_IMAGE_UNVERIFIED",
+    "generated_uart0_rx_tx": "OPEN",
+    "generated_hardware_flow": "OPEN",
+    "linked_vendor_dcdc": "OPEN",
+    "rf_pa_clock": "OPEN",
+    "stock_nv_security_parity": "OPEN",
+    "working_sys_ping": "OPEN",
+    "flash_authorized": false
+  }
+}
