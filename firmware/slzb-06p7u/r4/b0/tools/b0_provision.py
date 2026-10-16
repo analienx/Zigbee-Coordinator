@@ -17,6 +17,7 @@ Exit 0 READY, 1 BLOCKED, 2 usage error. Never prints a traceback.
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,30 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+def _matches_version(key, binary, output):
+    """A substring anywhere (especially InstalledDir) is not version proof."""
+    if key == "sysconfig":
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        return len(lines) == 1 and lines[0] in ("1.21.1+3772", "1.21.1.3772")
+    if key == "ti_arm_clang":
+        versions = re.findall(r"^TI Arm Clang Compiler\\s+([^\\s]+)\\s*$",
+                              output, re.MULTILINE)
+        return len(versions) == 1 and versions[0] == "3.2.2.LTS"
+    if key == "ccs":
+        # CCS projectBuild -ccs.help has NO IDE version field.
+        # Only publisher-authenticated distribution bytes plus the
+        # *exact* resulting executable and real CCS CLI help qualify.
+        from b0_fetch_ti import VENDOR_SHA256
+        archive = os.environ.get("B0_CCS_PACKAGE_PATH", "")
+        executable = os.environ.get("CCS_ECLIPSE", "")
+        return (bool(archive and executable)
+                and os.path.realpath(binary) == os.path.realpath(executable)
+                and _sha256(archive) == VENDOR_SHA256["ccs"]
+                and "com.ti.ccstudio.apps.buildProject" in output
+                and "-ccs.projects" in output)
+    return False
+
+
 def provision(tool_dir=None):
     """Returns (exit_code, receipt_dict). Never raises."""
     found = {}
@@ -108,21 +133,7 @@ def provision(tool_dir=None):
                           "acquire": ACQUIRE[key]}
             continue
         version_output = _version(binary, key)
-        if key == "ccs" and VERSION_PINS[key] not in version_output:
-            # CCS projectBuild -ccs.help documents command options, not an
-            # IDE version. Verify the actual TI-published distribution bytes
-            # instead of fabricating a version string from CLI help.
-            from b0_fetch_ti import VENDOR_SHA256
-            source_archive = os.environ.get("B0_CCS_PACKAGE_PATH", "")
-            exact_binary = os.environ.get("CCS_ECLIPSE", "")
-            authenticated = (source_archive and exact_binary
-                             and os.path.realpath(binary) == os.path.realpath(exact_binary)
-                             and _sha256(source_archive) == VENDOR_SHA256["ccs"]
-                             and "-ccs.projects" in version_output)
-            if authenticated:
-                version_output += ("\\nCCS 12.8.0.00012: validated via vendor "
-                                   "SHA-256 archive and actual projectBuild help")
-        if VERSION_PINS[key] not in version_output:
+        if not _matches_version(key, binary, version_output):
             missing.append(key)
             found[key] = {"present": False, "expected": EXPECTED[key],
                           "binary": binary,
