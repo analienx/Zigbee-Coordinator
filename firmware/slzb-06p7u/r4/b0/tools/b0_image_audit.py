@@ -557,16 +557,37 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
         bin_bytes = bin_path.read_bytes()
     except OSError as exc:
         return "audit HEX/BIN cross-binding failed (BIN unreadable: %s)" % exc
-    expected = bytes(payload[addr] for addr in sorted(payload))
-    if len(bin_bytes) != len(expected):
+    addresses = sorted(payload)
+    compact = bytes(payload[addr] for addr in addresses)
+    # Legacy fixture oracles use packed HEX bytes. Native tiarmobjcopy
+    # -O binary emits an *addressed, flat image* spanning the FLASH
+    # regions; gaps between .text and .ccfg are filled, not deleted.
+    # Require all programmed bytes to match exactly in either layout
+    # and require every native flat-image hole to be uniformly erased.
+    if bin_bytes == compact:
+        return None
+    base, last = addresses[0], addresses[-1]
+    span = last - base + 1
+    if span > BIN_SIZE_CAP or len(bin_bytes) != span:
         return ("audit HEX/BIN cross-binding failed "
-                "(BIN length %d differs from HEX data payload length %d; "
-                "BIN must equal the HEX data records in ascending "
-                "address order)" % (len(bin_bytes), len(expected)))
-    if bin_bytes != expected:
-        return ("audit HEX/BIN cross-binding failed "
-                "(BIN content differs from HEX data payload; BIN must "
-                "equal the HEX data records in ascending address order)")
+                "(BIN is neither exact packed HEX bytes nor a "
+                "full address-preserving binary image)")
+    gap_value = None
+    for offset, value in enumerate(bin_bytes):
+        addr = base + offset
+        if addr in payload:
+            if payload[addr] != value:
+                return ("audit HEX/BIN cross-binding failed "
+                        "(flat BIN byte at 0x%08X differs from HEX)" % addr)
+        else:
+            if gap_value is None:
+                if value not in (0x00, 0xFF):
+                    return ("audit HEX/BIN cross-binding failed "
+                            "(flat BIN contains unexpected gap fill)")
+                gap_value = value
+            elif value != gap_value:
+                return ("audit HEX/BIN cross-binding failed "
+                        "(flat BIN has inconsistent unprogrammed gap fill)")
     return None
 
 
