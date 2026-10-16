@@ -106,12 +106,17 @@ Reference: TI CCS command-line projects
   projectBuild + `tiarmclang --xml_link_info` + objcopy + syscfg),
   genuine TI `--xml_link_info` XML geometry (FLASH_NV `0xAA000` /
   `0x4000`, `.ccfg` in FLASH_LAST at HIGH, `.resetVecs`) plus an
-  independent ELF cross-check (ARM magic, entry agreement); exit 2
+  independent ELF cross-check (ARM magic, entry agreement) plus
+  HEX/BIN cross-binding (genuine Intel HEX records, data inside
+  XML regions and outside FLASH_NV, `.resetVecs`/`.ccfg`/entry
+  coverage, BIN equal to the HEX payload); exit 2
   `B0-AUDIT-BLOCKED` when no artifacts exist (never a pass). The
   legacy REGION/CSTACK/VECTORS text format is rejected as
   synthetic.
 - `tools/b0_provision.py provision` -- toolchain presence probe
   with `READY`/`BLOCKED` receipt (exit 1 when blocked).
-- `fixtures/` -- valid + six hostile artifact sets with
-  `SHA256_RECEIPTS.txt`; `tests/test_r4_b0_*.py` fail if the
-  overlay/audit logic is removed.
+- `fixtures/` -- valid + hostile artifact sets (including a
+  HEX/BIN-tampered pair with recomputed digests that must fail
+  at the HEX/BIN cross-binding) with `SHA256_RECEIPTS.txt`;
+  `tests/test_r4_b0_*.py` fail if the overlay/audit logic is
+  removed.

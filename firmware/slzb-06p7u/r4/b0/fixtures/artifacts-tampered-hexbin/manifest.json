@@ -1,0 +1,27 @@
+{
+  "build_log": "build.log",
+  "files": {
+    "bin": {
+      "file": "znp.bin",
+      "sha256": "ed39f875f02aeb4efd8e71fbfaf67e01adb19df0d429f6a9da9cfbcde4bc69db"
+    },
+    "elf": {
+      "file": "znp.out",
+      "sha256": "a66daf7e6e5eb970ec49f424ee6e5f62bda777e2fa4ba29907bd30f78df317d3"
+    },
+    "hex": {
+      "file": "znp.hex",
+      "sha256": "1c749e197bd0d4c63b5a9b7e10f401f3b752c6107e2b943f87f0eec0f907272d"
+    },
+    "xml": {
+      "file": "znp_linkInfo.xml",
+      "sha256": "19b04a5e7692bd9c6c1ef98017928d297182453d427a1de2dae5e401808fc8e6"
+    }
+  },
+  "schema": "r4-b0-artifact-manifest-v1",
+  "tool": {
+    "ccs": "12.8.0.00012",
+    "sysconfig": "1.21.1.3772",
+    "ti_arm_clang": "3.2.2.LTS"
+  }
+}

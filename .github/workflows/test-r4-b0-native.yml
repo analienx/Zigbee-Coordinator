@@ -119,6 +119,22 @@ jobs:
             exit 1
           fi
           echo "control (o9) rejected unhashable claim id as required"
+      - name: Negative control (o10) tampered HEX/BIN with updated digests must fail cross-binding
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-tampered-hexbin 2>&1); then
+            echo "control (o10) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "cross-binding"
+          if echo "$out" | grep -F "sha256 mismatch"; then
+            echo "control (o10) failed at hash only, cross-binding bypassed"
+            exit 1
+          fi
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o10) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o10) rejected at HEX/BIN cross-binding as required"
 
   r4-b0-upstream-inventory:
     runs-on: ubuntu-latest

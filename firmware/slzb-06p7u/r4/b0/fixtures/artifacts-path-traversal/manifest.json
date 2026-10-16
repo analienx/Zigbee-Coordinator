@@ -3,7 +3,7 @@
   "files": {
     "bin": {
       "file": "znp.bin",
-      "sha256": "41a8df8d7a09deeda1ce604e394aca7e77f054f4937b3e51c882a84f67de6d1d"
+      "sha256": "dc4f8093526cb0d2ebbf29fcfaec461ea9cc100f036e7eedbf5acd9e19688b13"
     },
     "elf": {
       "file": "../evil.bin",
@@ -11,7 +11,7 @@
     },
     "hex": {
       "file": "znp.hex",
-      "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+      "sha256": "a90551b6abee9c014d52e61bcb3548d1527bb9fb2d7014ba0b23d18afa2d1544"
     },
     "xml": {
       "file": "znp_linkInfo.xml",

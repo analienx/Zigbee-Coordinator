@@ -5,9 +5,10 @@ unit-test vectors. The vectors are synthetic oracle sanity inputs,
 NEVER native proof: a passing fixture audit proves only the
 validator logic, never a genuine TI CCS build. If the audit logic
 is removed or weakened (hash binding, linker-invocation evidence,
-TI XML + ELF cross-check, NV/CCFG separation, CCFG/vector
-presence, donor stack size, traversal confinement), these tests
-fail. No hardware, no network, no secrets.
+TI XML + ELF cross-check, HEX/BIN cross-binding to the XML memory
+map, NV/CCFG separation, CCFG/vector presence, donor stack size,
+traversal confinement), these tests fail. No hardware, no
+network, no secrets.
 """
 import contextlib
 import importlib.util
@@ -86,6 +87,15 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("C/IRQ stack", message)
 
+    def test_tampered_hexbin_with_updated_manifest_fails_cross_binding(self):
+        # Blind-spot regression: HEX+BIN tampered (first payload bytes
+        # on both sides) with manifest digests recomputed still fails,
+        # naming the cross-binding rather than a hash mismatch.
+        code, message = self._audit("artifacts-tampered-hexbin")
+        self.assertEqual(code, 1)
+        self.assertIn("cross-binding", message)
+        self.assertNotIn("sha256 mismatch", message)
+
     def test_absent_artifacts_block_never_pass(self):
         code, message = audit.audit(B0, FIX / "artifacts-does-not-exist")
         self.assertEqual(code, 2)
@@ -109,6 +119,13 @@ class B0ImageAuditTests(unittest.TestCase):
                                          str(FIX / "artifacts-path-traversal")])
         self.assertEqual(code, 1)
         self.assertIn("traversal", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_cli_tampered_hexbin_fails_without_traceback(self):
+        code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
+                                         str(FIX / "artifacts-tampered-hexbin")])
+        self.assertEqual(code, 1)
+        self.assertIn("cross-binding", out)
         self.assertNotIn("Traceback", out)
 
     def test_cli_blocked_without_traceback(self):

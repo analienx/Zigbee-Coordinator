@@ -18,9 +18,18 @@ Authoritative memory layout comes from the pinned TI objects
 
 The invented REGION/CSTACK/VECTORS text summary format is
 explicitly REJECTED as synthetic. Any partial/fake XML or fake
-ELF fails closed. Exit 0 audit OK, 1 audit mismatch, 2 BLOCKED
-(no artifacts: native toolchain unprovisioned, no binary claim).
-Never prints a traceback.
+ELF fails closed. HEX/BIN artifacts are cross-bound to the
+independently-parsed evidence: the HEX file must be genuine
+Intel HEX records (raw binary rejected), every HEX data address
+must fall inside an XML-reported memory area and outside
+FLASH_NV, the HEX payload must cover the XML-declared
+.resetVecs/.ccfg extents and the ELF entry, and the BIN must
+equal the HEX data payload in ascending address order. A
+tampered HEX/BIN pair with merely recomputed manifest digests
+fails at this cross-binding, never with exit 0. Exit 0 audit
+OK, 1 audit mismatch, 2 BLOCKED (no artifacts: native
+toolchain unprovisioned, no binary claim). Never prints a
+traceback.
 """
 import hashlib
 import json
@@ -52,6 +61,13 @@ DONOR_FLASH_LAST_BASE = 0xAE000
 DONOR_CSTACK = 1024
 
 XML_SIZE_CAP = 2 * 1024 * 1024
+
+# HEX/BIN cross-binding caps: the CC1352P7 FLASH image is ~704 KiB,
+# so a 1 MiB payload cap accepts any genuine image while failing
+# closed on unbounded inputs.
+HEX_SIZE_CAP = 4 * 1024 * 1024
+HEX_PAYLOAD_CAP = 1024 * 1024
+BIN_SIZE_CAP = 1024 * 1024
 
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -138,56 +154,57 @@ def _int_maybe(text):
 def _parse_link_xml(text, elf_name, elf_entry):
     """Validate the genuine TI --xml_link_info document.
 
-    Returns an error string or None on OK. Checks root/banner/
-    output/entry/placement/logical-group geometry against the
-    donor .cmd facts, plus ELF entry agreement.
+    Returns (evidence, error): evidence carries the parsed memory
+    areas, sections and entry on OK, error is None on OK. Checks
+    root/banner/output/entry/placement/logical-group geometry
+    against the donor .cmd facts, plus ELF entry agreement.
     """
     if "<!DOCTYPE" in text or "<!ENTITY" in text:
-        return "audit XML uses a forbidden DTD/entity declaration"
+        return None, "audit XML uses a forbidden DTD/entity declaration"
     try:
         root = ET.fromstring(text)
     except ET.ParseError as exc:
-        return "audit XML parse error (%s)" % exc
+        return None, "audit XML parse error (%s)" % exc
     if root.tag != "link_info":
-        return ("audit XML is not a TI link_info document "
-                "(synthetic summary rejected)")
+        return None, ("audit XML is not a TI link_info document "
+                      "(synthetic summary rejected)")
     banner = root.findtext("banner") or ""
     if "3.2.2" not in banner:
-        return "audit XML banner lacks TI-ARM-CLANG 3.2.2"
+        return None, "audit XML banner lacks TI-ARM-CLANG 3.2.2"
     output = (root.findtext("output_file") or "").strip()
     if Path(output).name != elf_name:
-        return "audit XML output_file does not match the audited ELF"
+        return None, "audit XML output_file does not match the audited ELF"
     entry_text = ""
     entry_node = root.find("entry_point")
     if entry_node is not None:
         entry_text = (entry_node.findtext("address") or "").strip()
     entry = _int_maybe(entry_text)
     if entry is None:
-        return "audit XML missing entry_point address"
+        return None, "audit XML missing entry_point address"
     if entry != elf_entry:
-        return "audit XML entry_point disagrees with ELF e_entry"
+        return None, "audit XML entry_point disagrees with ELF e_entry"
     areas = {}
     for area in root.findall("./placement_map/memory_area"):
         name = (area.findtext("name") or "").strip()
         origin = _int_maybe(area.findtext("origin"))
         length = _int_maybe(area.findtext("length"))
         if not name or origin is None or length is None:
-            return "audit XML memory_area malformed"
+            return None, "audit XML memory_area malformed"
         areas[name] = (origin, length)
     for need in ("FLASH", "FLASH_NV", "FLASH_LAST", "SRAM"):
         if need not in areas:
-            return "audit XML missing %s memory area" % need
+            return None, "audit XML missing %s memory area" % need
     nvs_base, nvs_size = areas["FLASH_NV"]
     if nvs_base != DONOR_NVS_BASE or nvs_size != DONOR_NVS_SIZE:
-        return ("audit NVS geometry differs from donor "
-                "(want base 0xAA000 size 0x4000)")
+        return None, ("audit NVS geometry differs from donor "
+                      "(want base 0xAA000 size 0x4000)")
     fl_base, fl_len = areas["FLASH_LAST"]
     if fl_base != DONOR_FLASH_LAST_BASE:
-        return "audit FLASH_LAST base differs from donor (want 0xAE000)"
+        return None, "audit FLASH_LAST base differs from donor (want 0xAE000)"
     nvs_end = nvs_base + nvs_size
     fl_end = fl_base + fl_len
     if nvs_base < fl_end and fl_base < nvs_end:
-        return "audit NV/CCFG overlap"
+        return None, "audit NV/CCFG overlap"
     sections = {}
     for section in root.findall("./logical_group_list//section"):
         name = ((section.findtext("name") or "").strip()
@@ -198,18 +215,18 @@ def _parse_link_xml(text, elf_name, elf_entry):
         if name:
             sections[name] = (load, size)
     if ".resetVecs" not in sections:
-        return "audit missing .resetVecs/vector table marker"
+        return None, "audit missing .resetVecs/vector table marker"
     ccfg = sections.get(".ccfg")
     if ccfg is None:
-        return "audit missing CCFG section (invalid ELF/map symbols)"
+        return None, "audit missing CCFG section (invalid ELF/map symbols)"
     ccfg_load, ccfg_size = ccfg
     if ccfg_load is None or ccfg_size is None:
-        return "audit CCFG section lacks load address/size"
+        return None, "audit CCFG section lacks load address/size"
     if nvs_base < ccfg_load + ccfg_size and ccfg_load < nvs_end:
-        return "audit NV/CCFG overlap"
+        return None, "audit NV/CCFG overlap"
     if not (fl_base <= ccfg_load
             and ccfg_load + ccfg_size <= fl_end):
-        return "audit CCFG not mapped into FLASH_LAST at HIGH"
+        return None, "audit CCFG not mapped into FLASH_LAST at HIGH"
     stack_size = None
     stack = sections.get(".stack")
     if stack is not None and stack[1] is not None:
@@ -223,10 +240,163 @@ def _parse_link_xml(text, elf_name, elf_entry):
                                         or symbol.get("value"))
                 break
     if stack_size is None:
-        return "audit missing C/IRQ stack size"
+        return None, "audit missing C/IRQ stack size"
     if stack_size != DONOR_CSTACK:
-        return ("audit wrong C/IRQ stack expectation "
-                "(want donor 1024; 4096 needs native map proof)")
+        return None, ("audit wrong C/IRQ stack expectation "
+                      "(want donor 1024; 4096 needs native map proof)")
+    return {"areas": areas, "sections": sections, "entry": entry}, None
+
+
+def _parse_intel_hex(path):
+    """Parse genuine Intel HEX records. Returns (payload, error).
+
+    Payload maps absolute byte addresses to byte values. Raw binary
+    content, bad checksums, unknown record types, missing EOF and
+    duplicate addresses all fail closed. Every failure names the
+    HEX/BIN cross-binding so a tampered pair with recomputed
+    manifest digests cannot pass as a mere hash check.
+    """
+    try:
+        if path.stat().st_size > HEX_SIZE_CAP:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(HEX exceeds size cap)")
+        raw = path.read_bytes()
+    except OSError as exc:
+        return None, "audit HEX/BIN cross-binding failed (HEX unreadable: %s)" % exc
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None, ("audit HEX/BIN cross-binding failed "
+                      "(HEX is not Intel HEX records; raw binary rejected)")
+    payload = {}
+    upper = 0
+    seen_eof = False
+    data_records = 0
+    seg_base = None
+    lineno = 0
+    for line in text.splitlines():
+        lineno += 1
+        if not line.strip():
+            continue
+        if seen_eof:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(Intel HEX records after EOF)")
+        if not line.startswith(":"):
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(HEX is not Intel HEX records; raw binary rejected)")
+        body = line[1:]
+        if len(body) < 10 or len(body) % 2 != 0:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(malformed Intel HEX line %d)" % lineno)
+        try:
+            blob = bytes(int(body[i:i + 2], 16)
+                         for i in range(0, len(body), 2))
+        except ValueError:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(malformed Intel HEX line %d)" % lineno)
+        count, addr, rtype = blob[0], (blob[1] << 8) | blob[2], blob[3]
+        data, checksum = blob[4:4 + count], blob[4 + count:]
+        if len(data) != count or len(checksum) != 1:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(malformed Intel HEX line %d)" % lineno)
+        if (sum(blob) & 0xFF) != 0:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(bad Intel HEX checksum on line %d)" % lineno)
+        if rtype == 0x00:
+            base = upper if seg_base is None else seg_base
+            for offset, value in enumerate(data):
+                target = base + addr + offset
+                if target in payload:
+                    return None, ("audit HEX/BIN cross-binding failed "
+                                  "(duplicate HEX address 0x%08X)" % target)
+                payload[target] = value
+            data_records += 1
+        elif rtype == 0x01:
+            if count != 0:
+                return None, ("audit HEX/BIN cross-binding failed "
+                              "(malformed Intel HEX EOF on line %d)" % lineno)
+            seen_eof = True
+        elif rtype == 0x02:
+            if count != 2:
+                return None, ("audit HEX/BIN cross-binding failed "
+                              "(malformed Intel HEX line %d)" % lineno)
+            seg_base = ((data[0] << 8) | data[1]) << 4
+            upper = 0
+        elif rtype == 0x04:
+            if count != 2:
+                return None, ("audit HEX/BIN cross-binding failed "
+                              "(malformed Intel HEX line %d)" % lineno)
+            upper = ((data[0] << 8) | data[1]) << 16
+            seg_base = None
+        elif rtype in (0x03, 0x05):
+            continue
+        else:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(unsupported Intel HEX record type 0x%02X)" % rtype)
+        if len(payload) > HEX_PAYLOAD_CAP:
+            return None, ("audit HEX/BIN cross-binding failed "
+                          "(HEX data payload exceeds size cap)")
+    if not seen_eof:
+        return None, ("audit HEX/BIN cross-binding failed "
+                      "(Intel HEX missing EOF record)")
+    if not data_records:
+        return None, ("audit HEX/BIN cross-binding failed "
+                      "(Intel HEX carries no data records)")
+    return payload, None
+
+
+def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry):
+    """Cross-bind HEX/BIN to the parsed XML evidence. Returns error or None."""
+    areas = evidence["areas"]
+    sections = evidence["sections"]
+    nvs_base, nvs_size = areas["FLASH_NV"]
+    nvs_end = nvs_base + nvs_size
+    others = [(base, base + size) for name, (base, size) in areas.items()
+              if name != "FLASH_NV"]
+    for addr in payload:
+        if nvs_base <= addr < nvs_end:
+            return ("audit HEX/BIN cross-binding failed "
+                    "(HEX data address 0x%08X inside FLASH_NV; "
+                    "image data must not overlap NV storage)" % addr)
+        if not any(base <= addr < end for base, end in others):
+            return ("audit HEX/BIN cross-binding failed "
+                    "(HEX data address 0x%08X outside the XML-reported "
+                    "memory regions)" % addr)
+    for need in (".resetVecs", ".ccfg"):
+        span = sections.get(need)
+        if span is None:
+            return ("audit HEX/BIN cross-binding failed "
+                    "(XML section %s missing from HEX coverage)" % need)
+        load, size = span
+        if load is None or size is None:
+            return ("audit HEX/BIN cross-binding failed "
+                    "(XML section %s lacks load address/size)" % need)
+        missing = [a for a in range(load, load + size) if a not in payload]
+        if missing:
+            return ("audit HEX/BIN cross-binding failed "
+                    "(HEX data payload does not cover XML section %s "
+                    "at 0x%08X)" % (need, missing[0]))
+    if elf_entry not in payload:
+        return ("audit HEX/BIN cross-binding failed "
+                "(ELF entry 0x%08X not covered by HEX data payload; "
+                "HEX is not derived from the audited ELF)" % elf_entry)
+    try:
+        if bin_path.stat().st_size > BIN_SIZE_CAP:
+            return ("audit HEX/BIN cross-binding failed "
+                    "(BIN exceeds size cap)")
+        bin_bytes = bin_path.read_bytes()
+    except OSError as exc:
+        return "audit HEX/BIN cross-binding failed (BIN unreadable: %s)" % exc
+    expected = bytes(payload[addr] for addr in sorted(payload))
+    if len(bin_bytes) != len(expected):
+        return ("audit HEX/BIN cross-binding failed "
+                "(BIN length %d differs from HEX data payload length %d; "
+                "BIN must equal the HEX data records in ascending "
+                "address order)" % (len(bin_bytes), len(expected)))
+    if bin_bytes != expected:
+        return ("audit HEX/BIN cross-binding failed "
+                "(BIN content differs from HEX data payload; BIN must "
+                "equal the HEX data records in ascending address order)")
     return None
 
 
@@ -298,7 +468,13 @@ def audit(base, artifacts):
     elf_entry, err = _parse_elf(targets["elf"])
     if err:
         return 1, err
-    err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry)
+    evidence, err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry)
+    if err:
+        return 1, err
+    payload, err = _parse_intel_hex(targets["hex"])
+    if err:
+        return 1, err
+    err = _check_hex_bin_binding(payload, targets["bin"], evidence, elf_entry)
     if err:
         return 1, err
     return 0, "R4-B0 image audit OK"
