@@ -222,6 +222,10 @@ def validate_board(doc):
             errors.append("board %s must be HARDWARE_OPERATIONALLY_PROVEN per issue #80" % cid)
         if "6198198498" not in str(claim.get("evidence", "")) and cid != "target-part":
             errors.append("board %s lacks actual UART source evidence #80/6198198498" % cid)
+    if by_id.get("target-part", {}).get("value") != "CC2652P7":
+        errors.append("fitted P7U is CC2652P7, not TI LaunchPad CC1352P7")
+    if doc.get("hardware_evidence", {}).get("ti_donor_target") != "CC1352P7_4 (LP donor, source composition only)":
+        errors.append("TI CC1352P7 donor identity must stay separate")
     if doc.get("board", {}).get("status") != "HARDWARE_OPERATIONALLY_PROVEN":
         errors.append("fitted P7U board identity evidence not acknowledged")
     hardware = doc.get("hardware_evidence", {})
