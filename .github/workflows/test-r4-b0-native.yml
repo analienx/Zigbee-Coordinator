@@ -356,9 +356,15 @@ jobs:
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
           echo "importing and building the pinned ZNP projectspec"
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec 2>&1 | tee -a /tmp/b0out/build.log
+          project=/tmp/b0ws/znp_LP_CC1352P7_4_tirtos7_ticlang
+          test -f "$project/znp.syscfg"
+          echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
+          "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
+            -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
           echo "Collecting real linker artifacts"
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0src/examples --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
       - name: Upload native artifacts and receipts
         if: always()
