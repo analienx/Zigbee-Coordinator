@@ -336,13 +336,24 @@ def _parse_link_xml(text, elf_name, elf_entry):
     if nvs_base < fl_end and fl_base < nvs_end:
         return None, "audit NV/CCFG overlap"
     sections = {}
-    for section in root.findall("./logical_group_list//section"):
+    # TI --xml_link_info uses one <logical_group id="lg-N"> per output
+    # section, with name/load_address/size as its *direct children*.
+    # Some historical synthetic test vectors nested <section> elements;
+    # support those as unit oracles, but never rely on them for native
+    # output. Reject duplicate entries to avoid shadowing real sections.
+    groups = list(root.findall("./logical_group_list/logical_group"))
+    candidates = groups + list(root.findall("./logical_group_list//section"))
+    for section in candidates:
+        if section.tag == "logical_group" and section.find("section") is not None:
+            continue  # synthetic parent group, children below
         name = ((section.findtext("name") or "").strip()
                 or (section.get("name") or "").strip())
         load = _int_maybe(section.findtext("load_address")
                            or section.get("load_address"))
         size = _int_maybe(section.findtext("size") or section.get("size"))
         if name:
+            if name in sections:
+                return None, "audit duplicate linker output section %s" % name
             sections[name] = (load, size)
     if ".resetVecs" not in sections:
         return None, "audit missing .resetVecs/vector table marker"
