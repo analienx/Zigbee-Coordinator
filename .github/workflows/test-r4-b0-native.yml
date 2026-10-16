@@ -242,9 +242,15 @@ jobs:
           [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
           sysconfig_cli --version | grep -F "1.21.1.3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
           tiarmclang --version | grep -F "3.2.2" || { echo "B0-BUILD-BLOCKED: TI-ARM-CLANG 3.2.2.LTS not provisioned; no dummy firmware produced"; exit 1; }
-          echo "building SDK libraries first (upstream README requirement at the pinned SHA)"
-          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/cc13xx_cc26xx_sdk/source
-          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects driverlib
+          echo "Building pinned TI SDK libraries with GNU make"
+          sdk=/tmp/b0src/examples/cc13xx_cc26xx_sdk
+          test -f "$sdk/imports.mak"
+          : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
+          : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
+          printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\n' "$SYSCONFIG_TOOL" "$TICLANG_ARMCOMPILER" >> "$sdk/imports.mak"
+          (cd "$sdk" && make -j2)
+          find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
+          test -s /tmp/b0out/sdk-libraries.txt
           echo "importing and building the pinned ZNP projectspec"
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang
