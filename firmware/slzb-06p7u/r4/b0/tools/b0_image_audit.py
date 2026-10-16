@@ -570,7 +570,7 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
     span = last - base + 1
     if span > BIN_SIZE_CAP or len(bin_bytes) != span:
         return ("audit HEX/BIN cross-binding failed "
-                "(BIN is neither exact packed HEX bytes nor a "
+                "(BIN content differs: neither exact packed HEX bytes nor a "
                 "full address-preserving binary image)")
     gap_value = None
     for offset, value in enumerate(bin_bytes):
