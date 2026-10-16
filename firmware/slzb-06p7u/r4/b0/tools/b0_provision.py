@@ -145,9 +145,9 @@ def provision(tool_dir=None):
         "emitted_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "expected_toolchain": dict(EXPECTED),
         "installer_download_sha256": {
-            "ccs": "UNKNOWN",
-            "sysconfig": "UNKNOWN",
-            "ti_arm_clang": "UNKNOWN",
+            "ccs": "fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d",
+            "sysconfig": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
+            "ti_arm_clang": "2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9",
         },
         "official_acquisition_points": dict(ACQUIRE),
         "components": found,
