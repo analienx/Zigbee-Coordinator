@@ -12,11 +12,13 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 HDR = ("#define CONFIG_GPIO_DISPLAY_UART_TX 13\n"
-       "#define CONFIG_GPIO_DISPLAY_UART_RX 12\n")
+       "#define CONFIG_GPIO_DISPLAY_UART_RX 12\n"
+       "#define CONFIG_DISPLAY_UART 0\n")
 SRC = """
 GPIO_PinConfig gpioPinConfigs[31] = {};
-const UART2_Config UART2_config[CONFIG_UART2_COUNT] = {};
-const UART2CC26X2_HWAttrs uart2CC26X2HWAttrs[] = {
+#define CONFIG_UART2_COUNT 1
+UART2CC26X2_Object uart2CC26X2Objects[CONFIG_UART2_COUNT];
+static const UART2CC26X2_HWAttrs uart2CC26X2HWAttrs[CONFIG_UART2_COUNT] = {
   {
     .baseAddr = UART0_BASE,
     .rxPin = CONFIG_GPIO_DISPLAY_UART_RX,
@@ -24,8 +26,18 @@ const UART2CC26X2_HWAttrs uart2CC26X2HWAttrs[] = {
     .ctsPin = GPIO_INVALID_INDEX,
     .rtsPin = GPIO_INVALID_INDEX,
     .flowControl = UART2_FLOWCTRL_NONE,
-  }
+    .rxPinMux = IOC_PORT_MCU_UART0_RX,
+    .txPinMux = IOC_PORT_MCU_UART0_TX,
+  },
 };
+const UART2_Config UART2_config[CONFIG_UART2_COUNT] = {
+    {
+      .object = &uart2CC26X2Objects[CONFIG_DISPLAY_UART],
+      .hwAttrs = &uart2CC26X2HWAttrs[CONFIG_DISPLAY_UART]
+    },
+};
+const uint_least8_t UART2_count = CONFIG_UART2_COUNT;
+const uint_least8_t CONFIG_DISPLAY_UART_CONST = CONFIG_DISPLAY_UART;
 """
 DEV = ("#define SET_CCFG_MODE_CONF_DCDC_RECHARGE 0x1\n"
        "#define SET_CCFG_MODE_CONF_DCDC_ACTIVE 0x1\n")
@@ -67,6 +79,26 @@ class B0GeneratedBoardTests(unittest.TestCase):
             self.seed(root, header=HDR + "#define CONFIG_GPIO_DISPLAY_UART_RX 12\n")
             with self.assertRaisesRegex(ValueError, "AMBIGUOUS"):
                 gate.inspect_generated(root)
+
+    def test_active_uart_count_object_and_pin_mux_mutations_fail(self):
+        cases = [
+            (SRC.replace("#define CONFIG_UART2_COUNT 1",
+                         "#define CONFIG_UART2_COUNT 0"), "UART2_CONFIG_COUNT"),
+            (SRC.replace("&uart2CC26X2HWAttrs[CONFIG_DISPLAY_UART]",
+                         "NULL"), "ACTIVE_UART_HWATTR_POINTER"),
+            (SRC.replace("IOC_PORT_MCU_UART0_RX",
+                         "IOC_PORT_MCU_UART1_RX"), "ACTIVE_rxPinMux"),
+            (SRC.replace("IOC_PORT_MCU_UART0_TX",
+                         "IOC_PORT_MCU_UART1_TX"), "ACTIVE_txPinMux"),
+            (SRC.replace("UART2_count = CONFIG_UART2_COUNT",
+                         "UART2_count = 0"), "ACTIVE_UART2_COUNT"),
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for mutated, error in cases:
+                self.seed(root, drivers=mutated)
+                with self.assertRaisesRegex(ValueError, error):
+                    gate.inspect_generated(root)
 
     def test_donor_dcdc_default_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as td:
