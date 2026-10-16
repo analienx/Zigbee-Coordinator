@@ -52,6 +52,16 @@ def acquire(kind, digest, destination):
         raise RuntimeError("untrusted TI distribution origin")
     destination.mkdir(parents=True, exist_ok=True)
     path = destination / filename
+    if path.is_file():
+        digest_cached = hashlib.sha256()
+        with path.open("rb") as existing:
+            for chunk in iter(lambda: existing.read(1024 * 1024), b""):
+                digest_cached.update(chunk)
+        if digest_cached.hexdigest() == digest:
+            return {"component": kind, "version": version, "sha256": digest,
+                    "bytes": path.stat().st_size, "file": str(path), "source": url,
+                    "status": "AUTHENTICATED_CACHED_DOWNLOAD"}
+        path.unlink()
     temporary = destination / (filename + ".incomplete")
     temporary.unlink(missing_ok=True)
     h = hashlib.sha256()
