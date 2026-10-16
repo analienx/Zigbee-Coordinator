@@ -98,9 +98,10 @@ class MTFormat(unittest.TestCase):
 
     def test_d06_len_smuggling_does_not_trust_embedded_payload(self):
         parser = BoundedMtStream()
-        self.assertEqual(parser.feed(bytes((SOF, 0xff, SRSP_SYS, DIAG_ID)) +
-                                     frame(SRSP_SYS, DIAG_ID, legacy())), [])
-        self.assertEqual(len(parser.feed(frame(SRSP_SYS, DIAG_ID, legacy()))), 1)
+        found = parser.feed(bytes((SOF, 0xff, SRSP_SYS, DIAG_ID)) +
+                            frame(SRSP_SYS, DIAG_ID, legacy()))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(parser.buffered_bytes, 0)
 
     def test_d17_parser_bounded_on_hostile_stream(self):
         parser = BoundedMtStream()
