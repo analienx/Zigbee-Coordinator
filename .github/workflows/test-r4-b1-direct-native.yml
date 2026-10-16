@@ -47,6 +47,17 @@ jobs:
           test -s /tmp/b1-source-receipt.json
           grep -F 'b1_nv_probe(' "$root/source/ti/common/nv/nvocmp.c"
           grep -F 'b1_nv_runtime_hold_active()' "$root/source/ti/zstack/zmac/f8w/zmac.c"
+          # Compile the original patched functions themselves, not a separate
+          # Python reimplementation of the ZMac gating behavior.
+          python firmware/slzb-06p7u/r4/b1/tools/make_zmac_harness.py \
+            --source "$root/source/ti/zstack/zmac/f8w/zmac.c" \
+            --output /tmp/b1-actual-zmac-functions.c
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/b1-actual-zmac-functions.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/b1-linked-zmac-hold-test
+          /tmp/b1-linked-zmac-hold-test
           grep -F 'if (zstack_user0Cfg.nvFps.initNV(NULL) != NVINTF_SUCCESS)' \
             "$root/source/ti/zstack/startup/main.c"
       - name: Upload source admission receipt
