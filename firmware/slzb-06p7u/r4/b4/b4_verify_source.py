@@ -16,6 +16,7 @@ TI_MT = "source/ti/zstack/mt/"
 TI_NPI = "source/ti/zstack/npi/"
 HERDSMAN_ZNP = "src/adapter/z-stack/znp/"
 HERDSMAN_ADAPTER = "src/adapter/z-stack/adapter/"
+NPI_CLIENT = "source/ti/zstack/npi/npi_client_mt.c"
 
 def _read(root, path):
     target = root / path
@@ -32,10 +33,12 @@ def _pin(root, expected):
     if actual != expected:
         raise ValueError("upstream checkout SHA mismatch")
 
-def verify_ti(mt_h, mt_sys, npi_task, uart):
+def verify_ti(mt_h, mt_sys, npi_task, uart, npi_client=None):
     """Return source proof anchors only, never fabricated counter validity."""
-    defs = dict((name, int(n, 16)) for name, n in
-                re.findall(r"^\s*#define\s+(MT_SYS_[A-Z0-9_]+)\s+(0x[0-9a-fA-F]+)\b",
+    # Match both decimal and hexadecimal definitions: an alias changing
+    # to decimal 240 must never bypass the SYS F0 collision gate.
+    defs = dict((name, int(n, 0)) for name, n in
+                re.findall(r"^\s*#define\s+(MT_SYS_[A-Z0-9_]+)\s+(0[xX][0-9a-fA-F]+|[1-9][0-9]*|0)\b",
                            mt_h, re.M))
     if defs.get("MT_SYS_PING") != 1 or defs.get("MT_SYS_VERSION") != 2:
         raise ValueError("stock SYS_PING / SYS_VERSION definition drift")
@@ -66,11 +69,16 @@ def verify_ti(mt_h, mt_sys, npi_task, uart):
     if ("NPITLUART_writeCallBack" not in uart or "UART2_write(" not in uart
             or "npiTransmitCB" not in uart or "status" not in uart):
         raise ValueError("missing UART2 callback / accepted-write evidence")
+    if npi_client is not None and ("void MT_BuildAndSendZToolResponse(" not in npi_client
+                                  or "OsalPort_msgSend(" not in npi_client):
+        raise ValueError("linked NPI-specific MT response producer not sourced")
     return {
         "sys_f0_unassigned": True,
         "ping_version_preserved": True,
         "npi_hook_names": list(funcs),
         "uart_status": "CALLBACK_SOURCE_IDENTIFIED; TX_FINISHED_EVENT_NOT_PROVEN",
+        "mt_response_producer": ("NPI_CLIENT_SOURCE_VERIFIED" if npi_client is not None
+                                 else "NOT_MEASURED"),
     }
 
 def verify_herdsman(definition, znp, adapter):
@@ -110,7 +118,8 @@ def verify(ti, herdsman):
         "ti": verify_ti(_read(ti, TI_MT + "mt.h"),
                         _read(ti, TI_MT + "mt_sys.c"),
                         _read(ti, TI_NPI + "npi_task.c"),
-                        _read(ti, TI_NPI + "npi_tl_uart.c")),
+                        _read(ti, TI_NPI + "npi_tl_uart.c"),
+                        _read(ti, NPI_CLIENT)),
         "herdsman": verify_herdsman(
             _read(herdsman, HERDSMAN_ZNP + "definition.ts"),
             _read(herdsman, HERDSMAN_ZNP + "znp.ts"),
