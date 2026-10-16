@@ -233,7 +233,9 @@ jobs:
         run: |
           python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
       - name: Real native build (only when provision is READY)
+        shell: bash
         run: |
+          set -Eeuo pipefail
           rm -rf /tmp/b0src /tmp/b0out && mkdir -p /tmp/b0src /tmp/b0out && cd /tmp/b0src
           git clone --depth 1 https://github.com/TexasInstruments/simplelink-zstack-examples.git examples
           git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
@@ -242,22 +244,20 @@ jobs:
           [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
           sysconfig_cli --version | grep -F "1.21.1.3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
           tiarmclang --version | grep -F "3.2.2" || { echo "B0-BUILD-BLOCKED: TI-ARM-CLANG 3.2.2.LTS not provisioned; no dummy firmware produced"; exit 1; }
-          echo "Building pinned TI SDK libraries with GNU make"
+          echo "Building pinned TI SDK libraries with GNU make" | tee /tmp/b0out/build.log
           sdk=/tmp/b0src/examples/cc13xx_cc26xx_sdk
           test -f "$sdk/imports.mak"
           : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
           : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
           printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\n' "$SYSCONFIG_TOOL" "$TICLANG_ARMCOMPILER" >> "$sdk/imports.mak"
-          (cd "$sdk" && make -j2)
+          (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
           find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
           test -s /tmp/b0out/sdk-libraries.txt
           echo "importing and building the pinned ZNP projectspec"
-          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
-          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang
-          echo "collecting genuine TI link outputs (ELF + --xml_link_info XML + HEX + BIN) into /tmp/b0out"
-          cp /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_linkInfo.xml /tmp/b0out/
-          cp /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/Release/znp.out /tmp/b0out/
-          cp /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/Release/znp.hex /tmp/b0out/
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec 2>&1 | tee -a /tmp/b0out/build.log
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          echo "Collecting real linker artifacts"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
       - name: Upload native artifacts and receipts
         if: always()
