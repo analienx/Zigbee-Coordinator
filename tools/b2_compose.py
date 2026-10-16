@@ -23,7 +23,7 @@ FORBIDDEN = ("ZDSECMGR_TC_DEVICE_MAX", "NWK_MAX_DEVICE_LIST",
              "CONCENTRATOR_DISCOVERY_TIME","CONCENTRATOR_ROUTE_CACHE",
              "SRC_RTG_EXPIRY_TIME", "NWK_MAX_DATA_RETRIES",
              "APSC_MAX_FRAME_RETRIES")
-OVERLAY_MARKER = "// R4-B2 DISPOSABLE PROJECT CONFIGURATION"
+OVERLAY_MARKER = "-DMAX_RTG_SRC_ENTRIES=192"  # token-only idempotency sentinel; response files reject comments
 
 class ComposeError(ValueError):
     pass
@@ -47,7 +47,8 @@ def compose(text, profile):
     for name,value in options.items():
         if type(value)!=int or not 1<=value<=255:
             raise ComposeError("unsafe index width for "+name)
-    lines=[OVERLAY_MARKER+" "+profile]
+    # TI Clang @response files are token streams; comments become compiler arguments.
+    lines=[]
     lines.extend("-D"+name+"="+str(value) for name,value in sorted(options.items()))
     suffix="" if text.endswith("\n") else "\n"
     return text+suffix+"\n".join(lines)+"\n",options
