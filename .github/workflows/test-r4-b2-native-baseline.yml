@@ -69,8 +69,10 @@ jobs:
             assert got["status"]=="HOSTED_NATIVE_LINKED",name
           x=json.loads(Path("/tmp/b2-measurements/B2_ROUTING_OBJECT_ORIGINS.json").read_text())
           for name in ("RTG_GetRtgSrcEntry","RTG_MTORouteReq","RTG_ProcessRreq"):
-            assert x["symbols"][name]["object_file"]=="rtg.o",name
-          assert x["symbols"]["nwkHandleBrokenRoute"]["object_file"]=="nwk_util.o"
+            assert x["symbols"][name]["archive_file"]=="libZStack_nwk_all.a",name
+            assert x["symbols"][name]["archive_member_object"]=="rtg.o",name
+          assert x["symbols"]["nwkHandleBrokenRoute"]["archive_file"]=="libZStack_nwk_all.a"
+          assert x["symbols"]["nwkHandleBrokenRoute"]["archive_member_object"]=="nwk_util.o"
           print("Historical B0 linked table sizing and library origin proof: PASS")
           PY
       - name: Record immutable report digests
