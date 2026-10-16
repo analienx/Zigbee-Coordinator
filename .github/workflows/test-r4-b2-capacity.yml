@@ -16,4 +16,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Python synthetic negative controls (NOT native TI proof)
-        run: python -m unittest -v tests.test_r4_b2_capacity_gate
+        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence
