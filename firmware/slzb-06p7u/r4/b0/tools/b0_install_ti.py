@@ -68,6 +68,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--github-env", required=True, type=Path)
+    parser.add_argument("--github-path", required=True, type=Path)
     args = parser.parse_args()
     names = {"ccs": "TI_CCS_SHA256", "sysconfig": "TI_SYSCONFIG_SHA256",
              "clang": "TI_CLANG_SHA256"}
@@ -78,6 +79,10 @@ def main():
     with args.github_env.open("a", encoding="utf-8") as output:
         for key, value in exports.items():
             output.write(f"{key}={value}\n")
+    with args.github_path.open("a", encoding="utf-8") as output:
+        output.write(str(Path(exports["CCS_ECLIPSE"]).parent) + "\n")
+        output.write(str(Path(exports["SYSCONFIG_TOOL"])) + "\n")
+        output.write(str(Path(exports["TICLANG_ARMCOMPILER"]) / "bin") + "\n")
     print("TI installation complete: discovered exact native executable paths")
 
 
