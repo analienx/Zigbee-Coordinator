@@ -5,6 +5,20 @@
  */
 #include "b1_admission.h"
 
+/* A monotonically asserted word store is atomic on this Cortex-M4 target.
+ * In-flight or ROM-originated transmissions are NOT covered by this gate. */
+static volatile uint32_t b1_nv_runtime_held;
+
+void b1_nv_runtime_hold_latch(void)
+{
+    b1_nv_runtime_held = 1u;
+}
+
+int b1_nv_runtime_hold_active(void)
+{
+    return b1_nv_runtime_held != 0u;
+}
+
 static int b1_nv2_known_header(const uint8_t h[4])
 {
     const uint8_t state = h[0];
