@@ -119,8 +119,8 @@ class V3DesignTests(unittest.TestCase):
         self.assertEqual(u32_delta(3,0xFFFFFFFE,continuous_epoch=True),5)
 
     def test_unknown_and_regressing_sequence_fail_closed(self):
-        a=decode_v3(v3(radio_boot=0,uptime=100,seq=2))
-        b=decode_v3(v3(radio_boot=0,uptime=200,seq=3))
+        a=decode_v3(v3(caps=0,radio_boot=0,uptime=100,seq=2))
+        b=decode_v3(v3(caps=0,radio_boot=0,uptime=200,seq=3))
         self.assertFalse(trustworthy_radio_epoch(a,b))
         a=decode_v3(v3(seq=3))
         b=decode_v3(v3(seq=2))
