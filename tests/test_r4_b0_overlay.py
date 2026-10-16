@@ -121,14 +121,29 @@ class B0OverlayHostileTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("uart-rx", errors[0])
 
-    def test_source_confirmed_uart_rejected(self):
+    def test_reclassifying_proven_uart_as_unknown_rejected(self):
         doc = self._board()
         for claim in doc["claims"]:
             if claim["id"] in ("uart-rx", "uart-tx", "uart-baud", "uart-flow"):
-                claim["status"] = "SOURCE_CONFIRMED"
+                claim["status"] = "PHYSICAL_UNVERIFIED"
         errors = val.validate_board(doc)
         self.assertEqual(len(errors), 4)
-        self.assertTrue(all("SOURCE_CONFIRMED" in e for e in errors))
+        self.assertTrue(all("HARDWARE_OPERATIONALLY_PROVEN" in e for e in errors))
+
+    def test_historical_hardware_does_not_qualify_r4_image(self):
+        doc = self._board()
+        self.assertEqual(val.validate_board(doc), [])
+        doc["r4_image"]["status"] = "HARDWARE_OPERATIONALLY_PROVEN"
+        errors = val.validate_board(doc)
+        self.assertTrue(any("R4 image" in e for e in errors))
+        doc = self._board()
+        doc["r4_image"]["flash_authorized"] = True
+        self.assertTrue(any("authorize flash" in e for e in val.validate_board(doc)))
+
+    def test_historical_vendor_ccfg_digest_must_be_exact(self):
+        doc = self._board()
+        doc["vendor_20240710_ccfg"]["vendor_digest_sha256"] = "0" * 64
+        self.assertTrue(any("CCFG" in e for e in val.validate_board(doc)))
 
     def test_nv_pages_mutation_fails(self):
         doc = self._board()
