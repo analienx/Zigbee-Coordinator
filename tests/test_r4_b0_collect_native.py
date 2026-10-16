@@ -28,6 +28,24 @@ class CollectorTests(unittest.TestCase):
                 collector.collect(p, p / "output", p / "clang", p / "build.log")
 
     @unittest.skipIf(os.name == "nt", "hosted Linux tool shim")
+    def test_build_log_already_at_destination(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ws, out, compiler = root / "workspace", root / "out", root / "compiler"
+            ws.mkdir()
+            out.mkdir()
+            (ws / "znp.out").write_bytes(b"fixture")
+            (ws / "znp_linkInfo.xml").write_text("<link_info/>")
+            (ws / "znp.hex").write_text(":00000001FF")
+            (out / "build.log").write_text("original log stays in place")
+            (compiler / "bin").mkdir(parents=True)
+            fake = compiler / "bin" / "tiarmobjcopy"
+            fake.write_text("#!/bin/sh\\ncp \\"$3\\" \\"$4\\"\\n")
+            fake.chmod(0o755)
+            collector.collect(ws, out, compiler, out / "build.log")
+            self.assertEqual((out / "build.log").read_text(), "original log stays in place")
+
+    @unittest.skipIf(os.name == "nt", "hosted Linux tool shim")
     def test_generated_manifest_binds_all_collected_files(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
