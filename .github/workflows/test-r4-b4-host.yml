@@ -1,14 +1,16 @@
 name: R4 B4 pinned herdsman existing-owner compile and tests
 
 on:
-  push:
-    branches:
-      - feat/p7u-r4-b4-issue98
   pull_request:
     paths:
       - ".github/workflows/test-r4-b4-host.yml"
       - "host/r4-b4/**"
       - "firmware/slzb-06p7u/r4/b4/B4_ABI_DECISION.md"
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
