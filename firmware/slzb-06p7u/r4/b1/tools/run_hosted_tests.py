@@ -210,6 +210,17 @@ def main():
     # Real TI startup/OSAL wrappers: genuine compiled bypass mutations.
     # A missing pre-MAC gate must reach the MAC boundary and violate the
     # healthy/fault ordering assertion, not merely fail a text regex.
+    # The real ZMac entrypoints share the native NV/security-only safety
+    # predicate. A host UART overflow must NOT shut down healthy RF traffic.
+    domain_source = work / "actual_zmac_hold_domains.c"
+    run([sys.executable, b1 / "tools/make_rf_transport_harness.py",
+         "--source", sdk / SOURCE_PATHS[2], "--output", domain_source], check=True)
+    generated["zmac_hold_domains"] = domain_source
+    domain_binary = compile_c(domain_source, "zmac_hold_domains",
+                              admission=True, management=True)
+    positive(domain_binary, ("nv",))
+    positive(domain_binary, ("security",))
+
     mutation(generated["startup_security"],
              "if (!b1_sec_validate_restored()) return;",
              "if (!b1_sec_validate_restored() && 0) return;", "mutant_startup_pre_mac",
