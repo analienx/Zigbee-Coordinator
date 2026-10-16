@@ -11,8 +11,10 @@ from pathlib import Path
 
 SDK_NV = "source/ti/common/nv/nvocmp.c"
 SDK_MAIN = "source/ti/zstack/startup/main.c"
+SDK_ZMAC = "source/ti/zstack/zmac/f8w/zmac.c"
 SHA_NV = "01b2b0827d278c10c012b33e5791e53bc5662f10"
 SHA_MAIN = "608adc97370be3910a96f5dcc356d0feffb79d70"
+SHA_ZMAC = "38edebba04b31a416f64949ef991aa990dd99dba"
 
 
 def git_blob_sha(text):
@@ -29,9 +31,12 @@ def replace_once(text, before, after, name):
 def overlay(sdk, b1_dir):
     src_nv = sdk / SDK_NV
     src_main = sdk / SDK_MAIN
+    src_zmac = sdk / SDK_ZMAC
     source = src_nv.read_text(encoding="utf-8")
     main = src_main.read_text(encoding="utf-8")
-    if git_blob_sha(source) != SHA_NV or git_blob_sha(main) != SHA_MAIN:
+    zmac = src_zmac.read_text(encoding="utf-8")
+    if (git_blob_sha(source) != SHA_NV or git_blob_sha(main) != SHA_MAIN
+            or git_blob_sha(zmac) != SHA_ZMAC):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
         raise RuntimeError("BLOCKED: missing B1 linked admission C/H files")
@@ -203,17 +208,20 @@ def overlay(sdk, b1_dir):
     (src_nv.parent / "b1_admission.c").write_bytes((b1_dir / "b1_admission.c").read_bytes())
     src_nv.write_text(source, encoding="utf-8")
     src_main.write_text(main, encoding="utf-8")
+    src_zmac.write_text(zmac, encoding="utf-8")
     return {
         "schema": "r4-b1-admission-overlay-v1",
         "upstream_nv_blob": SHA_NV,
         "upstream_main_blob": SHA_MAIN,
+        "upstream_zmac_blob": SHA_ZMAC,
+        "modified_zmac_sha256": hashlib.sha256(zmac.encode()).hexdigest(),
         "modified_nv_sha256": hashlib.sha256(source.encode()).hexdigest(),
         "modified_main_sha256": hashlib.sha256(main.encode()).hexdigest(),
         "mode": "B1_SOURCE_ONLY_NOT_PHYSICALLY_TESTED",
         "preflight": "read only (0x4000), no NVS_write/NVS_erase",
         "factory_boot": "unauthorized by default",
         "hold_transport": "NOT_OBSERVABLE pending NPI independent gate",
-        "security_and_mac_tx": "BLOCKED_NOT_IMPLEMENTED"
+        "security_and_mac_tx": "runtime NV failure -> linked ZMac wrapper HOLD; ROM, queued RF and restored-security gate OPEN"
     }
 
 
