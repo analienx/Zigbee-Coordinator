@@ -51,7 +51,8 @@ def audit(root_path, out_path):
             continue
         symbols[name]={
             "status":"LINKED_OBJECT_ORIGIN",
-            "object_file":fil.findtext("file"),
+            "archive_file":fil.findtext("file"),
+            "archive_member_object":fil.findtext("name"),
             "object_input_path":fil.findtext("path"),
             "object_kind":fil.findtext("kind"),
             "object_component_name":obj.findtext("name"),
@@ -80,7 +81,7 @@ def audit(root_path, out_path):
     ]
     for key,item in symbols.items():
         lines.append("| \`"+key+"\` | "+
-                     ("\`"+str(item.get("object_file","UNKNOWN"))+"\`")+" | "+
+                     ("\`"+str(item.get("archive_file","UNKNOWN"))+"::"+str(item.get("archive_member_object","UNKNOWN"))+"\`")+" | "+
                      str(item.get("status"))+" | "+
                      ("\`"+str(item.get("object_input_path","UNKNOWN"))+"\`")+" |")
     lines.extend(["","**Decision:** B2 may configure source-owned table declarations and",
