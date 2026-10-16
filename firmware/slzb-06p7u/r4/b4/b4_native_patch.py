@@ -27,7 +27,7 @@ static void B4_DiagPutU32(uint8_t *dest, uint32_t v)
     dest[2] = (uint8_t)(v >> 16);
     dest[3] = (uint8_t)(v >> 24);
 }
-static void B4_SysReadOnlyDiagnostics(void)
+__attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
 {
     uint8_t payload[132] = {0};
     uint32_t count;
