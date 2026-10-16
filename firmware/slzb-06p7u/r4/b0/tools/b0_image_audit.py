@@ -786,6 +786,15 @@ def audit(base, artifacts, *, fixture_oracle=False):
     evidence, err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry)
     if err:
         return 1, err
+    if not fixture_oracle:
+        # Defense-in-depth: the downstream generated-board checker
+        # independently rejects both, but the standalone native image
+        # audit must never certify a packed HEX-byte stream or a CCFG
+        # moved away from the final 88 bytes of the 704 KiB flash.
+        if evidence["sections"].get(".ccfg") != (0xAFFA8, 0x58):
+            return 1, "audit native CCFG must occupy 0xAFFA8..0xAFFFF"
+        if targets["bin"].stat().st_size != 0xB0000:
+            return 1, "audit native BIN must preserve complete 704KiB flash address space"
     payload, err = _parse_intel_hex(targets["hex"])
     if err:
         return 1, err
