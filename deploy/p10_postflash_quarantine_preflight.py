@@ -17,6 +17,8 @@ import json
 import pathlib
 import urllib.request
 
+from p10_quarantine_identity import check as identity_gates, refusal_reasons
+
 from zigpy.exceptions import NetworkNotFormed
 from zigpy_znp.api import ZNP
 from zigpy_znp.commands import SYS
@@ -67,23 +69,13 @@ async def audit(args: argparse.Namespace) -> None:
         await znp.connect()
         version = await znp.request(SYS.Version.Req(), timeout=3)
         report["znp_code_revision"] = int(version.CodeRevision or 0)
-        report["znp_revision_match"] = (
-            report["znp_code_revision"] == int(args.expected_revision))
-        # Do not equate management zb_version with actual ZNP CodeRevision.
-        # The selected management radio must also identify the exact
-        # endpoint port and expected hardware, or quarantine must STOP.
-        # Some SLZB-OS versions do not expose such a mapping: UNKNOWN
-        # is intentionally not sufficient to certify a radio.
-        reported_port = next((radio[k] for k in (
+        exposed_port = next((radio[k] for k in (
             "socket_port", "zb_socket_port", "zb_port", "port")
             if k in radio), None)
-        report["management_socket_binding_match"] = (
-            str(reported_port) == str(args.port))
-        report["radio_hardware_match"] = (
-            bool(args.expected_radio_hw)
-            and str(radio.get("zb_hw", "")).casefold()
-            == args.expected_radio_hw.casefold())
-
+        report.update(identity_gates(
+            args.expected_revision, report["znp_code_revision"],
+            radio.get("zb_version"), radio.get("zb_hw"),
+            args.expected_radio_hw, exposed_port, args.port))
 
         # Length-only probes. No Trust Center key bytes are requested.
         for sub_id in args.tclk_probe:
@@ -121,23 +113,7 @@ async def audit(args: argparse.Namespace) -> None:
     minimum_probe = args.minimum_tclk_subid
     minimum_length = report["tclk_slot_lengths"].get(str(minimum_probe), 0)
 
-    if not report["slzb_revision_match"]:
-        report["reasons"].append(
-            "SLZB-OS does not report the expected radio revision"
-        )
-
-    if not report["znp_revision_match"]:
-        report["reasons"].append(
-            "Direct ZNP SYS_VERSION CodeRevision differs from expected revision"
-        )
-    if not report["radio_hardware_match"]:
-        report["reasons"].append(
-            "Selected management radio hardware is not independently pinned"
-        )
-    if not report["management_socket_binding_match"]:
-        report["reasons"].append(
-            "Management radio cannot be bound to the connected ZNP socket"
-        )
+    report["reasons"].extend(refusal_reasons(report))
 
     if minimum_length == 0:
         report["reasons"].append(
