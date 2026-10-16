@@ -60,7 +60,8 @@ def install(destination, hashes):
         raise RuntimeError("installed TI binaries missing or ambiguous")
     checked([str(syscfg[0]), "--version"])
     checked([str(clang[0]), "--version"])
-    return {"CCS_ECLIPSE": str(eclipse[0]), "SYSCONFIG_TOOL": str(syscfg[0].parent.parent),
+    return {"CCS_ECLIPSE": str(eclipse[0]), "SYSCONFIG_TOOL": str(syscfg_dir),
+            "SYSCONFIG_CLI": str(syscfg[0]),
             "TICLANG_ARMCOMPILER": str(clang[0].parent.parent)}
 
 
@@ -81,7 +82,7 @@ def main():
             output.write(f"{key}={value}\n")
     with args.github_path.open("a", encoding="utf-8") as output:
         output.write(str(Path(exports["CCS_ECLIPSE"]).parent) + "\n")
-        output.write(str(Path(exports["SYSCONFIG_TOOL"])) + "\n")
+        output.write(str(Path(exports["SYSCONFIG_CLI"]).parent) + "\n")
         output.write(str(Path(exports["TICLANG_ARMCOMPILER"]) / "bin") + "\n")
     print("TI installation complete: discovered exact native executable paths")
 
