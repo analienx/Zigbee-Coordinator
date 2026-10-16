@@ -267,6 +267,11 @@ jobs:
       # the real CCS headless build. Fixture vectors in
       # firmware/slzb-06p7u/r4/b0/fixtures/ are unit oracle sanity
       # inputs only and are NEVER audited here as native proof.
+      - name: Install TI ARM Clang Linux runtime dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libtinfo5
+          ldconfig -p | grep -F 'libtinfo.so.5'
       - name: Authenticated TI bootstrap (hash pins required)
         env:
           TI_CCS_SHA256: ${{ secrets.TI_CCS_SHA256 }}
@@ -288,7 +293,7 @@ jobs:
           git -C examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
           git -C examples submodule update --init cc13xx_cc26xx_sdk
           [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
-          "$SYSCONFIG_CLI" --version | grep -F "1.21.1.3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
+          "$SYSCONFIG_CLI" --version | grep -F "1.21.1+3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
           tiarmclang --version | grep -F "3.2.2" || { echo "B0-BUILD-BLOCKED: TI-ARM-CLANG 3.2.2.LTS not provisioned; no dummy firmware produced"; exit 1; }
           echo "Building pinned TI SDK libraries with GNU make" | tee /tmp/b0out/build.log
           sdk=/tmp/b0src/examples/cc13xx_cc26xx_sdk
