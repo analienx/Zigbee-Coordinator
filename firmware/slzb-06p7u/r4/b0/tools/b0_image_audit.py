@@ -24,12 +24,18 @@ Intel HEX records (raw binary rejected), every HEX data address
 must fall inside an XML-reported memory area and outside
 FLASH_NV, the HEX payload must cover the XML-declared
 .resetVecs/.ccfg extents and the ELF entry, and the BIN must
-equal the HEX data payload in ascending address order. A
-tampered HEX/BIN pair with merely recomputed manifest digests
-fails at this cross-binding, never with exit 0. Exit 0 audit
-OK, 1 audit mismatch, 2 BLOCKED (no artifacts: native
-toolchain unprovisioned, no binary claim). Never prints a
-traceback.
+equal the HEX data payload in ascending address order. Beyond
+that, the HEX data payload must byte-match every ELF PT_LOAD
+segment exactly (same addresses, same bytes: no extra HEX data
+outside the LOAD segments, no missing LOAD bytes, no differing
+byte), so a content-tampered HEX/BIN pair with merely
+recomputed manifest digests fails closed at this
+content-binding, never with exit 0. The ELF entry address is
+compared Thumb-normalized (bit 0 cleared: Cortex-M Thumb-2
+entry points carry bit 0 set while Intel HEX holds the aligned
+address). Exit 0 audit OK, 1 audit mismatch, 2 BLOCKED (no
+artifacts: native toolchain unprovisioned, no binary claim).
+Never prints a traceback.
 """
 import hashlib
 import json
@@ -55,6 +61,9 @@ LOG_MARKERS = {
 }
 
 # Donor geometry from the genuine linked .cmd (SDK blob 1e5777c2).
+# The full FLASH/FLASH_NV/FLASH_LAST/SRAM layout is pinned by the
+# expected_geometry table in _parse_link_xml; only the constants
+# still referenced below are kept here.
 DONOR_NVS_BASE = 0xAA000
 DONOR_NVS_SIZE = 0x4000
 DONOR_FLASH_LAST_BASE = 0xAE000
@@ -68,6 +77,12 @@ XML_SIZE_CAP = 2 * 1024 * 1024
 HEX_SIZE_CAP = 4 * 1024 * 1024
 HEX_PAYLOAD_CAP = 1024 * 1024
 BIN_SIZE_CAP = 1024 * 1024
+
+# ELF program-header table cap: a genuine CC1352P7 image carries
+# a handful of PT_LOAD segments; the bound only rejects absurd
+# headers while parsing stays fail-closed on any malformation.
+ELF_SIZE_CAP = 8 * 1024 * 1024
+ELF_PHNUM_CAP = 32
 
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -141,6 +156,90 @@ def _parse_elf(path):
     else:
         entry = struct.unpack_from("<Q", header, 24)[0]
     return entry, None
+
+
+def _parse_elf_load_segments(path):
+    """Extract the ELF PT_LOAD file-backed image. Returns (segments, error).
+
+    Segments maps absolute byte addresses to byte values, covering
+    exactly the file-backed bytes of every PT_LOAD program header
+    (p_paddr .. p_paddr + p_filesz). Both 32- and 64-bit
+    little-endian ARM ELFs are accepted; anything malformed --
+    bad magic, missing/truncated program-header table, a LOAD
+    segment pointing outside the file, p_filesz > p_memsz,
+    overlapping LOAD file ranges, or no LOAD segment at all --
+    fails closed. The caller byte-matches this image against the
+    HEX data payload exactly, so content tamper, injected extra
+    bytes, and silent deletion all fail at the content-binding.
+    """
+    prefix = ("audit HEX/BIN/ELF content-binding failed (cross-binding: ")
+    try:
+        if path.stat().st_size > ELF_SIZE_CAP:
+            return None, prefix + "ELF exceeds size cap)"
+        blob = path.read_bytes()
+    except OSError as exc:
+        return None, prefix + "ELF unreadable: %s)" % exc
+    if len(blob) < 52 or blob[:4] != b"\x7fELF":
+        return None, prefix + "invalid ELF (bad magic; fake ELF rejected)"
+    ei_class, ei_data = blob[4], blob[5]
+    if ei_data != 1:
+        return None, prefix + "invalid ELF (not little-endian)"
+    if ei_class == 1:
+        if len(blob) < 52:
+            return None, prefix + "invalid ELF (truncated header)"
+        phoff = struct.unpack_from("<I", blob, 28)[0]
+        phentsize = struct.unpack_from("<H", blob, 42)[0]
+        phnum = struct.unpack_from("<H", blob, 44)[0]
+        min_entsize = 32
+    elif ei_class == 2:
+        if len(blob) < 64:
+            return None, prefix + "invalid ELF (truncated header)"
+        phoff = struct.unpack_from("<Q", blob, 32)[0]
+        phentsize = struct.unpack_from("<H", blob, 54)[0]
+        phnum = struct.unpack_from("<H", blob, 56)[0]
+        min_entsize = 56
+    else:
+        return None, prefix + "invalid ELF (not 32/64-bit)"
+    if phoff == 0 or phnum == 0:
+        return None, prefix + "ELF has no program headers)"
+    if phnum > ELF_PHNUM_CAP or phentsize < min_entsize:
+        return None, prefix + "ELF program-header table malformed)"
+    if phoff + phentsize * phnum > len(blob):
+        return None, prefix + "ELF program-header table truncated)"
+    segments = {}
+    ranges = []
+    total = 0
+    for index in range(phnum):
+        base = phoff + index * phentsize
+        try:
+            if ei_class == 1:
+                (ptype, poff, _, ppaddr, pfilesz, pmemsz, _, _) = (
+                    struct.unpack_from("<8I", blob, base))
+            else:
+                (ptype, _, poff, _, ppaddr, pfilesz, pmemsz, _) = (
+                    struct.unpack_from("<IIQQQQQQ", blob, base))
+        except struct.error:
+            return None, prefix + "ELF program-header entry truncated)"
+        if ptype != 1:
+            continue
+        if pfilesz > pmemsz:
+            return None, prefix + "ELF PT_LOAD file size exceeds memory size)"
+        if poff + pfilesz > len(blob):
+            return None, prefix + "ELF PT_LOAD segment outside the file)"
+        if pfilesz:
+            start, end = ppaddr, ppaddr + pfilesz
+            for (other_start, other_end) in ranges:
+                if start < other_end and other_start < end:
+                    return None, prefix + "ELF PT_LOAD segments overlap)"
+            ranges.append((start, end))
+            total += pfilesz
+            if total > HEX_PAYLOAD_CAP:
+                return None, prefix + "ELF PT_LOAD image exceeds size cap)"
+            for offset in range(pfilesz):
+                segments[start + offset] = blob[poff + offset]
+    if not segments:
+        return None, prefix + "ELF has no PT_LOAD segments)"
+    return segments, None
 
 
 def _int_maybe(text):
@@ -360,8 +459,20 @@ def _parse_intel_hex(path):
     return payload, None
 
 
-def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry):
-    """Cross-bind HEX/BIN to the parsed XML evidence. Returns error or None."""
+def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
+                           elf_segments):
+    """Cross-bind HEX/BIN to the parsed XML evidence and ELF image.
+
+    Returns error or None. After the XML region/coverage checks,
+    the HEX data payload must byte-match every ELF PT_LOAD segment
+    exactly: same addresses, same bytes. Any extra HEX byte with
+    no covering LOAD segment (injected bytes), any LOAD byte
+    missing from the HEX payload (silent deletion), and any
+    differing byte (content tamper) fails closed naming the
+    content-binding. The ELF entry is compared Thumb-normalized
+    (bit 0 cleared: Cortex-M Thumb-2 entry points carry bit 0 set
+    while Intel HEX holds the aligned address).
+    """
     areas = evidence["areas"]
     sections = evidence["sections"]
     nvs_base, nvs_size = areas["FLASH_NV"]
@@ -391,10 +502,27 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry):
             return ("audit HEX/BIN cross-binding failed "
                     "(HEX data payload does not cover XML section %s "
                     "at 0x%08X)" % (need, missing[0]))
-    if elf_entry not in payload:
+    entry_norm = elf_entry & 0xFFFFFFFE
+    if entry_norm not in payload:
         return ("audit HEX/BIN cross-binding failed "
                 "(ELF entry 0x%08X not covered by HEX data payload; "
                 "HEX is not derived from the audited ELF)" % elf_entry)
+    for addr in sorted(set(payload) | set(elf_segments)):
+        if addr not in elf_segments:
+            return ("audit HEX/BIN/ELF content-binding failed "
+                    "(cross-binding: HEX data address 0x%08X has no "
+                    "covering ELF PT_LOAD segment; extra image bytes "
+                    "rejected)" % addr)
+        if addr not in payload:
+            return ("audit HEX/BIN/ELF content-binding failed "
+                    "(cross-binding: ELF PT_LOAD byte 0x%08X missing "
+                    "from the HEX data payload; image deletion "
+                    "rejected)" % addr)
+        if payload[addr] != elf_segments[addr]:
+            return ("audit HEX/BIN/ELF content-binding failed "
+                    "(cross-binding: HEX data byte 0x%08X differs from "
+                    "the ELF PT_LOAD image; content tamper "
+                    "rejected)" % addr)
     try:
         if bin_path.stat().st_size > BIN_SIZE_CAP:
             return ("audit HEX/BIN cross-binding failed "
@@ -489,7 +617,11 @@ def audit(base, artifacts):
     payload, err = _parse_intel_hex(targets["hex"])
     if err:
         return 1, err
-    err = _check_hex_bin_binding(payload, targets["bin"], evidence, elf_entry)
+    elf_segments, err = _parse_elf_load_segments(targets["elf"])
+    if err:
+        return 1, err
+    err = _check_hex_bin_binding(payload, targets["bin"], evidence,
+                                 elf_entry, elf_segments)
     if err:
         return 1, err
     return 0, "R4-B0 image audit OK"

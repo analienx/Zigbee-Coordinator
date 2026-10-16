@@ -3,15 +3,15 @@
   "files": {
     "bin": {
       "file": "znp.bin",
-      "sha256": "ed39f875f02aeb4efd8e71fbfaf67e01adb19df0d429f6a9da9cfbcde4bc69db"
+      "sha256": "f9fb6dc6ae17108a87227e2fb9de7f5e7c9e3202ea0d021580105b45a107a27a"
     },
     "elf": {
       "file": "znp.out",
-      "sha256": "a66daf7e6e5eb970ec49f424ee6e5f62bda777e2fa4ba29907bd30f78df317d3"
+      "sha256": "22755e30755fe72df19be00c0939f99c0facf656b90e572b85a4f1de0872931a"
     },
     "hex": {
       "file": "znp.hex",
-      "sha256": "1c749e197bd0d4c63b5a9b7e10f401f3b752c6107e2b943f87f0eec0f907272d"
+      "sha256": "af8728594833fb291746d7069577aca414ced2b898eb6570de55a236b5a273f1"
     },
     "xml": {
       "file": "znp_linkInfo.xml",

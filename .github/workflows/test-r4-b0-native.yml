@@ -141,6 +141,35 @@ jobs:
             exit 1
           fi
           echo "control (o10) rejected at HEX/BIN cross-binding as required"
+      - name: Negative control (o11) injected SRAM bytes must fail content-binding
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-extra-bytes 2>&1); then
+            echo "control (o11) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "content-binding"
+          echo "$out" | grep -F "no covering ELF PT_LOAD segment"
+          if echo "$out" | grep -F "sha256 mismatch"; then
+            echo "control (o11) failed at hash only, content-binding bypassed"
+            exit 1
+          fi
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o11) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o11) rejected injected bytes at content-binding as required"
+      - name: Negative control (o12) deviant FLASH geometry must fail donor pin
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-geometry 2>&1); then
+            echo "control (o12) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "geometry mismatch"
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o12) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o12) rejected deviant FLASH geometry as required"
 
   r4-b0-upstream-inventory:
     runs-on: ubuntu-latest
