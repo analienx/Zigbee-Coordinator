@@ -72,7 +72,7 @@ def _which(names, tool_dir):
 
 
 def _version(binary, key):
-    flags = {"ccs": ["-noSplash", "-application",
+    flags = {"ccs": ["-noSplash", "-data", "/tmp/b0-ccs-version-probe", "-application",
                      "com.ti.ccstudio.apps.projectBuild", "-ccs.help"],
              "sysconfig": ["--version"],
              "ti_arm_clang": ["--version"]}[key]
