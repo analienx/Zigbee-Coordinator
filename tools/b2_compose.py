@@ -16,6 +16,11 @@ PROFILES = {
     "P1": {"MAX_RTG_SRC_ENTRIES": 192,
            "MAX_NEIGHBOR_ENTRIES": 64,
            "MAX_RTG_ENTRIES": 128},
+    # P3 uses identical valid route capacities to P1, plus a separate
+    # deliberately impossible BSS allocation in ephemeral TI source.
+    "P3": {"MAX_RTG_SRC_ENTRIES": 192,
+           "MAX_NEIGHBOR_ENTRIES": 64,
+           "MAX_RTG_ENTRIES": 128},
 }
 FORBIDDEN = ("ZDSECMGR_TC_DEVICE_MAX", "NWK_MAX_DEVICE_LIST",
              "NWK_MAX_DEVICES","MAX_DEVICE_TABLE_ENTRIES",
