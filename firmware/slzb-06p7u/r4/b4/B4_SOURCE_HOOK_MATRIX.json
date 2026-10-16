@@ -1,0 +1,283 @@
+{
+  "schema": "b4-hook-matrix-v1",
+  "issue": 98,
+  "source": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/",
+  "stage": "SOURCE_RESEARCH_NOT_NATIVE_INSTRUMENTATION",
+  "counters": [
+    {
+      "name": "mt_sys_sreq_dispatch",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/mt/mt_sys.c:246-398 MT_SysCommandProcessing",
+      "producer_context": "task",
+      "unit": "sreq",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "dispatch can be counted; not hooked"
+    },
+    {
+      "name": "npi_uart_rx_bytes",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:1069 NPITask_incomingFrameCB",
+      "producer_context": "callback",
+      "unit": "bytes",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "frameSize counts callback bytes, not RF receive"
+    },
+    {
+      "name": "npi_rx_frames",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:1069 NPITask_incomingFrameCB",
+      "producer_context": "callback",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "actual NPI framing/FCS before this callback not proved"
+    },
+    {
+      "name": "npi_rx_fcs_reject",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "no source-derived FCS callback yet"
+    },
+    {
+      "name": "npi_resync",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "no source-derived resync callback yet"
+    },
+    {
+      "name": "npi_srsp_enqueued",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:656 NPITask_sendToHost",
+      "producer_context": "task",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "enqueue success state not yet instrumented"
+    },
+    {
+      "name": "npi_srsp_queue_hwm",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:850 NPITask_ProcessTXQ",
+      "producer_context": "task",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "actual SRSP queue semantics require code-path proof"
+    },
+    {
+      "name": "npi_uart_write_accepted",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_tl_uart.c:233,416 UART2_write",
+      "producer_context": "task",
+      "unit": "calls",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "accepted write != completed TX"
+    },
+    {
+      "name": "npi_uart_write_finished",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_tl_uart.c:255-279 NPITLUART_writeCallBack",
+      "producer_context": "callback",
+      "unit": "calls",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "callback reports completion; explicit UART2_EVENT_TX_FINISHED absent; do not relabel as physical host receipt"
+    },
+    {
+      "name": "npi_async_queue_drop",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:850 NPITask_ProcessTXQ",
+      "producer_context": "task",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "specific branch and ownership not yet proven"
+    },
+    {
+      "name": "npi_async_queue_hwm",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:850 NPITask_ProcessTXQ",
+      "producer_context": "task",
+      "unit": "frames",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": null,
+      "status": "SOURCE_PATH_IDENTIFIED",
+      "qualification": "bounded HWM implementation pending"
+    },
+    {
+      "name": "af_data_request_srsp_ok",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "requests",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "AF request status source missing"
+    },
+    {
+      "name": "af_data_request_srsp_error",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "requests",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "SRSP != AF_CONFIRM or ZCL"
+    },
+    {
+      "name": "af_data_confirm",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "confirms",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "no proven AF_CONFIRM hook"
+    },
+    {
+      "name": "zdo_request_result",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "requests",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "no proven ZDO callback"
+    },
+    {
+      "name": "nwk_no_route",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "failures",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "B2 owns routing hook; NWK core may be closed"
+    },
+    {
+      "name": "source_route_error",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "failures",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "B2 owns routing hook"
+    },
+    {
+      "name": "mac_busy",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "events",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "no actual MAC API hook"
+    },
+    {
+      "name": "mac_cca_fail",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "events",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "no actual MAC API hook"
+    },
+    {
+      "name": "heap_allocation_failure",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "allocations",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "allocator owner/source unverified"
+    },
+    {
+      "name": "nv_stage_error",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "stage",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "B1/B3 nonsecret status optional; no key/NV read"
+    },
+    {
+      "name": "trusted_radio_boot_identity",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "generation",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "per-boot unique entropy source unproven"
+    },
+    {
+      "name": "boot_reset_cause",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "enum",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "reset-cause hook unverified"
+    },
+    {
+      "name": "sample_uptime_ms",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "milliseconds",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "monotonic uptime source unverified"
+    },
+    {
+      "name": "sample_sequence",
+      "source_anchor": "UNKNOWN",
+      "producer_context": "unknown",
+      "unit": "samples",
+      "width_bits": null,
+      "wrap_policy": "UNKNOWN",
+      "validity": false,
+      "status": "NOT_MEASURED",
+      "qualification": "RAM sequence implementation not yet hooked"
+    }
+  ]
+}
