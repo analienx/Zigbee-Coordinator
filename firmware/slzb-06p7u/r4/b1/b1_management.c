@@ -58,6 +58,14 @@ int b1_management_get_hold_active(void)
     return held;
 }
 
+int b1_management_nv_security_hold_active(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int held = (b1_management_flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY)) != 0u;
+    B1_CS_LEAVE(key);
+    return held;
+}
+
 void b1_management_transport_failed(uint8_t reason)
 {
     b1_management_latch(B1_FLAG_HOLD_TRANSPORT, B1_STAGE_HOLD_TRANSPORT,
