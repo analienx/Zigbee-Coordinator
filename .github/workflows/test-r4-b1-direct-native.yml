@@ -73,6 +73,21 @@ jobs:
             firmware/slzb-06p7u/r4/b1/b1_admission.c \
             -o /tmp/b1-linked-nvocmp-init-test
           /tmp/b1-linked-nvocmp-init-test
+          # Compiles the linked, patched ZDApp counter/key restore functions:
+          # real source with synthetic NV rows, including healthy controls.
+          python firmware/slzb-06p7u/r4/b1/tools/make_zdapp_harness.py \
+            --source "$root/source/ti/zstack/stack/zdo/zd_app.c" \
+            --output /tmp/b1-actual-zdapp-restore.c
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/b1-actual-zdapp-restore.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/b1-linked-zdapp-restore-test
+          for scenario in new_empty positive generic missing_key zero_key \
+                          missing_row overflow write_fail readback read_fail; do
+            /tmp/b1-linked-zdapp-restore-test "$scenario"
+          done
           grep -F 'if (zstack_user0Cfg.nvFps.initNV(NULL) != NVINTF_SUCCESS)' \
             "$root/source/ti/zstack/startup/main.c"
       - name: Upload source admission receipt
