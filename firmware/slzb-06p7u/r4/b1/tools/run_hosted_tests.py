@@ -130,7 +130,7 @@ def main():
         ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
         ("network_ready", "make_network_ready_harness.py", SOURCE_PATHS[3],
          tuple((name,) for name in ("healthy", "premature", "no_nv",
-             "no_security", "no_counter", "no_mt", "loss_of_coordinator",
+             "no_security", "no_counter", "no_mt", "loss_of_coordinator", "loss_then_regain",
              "after_nv_hold", "after_security_hold", "after_transport_hold"))),
         ("osal_nv", "make_osal_nv_harness.py", SOURCE_PATHS[8], ((),)),
     )
