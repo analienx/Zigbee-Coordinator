@@ -31,6 +31,8 @@ jobs:
       - name: Compile R4-00 tools and tests
         run: |
           python -m py_compile firmware/slzb-06p7u/r4/tools/r4_provenance_validate.py firmware/slzb-06p7u/r4/tools/r4_parity_audit.py firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py tests/test_r4_00_provenance.py tests/test_r4_00_parity.py
+      - name: Run R4-00 attester unit tests (synthetic; no upstream network)
+        run: python -m unittest -v tests.test_r4_00_attest
       - name: Run R4-00 provenance tests
         run: python -m unittest -v tests.test_r4_00_provenance
       - name: Run R4-00 parity tests
@@ -59,6 +61,18 @@ jobs:
       EXPECT_KOENKK_CHANGELOG_BLOB: 25f8bb3fb3bafe22b860d9a00134a2d722272650
       EXPECT_TI_RELEASE: lpf2-8.33.00.16
       EXPECT_HERDSMAN_VERSION: 10.9.1
+      # Explicit origin, path and toolchain tripwires. A PR can still edit
+      # its own workflow: this is NOT an independent protected trust root.
+      EXPECT_TI_SDK_REPO: TexasInstruments/simplelink-lowpower-f2-sdk
+      EXPECT_TI_EXAMPLES_REPO: TexasInstruments/simplelink-zstack-examples
+      EXPECT_HERDSMAN_REPO: Koenkk/zigbee-herdsman
+      EXPECT_KOENKK_REPO: Koenkk/Z-Stack-firmware
+      EXPECT_KOENKK_PATCH_PATH: coordinator/Z-Stack_3.x.0/firmware.patch
+      EXPECT_KOENKK_CHANGELOG_PATH: coordinator/Z-Stack_3.x.0/CHANGELOG.md
+      EXPECT_SDK_VERSION: "8.33"
+      EXPECT_CCS_VERSION: 12.8.0.00012
+      EXPECT_TI_ARM_CLANG_VERSION: 3.2.2.LTS
+      EXPECT_SYSCONFIG_VERSION: 1.21.1.3772
       EXPECT_VENDOR_20260310_SHA256: f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbe
       EXPECT_VENDOR_20240710_SHA256: 1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b
     steps:
@@ -198,6 +212,14 @@ jobs:
           fi
           echo "$out" | grep -F "manifest-consistency failed" | grep -F "vendor 20260310"
           echo "control (f) rejected at manifest-consistency as required (the URL is tuple-bound; the positive step proves the manifest URL is actually fetched)"
+      - name: Negative control (h) missing trust expectation fails before network
+        run: |
+          if out=$(env -u EXPECT_KOENKK_REPO python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py firmware/slzb-06p7u/r4 2>&1); then
+            echo "control (h) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "pin identity mismatch (reviewed expectation EXPECT_KOENKK_REPO missing or empty"
+          echo "control (h) rejected a missing required origin expectation"
       - name: Negative control (g) coherent repoint must fail pin identity
         run: |
           rm -rf /tmp/r4neg_g

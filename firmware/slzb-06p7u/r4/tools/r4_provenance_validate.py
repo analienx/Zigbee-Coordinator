@@ -285,6 +285,20 @@ def _has_pinned_digest(text):
     return bool(candidates & pinned)
 
 
+def _bound_source_anchor(evidence):
+    """Match an approved repository+commit+file relationship, not separate
+    unrelated strings. R4-00 has one SOURCE_CONFIRMED matrix row: the
+    Koenkk firmware.patch comparison (not proof of target firmware).
+    Future source facts require separately approved new bound anchors.
+    """
+    if not isinstance(evidence, str):
+        return False
+    anchor = ("%s@%s %s" % (
+        EXPECTED_DONOR_REPOS["koenkk_zstack_firmware"],
+        EXPECTED_PINS["koenkk_sha"], KOENKK_PATCH_PATH))
+    return anchor in evidence
+
+
 def _check_text(errors, where, name, value, need_anchor):
     """Claim/evidence/verification guard (R4-D05): nonempty TRIMMED
     strings within documented length bounds; evidence additionally needs
@@ -446,6 +460,10 @@ def validate_provenance(doc, allow_fixture=False):
             _err(errors, "provenance: vendor %s entry missing" % rev)
             continue
         for field in VENDOR_TUPLE_FIELDS:
+            if field in ("baud", "container_bytes_observed") and (
+                    type(img.get(field)) is not int):
+                _err(errors, "provenance: vendor %s %s must be an integer"
+                     % (rev, field))
             if img.get(field) != want[field]:
                 _err(errors, "provenance: vendor %s %s mismatch (want %r)"
                       % (rev, field, want[field]))
@@ -529,8 +547,7 @@ def validate_matrix(doc, allow_fixture=False):
         if status == "SOURCE_CONFIRMED":
             evidence = entry.get("evidence")
             if isinstance(evidence, str) and not (
-                    _has_pinned_digest(evidence)
-                    and SC_PATH_SEARCH.search(evidence)):
+                    _bound_source_anchor(evidence)):
                 _err(errors, "%s: SOURCE_CONFIRMED requires an exact upstream "
                              "anchor (repo + commit/blob + path); retag future "
                              "intent as PHYSICAL_UNVERIFIED" % where)

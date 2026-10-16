@@ -47,6 +47,7 @@ All output is clean single lines on stdout; this script never emits
 a traceback.
 """
 import hashlib
+import json
 import importlib.util
 import os
 import shutil
@@ -55,6 +56,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 
 GIT_TIMEOUT_S = 180
@@ -139,6 +141,26 @@ def _check_pin_identity(manifest, environ):
             for img in images:
                 if isinstance(img, dict) and isinstance(img.get("rev"), str):
                     by_rev.setdefault(img["rev"], img)
+        for key, name in (
+                ("ti_lowpower_f2_sdk", "EXPECT_TI_SDK_REPO"),
+                ("zstack_examples", "EXPECT_TI_EXAMPLES_REPO"),
+                ("zigbee_herdsman", "EXPECT_HERDSMAN_REPO"),
+                ("koenkk_zstack_firmware", "EXPECT_KOENKK_REPO")):
+            check("donors.%s.repo" % key, _dig(donors, key, "repo"), name)
+        check("donors.koenkk_zstack_firmware.patch",
+              _dig(donors, "koenkk_zstack_firmware", "patch"),
+              "EXPECT_KOENKK_PATCH_PATH")
+        check("donors.koenkk_zstack_firmware.changelog",
+              _dig(donors, "koenkk_zstack_firmware", "changelog"),
+              "EXPECT_KOENKK_CHANGELOG_PATH")
+        check("sdk_version", manifest.get("sdk_version"), "EXPECT_SDK_VERSION")
+        tool = manifest.get("toolchain")
+        if not isinstance(tool, dict):tool = {}
+        for field, envname in (
+                ("ccs", "EXPECT_CCS_VERSION"),
+                ("sysconfig", "EXPECT_SYSCONFIG_VERSION"),
+                ("ti_arm_clang", "EXPECT_TI_ARM_CLANG_VERSION")):
+            check("toolchain.%s" % field, tool.get(field), envname)
         for rev, env_name in (("20260310", "EXPECT_VENDOR_20260310_SHA256"),
                               ("20240710", "EXPECT_VENDOR_20240710_SHA256")):
             img = by_rev.get(rev)
@@ -165,6 +187,9 @@ def _check_koenkk_blob(clone, sha, relpath, want, display):
         return None, ("attest: external proof unavailable "
                       "(ls-tree of koenkk %s malformed: %r)"
                       % (display, out.strip()[:120]))
+    if len(parts) != 4 or parts[3] != relpath:
+        return None, ("attest: upstream mismatch (koenkk %s path differs "
+                      "from reviewed path)" % display)
     if parts[2] != want:
         return None, ("attest: upstream mismatch (koenkk %s blob %s "
                       "!= manifest %s)" % (display, parts[2], want))
@@ -208,24 +233,46 @@ def _fetch_exact(work, repo, sha, label):
     code, _ = _run_git(work, ["fetch", "--depth", "1", "origin", sha])
     if code != 0:
         return "fetch of %s %s from %s failed" % (label, sha, repo)
+    code, resolved = _run_git(work, ["rev-parse", "FETCH_HEAD"])
+    if code != 0 or resolved.strip() != sha:
+        return "fetched %s object does not resolve to exact SHA" % label
+    code, objtype = _run_git(work, ["cat-file", "-t", sha])
+    if code != 0 or objtype.strip() != "commit":
+        return "fetched %s object is not a commit" % label
     return None
 
 
-def _download_sha256(url):
+def _download_sha256(url, expected_bytes):
+    """Verify digest, byte size and exact HTTPS final URL separately."""
+    if (not isinstance(expected_bytes, int) or isinstance(expected_bytes, bool)
+            or expected_bytes <= 0):
+        return None, "origin mismatch (approved byte length is invalid)"
+    if urlsplit(url).scheme != "https" or urlsplit(url).hostname != "updates.smlight.tech":
+        return None, "origin mismatch (unapproved initial URL)"
     digest = hashlib.sha256()
     total = 0
     try:
         with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT_S) as resp:
+            final = urlsplit(resp.geturl())
+            if (final.scheme != "https" or final.hostname != "updates.smlight.tech"
+                    or resp.geturl() != url):
+                return None, "origin mismatch (unexpected redirect/final URL)"
+            if getattr(resp, "status", None) != 200:
+                return None, "origin mismatch (HTTP status not 200)"
+            header = resp.headers.get("Content-Length")
+            if header is not None and (not header.isdecimal() or int(header) != expected_bytes):
+                return None, "origin mismatch (Content-Length differs from approved bytes)"
             while True:
                 chunk = resp.read(65536)
-                if not chunk:
-                    break
+                if not chunk:break
                 total += len(chunk)
                 if total > MAX_IMAGE_BYTES:
-                    return None, "oversize body (> %d bytes)" % MAX_IMAGE_BYTES
+                    return None, "origin mismatch (oversize body)"
                 digest.update(chunk)
     except (urllib.error.URLError, OSError, ValueError) as exc:
         return None, "download failed (%s)" % exc
+    if total != expected_bytes:
+        return None, "origin mismatch (downloaded bytes differ from approved bytes)"
     return digest.hexdigest(), None
 
 
@@ -325,6 +372,22 @@ def attest(base):
             return 1, ["attest: upstream mismatch (SDK commit message does "
                        "not name release %s)" % ti_release]
         lines.append("upstream OK: SDK commit message names %s" % ti_release)
+        code, examples_log = _run_git(
+            clone_dirs["zstack-examples"],
+            ["log", "-1", "--format=%s%n%b", examples_sha])
+        if code != 0 or ti_release.split("lpf2-")[-1] not in examples_log:
+            return 1, ["attest: upstream mismatch (examples release message)"]
+        lines.append("upstream OK: examples commit message names release")
+        code, package_text = _run_git(
+            clone_dirs["zigbee-herdsman"], ["show", herdsman_sha + ":package.json"])
+        if code != 0:
+            return 1, ["attest: external proof unavailable (herdsman package.json)"]
+        try:herd_version = json.loads(package_text)["version"]
+        except (ValueError, KeyError, TypeError):
+            return 1, ["attest: upstream mismatch (herdsman package.json version malformed)"]
+        if herd_version != donors["zigbee_herdsman"]["version"]:
+            return 1, ["attest: upstream mismatch (herdsman version differs from package.json)"]
+        lines.append("upstream OK: herdsman package.json version matches")
         # Koenkk blob pins re-verified upstream (issue #85 R4-R2): the
         # manifest patch_blob/changelog_blob must equal the ls-tree
         # blob SHAs at the fetched koenkk commit.
@@ -346,10 +409,11 @@ def attest(base):
                 rev = img.get("rev", "?")
             except (KeyError, TypeError, AttributeError) as exc:
                 return 1, ["attest: manifest vendor entry malformed (%s)" % exc]
-            got, problem = _download_sha256(url)
+            got, problem = _download_sha256(url, img.get("container_bytes_observed"))
             if problem is not None:
-                return 1, ["attest: external proof unavailable "
-                           "(vendor %s image: %s)" % (rev, problem)]
+                kind = ("upstream mismatch" if problem.startswith("origin mismatch")
+                        else "external proof unavailable")
+                return 1, ["attest: %s (vendor %s image: %s)" % (kind, rev, problem)]
             if got != want:
                 return 1, ["attest: upstream mismatch (vendor %s sha256 "
                            "%s != manifest %s)" % (rev, got, want)]
