@@ -7,18 +7,16 @@
 - Stack/protocol: Z-Stack / ZNP
 - Repository coordinator ID: `mr4u-p10`
 
-This is the current primary Zigbee coordinator and the active reliability/recovery target.
+**Current repo role (16 October 2026): preserved finalized P10 reference/fallback and historical reliability/recovery evidence.** The primary engineering target has moved to [SLZB-06P7U / CC2652P7 R4](../slzb-06p7u/README.md). This status does not assert which coordinator is currently powered or that R4 has production flash approval.
 
-## Current work
+## Retained finalized P10 and historical work
 
 - SMLIGHT 2024 P10 baseline / rollback testing.
 - Existing-network restore and startup recovery.
 - Coordinator-wide SRSP/ZNP hang investigation.
 - TI reference CC2674P10 ZNP control experiment planning.
 
-Planning branch:
-
-`plan/cc2674p10-ti-znp-control`
+The historical planning branch `plan/cc2674p10-ti-znp-control` was retired during the 16 October branch cleanup. Its original ref/history is preserved in the verified pre-cleanup Git bundle; do not cite the retired branch as the active planning branch.
 
 ## Existing stable namespaces
 
