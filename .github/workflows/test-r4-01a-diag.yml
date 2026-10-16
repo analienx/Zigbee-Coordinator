@@ -1,0 +1,32 @@
+name: R4-01a diagnostic contracts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/p7u-r4-diagnostic-first-issue87
+
+permissions:
+  contents: read
+
+jobs:
+  r4-01a-diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Compile R4-01a diagnostic test
+        run: python -m py_compile tests/test_r4_01a_diag_contracts.py
+      - name: Run R4-01a diagnostic contract tests
+        run: python -m unittest -v tests.test_r4_01a_diag_contracts
