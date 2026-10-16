@@ -21,6 +21,22 @@ ARTIFACTS = {
 }
 
 
+# Vendor-published SHA-256, extracted from each TI version-specific download
+# page's adjacent Linux artifact <ti-text-copy value="..."> element on
+# 2026-10-16. Exact filename/link/digest pairing verified per artifact.
+# This is *publisher* metadata, not a digest computed after download.
+VENDOR_SHA256 = {
+    "ccs": "fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d",
+    "sysconfig": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
+    "clang": "2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9",
+}
+PUBLISHER_PAGES = {
+    "ccs": "https://www.ti.com/tool/download/CCSTUDIO/12.8.0",
+    "sysconfig": "https://www.ti.com/tool/download/SYSCONFIG/1.21.1.3772",
+    "clang": "https://www.ti.com/tool/download/ARM-CGT-CLANG/3.2.2.LTS",
+}
+
+
 def valid_digest(value):
     return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
