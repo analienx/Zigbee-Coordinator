@@ -95,6 +95,8 @@ class V3DesignTests(unittest.TestCase):
     def test_no_unclaimed_boot_capability(self):
         with self.assertRaises(ValueError):
             decode_v3(v3(caps=0,radio_boot=123))
+        with self.assertRaises(ValueError):
+            decode_v3(v3(caps=CAP_RADIO_BOOT_ID,radio_boot=0))
         parsed=decode_v3(v3(caps=0,radio_boot=0))
         self.assertFalse(parsed["radio_boot_id_verified"])
         self.assertIsNone(parsed["radio_boot_id"])
@@ -155,7 +157,7 @@ class HostObservationTests(unittest.TestCase):
         for count in (-1,1.5,True,None):
             with self.subTest(count=count),self.assertRaises(ValueError):
                 classify_host_observation(af_sreq_timeouts=count)
-        for window in (0,-1,float("nan"),float("inf")):
+        for window in (0,-1,True,float("nan"),float("inf")):
             with self.subTest(window=window),self.assertRaises(ValueError):
                 classify_host_observation(af_sreq_timeouts=64,
                                            window_seconds=window)

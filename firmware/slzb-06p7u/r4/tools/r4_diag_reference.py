@@ -75,6 +75,8 @@ def decode_v3(frame):
         raise ValueError("unsupported v3 flags or capabilities")
     if valid & ~VALID_COUNTER_MASK:
         raise ValueError("v3 validity has reserved bits")
+    if caps & CAP_RADIO_BOOT_ID and radio_boot == 0:
+        raise ValueError("radio boot identity capability requires a nonzero ID")
     if not caps & CAP_RADIO_BOOT_ID and radio_boot != 0:
         raise ValueError("boot ID field populated without capability")
     vals = struct.unpack_from("<25I", body, _V3_HEADER.size)
@@ -138,7 +140,8 @@ def classify_host_observation(*, af_sreq_timeouts, zdo_sreq_timeouts=0,
     for count in (af_sreq_timeouts, zdo_sreq_timeouts, zcl_timeouts):
         if type(count) is not int or count < 0:
             raise ValueError("counts must be nonnegative integers")
-    if not isinstance(window_seconds, (float, int)) or not math.isfinite(window_seconds) or window_seconds <= 0:
+    if (type(window_seconds) not in (int, float)
+            or not math.isfinite(window_seconds) or window_seconds <= 0):
         raise ValueError("window_seconds must be finite positive")
     if type(sigterm) is not bool or type(usb_disconnected) is not bool or type(ota_overlap) is not bool:
         raise ValueError("event switches must be boolean")
