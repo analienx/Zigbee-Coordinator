@@ -49,9 +49,30 @@ with `git ls-tree -r` at the pinned SHAs, never invented):
 
 ## 2. B0 overlay scope (narrow by design)
 
-`B0_BOARD_CONTRACT.json` is the machine-checked overlay: UART RX
-DIO12 / TX DIO13, 115200 baud, hardware flow OFF; target part
-CC1352P7; donor NV geometry preserved (`NVOCMP_NVPAGES=2`, NVS
+`B0_BOARD_CONTRACT.json` distinguishes a **historically measured fitted
+P7U board** from the unqualified new R4 image. Issue #90 correction
+[6215896717](https://github.com/analienx/Zigbee-Coordinator/issues/90#issuecomment-6215896717)
+recovers earlier physical facts: rev 1.73 ESP32-S3 / CC2652P7, stock 20240316
+SYS_PING/SYS_VERSION/IEEE on USB, confirmed 704 KiB two-pass ROM recovery,
+actual R2 ELF + vendor 20240710 UART0 RX DIO12 / TX DIO13,
+115200 baud, hardware flow OFF; SMLIGHT manufacturer board reference
+pins ESP TX GPIO17 to radio RX DIO12 and radio TX DIO13 to ESP RX GPIO18.
+The established physical pinout must **not** be repeatedly requalified.
+
+The genuine older-vendor 20240710 CCFG differs from the pinned TI
+LaunchPad CCFG in DCDC_RECHARGE and DCDC_ACTIVE, both disabled on P7U;
+historical `p7u_stock_ccfg.py` already implemented
+`device.enableDCDC = false;`. R4's `tools/b0_p7u_board_overlay.py`
+reuses this known vendor-specific adjustment and replaces the donor
+XDS110UART selection with an explicit UART0 DIO12/DIO13 assignment,
+only in the disposable CCS project copy. It emits a source SHA receipt.
+TI 8.33 generated UART pinmux, linked CCFG and RF/PA remain
+**R4_IMAGE_UNVERIFIED** until independently verified from real native
+artifacts. None of these historical facts establishes equivalence with
+later vendor 20260311/20260310 CCFG, routing or security/NV.
+
+The machine-checked contract keeps the target CC2652P7 and
+donor NV geometry (`NVOCMP_NVPAGES=2`, NVS
 `0xAA000`/`0x4000`); stock NPI ownership (no extra serial owner);
 MT SYS_PING/SYS_VERSION retained with `startupFromApp`.
 
