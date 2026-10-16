@@ -123,8 +123,14 @@ def validate_inventory(doc):
         if tool.get(field) != EXPECTED_PINS[pin]:
             errors.append("inventory toolchain %s mismatch" % field)
     for field in TOOLCHAIN_DOWNLOAD_DIGEST_FIELDS:
-        if tool.get(field) != "UNKNOWN":
-            errors.append("inventory toolchain %s must be explicitly UNKNOWN" % field)
+        from b0_fetch_ti import VENDOR_SHA256
+        expected = {
+            "ccs_download_sha256": VENDOR_SHA256["ccs"],
+            "sysconfig_download_sha256": VENDOR_SHA256["sysconfig"],
+            "ti_arm_clang_download_sha256": VENDOR_SHA256["clang"],
+        }[field]
+        if tool.get(field) != expected:
+            errors.append("inventory toolchain %s must match TI-published SHA-256" % field)
     files = doc["donor_files"]
     if not isinstance(files, list) or not files:
         return errors + ["inventory donor_files must be a nonempty list"]
