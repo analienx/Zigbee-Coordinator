@@ -58,6 +58,20 @@ def overlay(sdk, b1_dir):
                           insertion + "static uint8_t NVOCMP_initNvApi(void *param)\n{",
                           "NVOCMP init function")
 
+    # TI's priority mutex allocation is unchecked in the ZNP path.
+    # A NULL gate would cause NVOCMP_LOCK()/UNLOCK() to fail unpredictably.
+    source = replace_once(
+        source,
+        "        NVOCMP_gMutexPri = GateMutexPri_create(&gateParams, NULL);",
+        "        NVOCMP_gMutexPri = GateMutexPri_create(&gateParams, NULL);\n"
+        "        if (NVOCMP_gMutexPri == NULL)\n"
+        "        {\n"
+        "            NVOCMP_failF = NVINTF_FAILURE;\n"
+        "            NVOCMP_failW = NVINTF_FAILURE;\n"
+        "            return NVOCMP_failF; /* B1 N08: no task gate */\n"
+        "        }",
+        "NVOCMP mutex allocation failure")
+
     # The original implementation dereferences NVS_open(NULL) *before* checking.
     # Repair in the real compiled donor body, not a mock or commentary.
     source = replace_once(
@@ -138,6 +152,18 @@ def overlay(sdk, b1_dir):
         "        NVOCMP_failW = NVINTF_FAILURE;\n"
         "    }",
         "NVOCMP_read real checked backend")
+
+    # A backend read error must also reach the public NV item read status,
+    # not just poison the buffer and set a hidden fatal flag.
+    source = replace_once(
+        source,
+        "              NVOCMP_read(iHdr->hpage, dOfs, (uint8_t *)pBuf, len);",
+        "              NVOCMP_read(iHdr->hpage, dOfs, (uint8_t *)pBuf, len);\n"
+        "              if (NVOCMP_failF != NVINTF_SUCCESS)\n"
+        "              {\n"
+        "                  err = NVINTF_FAILURE; /* B1 N05: no fake success */\n"
+        "              }",
+        "NVOCMP item API read failure propagation")
 
     # Further writes/erases do not reach NVS once any fatal read fault occurs.
     source = replace_once(
