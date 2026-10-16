@@ -21,7 +21,8 @@ static uint8_t result; static unsigned called;
 static uint8_t read_item(NVINTF_itemID_t id,uint16_t off,uint16_t len,void *dst)
 {
   ++called; assert(id.systemID==1 && id.itemID==0 && id.subID==7 && off==0 && len==1);
-  if(result==NVINTF_SUCCESS) memset(dst,0x51,len); return result;
+  if (result == NVINTF_SUCCESS) { memset(dst, 0x51, len); }
+  return result;
 }
 '''
 MAIN = r'''
