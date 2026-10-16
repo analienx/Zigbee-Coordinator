@@ -28,6 +28,28 @@ class CollectorTests(unittest.TestCase):
                 collector.collect(p, p / "output", p / "clang", p / "build.log")
 
     @unittest.skipIf(os.name == "nt", "hosted Linux tool shim")
+    def test_preserves_native_ti_project_names(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ws, out, clang = root / "ws", root / "out", root / "clang"
+            ws.mkdir()
+            out.mkdir()
+            (ws / "znp_LP_CC1352P7_4_tirtos7_ticlang.out").write_bytes(b"ELF FIXTURE")
+            (ws / "znp_LP_CC1352P7_4_tirtos7_ticlang_linkInfo.xml").write_text("<link_info/>")
+            (ws / "znp_LP_CC1352P7_4_tirtos7_ticlang.hex").write_text(":00000001FF")
+            (out / "build.log").write_text("mock, NOT native evidence")
+            (clang / "bin").mkdir(parents=True)
+            fake = clang / "bin" / "tiarmobjcopy"
+            fake.write_text('#!/bin/sh\\ncp "$3" "$4"\\n')
+            fake.chmod(0o755)
+            manifest = collector.collect(ws, out, clang, out / "build.log")
+            elf_name = manifest["files"]["elf"]["file"]
+            xml_name = manifest["files"]["xml"]["file"]
+            self.assertEqual(elf_name, "znp_LP_CC1352P7_4_tirtos7_ticlang.out")
+            self.assertTrue(xml_name.endswith("_linkInfo.xml"))
+            self.assertTrue((out / elf_name).is_file())
+
+    @unittest.skipIf(os.name == "nt", "hosted Linux tool shim")
     def test_build_log_already_at_destination(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
