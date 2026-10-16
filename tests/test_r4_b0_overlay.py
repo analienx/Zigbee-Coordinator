@@ -64,9 +64,14 @@ class B0OverlayPositiveTests(unittest.TestCase):
         self.assertEqual(paths["source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"]["sha"],
                          "3615ad5d3f4f271258d18a2f5ce1785064ff9a58")
 
-    def test_toolchain_digests_stay_unknown(self):
+    def test_toolchain_digests_match_ti_vendor_pins(self):
+        expected = {
+            "ccs_download_sha256": "fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d",
+            "sysconfig_download_sha256": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
+            "ti_arm_clang_download_sha256": "2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9",
+        }
         for field in val.TOOLCHAIN_DOWNLOAD_DIGEST_FIELDS:
-            self.assertEqual(self.inv["toolchain"][field], "UNKNOWN")
+            self.assertEqual(self.inv["toolchain"][field], expected[field])
 
     def test_uart_contract_exact(self):
         by_id = {c["id"]: c for c in self.board["claims"]}
@@ -170,7 +175,7 @@ class B0OverlayHostileTests(unittest.TestCase):
         doc["toolchain"]["ccs_download_sha256"] = "0" * 64
         errors = val.validate_inventory(doc)
         self.assertEqual(len(errors), 1)
-        self.assertIn("explicitly UNKNOWN", errors[0])
+        self.assertIn("TI-published SHA-256", errors[0])
 
     def test_unhashable_claim_id_rejected_without_traceback(self):
         doc = self._board()
