@@ -8,6 +8,7 @@ always strict (allow_fixture=False) and are exercised through real
 main(argv) calls with temp dirs.
 """
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -29,9 +30,11 @@ spec_a = importlib.util.spec_from_file_location("r4_parity_audit", AUDIT_TOOL)
 audit = importlib.util.module_from_spec(spec_a)
 spec_a.loader.exec_module(audit)
 
-PINS = val.EXPECTED_PINS
-REPOS = val.EXPECTED_DONOR_REPOS
-VENDORS = val.EXPECTED_VENDOR_IMAGES
+# Copies, never aliases (issue #85 R4-R5): a test mutating these must
+# not corrupt validator state across tests.
+PINS = copy.deepcopy(val.EXPECTED_PINS)
+REPOS = copy.deepcopy(val.EXPECTED_DONOR_REPOS)
+VENDORS = copy.deepcopy(val.EXPECTED_VENDOR_IMAGES)
 
 
 def load(path):
@@ -211,6 +214,28 @@ class ProvenancePinTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("must be explicitly UNKNOWN", errors[0])
 
+    def test_reviewed_pin_canaries_match_validator(self):
+        # Tamper-evidence canaries (issue #85 R4-R5): these literals are
+        # typed IN this file, so a coherent in-PR repoint of pins plus
+        # validator constants must also edit them (visible in diff).
+        # The external identity root remains the hosted
+        # upstream-attestation job plus reviewer re-derivation -- these
+        # literals prove only that the checkout was not silently
+        # repointed without touching the tests.
+        self.assertEqual(val.EXPECTED_PINS["ti_sdk_sha"],
+                         "3615ad5d3f4f271258d18a2f5ce1785064ff9a58")
+        self.assertEqual(val.EXPECTED_PINS["ti_examples_sha"],
+                         "87ff5b638b632050228a7504f35cf3b95581c278")
+        self.assertEqual(val.EXPECTED_PINS["herdsman_sha"],
+                         "0968f979d558874b17396c96b66382d4236bbdcd")
+        self.assertEqual(val.EXPECTED_PINS["koenkk_sha"],
+                         "5e4db67e550d41ea6dc6cd86ceeb04d82ffe1bfb")
+        self.assertEqual(val.EXPECTED_PINS["vendor_20260310_sha256"],
+                         "f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbe")
+        self.assertEqual(val.EXPECTED_PINS["vendor_20240710_sha256"],
+                         "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b")
+        self.assertEqual(val.EXPECTED_PINS["ti_sdk_release"], "lpf2-8.33.00.16")
+
     def test_vendor_tuple_single_faults(self):
         cases = [
             ("provenance_bad_vendor_id.json", "id mismatch"),
@@ -219,6 +244,9 @@ class ProvenancePinTests(unittest.TestCase):
             ("provenance_bad_vendor_baud.json", "baud mismatch"),
             ("provenance_bad_vendor_size.json", "container_bytes_observed mismatch"),
             ("provenance_catalog_flip.json", "vendor_catalog mismatch"),
+            ("provenance_vendor_provenance_flip.json", "20260310 provenance mismatch"),
+            ("provenance_vendor_catalog_sdk_flip.json", "20260310 catalog_sdk mismatch"),
+            ("provenance_vendor_40710_filename_flip.json", "20240710 filename mismatch"),
         ]
         for name, needle in cases:
             with self.subTest(fixture=name):
@@ -226,6 +254,55 @@ class ProvenancePinTests(unittest.TestCase):
                 errors = val.validate_provenance(doc, allow_fixture=True)
                 self.assertEqual(len(errors), 1)
                 self.assertIn(needle, errors[0])
+
+    def test_herdsman_sha_flip_fails_singly(self):
+        # 40-hex-safe flip (last nibble d->c): only the sha binding
+        # fires; a non-hex flip would double-fire mismatch + not-hex.
+        doc = load(FIX / "invalid" / "provenance_herdsman_sha_flip.json")
+        errors = val.validate_provenance(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("herdsman sha mismatch", errors[0])
+
+    def test_koenkk_changelog_blob_flip_fails_singly(self):
+        doc = load(FIX / "invalid" / "provenance_koenkk_changelog_blob_flip.json")
+        errors = val.validate_provenance(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("koenkk CHANGELOG.md blob mismatch", errors[0])
+
+    def test_koenkk_patch_path_flip_fails_singly(self):
+        doc = load(FIX / "invalid" / "provenance_koenkk_patch_path_flip.json")
+        errors = val.validate_provenance(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("koenkk patch path mismatch", errors[0])
+
+    def test_koenkk_identical_true_fails_singly(self):
+        doc = load(FIX / "invalid" / "provenance_koenkk_identical_flip.json")
+        errors = val.validate_provenance(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("identical_to_20260310=false", errors[0])
+
+    def test_donor_repo_flip_fails_singly(self):
+        doc = load(FIX / "invalid" / "provenance_donor_repo_flip.json")
+        errors = val.validate_provenance(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("repo", errors[0])
+        self.assertIn("mismatch", errors[0])
+
+    def test_toolchain_ccs_flip_fails_singly(self):
+        doc = load(FIX / "invalid" / "provenance_toolchain_ccs_flip.json")
+        errors = val.validate_provenance(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("toolchain ccs mismatch", errors[0])
+
+    def test_top_keys_preserve_phase_errors(self):
+        # Issue #85 R4-R6: a doc failing top-keys AND phase/issue must
+        # report both (the early return preserves, never replaces).
+        doc = {"schema": "r4-source-provenance-v1", "phase": "R4-00-fixture",
+               "issue": 86}
+        errors = val.validate_provenance(doc, allow_fixture=False)
+        self.assertGreater(len(errors), 1)
+        self.assertTrue(any("missing key" in e for e in errors))
+        self.assertTrue(any("phase" in e for e in errors))
 
     def test_vendor_rev_flip_fails(self):
         doc = load(FIX / "invalid" / "provenance_bad_vendor_rev.json")
@@ -243,11 +320,13 @@ class ProvenancePinTests(unittest.TestCase):
                 self.assertIn("phase must be a string", errors[0])
 
     def test_malformed_sdk_version_type_fails_cleanly(self):
-        doc = load(FIX / "invalid" / "provenance_sdk_array.json")
-        errors = val.validate_provenance(doc, allow_fixture=True)
-        self.assertIsInstance(errors, list)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("sdk_version must be a string", errors[0])
+        for name in ("provenance_sdk_array.json", "provenance_sdk_object.json"):
+            with self.subTest(fixture=name):
+                doc = load(FIX / "invalid" / name)
+                errors = val.validate_provenance(doc, allow_fixture=True)
+                self.assertIsInstance(errors, list)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("sdk_version must be a string", errors[0])
 
 
 class ProvenanceCliTests(unittest.TestCase):

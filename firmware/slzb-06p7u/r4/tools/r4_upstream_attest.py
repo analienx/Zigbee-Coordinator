@@ -1,9 +1,22 @@
 """R4-00 upstream attestation (hosted-network job only, never unittest).
 
-Given a base dir, loads that dir's SOURCE_PROVENANCE.json AND imports
-that dir's tools/r4_provenance_validate.py for the EXPECTED pins, then
-independently verifies every pin against upstream over the network:
+Given a base dir, loads that dir's SOURCE_PROVENANCE.json (parsed with
+that dir's validator.loads_strict, so duplicate keys fail here exactly
+as in the production consistency gate) AND imports that dir's
+tools/r4_provenance_validate.py for the EXPECTED pins, then verifies
+every pin against upstream over the network:
 
+- reviewer-visible identity tripwire FIRST (before any network use):
+  manifest pins are compared against the EXPECT_* literals the
+  workflow passes in the environment (see
+  .github/workflows/test-r4-00-provenance.yml). A coherent
+  manifest+validator repoint to another REAL upstream commit passes
+  manifest-consistency and every existence check below, so without
+  this gate it would attest green; here it fails closed with a `pin
+  identity mismatch` line. Missing/empty env also fails closed (never
+  default-accepts). These literals live in-PR: any repoint must edit
+  manifest + validator + workflow env (+ test canaries) consistently,
+  all visible in the diff. They are tripwires, not external proof;
 - git fetch the exact zstack-examples SHA from
   TexasInstruments/simplelink-zstack-examples, then `git ls-tree` the
   cc13xx_cc26xx_sdk gitlink: mode must be 160000 and the SHA must equal
@@ -13,17 +26,29 @@ independently verifies every pin against upstream over the network:
   message names the manifest release (lpf2-8.33.00.16);
 - git fetch the herdsman and koenkk pins from their repos
   (existence = fetch success);
-- bounded download of both vendor image URLs with sha256 compared to
-  the manifest (content identity only, never source proof).
+- `git ls-tree` of coordinator/Z-Stack_3.x.0/firmware.patch and
+  CHANGELOG.md at the fetched koenkk commit: mode must be 100644 blob
+  and each SHA must equal the manifest blob pin;
+- bounded download of both vendor image URLs taken from the manifest,
+  with sha256 compared to the manifest pin.
+
+Vendor-URL limit stated honestly: no external catalog root exists for
+URL identity. The gates are exact-tuple consistency (validator: the
+URL is bound to rev/model/filename/bytes/sha) plus
+URL-actually-fetched-and-content-matches here (the positive step
+downloads img["url"] from the manifest and compares bytes to the pin).
+This never proves URL authenticity beyond that; never claim it does.
 
 Fail-closed: on ANY unavailable external check (no git, no network,
-fetch refused, download error, oversize body) exit nonzero with an
-explicit `external proof unavailable` line. On pin/content mismatch
-exit nonzero with an `upstream mismatch` line. All output is clean
-single lines on stdout; this script never emits a traceback.
+fetch refused, download error, oversize body, malformed ls-tree)
+exit nonzero with an explicit `external proof unavailable` line. On
+pin/content mismatch exit nonzero with an `upstream mismatch` line.
+All output is clean single lines on stdout; this script never emits
+a traceback.
 """
 import hashlib
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -39,14 +64,112 @@ HTTP_TIMEOUT_S = 60
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
-def _load_manifest(base):
+def _load_manifest(base, loads_strict):
+    """Parse with the validator's loads_strict (duplicate-key parity
+    with the production gate): a duplicate-key manifest the validator
+    rejects is rejected here too, never silently deduped."""
     path = base / "SOURCE_PROVENANCE.json"
     try:
-        import json
         with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle), None
+            return loads_strict(handle.read()), None
     except (OSError, ValueError) as exc:
         return None, "attest: unreadable manifest %s (%s)" % (path, exc)
+
+
+def _dig(donors, key, field):
+    entry = donors.get(key)
+    if isinstance(entry, dict):
+        return entry.get(field)
+    return None
+
+
+def _check_pin_identity(manifest, environ):
+    """Reviewer-visible identity tripwire (issue #85 R4-R1): compare
+    manifest pin values against the EXPECT_* environment literals
+    BEFORE any network use. Mismatch (or missing/empty env, which
+    never default-accepts) yields `pin identity mismatch` lines.
+    Never raises: malformed shapes fail closed as mismatch lines."""
+    problems = []
+
+    def want(name):
+        value = environ.get(name)
+        if not value:
+            problems.append(
+                "pin identity mismatch (reviewed expectation %s "
+                "missing or empty; refusing to default-accept)" % name)
+            return None
+        return value
+
+    def check(manifest_field, got, env_name):
+        expected = want(env_name)
+        if expected is None:
+            return
+        if got != expected:
+            problems.append(
+                "pin identity mismatch (manifest %s != reviewed expectation)"
+                % manifest_field)
+
+    try:
+        donors = manifest.get("donors")
+        if not isinstance(donors, dict):
+            donors = {}
+        check("donors.ti_lowpower_f2_sdk.sha",
+              _dig(donors, "ti_lowpower_f2_sdk", "sha"), "EXPECT_TI_SDK_SHA")
+        check("donors.zstack_examples.sha",
+              _dig(donors, "zstack_examples", "sha"), "EXPECT_TI_EXAMPLES_SHA")
+        check("donors.zigbee_herdsman.sha",
+              _dig(donors, "zigbee_herdsman", "sha"), "EXPECT_HERDSMAN_SHA")
+        check("donors.koenkk_zstack_firmware.commit",
+              _dig(donors, "koenkk_zstack_firmware", "commit"), "EXPECT_KOENKK_SHA")
+        check("donors.koenkk_zstack_firmware.patch_blob",
+              _dig(donors, "koenkk_zstack_firmware", "patch_blob"),
+              "EXPECT_KOENKK_PATCH_BLOB")
+        check("donors.koenkk_zstack_firmware.changelog_blob",
+              _dig(donors, "koenkk_zstack_firmware", "changelog_blob"),
+              "EXPECT_KOENKK_CHANGELOG_BLOB")
+        check("donors.ti_lowpower_f2_sdk.release",
+              _dig(donors, "ti_lowpower_f2_sdk", "release"), "EXPECT_TI_RELEASE")
+        check("donors.zstack_examples.release",
+              _dig(donors, "zstack_examples", "release"), "EXPECT_TI_RELEASE")
+        check("donors.zigbee_herdsman.version",
+              _dig(donors, "zigbee_herdsman", "version"), "EXPECT_HERDSMAN_VERSION")
+        by_rev = {}
+        images = manifest.get("vendor_images")
+        if isinstance(images, list):
+            for img in images:
+                if isinstance(img, dict) and isinstance(img.get("rev"), str):
+                    by_rev.setdefault(img["rev"], img)
+        for rev, env_name in (("20260310", "EXPECT_VENDOR_20260310_SHA256"),
+                              ("20240710", "EXPECT_VENDOR_20240710_SHA256")):
+            img = by_rev.get(rev)
+            check("vendor %s sha256" % rev,
+                  img.get("sha256") if isinstance(img, dict) else None,
+                  env_name)
+    except Exception as exc:  # noqa: BLE001 -- fail closed, never traceback
+        problems.append("pin identity mismatch (identity check error: %s)" % exc)
+    return problems
+
+
+def _check_koenkk_blob(clone, sha, relpath, want, display):
+    """ls-tree one koenkk path at the fetched commit; returns
+    (ok_line, None) on match or (None, error_line). Malformed output
+    (nonzero ls-tree, empty, non-100644-blob) is `external proof
+    unavailable`; a SHA that differs from the manifest pin is
+    `upstream mismatch`."""
+    code, out = _run_git(clone, ["ls-tree", sha, relpath])
+    if code != 0 or not out.strip():
+        return None, ("attest: external proof unavailable "
+                      "(ls-tree of koenkk %s failed)" % display)
+    parts = out.split()
+    if len(parts) < 3 or parts[0] != "100644" or parts[1] != "blob":
+        return None, ("attest: external proof unavailable "
+                      "(ls-tree of koenkk %s malformed: %r)"
+                      % (display, out.strip()[:120]))
+    if parts[2] != want:
+        return None, ("attest: upstream mismatch (koenkk %s blob %s "
+                      "!= manifest %s)" % (display, parts[2], want))
+    return ("upstream OK: koenkk %s blob equals manifest %s"
+            % (display, want)), None
 
 
 def _load_validator(base):
@@ -109,16 +232,17 @@ def _download_sha256(url):
 def attest(base):
     """Returns (exit_code, lines). Never raises."""
     lines = []
-    manifest, err = _load_manifest(base)
-    if err is not None:
-        return 1, [err]
     validator, err = _load_validator(base)
     if err is not None:
         return 1, [err]
     try:
         repos = validator.EXPECTED_DONOR_REPOS
+        loads_strict = validator.loads_strict
     except AttributeError as exc:
         return 1, ["attest: validator missing EXPECTED constants (%s)" % exc]
+    manifest, err = _load_manifest(base, loads_strict)
+    if err is not None:
+        return 1, [err]
     # Manifest-consistency first (strict production gate): a doc that
     # fails its own constants is rejected before any network use.
     try:
@@ -129,6 +253,17 @@ def attest(base):
     if consistency:
         lines.append("attest: manifest-consistency failed: %s" % consistency[0])
         return 1, lines
+    # Identity tripwire BEFORE any network use (issue #85 R4-R1): the
+    # manifest pins must equal the reviewed EXPECT_* env literals.
+    try:
+        identity = _check_pin_identity(manifest, os.environ)
+    except Exception as exc:  # noqa: BLE001 -- fail closed, never traceback
+        return 1, ["attest: external proof unavailable "
+                   "(identity check error: %s)" % exc]
+    if identity:
+        for problem in identity:
+            lines.append("attest: " + problem)
+        return 1, lines
     try:
         donors = manifest["donors"]
         ti_sdk_sha = donors["ti_lowpower_f2_sdk"]["sha"]
@@ -136,6 +271,10 @@ def attest(base):
         examples_sha = donors["zstack_examples"]["sha"]
         herdsman_sha = donors["zigbee_herdsman"]["sha"]
         koenkk_sha = donors["koenkk_zstack_firmware"]["commit"]
+        koenkk_patch_blob = donors["koenkk_zstack_firmware"]["patch_blob"]
+        koenkk_changelog_blob = donors["koenkk_zstack_firmware"]["changelog_blob"]
+        koenkk_patch_path = validator.KOENKK_PATCH_PATH
+        koenkk_changelog_path = validator.KOENKK_CHANGELOG_PATH
         images = manifest["vendor_images"]
     except (KeyError, TypeError, AttributeError) as exc:
         return 1, ["attest: manifest missing attestation fields (%s)" % exc]
@@ -185,6 +324,18 @@ def attest(base):
             return 1, ["attest: upstream mismatch (SDK commit message does "
                        "not name release %s)" % ti_release]
         lines.append("upstream OK: SDK commit message names %s" % ti_release)
+        # Koenkk blob pins re-verified upstream (issue #85 R4-R2): the
+        # manifest patch_blob/changelog_blob must equal the ls-tree
+        # blob SHAs at the fetched koenkk commit.
+        for relpath, want_blob, display in (
+                (koenkk_patch_path, koenkk_patch_blob, "firmware.patch"),
+                (koenkk_changelog_path, koenkk_changelog_blob, "CHANGELOG.md")):
+            ok_line, blob_err = _check_koenkk_blob(
+                clone_dirs["koenkk-firmware"], koenkk_sha,
+                relpath, want_blob, display)
+            if blob_err is not None:
+                return 1, [blob_err]
+            lines.append(ok_line)
         if not isinstance(images, list) or not images:
             return 1, ["attest: manifest vendor_images missing"]
         for img in images:

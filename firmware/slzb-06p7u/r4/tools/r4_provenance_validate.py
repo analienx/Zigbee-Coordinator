@@ -258,6 +258,27 @@ def _has_traceable_anchor(text):
     )
 
 
+def _has_pinned_digest(text):
+    """True when text contains a full 40- or 64-hex digest equal to one of
+    the EXPECTED_PINS digest values (TI/herdsman/koenkk commits, koenkk
+    blobs, vendor image sha256s). A coincidental 40-hex run such as
+    all-zeros is NOT sufficient: it must equal a reviewed pin (issue
+    #85 R4-R3; the SOURCE_CONFIRMED anchor binds the entry to a pin)."""
+    candidates = set(HEX40_SEARCH.findall(text))
+    candidates.update(HEX64_SEARCH.findall(text))
+    pinned = {
+        EXPECTED_PINS["ti_sdk_sha"],
+        EXPECTED_PINS["ti_examples_sha"],
+        EXPECTED_PINS["herdsman_sha"],
+        EXPECTED_PINS["koenkk_sha"],
+        EXPECTED_PINS["koenkk_patch_blob"],
+        EXPECTED_PINS["koenkk_changelog_blob"],
+        EXPECTED_PINS["vendor_20260310_sha256"],
+        EXPECTED_PINS["vendor_20240710_sha256"],
+    }
+    return bool(candidates & pinned)
+
+
 def _check_text(errors, where, name, value, need_anchor):
     """Claim/evidence/verification guard (R4-D05): nonempty TRIMMED
     strings within documented length bounds; evidence additionally needs
@@ -286,11 +307,17 @@ def validate_provenance(doc, allow_fixture=False):
     _check_top_keys(errors, "provenance", doc, PROVENANCE_TOP_KEYS,
                     ("schema", "phase", "issue", "sdk_version", "donors",
                      "toolchain", "vendor_images", "unknowns"))
-    if errors:
+    # Phase/issue BEFORE the top-keys early return (issue #85 R4-R6):
+    # a shape error must never silently drop the phase/issue lines;
+    # both are reported together and the CLI still exits nonzero.
+    # Missing/extra keys make deeper checks unsafe, so only that shape
+    # class returns early (with the phase/issue lines preserved).
+    had_shape_errors = bool(errors)
+    _check_phase_issue(errors, "provenance", doc, allow_fixture)
+    if had_shape_errors:
         return errors
     if doc.get("schema") != "r4-source-provenance-v1":
         _err(errors, "provenance: unexpected schema %r" % doc.get("schema"))
-    _check_phase_issue(errors, "provenance", doc, allow_fixture)
     sdk_version = doc.get("sdk_version")
     if not isinstance(sdk_version, str):
         _err(errors, "provenance: sdk_version must be a string (got %s)"
@@ -444,14 +471,23 @@ def validate_matrix(doc, allow_fixture=False):
         return ["matrix: top-level object required"]
     _check_top_keys(errors, "matrix", doc, MATRIX_TOP_KEYS,
                     ("schema", "phase", "issue", "entries"))
-    if errors:
+    # Phase/issue BEFORE either early return (issue #85 R4-R6): the
+    # entries-shape error is appended to already-accumulated phase/issue
+    # lines instead of replacing them, and the top-keys return likewise
+    # preserves them. Fail-closed still holds (nonzero exit).
+    # Missing/extra keys make deeper checks unsafe, so only that shape
+    # class returns early (with the phase/issue lines preserved); other
+    # errors accumulate through the entries checks below.
+    had_shape_errors = bool(errors)
+    _check_phase_issue(errors, "matrix", doc, allow_fixture)
+    if had_shape_errors:
         return errors
     if doc.get("schema") != "r4-parity-matrix-v1":
         _err(errors, "matrix: unexpected schema %r" % doc.get("schema"))
-    _check_phase_issue(errors, "matrix", doc, allow_fixture)
-    entries = doc["entries"]
+    entries = doc.get("entries")
     if not isinstance(entries, list) or not entries:
-        return ["matrix: entries must be a non-empty list"]
+        _err(errors, "matrix: entries must be a non-empty list")
+        return errors
     seen_ids = set()
     seen_domains = set()
     for idx, entry in enumerate(entries):
@@ -487,7 +523,8 @@ def validate_matrix(doc, allow_fixture=False):
         if status == "SOURCE_CONFIRMED":
             evidence = entry.get("evidence")
             if isinstance(evidence, str) and not (
-                    HEX40_SEARCH.search(evidence) and "/" in evidence):
+                    _has_pinned_digest(evidence)
+                    and UPSTREAM_PATH_SEARCH.search(evidence)):
                 _err(errors, "%s: SOURCE_CONFIRMED requires an exact upstream "
                              "anchor (repo + commit/blob + path); retag future "
                              "intent as PHYSICAL_UNVERIFIED" % where)

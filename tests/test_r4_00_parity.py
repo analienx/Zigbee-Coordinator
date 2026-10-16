@@ -29,8 +29,11 @@ spec_a = importlib.util.spec_from_file_location(
 audit = importlib.util.module_from_spec(spec_a)
 spec_a.loader.exec_module(audit)
 
-REQUIRED_DOMAINS = val.REQUIRED_DOMAINS
-ALLOWED = val.ALLOWED_STATUS
+# Copies, never aliases (issue #85 R4-R5): a test mutating these must
+# not corrupt validator state across tests (frozenset/set are cheap
+# to copy; REQUIRED_DOMAINS is immutable but copied for uniformity).
+REQUIRED_DOMAINS = set(val.REQUIRED_DOMAINS)
+ALLOWED = set(val.ALLOWED_STATUS)
 # R4-D07 audit outcome: only c-irq-stack is an observed source fact
 # with an exact upstream anchor; every B0-or-later behavior entry is
 # PHYSICAL_UNVERIFIED.
@@ -191,11 +194,52 @@ class ParityMatrixTests(unittest.TestCase):
         self.assertIn("evidence exceeds", errors[0])
 
     def test_malformed_phase_type_fails_cleanly(self):
-        doc = load(FIX / "invalid" / "matrix_phase_array.json")
+        for name in ("matrix_phase_array.json", "matrix_phase_object.json"):
+            with self.subTest(fixture=name):
+                doc = load(FIX / "invalid" / name)
+                errors = val.validate_matrix(doc, allow_fixture=True)
+                self.assertIsInstance(errors, list)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("phase must be a string", errors[0])
+
+    def test_source_confirmed_fake_anchor_fails_singly(self):
+        # Issue #85 R4-R3: all-zeros 40-hex plus "and/or" is not an
+        # anchor (no pinned digest, no real path) and must fail.
+        doc = load(FIX / "invalid" / "matrix_sc_weak_anchor.json")
         errors = val.validate_matrix(doc, allow_fixture=True)
-        self.assertIsInstance(errors, list)
         self.assertEqual(len(errors), 1)
-        self.assertIn("phase must be a string", errors[0])
+        self.assertIn("SOURCE_CONFIRMED", errors[0])
+        self.assertIn("anchor", errors[0])
+
+    def test_evidence_without_anchor_fails_singly(self):
+        # Plain prose with no digest/URL/ref/path carries no anchor.
+        doc = load(FIX / "invalid" / "matrix_evidence_no_anchor.json")
+        errors = val.validate_matrix(doc, allow_fixture=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("must carry a traceable anchor", errors[0])
+
+    def test_shape_error_preserves_phase_errors(self):
+        # Issue #85 R4-R6: non-list entries must not wipe the
+        # already-accumulated phase/issue lines (fail-closed either
+        # way, but the reason must name every gate).
+        doc = {"schema": "r4-parity-matrix-v1", "phase": "R4-00-fixture",
+               "issue": 86, "entries": "nope"}
+        errors = val.validate_matrix(doc, allow_fixture=False)
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(any("phase" in e for e in errors))
+        self.assertTrue(any("issue" in e for e in errors))
+        self.assertTrue(any("entries must be a non-empty list" in e
+                            for e in errors))
+
+    def test_top_keys_preserve_phase_errors(self):
+        # Issue #85 R4-R6: missing top-level keys plus a bad phase must
+        # report both, never only the shape line.
+        doc = {"schema": "r4-parity-matrix-v1", "phase": "R4-00-fixture",
+               "issue": 86}
+        errors = val.validate_matrix(doc, allow_fixture=False)
+        self.assertGreater(len(errors), 1)
+        self.assertTrue(any("missing key" in e for e in errors))
+        self.assertTrue(any("phase" in e for e in errors))
 
     def test_audit_report_marks_gaps(self):
         report = audit.audit_matrix(self.doc, self.prov)
@@ -300,6 +344,42 @@ class AuditBoundaryTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("phase must be a string", out)
             self.assertNotIn("Traceback", out)
+
+    def test_cli_rejects_object_matrix_phase(self):
+        # Issue #85 R4-R4: object-phase matrix through audit.main.
+        matrix_bad = (FIX / "invalid" / "matrix_phase_object.json").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "SOURCE_PROVENANCE.json").write_text(self.prov_text, encoding="utf-8")
+            (base / "PARITY_MATRIX.json").write_text(matrix_bad, encoding="utf-8")
+            code, out = run_cli(audit.main, ["audit", str(base)])
+            self.assertEqual(code, 1)
+            self.assertIn("phase must be a string", out)
+            self.assertNotIn("Traceback", out)
+
+    def test_cli_rejects_mismatched_phase_pair(self):
+        # Issue #85 R4-R7: cross-document identity gate through real
+        # audit.main with a mismatched temp-dir pair.
+        matrix = json.loads(self.matrix_text)
+        matrix["phase"] = "R4-00-fixture"
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "SOURCE_PROVENANCE.json").write_text(self.prov_text, encoding="utf-8")
+            (base / "PARITY_MATRIX.json").write_text(json.dumps(matrix), encoding="utf-8")
+            code, out = run_cli(audit.main, ["audit", str(base)])
+            self.assertEqual(code, 1)
+            self.assertIn("phase", out)
+            self.assertNotIn("Traceback", out)
+
+    def test_audit_matrix_rejects_non_dict_cleanly(self):
+        # Issue #85 R4-R6: direct audit_matrix call with a non-object
+        # matrix returns an INVALID INPUT report string, never raises.
+        for bad in ([], None, "nope", 42):
+            with self.subTest(bad=repr(bad)):
+                report = audit.audit_matrix(bad, None)
+                self.assertIsInstance(report, str)
+                self.assertIn("INVALID INPUT", report)
+                self.assertNotIn("Traceback", report)
 
 
 if __name__ == "__main__":

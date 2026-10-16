@@ -41,6 +41,26 @@ jobs:
         run: python firmware/slzb-06p7u/r4/tools/r4_parity_audit.py firmware/slzb-06p7u/r4
   r4-00-upstream-attestation:
     runs-on: ubuntu-latest
+    # Reviewed pin literals (issue #85 R4-R1): reviewer-visible
+    # identity tripwires. attest compares the manifest pins against
+    # these BEFORE any network use; a coherent manifest+validator
+    # repoint to another real upstream commit passes consistency and
+    # every existence check, so without this gate it would attest
+    # green. Any repoint must edit manifest + validator + these
+    # literals (+ test canaries) consistently, all visible in the
+    # diff. The EXTERNAL roots remain the upstream
+    # existence/gitlink/message/blob/content checks below.
+    env:
+      EXPECT_TI_SDK_SHA: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      EXPECT_TI_EXAMPLES_SHA: 87ff5b638b632050228a7504f35cf3b95581c278
+      EXPECT_HERDSMAN_SHA: 0968f979d558874b17396c96b66382d4236bbdcd
+      EXPECT_KOENKK_SHA: 5e4db67e550d41ea6dc6cd86ceeb04d82ffe1bfb
+      EXPECT_KOENKK_PATCH_BLOB: e015d9a9020e08d049515664693b22a9ce0e1fdb
+      EXPECT_KOENKK_CHANGELOG_BLOB: 25f8bb3fb3bafe22b860d9a00134a2d722272650
+      EXPECT_TI_RELEASE: lpf2-8.33.00.16
+      EXPECT_HERDSMAN_VERSION: 10.9.1
+      EXPECT_VENDOR_20260310_SHA256: f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbe
+      EXPECT_VENDOR_20240710_SHA256: 1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b
     steps:
       # Same exact-SHA checkout discipline as the contracts job: PR runs
       # check out the exact PR head SHA (never the merge commit); push
@@ -65,17 +85,118 @@ jobs:
       # offline suite cannot and must not depend on the network.
       - name: Attest upstream pins against real manifests
         run: python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py firmware/slzb-06p7u/r4
-      - name: Negative control (mutated pins must be rejected)
+      # Vacuity note (issue #85 R4-R1): controls (a)-(e) assert
+      # stage-distinctive messages and need live network. On an outage
+      # attest exits `external proof unavailable`, which never contains
+      # `upstream mismatch` (or the fetch line), so these controls fail
+      # visibly instead of passing vacuously. Controls (f)-(g) reject
+      # offline (manifest-consistency / pin-identity) and are
+      # outage-proof. Each control overrides ONLY the env var(s) for
+      # the mutated pin so the identity tripwire passes and rejection
+      # comes solely from the intended upstream stage; every other
+      # literal stays at its reviewed value. Manifest+validator are
+      # co-mutated where the field is tuple/constant-checked so
+      # manifest-consistency still passes and the intended stage is
+      # what rejects (hand-traced per control).
+      - name: Negative control (a) zero SHAs must fail fetch closed
+        env:
+          EXPECT_TI_SDK_SHA: 0000000000000000000000000000000000000000
+          EXPECT_TI_EXAMPLES_SHA: 1111111111111111111111111111111111111111
         run: |
-          rm -rf /tmp/r4neg
-          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg
+          rm -rf /tmp/r4neg_a
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_a
           S1=3615ad5d3f4f271258d18a2f5ce1785064ff9a58
           S2=87ff5b638b632050228a7504f35cf3b95581c278
           F1=0000000000000000000000000000000000000000
           F2=1111111111111111111111111111111111111111
-          sed -i "s/$S1/$F1/g; s/$S2/$F2/g" /tmp/r4neg/SOURCE_PROVENANCE.json /tmp/r4neg/tools/r4_provenance_validate.py
-          if python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg; then
-            echo "attest negative control unexpectedly passed"
+          sed -i "s/$S1/$F1/g; s/$S2/$F2/g" /tmp/r4neg_a/SOURCE_PROVENANCE.json /tmp/r4neg_a/tools/r4_provenance_validate.py
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_a 2>&1); then
+            echo "control (a) unexpectedly passed"
             exit 1
           fi
-          echo "attest negative control rejected as required"
+          echo "$out" | grep -F "external proof unavailable (fetch of zstack-examples"
+          echo "control (a) rejected at fetch as required"
+      - name: Negative control (b) vendor sha256 mutation must fail content check
+        env:
+          EXPECT_VENDOR_20260310_SHA256: f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbf
+        run: |
+          rm -rf /tmp/r4neg_b
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_b
+          S=f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbe
+          F=f18011d2652651e36d5e1e7e1cb1f7cbcb99e9493eacbbf8e404a036c626afbf
+          sed -i "s/$S/$F/g" /tmp/r4neg_b/SOURCE_PROVENANCE.json /tmp/r4neg_b/tools/r4_provenance_validate.py
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_b 2>&1); then
+            echo "control (b) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "upstream mismatch (vendor 20260310"
+          echo "control (b) rejected at vendor content check as required"
+      - name: Negative control (c) koenkk blob mutation must fail blob check
+        env:
+          EXPECT_KOENKK_PATCH_BLOB: e015d9a9020e08d049515664693b22a9ce0e1fdc
+        run: |
+          rm -rf /tmp/r4neg_c
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_c
+          S=e015d9a9020e08d049515664693b22a9ce0e1fdb
+          F=e015d9a9020e08d049515664693b22a9ce0e1fdc
+          sed -i "s/$S/$F/g" /tmp/r4neg_c/SOURCE_PROVENANCE.json /tmp/r4neg_c/tools/r4_provenance_validate.py
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_c 2>&1); then
+            echo "control (c) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "upstream mismatch (koenkk"
+          echo "control (c) rejected at koenkk blob check as required"
+      - name: Negative control (d) TI release mutation must fail message check
+        env:
+          EXPECT_TI_RELEASE: lpf2-8.33.00.99
+        run: |
+          rm -rf /tmp/r4neg_d
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_d
+          sed -i "s/lpf2-8.33.00.16/lpf2-8.33.00.99/g" /tmp/r4neg_d/SOURCE_PROVENANCE.json /tmp/r4neg_d/tools/r4_provenance_validate.py
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_d 2>&1); then
+            echo "control (d) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "upstream mismatch (SDK commit message"
+          echo "control (d) rejected at SDK message check as required"
+      - name: Negative control (e) koenkk repoint to real HEAD must fail blob check
+        env:
+          EXPECT_KOENKK_SHA: 58dda33d834ef09132427cb41721d7d68e11a7a6
+        run: |
+          rm -rf /tmp/r4neg_e
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_e
+          S=5e4db67e550d41ea6dc6cd86ceeb04d82ffe1bfb
+          F=58dda33d834ef09132427cb41721d7d68e11a7a6
+          sed -i "s/$S/$F/g" /tmp/r4neg_e/SOURCE_PROVENANCE.json /tmp/r4neg_e/tools/r4_provenance_validate.py
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_e 2>&1); then
+            echo "control (e) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "upstream mismatch (koenkk"
+          echo "control (e) rejected at koenkk blob check as required"
+      - name: Negative control (f) vendor URL repoint must fail closed
+        run: |
+          rm -rf /tmp/r4neg_f
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_f
+          S=https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/20260310/znp-SLZB-06P7U-115200-20260310.bin
+          F=https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/20260310/nonexistent-404-r4-control.bin
+          sed -i "s|$S|$F|g" /tmp/r4neg_f/SOURCE_PROVENANCE.json
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_f 2>&1); then
+            echo "control (f) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "vendor 20260310"
+          echo "control (f) rejected as required (manifest-consistency binds the URL; the positive step proves the manifest URL is actually fetched)"
+      - name: Negative control (g) coherent repoint must fail pin identity
+        run: |
+          rm -rf /tmp/r4neg_g
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_g
+          S=0968f979d558874b17396c96b66382d4236bbdcd
+          F=0968f979d558874b17396c96b66382d4236bbdcc
+          sed -i "s/$S/$F/g" /tmp/r4neg_g/SOURCE_PROVENANCE.json /tmp/r4neg_g/tools/r4_provenance_validate.py
+          if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_g 2>&1); then
+            echo "control (g) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "pin identity mismatch"
+          echo "control (g) rejected at pin identity as required (offline, outage-proof)"

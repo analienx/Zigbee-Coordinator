@@ -75,6 +75,33 @@ URL). Validator checks are manifest-consistency, not external
 source-integrity proof; proof lives only in the hosted
 `r4-00-upstream-attestation` job. All physical gates OPEN.
 
+## Upstream attestation identity tripwires (R4-R1) and vendor-URL limit (R4-R8)
+
+A coherent manifest+validator repoint to another REAL upstream commit
+passes manifest-consistency and every existence check, so the attest
+job additionally compares manifest pins against reviewer-visible
+`EXPECT_*` env literals passed in
+`.github/workflows/test-r4-00-provenance.yml` BEFORE any network use
+(TI SDK/examples/herdsman/koenkk commits, koenkk blob SHAs, TI
+release, herdsman version, both vendor sha256s); mismatch -- or
+missing/empty env, which never default-accepts -- fails closed with
+`pin identity mismatch`. These literals live in-PR and are
+tripwires, not external proof: any repoint must edit manifest +
+validator + workflow env (+ test canaries) consistently, all visible
+in the diff. The EXTERNAL roots remain the upstream
+existence/gitlink/message/blob/content checks, each exercised by a
+message-asserting negative control that cannot pass vacuously on a
+network outage (outage yields `external proof unavailable`, never
+`upstream mismatch`).
+
+Vendor-URL limit, stated honestly: no external catalog root exists
+for URL identity. The gates are exact-tuple consistency (validator
+binds URL to rev/model/filename/bytes/sha) plus
+URL-actually-fetched-and-content-matches (attest downloads the
+manifest `img["url"]` and compares bytes to the pin, proven by the
+positive downloads). A manifest-only URL repoint is rejected at
+manifest-consistency; URL authenticity beyond that is never claimed.
+
 ## Consequences
 
 B0-B4 each need exact-HEAD hosted CI + adversarial review

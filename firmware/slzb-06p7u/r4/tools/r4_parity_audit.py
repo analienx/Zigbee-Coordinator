@@ -43,6 +43,11 @@ def _load_validator():
 
 
 def audit_matrix(matrix, provenance=None):
+    # Dict guard (issue #85 R4-R6): a non-object matrix yields a clean
+    # INVALID INPUT report string, never an AttributeError traceback.
+    if not isinstance(matrix, dict):
+        return ("INVALID INPUT: matrix must be an object "
+                "(got %s)\n" % type(matrix).__name__)
     entries = matrix.get("entries", [])
     if not isinstance(entries, list):
         entries = []
@@ -83,7 +88,8 @@ def audit_matrix(matrix, provenance=None):
 def _same_path(left, right):
     try:
         return left.resolve() == right.resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
+        # RuntimeError covers symlink loops (Path.resolve recursion).
         return False
 
 
@@ -144,6 +150,20 @@ def main(argv):
     if prov_errors:
         for err in prov_errors:
             sys.stdout.write("audit: invalid provenance: %s\n" % err)
+        return 1
+    # Cross-document identity gate (issue #85 R4-R7), mirroring
+    # validator main(): the pair must identify the same phase/issue.
+    # (Unreachable when both docs validate strictly -- phase must be
+    # R4-00 and issue 85 on each side -- kept as defense in depth.)
+    if provenance.get("phase") != matrix.get("phase"):
+        sys.stdout.write("audit: cross phase mismatch (provenance %r vs parity %r; "
+                         "documents must identify the same phase)\n"
+                         % (provenance.get("phase"), matrix.get("phase")))
+        return 1
+    if provenance.get("issue") != matrix.get("issue"):
+        sys.stdout.write("audit: cross issue mismatch (provenance %r vs parity %r; "
+                         "documents must identify the same issue)\n"
+                         % (provenance.get("issue"), matrix.get("issue")))
         return 1
     report = audit_matrix(matrix, provenance)
     if out is not None:
