@@ -30,7 +30,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-00 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/tools/r4_provenance_validate.py firmware/slzb-06p7u/r4/tools/r4_parity_audit.py tests/test_r4_00_provenance.py tests/test_r4_00_parity.py
+          python -m py_compile firmware/slzb-06p7u/r4/tools/r4_provenance_validate.py firmware/slzb-06p7u/r4/tools/r4_parity_audit.py firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py tests/test_r4_00_provenance.py tests/test_r4_00_parity.py
       - name: Run R4-00 provenance tests
         run: python -m unittest -v tests.test_r4_00_provenance
       - name: Run R4-00 parity tests
@@ -39,3 +39,43 @@ jobs:
         run: python firmware/slzb-06p7u/r4/tools/r4_provenance_validate.py firmware/slzb-06p7u/r4
       - name: Run R4-00 audit CLI against real manifests
         run: python firmware/slzb-06p7u/r4/tools/r4_parity_audit.py firmware/slzb-06p7u/r4
+  r4-00-upstream-attestation:
+    runs-on: ubuntu-latest
+    steps:
+      # Same exact-SHA checkout discipline as the contracts job: PR runs
+      # check out the exact PR head SHA (never the merge commit); push
+      # runs use the pushed SHA.
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      # This is the ONLY source-integrity proof: every pin is re-verified
+      # against upstream over the network and the job fails closed
+      # (nonzero with an `external proof unavailable` line) whenever any
+      # external check is unreachable. Never invoked from unittest: the
+      # offline suite cannot and must not depend on the network.
+      - name: Attest upstream pins against real manifests
+        run: python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py firmware/slzb-06p7u/r4
+      - name: Negative control (mutated pins must be rejected)
+        run: |
+          rm -rf /tmp/r4neg
+          cp -r firmware/slzb-06p7u/r4 /tmp/r4neg
+          S1=3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          S2=87ff5b638b632050228a7504f35cf3b95581c278
+          F1=0000000000000000000000000000000000000000
+          F2=1111111111111111111111111111111111111111
+          sed -i "s/$S1/$F1/g; s/$S2/$F2/g" /tmp/r4neg/SOURCE_PROVENANCE.json /tmp/r4neg/tools/r4_provenance_validate.py
+          if python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg; then
+            echo "attest negative control unexpectedly passed"
+            exit 1
+          fi
+          echo "attest negative control rejected as required"
