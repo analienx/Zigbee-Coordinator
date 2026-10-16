@@ -119,6 +119,24 @@ def overlay(sdk, b1_dir):
         "        NVS_getAttrs(NVOCMP_nvsHandle,&NVOCMP_nvsAttrs);",
         "NVS_open NULL-before-getAttrs")
 
+    # Check actual NVS geometry BEFORE the donor divides by sectorSize.
+    # The original checks after division; sectorSize=0 can fault first.
+    source = replace_once(
+        source,
+        "        NVOCMP_nvHandle.nvSize = NVOCMP_nvsAttrs.regionSize/NVOCMP_nvsAttrs.sectorSize;",
+        "        if (NVOCMP_NVS_INDEX != 0 ||\n"
+        "            NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT ||\n"
+        "            NVOCMP_nvsAttrs.sectorSize != B1_NV2_PAGE_SIZE ||\n"
+        "            NVOCMP_nvsAttrs.regionSize != B1_NV2_REGION_SIZE ||\n"
+        "            (uintptr_t)NVOCMP_nvsAttrs.regionBase != (uintptr_t)0xAA000u)\n"
+        "        {\n"
+        "            NVOCMP_failF = NVINTF_FAILURE;\n"
+        "            NVOCMP_failW = NVINTF_FAILURE;\n"
+        "            return NVOCMP_failF; /* B1 N03: no divide by zero/CCFG */\n"
+        "        }\n"
+        "        NVOCMP_nvHandle.nvSize = NVOCMP_nvsAttrs.regionSize/NVOCMP_nvsAttrs.sectorSize;",
+        "pre-division exact NV2 address/sector geometry")
+
     # The late NULL check is now unreachable; remove to ensure the source
     # never claims a NULL handle could survive the geometry calculations.
     source = replace_once(
