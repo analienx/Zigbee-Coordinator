@@ -5,8 +5,8 @@ Inspects the current machine for the pinned native build toolchain
 TI-ARM-CLANG 3.2.2.LTS) and writes a dated receipt. READY only when
 all three are present with pinned versions; otherwise BLOCKED with
 the precise missing piece and the official TI acquisition points.
-Installer/download SHA256 digests are recorded UNKNOWN (never
-fabricated) until sourced from TI distribution channels.
+Installer/download SHA256 digests are pinned to TI's exact Linux
+versioned download pages (2026-10-16); this verifier records them.
 
 The verifier never downloads, installs, or fabricates firmware.
 A BLOCKED receipt is a hard stop for the native build, not a pass.
@@ -28,9 +28,9 @@ EXPECTED = {
     "ti_arm_clang": "3.2.2.LTS",
 }
 
-# Official TI acquisition points (informational; installer binaries
-# and their digests are NOT pinned here because no verified direct
-# headless download URL/SHA has been sourced -- see UNKNOWN below).
+# Official TI acquisition points (informational); verified direct Linux
+# artifact URLs and TI-published SHA-256 values are pinned separately
+# in b0_fetch_ti.py and mirrored in the receipt below.
 # SysConfig 1.21.1.3772 must be installed EXPLICITLY external:
 # CCS 12.8.0.00012 officially bundles SysConfig 1.21.0.3721, which
 # is NOT equal to the coherent SDK donor pin (see CCS 12.8.0
