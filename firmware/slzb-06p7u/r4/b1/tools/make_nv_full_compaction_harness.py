@@ -170,7 +170,28 @@ int main(void)
          * complete read-only TI header+CRC preflight is coherent.
          * Anything else must not be treated as erased/factory-new. */
         if(probe.code==B1_NV2_HEADER_CANDIDATE) {
+          NVOCMP_itemHdr_t reloaded={0};
+          uint8_t data[8]={0};
+          unsigned before_w=write_calls,before_e=erase_calls;
+          uint8_t init_status;
           ++admitted;
+          /* Reboot only after a fully validated image. Never invoke the
+           * possibly destructive vendor init on an ambiguous layout. */
+          memset(&NVOCMP_nvHandle,0,sizeof(NVOCMP_nvHandle));
+          NVOCMP_failF=NVINTF_NOTREADY;NVOCMP_failW=NVINTF_NOTREADY;
+          init_status=NVOCMP_initNvApi(NULL);
+          assert(write_calls==before_w && erase_calls==before_e);
+          if(init_status==NVINTF_SUCCESS) {
+            reloaded.sysid=1u;reloaded.itemid=1u;
+            assert(NVOCMP_findItem(&NVOCMP_nvHandle,
+                NVOCMP_nvHandle.actPage,NVOCMP_nvHandle.actOffset,
+                &reloaded,NVOCMP_FINDSTRICT,NULL)==NVINTF_SUCCESS);
+            assert(reloaded.len==8u);
+            assert(NVOCMP_readItem(&reloaded,0u,8u,data,false)==NVINTF_SUCCESS);
+            assert(data[0]==1u && data[7]==8u);
+          } else {
+            assert(init_status==NVINTF_FAILURE);
+          }
         } else {
           ++safe_holds;
           assert(probe.code!=B1_NV_FACTORY_AUTHORIZED);
