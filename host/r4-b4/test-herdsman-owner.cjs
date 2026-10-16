@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
-const root = process.argv[2];
+const root = process.env.B4_HERDSMAN_ROOT;
 if (!root || !path.isAbsolute(root) || !root.startsWith("/tmp/")) {
     throw new Error("disposable pinned checkout absolute /tmp path required");
 }
