@@ -143,7 +143,11 @@ def plan(root):
                 return this.readBuffer(100);
             }
             case ParameterType.BUFFER132: {
-                // B4_EXPERIMENTAL_EXISTING_OWNER: fixed payload, never raw NV.
+                // B4_EXPERIMENTAL_EXISTING_OWNER: strict fixed-size
+                // payload. Buffalo.readBuffer alone silently truncates.
+                if (this.getBuffer().length - this.getPosition() !== 132) {
+                    throw new Error("B4 diagnostic length must be exactly 132");
+                }
                 return this.readBuffer(132);
             }""",
     )
