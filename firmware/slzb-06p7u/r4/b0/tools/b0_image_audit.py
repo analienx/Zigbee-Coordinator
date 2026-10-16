@@ -665,23 +665,43 @@ def audit(base, artifacts):
         return 1, ("audit no actual linker invocation "
                    "(build log markers share a single line; fabricated "
                    "one-liner rejected)")
-    ordered = ("syscfg", "com.ti.ccstudio.apps.projectbuild",
-               "tiarmclang", "tiarmobjcopy")
-
-    def _first(sub):
-        for index, line in enumerate(lowered_lines):
-            if sub in line:
-                return index
-        return None
-
-    positions = [_first(sub) for sub in ordered]
-    if (any(pos is None for pos in positions)
-            or not (positions[0] < positions[1] < positions[2])
-            or not (positions[1] < positions[3])):
+    # A genuine SDK-root GNU make invokes tiarmclang extensively BEFORE
+    # the ZNP CCS project build; the first compiler string in the complete
+    # log is therefore NOT the ZNP link. Find the actual linker command
+    # AFTER the CCS projectBuild command and require --xml_link_info on
+    # that same line; then require objcopy AFTER that linker command.
+    # We validate a monotone, stage-specific sequence, not the global
+    # first occurrence of generic tool names.
+    syscfg_positions = [i for i, line in enumerate(lowered_lines)
+                        if ("$ syscfg" in line or "syscfg generation" in line
+                            or "syscfg standalone pinned preflight" in line
+                            or ("sysconfig_cli" in line and "--script" in line))]
+    project_positions = [i for i, line in enumerate(lowered_lines)
+                         if "com.ti.ccstudio.apps.projectbuild" in line]
+    actual_sequence = None
+    for project_pos in project_positions:
+        preceding = [i for i in syscfg_positions if i < project_pos]
+        if not preceding:
+            continue
+        for linker_pos in range(project_pos + 1, len(lowered_lines)):
+            line = lowered_lines[linker_pos]
+            if "tiarmclang" not in line or "--xml_link_info" not in line:
+                continue
+            for objcopy_pos in range(linker_pos + 1, len(lowered_lines)):
+                if "tiarmobjcopy" in lowered_lines[objcopy_pos]:
+                    actual_sequence = (preceding[-1], project_pos,
+                                       linker_pos, objcopy_pos)
+                    break
+            if actual_sequence:
+                break
+        if actual_sequence:
+            break
+    if actual_sequence is None:
         return 1, ("audit no actual linker invocation "
-                   "(build log pipeline order implausible: syscfg "
-                   "generation must precede projectBuild, which must "
-                   "precede tiarmclang/tiarmobjcopy)")
+                   "(build log pipeline order implausible: require an "
+                   "actual SysConfig stage before CCS projectBuild, "
+                   "a later tiarmclang --xml_link_info linker command, "
+                   "and later tiarmobjcopy)")
     try:
         if targets["xml"].stat().st_size > XML_SIZE_CAP:
             return 1, "audit XML exceeds size cap (synthetic summary rejected)"
