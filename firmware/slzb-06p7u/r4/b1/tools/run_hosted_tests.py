@@ -186,6 +186,15 @@ def main():
         for scenario in backend_scenarios:
             positive(binary, (scenario,))
 
+    # N24 partial power cuts through actual TI writeItem()/erase() with
+    # 1->0 NOR semantics and read-only persisted admission on simulated reboot.
+    powercut_source = work / "actual_nv_media_powercut.c"
+    run([sys.executable, b1 / "tools/make_nv_powercut_harness.py",
+         "--source", sdk / SOURCE_PATHS[0], "--crc-source", sdk / SOURCE_PATHS[6],
+         "--output", powercut_source], check=True)
+    generated["nv_media_powercut"] = powercut_source
+    positive(compile_c(powercut_source, "nv_media_powercut"))
+
     source = work / "actual_nv_authorized_blank.c"
     run([sys.executable, b1 / "tools/make_nv_backend_harness.py",
          "--source", sdk / SOURCE_PATHS[0], "--crc-source", sdk / SOURCE_PATHS[6],
