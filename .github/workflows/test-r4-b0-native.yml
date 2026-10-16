@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-B0 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
       - name: Run R4-B0 overlay tests
         run: python -m unittest -v tests.test_r4_b0_overlay
       - name: Run R4-B0 image audit tests
@@ -37,6 +37,8 @@ jobs:
         run: python -m unittest -v tests.test_r4_b0_collect_native
       - name: Test SHA-gated TI toolchain acquisition (offline)
         run: python -m unittest -v tests.test_r4_b0_fetch_ti
+      - name: Test TI installer archive safety (offline)
+        run: python -m unittest -v tests.test_r4_b0_install_ti
       - name: Validate real B0 overlay documents
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
       - name: Unit oracle sanity on valid vector (NOT native proof)
