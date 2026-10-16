@@ -63,7 +63,8 @@ int main(int argc,char **argv)
     /* The positive coordinator transition alone cannot synthesize MT registration. */
   } else if(strcmp(s,"healthy") && strcmp(s,"after_nv_hold") &&
             strcmp(s,"after_security_hold") && strcmp(s,"after_transport_hold") &&
-            strcmp(s,"loss_of_coordinator") && strcmp(s,"premature")) {
+            strcmp(s,"loss_of_coordinator") && strcmp(s,"loss_then_regain") &&
+            strcmp(s,"premature")) {
     return 2;
   }
   if(strcmp(s,"premature")==0) {
@@ -74,12 +75,19 @@ int main(int argc,char **argv)
   } else {
     ZDApp_ChangeState(DEV_ZB_COORD);
     check_status(strcmp(s,"healthy")==0 || strncmp(s,"after_",6)==0 ||
-                 strcmp(s,"loss_of_coordinator")==0);
+                 strcmp(s,"loss_of_coordinator")==0 || strcmp(s,"loss_then_regain")==0);
   }
-  if(strcmp(s,"loss_of_coordinator")==0) {
+  if(strcmp(s,"loss_of_coordinator")==0 || strcmp(s,"loss_then_regain")==0) {
     ZDApp_ChangeState(DEV_INIT);
     assert(devState==DEV_INIT && events==2);
     check_status(0);
+    if(strcmp(s,"loss_then_regain")==0) {
+      ZDApp_ChangeState(DEV_ZB_COORD);
+      assert(devState==DEV_ZB_COORD && events==3);
+      /* Native callback must not recycle an earlier restore/counter proof.
+       * A new boot-time security attestation is required before READY. */
+      check_status(0);
+    }
   } else if(strcmp(s,"after_nv_hold")==0) {
     b1_management_hold_nv(B1_ERROR_NV_BACKEND);
     check_status(0);
