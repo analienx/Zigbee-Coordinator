@@ -128,6 +128,10 @@ def main():
         ("security", "make_security_harness.py", SOURCE_PATHS[4],
          tuple((name,) for name in SECURITY_SCENARIOS)),
         ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
+        ("network_ready", "make_network_ready_harness.py", SOURCE_PATHS[3],
+         tuple((name,) for name in ("healthy", "premature", "no_nv",
+             "no_security", "no_counter", "no_mt", "loss_of_coordinator",
+             "after_nv_hold", "after_security_hold", "after_transport_hold"))),
         ("osal_nv", "make_osal_nv_harness.py", SOURCE_PATHS[8], ((),)),
     )
     generated = {}
@@ -136,7 +140,8 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              "--source", sdk / relative, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name != "security"))
+        binary = compile_c(source, name, admission=(name != "security" and name != "network_ready"),
+                           management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)
 
