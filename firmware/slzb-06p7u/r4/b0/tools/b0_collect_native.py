@@ -30,7 +30,8 @@ def collect(workspace, out, clang_dir, build_log):
     for kind, origin in items.items():
         shutil.copyfile(origin, out / ("znp" + {"elf": ".out", "xml": "_linkInfo.xml", "hex": ".hex"}[kind]))
     subprocess.run([str(tool), "-O", "binary", str(elf), str(out / "znp.bin")], check=True)
-    shutil.copyfile(build_log, out / "build.log")
+    if build_log.resolve() != (out / "build.log").resolve():
+        shutil.copyfile(build_log, out / "build.log")
     items = {"elf": "znp.out", "xml": "znp_linkInfo.xml", "hex": "znp.hex", "bin": "znp.bin"}
     manifest = {
         "schema": "r4-b0-artifact-manifest-v1",
