@@ -116,6 +116,24 @@ def _write_report_atomic(out, report):
     return 0
 
 
+def _cross_errors(provenance, matrix):
+    """Cross-document identity errors (issue #85 R4-R7), mirroring
+    validator main(): the pair must identify the same phase/issue.
+    Unreachable when both docs validate strictly (phase R4-00 and
+    issue 85 on each side) -- kept as defense in depth and
+    unit-exercised directly."""
+    errors = []
+    if provenance.get("phase") != matrix.get("phase"):
+        errors.append("audit: cross phase mismatch (provenance %r vs parity %r; "
+                      "documents must identify the same phase)"
+                      % (provenance.get("phase"), matrix.get("phase")))
+    if provenance.get("issue") != matrix.get("issue"):
+        errors.append("audit: cross issue mismatch (provenance %r vs parity %r; "
+                      "documents must identify the same issue)"
+                      % (provenance.get("issue"), matrix.get("issue")))
+    return errors
+
+
 def main(argv):
     base = Path(argv[1]) if len(argv) > 1 else Path(__file__).resolve().parents[1]
     out = Path(argv[2]) if len(argv) > 2 else None
@@ -152,18 +170,10 @@ def main(argv):
             sys.stdout.write("audit: invalid provenance: %s\n" % err)
         return 1
     # Cross-document identity gate (issue #85 R4-R7), mirroring
-    # validator main(): the pair must identify the same phase/issue.
-    # (Unreachable when both docs validate strictly -- phase must be
-    # R4-00 and issue 85 on each side -- kept as defense in depth.)
-    if provenance.get("phase") != matrix.get("phase"):
-        sys.stdout.write("audit: cross phase mismatch (provenance %r vs parity %r; "
-                         "documents must identify the same phase)\n"
-                         % (provenance.get("phase"), matrix.get("phase")))
-        return 1
-    if provenance.get("issue") != matrix.get("issue"):
-        sys.stdout.write("audit: cross issue mismatch (provenance %r vs parity %r; "
-                         "documents must identify the same issue)\n"
-                         % (provenance.get("issue"), matrix.get("issue")))
+    # validator main(). Unreachable on strict-valid pairs -- defense
+    # in depth, unit-exercised via _cross_errors directly.
+    for err in _cross_errors(provenance, matrix):
+        sys.stdout.write(err + "\n")
         return 1
     report = audit_matrix(matrix, provenance)
     if out is not None:

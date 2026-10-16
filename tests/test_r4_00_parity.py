@@ -205,6 +205,9 @@ class ParityMatrixTests(unittest.TestCase):
     def test_source_confirmed_fake_anchor_fails_singly(self):
         # Issue #85 R4-R3: all-zeros 40-hex plus "and/or" is not an
         # anchor (no pinned digest, no real path) and must fail.
+        # Fragile by construction: a non-hex weak anchor would fire
+        # the anchor-missing line too (2 errors), so this fixture
+        # must stay 40-hex-but-unpinned to assert the single SC line.
         doc = load(FIX / "invalid" / "matrix_sc_weak_anchor.json")
         errors = val.validate_matrix(doc, allow_fixture=True)
         self.assertEqual(len(errors), 1)
@@ -213,6 +216,9 @@ class ParityMatrixTests(unittest.TestCase):
 
     def test_evidence_without_anchor_fails_singly(self):
         # Plain prose with no digest/URL/ref/path carries no anchor.
+        # Fragile by construction: adding any anchor token to the
+        # fixture prose collapses the count to 0, so the prose must
+        # stay token-free to assert the single anchor line.
         doc = load(FIX / "invalid" / "matrix_evidence_no_anchor.json")
         errors = val.validate_matrix(doc, allow_fixture=True)
         self.assertEqual(len(errors), 1)
@@ -358,8 +364,9 @@ class AuditBoundaryTests(unittest.TestCase):
             self.assertNotIn("Traceback", out)
 
     def test_cli_rejects_mismatched_phase_pair(self):
-        # Issue #85 R4-R7: cross-document identity gate through real
-        # audit.main with a mismatched temp-dir pair.
+        # Issue #85 R4-R7: mismatched temp-dir pair through real
+        # audit.main fails closed (here at matrix validation, before
+        # the cross gate; the gate itself is unit-exercised below).
         matrix = json.loads(self.matrix_text)
         matrix["phase"] = "R4-00-fixture"
         with tempfile.TemporaryDirectory() as tmp:
@@ -370,6 +377,19 @@ class AuditBoundaryTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("phase", out)
             self.assertNotIn("Traceback", out)
+
+    def test_cross_identity_gate_direct(self):
+        # Issue #85 R4-R7: the gate itself, unit-exercised (unreachable
+        # via main when both docs validate strictly -- kept defense in
+        # depth, so the CLI test above cannot reach these lines).
+        prov = {"phase": "R4-00", "issue": 85}
+        matrix = {"phase": "R4-00-fixture", "issue": 86}
+        errors = audit._cross_errors(prov, matrix)
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("cross phase mismatch" in e for e in errors))
+        self.assertTrue(any("cross issue mismatch" in e for e in errors))
+        self.assertEqual(
+            audit._cross_errors(prov, {"phase": "R4-00", "issue": 85}), [])
 
     def test_audit_matrix_rejects_non_dict_cleanly(self):
         # Issue #85 R4-R6: direct audit_matrix call with a non-object

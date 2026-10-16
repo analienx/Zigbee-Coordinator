@@ -308,9 +308,10 @@ def attest(base):
             return 1, ["attest: external proof unavailable "
                        "(ls-tree of cc13xx_cc26xx_sdk failed)"]
         parts = tree_out.split()
-        if len(parts) < 3 or parts[0] != "160000" or parts[2].split("\t")[0] != ti_sdk_sha:
+        if (len(parts) < 4 or parts[0] != "160000" or parts[1] != "commit"
+                or parts[2] != ti_sdk_sha):
             return 1, ["attest: upstream mismatch (cc13xx_cc26xx_sdk gitlink "
-                       "%r != mode 160000 + SDK pin %s)"
+                       "%r != mode 160000 commit + SDK pin %s)"
                        % (tree_out.strip(), ti_sdk_sha)]
         lines.append("upstream OK: cc13xx_cc26xx_sdk gitlink mode 160000 "
                      "equals SDK pin %s" % ti_sdk_sha)

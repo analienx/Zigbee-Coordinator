@@ -134,20 +134,23 @@ jobs:
           fi
           echo "$out" | grep -F "upstream mismatch (vendor 20260310"
           echo "control (b) rejected at vendor content check as required"
-      - name: Negative control (c) koenkk blob mutation must fail blob check
+      - name: Negative control (c) koenkk CHANGELOG blob mutation must fail blob check
+        # Tamper is the CHANGELOG blob (not firmware.patch) so this
+        # control's line is distinctive from control (e), which fails
+        # on firmware.patch: shared greps would prove nothing.
         env:
-          EXPECT_KOENKK_PATCH_BLOB: e015d9a9020e08d049515664693b22a9ce0e1fdc
+          EXPECT_KOENKK_CHANGELOG_BLOB: 25f8bb3fb3bafe22b860d9a00134a2d722272651
         run: |
           rm -rf /tmp/r4neg_c
           cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_c
-          S=e015d9a9020e08d049515664693b22a9ce0e1fdb
-          F=e015d9a9020e08d049515664693b22a9ce0e1fdc
+          S=25f8bb3fb3bafe22b860d9a00134a2d722272650
+          F=25f8bb3fb3bafe22b860d9a00134a2d722272651
           sed -i "s/$S/$F/g" /tmp/r4neg_c/SOURCE_PROVENANCE.json /tmp/r4neg_c/tools/r4_provenance_validate.py
           if out=$(python firmware/slzb-06p7u/r4/tools/r4_upstream_attest.py /tmp/r4neg_c 2>&1); then
             echo "control (c) unexpectedly passed"
             exit 1
           fi
-          echo "$out" | grep -F "upstream mismatch (koenkk"
+          echo "$out" | grep -F "upstream mismatch (koenkk CHANGELOG.md"
           echo "control (c) rejected at koenkk blob check as required"
       - name: Negative control (d) TI release mutation must fail message check
         env:
@@ -163,6 +166,11 @@ jobs:
           echo "$out" | grep -F "upstream mismatch (SDK commit message"
           echo "control (d) rejected at SDK message check as required"
       - name: Negative control (e) koenkk repoint to real HEAD must fail blob check
+        # Assumption labeled in-source (issue #85 re-review): 58dda33d
+        # is the real Koenkk HEAD whose tree blobs differ from the
+        # pinned 20250321 blobs. If the blobs were ever equal, this
+        # control would fail VISIBLY ("unexpectedly passed" -> exit 1),
+        # never pass vacuously: assumption failure is loud, not silent.
         env:
           EXPECT_KOENKK_SHA: 58dda33d834ef09132427cb41721d7d68e11a7a6
         run: |
@@ -175,7 +183,7 @@ jobs:
             echo "control (e) unexpectedly passed"
             exit 1
           fi
-          echo "$out" | grep -F "upstream mismatch (koenkk"
+          echo "$out" | grep -F "upstream mismatch (koenkk firmware.patch"
           echo "control (e) rejected at koenkk blob check as required"
       - name: Negative control (f) vendor URL repoint must fail closed
         run: |
@@ -188,8 +196,8 @@ jobs:
             echo "control (f) unexpectedly passed"
             exit 1
           fi
-          echo "$out" | grep -F "vendor 20260310"
-          echo "control (f) rejected as required (manifest-consistency binds the URL; the positive step proves the manifest URL is actually fetched)"
+          echo "$out" | grep -F "manifest-consistency failed" | grep -F "vendor 20260310"
+          echo "control (f) rejected at manifest-consistency as required (the URL is tuple-bound; the positive step proves the manifest URL is actually fetched)"
       - name: Negative control (g) coherent repoint must fail pin identity
         run: |
           rm -rf /tmp/r4neg_g

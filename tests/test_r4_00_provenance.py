@@ -2,7 +2,8 @@
 
 No hardware, no network, no secrets. Runnable under hosted CI.
 Pins and domains are imported from the validator (single source
-of truth); they are never re-typed here. Fixture docs are validated
+of truth); only the tamper-evidence canaries below re-type reviewed
+literals in-file. Fixture docs are validated
 with explicit allow_fixture=True; the production CLIs (main) are
 always strict (allow_fixture=False) and are exercised through real
 main(argv) calls with temp dirs.
@@ -235,6 +236,12 @@ class ProvenancePinTests(unittest.TestCase):
         self.assertEqual(val.EXPECTED_PINS["vendor_20240710_sha256"],
                          "1e257bc066e7a8db9c12e0b826791cc81d8744b9453355af0f4efce194060d6b")
         self.assertEqual(val.EXPECTED_PINS["ti_sdk_release"], "lpf2-8.33.00.16")
+        self.assertEqual(val.EXPECTED_PINS["koenkk_patch_blob"],
+                         "e015d9a9020e08d049515664693b22a9ce0e1fdb")
+        self.assertEqual(val.EXPECTED_PINS["koenkk_changelog_blob"],
+                         "25f8bb3fb3bafe22b860d9a00134a2d722272650")
+        self.assertEqual(val.EXPECTED_PINS["herdsman_version"], "10.9.1")
+        self.assertEqual(val.EXPECTED_PINS["ti_examples_release"], "lpf2-8.33.00.16")
 
     def test_vendor_tuple_single_faults(self):
         cases = [
@@ -257,7 +264,8 @@ class ProvenancePinTests(unittest.TestCase):
 
     def test_herdsman_sha_flip_fails_singly(self):
         # 40-hex-safe flip (last nibble d->c): only the sha binding
-        # fires; a non-hex flip would double-fire mismatch + not-hex.
+        # fires (herdsman sha carries no hex-format guard, unlike
+        # TI/koenkk, so even a non-hex flip fires just the binding).
         doc = load(FIX / "invalid" / "provenance_herdsman_sha_flip.json")
         errors = val.validate_provenance(doc, allow_fixture=True)
         self.assertEqual(len(errors), 1)
@@ -413,6 +421,17 @@ class ProvenanceCliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("sdk_version must be a string", out)
             self.assertNotIn("Traceback", out)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = self._temp_base(tmp, prov, self.matrix_text)
+            code, out = run_cli(audit.main, ["audit", base])
+            self.assertEqual(code, 1)
+            self.assertIn("sdk_version", out)
+            self.assertNotIn("Traceback", out)
+
+    def test_cli_rejects_object_sdk_version_audit_entrypoint(self):
+        # Issue #85 re-review: object sdk_version through audit.main
+        # (array form is covered for both entrypoints above).
+        prov = (FIX / "invalid" / "provenance_sdk_object.json").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as tmp:
             base = self._temp_base(tmp, prov, self.matrix_text)
             code, out = run_cli(audit.main, ["audit", base])

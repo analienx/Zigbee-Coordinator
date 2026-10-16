@@ -49,6 +49,12 @@ HEX64_SEARCH = re.compile(r"[0-9a-f]{64}")
 # A path-like traceability token: contains a slash and a dotted suffix,
 # e.g. coordinator/Z-Stack_3.x.0/firmware.patch or .supervisor/x.yaml.
 UPSTREAM_PATH_SEARCH = re.compile(r"\S+/\S*\.\S+")
+# SOURCE_CONFIRMED-only path token (issue #85 re-review): a real
+# multi-segment upstream path (at least two slashes), e.g.
+# coordinator/Z-Stack_3.x.0/firmware.patch. A trivial "a/b.c" does
+# not qualify. Used ONLY for the SOURCE_CONFIRMED anchor rule; the
+# general evidence taxonomy above stays permissive.
+SC_PATH_SEARCH = re.compile(r"\S+/\S+/\S*\.\S+")
 # Claim/evidence/verification length bound (trimmed). Real R4-00 strings
 # are a few hundred chars; the bound only rejects runaway pastes.
 TEXT_MAX_LEN = 2000
@@ -524,7 +530,7 @@ def validate_matrix(doc, allow_fixture=False):
             evidence = entry.get("evidence")
             if isinstance(evidence, str) and not (
                     _has_pinned_digest(evidence)
-                    and UPSTREAM_PATH_SEARCH.search(evidence)):
+                    and SC_PATH_SEARCH.search(evidence)):
                 _err(errors, "%s: SOURCE_CONFIRMED requires an exact upstream "
                              "anchor (repo + commit/blob + path); retag future "
                              "intent as PHYSICAL_UNVERIFIED" % where)
