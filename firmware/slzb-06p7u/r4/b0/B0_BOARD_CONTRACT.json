@@ -43,8 +43,8 @@
     {
       "id": "target-part",
       "status": "HARDWARE_OPERATIONALLY_PROVEN",
-      "value": "CC1352P7",
-      "evidence": "Issue #80 comment 6193390974 fitted SLZB-06P7U R1.73 ESP32-S3/CC2652P7, ROM geometry #80 6194649397."
+      "value": "CC2652P7",
+      "evidence": "Fitted SLZB-06P7U R1.73 radio CC2652P7, issue #80 6193390974; separate TI donor projectspec targets CC1352P7_4 (not proof the fitted chip is CC1352P7)."
     },
     {
       "id": "nv-pages",
@@ -105,7 +105,9 @@
       "bsl": "ESP GPIO16 active low",
       "reset": "ESP GPIO21 active low",
       "hardware_flow": "GPIO15/14 declared but active HWFC unproven"
-    }
+    },
+    "ti_donor_target": "CC1352P7_4 (LP donor, source composition only)",
+    "fitted_radio_target": "CC2652P7 (SLZB-06P7U R1.73 board identity)"
   },
   "vendor_20240710_ccfg": {
     "status": "SOURCE_CONFIRMED",
