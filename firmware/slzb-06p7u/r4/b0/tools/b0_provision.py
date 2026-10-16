@@ -103,7 +103,7 @@ def _matches_version(key, binary, output):
         lines = [line.strip() for line in output.splitlines() if line.strip()]
         return len(lines) == 1 and lines[0] in ("1.21.1+3772", "1.21.1.3772")
     if key == "ti_arm_clang":
-        versions = re.findall(r"^TI Arm Clang Compiler\\s+([^\\s]+)\\s*$",
+        versions = re.findall(r"^TI Arm Clang Compiler\s+([^\s]+)\s*$",
                               output, re.MULTILINE)
         return len(versions) == 1 and versions[0] == "3.2.2.LTS"
     if key == "ccs":
