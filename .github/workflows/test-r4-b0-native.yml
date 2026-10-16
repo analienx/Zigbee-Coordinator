@@ -241,7 +241,7 @@ jobs:
           TI_SYSCONFIG_SHA256: ${{ secrets.TI_SYSCONFIG_SHA256 }}
           TI_CLANG_SHA256: ${{ secrets.TI_CLANG_SHA256 }}
         run: |
-          python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py --root /tmp/b0ti --github-env "$GITHUB_ENV"
+          python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py --root /tmp/b0ti --github-env "$GITHUB_ENV" --github-path "$GITHUB_PATH"
       - name: Provision gate (fail closed without toolchain)
         run: |
           export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
