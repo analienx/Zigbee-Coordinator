@@ -1,0 +1,60 @@
+{
+  "schema": "b2-profile-matrix-source-stage-v1",
+  "source_pin": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "base_b0": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "baseline_linked_native_run_id": 38952302280,
+  "baseline_note": "Read authentic B0 ELF/map; not production validation",
+  "profiles": {
+    "P0": {
+      "status": "NATIVE_BASELINE_OBSERVED",
+      "source_routes": 12,
+      "neighbors": 16,
+      "nwk_routes": 40,
+      "direct_child_list": 21,
+      "route_discoveries": 8,
+      "source_relay_depth": 12,
+      "delta_static_tables_bytes": 0,
+      "queue_retry_policy": "B0_UNCHANGED"
+    },
+    "P1": {
+      "status": "NATIVE_CANDIDATE_UNDER_TEST",
+      "source_routes": 192,
+      "neighbors": 64,
+      "nwk_routes": 128,
+      "direct_child_list": 21,
+      "route_discoveries": 8,
+      "source_relay_depth": 12,
+      "delta_static_tables_bytes_expected": 3488,
+      "queue_retry_policy": "B0_UNCHANGED",
+      "mto_policy": "B0_UNCHANGED",
+      "security_nv": "B0_UNCHANGED"
+    },
+    "P2": {
+      "status": "BLOCKED_NO_REPRODUCED_QUEUE_FAILURE",
+      "queue_retry_policy": "NOT_PROPOSED_YET",
+      "linked_effective_values": null,
+      "static_delta_bytes": null
+    },
+    "P3": {
+      "status": "HOSTED_SYNTHETIC_NEGATIVE_ONLY",
+      "expected_result": "SRAM_BUDGET_EXCEEDED",
+      "native_build": false,
+      "not_validated_as_native": true
+    }
+  },
+  "linked_structure_entry_bytes": {
+    "source_routes": 8,
+    "neighbors": 28,
+    "nwk_routes": 8,
+    "direct_child_list": 36,
+    "route_discoveries": 10,
+    "source_relay_depth": 2
+  },
+  "observed_sram_bytes": 147456,
+  "observed_c_irq_stack_bytes": 1024,
+  "observed_heap_linker_start": 536895536,
+  "observed_heap_linker_end": 537017344,
+  "actual_runtime_heap_high_water": null,
+  "physical_rf_verified": false,
+  "B2_SOURCE_READY": false
+}
