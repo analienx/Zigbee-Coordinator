@@ -184,6 +184,21 @@ def main():
     generated["nv_authorized_blank"] = source
     positive(compile_c(source, "nv_authorized_blank"), ("authorized_blank",))
 
+    # Real TI startup/OSAL wrappers: genuine compiled bypass mutations.
+    # A missing pre-MAC gate must reach the MAC boundary and violate the
+    # healthy/fault ordering assertion, not merely fail a text regex.
+    mutation(generated["startup_security"],
+             "if (!b1_sec_validate_restored()) return;",
+             "if (0) return;", "mutant_startup_pre_mac",
+             "checks==1 && mac_calls==0 && sem_calls==0")
+    # Regression to the donor's only-check-NVINTF_FAILURE would silently
+    # accept other non-success read statuses as valid data.
+    mutation(generated["osal_nv"],
+             "if ( pZStackCfg->nvFps.readItem( nvId, ndx, len, buf ) != NVINTF_SUCCESS )",
+             "if ( pZStackCfg->nvFps.readItem( nvId, ndx, len, buf ) == NVINTF_FAILURE )",
+             "mutant_osal_nv_nonzero_status",
+             "osal_nv_read(7,0,1,&value)==NV_OPER_FAILED")
+
     mutation(generated["zmac"],
              "if (b1_nv_runtime_hold_active()) return MAC_NO_RESOURCES;",
              "if (0) return MAC_NO_RESOURCES;", "mutant_zmac_data_hold",
