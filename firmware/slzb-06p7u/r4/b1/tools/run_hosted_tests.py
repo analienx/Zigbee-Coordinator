@@ -182,7 +182,7 @@ def main():
          "--sdk", sdk, "--output", n30_integrated_source], check=True)
     generated["n30_network_mt"] = n30_integrated_source
     positive(compile_c(n30_integrated_source, "n30_network_mt",
-                       admission=False, management=True), ("network_ready_e2e",))
+                       admission=True, management=True), ("network_ready_e2e",))
 
     backend_scenarios = ("healthy", "write_ok", "erase_ok", "crc_corrupt", "header_corrupt",
         "init_read_fail", "init_repair", "init_scan_corrupt", "init_page_signature",
