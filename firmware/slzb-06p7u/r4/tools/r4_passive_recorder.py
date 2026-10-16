@@ -209,6 +209,14 @@ class PassiveR4Recorder:
                 out.flush()
                 os.fsync(out.fileno())
             os.replace(tmp, target)
+            # Rename is not a durability barrier on POSIX. If the parent
+            # directory cannot be fsynced, report failure, not success.
+            if os.name == "posix":
+                fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
         finally:
             try:
                 tmp.unlink(missing_ok=True)
@@ -219,7 +227,15 @@ class PassiveR4Recorder:
     @staticmethod
     def read_last_good(path):
         """Read only the allowlisted snapshot schema; never execute stored data."""
-        obj = json.loads(Path(path).read_text(encoding="utf-8"))
+        target = Path(path)
+        if target.is_symlink() or target.parent.is_symlink():
+            raise ValueError("symlink snapshot refused")
+        # Never read an unbounded or malicious persisted JSON blob.
+        with target.open("rb") as src:
+            raw = src.read(1_048_577)
+        if len(raw) > 1_048_576:
+            raise ValueError("snapshot file exceeds maximum supported size")
+        obj = json.loads(raw.decode("utf-8"))
         if (not isinstance(obj, dict) or obj.get("schema") != "r4-offline-host-observation-v1"
                 or obj.get("root_cause") != "UNDETERMINED"
                 or obj.get("source") != "SYNTHETIC_REFERENCE_MODEL"
@@ -258,4 +274,18 @@ class PassiveR4Recorder:
             _int(obj["last_at_ms"], "last_at_ms")
         if obj["window_ms"] != WINDOW_MS:
             raise ValueError("unexpected window")
+        # A forged large integer, reordered history or time beyond the
+        # last accepted event must not be treated as recovered evidence.
+        previous = None
+        for event in obj["recent_events"]:
+            _int(event["at_ms"], "event.at_ms")
+            if previous is not None and event["at_ms"] < previous:
+                raise ValueError("snapshot history clock reversed")
+            if obj["last_at_ms"] is None or event["at_ms"] > obj["last_at_ms"]:
+                raise ValueError("history exceeds last event")
+            previous = event["at_ms"]
+        if obj["last_at_ms"] is None and obj["recent_events"]:
+            raise ValueError("history without timestamp")
+        if len(set(obj["signals"])) != len(obj["signals"]):
+            raise ValueError("duplicate classification signal")
         return obj
