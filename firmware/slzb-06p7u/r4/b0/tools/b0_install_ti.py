@@ -60,7 +60,9 @@ def install(destination, hashes):
         raise RuntimeError("installed TI binaries missing or ambiguous")
     checked([str(syscfg[0]), "--version"])
     checked([str(clang[0]), "--version"])
-    return {"CCS_ECLIPSE": str(eclipse[0]), "SYSCONFIG_TOOL": str(syscfg_dir),
+    return {"CCS_ECLIPSE": str(eclipse[0]),
+            "B0_CCS_PACKAGE_PATH": str(ccs_dist),
+            "SYSCONFIG_TOOL": str(syscfg_dir),
             "SYSCONFIG_CLI": str(syscfg[0]),
             "TICLANG_ARMCOMPILER": str(clang[0].parent.parent)}
 
