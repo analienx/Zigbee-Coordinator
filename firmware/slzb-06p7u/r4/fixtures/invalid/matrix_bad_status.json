@@ -1,0 +1,1 @@
+{"entries": [{"claim": "bad status + hardware proven", "domain": "startup-order", "evidence": "fx", "id": "B-01", "status": "HARDWARE_PROVEN"}, {"claim": "bad enum", "domain": "c-irq-stack", "evidence": "fx", "id": "B-02", "status": "CONFIRMED"}], "issue": 85, "phase": "R4-00-fixture", "schema": "r4-parity-matrix-v1"}

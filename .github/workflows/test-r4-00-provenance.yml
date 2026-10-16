@@ -1,0 +1,28 @@
+name: R4-00 provenance and parity
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/p7u-r4-stock-derived-redesign
+
+permissions:
+  contents: read
+
+jobs:
+  r4-00-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile R4-00 tools and tests
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/tools/r4_provenance_validate.py firmware/slzb-06p7u/r4/tools/r4_parity_audit.py tests/test_r4_00_provenance.py tests/test_r4_00_parity.py
+      - name: Run R4-00 provenance tests
+        run: python -m unittest -v tests.test_r4_00_provenance
+      - name: Run R4-00 parity tests
+        run: python -m unittest -v tests.test_r4_00_parity
