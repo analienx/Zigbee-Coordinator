@@ -83,7 +83,7 @@ class B0GeneratedBoardTests(unittest.TestCase):
     def test_active_uart_count_object_and_pin_mux_mutations_fail(self):
         cases = [
             (SRC.replace("#define CONFIG_UART2_COUNT 1",
-                         "#define CONFIG_UART2_COUNT 0"), "UART2_CONFIG_COUNT"),
+                         "#define CONFIG_UART2_COUNT 0"), "UART2_COUNT_INVALID"),
             (SRC.replace("&uart2CC26X2HWAttrs[CONFIG_DISPLAY_UART]",
                          "NULL"), "ACTIVE_UART_HWATTR_POINTER"),
             (SRC.replace("IOC_PORT_MCU_UART0_RX",
