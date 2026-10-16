@@ -239,7 +239,7 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
       - name: Upload native artifacts and receipts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75bdb9e924fd1b17b33b9e83e5b # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: r4-b0-native-${{ github.sha }}
           path: |
