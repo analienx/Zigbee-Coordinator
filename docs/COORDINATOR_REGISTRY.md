@@ -26,7 +26,7 @@ This file is the canonical repository-level map of coordinator hardware, radio s
   - `tests/test_p10_*.py`
   - `docs/P10_*.md`
   - `skills/p10-zstack-restore-recovery/`
-- Historical plan reference: `plan/mr4u-p10-ti-znp-control` (not active R4 plan).
+- Historical TI planning branches were retired during the 16 October 2026 cleanup. Their ref history is in the verified pre-cleanup Git bundle; they are not current branch targets.
 
 The `P10` identifier describes the TI CC2674P10 family, not all SMLIGHT coordinators; `P7U` is not the same chipset or firmware target.
 
@@ -116,8 +116,8 @@ Examples:
 feat/p7u-r4-stock-derived-redesign
 feat/p7u-r4-b0-native-issue90
 feat/r4-b1-direct-nv-safety-20261016
-plan/mr4u-p10-ti-znp-control
-exp/mr4u-p10-ti830-prod-r0
+feat/p7u-r4-b0-native-issue90
+exp/mr4u-p10-ti832-kctrl-r0
 fix/mr4u-p10-znp-resource-leak
 exp/sonoff-mg24-p015-rf-shaping
 docs/slzb-06p7-recovery-notes
