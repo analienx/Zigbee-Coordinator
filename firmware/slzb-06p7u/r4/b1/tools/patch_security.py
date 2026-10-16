@@ -434,7 +434,7 @@ def patch_startup(source: str) -> str:
         '    b1_management_note_mt_registered();', 'MT actual registration lifecycle')
     # Header and helper symbols compile within the existing donor source unit.
     return replace_once(source,
-        '#include "zcomdef.h"', '#include "zcomdef.h"\n'
+        '#include "zstackconfig.h"', '#include "zstackconfig.h"\n'
         'extern int b1_sec_validate_restored(void);\n'
         'extern void b1_management_transport_failed(uint8_t reason);\n'
         'extern void b1_management_note_mt_registered(void);', 'startup security declarations')
