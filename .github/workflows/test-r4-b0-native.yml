@@ -469,6 +469,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          # Re-run the independent B0 image/CCFG/NV geometry audit on all
+          # downloaded native artifacts; do not trust uploaded JSON receipts.
+          for profile in p0 p1a p1b; do
+            python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit \
+              firmware/slzb-06p7u/r4/b0 \
+              --artifacts "/tmp/b2-compare/$profile/b0out"
+          done
           python tools/b2_compare_native.py \
             --p0 /tmp/b2-compare/p0 \
             --p1a /tmp/b2-compare/p1a \
