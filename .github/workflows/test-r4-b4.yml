@@ -32,7 +32,7 @@ jobs:
           python -m py_compile firmware/slzb-06p7u/r4/b4/*.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py tests/test_r4_b4_*.py
       - name: Run original #87 contract and recorder regressions plus B4 attacks
         run: |
-          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source
+          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source tests.test_r4_b4_replays tests.test_r4_b4_native
       - name: Re-run adversarial source and protocol checks independently
         run: python -m unittest -v tests.test_r4_b4_source tests.test_r4_b4_protocol
 
@@ -66,6 +66,14 @@ jobs:
       - name: Assert stock SYS and single ZNP owner source invariants
         run: |
           python firmware/slzb-06p7u/r4/b4/b4_verify_source.py --ti /tmp/b4-sources/ti --herdsman /tmp/b4-sources/herdsman
+      - name: Verify experimental pinned TI patch on disposable source and never conflate source with native linkage
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_native_patch.py --sdk /tmp/b4-sources/ti --receipt /tmp/b4-native-source-only.json
+          python -c 'import json; d=json.load(open("/tmp/b4-native-source-only.json")); assert d["stage"]=="PATCHED_DISPOSABLE_SDK_NOT_LINKED"; assert d["valid_counter_indices"]==[4]'
+      - name: Verify pinned herdsman single-owner overlay exists and remains default-off
+        run: |
+          python host/r4-b4/herdsman_overlay.py --checkout /tmp/b4-sources/herdsman --receipt /tmp/b4-herdsman-source-only.json
+          python -c 'import json; d=json.load(open("/tmp/b4-herdsman-source-only.json")); assert d["default_off"] is True; assert d["serial_owner"]=="EXISTING_ZNP_ONLY"'
       - name: Explicitly deny a native linked or installed claim
         run: |
           test ! -e firmware/slzb-06p7u/r4/b4/native-linked.ok
