@@ -26,7 +26,8 @@ enum {
     B1_STAGE_NV_HEADER_CANDIDATE = 1,
     B1_STAGE_HOLD_NV = 2,
     B1_STAGE_HOLD_SECURITY = 3,
-    B1_STAGE_HOLD_TRANSPORT = 4
+    B1_STAGE_HOLD_TRANSPORT = 4,
+    B1_STAGE_NETWORK_READY = 5
 };
 enum {
     B1_FLAG_MT_HANDLER_REACHED = 1u,
@@ -58,6 +59,10 @@ int b1_management_npi_initialized(void);
 int b1_management_transport_unavailable(void);
 void b1_management_note_mt_registered(void);
 int b1_management_mt_registered(void);
+/* Attest readiness only from the TI ZDO coordinator transition and coherent
+ * restored security / durable NWK frame counter. Never a timer or SYS_PING. */
+void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore_ok);
+int b1_management_network_ready(void);
 /* Called only at the real MT_ProcessIncoming dispatch boundary. The flag
  * proves dispatch execution, not successful UART transmission or host receipt. */
 uint8_t b1_management_mt_filter(const uint8_t *frame,
