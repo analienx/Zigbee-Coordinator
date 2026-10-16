@@ -31,6 +31,8 @@ typedef struct {
 /* Sticky, monotonically asserted on backend failures, never auto-cleared. */
 void b1_nv_runtime_hold_latch(void);
 int b1_nv_runtime_hold_active(void);
+/* Header-pair candidate ONLY, not a verified existing network or key. */
+int b1_nv_existing_header_candidate(void);
 
 b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
                                bool factory_new_authorized);
