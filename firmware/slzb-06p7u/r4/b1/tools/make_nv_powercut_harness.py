@@ -109,8 +109,12 @@ static int_fast16_t media_read(void *ctx,uint32_t off,uint8_t *p,uint32_t n)
 }
 int main(void)
 {
-  unsigned tests=0u, safe_holds=0u, admitted=0u, observed_ops=0u;
+  static volatile unsigned tests=0u, safe_holds=0u, admitted=0u, observed_ops=0u;
   fixture();
+  memcpy(before,nv,sizeof(nv));
+  NVOCMP_failF=NVINTF_NOTREADY;
+  assert(NVOCMP_initNvApi(NULL)==NVINTF_SUCCESS);
+  assert(memcmp(before,nv,sizeof(nv))==0);
   {
     b1_nv_probe_result probe=b1_nv_probe(media_read,NULL,false);
     assert(probe.code==B1_NV2_HEADER_CANDIDATE);
@@ -123,8 +127,8 @@ int main(void)
     total=write_calls+erase_calls;
     assert(total>0u && total<24u);
     observed_ops+=total;
-    for(unsigned cut=1u;cut<=total;++cut) {
-      for(unsigned partial=0u;partial<2u;++partial) {
+    for(volatile unsigned cut=1u;cut<=total;++cut) {
+      for(volatile unsigned partial=0u;partial<2u;++partial) {
         b1_nv_probe_result probe;
         uint8_t flash_before[B1_NV2_REGION_SIZE];
         reset_trial();
