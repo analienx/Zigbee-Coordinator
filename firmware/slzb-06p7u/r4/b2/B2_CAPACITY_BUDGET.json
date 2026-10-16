@@ -1,0 +1,104 @@
+{
+  "schema": "r4-b2-p0-p1-native-linked-capacity-evidence-v1",
+  "status": "HOSTED_NATIVE_LINKED_REPRODUCED_P1_TWICE_NOT_ROUTING_QUALIFIED",
+  "verified_source_sha": "f18d962af6b3976a196faf869ebca7d1609c80a5",
+  "b0_ancestor": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "ti_sdk_sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "github_actions_run_id": 38964092055,
+  "artifacts": {
+    "P0": {
+      "artifact_id": 12074104151,
+      "elf_sha256": "9ae5b2f12baea84b9a68eac015052194dd29774e3d1209d90303c55c36d56549",
+      "bin_sha256": "6bf9def769cbbdf41a7e876ec745a067fffc862b0ba6b4adc4acda1bc224748d",
+      "xml_sha256": "dc9bc11033c6c5294739607dda983748251d52b649a1e488dc658e0b8563257d"
+    },
+    "P1_replica1": {
+      "artifact_id": 12074639024,
+      "elf_sha256": "54427f7e2712ba45b9f8f9ef5122aa88e946b0d210917992273083bf0fbd780d",
+      "bin_sha256": "105fa0a3cf35d1ed0d25f42c2a7b68ce858144c9316c19011f9b05cb9ae2762e",
+      "xml_sha256": "febf234e2be5ff928d5aa28c49ac7e8512307d0da7c01cda722634196cd0e81c"
+    },
+    "P1_replica2": {
+      "artifact_id": 12074539365,
+      "elf_sha256": "54427f7e2712ba45b9f8f9ef5122aa88e946b0d210917992273083bf0fbd780d",
+      "bin_sha256": "105fa0a3cf35d1ed0d25f42c2a7b68ce858144c9316c19011f9b05cb9ae2762e",
+      "xml_sha256": "2836c3a3dafc05138bcd4434bead873681b44e06f53b16e156f54b382cf51585"
+    }
+  },
+  "observed_tables": {
+    "source_routes": {
+      "entry_bytes": 8,
+      "p0_count": 12,
+      "p1_count": 192,
+      "p0_bytes": 96,
+      "p1_bytes": 1536
+    },
+    "neighbors": {
+      "entry_bytes": 28,
+      "p0_count": 16,
+      "p1_count": 64,
+      "p0_bytes": 448,
+      "p1_bytes": 1792
+    },
+    "nwk_routes": {
+      "entry_bytes": 8,
+      "p0_count": 40,
+      "p1_count": 128,
+      "p0_bytes": 320,
+      "p1_bytes": 1024
+    },
+    "children": {
+      "entry_bytes": 36,
+      "p0_count": 21,
+      "p1_count": 21,
+      "p0_bytes": 756,
+      "p1_bytes": 756
+    },
+    "route_requests": {
+      "entry_bytes": 10,
+      "p0_count": 8,
+      "p1_count": 8,
+      "p0_bytes": 80,
+      "p1_bytes": 80
+    },
+    "relay_path": {
+      "entry_bytes": 2,
+      "p0_count": 12,
+      "p1_count": 12,
+      "p0_bytes": 24,
+      "p1_bytes": 24
+    }
+  },
+  "sram_linker_address_space": {
+    "total_bytes": 147456,
+    "P0": {
+      "below_heap_bytes": 24624,
+      "heap_span_bytes": 121808,
+      "above_heap_bytes": 1024
+    },
+    "P1": {
+      "below_heap_bytes": 28112,
+      "heap_span_bytes": 118320,
+      "above_heap_bytes": 1024
+    },
+    "static_table_delta_bytes": 3488,
+    "runtime_heap_high_water_bytes": null,
+    "runtime_heap_free_bytes": null,
+    "rtos_task_stack_peak_bytes": null,
+    "fragmentation_bytes": null
+  },
+  "reproducibility": {
+    "independent_P1_runs": 2,
+    "P1_BIN_bit_identical": true,
+    "P1_ELF_bit_identical": true,
+    "P1_XML_bit_identical": false,
+    "reason": "Linker reports may contain nondeterministic ordering/paths; do not require XML byte identity when independently audited."
+  },
+  "scope": {
+    "no_real_mesh_traffic": true,
+    "not_rf_qualified": true,
+    "no_security_persistence_modifications": true,
+    "B2_SOURCE_READY": false
+  },
+  "source_note": "This checked-in JSON is a compact read-only digest of exact run 38964092055, not proof for later source SHAs or a full B2 acceptance."
+}
