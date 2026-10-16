@@ -45,6 +45,7 @@ b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
     b1_nv_probe_result result = {B1_NV_HOLD_NO_READER, 0, 0, 0, 0};
     uint8_t chunk[32];
     uint8_t hdr[4];
+    uint8_t page_states[B1_NV2_PAGE_COUNT] = {0xFFu, 0xFFu};
     uint32_t page;
     if (reader == NULL) return result;
     for (page = 0; page < B1_NV2_PAGE_COUNT; ++page) {
@@ -70,6 +71,7 @@ b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
         if (all_ff) {
             ++result.blank_pages;
         } else if (b1_nv2_known_header(hdr)) {
+            page_states[page] = hdr[0];
             ++result.candidate_pages;
         } else {
             result.code = B1_NV_HOLD_UNKNOWN_LAYOUT;
@@ -81,7 +83,16 @@ b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
         result.code = factory_new_authorized
             ? B1_NV_FACTORY_AUTHORIZED : B1_NV_HOLD_FACTORY_NOT_AUTHORIZED;
     } else if (result.candidate_pages == B1_NV2_PAGE_COUNT) {
-        result.code = B1_NV2_HEADER_CANDIDATE;
+        /* The actual two-page NVOCMP_initNv donor erases the tail when
+         * there is no PGXDST and may compact a PGXSRC pair. Only a
+         * source-supported active+destination pair passes this gate.
+         * An interrupted compaction is not silently repaired. */
+        const int active0 = page_states[0] == 0x7Cu || page_states[0] == 0x78u;
+        const int active1 = page_states[1] == 0x7Cu || page_states[1] == 0x78u;
+        const int dest0 = page_states[0] == 0xFEu;
+        const int dest1 = page_states[1] == 0xFEu;
+        result.code = ((active0 && dest1) || (active1 && dest0))
+            ? B1_NV2_HEADER_CANDIDATE : B1_NV_HOLD_MIXED_LAYOUT;
     } else {
         /* Formatted+erased may be a legitimate interrupted compaction,
          * but we have no source-proven safe recovery yet: do not mutate it. */
