@@ -381,6 +381,17 @@ jobs:
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+      - name: B2 read-only linked baseline from actual B0 ELF (not physical proof)
+        if: github.head_ref == 'feat/p7u-r4-b2-routing-capacity' || github.ref_name == 'feat/p7u-r4-b2-routing-capacity'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_collect_native_evidence.py \
+            --artifacts /tmp/b0out \
+            --out /tmp/b0out/b2-linked-baseline \
+            --source-sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID"
+          cat /tmp/b0out/b2-linked-baseline/BASELINE_ELF_SYMBOLS.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
