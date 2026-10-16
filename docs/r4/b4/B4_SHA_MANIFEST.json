@@ -1,0 +1,24 @@
+{
+  "schema": "b4-source-research-provenance-v1",
+  "repo": "analienx/Zigbee-Coordinator",
+  "issue": 98,
+  "pr": 100,
+  "base_commit": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "sdk": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "examples": "87ff5b638b632050228a7504f35cf3b95581c278",
+  "herdsman": "0968f979d558874b17396c96b66382d4236bbdcd",
+  "installed_z2m_version": "NOT_VERIFIED",
+  "installed_herdsman_version": "NOT_VERIFIED",
+  "toolchain": {
+    "ccs": "12.8.0.00012",
+    "ti_arm_clang": "3.2.2.LTS",
+    "sysconfig": "1.21.1.3772",
+    "host": "GitHub Ubuntu 22.04"
+  },
+  "artifact_sha256s": "NOT_YET_AVAILABLE",
+  "native_linked": false,
+  "host_compiled": "PENDING_ACTIONS",
+  "physical_verified": false,
+  "combined_integration": false,
+  "independent_review": false
+}
