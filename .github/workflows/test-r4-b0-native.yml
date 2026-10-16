@@ -293,8 +293,9 @@ jobs:
       # the real CCS headless build. Fixture vectors in
       # firmware/slzb-06p7u/r4/b0/fixtures/ are unit oracle sanity
       # inputs only and are NEVER audited here as native proof.
-      - name: Cache authenticated TI toolchain archives
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - name: Restore checksum-pinned TI distribution cache
+        id: ti_archive_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/b0ti/downloads
           key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
@@ -310,6 +311,12 @@ jobs:
           TI_CLANG_SHA256: ${{ secrets.TI_CLANG_SHA256 }}
         run: |
           python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py --root /tmp/b0ti --github-env "$GITHUB_ENV" --github-path "$GITHUB_PATH"
+      - name: Save authenticated TI archives before potentially failing compilation
+        if: steps.ti_archive_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/b0ti/downloads
+          key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
       - name: Provision gate (fail closed without toolchain)
         run: |
           export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
