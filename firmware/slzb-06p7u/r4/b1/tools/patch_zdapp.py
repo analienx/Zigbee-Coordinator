@@ -47,6 +47,24 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
     return;
   }
 
+  /* A populated existing NV header pair must never advance its counter
+   * while the mandatory NWK key is absent or all zero. Key bytes never
+   * appear in diagnostics and are wiped on all paths. */
+  if (b1_nv_existing_header_candidate())
+  {
+    nwkActiveKeyItems keyItems = {0};
+    uint8_t nullKey[SEC_KEY_LEN] = {0};
+    uint8_t status = osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(keyItems), &keyItems);
+    uint8_t valid = status == ZSUCCESS &&
+                    !OsalPort_memcmp(keyItems.active.key, nullKey, SEC_KEY_LEN);
+    memset(&keyItems, 0, sizeof(keyItems));
+    if (!valid)
+    {
+      b1_nv_runtime_hold_latch();
+      return;
+    }
+  }
+
   /* Missing optional entries are allowed. Any actual failed backend read
    * is separately latched by NVOCMP and must end restoration immediately. */
   for (i = 0; i < gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES; i++)
@@ -142,23 +160,31 @@ def patch(source: str) -> str:
 
     key_signature = "uint8_t ZDApp_RestoreNwkKey( uint8_t incrFrmCnt )"
     old_key = extract_function(source, key_signature)
-    new_key = old_key
-    new_key = replace_once(new_key,
-        "  nwkActiveKeyItems keyItems;",
-        "  nwkActiveKeyItems keyItems = {0};", "zero-initialize key local")
-    new_key = replace_once(new_key,
-        "  ZDApp_RestoreNwkSecMaterial();",
-        "  ZDApp_RestoreNwkSecMaterial();\n"
-        "  if (b1_nv_runtime_hold_active()) return FALSE;",
-        "never read/publish keys after counter failure")
-    new_key = replace_once(new_key,
-        "  return ( ret );",
-        "  if (ret != TRUE && b1_nv_existing_header_candidate())\n"
-        "  {\n"
-        "    b1_nv_runtime_hold_latch(); /* N12: mandatory NWK key missing */\n"
-        "  }\n"
-        "  memset(&keyItems, 0x00, sizeof(keyItems));\n"
-        "  return ( ret );",
-        "key missing on restored existing network")
-    source = replace_once(source, old_key, new_key, "restored key gate")
+    new_key = r"""uint8_t ZDApp_RestoreNwkKey( uint8_t incrFrmCnt )
+{
+  nwkActiveKeyItems keyItems = {0};
+  uint8_t nullKey[SEC_KEY_LEN] = {0};
+  uint8_t ret = FALSE;
+
+  /* Never publish a frame counter if the mandatory key is absent. */
+  if (b1_nv_runtime_hold_active()) return FALSE;
+  if (osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(keyItems), &keyItems) == ZSUCCESS)
+  {
+    if (!OsalPort_memcmp(keyItems.active.key, nullKey, SEC_KEY_LEN))
+    {
+      ret = TRUE;
+    }
+  }
+  memset(&keyItems, 0, sizeof(keyItems));
+  if (ret != TRUE)
+  {
+    if (b1_nv_existing_header_candidate()) b1_nv_runtime_hold_latch();
+    return FALSE;
+  }
+  ZDApp_RestoreNwkSecMaterial();
+  if (b1_nv_runtime_hold_active()) return FALSE;
+  return TRUE;
+}"""
+    source = replace_once(source, old_key, new_key, "key before counter")
+
     return source
