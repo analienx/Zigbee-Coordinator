@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 from patch_zdapp import patch as patch_zdapp
-from patch_security import patch as patch_security, patch_zglobals
+from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
 import subprocess
@@ -20,8 +20,12 @@ SDK_ZMAC = "source/ti/zstack/zmac/f8w/zmac.c"
 SDK_ZDAPP = "source/ti/zstack/stack/zdo/zd_app.c"
 SDK_SECURITY = "source/ti/zstack/stack/zdo/zd_sec_mgr.c"
 SDK_ZGLOBALS = "source/ti/zstack/stack/sys/zglobals.c"
+SDK_STARTUP = "source/ti/zstack/startup/zstackstartup.c"
+SDK_OSAL_NV = "source/ti/zstack/osal/osal_nv.c"
 SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
 SHA_ZGLOBALS = "0a1d7d2a61a88d1a6bb6e4bc5e359e71e1719024"
+SHA_STARTUP = "72073f7a90d3de183533e84c3396e239343731e5"
+SHA_OSAL_NV = "65c7667475627989cbe2e3f5fdd46335b50eb660"
 HERDSMAN_FILE = ".b1-prerequisites/herdsman-definition.ts"
 SHA_NV = "01b2b0827d278c10c012b33e5791e53bc5662f10"
 SHA_MAIN = "608adc97370be3910a96f5dcc356d0feffb79d70"
@@ -47,8 +51,12 @@ def overlay(sdk, b1_dir):
     src_zdapp = sdk / SDK_ZDAPP
     src_security = sdk / SDK_SECURITY
     src_zglobals = sdk / SDK_ZGLOBALS
+    src_startup = sdk / SDK_STARTUP
+    src_osal_nv = sdk / SDK_OSAL_NV
     security = src_security.read_text(encoding="utf-8")
     zglobals = src_zglobals.read_text(encoding="utf-8")
+    startup = src_startup.read_text(encoding="utf-8")
+    osal_nv = src_osal_nv.read_text(encoding="utf-8")
     source = src_nv.read_text(encoding="utf-8")
     main = src_main.read_text(encoding="utf-8")
     zmac = src_zmac.read_text(encoding="utf-8")
@@ -57,7 +65,9 @@ def overlay(sdk, b1_dir):
             or git_blob_sha(zmac) != SHA_ZMAC
             or git_blob_sha(zdapp) != SHA_ZDAPP
             or git_blob_sha(security) != SHA_SECURITY
-            or git_blob_sha(zglobals) != SHA_ZGLOBALS):
+            or git_blob_sha(zglobals) != SHA_ZGLOBALS
+            or git_blob_sha(startup) != SHA_STARTUP
+            or git_blob_sha(osal_nv) != SHA_OSAL_NV):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
         raise RuntimeError("BLOCKED: missing B1 linked admission C/H files")
@@ -332,6 +342,8 @@ def overlay(sdk, b1_dir):
     zdapp = patch_zdapp(zdapp)
     security = patch_security(security)
     zglobals = patch_zglobals(zglobals)
+    startup = patch_startup(startup)
+    osal_nv = patch_osal_nv(osal_nv)
 
     main = replace_once(main, '#include "nvocmp.h"',
                         '#include "nvocmp.h"\n#include "b1_management.h"', "main management header")
@@ -389,6 +401,8 @@ def overlay(sdk, b1_dir):
     src_zdapp.write_text(zdapp, encoding="utf-8")
     src_security.write_text(security, encoding="utf-8")
     src_zglobals.write_text(zglobals, encoding="utf-8")
+    src_startup.write_text(startup, encoding="utf-8")
+    src_osal_nv.write_text(osal_nv, encoding="utf-8")
     return {
         "schema": "r4-b1-admission-overlay-v2",
         "source_sha": source_sha,
@@ -401,6 +415,8 @@ def overlay(sdk, b1_dir):
         "upstream_zglobals_blob": SHA_ZGLOBALS,
         "modified_security_sha256": hashlib.sha256(security.encode()).hexdigest(),
         "modified_zglobals_sha256": hashlib.sha256(zglobals.encode()).hexdigest(),
+        "modified_startup_sha256": hashlib.sha256(startup.encode()).hexdigest(),
+        "modified_osal_nv_sha256": hashlib.sha256(osal_nv.encode()).hexdigest(),
         **{"management_source_%d_sha256" % i: hashlib.sha256(text.encode()).hexdigest()
            for i, (relative, text) in enumerate(management_sources.items())},
         "additional_source_bindings": {
@@ -408,6 +424,8 @@ def overlay(sdk, b1_dir):
                for i, relative in enumerate(management_sources)},
             "modified_security_sha256": SDK_SECURITY,
             "modified_zglobals_sha256": SDK_ZGLOBALS,
+            "modified_startup_sha256": SDK_STARTUP,
+            "modified_osal_nv_sha256": SDK_OSAL_NV,
         },
         "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
             "b1_management_mt_filter", "b1_security_runtime_hold_latch",
