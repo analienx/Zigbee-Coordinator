@@ -19,7 +19,13 @@ def one(root, suffix):
 def collect(workspace, out, clang_dir, build_log):
     out.mkdir(parents=True, exist_ok=True)
     elf = one(workspace, ".out")
-    xml = one(workspace, "linkinfo.xml")
+    # A real CCS projectspec names its linker report after the project,
+    # not necessarily "znp_linkInfo.xml". Restrict to this one project.
+    xmls = [p for p in workspace.rglob("*linkInfo.xml") if p.is_file()
+            and p.name.startswith("znp_")]
+    if len(xmls) != 1:
+        raise RuntimeError("expected exactly one ZNP linkInfo.xml, found %d" % len(xmls))
+    xml = xmls[0]
     hexfile = one(workspace, ".hex")
     if not build_log.is_file():
         raise RuntimeError("missing actual CCS build log")
