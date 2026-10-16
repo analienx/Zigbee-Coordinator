@@ -42,6 +42,24 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("R4-B0 image audit OK", message)
 
+    def test_link_xml_rejects_forged_flash_extent(self):
+        xml = (FIX / "artifacts-valid" / "znp_linkInfo.xml").read_text()
+        xml = xml.replace("<length>0x000AA000</length>",
+                          "<length>0x000A9000</length>", 1)
+        evidence, error = audit._parse_link_xml(xml, "znp.out", 0)
+        self.assertIsNone(evidence)
+        self.assertIn("geometry mismatch", error)
+
+    def test_link_xml_rejects_duplicate_region(self):
+        xml = (FIX / "artifacts-valid" / "znp_linkInfo.xml").read_text()
+        target = ("<memory_area><name>FLASH_NV</name><origin>0xAA000</origin>"
+                  "<length>0x4000</length><used_space>0x0</used_space></memory_area>")
+        self.assertIn(target, xml)
+        xml = xml.replace(target, target + target, 1)
+        evidence, error = audit._parse_link_xml(xml, "znp.out", 0)
+        self.assertIsNone(evidence)
+        self.assertIn("duplicate/invalid memory_area", error)
+
     def test_corrupted_image_fails_hash(self):
         code, message = self._audit("artifacts-bad-hash")
         self.assertEqual(code, 1)
