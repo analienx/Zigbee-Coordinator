@@ -158,6 +158,9 @@ def main():
         ("npi_queue", "make_npi_queue_harness.py", "--source",
          sdk / "source/ti/zstack/npi/npi_task.c",
          ("healthy", "record_oom", "container_oom", "held_drop")),
+        ("uart_rearm", "make_uart_rearm_harness.py", "--source",
+         sdk / "source/ti/zstack/npi/npi_tl_uart.c",
+         ("healthy", "overflow", "preheld")),
     ):
         source = work / f"actual_{name}.c"
         run([sys.executable, b1 / "tools" / generator,
