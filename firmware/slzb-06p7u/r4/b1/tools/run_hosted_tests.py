@@ -197,7 +197,7 @@ def main():
              "mutant_nvs_zero_sector", "division by zero")
     mutation(generated["nvocmp_init"],
              "if (NVOCMP_gMutexPri == NULL)", "if (0)",
-             "mutant_nvs_mutex", "nvs_init_calls == 0")
+             "mutant_nvs_mutex", "NVOCMP_initNvApi(NULL) == NVINTF_FAILURE")
     mutation(generated["management"],
              "uint8_t b1_action = b1_management_mt_filter(pBuf, b1_reply, &b1_error);",
              "uint8_t b1_action = b1_management_mt_filter(pBuf, b1_reply, &b1_error);\n"
