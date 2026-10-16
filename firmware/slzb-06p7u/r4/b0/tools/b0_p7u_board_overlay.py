@@ -46,14 +46,14 @@ def transform(original):
     if not isinstance(original, str):
         raise ValueError("SysConfig source must be text")
     src = original.replace("\r\n", "\n")
+    if any(x in src for x in ("P7U_R4_UART", "P7U_R4_VENDOR_20240710_CCFG",
+                              "device.enableDCDC =")):
+        raise ValueError("B0_P7U_BOARD_OVERRIDE_ALREADY_PRESENT")
     if (src.count(HW_ANCHOR) != 1 or src.count(CCFG_ANCHOR) != 1
             or src.count('Display_UART.uart.$name = "CONFIG_DISPLAY_UART";') != 1
             or src.count('scripting.addModule("/ti/devices/CCFG")') != 1
             or src.count("// @cliArgs --board /ti/boards/LP_CC1352P7_4") != 1):
         raise ValueError("B0_P7U_DONOR_SYSCFG_ANCHOR_DRIFT")
-    if any(x in src for x in ("P7U_R4_UART", "P7U_R4_VENDOR_20240710_CCFG",
-                              "device.enableDCDC =")):
-        raise ValueError("B0_P7U_BOARD_OVERRIDE_ALREADY_PRESENT")
     src = src.replace(HW_ANCHOR, "", 1)
     anchor = 'Display_UART.uart.$name = "CONFIG_DISPLAY_UART";\n'
     src = src.replace(anchor, anchor + UART_PIN_OVERRIDE, 1)
