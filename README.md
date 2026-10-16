@@ -8,33 +8,36 @@ This repository is intentionally **hardware-neutral at the top level**. Coordina
 
 | Coordinator ID | Hardware | Zigbee radio / stack | Role |
 |---|---|---|---|
-| `mr4u-p10` | SMLIGHT SLZB-MR4U | TI CC2674P10 / Z-Stack | **Current primary coordinator and active investigation target** |
+| `slzb-06p7u` | SMLIGHT SLZB-06P7U | TI CC2652P7 / Z-Stack ZNP | **Primary development/reliability target: R4 (not production-qualified)** |
+| `mr4u-p10` | SMLIGHT SLZB-MR4U | TI CC2674P10 / Z-Stack | Preserved finalized P10 reference/fallback and historical diagnosis |
 | `sonoff-mg24` | SONOFF Dongle Max / Dongle-M | Silicon Labs EFR32MG24 / Ember | Previous production coordinator, rollback/reference platform and historical firmware experiments |
-| `slzb-06p7` | SMLIGHT SLZB-06P7 | TI P7-class / Z-Stack | Historical predecessor / recovery reference |
+| `slzb-06p7` | SMLIGHT SLZB-06P7 | TI P7-class / Z-Stack | Legacy historical entry; do not conflate with the SLZB-06P7U R4 board |
 | `mr4u-mg26` | SMLIGHT SLZB-MR4U secondary radio | Silicon Labs EFR32MG26 | **Not the current Zigbee coordinator target**; keep separate from the P10 Zigbee work |
 
 See [`coordinators/README.md`](coordinators/README.md) and [`docs/COORDINATOR_REGISTRY.md`](docs/COORDINATOR_REGISTRY.md) for the canonical naming and status map.
 
-## Current focus
+## Current focus — P7U / R4
 
-The active coordinator investigation is **`mr4u-p10`**.
+**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability; it is **not yet approved for physical production flashing**.
 
-Current work includes:
+- [R4 master plan #85](https://github.com/analienx/Zigbee-Coordinator/issues/85) and [R4-00 provenance draft #86](https://github.com/analienx/Zigbee-Coordinator/pull/86).
+- [R4-01a diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [R4-B0 native build #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [R4-B1 NV safety #92](https://github.com/analienx/Zigbee-Coordinator/issues/92) and [draft PR #93](https://github.com/analienx/Zigbee-Coordinator/pull/93).
+- Active R4 work is on isolated `feat/p7u-r4-*`, `feat/r4-*`, and `review/p7u-r4-*` branches, not automatically deployed by `main`.
+- Vendor P7U ZNP `20260310` is a behavior/rollback reference, **not** proven source-equivalent or stable in a 100+-device mesh. Native CCS build success is not a physical acceptance.
+- Preserve the original coordinator identity, NV/security/counters, rollback evidence, and exactly one serial owner; no live firmware/recovery operation follows from these documentation updates.
 
-- SMLIGHT 2024 P10 baseline / rollback testing;
-- recovery of the existing Z-Stack network without re-forming it;
-- failure analysis for coordinator-wide SRSP degradation / terminal ZNP hangs;
-- the planned TI CC2674P10 reference-ZNP A/B control experiment.
+The **finalized MR4U/P10 work remains retained** as a separate reference and potential recovery path, but it is no longer the primary active engineering direction. Historic P10 and SONOFF P009/P013/P015 docs are retained for traceability, not current-work priorities.
 
-The TI planning work lives on branch:
-
-`plan/mr4u-p10-ti-znp-control`
-
-The older P009/P013/P015 work belongs to **`sonoff-mg24`**. Those labels are firmware experiment identifiers, **not coordinator models**.
+See [P7U coordinator overview](coordinators/slzb-06p7u/README.md) and [coordinator registry](docs/COORDINATOR_REGISTRY.md).
 
 ## Repository layout
 
-### Current stable paths
+### P7U/R4 development (unmerged work)
+
+- `firmware/slzb-06p7u/r4/` — R4 source/design/CI on preserved feature branches; refer to the R4 issue and PR chain for current status.
+- `coordinators/slzb-06p7u/` — primary target identity and safety gates.
+
+### Retained P10 compatibility paths
 
 - `deploy/p10_*.py` — existing **MR4U / CC2674P10** migration, restore, evidence and cutover tooling.
 - `tests/test_p10_*.py` — tests for the same MR4U/P10 tooling.
@@ -58,7 +61,8 @@ Use these terms consistently:
 
 - **`mr4u-p10`** — the MR4U CC2674P10 Zigbee coordinator.
 - **`sonoff-mg24`** — the SONOFF EFR32MG24 Ember coordinator.
-- **`slzb-06p7`** — the older SMLIGHT Z-Stack coordinator.
+- **`slzb-06p7u`** — active SMLIGHT CC2652P7 R4 development target (distinguish from legacy `slzb-06p7`).
+- **`slzb-06p7`** — legacy SMLIGHT coordinator entry, not interchangeable with the P7U R4 board.
 - **P009 / P013 / P015** — SONOFF MG24 firmware experiment generations.
 - **20240705 / 20260310 / similar** — P10 ZNP build/revision identifiers, not hardware names.
 - Avoid **Radio 1 / Radio 2** as identity. MR4U numbering has been a source of confusion; identify a radio by chip and protocol.
@@ -83,7 +87,7 @@ For live Home Assistant diagnostics, Zigbee2MQTT inventory, NWK/address mapping 
 
 Do not copy credentials or HA connection helpers into this repository.
 
-## MR4U P10 migration / recovery
+## Retained MR4U P10 migration / recovery (not primary)
 
 For an existing-network USB replacement or P10 recovery, start with:
 
@@ -102,4 +106,4 @@ The SONOFF EFR32MG24 line remains valuable as:
 - P009/P013/P015 firmware experiments;
 - Ember-vs-Z-Stack comparison evidence.
 
-Historical branches keep their original names for traceability. They should not be renamed merely for cosmetic consistency.
+Retained historical branches keep their original names. Obsolete local and remote branches may be pruned only after identifying protected R4 dependencies, open PR heads/bases, worktrees, unmerged changes and the finalized P10 reference; do not erase unmerged history without an immutable recovery ref.
