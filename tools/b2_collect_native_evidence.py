@@ -166,6 +166,25 @@ def derive(root, source_sha, out, run_id):
     if stack_size_symbol:
         linked_stack={"size_bytes":stack_size_symbol["address"],
                       "status":"LINKED_SYMBOL_NOT_RUNTIME_HIGH_WATER"}
+    # Address-space partition, NOT runtime allocator free space. It remains
+    # meaningful even when the RTOS allocates task stacks inside heapStart/end.
+    sram = areas["SRAM"]
+    memory_partition = None
+    if linked_heap:
+        low = linked_heap["start_address"] - sram["base"]
+        high = sram["base"] + sram["size"] - linked_heap["end_address"]
+        if min(low, high) < 0 or low + linked_heap["span_bytes"] + high != sram["size"]:
+            raise EvidenceError("invalid disjoint SRAM linker partition")
+        memory_partition = {
+            "status":"LINKER_ADDRESS_SPACE_ONLY_NOT_RUNTIME_FREE_HEAP",
+            "sram_total_bytes":sram["size"],
+            "below_heap_linker_reserved_span_bytes":low,
+            "heap_linker_address_span_bytes":linked_heap["span_bytes"],
+            "above_heap_linker_reserved_span_bytes":high,
+            "rtos_task_stacks_dynamically_consumed":None,
+            "fragmentation_reserve_bytes":None,
+            "runtime_high_water_bytes":None,
+        }
     table_result={}
     for key,(array_name,limit_name) in TABLES.items():
         table=one_symbol(symbols,array_name)
@@ -206,9 +225,10 @@ def derive(root, source_sha, out, run_id):
         "memory_regions":areas,"sram_allocated_sections":memory_sections,
         "linked_heap_address_span":linked_heap,
         "linked_c_irq_stack_size":linked_stack,
+        "sram_linker_address_partition":memory_partition,
         "tables":table_result,
         "heap_high_water":None,"concurrent_dynamic_route_buffer_peak":None,
-        "rtos_task_stacks_total":None,"c_irq_stack_confirmed_bytes":None,
+        "rtos_task_stacks_total":None,"c_irq_stack_confirmed_bytes":linked_stack["size_bytes"] if linked_stack else None,
         "safe_sram_headroom_bytes":None,
     }
     out.mkdir(parents=True,exist_ok=True)
@@ -226,6 +246,7 @@ def derive(root, source_sha, out, run_id):
                      f" {x(t['entry_sizeof_derived'])} | {x(t['array_section'])} |")
     lines+=["", "RAM memory sections (raw ELF SHF_ALLOC; may contain overlap/aliases):"]
     lines.extend(f"- \`{n}\`: {v} bytes" for n,v in sorted(memory_sections.items()))
+    lines+=["", "SRAM linked address-space partition (NOT runtime free memory): "+str(memory_partition)]
     lines+=["", "Linked heap region (NOT free heap/high-water): \\`"+str(linked_heap)+"\\`",
             "C/IRQ stack linked symbol: \\`"+str(linked_stack)+"\\`",
             "", "A section sum is not a proven free-RAM bound. Tasks, C/IRQ stack,"
