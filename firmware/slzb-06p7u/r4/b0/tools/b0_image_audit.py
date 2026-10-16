@@ -190,10 +190,25 @@ def _parse_link_xml(text, elf_name, elf_entry):
         length = _int_maybe(area.findtext("length"))
         if not name or origin is None or length is None:
             return None, "audit XML memory_area malformed"
+        if name in areas or length <= 0:
+            return None, "audit XML duplicate/invalid memory_area: %s" % name
         areas[name] = (origin, length)
     for need in ("FLASH", "FLASH_NV", "FLASH_LAST", "SRAM"):
         if need not in areas:
             return None, "audit XML missing %s memory area" % need
+    # Match the complete pinned TI linker layout, not just NV and LAST
+    # region starts. Reject duplicate/malformed region declarations above
+    # before accepting any flash image as layout-compatible.
+    expected_geometry = {
+        "FLASH": (0x00000000, 0xAA000),
+        "FLASH_NV": (0xAA000, 0x4000),
+        "FLASH_LAST": (0xAE000, 0x2000),
+        "SRAM": (0x20000000, 0x24000),
+    }
+    for region, expected in expected_geometry.items():
+        if areas[region] != expected:
+            return None, ("audit donor memory geometry mismatch for %s "
+                          "(got %r; want %r)" % (region, areas[region], expected))
     nvs_base, nvs_size = areas["FLASH_NV"]
     if nvs_base != DONOR_NVS_BASE or nvs_size != DONOR_NVS_SIZE:
         return None, ("audit NVS geometry differs from donor "
