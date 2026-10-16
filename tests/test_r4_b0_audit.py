@@ -92,6 +92,32 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertIsNone(evidence)
         self.assertIn("duplicate/invalid memory_area", error)
 
+    def test_authentic_ti_logical_groups_are_parsed(self):
+        # TI linker emits direct logical_group entries, not nested
+        # synthetic <section> elements from the legacy test vectors.
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring((FIX / "artifacts-valid" / "znp_linkInfo.xml").read_text())
+        gl = root.find("./logical_group_list")
+        old = list(gl)
+        groups = list(old[0].findall("section"))
+        for group in old:
+            gl.remove(group)
+        for idx, section in enumerate(groups):
+            item = ET.SubElement(gl, "logical_group", id="lg-%d" % idx)
+            for field in ("name", "load_address", "size"):
+                ET.SubElement(item, field).text = section.findtext(field)
+        evidence, error = audit._parse_link_xml(
+            ET.tostring(root, encoding="unicode"), "znp.out", 0)
+        self.assertIsNone(error)
+        self.assertIn(".resetVecs", evidence["sections"])
+        self.assertEqual(evidence["sections"][".ccfg"], (0xAE000, 0x88))
+        # A second real linker group with the same section name is
+        # ambiguous, even when size and address agree.
+        gl.append(ET.fromstring(ET.tostring(gl[0])))
+        _, error = audit._parse_link_xml(
+            ET.tostring(root, encoding="unicode"), "znp.out", 0)
+        self.assertIn("duplicate linker output section", error)
+
     def test_corrupted_image_fails_hash(self):
         code, message = self._audit("artifacts-bad-hash")
         self.assertEqual(code, 1)
