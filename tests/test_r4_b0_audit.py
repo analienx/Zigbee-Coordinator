@@ -118,6 +118,42 @@ class B0ImageAuditTests(unittest.TestCase):
             ET.tostring(root, encoding="unicode"), "znp.out", 0)
         self.assertIn("duplicate linker output section", error)
 
+    def test_elf_only_zero_alignment_holes_are_bounded_and_never_code(self):
+        # Actual CI #38905120532 ELF PT_LOAD carries two 0x00 bytes
+        # at 0x2ACD2/3 between .rodata and config_const; the real
+        # TI ihex skips them. Unit-scale this exact semantic gap.
+        evidence = {
+            "areas": {"FLASH": (0, 8), "FLASH_NV": (10, 2),
+                      "FLASH_LAST": (8, 2), "SRAM": (0x20000000, 32)},
+            "sections": {".resetVecs": (0, 2), ".rodata": (2, 2),
+                         "config_const": (6, 2), ".ccfg": (8, 2)},
+        }
+        payload = {0: 1, 1: 2, 2: 3, 3: 4,
+                   6: 5, 7: 6, 8: 7, 9: 8}
+        elf = dict(payload)
+        elf[4] = 0
+        elf[5] = 0
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "real-layout.bin"
+            path.write_bytes(bytes([1, 2, 3, 4, 0, 0, 5, 6, 7, 8]))
+            self.assertIsNone(audit._check_hex_bin_binding(
+                payload, path, evidence, 1, elf))
+            corrupt = dict(elf)
+            corrupt[4] = 0x23
+            message = audit._check_hex_bin_binding(
+                payload, path, evidence, 1, corrupt)
+            self.assertIn("image deletion", message)
+            deleted_code = dict(payload)
+            del deleted_code[2]
+            message = audit._check_hex_bin_binding(
+                deleted_code, path, evidence, 1, elf)
+            self.assertIn("image deletion", message)
+            outside = dict(payload)
+            del outside[8]
+            message = audit._check_hex_bin_binding(
+                outside, path, evidence, 1, elf)
+            self.assertIn("does not cover XML section .ccfg", message)
+
     def test_ti_flat_binary_padding_matches_sparse_intel_hex(self):
         # A real tiarmobjcopy -O binary retains erased address holes.
         # The synthetic fixture BIN is packed; accept both only when
