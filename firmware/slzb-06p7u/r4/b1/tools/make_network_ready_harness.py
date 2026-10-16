@@ -52,7 +52,7 @@ int main(int argc,char **argv)
   assert(argc==2);const char *s=argv[1];
   existing_candidate=1u;valid_security=1u;FrameCounterUpdated=1u;
   b1_management_note_nv_candidate();
-  b1_management_note_mt_registered();
+  if(strcmp(s,"no_mt")!=0) b1_management_note_mt_registered();
   if(strcmp(s,"no_nv")==0) {
     existing_candidate=0u;
   } else if(strcmp(s,"no_security")==0) {
@@ -60,9 +60,7 @@ int main(int argc,char **argv)
   } else if(strcmp(s,"no_counter")==0) {
     FrameCounterUpdated=0u;
   } else if(strcmp(s,"no_mt")==0) {
-    /* This path intentionally uses a fresh process without registration.
-     * Existing MT registration is monotonic. */
-    assert(!"set no_mt earlier");
+    /* The positive coordinator transition alone cannot synthesize MT registration. */
   } else if(strcmp(s,"healthy") && strcmp(s,"after_nv_hold") &&
             strcmp(s,"after_security_hold") && strcmp(s,"after_transport_hold") &&
             strcmp(s,"loss_of_coordinator") && strcmp(s,"premature")) {
