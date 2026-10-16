@@ -7,6 +7,8 @@ on:
     paths:
       - 'tools/b2_capacity_gate.py'
       - 'tests/test_r4_b2_capacity_gate.py'
+      - 'tests/test_r4_b2_compose.py'
+      - 'tests/test_r4_b2_profile.py'
       - '.github/workflows/test-r4-b2-capacity.yml'
 jobs:
   arithmetic-negative-controls:
@@ -16,4 +18,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Python synthetic negative controls (NOT native TI proof)
-        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence
+        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence tests.test_r4_b2_compose tests.test_r4_b2_profile
