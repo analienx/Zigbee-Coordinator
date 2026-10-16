@@ -1,0 +1,29 @@
+# ADR B3-00 — NV2 versus NV3 versus NV5
+
+**Status: PROPOSED / NOT ACCEPTED.** Author: R4-B3 source contributor; date: 2026-10-16; source baseline B0 `1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe`.
+
+## Decision
+
+**Retain B0 NV2 unchanged for the source branch; select no production expansion yet.** NV3/NV5 are candidate geometry only. This is not a claim that NV2 can hold all 106 devices or that an existing NV can safely boot. Do not infer a decision from R2 NV5.
+
+Source-derived one-reserve-page upper bound: NV2 8,176 bytes, NV3 16,352, NV5 32,704 before per-item 7-byte headers, obsolete versions, key rows, journals, CRC/compaction overhead and free-space reserve. A full table model needs real serialized records for NWK/NIB/BDB, TC/APS/TCLK, address/binding/group, and any durable routing; see unresolved mapping in capacity manifest.
+
+## Criteria before final profile choice
+
+1. B1 fail-closed NV preflight, unknown-format HOLD_NV and successful management path must be source-accepted.
+2. B2 must choose supported TC/key table count and RAM/heap limits (106, 128, 160, 192 scenario); no silent persisted table migration.
+3. Compile-time types and actual NVOCMP call-path/write fault harness for SDK 8.33 must prove item lengths, compaction reserve, torn-page behavior, cold reboot persistence and high-water key/counter policy.
+4. 1k/10k/100k repeated item update model with realistic, separately sourced payload mix, bounded erase counts, worst-case copy demand and measured quantiles; no invented flash lifetime.
+5. Two clean authenticated GitHub CCS native links per selected candidate with ELF/XML/HEX/BIN, CCFG vendor 88-byte SHA and board UART checks; explicit writer and rollback sectors.
+6. Independent NV/security/build and migration authority review. No live stock format assumption.
+
+## Alternatives
+
+- **NV2:** smallest erase surface and unchanged B0 linker, but one 8,176-byte active page nominal bound may be inadequate for many link keys; cannot claim capacity.
+- **NV3:** doubles nominal active capacity, removes 8 KiB of app address space, needs new native linker / NVS mapping; not an upgrade path from unknown NV2/NV5.
+- **NV5:** four active pages, largest nominal capacity, 24 KiB app tradeoff and larger active/swap journal scans; stock format still unknown.
+- **Offline escrow:** good for forensic evidence but cannot replace durable runtime frame-counter/key storage, and it never authorizes a flash.
+
+**Fails closed:** unknown old layout, unknown current counter floor, divergent keys or insufficient room => NOT_RESTORE_READY / HOLD. No automatic formatting or sector erase.
+
+Sign-off: **PENDING B1/B2/native/reviewer gates**; B3_SOURCE_READY=false, B3_INTEGRATED_READY=false, RESTORE_READY=false, FLASH_READY=false.
