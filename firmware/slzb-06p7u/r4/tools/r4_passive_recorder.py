@@ -185,7 +185,11 @@ class PassiveR4Recorder:
             raise ValueError("parent must preexist")
         if type(max_bytes) is not int or not 1024 <= max_bytes <= 1_048_576:
             raise ValueError("invalid bounded size")
-        snapshot = self.last_good if self.last_good is not None else self.snapshot()
+        # last_good is a cache of the last accepted event; drop-only
+        # paths (duplicate, out-of-order, queue overflow) update the
+        # live dropped counter without refreshing it. Persist current
+        # sanitized counters, never raw events or waiter identities.
+        snapshot = self.snapshot()
         snapshot = dict(snapshot)
         snapshot["recent_events"] = list(snapshot["recent_events"])
         frame = json.dumps(snapshot, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8")
