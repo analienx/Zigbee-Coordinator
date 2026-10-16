@@ -32,9 +32,7 @@ Recovery specialization:
 
 - [P10 Z-Stack restore recovery skill](../skills/p10-zstack-restore-recovery/SKILL.md)
 
-Historic P10 TI reference-ZNP planning is documented on:
-
-`plan/mr4u-p10-ti-znp-control`
+The historical planning branch `plan/mr4u-p10-ti-znp-control` was retired on 16 October 2026. Its ref history is in the verified pre-cleanup bundle; the finalized P10 recovery/reference line remains preserved.
 
 ## sonoff-mg24 — SONOFF Dongle Max / EFR32MG24 / Ember
 
