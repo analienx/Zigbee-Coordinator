@@ -274,9 +274,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        b2_profile: [P0, P1]
+        include:
+          - {b2_profile: P0, replica: 1}
+          - {b2_profile: P1, replica: 1}
+          - {b2_profile: P1, replica: 2}
     concurrency:
-      group: r4-b0-native-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ matrix.b2_profile }}
+      group: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.b2_profile }}-${{ matrix.replica }}
       cancel-in-progress: true
     runs-on: ubuntu-22.04
     steps:
@@ -410,7 +413,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b2-native-${{ github.sha }}-${{ matrix.b2_profile }}
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.b2_profile }}-replica${{ matrix.replica }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
