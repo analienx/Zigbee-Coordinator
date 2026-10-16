@@ -164,3 +164,23 @@ The **retained P10 consolidated PR #60 is still DRAFT**, not promoted as a physi
 ### Follow-up safety
 
 The GitHub branch count is now operationally small; further deletion should not target R4 or the retained P10 PR #60 head/base. The only non-R4/non-P10 branch retained for ambiguity, `supervisor/preflash-readiness-fixes`, should be reconciled with the supervisor-control-plane workstream before deletion. Do not declare final firmware acceptance from this repository housekeeping exercise.
+
+
+### Additional safe local cleanup (same session)
+
+After the initial nine completely clean worktree removals, the remaining legacy worktrees were audited again with `git clean -ndx` to distinguish **rebuildable Python caches** from firmware/build artifacts, untracked files and source edits. A second strictly scoped pass deleted **11 additional obsolete clean worktrees/local branches** whose only ignored files were `__pycache__` or standard test/lint caches. Git again confirmed the original branch tip in the verified bundle and refused removal if the tree was dirty.
+
+Additional local worktrees safely removed:
+- `zigbee-p10-bsl-readonly`
+- `zigbee-p7-wonder-crashdiag-20261013`
+- `zigbee-p7u-issue80-review-20261014`
+- `zigbee-p7u-r2-diag-20261015`
+- `zigbee-p7u-sector-writer-20261014`
+- `zigbee-p7u-v010-rc1-20261014`
+- `zigbee-t832-a1-diagnostic`
+- `zigbee-t832-diag-r0`
+- `zigbee-t832-r11-diag`
+- `zigbee-t832-r12-aux-analysis`
+- `zigbee-t832-r12-forensics`
+
+**Final locally verified result:** **20 obsolete local worktrees and their 20 branches removed** in wave 2; two stale registrations pruned; **18 live registered worktrees and 18 local branches** remain, with **zero stale registrations**. The count also reflects one concurrently created active R4 worktree, which was preserved. The remaining trees include active R4 work, protected P10 work and trees with non-Git data/dirty status; no wholesale cleanup of the latter was attempted. In particular, large `.tmp/` trees and uncommitted changes remain untouched. These additional removals did not affect the **13 remote branches** retained above.
