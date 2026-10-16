@@ -1,0 +1,73 @@
+name: R4 B4 bounded diagnostics source guards
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/test-r4-b4.yml"
+      - "firmware/slzb-06p7u/r4/b4/**"
+      - "firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py"
+      - "firmware/slzb-06p7u/r4/tools/r4_diag_reference.py"
+      - "tests/test_r4_b4_*.py"
+      - "tests/test_r4_01a_*.py"
+  push:
+    branches:
+      - feat/p7u-r4-b4-issue98
+
+permissions:
+  contents: read
+
+jobs:
+  b4-offline-hostile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Syntax and static source compile
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/b4/*.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py tests/test_r4_b4_*.py
+      - name: Run original #87 contract and recorder regressions plus B4 attacks
+        run: |
+          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source
+      - name: Re-run adversarial source and protocol checks independently
+        run: python -m unittest -v tests.test_r4_b4_source tests.test_r4_b4_protocol
+
+  b4-pinned-source-proof:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      TI: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      HERDSMAN: 0968f979d558874b17396c96b66382d4236bbdcd
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Fetch source exactly pinned to TI SDK and herdsman
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b4-sources
+          git -C /tmp/b4-sources init -q ti
+          git -C /tmp/b4-sources/ti remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b4-sources/ti fetch --depth 1 origin "$TI"
+          git -C /tmp/b4-sources/ti checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/b4-sources/ti rev-parse HEAD)" = "$TI"
+          git -C /tmp/b4-sources init -q herdsman
+          git -C /tmp/b4-sources/herdsman remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C /tmp/b4-sources/herdsman fetch --depth 1 origin "$HERDSMAN"
+          git -C /tmp/b4-sources/herdsman checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/b4-sources/herdsman rev-parse HEAD)" = "$HERDSMAN"
+      - name: Assert stock SYS and single ZNP owner source invariants
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_verify_source.py --ti /tmp/b4-sources/ti --herdsman /tmp/b4-sources/herdsman
+      - name: Explicitly deny a native linked or installed claim
+        run: |
+          test ! -e firmware/slzb-06p7u/r4/b4/native-linked.ok
+          test ! -e firmware/slzb-06p7u/r4/b4/host-installed.ok
+          echo "B4 SOURCE_RESEARCH_ONLY: NOT native-linked, NOT host-installed, NOT flashed"
