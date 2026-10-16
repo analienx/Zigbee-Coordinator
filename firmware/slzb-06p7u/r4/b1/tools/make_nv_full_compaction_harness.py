@@ -244,7 +244,10 @@ def main():
     bodies.extend(real_compaction)
     prototypes="\n".join(body[:body.index("\n{")]+";" for body in bodies)
     a=PREAMBLE+definitions+boundary+crc+prototypes
-    a+='\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wunused-parameter"\n'
+    # The source-extracted TI findSignature() uses a mixed signed/unsigned
+    # ternary under host GCC, whereas the pinned native compiler accepts it.
+    # Suppress only the donor's warning; sanitizers/assertions stay enabled.
+    a+='\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wunused-parameter"\n#pragma GCC diagnostic ignored "-Wsign-compare"\n'
     a+="\n\n".join(bodies)
     a+='\n#pragma GCC diagnostic pop\n'+MAIN
     args.output.write_text(a,encoding="utf-8")
