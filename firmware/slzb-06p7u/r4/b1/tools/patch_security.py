@@ -164,6 +164,14 @@ int b1_sec_validate_restored(void)
   return TRUE;
 }
 
+/* Read-only cached attestation: only a completed restored-network security
+ * preflight may set this bit; late backend HOLD always revokes it. Never
+ * recompute or create NV records inside an asynchronous ZDO state callback. */
+int b1_sec_restored_network_validated(void)
+{
+  return b1_sec_existing_network && !b1_nv_runtime_hold_active();
+}
+
 static uint8_t b1_sec_write_checked(uint16_t table, uint16_t index,
                                     uint16_t len, void *value)
 {
