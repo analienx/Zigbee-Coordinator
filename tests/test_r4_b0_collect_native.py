@@ -40,7 +40,7 @@ class CollectorTests(unittest.TestCase):
             (out / "build.log").write_text("mock, NOT native evidence")
             (clang / "bin").mkdir(parents=True)
             fake = clang / "bin" / "tiarmobjcopy"
-            fake.write_text('#!/bin/sh\\ncp "$3" "$4"\\n')
+            fake.write_text('#!/bin/sh\ncp "$3" "$4"\n')
             fake.chmod(0o755)
             manifest = collector.collect(ws, out, clang, out / "build.log")
             elf_name = manifest["files"]["elf"]["file"]
