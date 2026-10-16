@@ -69,11 +69,26 @@ Toolchain: CCS `12.8.0.00012`, TI-ARM-CLANG `3.2.2.LTS`, SysConfig
 `1.21.1.3772` installed explicitly standalone on `ubuntu-22.04`
 (CCS 12.8 officially validates Ubuntu 22.04; it bundles only
 SysConfig `1.21.0.3721`, never relied on for the `1.21.1.3772`
-pin). Installer/download digests are explicitly `UNKNOWN`
-(recorded, never fabricated); no verified direct headless
-download URL has been sourced, so the build job currently emits
-a `B0-BUILD-BLOCKED` receipt and fails closed -- no dummy
-firmware, no false green.
+pin). Exact Linux installer SHA-256 digests were recovered from
+TI's official versioned download pages (2026-10-16) and are enforced
+in `tools/b0_fetch_ti.py`, `B0_DONOR_INVENTORY.json` and the
+provisioning receipt. Download archives are persisted only after a
+successful publisher-hash check, before the potentially failing native
+build. The CCS 12.8 bundled SysConfig 1.21.0 launcher is dispatched,
+with a reversible hosted-only binding receipt, to verified standalone
+SysConfig 1.21.1+3772; it is NEVER used as the old 1.21.0 binary.
+
+The hosted pipeline has already compiled the pinned SDK libraries and
+imported the ZNP projectspec. Native ZNP compile/link and genuine
+ELF/XML/HEX/BIN audit remain independent acceptance gates: until those
+all pass, no firmware is claimed. Regardless of native build outcome,
+P7U UART, PA/RF, CCFG and vendor NV/security compatibility remain
+PHYSICAL_UNVERIFIED and production flashing is prohibited.
+
+Publisher SHA-256 evidence:
+- CCS 12.8 Linux: `fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d`
+- SysConfig 1.21.1 Linux: `0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5`
+- TI ARM Clang 3.2.2 Linux: `2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9`
 
 When provisioned, the exact build sequence is:
 
