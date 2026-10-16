@@ -32,17 +32,21 @@ jobs:
           set -Eeuo pipefail
           python -m py_compile firmware/slzb-06p7u/r4/b1/tools/apply_b1.py
           root=/tmp/b1-pinned-source
-          mkdir -p "$root/source/ti/common/nv" "$root/source/ti/zstack/startup"
+          mkdir -p "$root/source/ti/common/nv" "$root/source/ti/zstack/startup" "$root/source/ti/zstack/zmac/f8w"
           curl -fL --proto '=https' --tlsv1.2 --retry 3 \
             https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/common/nv/nvocmp.c \
             -o "$root/source/ti/common/nv/nvocmp.c"
           curl -fL --proto '=https' --tlsv1.2 --retry 3 \
             https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/startup/main.c \
             -o "$root/source/ti/zstack/startup/main.c"
+          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/zmac/f8w/zmac.c \
+            -o "$root/source/ti/zstack/zmac/f8w/zmac.c"
           python firmware/slzb-06p7u/r4/b1/tools/apply_b1.py \
             --sdk "$root" --receipt /tmp/b1-source-receipt.json
           test -s /tmp/b1-source-receipt.json
           grep -F 'b1_nv_probe(' "$root/source/ti/common/nv/nvocmp.c"
+          grep -F 'b1_nv_runtime_hold_active()' "$root/source/ti/zstack/zmac/f8w/zmac.c"
           grep -F 'if (zstack_user0Cfg.nvFps.initNV(NULL) != NVINTF_SUCCESS)' \
             "$root/source/ti/zstack/startup/main.c"
       - name: Upload source admission receipt
