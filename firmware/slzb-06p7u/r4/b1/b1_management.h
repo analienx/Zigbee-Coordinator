@@ -19,6 +19,7 @@
 #define B1_ERROR_UART_OPEN 0x63u
 #define B1_ERROR_UART_READ 0x64u
 #define B1_ERROR_MT_NOT_REGISTERED 0x65u
+#define B1_ERROR_NPI_RX_OVERFLOW 0x66u
 
 enum {
     B1_STAGE_PRE_BOOT = 0,
@@ -53,6 +54,8 @@ void b1_management_transport_failed(uint8_t reason);
 void b1_management_note_uart_opened(void);
 void b1_management_note_npi_initialized(void);
 int b1_management_npi_initialized(void);
+/* Transport corruption is distinct from legitimate NV/security HOLD. */
+int b1_management_transport_unavailable(void);
 void b1_management_note_mt_registered(void);
 int b1_management_mt_registered(void);
 /* Called only at the real MT_ProcessIncoming dispatch boundary. The flag
