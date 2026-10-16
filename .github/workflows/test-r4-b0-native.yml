@@ -271,8 +271,12 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        b2_profile: [P0, P1]
     concurrency:
-      group: r4-b0-native-${{ github.event.pull_request.head.ref || github.ref_name }}
+      group: r4-b0-native-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ matrix.b2_profile }}
       cancel-in-progress: true
     runs-on: ubuntu-22.04
     steps:
@@ -366,6 +370,10 @@ jobs:
           test -f "$project/znp.syscfg"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
             --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
+          python "$GITHUB_WORKSPACE/tools/b2_compose.py" \
+            --opts "$project/Stack/Config/znp_cnf.opts" \
+            --profile "${{ matrix.b2_profile }}" \
+            --receipt "/tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json"
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
@@ -392,11 +400,12 @@ jobs:
             --source-sha "$(git rev-parse HEAD)" \
             --run-id "$GITHUB_RUN_ID"
           cat /tmp/b0out/b2-linked-baseline/BASELINE_ELF_SYMBOLS.md >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json >> "$GITHUB_STEP_SUMMARY"
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b0-native-${{ github.sha }}
+          name: r4-b2-native-${{ github.sha }}-${{ matrix.b2_profile }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
