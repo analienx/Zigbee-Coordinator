@@ -534,6 +534,27 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
         return ("audit HEX/BIN cross-binding failed "
                 "(ELF entry 0x%08X not covered by HEX data payload; "
                 "HEX is not derived from the audited ELF)" % elf_entry)
+    # Real tiarmobjcopy -O ihex omits ELF PT_LOAD zero-byte alignment
+    # padding where no linked logical output section exists. Confirmed
+    # on native donor CI artifact 12048696580: exactly two zero bytes
+    # at 0x2ACD2..0x2ACD3 between .rodata and config_const. Treating
+    # these as missing executable bytes produces a false rejection.
+    # Accept only bounded ZERO padding within FLASH and outside ALL
+    # real allocated FLASH logical-group spans; every meaningful linked
+    # section remains byte-for-byte tied to HEX. Never permit nonzero
+    # omissions, SRAM omissions or broad erased-data deletions.
+    flash_start, flash_size = areas["FLASH"]
+    nonalloc_prefixes = (".debug", ".symtab", ".strtab", ".comment",
+                         ".note", ".ARM.attributes")
+    linked_spans = [
+        (load, load + size)
+        for name, (load, size) in sections.items()
+        if load is not None and size is not None and size > 0
+        and not name.startswith(nonalloc_prefixes)
+        and flash_start <= load < flash_start + flash_size
+        and load + size <= flash_start + flash_size
+    ]
+    padded = 0
     for addr in sorted(set(payload) | set(elf_segments)):
         if addr not in elf_segments:
             return ("audit HEX/BIN/ELF content-binding failed "
@@ -541,6 +562,15 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
                     "covering ELF PT_LOAD segment; extra image bytes "
                     "rejected)" % addr)
         if addr not in payload:
+            is_alignment = (
+                elf_segments[addr] == 0 and padded < 16
+                and flash_start <= addr < flash_start + flash_size
+                and not any(start <= addr < end
+                            for start, end in linked_spans)
+            )
+            if is_alignment:
+                padded += 1
+                continue
             return ("audit HEX/BIN/ELF content-binding failed "
                     "(cross-binding: ELF PT_LOAD byte 0x%08X missing "
                     "from the HEX data payload; image deletion "
