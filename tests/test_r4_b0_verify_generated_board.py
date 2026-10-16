@@ -34,9 +34,9 @@ DONOR_CCFG = bytes.fromhex(
     "00008001100080fffdff5800ffc1b9f3"
     "ffffffffffffffffffffffffffffffff"
     "ffffffffffffffffffffffffffffffff"
-    "c50ffec5ffffffff00ffffff00c5c5"
-    "ff000000ff00000000ffffffffffffff"
-    "ffffffffff"
+    "c50ffec5ffffffff00ffffff00c5c5ff"
+    "000000ff00000000ffffffffffffffff"
+    "ffffffffffffffff"
 )
 # Avoid reconstructing any private IEEE/NV; CCFG is public board data.
 assert len(DONOR_CCFG) == gate.CCFG_LEN
