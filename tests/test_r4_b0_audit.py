@@ -118,6 +118,32 @@ class B0ImageAuditTests(unittest.TestCase):
             ET.tostring(root, encoding="unicode"), "znp.out", 0)
         self.assertIn("duplicate linker output section", error)
 
+    def test_ti_flat_binary_padding_matches_sparse_intel_hex(self):
+        # A real tiarmobjcopy -O binary retains erased address holes.
+        # The synthetic fixture BIN is packed; accept both only when
+        # every programmed byte remains cross-bound to ELF and HEX.
+        with tempfile.TemporaryDirectory() as tmp:
+            art = Path(tmp) / "art"
+            shutil.copytree(FIX / "artifacts-valid", art)
+            payload, error = audit._parse_intel_hex(art / "znp.hex")
+            self.assertIsNone(error)
+            base, last = min(payload), max(payload)
+            flat = bytearray([0xFF]) * (last - base + 1)
+            for addr, value in payload.items():
+                flat[addr - base] = value
+            (art / "znp.bin").write_bytes(flat)
+            _refresh_manifest(art)
+            code, message = audit.audit(B0, art)
+            self.assertEqual((code, message.split(" (")[0]), (0, "R4-B0 image audit OK"))
+            gaps = [i for i in range(len(flat)) if base + i not in payload]
+            self.assertTrue(gaps)
+            flat[gaps[len(gaps) // 2]] = 0xA5
+            (art / "znp.bin").write_bytes(flat)
+            _refresh_manifest(art)
+            code, message = audit.audit(B0, art)
+            self.assertEqual(code, 1)
+            self.assertIn("gap fill", message)
+
     def test_corrupted_image_fails_hash(self):
         code, message = self._audit("artifacts-bad-hash")
         self.assertEqual(code, 1)
