@@ -47,7 +47,7 @@ ACQUIRE = {
 # binary must BLOCK). Each probe output must contain its pin.
 VERSION_PINS = {
     "ccs": "12.8.0.00012",
-    "sysconfig": "1.21.1.3772",
+    "sysconfig": "1.21.1+3772",
     "ti_arm_clang": "3.2.2",
 }
 
