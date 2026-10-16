@@ -227,9 +227,22 @@ def patch_uart(text):
     # Two occurrences include the callback re-arm and the public read function.
     if text.count(anchor) != 2:
         raise RuntimeError("BLOCKED: UART read/re-arm anchors changed")
-    return text.replace(anchor, """    TransportRxLen = 0;
-    if (UART2_read(uartHandle, &isrRxBuf[0], UART_ISR_BUF_SIZE, NULL) != UART2_STATUS_SUCCESS)
+    text = text.replace(anchor, """    TransportRxLen = 0;
+    /* Read callback may have just latched HOLD after lost bytes. Re-arming
+     * that UART would cause an unbounded stream of corrupt callbacks. */
+    if (!b1_management_transport_unavailable() &&
+        UART2_read(uartHandle, &isrRxBuf[0], UART_ISR_BUF_SIZE, NULL) != UART2_STATUS_SUCCESS)
         b1_management_transport_failed(B1_ERROR_UART_READ);""")
+    text = once(text,
+        "    key = OsalPort_enterCS();\n\n    if (size)",
+        "    key = OsalPort_enterCS();\n"
+        "    if (b1_management_transport_unavailable())\n"
+        "    {\n"
+        "        OsalPort_leaveCS(key);\n"
+        "        return; /* No reads/responses from failed physical transport */\n"
+        "    }\n\n    if (size)",
+        "UART callback cannot revive transport after RX loss")
+    return text
 
 
 def prepare(sdk, definition):
