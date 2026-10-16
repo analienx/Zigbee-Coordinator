@@ -47,13 +47,29 @@ def render_minimal(raw: bytes, host: str, port: int) -> bytes:
         raise ValueError('Expected one plain, root-level serial YAML block')
     start = heads[0] + 1
     stop = next((i for i in range(start, len(lines)) if lines[i].strip() and not lines[i][0].isspace() and not lines[i].lstrip().startswith('#')), len(lines))
-    for key, value in (('port', f'tcp://{host}:{port}'), ('adapter', 'zstack')):
-        matches = [(i, re.fullmatch(r'  '+key+r':[^\r\n]*(\r?\n?)', lines[i])) for i in range(start, stop)]
+    # Rewrite only the direct serial scalars; optional baud/flow values
+    # must be normalized or inserted (review P2). Preserve the rest of
+    # the configuration byte-for-byte, including comments and CRLF.
+    newline = '\\r\\n' if b'\\r\\n' in raw else '\\n'
+    targets = (('port', f'tcp://{host}:{port}'), ('adapter', 'zstack'),
+               ('baudrate', '115200'), ('rtscts', 'false'))
+    additions = []
+    for key, value in targets:
+        matches = [(i, re.fullmatch(r'  ' + key + r':[^\\r\\n]*(\\r?\\n?)', lines[i]))
+                   for i in range(start, stop)]
         matches = [(i, match) for i, match in matches if match is not None]
-        if len(matches) != 1:
-            raise ValueError('Expected one direct serial.'+key+' scalar line')
-        i, match = matches[0]
-        lines[i] = '  '+key+': '+value+match.group(1)
+        if len(matches) > 1 or (len(matches) == 0 and key in ('port', 'adapter')):
+            raise ValueError('Expected exactly one direct serial.'+key+' scalar line')
+        if not matches:
+            additions.append('  ' + key + ': ' + value + newline)
+        else:
+            i, match = matches[0]
+            lines[i] = '  ' + key + ': ' + value + match.group(1)
+    if additions:
+        # An unterminated final scalar would otherwise swallow additions.
+        if stop > start and not lines[stop-1].endswith(('\\n', '\\r')):
+            lines[stop-1] += newline
+        lines[stop:stop] = additions
     return ''.join(lines).encode('utf-8')
 
 
