@@ -94,13 +94,17 @@ def decode_v3(frame):
     }
 
 
-def trustworthy_radio_epoch(prev, current):
+def trustworthy_radio_epoch(prev, current, *, source_qualified=False):
     """Radio continuity can ONLY be asserted for two v3 samples with
     nonzero, firmware-proven boot identity; host timestamps are insufficient.
 
     Even equal boot IDs are not proof without an audited source of per-boot
-    identity uniqueness. Call only on qualified v3 firmware.
+    identity uniqueness. The caller MUST explicitly pass source_qualified=True
+    only after a separately reviewed/native-proven boot identity generator.
+    An on-wire capability bit alone cannot grant that authority.
     """
+    if type(source_qualified) is not bool or not source_qualified:
+        return False
     if prev.get("abi") != 3 or current.get("abi") != 3:
         return False
     if not prev.get("radio_boot_id_verified") or not current.get("radio_boot_id_verified"):

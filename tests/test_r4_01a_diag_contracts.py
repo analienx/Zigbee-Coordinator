@@ -115,7 +115,8 @@ class V3DesignTests(unittest.TestCase):
     def test_radio_epoch_with_source_proven_identity(self):
         a=decode_v3(v3(radio_boot=44,uptime=100,seq=3))
         b=decode_v3(v3(radio_boot=44,uptime=200,seq=4))
-        self.assertTrue(trustworthy_radio_epoch(a,b))
+        self.assertFalse(trustworthy_radio_epoch(a,b))  # self-claimed bit is insufficient
+        self.assertTrue(trustworthy_radio_epoch(a,b,source_qualified=True))
         self.assertEqual(u32_delta(3,0xFFFFFFFE,continuous_epoch=True),5)
 
     def test_unknown_and_regressing_sequence_fail_closed(self):

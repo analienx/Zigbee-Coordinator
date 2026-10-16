@@ -138,3 +138,13 @@ r4_diag_reference.py, verified only against synthetic fixtures here.
 V3 MT command ID allocation, TI source hooks, actual compiled ELF,
 entropy and field qualification remain separate future acceptance
 gates. This stage does NOT implement firmware/host diagnostics.
+
+
+### Decoder trust boundary
+
+The source-only reference function trustworthy_radio_epoch() defaults
+to false even if both wire messages claim boot-identity capability.
+The higher-level host caller must explicitly provide source_qualified
+ONLY after independent native proof of the per-boot identity source.
+An attacker- or buggy-radio-supplied capability bit is not external
+attestation. No such native qualification has been performed.
