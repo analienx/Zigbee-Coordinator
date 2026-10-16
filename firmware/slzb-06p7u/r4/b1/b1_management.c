@@ -20,6 +20,7 @@ static uint8_t b1_management_first_error;
 static uint8_t b1_management_current_error;
 static uint8_t b1_management_stage;
 static uint8_t b1_management_nv_probe;
+static uint8_t b1_network_ready_attested;
 
 static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
 {
@@ -30,6 +31,7 @@ static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
     }
     b1_management_current_error = reason;
     b1_management_stage = stage;
+    b1_network_ready_attested = 0u; /* irreversible fault revokes ready */
     b1_management_flags |= flag;
     B1_CS_LEAVE(key);
 }
@@ -111,6 +113,40 @@ int b1_management_mt_registered(void)
     return registered;
 }
 
+/* The authority is monotonic against faults but not against leaving ZDO coordinator. */
+void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore_ok)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (!coordinator)
+    {
+        b1_network_ready_attested = 0u;
+        if ((b1_management_flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
+                                   B1_FLAG_HOLD_TRANSPORT)) == 0u)
+            b1_management_stage = (b1_management_flags & B1_FLAG_NV_HEADER_CANDIDATE)
+                ? B1_STAGE_NV_HEADER_CANDIDATE : B1_STAGE_PRE_BOOT;
+    }
+    else if (persisted_restore_ok && b1_management_first_error == 0u &&
+             (b1_management_flags & (B1_FLAG_NV_HEADER_CANDIDATE | B1_FLAG_MT_REGISTERED)) ==
+             (B1_FLAG_NV_HEADER_CANDIDATE | B1_FLAG_MT_REGISTERED) &&
+             (b1_management_flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
+                                    B1_FLAG_HOLD_TRANSPORT)) == 0u)
+    {
+        b1_network_ready_attested = 1u;
+        b1_management_stage = B1_STAGE_NETWORK_READY;
+    }
+    B1_CS_LEAVE(key);
+}
+
+int b1_management_network_ready(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int ready = b1_network_ready_attested != 0u &&
+                (b1_management_flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
+                                       B1_FLAG_HOLD_TRANSPORT)) == 0u;
+    B1_CS_LEAVE(key);
+    return ready;
+}
+
 void b1_management_note_nv_candidate(void)
 {
     uintptr_t key = B1_CS_ENTER();
@@ -135,7 +171,7 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
     static const uint8_t query[B1_STATUS_QUERY_SIZE] =
         { 'B', '1', 'Q', '1', 1u, B1_STATUS_QUERY_SIZE, 0u, 0u };
     uintptr_t key;
-    uint8_t flags, stage, first_error, current_error, nv_probe;
+    uint8_t flags, stage, first_error, current_error, nv_probe, network_ready;
     int held;
     if (frame == NULL || reply == NULL || rpc_error == NULL)
         return B1_MT_DROP;
@@ -147,6 +183,7 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
     first_error = b1_management_first_error;
     current_error = b1_management_current_error;
     nv_probe = b1_management_nv_probe;
+    network_ready = b1_network_ready_attested;
     B1_CS_LEAVE(key);
     held = (flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
                      B1_FLAG_HOLD_TRANSPORT)) != 0u;
@@ -170,6 +207,7 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
         reply[7] = first_error;
         reply[8] = flags;
         reply[9] = 3u; /* bit0 snapshot; bit1 MT HOLD command admission */
+        if (network_ready && !held) reply[9] |= 8u; /* bit3 N30 attested restored ZDO coordinator */
         reply[10] = current_error;
         reply[11] = nv_probe; /* zero = not measured; otherwise probe enum */
 #ifdef B1_BUILD_DIGEST_BYTES
