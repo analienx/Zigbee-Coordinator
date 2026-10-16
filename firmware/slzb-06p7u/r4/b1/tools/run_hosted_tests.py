@@ -237,7 +237,7 @@ def main():
              "b1_management_note_zdo_state((uint8_t)(state == DEV_ZB_COORD),",
              "b1_management_note_zdo_state((uint8_t)(0 && state == DEV_ZB_COORD),",
              "mutant_zdo_missing_coordinator_transition",
-             "b1_management_network_ready()==ready", ("healthy",),
+             "(reply[9]&8u)==(ready?8u:0u)", ("healthy",),
              admission=False, management=True)
     mutation(generated["zmac"],
              "if (b1_nv_runtime_hold_active()) return MAC_NO_RESOURCES;",
