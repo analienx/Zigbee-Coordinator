@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-B0 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
       - name: Run R4-B0 overlay tests
         run: python -m unittest -v tests.test_r4_b0_overlay
       - name: Run R4-B0 image audit tests
@@ -233,8 +233,16 @@ jobs:
       # the real CCS headless build. Fixture vectors in
       # firmware/slzb-06p7u/r4/b0/fixtures/ are unit oracle sanity
       # inputs only and are NEVER audited here as native proof.
+      - name: Authenticated TI bootstrap (hash pins required)
+        env:
+          TI_CCS_SHA256: ${{ secrets.TI_CCS_SHA256 }}
+          TI_SYSCONFIG_SHA256: ${{ secrets.TI_SYSCONFIG_SHA256 }}
+          TI_CLANG_SHA256: ${{ secrets.TI_CLANG_SHA256 }}
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py --root /tmp/b0ti --github-env "$GITHUB_ENV"
       - name: Provision gate (fail closed without toolchain)
         run: |
+          export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
           python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
       - name: Real native build (only when provision is READY)
         shell: bash
