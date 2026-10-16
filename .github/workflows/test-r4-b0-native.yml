@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-B0 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
       - name: Assert R4-B0 fixture LF pin holds (CRLF drift guard)
         run: |
           test -f firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
@@ -328,6 +328,9 @@ jobs:
           : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
           : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
           printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\nCMAKE := %s\nPYTHON := python3\nGCC_ARMCOMPILER :=\nIAR_ARMCOMPILER :=\n' "$SYSCONFIG_CLI" "$TICLANG_ARMCOMPILER" "$(command -v cmake)" >> "$sdk/imports.mak"
+          # Scoped workaround for upstream generic M4 ASM/FPU mismatch.
+          # Keep the target CC2652P7 M4F library compiled in this SDK.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py" --sdk "$sdk" --receipt /tmp/b0out/sdk-scope-receipt.json
           (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
           find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
           test -s /tmp/b0out/sdk-libraries.txt
