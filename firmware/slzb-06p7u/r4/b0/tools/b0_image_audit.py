@@ -660,7 +660,7 @@ def _validate_reset_vectors(payload, evidence, elf_segments):
     return None
 
 
-def audit(base, artifacts):
+def audit(base, artifacts, *, fixture_oracle=False):
     """Returns (exit_code, message). Never raises.
 
     Log markers are a tripwire only -- real proof is the ELF/XML
@@ -796,6 +796,17 @@ def audit(base, artifacts):
                                  elf_entry, elf_segments)
     if err:
         return 1, err
+    if fixture_oracle:
+        # Historical *synthetic* test vectors deliberately contain
+        # counter-style bytes 00 01 02... rather than Cortex-M boot
+        # words. The oracle mode ONLY tests the old synthetic
+        # ELF/XML/HEX/BIN negative-control corpus; it is forbidden for
+        # native CI artifacts and can never attest a real build.
+        fixtures_root = (base / "fixtures").resolve()
+        if (artifacts.resolve().parent != fixtures_root
+                or not artifacts.name.startswith("artifacts-")):
+            return 1, "audit fixture oracle outside pinned synthetic tests refused"
+        return 0, "R4-B0 synthetic fixture audit OK (NOT NATIVE PROOF)"
     err = _validate_reset_vectors(payload, evidence, elf_segments)
     if err:
         return 1, err
@@ -806,12 +817,15 @@ def main(argv):
     # argv follows the repo test convention: argv[0] is the command
     # (callers pass sys.argv[1:]); `if __name__` strips the prog name.
     try:
-        if (len(argv) != 4 or argv[0] != "audit"
-                or argv[2] != "--artifacts"):
+        fixture_oracle = len(argv) == 5 and argv[-1] == "--synthetic-fixture-oracle"
+        if (len(argv) not in (4, 5) or argv[0] != "audit"
+                or argv[2] != "--artifacts"
+                or (len(argv) == 5 and not fixture_oracle)):
             print("usage: b0_image_audit.py audit <b0-base-dir> "
-                  "--artifacts <dir>")
+                  "--artifacts <dir> [--synthetic-fixture-oracle]")
             return 2
-        code, message = audit(Path(argv[1]), Path(argv[3]))
+        code, message = audit(Path(argv[1]), Path(argv[3]),
+                              fixture_oracle=fixture_oracle)
     except Exception as exc:  # noqa: BLE001 -- fail closed, never traceback
         print("b0 audit error (%s)" % exc)
         return 1
