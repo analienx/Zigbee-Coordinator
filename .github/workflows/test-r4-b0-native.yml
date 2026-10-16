@@ -419,3 +419,47 @@ jobs:
             /tmp/b0-sysconfig-binding.json
             /tmp/b0out/
           if-no-files-found: warn
+
+  r4-b2-capacity-compare:
+    if: github.head_ref == 'feat/p7u-r4-b2-routing-capacity'
+    needs: [r4-b0-native-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch P0 independent native proof
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P0-replica1
+          path: /tmp/b2-compare/p0
+      - name: Fetch P1 native proof A
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P1-replica1
+          path: /tmp/b2-compare/p1a
+      - name: Fetch P1 native proof B
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P1-replica2
+          path: /tmp/b2-compare/p1b
+      - name: Strict exact-source, exact-binary linked-capacity and SRAM delta comparison
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compare_native.py \
+            --p0 /tmp/b2-compare/p0 \
+            --p1a /tmp/b2-compare/p1a \
+            --p1b /tmp/b2-compare/p1b \
+            --out /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
+          cat /tmp/b2-comparison/B2_CAPACITY_BUDGET.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish exact-SHA B2 capacity acceptance receipt (not RF proof)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-capacity-budget-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
+          if-no-files-found: warn
+          retention-days: 30
