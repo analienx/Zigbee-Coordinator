@@ -85,10 +85,10 @@
  "schema": "r4-b0-donor-inventory-v1",
  "toolchain": {
   "ccs": "12.8.0.00012",
-  "ccs_download_sha256": "UNKNOWN",
+  "ccs_download_sha256": "fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d",
   "sysconfig": "1.21.1.3772",
-  "sysconfig_download_sha256": "UNKNOWN",
+  "sysconfig_download_sha256": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
   "ti_arm_clang": "3.2.2.LTS",
-  "ti_arm_clang_download_sha256": "UNKNOWN"
+  "ti_arm_clang_download_sha256": "2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9"
  }
 }
