@@ -17,7 +17,7 @@ NOT_MEASURED. Each remaining requirement below keeps the full case open.
 | N07 | Actual erase nonzero status and voltage denial, no subsequent mutation | Hardware voltage/current and power failure unknown |
 | N08 | Actual init priority/POSIX/sem variants; NPI queue/sem/register faults | Every native RTOS failure/interleaving not exhausted |
 | N09 | Packed TI rows with header/CRC mutations, actual donor CRC | Vendor provenance cannot be inferred from a valid-looking slice |
-| N10 | Pending/mixed compaction, destination payload, forbidden init repair | Every runtime compaction interruption remains open |
+| N10 | Pending/mixed compaction, destination payload, forbidden init repair; source-extracted TI compaction state/header media-cut controls | Full NVOCMP_compactPage recovery graph and real voltage interruptions remain open |
 | N11 | Actual scan/header/length/read failures, bounded admission | Hardware timing not measured |
 | N12 | Missing NWK/APS/TCLK/BDB/seed/TC restored rows; no replacements | Complete security variants require review |
 | N13 | Real counter overflow, checkpoint faults, RAM rollback, readback mutants | Global/ROM counter paths and physical continuity open |
@@ -31,13 +31,13 @@ NOT_MEASURED. Each remaining requirement below keeps the full case open.
 | N21 | Actual UART open/read and NPI init boundary failures | Physical transport death and host timeout unknown |
 | N22 | Actual ZMac data/no-data reject post-fault; bypass mutants fail | Queued/ROM RF not cancelled/proven |
 | N23 | Actual FCS rejection; strict F1 magic/version/length/reserved query | Host decoder/all framing adversaries not exhausted |
-| N24 | Failures at read/write/erase and init-repair boundaries | **OPEN:** exhaustive compaction-step and physical brownout proof |
+| N24 | 512 bounded read-cut cases; real source-extracted NVOCMP writeItem/erase and compact-state/header NOR 1→0 power-cut fixtures; read-only persisted-image revalidation | **OPEN:** full NVOCMP_compactPage/compact/cleanPage cut enumeration, verified counter continuity on every accepted reboot, physical brownout |
 | N25 | Key generation, index, seed/counter and restored inconsistencies | Full NIB/APS/TCLK generation/identity review remains |
 | N26 | Sticky state; benign candidate/traffic cannot clear HOLD | Reboot must revalidate; no recovery API added |
 | N27 | Authorized blank/configured-new use actual donor dispatch | Every optional singleton/library path not exhausted |
 | N28 | Empty optional APS versus missing referenced APS/TCLK | Full table variants need independent review |
 | N29 | 128 dummy rows and 1001 management events, bounded reads/allocations | **Not** an RF soak or native stack high-water measurement |
-| N30 | Diagnostics has no NETWORK_READY capability; early faults hold | **OPEN:** complete positive readiness lifecycle/fresh-boot proof |
+| N30 | Actual TI ZDApp_ChangeState(DEV_ZB_COORD) hooks cached valid restored security + persisted NWK reserve and NV2 candidate; SYS F1 readiness bit3/stage5, retracted on ZDO loss/HOLD; hosted healthy/missing/late-failure source scenarios and disconnected-callback mutant | **OPEN:** whole-stack restored network, real ZDO AREQ/AF/ZDO host startup, new-network readiness, physical UART/RF acceptance |
 
 Every test uses synthetic bytes. No keys, raw NV, IEEE/PAN values, rosters or
 packet payloads from a real household network enter logs or artifacts.
