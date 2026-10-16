@@ -179,6 +179,7 @@ def overlay(sdk, b1_dir):
         "        memset(pBuf, 0, len); /* poisoned bytes MUST NOT be trusted */\n"
         "        NVOCMP_failF = NVINTF_FAILURE;\n"
         "        NVOCMP_failW = NVINTF_FAILURE;\n"
+        "        b1_nv_runtime_hold_latch();\n"
         "    }",
         "NVOCMP_read real checked backend")
 
@@ -212,6 +213,37 @@ def overlay(sdk, b1_dir):
         "    if (NVOCMP_failF != NVINTF_SUCCESS) return NVINTF_FAILURE;\n"
         "    uint8_t err = NVINTF_SUCCESS;",
         "no erase after fatal read")
+
+    # Sticky failure of a real NVS mutation must block later media writes
+    # and fresh ZMac-origin RF requests even if failW is reset later.
+    source = replace_once(
+        source,
+        "    if (nvsRes < 0)\n"
+        "    {\n"
+        "        err = NVINTF_FAILURE;\n"
+        "    }",
+        "    if (nvsRes < 0)\n"
+        "    {\n"
+        "        err = NVINTF_FAILURE;\n"
+        "        NVOCMP_failF = NVINTF_FAILURE;\n"
+        "        NVOCMP_failW = NVINTF_FAILURE;\n"
+        "        b1_nv_runtime_hold_latch();\n"
+        "    }",
+        "NVOCMP_write real NVS error latch")
+    source = replace_once(
+        source,
+        "        if (nvsRes < 0)\n"
+        "        {\n"
+        "          err = NVINTF_FAILURE;\n"
+        "        }",
+        "        if (nvsRes < 0)\n"
+        "        {\n"
+        "          err = NVINTF_FAILURE;\n"
+        "          NVOCMP_failF = NVINTF_FAILURE;\n"
+        "          NVOCMP_failW = NVINTF_FAILURE;\n"
+        "          b1_nv_runtime_hold_latch();\n"
+        "        }",
+        "NVOCMP_erase real NVS error latch")
 
     # The original app ignores initNV's failure and creates the Zigbee stack.
     # B1 must not do that. This path is deliberately NOT_OBSERVABLE until the
