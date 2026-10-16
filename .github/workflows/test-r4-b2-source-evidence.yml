@@ -1,0 +1,69 @@
+name: R4 B2 pinned TI source evidence (not linked proof)
+on:
+  push:
+    branches:
+      - feat/p7u-r4-b2-routing-capacity
+  pull_request:
+    paths:
+      - 'tools/b2_source_evidence.py'
+      - '.github/workflows/test-r4-b2-source-evidence.yml'
+      - 'docs/r4/b2/**'
+permissions:
+  contents: read
+jobs:
+  pinned-ti-source-index:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 source SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Acquire exact upstream TI Git commits and verify gitlink
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/b2-upstream
+          git init -q /tmp/b2-upstream/examples
+          git -C /tmp/b2-upstream/examples remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git
+          git -C /tmp/b2-upstream/examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C /tmp/b2-upstream/examples checkout --quiet FETCH_HEAD
+          git init -q /tmp/b2-upstream/sdk
+          git -C /tmp/b2-upstream/sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b2-upstream/sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/b2-upstream/sdk checkout --quiet FETCH_HEAD
+          test "$(git -C /tmp/b2-upstream/examples rev-parse HEAD)" = 87ff5b638b632050228a7504f35cf3b95581c278
+          test "$(git -C /tmp/b2-upstream/sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/b2-upstream/examples ls-tree HEAD cc13xx_cc26xx_sdk | grep -F '160000 commit 3615ad5d3f4f271258d18a2f5ce1785064ff9a58'
+      - name: Produce source evidence with exact source line references
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_source_evidence.py \
+            --sdk /tmp/b2-upstream/sdk \
+            --examples /tmp/b2-upstream/examples \
+            --out /tmp/b2-source-data \
+            --repo-sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/b2-source-data')
+          v=json.loads((p/'B2_EFFECTIVE_LIMITS.json').read_text())
+          assert v['measurement_kind']=='SOURCE_ONLY_NOT_LINKED'
+          assert v['native_elf_sha256'] is None and v['native_map_sha256'] is None
+          assert all(not x['elf_symbol_verified'] and x['effective_linked_count'] is None for x in v['tables'].values())
+          assert all(v['tables'][k]['source_declarations'] for k in ('source_routes','neighbors','nwk_routes','children'))
+          print('SOURCE INDEX ONLY — linked evidence remains fail-closed.')
+          PY
+          (cd /tmp/b2-source-data && sha256sum B2_*.json SOURCE_CALL_GRAPH.md DATA_STATUS.md > SHA256SUMS.txt)
+          cat /tmp/b2-source-data/DATA_STATUS.md >> "$GITHUB_STEP_SUMMARY"
+          echo 'Source index generated; not accepted as B2 native readiness.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reproducible source evidence (non-secret)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-source-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/b2-source-data/
+          if-no-files-found: error
+          retention-days: 30
