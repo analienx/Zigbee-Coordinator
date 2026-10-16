@@ -1,0 +1,98 @@
+"""R4-B0 image audit tests (stdlib unittest only, offline).
+
+Exercises the real b0_image_audit logic against the committed
+hostile artifact fixtures. If the audit logic is removed or
+weakened (hash binding, linker-invocation evidence, NV/CCFG
+separation, CCFG/vector presence, donor stack size), these tests
+fail. No hardware, no network, no secrets.
+"""
+import contextlib
+import importlib.util
+import io
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+B0 = ROOT / "firmware" / "slzb-06p7u" / "r4" / "b0"
+FIX = B0 / "fixtures"
+TOOL = B0 / "tools" / "b0_image_audit.py"
+
+spec = importlib.util.spec_from_file_location("b0_image_audit", TOOL)
+audit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(audit)
+
+
+def run_cli(func, argv):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = func(argv)
+    return code, buf.getvalue()
+
+
+class B0ImageAuditTests(unittest.TestCase):
+    def _audit(self, name):
+        return audit.audit(B0, FIX / name)
+
+    def test_valid_artifacts_pass(self):
+        code, message = self._audit("artifacts-valid")
+        self.assertEqual(code, 0)
+        self.assertIn("R4-B0 image audit OK", message)
+
+    def test_corrupted_image_fails_hash(self):
+        code, message = self._audit("artifacts-bad-hash")
+        self.assertEqual(code, 1)
+        self.assertIn("sha256 mismatch", message)
+
+    def test_echo_pass_log_rejected(self):
+        code, message = self._audit("artifacts-no-link")
+        self.assertEqual(code, 1)
+        self.assertIn("no actual linker invocation", message)
+
+    def test_nv_ccfg_overlap_rejected(self):
+        code, message = self._audit("artifacts-overlap")
+        self.assertEqual(code, 1)
+        self.assertIn("NV/CCFG overlap", message)
+
+    def test_missing_ccfg_rejected(self):
+        code, message = self._audit("artifacts-no-ccfg")
+        self.assertEqual(code, 1)
+        self.assertIn("CCFG", message)
+
+    def test_missing_vectors_rejected(self):
+        code, message = self._audit("artifacts-no-vector")
+        self.assertEqual(code, 1)
+        self.assertIn("vector", message)
+
+    def test_unproven_4096_stack_rejected(self):
+        code, message = self._audit("artifacts-bad-stack")
+        self.assertEqual(code, 1)
+        self.assertIn("C/IRQ stack", message)
+
+    def test_absent_artifacts_block_never_pass(self):
+        code, message = audit.audit(B0, FIX / "artifacts-does-not-exist")
+        self.assertEqual(code, 2)
+        self.assertIn("B0-AUDIT-BLOCKED", message)
+
+    def test_cli_valid_pair(self):
+        code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
+                                         str(FIX / "artifacts-valid")])
+        self.assertEqual(code, 0)
+        self.assertIn("R4-B0 image audit OK", out)
+
+    def test_cli_overlap_fails_without_traceback(self):
+        code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
+                                         str(FIX / "artifacts-overlap")])
+        self.assertEqual(code, 1)
+        self.assertIn("NV/CCFG overlap", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_cli_blocked_without_traceback(self):
+        code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
+                                         str(FIX / "artifacts-does-not-exist")])
+        self.assertEqual(code, 2)
+        self.assertIn("B0-AUDIT-BLOCKED", out)
+        self.assertNotIn("Traceback", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

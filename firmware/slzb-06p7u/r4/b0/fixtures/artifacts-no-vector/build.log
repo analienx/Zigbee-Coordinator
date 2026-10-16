@@ -1,0 +1,10 @@
+CCS 12.8.0.00012 headless build log (synthetic excerpt, R4-B0 fixture)
+$ eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
+project import OK: znp_LP_CC1352P7_4_tirtos7_ticlang
+$ syscfg -o syscfg --product $SDK/.metadata/product.json --compiler ticlang tirtos7/znp.syscfg
+syscfg generation OK: ti_utils_build_linker.cmd.genlibs emitted
+$ eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang -ccs.configuration release
+tiarmclang link: --rom_model --warn_sections -llibc.a -ldriverlib.lib -ltimac_rom_PG2_0_rom_api_linker.cmd
+link OK: znp.out (ELF)
+$ tiarmobjcopy znp.out --output-target ihex znp.hex
+hex emission OK

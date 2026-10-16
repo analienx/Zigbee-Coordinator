@@ -1,0 +1,196 @@
+name: R4-B0 native P7U ZNP
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/p7u-r4-b0-native-issue90
+
+permissions:
+  contents: read
+
+jobs:
+  r4-b0-overlay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Compile R4-B0 tools and tests
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py
+      - name: Run R4-B0 overlay tests
+        run: python -m unittest -v tests.test_r4_b0_overlay
+      - name: Run R4-B0 image audit tests
+        run: python -m unittest -v tests.test_r4_b0_audit
+      - name: Validate real B0 overlay documents
+        run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
+      - name: Audit valid artifact fixture
+        run: python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-valid
+      - name: Negative control (o1) corrupted image must fail hash binding
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-hash 2>&1); then
+            echo "control (o1) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "sha256 mismatch"
+          echo "control (o1) rejected at hash binding as required"
+      - name: Negative control (o2) echo-pass log must fail linker evidence
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-no-link 2>&1); then
+            echo "control (o2) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "no actual linker invocation"
+          echo "control (o2) rejected at linker evidence as required"
+      - name: Negative control (o3) NV-CCFG overlap must fail
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-overlap 2>&1); then
+            echo "control (o3) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "NV/CCFG overlap"
+          echo "control (o3) rejected at NV/CCFG separation as required"
+      - name: Negative control (o4) baud mutation must fail overlay
+        run: |
+          rm -rf /tmp/b0neg_baud
+          cp -r firmware/slzb-06p7u/r4/b0 /tmp/b0neg_baud
+          python -c "import json; p='/tmp/b0neg_baud/B0_BOARD_CONTRACT.json'; d=json.load(open(p)); [c.__setitem__('value',9600) for c in d['claims'] if c['id']=='uart-baud']; json.dump(d,open(p,'w'),indent=1)"
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate /tmp/b0neg_baud 2>&1); then
+            echo "control (o4) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "uart-baud"
+          echo "control (o4) rejected at board contract as required"
+      - name: Negative control (o5) absent artifacts must BLOCK, never pass
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-does-not-exist 2>&1); then
+            echo "control (o5) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "B0-AUDIT-BLOCKED"
+          echo "control (o5) blocked without binary claim as required"
+
+  r4-b0-upstream-inventory:
+    runs-on: ubuntu-latest
+    env:
+      EXPECT_TI_SDK_SHA: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      EXPECT_TI_EXAMPLES_SHA: 87ff5b638b632050228a7504f35cf3b95581c278
+      EXPECT_TI_RELEASE: lpf2-8.33.00.16
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      # Re-derives every donor file name in B0_DONOR_INVENTORY.json
+      # against upstream at the pinned SHAs. Any invented or renamed
+      # path fails here. Fails closed on network outage (fetch
+      # failure is nonzero with `external proof unavailable`, never
+      # a pass).
+      - name: Verify donor pins and exact upstream file names
+        run: |
+          set -e
+          rm -rf /tmp/b0donor && mkdir -p /tmp/b0donor && cd /tmp/b0donor
+          git init -q examples && (cd examples && git remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git && git fetch --depth 1 origin "$EXPECT_TI_EXAMPLES_SHA" || { echo "external proof unavailable (fetch of zstack-examples failed)"; exit 1; })
+          [ "$(cd examples && git rev-parse FETCH_HEAD)" = "$EXPECT_TI_EXAMPLES_SHA" ] || { echo "upstream mismatch (examples SHA)"; exit 1; }
+          echo "upstream OK: fetched zstack-examples $EXPECT_TI_EXAMPLES_SHA"
+          git init -q sdk && (cd sdk && git remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git && git fetch --depth 1 origin "$EXPECT_TI_SDK_SHA" || { echo "external proof unavailable (fetch of lowpower-f2-sdk failed)"; exit 1; })
+          [ "$(cd sdk && git rev-parse FETCH_HEAD)" = "$EXPECT_TI_SDK_SHA" ] || { echo "upstream mismatch (SDK SHA)"; exit 1; }
+          echo "upstream OK: fetched lowpower-f2-sdk $EXPECT_TI_SDK_SHA"
+          (cd examples && git ls-tree "$EXPECT_TI_EXAMPLES_SHA" cc13xx_cc26xx_sdk | grep -F "160000 commit $EXPECT_TI_SDK_SHA") || { echo "upstream mismatch (cc13xx_cc26xx_sdk gitlink)"; exit 1; }
+          echo "upstream OK: cc13xx_cc26xx_sdk gitlink mode 160000 equals SDK pin"
+          (cd sdk && git log -1 --format=%s "$EXPECT_TI_SDK_SHA" | grep -F "$EXPECT_TI_RELEASE") || { echo "upstream mismatch (SDK commit message release)"; exit 1; }
+          echo "upstream OK: SDK commit message names $EXPECT_TI_RELEASE"
+          for p in \
+            "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec" \
+            "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg" \
+            "README.md"; do
+            (cd examples && git ls-tree "$EXPECT_TI_EXAMPLES_SHA" "$p" | grep -F "$p") || { echo "upstream mismatch (missing examples path: $p)"; exit 1; }
+            echo "upstream OK: examples path present: $p"
+          done
+          for p in \
+            "source/ti/zstack/startup/main.c" \
+            "source/ti/zstack/npi/npi_task.c" \
+            "source/ti/zstack/mt/mt_sys.c" \
+            "source/ti/devices/cc13x2x7_cc26x2x7/linker_files/cc13x2x7.cmd" \
+            "source/ti/devices/cc13x2x7_cc26x2x7/startup_files/startup_ticlang.c"; do
+            (cd sdk && git ls-tree "$EXPECT_TI_SDK_SHA" "$p" | grep -F "$p") || { echo "upstream mismatch (missing SDK path: $p)"; exit 1; }
+            echo "upstream OK: SDK path present: $p"
+          done
+          echo "B0 donor inventory attested upstream"
+      - name: Negative control (i1) bogus SHA must fail fetch closed
+        run: |
+          rm -rf /tmp/b0neg_i1 && mkdir -p /tmp/b0neg_i1 && cd /tmp/b0neg_i1
+          git init -q neg && (cd neg && git remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git && git fetch --depth 1 origin 0000000000000000000000000000000000000000 2>/dev/null) && { echo "control (i1) unexpectedly fetched"; exit 1; }
+          echo "control (i1) fetch refused as required (external proof unavailable, never a pass)"
+      - name: Negative control (i2) invented path must fail ls-tree
+        run: |
+          cd /tmp/b0donor/examples
+          if git ls-tree "$EXPECT_TI_EXAMPLES_SHA" "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp_CC1352P7_4_tirtos7_ticlang.projectspec" | grep -F "znp_CC1352P7_4"; then
+            echo "control (i2) unexpectedly found invented path"
+            exit 1
+          fi
+          echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
+
+  r4-b0-native-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      # Fail-closed provision gate: with no verified TI toolchain
+      # distribution provisioned, this emits a BLOCKED receipt and
+      # fails the job. It never fabricates ELF/HEX/BIN and never
+      # reports a build PASS. When the toolchain becomes available,
+      # the READY branch below performs the real CCS headless build.
+      - name: Provision gate (fail closed without toolchain)
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
+      - name: Real native build (only when provision is READY)
+        run: |
+          echo "provision READY: performing donor fetch, SDK library build, CCS headless import/build"
+          rm -rf /tmp/b0src && mkdir -p /tmp/b0src && cd /tmp/b0src
+          git clone --depth 1 https://github.com/TexasInstruments/simplelink-zstack-examples.git examples
+          git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples submodule update --init cc13xx_cc26xx_sdk
+          [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
+          echo "SDK library build per SDK README at pinned SHA (see firmware/slzb-06p7u/r4/b0/README.md)"
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+      - name: Upload native artifacts and receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75bdb9e924fd1b17b33b9e83e5b # v4
+        with:
+          name: r4-b0-native-${{ github.sha }}
+          path: |
+            /tmp/b0-provision-receipt.json
+            /tmp/b0out/
+          if-no-files-found: warn
