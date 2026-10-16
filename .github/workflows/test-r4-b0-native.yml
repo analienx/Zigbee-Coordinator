@@ -317,7 +317,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           rm -rf /tmp/b0src /tmp/b0out && mkdir -p /tmp/b0src /tmp/b0out && cd /tmp/b0src
-          git clone --depth 1 https://github.com/TexasInstruments/simplelink-zstack-examples.git examples
+          git init -q examples
+          git -C examples remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git
           git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
           git -C examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
           git -C examples submodule update --init cc13xx_cc26xx_sdk
