@@ -352,6 +352,16 @@ def _parse_link_xml(text, elf_name, elf_entry):
                            or section.get("load_address"))
         size = _int_maybe(section.findtext("size") or section.get("size"))
         if name:
+            # TI emits zero-size, unallocated logical groups as bookkeeping
+            # alongside their real FLASH allocation. Native ZNP XML from
+            # CI 38912997596 has .resetVecs id lg-3 (0x0, 0x3c) AND
+            # lg-1b (no load_address, size 0), similarly .ramVecs.
+            # The zero-sized no-load group carries no programmed bytes.
+            # Do not let it shadow a genuine allocated group. Other
+            # duplicates, including two populated groups, fail closed.
+            if (section.tag == "logical_group" and load is None
+                    and size == 0):
+                continue
             if name in sections:
                 return None, "audit duplicate linker output section %s" % name
             sections[name] = (load, size)
