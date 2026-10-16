@@ -88,8 +88,5 @@ paths below are `firmware/t832/`-rooted)
 
 - Issue #87 body (ISSUE-PROSE): 64 AF / 6 s SRSP, 6 ZDO
   mgmtPermitJoinReq, 69 TIMEOUT, SIGTERM 09:43:58, OTA 08:25-09:00.
-- HA#73 comment `6139149384` (EXTERNAL-COMMENT): F0 v2 live
-  asyncHWM 158, 25/26 zeros, RTT 147-1549 ms; 13 Oct
-  startupFromApp 40 s timeout 06:07:57.
-- GAP: raw Z2M logs uninspected; board subtree unlisted;
-  STACKMSG doc describes superseded v1/62B.
+- HA#73 comment 6139149384: on 13 Oct, F0 v2 showed async HWM 158, SRSP enqueue/accept 25 to 26, RTT 147-1549 ms, after a separate cold startupFromApp 40s timeout 06:07:57. The 2 Oct event had no contemporaneous F0 and must not be conflated.
+- P7U logs were reviewed read-only in issue #85 comment 6211227402, but this source-only synthetic library has no raw logs. Per-waiter IDs, radio epoch and fitted board still unproven; STACKMSG v1/62B documentation is superseded.

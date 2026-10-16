@@ -27,6 +27,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile R4-01a offline source and tests
-        run: python -m py_compile tests/test_r4_01a_diag_contracts.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py
-      - name: Run R4-01a diagnostic contract tests
-        run: python -m unittest -v tests.test_r4_01a_diag_contracts
+        run: python -m py_compile tests/test_r4_01a_diag_contracts.py tests/test_r4_01a_passive_recorder.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py
+      - name: Run R4-01a diagnostic contract and passive recorder tests
+        run: python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder
