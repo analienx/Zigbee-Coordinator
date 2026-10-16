@@ -56,7 +56,7 @@ class CollisionGuards(unittest.TestCase):
 
     def test_d02_decimal_sys_f0_collision_defeats_audit(self):
         with self.assertRaisesRegex(ValueError, "already assigned"):
-            verify_ti(MT_H + "\\n#define MT_SYS_B4_DIAG 240\\n", MT_DISPATCH, NPI, UART)
+            verify_ti(MT_H + "\n#define MT_SYS_B4_DIAG 240\n", MT_DISPATCH, NPI, UART)
 
     def test_d02_npi_mode_producer_source_required(self):
         with self.assertRaisesRegex(ValueError, "NPI-specific"):
