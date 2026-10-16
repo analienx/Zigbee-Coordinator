@@ -19,6 +19,7 @@ TABLES = {
     "route_requests": ("rtDiscTable", "gMAX_RREQ_ENTRIES"),
     "relay_path": ("rtgSrcRelayList", "gMAX_SOURCE_ROUTE"),
 }
+MEMORY_SYMBOLS = frozenset(("heapStart", "heapEnd", "__STACK_TOP", "__STACK_SIZE", "__stack"))
 MAX_ELF = 8 * 1024 * 1024
 MAX_XML = 2 * 1024 * 1024
 
@@ -95,15 +96,18 @@ def parse_elf(path):
             if not name:
                 continue
             label=string_at(strings,name)
-            if label in {v for pair in TABLES.values() for v in pair} and size>0:
-                if index>=shnum:
+            table_symbol = label in {v for pair in TABLES.values() for v in pair}
+            if (table_symbol and size>0) or label in MEMORY_SYMBOLS:
+                if index>=shnum and index != 0xfff1:
                     raise EvidenceError("symbol section index invalid "+label)
+                sec=sh[index] if index<shnum else None
                 symbols.setdefault(label,[]).append({
                     "name":label,"address":value,"size_bytes":size,
-                    "section":sh[index]["section_name"],"section_index":index,
-                    "section_type":sh[index]["type"],"section_offset":sh[index]["offset"],
-                    "section_address":sh[index]["addr"],
-                    "section_size":sh[index]["size"],
+                    "section":sec["section_name"] if sec else "ABS", "section_index":index,
+                    "section_type":sec["type"] if sec else None,
+                    "section_offset":sec["offset"] if sec else None,
+                    "section_address":sec["addr"] if sec else None,
+                    "section_size":sec["size"] if sec else None,
                     "binding":info>>4,
                 })
     return raw,sh,symbols
@@ -147,6 +151,21 @@ def derive(root, source_sha, out, run_id):
         areas[name]={"base":origin,"size":size}
     if areas.get("SRAM",{}).get("size")!=0x24000:
         raise EvidenceError("unverified P7 SRAM geometry")
+    heap_start=one_symbol(symbols,"heapStart")
+    heap_end=one_symbol(symbols,"heapEnd")
+    stack_size_symbol=one_symbol(symbols,"__STACK_SIZE")
+    linked_heap=None
+    linked_stack=None
+    if heap_start and heap_end:
+        a,b=heap_start["address"],heap_end["address"]
+        start=areas["SRAM"]["base"]
+        end=start+areas["SRAM"]["size"]
+        if start<=a<=b<=end:
+            linked_heap={"start_address":a,"end_address":b,"span_bytes":b-a,
+                         "status":"LINKER_ADDRESS_SPAN_NOT_ALLOCATOR_HIGH_WATER"}
+    if stack_size_symbol:
+        linked_stack={"size_bytes":stack_size_symbol["address"],
+                      "status":"LINKED_SYMBOL_NOT_RUNTIME_HIGH_WATER"}
     table_result={}
     for key,(array_name,limit_name) in TABLES.items():
         table=one_symbol(symbols,array_name)
@@ -185,6 +204,8 @@ def derive(root, source_sha, out, run_id):
         "sdk_source_sha":"3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
         "artifact_sha256":{k:v["sha256"] for k,v in files.items()},
         "memory_regions":areas,"sram_allocated_sections":memory_sections,
+        "linked_heap_address_span":linked_heap,
+        "linked_c_irq_stack_size":linked_stack,
         "tables":table_result,
         "heap_high_water":None,"concurrent_dynamic_route_buffer_peak":None,
         "rtos_task_stacks_total":None,"c_irq_stack_confirmed_bytes":None,
@@ -205,7 +226,9 @@ def derive(root, source_sha, out, run_id):
                      f" {x(t['entry_sizeof_derived'])} | {x(t['array_section'])} |")
     lines+=["", "RAM memory sections (raw ELF SHF_ALLOC; may contain overlap/aliases):"]
     lines.extend(f"- \`{n}\`: {v} bytes" for n,v in sorted(memory_sections.items()))
-    lines+=["", "A section sum is not a proven free-RAM bound. Tasks, C/IRQ stack,"
+    lines+=["", "Linked heap region (NOT free heap/high-water): \\`"+str(linked_heap)+"\\`",
+            "C/IRQ stack linked symbol: \\`"+str(linked_stack)+"\\`",
+            "", "A section sum is not a proven free-RAM bound. Tasks, C/IRQ stack,"
             " heap arena and worst-case dynamic occupancy need disjoint proof.",
             "Runtime heap high-water: **UNKNOWN**.",
             "Security/NV layout, physical hardware and RF: **NOT QUALIFIED**."]
