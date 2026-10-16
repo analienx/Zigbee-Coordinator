@@ -34,6 +34,8 @@ spec.loader.exec_module(audit)
 def run_cli(func, argv):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
+        if func is audit.main and "--artifacts" in argv:
+            argv = list(argv) + ["--synthetic-fixture-oracle"]
         code = func(argv)
     return code, buf.getvalue()
 
@@ -67,12 +69,37 @@ def _patched_xml(old_block, new_block):
 
 class B0ImageAuditTests(unittest.TestCase):
     def _audit(self, name):
-        return audit.audit(B0, FIX / name)
+        return audit.audit(B0, FIX / name, fixture_oracle=True)
+
+    def test_real_cortex_m_reset_words_must_be_executable(self):
+        evidence = {
+            "areas": {"SRAM": (0x20000000, 0x24000)},
+            "sections": {".resetVecs": (0, 0x3c),
+                         ".text": (0x3c, 0x2f000)},
+        }
+        vectors = (0x20023C00).to_bytes(4, "little") + (
+            0x245ED).to_bytes(4, "little")
+        payload = {i: b for i, b in enumerate(vectors)}
+        payload[0x245EC] = 0x70
+        elf = dict(payload)
+        self.assertIsNone(audit._validate_reset_vectors(payload, evidence, elf))
+        for wrong in (
+            b"\\xff" * 8,
+            (0xFFFFFFFF).to_bytes(4, "little") + vectors[4:],
+            (0x20023C03).to_bytes(4, "little") + vectors[4:],
+            vectors[:4] + (0x245EC).to_bytes(4, "little"),
+            vectors[:4] + (0xB0001).to_bytes(4, "little"),
+        ):
+            corrupt = dict(payload)
+            corrupt.update({i: b for i, b in enumerate(wrong)})
+            message = audit._validate_reset_vectors(corrupt, evidence, corrupt)
+            self.assertIsNotNone(message)
+            self.assertIn("reset vector", message)
 
     def test_valid_vector_passes_oracle_sanity(self):
         code, message = self._audit("artifacts-valid")
         self.assertEqual(code, 0)
-        self.assertIn("R4-B0 image audit OK", message)
+        self.assertIn("R4-B0 synthetic fixture audit OK", message)
 
     def test_link_xml_rejects_forged_flash_extent(self):
         xml = (FIX / "artifacts-valid" / "znp_linkInfo.xml").read_text()
@@ -188,14 +215,14 @@ class B0ImageAuditTests(unittest.TestCase):
                 flat[addr - base] = value
             (art / "znp.bin").write_bytes(flat)
             _refresh_manifest(art)
-            code, message = audit.audit(B0, art)
-            self.assertEqual((code, message.split(" (")[0]), (0, "R4-B0 image audit OK"))
+            code, message = audit.audit(B0, art, fixture_oracle=True)
+            self.assertEqual((code, message.split(" (")[0]), (0, "R4-B0 synthetic fixture audit OK"))
             gaps = [i for i in range(len(flat)) if base + i not in payload]
             self.assertTrue(gaps)
             flat[gaps[len(gaps) // 2]] = 0xA5
             (art / "znp.bin").write_bytes(flat)
             _refresh_manifest(art)
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 1)
             self.assertIn("gap fill", message)
 
@@ -218,7 +245,7 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("no actual linker invocation", message)
         self.assertNotIn("content-binding", message)
-        self.assertNotIn("R4-B0 image audit OK", message)
+        self.assertNotIn("R4-B0 synthetic fixture audit OK", message)
 
     def test_shuffled_pipeline_order_rejected(self):
         # Markers in implausible order (projectBuild before syscfg)
@@ -236,7 +263,7 @@ class B0ImageAuditTests(unittest.TestCase):
             rest = rows[:syscfg_at] + rows[build_at:]
             (art / "build.log").write_text(
                 "\n".join(rest + block) + "\n", encoding="utf-8")
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 1)
             self.assertIn("no actual linker invocation", message)
             self.assertIn("pipeline order", message)
@@ -353,7 +380,7 @@ class B0ImageAuditTests(unittest.TestCase):
             (art / "znp.out").write_bytes(head + phdrs + seg0 + seg1
                                           + extra)
             _refresh_manifest(art)
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 1)
             self.assertIn("content-binding", message)
             self.assertIn("0x00000040", message)
@@ -371,7 +398,7 @@ class B0ImageAuditTests(unittest.TestCase):
                 "<length>0x2000</length>",
                 "<name>FLASH_LAST</name><origin>0xAE000</origin>"
                 "<length>0x1000</length>") as art:
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 1)
             self.assertIn("geometry mismatch", message)
             self.assertIn("FLASH_LAST", message)
@@ -382,7 +409,7 @@ class B0ImageAuditTests(unittest.TestCase):
                 "<length>0x24000</length>",
                 "<name>SRAM</name><origin>0x20001000</origin>"
                 "<length>0x24000</length>") as art:
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 1)
             self.assertIn("geometry mismatch", message)
             self.assertIn("SRAM", message)
@@ -407,9 +434,9 @@ class B0ImageAuditTests(unittest.TestCase):
                             "<address>0x00000001</address>"),
                 encoding="utf-8")
             _refresh_manifest(art)
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 0)
-            self.assertIn("R4-B0 image audit OK", message)
+            self.assertIn("R4-B0 synthetic fixture audit OK", message)
 
     def test_entry_outside_image_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -424,12 +451,12 @@ class B0ImageAuditTests(unittest.TestCase):
                             "<address>0x00001000</address>"),
                 encoding="utf-8")
             _refresh_manifest(art)
-            code, message = audit.audit(B0, art)
+            code, message = audit.audit(B0, art, fixture_oracle=True)
             self.assertEqual(code, 1)
             self.assertIn("not covered by HEX", message)
 
     def test_absent_artifacts_block_never_pass(self):
-        code, message = audit.audit(B0, FIX / "artifacts-does-not-exist")
+        code, message = audit.audit(B0, FIX / "artifacts-does-not-exist", fixture_oracle=True)
         self.assertEqual(code, 2)
         self.assertIn("B0-AUDIT-BLOCKED", message)
 
@@ -437,7 +464,7 @@ class B0ImageAuditTests(unittest.TestCase):
         code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
                                          str(FIX / "artifacts-valid")])
         self.assertEqual(code, 0)
-        self.assertIn("R4-B0 image audit OK", out)
+        self.assertIn("R4-B0 synthetic fixture audit OK", out)
 
     def test_cli_overlap_fails_without_traceback(self):
         code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
