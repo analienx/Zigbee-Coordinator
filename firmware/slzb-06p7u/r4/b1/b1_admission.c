@@ -26,7 +26,7 @@ void b1_nv_runtime_hold_latch(void)
 int b1_nv_runtime_hold_active(void)
 {
 #ifdef B1_MANAGEMENT_ENABLED
-    return b1_nv_runtime_held != 0u || b1_management_get_hold_active();
+    return b1_nv_runtime_held != 0u || b1_management_nv_security_hold_active();
 #else
     return b1_nv_runtime_held != 0u;
 #endif
