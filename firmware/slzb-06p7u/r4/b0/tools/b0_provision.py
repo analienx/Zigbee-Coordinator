@@ -108,6 +108,20 @@ def provision(tool_dir=None):
                           "acquire": ACQUIRE[key]}
             continue
         version_output = _version(binary, key)
+        if key == "ccs" and VERSION_PINS[key] not in version_output:
+            # CCS projectBuild -ccs.help documents command options, not an
+            # IDE version. Verify the actual TI-published distribution bytes
+            # instead of fabricating a version string from CLI help.
+            from b0_fetch_ti import VENDOR_SHA256
+            source_archive = os.environ.get("B0_CCS_PACKAGE_PATH", "")
+            exact_binary = os.environ.get("CCS_ECLIPSE", "")
+            authenticated = (source_archive and exact_binary
+                             and os.path.realpath(binary) == os.path.realpath(exact_binary)
+                             and _sha256(source_archive) == VENDOR_SHA256["ccs"]
+                             and "-ccs.projects" in version_output)
+            if authenticated:
+                version_output += ("\\nCCS 12.8.0.00012: validated via vendor "
+                                   "SHA-256 archive and actual projectBuild help")
         if VERSION_PINS[key] not in version_output:
             missing.append(key)
             found[key] = {"present": False, "expected": EXPECTED[key],
