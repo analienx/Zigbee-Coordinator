@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-B0 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py tests/test_r4_b0_bind_sysconfig.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py
       - name: Assert R4-B0 fixture LF pin holds (CRLF drift guard)
         run: |
           test -f firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
@@ -51,6 +51,8 @@ jobs:
         run: python -m unittest -v tests.test_r4_b0_install_ti
       - name: Test target-scoped SDK M4F build workaround
         run: python -m unittest -v tests.test_r4_b0_sdk_build_scope
+      - name: Test pinned CCS SysConfig version dispatch
+        run: python -m unittest -v tests.test_r4_b0_bind_sysconfig
       - name: Validate real B0 overlay documents
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
       - name: Unit oracle sanity on valid vector (NOT native proof)
@@ -312,6 +314,11 @@ jobs:
         run: |
           export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
           python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
+      - name: Bind CCS SysConfig invocation to exact standalone pin
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py \
+            --ccs-eclipse "$CCS_ECLIPSE" --standalone-cli "$SYSCONFIG_CLI" \
+            --receipt /tmp/b0-sysconfig-binding.json
       - name: Real native build (only when provision is READY)
         shell: bash
         run: |
@@ -353,5 +360,6 @@ jobs:
           name: r4-b0-native-${{ github.sha }}
           path: |
             /tmp/b0-provision-receipt.json
+            /tmp/b0-sysconfig-binding.json
             /tmp/b0out/
           if-no-files-found: warn
