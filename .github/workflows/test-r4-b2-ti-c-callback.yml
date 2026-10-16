@@ -1,0 +1,76 @@
+name: R4 B2 T10 real TI ZDO callback compiled with ASan
+on:
+  pull_request:
+    paths:
+      - 'tools/b2_compile_actual_zdo_callback.py'
+      - '.github/workflows/test-r4-b2-ti-c-callback.yml'
+      - 'docs/r4/b2/TEST_MATRIX.md'
+  push:
+    branches: [feat/p7u-r4-b2-routing-capacity]
+permissions:
+  contents: read
+jobs:
+  compiled-ti-c-callback:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch exact TI SDK pin and verify real C source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init -q /tmp/b2-zdo-sdk
+          git -C /tmp/b2-zdo-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b2-zdo-sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/b2-zdo-sdk checkout --quiet FETCH_HEAD
+          test "$(git -C /tmp/b2-zdo-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          test -f /tmp/b2-zdo-sdk/source/ti/zstack/stack/zdo/zd_app.c
+      - name: Compile and execute original actual TI ZDO callback source with ASan and UBSan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_zdo_callback.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-zdo-original
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-zdo-original/ti_zdo_mto_host.c -o /tmp/b2-zdo-original/ti_zdo_mto_host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-zdo-original/ti_zdo_mto_host
+          echo 'T10 actual TI ZDO C callback: 1,2,1000 calls correctly forwarded (no flood suppression in this function).' >> "$GITHUB_STEP_SUMMARY"
+      - name: Deliberately mutate exact TI C body and require sanitizer-host test to detect missing MTO call
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_zdo_callback.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-zdo-mutant --mutation drop-mto-call
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-zdo-mutant/ti_zdo_mto_host.c -o /tmp/b2-zdo-mutant/ti_zdo_mto_host
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-zdo-mutant/ti_zdo_mto_host) > /tmp/b2-zdo-mutant/negative-test.log 2>&1
+          result=$?
+          set -e
+          if [[ "$result" -eq 0 ]]; then
+            echo 'B2-T10-BLOCKED: mutated TI callback incorrectly passed'
+            exit 1
+          fi
+          if ! grep -E 'Assertion.*mto_requests|assertion.*mto_requests' /tmp/b2-zdo-mutant/negative-test.log; then
+            echo 'B2-T10-BLOCKED: mutation failed for the wrong reason'
+            cat /tmp/b2-zdo-mutant/negative-test.log
+            exit 1
+          fi
+          echo 'T10 source mutation removal of MTO call correctly failed the exact request-count assertion.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload original source-body and mutation receipts (no keys or real network)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-ti-zdo-t10-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/b2-zdo-original/B2_T10_COMPILED_TI_CALLBACK_RECEIPT.json
+            /tmp/b2-zdo-mutant/B2_T10_COMPILED_TI_CALLBACK_RECEIPT.json
+            /tmp/b2-zdo-mutant/negative-test.log
+          if-no-files-found: warn
+          retention-days: 30
