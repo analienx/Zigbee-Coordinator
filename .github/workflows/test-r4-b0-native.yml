@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-B0 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py tests/test_r4_b0_bind_sysconfig.py firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py tests/test_r4_b0_p7u_board_overlay.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py tests/test_r4_b0_bind_sysconfig.py firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py tests/test_r4_b0_p7u_board_overlay.py firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py tests/test_r4_b0_verify_generated_board.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py
       - name: Assert R4-B0 fixture LF pin holds (CRLF drift guard)
         run: |
           test -f firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
@@ -55,6 +55,8 @@ jobs:
         run: python -m unittest -v tests.test_r4_b0_bind_sysconfig
       - name: Test measured P7U pinout and CCFG source overlay
         run: python -m unittest -v tests.test_r4_b0_p7u_board_overlay
+      - name: Test generated P7U UART and whole-CFG audit negative controls
+        run: python -m unittest -v tests.test_r4_b0_verify_generated_board
       - name: Validate real B0 overlay documents
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
       - name: Unit oracle sanity on valid vector (NOT native proof)
@@ -365,10 +367,17 @@ jobs:
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir /tmp/b0out/preflight-syscfg \
+            --receipt /tmp/b0out/p7u-generated-preflight.json
           echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
           echo "Collecting real linker artifacts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir "$project/default/syscfg" \
+            --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+            --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
       - name: Upload native artifacts and receipts
         if: always()
