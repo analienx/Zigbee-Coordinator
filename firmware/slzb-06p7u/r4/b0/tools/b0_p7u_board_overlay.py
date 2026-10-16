@@ -1,7 +1,7 @@
 """Apply ONLY measured P7U r1.73 UART0 pins and vendor-20240710 DC/DC delta.
 
 This is a fail-closed transformation of the pinned TI 8.33 ZNP SysConfig
-COPY in the disposable hosted CCS workspace, not an edit to the upstream
+COPY in the disposable hosted CCS workspace, retaining TI's\nLaunchPad UART pinmux alias because its removal produces wrong pins.\nNot an edit to the upstream
 donor and not permission to flash. Historically fitted UART facts come
 from issue #80 comment 6198198498 and issue #90 comment 6215896717.
 The 20240710 CCFG DC/DC delta comes from prior native R1 proof; its
@@ -54,12 +54,12 @@ def transform(original):
             or src.count('scripting.addModule("/ti/devices/CCFG")') != 1
             or src.count("// @cliArgs --board /ti/boards/LP_CC1352P7_4") != 1):
         raise ValueError("B0_P7U_DONOR_SYSCFG_ANCHOR_DRIFT")
-    src = src.replace(HW_ANCHOR, "", 1)
+    # KEEP the board XDS110 UART pinmux alias, which maps to DIO12/DIO13.
+    # Its removal made SysConfig silently choose DIO16/DIO17 (CI 38905120532).
+    # This is an IDE pin constraint only, NOT a requirement for physical XDS110.
     anchor = 'Display_UART.uart.$name = "CONFIG_DISPLAY_UART";\n'
     src = src.replace(anchor, anchor + UART_PIN_OVERRIDE, 1)
     src = src.replace(CCFG_ANCHOR, CCFG_ANCHOR + CCFG_OVERRIDE, 1)
-    if "Display_UART.$hardware = " in src:
-        raise ValueError("B0_P7U_LAUNCHPAD_XDS110_UART_STILL_SELECTED")
     return src
 
 
