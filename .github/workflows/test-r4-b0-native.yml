@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Each push/PR head supersedes older B2 native candidates. Avoid exhausting
+# costly TI toolchain runners on stale SHAs while preserving completed artifacts.
+concurrency:
+  group: r4-b2-native-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   r4-b0-overlay:
     runs-on: ubuntu-latest
