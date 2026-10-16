@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import tarfile
-from b0_fetch_ti import acquire
+from b0_fetch_ti import acquire, VENDOR_SHA256
 
 
 def checked(argv, cwd=None):
@@ -73,9 +73,11 @@ def main():
     args = parser.parse_args()
     names = {"ccs": "TI_CCS_SHA256", "sysconfig": "TI_SYSCONFIG_SHA256",
              "clang": "TI_CLANG_SHA256"}
-    hashes = {key: os.getenv(name, "") for key, name in names.items()}
-    if any(not value for value in hashes.values()):
-        raise RuntimeError("BLOCKED: publisher verified TI SHA-256 pins not configured")
+    hashes = dict(VENDOR_SHA256)
+    for key, name in names.items():
+        override = os.getenv(name, "")
+        if override and override != hashes[key]:
+            raise RuntimeError("BLOCKED: configured digest conflicts with TI-published %s pin" % key)
     exports = install(args.root, hashes)
     with args.github_env.open("a", encoding="utf-8") as output:
         for key, value in exports.items():
