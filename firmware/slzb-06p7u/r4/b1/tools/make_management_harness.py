@@ -235,10 +235,19 @@ int main(int argc,char **argv) {
         if(fail_queue) assert(queue_deleted==1 && uart_opens==0);
         if(fail_sem||fail_register) assert(uart_opens==0);
         if(fail_uart) assert(uart_reads==0);
+    } else if(strcmp(s,"npi_first")==0) {
+        /* NPI before the donor MT service is registered is an impossible
+         * healthy initialization order. Fail closed, do not advertise a
+         * functional transport or invent a SYS response. */
+        NPITask_Fxn(0,0);
+        assert(b1_management_get_hold_active());
+        assert(!b1_management_npi_initialized());
+        assert(mt_id_reads==0 && process_started==0 && sem_posts==0);
+        assert(sent==0 && forwarded==0 && mutations==0);
     } else {
         if(strcmp(s,"healthy")==0) b1_management_note_mt_registered();
         else if(strcmp(s,"hold_security")==0) b1_security_runtime_hold_latch();
-        else if(strcmp(s,"npi_first")!=0) b1_management_hold_nv(B1_ERROR_NV_OPEN);
+        else b1_management_hold_nv(B1_ERROR_NV_OPEN);
         NPITask_Fxn(0,0); assert(process_started==1 && b1_management_npi_initialized());
         assert(mt_id_reads==(strcmp(s,"healthy")==0?1u:0u));
         if(strcmp(s,"healthy")==0) {
