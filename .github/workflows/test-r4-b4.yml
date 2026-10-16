@@ -9,9 +9,11 @@ on:
       - "firmware/slzb-06p7u/r4/tools/r4_diag_reference.py"
       - "tests/test_r4_b4_*.py"
       - "tests/test_r4_01a_*.py"
-  push:
-    branches:
-      - feat/p7u-r4-b4-issue98
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
