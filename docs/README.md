@@ -6,6 +6,7 @@ Repository-level documentation is organized by **coordinator scope**, even where
 
 - [Coordinator Registry](COORDINATOR_REGISTRY.md) — canonical hardware/stack/naming map.
 - Root [README](../README.md) — repository purpose, safety invariants and current focus.
+- [16 October 2026 branch-prune audit](BRANCH_PRUNE_AUDIT_2026-10-16.md) — verified pre-cleanup recovery bundle, deleted branches and retained R4/finalized P10 dependency refs.
 
 ## slzb-06p7u — PRIMARY P7U / CC2652P7 / R4
 
