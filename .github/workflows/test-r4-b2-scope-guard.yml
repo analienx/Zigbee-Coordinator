@@ -1,0 +1,34 @@
+name: R4 B2 sealed ancestry and ownership lanes
+on:
+  pull_request:
+    paths:
+      - 'tools/b2_scope_guard.py'
+      - 'tests/test_r4_b2_scope_guard.py'
+      - '.github/workflows/test-r4-b2-scope-guard.yml'
+  push:
+    branches: [feat/p7u-r4-b2-routing-capacity]
+permissions:
+  contents: read
+jobs:
+  immutable-owner-boundary:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout full tree to prove sealed B0 ancestry (no shallow guess)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run hostile B2 scope and ancestry tests
+        run: |
+          set -Eeuo pipefail
+          python -m unittest -v tests.test_r4_b2_scope_guard
+          python tools/b2_scope_guard.py --repo . --out /tmp/b2-scope/B2_OWNER_BOUNDARY.json
+          cat /tmp/b2-scope/B2_OWNER_BOUNDARY.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive exact source ownership proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-owner-boundary-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/b2-scope/B2_OWNER_BOUNDARY.json
+          if-no-files-found: error
+          retention-days: 30
