@@ -54,6 +54,20 @@ class CollisionGuards(unittest.TestCase):
             verify_ti(MT_H + "\n#define MT_SYS_DIAG 0xF0\n",
                       MT_DISPATCH, NPI, UART)
 
+    def test_d02_decimal_sys_f0_collision_defeats_audit(self):
+        with self.assertRaisesRegex(ValueError, "already assigned"):
+            verify_ti(MT_H + "\\n#define MT_SYS_B4_DIAG 240\\n", MT_DISPATCH, NPI, UART)
+
+    def test_d02_npi_mode_producer_source_required(self):
+        with self.assertRaisesRegex(ValueError, "NPI-specific"):
+            verify_ti(MT_H, MT_DISPATCH, NPI, UART,
+                      "void MT_BuildAndSendZToolResponse() {}")
+        self.assertEqual(
+            verify_ti(MT_H, MT_DISPATCH, NPI, UART,
+                      "void MT_BuildAndSendZToolResponse() { OsalPort_msgSend(); }")["mt_response_producer"],
+            "NPI_CLIENT_SOURCE_VERIFIED",
+        )
+
     def test_d02_numeric_dispatch_collision_defeats_audit(self):
         patch = MT_DISPATCH.replace("default:", "case 0xF0: break; default:")
         with self.assertRaisesRegex(ValueError, "collision"):
