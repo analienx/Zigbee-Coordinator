@@ -58,6 +58,17 @@ jobs:
             firmware/slzb-06p7u/r4/b1/b1_admission.c \
             -o /tmp/b1-linked-zmac-hold-test
           /tmp/b1-linked-zmac-hold-test
+          # Compile actual patched donor NVOCMP_initNvApi against NVS/RTOS
+          # failure boundaries: N01/N02/N03/N04/N05/N08/N18/N26 partial.
+          python firmware/slzb-06p7u/r4/b1/tools/make_nvocmp_init_harness.py \
+            --source "$root/source/ti/common/nv/nvocmp.c" \
+            --output /tmp/b1-actual-nvocmp-init.c
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/b1-actual-nvocmp-init.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/b1-linked-nvocmp-init-test
+          /tmp/b1-linked-nvocmp-init-test
           grep -F 'if (zstack_user0Cfg.nvFps.initNV(NULL) != NVINTF_SUCCESS)' \
             "$root/source/ti/zstack/startup/main.c"
       - name: Upload source admission receipt
