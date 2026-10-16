@@ -24,7 +24,7 @@ def validate(log, exit_code, injection):
         raise P3ValidationError("negative control source safety not established")
     if not re.search(r"Invoking:\s*Arm Linker",log):
         raise P3ValidationError("CCS linker never executed")
-    if not re.search(r"(?:error\s*#10099-D:|error\s*#10099:).*program will not fit into available memory",log,re.I):
+    if not re.search(r"(?:error\s*#10099-D:|error\s*#10099:)[\\s\\S]{0,240}?program will not fit into available\\s+memory",log,re.I):
         raise P3ValidationError("missing genuine TI memory placement diagnostic #10099")
     if not re.search(r"(?:available memory ranges|\bSRAM\b|\.bss)",log,re.I):
         raise P3ValidationError("failure not demonstrated in SRAM placement")
