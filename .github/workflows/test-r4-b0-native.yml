@@ -278,6 +278,7 @@ jobs:
           - {b2_profile: P0, replica: 1}
           - {b2_profile: P1, replica: 1}
           - {b2_profile: P1, replica: 2}
+          - {b2_profile: P3, replica: 1}
     concurrency:
       group: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.b2_profile }}-${{ matrix.replica }}
       cancel-in-progress: true
@@ -384,6 +385,25 @@ jobs:
             --out-dir /tmp/b0out/preflight-syscfg \
             --receipt /tmp/b0out/p7u-generated-preflight.json
           echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
+          if [[ "${{ matrix.b2_profile }}" == "P3" ]]; then
+            # P3 is a negative-control ONLY: genuine TI CC1352P7 build must fail
+            # at SRAM allocation. A compiler failure or forged echo is NOT accepted.
+            python "$GITHUB_WORKSPACE/tools/b2_p3_force_link_overbudget.py" \
+              --sdk "$sdk" --receipt /tmp/b0out/b2-p3-injection.json
+            set +e
+            eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang > /tmp/b0out/b2-p3-native-build.log 2>&1
+            p3_result=$?
+            set -e
+            cat /tmp/b0out/b2-p3-native-build.log | tee -a /tmp/b0out/build.log
+            python "$GITHUB_WORKSPACE/tools/b2_verify_p3_link.py" \
+              --build-log /tmp/b0out/b2-p3-native-build.log \
+              --injection /tmp/b0out/b2-p3-injection.json \
+              --exit-code "$p3_result" \
+              --out /tmp/b0out/B2_PROFILE_P3_NATIVE_REJECTION.json
+            cat /tmp/b0out/B2_PROFILE_P3_NATIVE_REJECTION.json >> "$GITHUB_STEP_SUMMARY"
+            # No ELF/BIN collector for an intentionally unlinked test.
+            exit 0
+          fi
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
           echo "Collecting real linker artifacts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
@@ -393,7 +413,7 @@ jobs:
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
       - name: B2 read-only linked baseline from actual B0 ELF (not physical proof)
-        if: github.head_ref == 'feat/p7u-r4-b2-routing-capacity' || github.ref_name == 'feat/p7u-r4-b2-routing-capacity'
+        if: (github.head_ref == 'feat/p7u-r4-b2-routing-capacity' || github.ref_name == 'feat/p7u-r4-b2-routing-capacity') && matrix.b2_profile != 'P3'
         shell: bash
         run: |
           set -Eeuo pipefail
