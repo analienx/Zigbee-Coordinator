@@ -263,7 +263,7 @@ jobs:
           test -f "$sdk/imports.mak"
           : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
           : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
-          printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\n' "$SYSCONFIG_TOOL" "$TICLANG_ARMCOMPILER" >> "$sdk/imports.mak"
+          printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\nGCC_ARMCOMPILER :=\nIAR_ARMCOMPILER :=\n' "$SYSCONFIG_CLI" "$TICLANG_ARMCOMPILER" >> "$sdk/imports.mak"
           (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
           find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
           test -s /tmp/b0out/sdk-libraries.txt
