@@ -34,7 +34,7 @@ FIELDS = ("DCDC_RECHARGE", "DCDC_ACTIVE")
 
 
 def unique(pattern, text, field):
-    values = re.findall(pattern, text, re.MULTILINE)
+    values = re.findall(pattern, text, re.MULTILINE | re.DOTALL)
     if len(values) != 1:
         raise ValueError("B0_R4_GENERATED_%s_MISSING_OR_AMBIGUOUS" % field)
     return values[0]
@@ -67,6 +67,49 @@ def inspect_generated(directory):
     require(r"\.rtsPin\s*=\s*GPIO_INVALID_INDEX\s*,", "RTS_DISABLED")
     require(r"\.flowControl\s*=\s*UART2_FLOWCTRL_NONE\s*,", "FLOW_DISABLED")
     require(r"UART2_config\[CONFIG_UART2_COUNT\]", "CONFIG_DISPLAY_UART_OBJECT")
+    # The independent review reproduced false positives when good-looking
+    # fields belonged to an inactive UART2 object. Bind ALL properties to
+    # the *one* active CONFIG_DISPLAY_UART configuration, not global text.
+    if int(unique(r"^#define\\s+CONFIG_DISPLAY_UART\\s+(\\d+)\\s*$",
+                  header, "DISPLAY_UART_INDEX")) != 0:
+        raise ValueError("B0_R4_GENERATED_ACTIVE_UART_INDEX_INVALID")
+    if int(unique(r"^#define\\s+CONFIG_UART2_COUNT\\s+(\\d+)\\s*$",
+                  drivers, "UART2_CONFIG_COUNT")) != 1:
+        raise ValueError("B0_R4_GENERATED_UART2_COUNT_INVALID")
+    require(r"const\\s+uint_least8_t\\s+UART2_count\\s*=\\s*CONFIG_UART2_COUNT\\s*;",
+            "ACTIVE_UART2_COUNT")
+    require(r"const\\s+uint_least8_t\\s+CONFIG_DISPLAY_UART_CONST\\s*=\\s*CONFIG_DISPLAY_UART\\s*;",
+            "ACTIVE_DISPLAY_UART")
+    # Exactly one hardware-attributes initializer and exactly one
+    # active UART2_config entry with object/hwAttrs pointing to index 0.
+    hw = unique(
+        r"static\\s+const\\s+UART2CC26X2_HWAttrs\\s+uart2CC26X2HWAttrs"
+        r"\\[CONFIG_UART2_COUNT\\]\\s*=\\s*\\{\\s*\\{(.*?)\\}\\s*,?\\s*\\};",
+        drivers, "ACTIVE_UART_HWATTR_BLOCK")
+    active = unique(
+        r"const\\s+UART2_Config\\s+UART2_config\\[CONFIG_UART2_COUNT\\]"
+        r"\\s*=\\s*\\{\\s*\\{(.*?)\\}\\s*,?\\s*\\};",
+        drivers, "ACTIVE_UART_CONFIG_BLOCK")
+    for name, symbol in (
+        ("ACTIVE_UART_OBJECT", "uart2CC26X2Objects"),
+        ("ACTIVE_UART_HWATTR_POINTER", "uart2CC26X2HWAttrs"),
+    ):
+        if len(re.findall(r"\\.\\s*" + ("object" if "OBJECT" in name else "hwAttrs")
+                          + r"\\s*=\\s*&" + symbol
+                          + r"\\[CONFIG_DISPLAY_UART\\]\\s*,?", active)) != 1:
+            raise ValueError("B0_R4_GENERATED_%s_INVALID" % name)
+    for field, value in (
+        ("baseAddr", "UART0_BASE"),
+        ("rxPin", "CONFIG_GPIO_DISPLAY_UART_RX"),
+        ("txPin", "CONFIG_GPIO_DISPLAY_UART_TX"),
+        ("ctsPin", "GPIO_INVALID_INDEX"),
+        ("rtsPin", "GPIO_INVALID_INDEX"),
+        ("flowControl", "UART2_FLOWCTRL_NONE"),
+        ("rxPinMux", "IOC_PORT_MCU_UART0_RX"),
+        ("txPinMux", "IOC_PORT_MCU_UART0_TX"),
+    ):
+        if len(re.findall(r"\\." + field + r"\\s*=\\s*" + value + r"\\s*,", hw)) != 1:
+            raise ValueError("B0_R4_GENERATED_ACTIVE_%s_INVALID" % field)
     for field in FIELDS:
         value = int(unique(
             r"^#define\s+SET_CCFG_MODE_CONF_%s\s+0x([0-9a-fA-F]+)\s*$" % field,
