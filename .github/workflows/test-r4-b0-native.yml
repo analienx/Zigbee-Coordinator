@@ -60,10 +60,10 @@ jobs:
       - name: Validate real B0 overlay documents
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
       - name: Unit oracle sanity on valid vector (NOT native proof)
-        run: python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-valid
+        run: python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-valid --synthetic-fixture-oracle
       - name: Negative control (o1) corrupted image must fail hash binding
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-hash 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-hash --synthetic-fixture-oracle 2>&1); then
             echo "control (o1) unexpectedly passed"
             exit 1
           fi
@@ -71,7 +71,7 @@ jobs:
           echo "control (o1) rejected at hash binding as required"
       - name: Negative control (o2) echo-pass log must fail linker evidence
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-no-link 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-no-link --synthetic-fixture-oracle 2>&1); then
             echo "control (o2) unexpectedly passed"
             exit 1
           fi
@@ -79,7 +79,7 @@ jobs:
           echo "control (o2) rejected at linker evidence as required"
       - name: Negative control (o3) NV-CCFG overlap must fail
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-overlap 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-overlap --synthetic-fixture-oracle 2>&1); then
             echo "control (o3) unexpectedly passed"
             exit 1
           fi
@@ -98,7 +98,7 @@ jobs:
           echo "control (o4) rejected at board contract as required"
       - name: Negative control (o5) absent artifacts must BLOCK, never pass
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-does-not-exist 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-does-not-exist --synthetic-fixture-oracle 2>&1); then
             echo "control (o5) unexpectedly passed"
             exit 1
           fi
@@ -106,7 +106,7 @@ jobs:
           echo "control (o5) blocked without binary claim as required"
       - name: Negative control (o6) fake ELF must fail ELF gate
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-elf 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-elf --synthetic-fixture-oracle 2>&1); then
             echo "control (o6) unexpectedly passed"
             exit 1
           fi
@@ -114,7 +114,7 @@ jobs:
           echo "control (o6) rejected fake ELF as required"
       - name: Negative control (o7) path traversal must fail confined
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-path-traversal 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-path-traversal --synthetic-fixture-oracle 2>&1); then
             echo "control (o7) unexpectedly passed"
             exit 1
           fi
@@ -122,7 +122,7 @@ jobs:
           echo "control (o7) rejected path traversal as required"
       - name: Negative control (o8) synthetic map format must fail
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-synthetic-map 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-synthetic-map --synthetic-fixture-oracle 2>&1); then
             echo "control (o8) unexpectedly passed"
             exit 1
           fi
@@ -145,7 +145,7 @@ jobs:
           echo "control (o9) rejected unhashable claim id as required"
       - name: Negative control (o10) tampered HEX/BIN with updated digests must fail cross-binding
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-tampered-hexbin 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-tampered-hexbin --synthetic-fixture-oracle 2>&1); then
             echo "control (o10) unexpectedly passed"
             exit 1
           fi
@@ -161,7 +161,7 @@ jobs:
           echo "control (o10) rejected at HEX/BIN cross-binding as required"
       - name: Negative control (o11) injected SRAM bytes must fail content-binding
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-extra-bytes 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-extra-bytes --synthetic-fixture-oracle 2>&1); then
             echo "control (o11) unexpectedly passed"
             exit 1
           fi
@@ -178,7 +178,7 @@ jobs:
           echo "control (o11) rejected injected bytes at content-binding as required"
       - name: Negative control (o12) deviant FLASH geometry must fail donor pin
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-geometry 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-geometry --synthetic-fixture-oracle 2>&1); then
             echo "control (o12) unexpectedly passed"
             exit 1
           fi
@@ -190,7 +190,7 @@ jobs:
           echo "control (o12) rejected deviant FLASH geometry as required"
       - name: Negative control (o13) fabricated one-line log must fail log tripwire
         run: |
-          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-log 2>&1); then
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-log --synthetic-fixture-oracle 2>&1); then
             echo "control (o13) unexpectedly passed"
             exit 1
           fi
