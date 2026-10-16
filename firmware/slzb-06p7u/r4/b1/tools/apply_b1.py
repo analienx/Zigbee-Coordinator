@@ -277,6 +277,22 @@ def overlay(sdk, b1_dir):
         "        }",
         "main failed NV init must not start Zigbee stack")
 
+    # Donor's if(initNV) silently continues if the function pointer is absent.
+    # A missing NV driver cannot be treated as factory-new or RF-safe.
+    main = replace_once(
+        main,
+        "        }\n"
+        "    }\n\n"
+        "#ifdef ZSTACK_GPD",
+        "        }\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        return 1; /* B1 N08: no NV API means no Zigbee startup */\n"
+        "    }\n\n"
+        "#ifdef ZSTACK_GPD",
+        "main absent NV init function fail-closed")
+
     # All preflight validation completed before writing any workspace file.
     (src_nv.parent / "b1_admission.h").write_bytes((b1_dir / "b1_admission.h").read_bytes())
     (src_nv.parent / "b1_admission.c").write_bytes((b1_dir / "b1_admission.c").read_bytes())
