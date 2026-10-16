@@ -4,26 +4,31 @@ This file is the canonical repository-level map of coordinator hardware, radio s
 
 ## Coordinator IDs
 
-### `mr4u-p10`
+### `slzb-06p7u` — PRIMARY R4 ENGINEERING TARGET
+
+- Hardware: SMLIGHT SLZB-06P7U (board R1.73 per current R4 evidence).
+- Zigbee chip: TI CC2652P7; stack: Z-Stack / ZNP.
+- Verified board-contract evidence used for current source work: UART RX DIO12, TX DIO13, 115200 baud, hardware flow control off. Board-specific RF, CCFG, boot and NV equivalence still require independent physical qualification.
+- **Current engineering role as of 16 October 2026: primary firmware/reliability development target, R4.** This statement is not proof of live healthy state or release authorization.
+- Vendor `20260310` is a known-booting and previously responsive behavioral/rollback reference, **not a proven stable dense-mesh release or source-equivalent donor**.
+- Primary source namespace **on unmerged R4 branches**: `firmware/slzb-06p7u/r4/`; coordinator README: `coordinators/slzb-06p7u/README.md`.
+- R4 tracking: [master #85](https://github.com/analienx/Zigbee-Coordinator/issues/85), [R4-00 #86](https://github.com/analienx/Zigbee-Coordinator/pull/86), [diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [native B0 #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [NV-safe B1 #92](https://github.com/analienx/Zigbee-Coordinator/issues/92), [B1 draft #93](https://github.com/analienx/Zigbee-Coordinator/pull/93).
+- Source-only work and independent review proceed separately from explicit flash, live network restore and production qualification. Do not change live HA/Z2M, serial owner, coordinator image, NVM or security counters as part of repo cleanup.
+
+### `mr4u-p10` — FINALIZED REFERENCE / FALLBACK (RETAIN)
 
 - Hardware: SMLIGHT SLZB-MR4U.
-- Zigbee radio: TI CC2674P10.
-- Host stack: Z-Stack / ZNP.
-- Current role: primary production coordinator and active reliability investigation target.
-- Current work:
-  - 2024 SMLIGHT P10 baseline / rollback test;
-  - restored-network startup recovery;
-  - SRSP/ZNP hang investigation;
-  - planned TI reference ZNP control and diagnostic builds.
-- Stable existing namespace:
+- Zigbee radio: TI CC2674P10; stack: Z-Stack / ZNP.
+- Role: preserve finalized P10 evidence, migration/restore tooling and diagnostics as a separate recovery/reference line, **not the primary current R4 engineering target**.
+- Keep finalized P10 artifacts/refs and tested rollback/recovery instructions intact.
+- Existing compatibility namespace (do not rename during branch cleanup):
   - `deploy/p10_*.py`
   - `tests/test_p10_*.py`
   - `docs/P10_*.md`
   - `skills/p10-zstack-restore-recovery/`
-- Active planning branch:
-  - `plan/mr4u-p10-ti-znp-control`
+- Historical plan reference: `plan/mr4u-p10-ti-znp-control` (not active R4 plan).
 
-Important: `P10` identifies the CC2674P10 radio family, not the MR4U product by itself. Where another CC2674P10 board is possible, use the full coordinator ID.
+The `P10` identifier describes the TI CC2674P10 family, not all SMLIGHT coordinators; `P7U` is not the same chipset or firmware target.
 
 ### `sonoff-mg24`
 
@@ -49,14 +54,11 @@ Important: `P10` identifies the CC2674P10 radio family, not the MR4U product by 
 
 P009/P013/P015 are firmware experiment labels. They are not coordinator hardware names and must not be used to refer to MR4U/P10 work.
 
-### `slzb-06p7`
+### `slzb-06p7` — LEGACY ID
 
-- Hardware: SMLIGHT SLZB-06P7.
-- Stack family: TI Z-Stack.
-- Current role: historical predecessor / recovery reference.
-- Repository status: no normalized current implementation namespace yet.
-
-Do not silently reuse old 06P7 assumptions for MR4U/P10. Treat it as a separate coordinator even when both use TI Z-Stack.
+- Historical predecessor/reference entry; distinct from the **active `slzb-06p7u` CC2652P7** R4 target.
+- Never infer a P7U board pinout, CCFG layout, RF/PA, NV region or flash recipe solely from a legacy `slzb-06p7` entry.
+- Preserve provenance when classifying old evidence; promote only after a hardware identity check.
 
 ### `mr4u-mg26`
 
@@ -72,7 +74,7 @@ The repository contains three kinds of identifiers that must not be mixed:
 
 | Identifier type | Examples | Meaning |
 |---|---|---|
-| Coordinator ID | `mr4u-p10`, `sonoff-mg24` | Physical coordinator + radio family |
+| Coordinator ID | `slzb-06p7u`, `mr4u-p10`, `sonoff-mg24` | Physical coordinator + radio family |
 | Firmware experiment ID | P009, P013, P015 | A specific experimental firmware/config generation |
 | Vendor/build revision | 20240705, 20260310 | A firmware build/revision identifier |
 
@@ -81,8 +83,10 @@ When writing a new issue, branch, report or artifact, include the coordinator ID
 Preferred examples:
 
 ```
+slzb-06p7u / R4-B0 (native source build only)
+slzb-06p7u / R4-B1 (draft, do not flash)
+mr4u-p10 / FINALIZED-REFERENCE
 mr4u-p10 / SMLIGHT-2024
-mr4u-p10 / TI830-PROD-R0
 sonoff-mg24 / P009
 sonoff-mg24 / P015
 ```
@@ -109,6 +113,9 @@ Preferred:
 Examples:
 
 ```
+feat/p7u-r4-stock-derived-redesign
+feat/p7u-r4-b0-native-issue90
+feat/r4-b1-direct-nv-safety-20261016
 plan/mr4u-p10-ti-znp-control
 exp/mr4u-p10-ti830-prod-r0
 fix/mr4u-p10-znp-resource-leak
@@ -116,7 +123,7 @@ exp/sonoff-mg24-p015-rf-shaping
 docs/slzb-06p7-recovery-notes
 ```
 
-Existing historical branches keep their original names for traceability.
+Existing retained branches keep their original names. Branch pruning is permitted after verifying R4 branch/PR/worktree dependencies and finalized P10 retention. Do not delete unmerged history without an independently recoverable ref, and do not delete a checked-out branch or a dependency of an open PR.
 
 ## Shared invariants
 
