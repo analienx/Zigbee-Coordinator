@@ -10,6 +10,9 @@ on:
       - 'tests/test_r4_b2_compose.py'
       - 'tests/test_r4_b2_profile.py'
       - 'tests/test_r4_b2_compare_native.py'
+      - 'tests/test_r4_b2_p3_native.py'
+      - 'tools/b2_p3_force_link_overbudget.py'
+      - 'tools/b2_verify_p3_link.py'
       - '.github/workflows/test-r4-b2-capacity.yml'
 jobs:
   arithmetic-negative-controls:
@@ -19,4 +22,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Python synthetic negative controls (NOT native TI proof)
-        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence tests.test_r4_b2_compose tests.test_r4_b2_profile tests.test_r4_b2_compare_native
+        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence tests.test_r4_b2_compose tests.test_r4_b2_profile tests.test_r4_b2_compare_native tests.test_r4_b2_p3_native
