@@ -8,6 +8,12 @@
 /* A monotonically asserted word store is atomic on this Cortex-M4 target.
  * In-flight or ROM-originated transmissions are NOT covered by this gate. */
 static volatile uint32_t b1_nv_runtime_held;
+static volatile uint32_t b1_nv_existing_pair;
+
+int b1_nv_existing_header_candidate(void)
+{
+    return b1_nv_existing_pair != 0u;
+}
 
 void b1_nv_runtime_hold_latch(void)
 {
@@ -93,6 +99,7 @@ b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
         const int dest1 = page_states[1] == 0xFEu;
         result.code = ((active0 && dest1) || (active1 && dest0))
             ? B1_NV2_HEADER_CANDIDATE : B1_NV_HOLD_MIXED_LAYOUT;
+        if (result.code == B1_NV2_HEADER_CANDIDATE) b1_nv_existing_pair = 1u;
     } else {
         /* Formatted+erased may be a legitimate interrupted compaction,
          * but we have no source-proven safe recovery yet: do not mutate it. */
