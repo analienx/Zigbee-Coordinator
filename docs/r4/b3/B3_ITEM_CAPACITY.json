@@ -1,0 +1,62 @@
+{
+  "schema": "r4-b3-item-capacity-v1",
+  "status": "MEASURED_GEOMETRY_ONLY",
+  "sdk_commit": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "b0_base": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "region": {
+    "page_bytes": 8192,
+    "page_header_bytes": 4,
+    "compaction_headers_count": 3,
+    "compaction_header_bytes": 4,
+    "usable_bytes_per_active_page_before_records": 8176,
+    "compressed_item_header_bytes": 7
+  },
+  "profiles": [
+    {
+      "name": "NV2",
+      "pages": 2,
+      "app_end_exclusive": 696320,
+      "nv_start": 696320,
+      "nv_end_exclusive": 712704,
+      "nominal_active_bytes": 8176
+    },
+    {
+      "name": "NV3_EXPERIMENT",
+      "pages": 3,
+      "app_end_exclusive": 688128,
+      "nv_start": 688128,
+      "nv_end_exclusive": 712704,
+      "nominal_active_bytes": 16352
+    },
+    {
+      "name": "NV5_EXPERIMENT",
+      "pages": 5,
+      "app_end_exclusive": 671744,
+      "nv_start": 671744,
+      "nv_end_exclusive": 712704,
+      "nominal_active_bytes": 32704
+    }
+  ],
+  "ccfg_start": 712704,
+  "ccfg_end_exclusive": 720896,
+  "uncertainties": [
+    "serialized NWK/NIB sizes",
+    "TC/APS/TCLK per-row payload sizes",
+    "BDB/address/group/binding serialized bytes",
+    "NVOCMP compaction peak copy demand",
+    "hot counter reservation payload size",
+    "native compiled header struct sizes and effective link budget",
+    "B2 selected TC limit"
+  ],
+  "workloads": {
+    "devices": [
+      106,
+      128,
+      160,
+      192
+    ],
+    "status": "NOT_CAPACITY_PROVEN",
+    "required_item_lengths": "actual SDK implementation and linked profile, not synthetic invented constants"
+  },
+  "recommendation": "NO_PROFILE_LOCKED"
+}
