@@ -9,6 +9,11 @@ on:
       - 'tools/b2_native_origin_audit.py'
       - 'tests/test_r4_b2_native_evidence.py'
       - '.github/workflows/test-r4-b2-native-baseline.yml'
+  pull_request:
+    paths:
+      - 'tools/b2_collect_native_evidence.py'
+      - 'tools/b2_native_origin_audit.py'
+      - '.github/workflows/test-r4-b2-native-baseline.yml'
   workflow_dispatch:
 
 permissions:
