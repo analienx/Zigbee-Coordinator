@@ -1,0 +1,84 @@
+name: R4 B2 historical native ELF baseline recovery
+
+on:
+  push:
+    branches:
+      - feat/p7u-r4-b2-routing-capacity
+    paths:
+      - 'tools/b2_collect_native_evidence.py'
+      - 'tools/b2_native_origin_audit.py'
+      - 'tests/test_r4_b2_native_evidence.py'
+      - '.github/workflows/test-r4-b2-native-baseline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  read-only-native-baseline:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 PR source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download immutable successful B0 reference run
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b0-native-f0bfba793257d8789c96886a5de552d0774fad98
+          path: /tmp/b2-baseline
+          run-id: 38952302280
+          repository: analienx/Zigbee-Coordinator
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fail closed on B0 binary or image audit failure
+        run: |
+          set -Eeuo pipefail
+          python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit \
+            firmware/slzb-06p7u/r4/b0 --artifacts /tmp/b2-baseline/b0out
+      - name: Analyze B0 linked tables and originating TI objects
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_collect_native_evidence.py \
+            --artifacts /tmp/b2-baseline/b0out \
+            --out /tmp/b2-measurements \
+            --source-sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID"
+          python tools/b2_native_origin_audit.py \
+            --artifacts /tmp/b2-baseline/b0out \
+            --out /tmp/b2-measurements
+          cat /tmp/b2-measurements/BASELINE_ELF_SYMBOLS.md >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/b2-measurements/ROUTING_OBJECT_PROVENANCE.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Check independent linked table expected oracle (historical B0 only)
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("/tmp/b2-measurements/B2_BASELINE_ELF_SYMBOLS.json").read_text())
+          expected={"source_routes":(12,96,8),"neighbors":(16,448,28),
+                    "nwk_routes":(40,320,8),"children":(21,756,36),
+                    "route_requests":(8,80,10),"relay_path":(12,24,2)}
+          for name,(n,b,s) in expected.items():
+            got=d["tables"][name]
+            assert (got["linked_count"],got["linked_bytes"],got["entry_sizeof_derived"])==(n,b,s),(name,got)
+            assert got["status"]=="HOSTED_NATIVE_LINKED",name
+          x=json.loads(Path("/tmp/b2-measurements/B2_ROUTING_OBJECT_ORIGINS.json").read_text())
+          for name in ("RTG_GetRtgSrcEntry","RTG_MTORouteReq","RTG_ProcessRreq"):
+            assert x["symbols"][name]["object_file"]=="rtg.o",name
+          assert x["symbols"]["nwkHandleBrokenRoute"]["object_file"]=="nwk_util.o"
+          print("Historical B0 linked table sizing and library origin proof: PASS")
+          PY
+      - name: Record immutable report digests
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p /tmp/b2-measurements
+          (cd /tmp/b2-measurements && sha256sum *.json *.md > SHA256SUMS.txt) || true
+      - name: Upload baseline evidence without republishing firmware
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-native-b0-linked-${{ github.sha }}
+          path: /tmp/b2-measurements/
+          if-no-files-found: warn
+          retention-days: 30
