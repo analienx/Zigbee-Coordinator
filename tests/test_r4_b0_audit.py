@@ -111,6 +111,25 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertIn(".resetVecs", evidence["sections"])
         self.assertEqual(evidence["sections"][".ccfg"], (0xAE000, 0x88))
+        # Genuine TI linker output repeats .resetVecs as an EMPTY
+        # unallocated logical group (lg-1b) after its allocated lg-3.
+        # This must not conceal the real programmed vector span.
+        empty = ET.SubElement(gl, "logical_group", id="lg-1b")
+        ET.SubElement(empty, "name").text = ".resetVecs"
+        ET.SubElement(empty, "run_address").text = "0x0"
+        ET.SubElement(empty, "size").text = "0x0"
+        evidence, error = audit._parse_link_xml(
+            ET.tostring(root, encoding="unicode"), "znp.out", 0)
+        self.assertIsNone(error)
+        self.assertEqual(evidence["sections"][".resetVecs"], (0, 0x40))
+        # Likewise, this zero-size placeholder must be safe even if
+        # it appears before the real allocated section.
+        gl.remove(empty)
+        gl.insert(0, empty)
+        evidence, error = audit._parse_link_xml(
+            ET.tostring(root, encoding="unicode"), "znp.out", 0)
+        self.assertIsNone(error)
+        gl.remove(empty)
         # A second real linker group with the same section name is
         # ambiguous, even when size and address agree.
         gl.append(ET.fromstring(ET.tostring(gl[0])))
