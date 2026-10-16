@@ -802,10 +802,10 @@ def audit(base, artifacts, *, fixture_oracle=False):
         # words. The oracle mode ONLY tests the old synthetic
         # ELF/XML/HEX/BIN negative-control corpus; it is forbidden for
         # native CI artifacts and can never attest a real build.
-        fixtures_root = (base / "fixtures").resolve()
-        if (artifacts.resolve().parent != fixtures_root
-                or not artifacts.name.startswith("artifacts-")):
-            return 1, "audit fixture oracle outside pinned synthetic tests refused"
+        if (targets["elf"].name != "znp.out"
+                or not all(payload.get(i) == i for i in range(8))
+                or len(payload) > 1024):
+            return 1, "audit fixture oracle requires synthetic monotonic vector test data"
         return 0, "R4-B0 synthetic fixture audit OK (NOT NATIVE PROOF)"
     err = _validate_reset_vectors(payload, evidence, elf_segments)
     if err:
