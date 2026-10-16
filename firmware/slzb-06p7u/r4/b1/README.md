@@ -18,13 +18,15 @@ No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counte
 3. Deny blank factory provisioning by default; a separately compiled explicit
    `B1_FACTORY_BOOT_AUTHORIZED` may permit it for a disposable lab board only.
    Never set that define from production runtime commands.
-4. Exact SHA-1-blob preimage checks against pinned TI 8.33 `nvocmp.c` and
-   `main.c`, then inject admission into the **actual NVOCMP_initNvApi**
+4. Exact SHA-1-blob preimage checks against pinned TI 8.33 `nvocmp.c`,
+   `zmac.c` and `main.c`, then inject admission into the **actual NVOCMP_initNvApi**
    compiled source. Fix NULL-before-getAttrs (`N04`), catch non-successful
    `NVS_read` (`N05`) and suppress subsequent NVS_write/erase on fatal
    NVOCMP errors. `main.c` now checks the initNV result and refuses stack
-   initialization on a failed NV boot. These are linked-source changes,
-   not a Python-only simulation.
+   initialization on a failed NV boot. A sticky runtime latch is asserted
+   on detected backend failures and guarded in eight real ZMac request
+   wrappers; transmissions already queued or originating within MAC ROM
+   are NOT proven blocked. These are linked-source changes, not a model.
 5. Exact source-only receipt, C ASan/UBSan harness on synthetic dummy flash
    and unchanged B0 native toolchain/ELF/CCFG audit on GitHub-hosted runners.
 
@@ -38,10 +40,11 @@ No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counte
   damaged-page provenance and post-boot backend failure behavior are not
   fully verified. Header admission alone cannot guarantee no subsequent
   implicit media write, particularly in ambiguous legacy-like layouts.
-- **B1-03:** linked lower MAC RF admission, coherent NWK NIB/APS/TCLK/keys
-  and frame counter continuity are NOT implemented or validated. Fatal
-  runtime read failures inhibit media writes but cannot currently be
-  asserted to inhibit every further RF transmission.
+- **B1-03:** a sticky guard on eight real ZMac wrappers after any detected
+  backend read/write/erase failure is implemented in linked TI source.
+  **It does NOT prove** protection from queued frames, MAC ROM/direct callers,
+  or invalid security accepted at initial boot. Coherent NWK NIB/APS/TCLK,
+  keys and frame-counter continuity are NOT yet implemented or validated.
 - **B1-04:** there is no status ABI in a reachable HOLD transport state,
   no proven `HOST_MANAGEMENT_READY`, no herdsman integration.
 - **B1-05:** N01-N30 acceptance matrix remains largely OPEN. The included C
