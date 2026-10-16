@@ -18,6 +18,7 @@ PREAMBLE = r"""
 #include <stdio.h>
 #include <assert.h>
 #include "b1_admission.h"
+#include "b1_management.h"
 
 #define NVINTF_NOTREADY 1u
 #define NVINTF_SUCCESS 0u
@@ -49,18 +50,44 @@ typedef struct {
 typedef struct { uint8_t dummy; } NVOCMP_compactInfo_t;
 static uint8_t NVOCMP_failF = NVINTF_NOTREADY;
 static uint8_t NVOCMP_failW;
+static uint8_t b1_nv_initializing;
 static uint8_t NVOCMP_size;
 static NVOCMP_nvHandle_t NVOCMP_nvHandle;
 static NVS_Attrs NVOCMP_nvsAttrs;
 static NVS_Handle NVOCMP_nvsHandle;
+#ifdef NVOCMP_POSIX_SEM
+typedef int sem_t;
+static sem_t NVOCMP_gPosixSem;
+#elif defined(NVOCMP_POSIX_MUTEX)
+typedef struct {int type;} pthread_mutexattr_t;
+typedef int pthread_mutex_t;
+static pthread_mutex_t NVOCMP_gPosixMutex;
+#define PTHREAD_MUTEX_RECURSIVE 1
+#else
 static GateMutexPri_Handle NVOCMP_gMutexPri;
+#endif
 static uint8_t synthetic_nv[B1_NV2_REGION_SIZE];
 static NVS_Attrs stub_attrs;
 static bool stub_open_null, stub_mutex_null;
 static uint32_t stub_read_fail_off;
 static uint32_t read_calls, getattrs_calls, init_calls, write_calls, erase_calls;
 static uint32_t open_calls, gate_calls, nvs_init_calls;
+static uint8_t mgmt_reason, mgmt_probe;
+static uint32_t mgmt_candidate;
+void b1_management_hold_nv(uint8_t reason)
+{ if (mgmt_reason == 0u) mgmt_reason = reason; }
+void b1_management_note_nv_probe(uint8_t code) { mgmt_probe = code; }
+void b1_management_note_nv_candidate(void) { ++mgmt_candidate; }
 
+#ifdef NVOCMP_POSIX_SEM
+static int sem_init(sem_t *s,int shared,unsigned value)
+{(void)s;(void)shared;(void)value;++gate_calls;return stub_mutex_null?-1:0;}
+#elif defined(NVOCMP_POSIX_MUTEX)
+static int pthread_mutexattr_init(pthread_mutexattr_t *a)
+{a->type=0;return 0;}
+static int pthread_mutex_init(pthread_mutex_t *m,pthread_mutexattr_t *a)
+{(void)m;(void)a;++gate_calls;return stub_mutex_null?-1:0;}
+#else
 static void GateMutexPri_Params_init(GateMutexPri_Params *p)
 {
     p->dummy = 0;
@@ -71,6 +98,7 @@ static GateMutexPri_Handle GateMutexPri_create(GateMutexPri_Params *p, void *unu
     ++gate_calls;
     return stub_mutex_null ? NULL : (void *)(uintptr_t)1;
 }
+#endif
 static void NVS_init(void)
 {
     ++nvs_init_calls;
@@ -126,6 +154,7 @@ static void reset_state(void)
     stub_read_fail_off = UINT32_MAX;
     read_calls = getattrs_calls = init_calls = write_calls = erase_calls = 0;
     open_calls = gate_calls = nvs_init_calls = 0;
+    mgmt_reason = mgmt_probe = 0u; mgmt_candidate = 0u;
 }
 static void populate(void)
 {
@@ -134,17 +163,17 @@ static void populate(void)
     synthetic_nv[1] = 1;
     synthetic_nv[2] = 0x0F;
     synthetic_nv[3] = 0x96;
-    synthetic_nv[20] = 0x01;
+    synthetic_nv[7] = synthetic_nv[11] = synthetic_nv[15] = 0x96;
     synthetic_nv[p] = 0xFE;
     synthetic_nv[p+1] = 2;
     synthetic_nv[p+2] = 0x0F;
     synthetic_nv[p+3] = 0x96;
-    synthetic_nv[p+20] = 0x01;
+    synthetic_nv[p+7] = synthetic_nv[p+11] = synthetic_nv[p+15] = 0x96;
 }
 static void no_mutation(void)
 {
     assert(!write_calls && !erase_calls);
-    assert(read_calls <= 512);
+    assert(read_calls <= B1_NV2_MAX_READS);
 }
 int main(void)
 {
@@ -244,9 +273,12 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--source", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--rtos", choices=("priority", "sem", "posix"), default="priority")
     a = p.parse_args()
     source = a.source.read_text(encoding="utf-8")
-    a.output.write_text(PREAMBLE + extract(source) + MAIN, encoding="utf-8")
+    define = {"priority": "", "sem": "#define NVOCMP_POSIX_SEM 1\n",
+              "posix": "#define NVOCMP_POSIX_MUTEX 1\n"}[a.rtos]
+    a.output.write_text(define + PREAMBLE + extract(source) + MAIN, encoding="utf-8")
     print("B1_PINNED_NVOCMP_INIT_COMPILED_FUNCTION_EXTRACTED")
 
 

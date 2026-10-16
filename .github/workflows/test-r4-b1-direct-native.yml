@@ -2,12 +2,12 @@ name: R4-B1 native P7U NV safety source-only
 
 on:
   pull_request:
-  push:
-    branches:
-      - feat/r4-b1-direct-nv-safety-20261016
 
 permissions:
   contents: read
+
+env:
+  B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   r4-b1-admission-source:
@@ -17,85 +17,16 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Compile actual R4-B1 admission C under sanitizers (synthetic ONLY)
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          b1=firmware/slzb-06p7u/r4/b1
-          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-            -fno-omit-frame-pointer -I"$b1" \
-            "$b1/b1_admission.c" "$b1/tests/test_admission.c" -o /tmp/b1-admission-test
-          /tmp/b1-admission-test
-      - name: Assert overlay patches exact pinned TI actual-source blobs
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          python -m py_compile firmware/slzb-06p7u/r4/b1/tools/apply_b1.py
-          root=/tmp/b1-pinned-source
-          mkdir -p "$root/source/ti/common/nv" "$root/source/ti/zstack/startup" "$root/source/ti/zstack/zmac/f8w" "$root/source/ti/zstack/stack/zdo"
-          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
-            https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/common/nv/nvocmp.c \
-            -o "$root/source/ti/common/nv/nvocmp.c"
-          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
-            https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/startup/main.c \
-            -o "$root/source/ti/zstack/startup/main.c"
-          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
-            https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/zmac/f8w/zmac.c \
-            -o "$root/source/ti/zstack/zmac/f8w/zmac.c"
-          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
-            https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/stack/zdo/zd_app.c \
-            -o "$root/source/ti/zstack/stack/zdo/zd_app.c"
-          python firmware/slzb-06p7u/r4/b1/tools/apply_b1.py \
-            --sdk "$root" --receipt /tmp/b1-source-receipt.json
-          test -s /tmp/b1-source-receipt.json
-          grep -F 'b1_nv_probe(' "$root/source/ti/common/nv/nvocmp.c"
-          grep -F 'b1_nv_runtime_hold_active()' "$root/source/ti/zstack/zmac/f8w/zmac.c"
-          grep -F 'b1_nv_existing_header_candidate()' "$root/source/ti/zstack/stack/zdo/zd_app.c"
-          # Compile the original patched functions themselves, not a separate
-          # Python reimplementation of the ZMac gating behavior.
-          python firmware/slzb-06p7u/r4/b1/tools/make_zmac_harness.py \
-            --source "$root/source/ti/zstack/zmac/f8w/zmac.c" \
-            --output /tmp/b1-actual-zmac-functions.c
-          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-            -fno-omit-frame-pointer -I firmware/slzb-06p7u/r4/b1 \
-            /tmp/b1-actual-zmac-functions.c \
-            firmware/slzb-06p7u/r4/b1/b1_admission.c \
-            -o /tmp/b1-linked-zmac-hold-test
-          /tmp/b1-linked-zmac-hold-test
-          # Compile actual patched donor NVOCMP_initNvApi against NVS/RTOS
-          # failure boundaries: N01/N02/N03/N04/N05/N08/N18/N26 partial.
-          python firmware/slzb-06p7u/r4/b1/tools/make_nvocmp_init_harness.py \
-            --source "$root/source/ti/common/nv/nvocmp.c" \
-            --output /tmp/b1-actual-nvocmp-init.c
-          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-            -fno-omit-frame-pointer -I firmware/slzb-06p7u/r4/b1 \
-            /tmp/b1-actual-nvocmp-init.c \
-            firmware/slzb-06p7u/r4/b1/b1_admission.c \
-            -o /tmp/b1-linked-nvocmp-init-test
-          /tmp/b1-linked-nvocmp-init-test
-          # Compiles the linked, patched ZDApp counter/key restore functions:
-          # real source with synthetic NV rows, including healthy controls.
-          python firmware/slzb-06p7u/r4/b1/tools/make_zdapp_harness.py \
-            --source "$root/source/ti/zstack/stack/zdo/zd_app.c" \
-            --output /tmp/b1-actual-zdapp-restore.c
-          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter \
-            -fsanitize=address,undefined -fno-omit-frame-pointer \
-            -I firmware/slzb-06p7u/r4/b1 \
-            /tmp/b1-actual-zdapp-restore.c \
-            firmware/slzb-06p7u/r4/b1/b1_admission.c \
-            -o /tmp/b1-linked-zdapp-restore-test
-          for scenario in new_empty positive generic missing_key zero_key \
-                          missing_row overflow write_fail readback read_fail; do
-            /tmp/b1-linked-zdapp-restore-test "$scenario"
-          done
-          grep -F 'if (zstack_user0Cfg.nvFps.initNV(NULL) != NVINTF_SUCCESS)' \
-            "$root/source/ti/zstack/startup/main.c"
-      - name: Upload source admission receipt
+      - name: Compile pinned actual TI bodies and execute fault and mutation controls
+        run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
+      - name: Upload exact-source synthetic receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: b1-direct-source-${{ github.sha }}
-          path: /tmp/b1-source-receipt.json
+          name: b1-direct-source-${{ env.B1_SOURCE_SHA }}
+          path: |
+            /tmp/b1-hosted/overlay.json
+            /tmp/b1-hosted/test-results.json
           if-no-files-found: warn
 
   r4-b0-overlay:
@@ -359,8 +290,15 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
+    needs: r4-b1-admission-source
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    env:
+      B1_NATIVE_REPLICA: ${{ matrix.replica }}
     concurrency:
-      group: r4-b1-direct-native-${{ github.event.pull_request.head.ref || github.ref_name }}
+      group: r4-b1-direct-native-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ matrix.replica }}
       cancel-in-progress: true
     runs-on: ubuntu-22.04
     steps:
@@ -446,6 +384,10 @@ jobs:
           find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
           test -s /tmp/b0out/sdk-libraries.txt
           echo "Apply pinned-source R4-B1 admission overlay AFTER SDK library build and BEFORE ZNP project import" | tee -a /tmp/b0out/build.log
+          mkdir -p "$sdk/.b1-prerequisites"
+          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts \
+            -o "$sdk/.b1-prerequisites/herdsman-definition.ts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/apply_b1.py" \
             --sdk "$sdk" --receipt /tmp/b0out/b1-overlay.json
           test -s /tmp/b0out/b1-overlay.json
@@ -466,26 +408,49 @@ jobs:
             --receipt /tmp/b0out/p7u-generated-preflight.json
           echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          cp "$project/Stack/Config/znp_cnf.opts" /tmp/b0out/znp_cnf.opts
           echo "Collecting real linker artifacts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
             --out-dir "$project/default/syscfg" \
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
             --receipt /tmp/b0out/p7u-generated-native.json
-          echo "B1 overlay symbol linkage check (not physical RF qualification)"
-          if ! find "$project" -type f \( -name '*.map' -o -name '*.xml' \) -print0 \
-               | xargs -0 -r grep -l 'b1_nv_probe' > /tmp/b0out/b1-symbol-receipt.txt; then
-            echo "B1-SYMBOL-BLOCKED: admission not proven linked into native ZNP"; exit 1
-          fi
-          test -s /tmp/b0out/b1-symbol-receipt.txt
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
+            --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b1-direct-native-${{ github.sha }}
+          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-${{ matrix.replica }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
             /tmp/b0out/
           if-no-files-found: warn
+
+  r4-b1-native-reproducibility:
+    needs: [r4-b0-native-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.B1_SOURCE_SHA }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-1
+          path: /tmp/b1-replica-1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-2
+          path: /tmp/b1-replica-2
+      - name: Compare independent clean native replicas
+        run: |
+          python firmware/slzb-06p7u/r4/b1/tools/compare_native.py \
+            --first /tmp/b1-replica-1/b0out --second /tmp/b1-replica-2/b0out \
+            --expected-sha "$B1_SOURCE_SHA" --out /tmp/b1-native-reproducibility.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: b1-reproducibility-${{ env.B1_SOURCE_SHA }}
+          path: /tmp/b1-native-reproducibility.json
+          if-no-files-found: error

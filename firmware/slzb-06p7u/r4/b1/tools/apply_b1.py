@@ -9,11 +9,20 @@ import json
 import os
 from pathlib import Path
 from patch_zdapp import patch as patch_zdapp
+from patch_security import patch as patch_security, patch_zglobals
+from patch_nv_integrity import patch as patch_nv_integrity
+import patch_management
+import subprocess
 
 SDK_NV = "source/ti/common/nv/nvocmp.c"
 SDK_MAIN = "source/ti/zstack/startup/main.c"
 SDK_ZMAC = "source/ti/zstack/zmac/f8w/zmac.c"
 SDK_ZDAPP = "source/ti/zstack/stack/zdo/zd_app.c"
+SDK_SECURITY = "source/ti/zstack/stack/zdo/zd_sec_mgr.c"
+SDK_ZGLOBALS = "source/ti/zstack/stack/sys/zglobals.c"
+SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
+SHA_ZGLOBALS = "0a1d7d2a61a88d1a6bb6e4bc5e359e71e1719024"
+HERDSMAN_FILE = ".b1-prerequisites/herdsman-definition.ts"
 SHA_NV = "01b2b0827d278c10c012b33e5791e53bc5662f10"
 SHA_MAIN = "608adc97370be3910a96f5dcc356d0feffb79d70"
 SHA_ZMAC = "38edebba04b31a416f64949ef991aa990dd99dba"
@@ -36,16 +45,30 @@ def overlay(sdk, b1_dir):
     src_main = sdk / SDK_MAIN
     src_zmac = sdk / SDK_ZMAC
     src_zdapp = sdk / SDK_ZDAPP
+    src_security = sdk / SDK_SECURITY
+    src_zglobals = sdk / SDK_ZGLOBALS
+    security = src_security.read_text(encoding="utf-8")
+    zglobals = src_zglobals.read_text(encoding="utf-8")
     source = src_nv.read_text(encoding="utf-8")
     main = src_main.read_text(encoding="utf-8")
     zmac = src_zmac.read_text(encoding="utf-8")
     zdapp = src_zdapp.read_text(encoding="utf-8")
     if (git_blob_sha(source) != SHA_NV or git_blob_sha(main) != SHA_MAIN
             or git_blob_sha(zmac) != SHA_ZMAC
-            or git_blob_sha(zdapp) != SHA_ZDAPP):
+            or git_blob_sha(zdapp) != SHA_ZDAPP
+            or git_blob_sha(security) != SHA_SECURITY
+            or git_blob_sha(zglobals) != SHA_ZGLOBALS):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
         raise RuntimeError("BLOCKED: missing B1 linked admission C/H files")
+
+    management_sources, management_receipt = patch_management.prepare(
+        sdk, (sdk / HERDSMAN_FILE).read_text(encoding="utf-8"))
+    source_sha = os.environ.get("B1_SOURCE_SHA") or subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True).strip()
+    if len(source_sha) != 40 or any(c not in "0123456789abcdef" for c in source_sha):
+        raise RuntimeError("BLOCKED: exact source SHA required for public build digest")
+    digest_bytes = ", ".join("0x" + source_sha[i:i + 2] for i in range(0, 8, 2))
 
     # ZMac wrappers in the pinned projectspec reach the actual MAC request
     # API. Gating this layer covers new APP-origin RF requests after NV faults,
@@ -74,7 +97,11 @@ def overlay(sdk, b1_dir):
     # Compile the actual admission C as part of the SDK's nvocmp.c TU, avoiding
     # any CCS projectspec alias/new compile-unit ambiguity.
     source = replace_once(source, '#include "ti/common/nv/crc.h"',
-                          '#include "ti/common/nv/crc.h"\n#ifndef NV_LINUX\n#include "b1_admission.c" /* B1 source-linked native admission */\n#endif',
+                          '#include "ti/common/nv/crc.h"\n#ifndef NV_LINUX\n'
+                          '#define B1_MANAGEMENT_ENABLED 1\n'
+                          '#define B1_BUILD_DIGEST_BYTES ' + digest_bytes + '\n'
+                          '#include "b1_management.c"\n'
+                          '#include "b1_admission.c" /* B1 source-linked native admission */\n#endif',
                           "NV includes")
 
     # This callback is in the same TU and uses the existing single TI NVS
@@ -299,22 +326,92 @@ def overlay(sdk, b1_dir):
         "#ifdef ZSTACK_GPD",
         "main absent NV init function fail-closed")
 
+    source = patch_nv_integrity(source)
+
     # Runtime NWK counter continuity: persist, read back, then publish.
     zdapp = patch_zdapp(zdapp)
+    security = patch_security(security)
+    zglobals = patch_zglobals(zglobals)
+
+    main = replace_once(main, '#include "nvocmp.h"',
+                        '#include "nvocmp.h"\n#include "b1_management.h"', "main management header")
+    main = replace_once(main, "            return 1;",
+        "            b1_management_hold_nv(B1_ERROR_NV_INIT);\n"
+        "#if defined(NPI) && defined(ZNP_NPI)\n"
+        "            goto b1_start_npi; /* no stack task, original NPI owner */\n"
+        "#else\n            return 1;\n#endif", "boot HOLD original NPI path")
+    main = replace_once(main,
+        "        return 1; /* B1 N08: no NV API means no Zigbee startup */",
+        "        b1_management_hold_nv(B1_ERROR_NV_API);\n"
+        "#if defined(NPI) && defined(ZNP_NPI)\n"
+        "        goto b1_start_npi;\n#else\n        return 1;\n#endif",
+        "absent NV API original NPI path")
+    main = replace_once(main, "#ifdef NPI\n    extern void NPITask_createTask(void);",
+        "#if defined(NPI) && defined(ZNP_NPI)\nb1_start_npi: ;\n#endif\n"
+        "#ifdef NPI\n    extern void NPITask_createTask(void);", "original NPI task label")
+    main = replace_once(main,
+        "    npiInitializationMutexHandle = Semaphore_handle(&npiInitializationMutex);",
+        "    npiInitializationMutexHandle = Semaphore_handle(&npiInitializationMutex);\n"
+        "    if (npiInitializationMutexHandle == NULL)\n"
+        "    {\n        b1_management_transport_failed(B1_ERROR_NPI_SEMAPHORE);\n"
+        "        return 1; /* scheduler has not started */\n    }",
+        "boot NPI semaphore failure")
+    source = replace_once(source, "            if (admission.code != B1_NV2_HEADER_CANDIDATE &&",
+        "            b1_management_note_nv_probe((uint8_t)admission.code);\n"
+        "            if (admission.code != B1_NV2_HEADER_CANDIDATE &&", "record NV layout without secrets")
+    source = replace_once(source,
+        "                return NVOCMP_failF;\n            }\n        }\n#endif /* !NV_LINUX */",
+        "                b1_management_hold_nv((uint8_t)admission.code);\n"
+        "                return NVOCMP_failF;\n            }\n"
+        "            if (admission.code == B1_NV2_HEADER_CANDIDATE)\n"
+        "                b1_management_note_nv_candidate();\n"
+        "        }\n#endif /* !NV_LINUX */", "NV admission HOLD first error")
+    for anchor, reason in (
+        ("            return NVOCMP_failF; /* B1 N08: no task gate */", "B1_ERROR_NV_MUTEX"),
+        ("            return NVOCMP_failF; /* B1 N04: never dereference NULL */", "B1_ERROR_NV_OPEN"),
+        ("            return NVOCMP_failF; /* B1 N03: no divide by zero/CCFG */", "B1_ERROR_NV_GEOMETRY"),
+    ):
+        source = replace_once(source, anchor,
+            "            b1_management_hold_nv(" + reason + ");\n" + anchor, "NV reason " + reason)
 
     # All preflight validation completed before writing any workspace file.
     (src_nv.parent / "b1_admission.h").write_bytes((b1_dir / "b1_admission.h").read_bytes())
     (src_nv.parent / "b1_admission.c").write_bytes((b1_dir / "b1_admission.c").read_bytes())
+    for name in ("b1_management.c", "b1_management.h"):
+        (src_nv.parent / name).write_bytes((b1_dir / name).read_bytes())
+    for directory in (sdk / "source/ti/zstack/mt", sdk / "source/ti/zstack/npi", src_main.parent):
+        (directory / "b1_management.h").write_bytes((b1_dir / "b1_management.h").read_bytes())
+    for relative, text in management_sources.items():
+        (sdk / relative).write_text(text, encoding="utf-8")
     src_nv.write_text(source, encoding="utf-8")
     src_main.write_text(main, encoding="utf-8")
     src_zmac.write_text(zmac, encoding="utf-8")
     src_zdapp.write_text(zdapp, encoding="utf-8")
+    src_security.write_text(security, encoding="utf-8")
+    src_zglobals.write_text(zglobals, encoding="utf-8")
     return {
-        "schema": "r4-b1-admission-overlay-v1",
+        "schema": "r4-b1-admission-overlay-v2",
+        "source_sha": source_sha,
+        "management": management_receipt,
         "upstream_nv_blob": SHA_NV,
         "upstream_main_blob": SHA_MAIN,
         "upstream_zmac_blob": SHA_ZMAC,
         "upstream_zdapp_blob": SHA_ZDAPP,
+        "upstream_security_blob": SHA_SECURITY,
+        "upstream_zglobals_blob": SHA_ZGLOBALS,
+        "modified_security_sha256": hashlib.sha256(security.encode()).hexdigest(),
+        "modified_zglobals_sha256": hashlib.sha256(zglobals.encode()).hexdigest(),
+        **{"management_source_%d_sha256" % i: hashlib.sha256(text.encode()).hexdigest()
+           for i, (relative, text) in enumerate(management_sources.items())},
+        "additional_source_bindings": {
+            **{"management_source_%d_sha256" % i: relative
+               for i, relative in enumerate(management_sources)},
+            "modified_security_sha256": SDK_SECURITY,
+            "modified_zglobals_sha256": SDK_ZGLOBALS,
+        },
+        "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
+            "b1_management_mt_filter", "b1_security_runtime_hold_latch",
+            "b1_management_npi_initialized"],
         "modified_zdapp_sha256": hashlib.sha256(zdapp.encode()).hexdigest(),
         "modified_zmac_sha256": hashlib.sha256(zmac.encode()).hexdigest(),
         "modified_nv_sha256": hashlib.sha256(source.encode()).hexdigest(),
@@ -322,7 +419,7 @@ def overlay(sdk, b1_dir):
         "mode": "B1_SOURCE_ONLY_NOT_PHYSICALLY_TESTED",
         "preflight": "read only (0x4000), no NVS_write/NVS_erase",
         "factory_boot": "unauthorized by default",
-        "hold_transport": "NOT_OBSERVABLE pending NPI independent gate",
+        "hold_transport": "existing NPI task only on early NV HOLD; physical UART/RF NOT_MEASURED",
         "security_and_mac_tx": "runtime NV failure -> linked ZMac wrapper HOLD; ROM, queued RF and restored-security gate OPEN"
     }
 
