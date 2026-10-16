@@ -3,19 +3,19 @@
   "files": {
     "bin": {
       "file": "znp.bin",
-      "sha256": "e784078f882cb3cbd9b8ffb50c6d9910841ec0a391ae621d2bdbfa8fe4148751"
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     },
     "elf": {
       "file": "znp.out",
-      "sha256": "6b581e4ff4e12df0e49f7d4fad9ce00cc7b1a6d5f6ad68d9183593efc0ec1f19"
+      "sha256": "a66daf7e6e5eb970ec49f424ee6e5f62bda777e2fa4ba29907bd30f78df317d3"
     },
     "hex": {
       "file": "znp.hex",
-      "sha256": "3f8e73b74c458dcf96bcdf19bf482239a9abf5ced2b78737a4418d6035c81a03"
+      "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
     },
-    "map": {
-      "file": "firmware.map",
-      "sha256": "cb80fdc65857e89f010d4ee4f4357a9fcc0dd1afd3f30892ec4f68ded2a1bc55"
+    "xml": {
+      "file": "znp_linkInfo.xml",
+      "sha256": "19b04a5e7692bd9c6c1ef98017928d297182453d427a1de2dae5e401808fc8e6"
     }
   },
   "schema": "r4-b0-artifact-manifest-v1",

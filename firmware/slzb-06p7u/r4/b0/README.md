@@ -35,7 +35,11 @@ with `git ls-tree -r` at the pinned SHAs, never invented):
 - `TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d`
   app main `source/ti/zstack/startup/main.c`, NPI group
   (`npi_task.c`, `npi_tl_uart.c`, ...), MT group (`mt_sys.c`, ...),
-  linker `source/ti/devices/cc13x2x7_cc26x2x7/linker_files/cc13x2x7.cmd`,
+  board linker `source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd`
+  (the exact .cmd the pinned projectspec links: SDK blob
+  `1e5777c2`; FLASH app `0x00000..0xA9FFF`, FLASH_NV
+  `0xAA000..0xADFFF`, FLASH_LAST `0xAE000..0xAFFFF` with `.ccfg`
+  at HIGH, `.resetVecs`, `--stack_size=1024`),
   startup `startup_files/startup_ticlang.c` + `ccfg.c`.
 - `Koenkk/zigbee-herdsman@0968f97` (v10.9.1, ABI reference only).
 - `Koenkk/Z-Stack-firmware@5e4db67` comparison-only patch donor
@@ -62,11 +66,14 @@ authorized disposable-device trial both exist.
 ## 3. Hosted native build path (staged, fail-closed)
 
 Toolchain: CCS `12.8.0.00012`, TI-ARM-CLANG `3.2.2.LTS`, SysConfig
-`1.21.1.3772` on `ubuntu-latest`. Installer/download digests are
-explicitly `UNKNOWN` (recorded, never fabricated); no verified
-direct headless download URL has been sourced, so the build job
-currently emits a `B0-BUILD-BLOCKED` receipt and fails closed --
-no dummy firmware, no false green.
+`1.21.1.3772` installed explicitly standalone on `ubuntu-22.04`
+(CCS 12.8 officially validates Ubuntu 22.04; it bundles only
+SysConfig `1.21.0.3721`, never relied on for the `1.21.1.3772`
+pin). Installer/download digests are explicitly `UNKNOWN`
+(recorded, never fabricated); no verified direct headless
+download URL has been sourced, so the build job currently emits
+a `B0-BUILD-BLOCKED` receipt and fails closed -- no dummy
+firmware, no false green.
 
 When provisioned, the exact build sequence is:
 
@@ -95,9 +102,14 @@ Reference: TI CCS command-line projects
   overlay consistency (pins, verified path set, UART values,
   NV pages, forbidden claims).
 - `tools/b0_image_audit.py audit <b0-dir> --artifacts <dir>` --
-  artifact binding, real linker-invocation evidence, CCFG/vector
-  presence, NV/CCFG non-overlap, donor 1024 C/IRQ stack; exit 2
-  `B0-AUDIT-BLOCKED` when no artifacts exist (never a pass).
+  artifact binding, real linker-invocation evidence (CCS
+  projectBuild + `tiarmclang --xml_link_info` + objcopy + syscfg),
+  genuine TI `--xml_link_info` XML geometry (FLASH_NV `0xAA000` /
+  `0x4000`, `.ccfg` in FLASH_LAST at HIGH, `.resetVecs`) plus an
+  independent ELF cross-check (ARM magic, entry agreement); exit 2
+  `B0-AUDIT-BLOCKED` when no artifacts exist (never a pass). The
+  legacy REGION/CSTACK/VECTORS text format is rejected as
+  synthetic.
 - `tools/b0_provision.py provision` -- toolchain presence probe
   with `READY`/`BLOCKED` receipt (exit 1 when blocked).
 - `fixtures/` -- valid + six hostile artifact sets with

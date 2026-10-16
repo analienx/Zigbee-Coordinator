@@ -1,5 +1,4 @@
-# Synthetic TI-map excerpt (R4-B0 valid fixture). Format: REGION/MEMORY
-# lines plus CSTACK (C/IRQ stack bytes, donor default 1024) and VECTORS.
+# Synthetic TI-map excerpt (REJECTED legacy format; unit negative vector).
 REGION FLASH 0x00000000 0x000A8000
 REGION NVS 0xAA000 0x4000
 REGION CCFG 0x000AE000 0x00000088

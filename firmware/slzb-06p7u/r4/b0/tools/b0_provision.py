@@ -31,11 +31,24 @@ EXPECTED = {
 # Official TI acquisition points (informational; installer binaries
 # and their digests are NOT pinned here because no verified direct
 # headless download URL/SHA has been sourced -- see UNKNOWN below).
+# SysConfig 1.21.1.3772 must be installed EXPLICITLY external:
+# CCS 12.8.0.00012 officially bundles SysConfig 1.21.0.3721, which
+# is NOT equal to the coherent SDK donor pin (see CCS 12.8.0
+# release notes). Never rely on the CCS bundle for the version pin.
 ACQUIRE = {
     "ccs": "https://www.ti.com/tool/CCSTUDIO (CCS 12.8.0.00012, Linux; TI account/export approval may apply)",
-    "sysconfig": "https://www.ti.com/tool/SYSCONFIG (1.21.1.3772, bundled with CCS or standalone)",
+    "sysconfig": "https://www.ti.com/tool/SYSCONFIG (standalone 1.21.1.3772 explicitly external; CCS 12.8 bundles only 1.21.0.3721 -- never rely on the bundle)",
     "ti_arm_clang": "https://www.ti.com/tool/TI-ARM-CLANG (3.2.2.LTS, via CCS update or standalone)",
     "cli_reference": "https://software-dl.ti.com/ccs/esd/documents/ccs_projects-command-line.html",
+}
+
+# Exact version fingerprints required for READY. Presence of an
+# executable name alone never yields READY (a stub or wrong-version
+# binary must BLOCK). Each probe output must contain its pin.
+VERSION_PINS = {
+    "ccs": "12.8.0.00012",
+    "sysconfig": "1.21.1.3772",
+    "ti_arm_clang": "3.2.2",
 }
 
 BINARIES = {
@@ -93,11 +106,21 @@ def provision(tool_dir=None):
             missing.append(key)
             found[key] = {"present": False, "expected": EXPECTED[key],
                           "acquire": ACQUIRE[key]}
+            continue
+        version_output = _version(binary, key)
+        if VERSION_PINS[key] not in version_output:
+            missing.append(key)
+            found[key] = {"present": False, "expected": EXPECTED[key],
+                          "binary": binary,
+                          "version_output": version_output,
+                          "version_mismatch": True,
+                          "acquire": ACQUIRE[key]}
         else:
             found[key] = {"present": True, "binary": binary,
                           "expected": EXPECTED[key],
                           "binary_sha256": _sha256(binary),
-                          "version_output": _version(binary, key),
+                          "version_output": version_output,
+                          "version_match": True,
                           "acquire": ACQUIRE[key]}
     status = "READY" if not missing else "BLOCKED"
     receipt = {

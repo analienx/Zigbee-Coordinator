@@ -61,7 +61,7 @@ class B0OverlayPositiveTests(unittest.TestCase):
                          "3615ad5d3f4f271258d18a2f5ce1785064ff9a58")
         self.assertEqual(paths["source/ti/zstack/mt/mt_sys.c"]["sha"],
                          "3615ad5d3f4f271258d18a2f5ce1785064ff9a58")
-        self.assertEqual(paths["source/ti/devices/cc13x2x7_cc26x2x7/linker_files/cc13x2x7.cmd"]["sha"],
+        self.assertEqual(paths["source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"]["sha"],
                          "3615ad5d3f4f271258d18a2f5ce1785064ff9a58")
 
     def test_toolchain_digests_stay_unknown(self):
@@ -171,6 +171,14 @@ class B0OverlayHostileTests(unittest.TestCase):
         errors = val.validate_inventory(doc)
         self.assertEqual(len(errors), 1)
         self.assertIn("explicitly UNKNOWN", errors[0])
+
+    def test_unhashable_claim_id_rejected_without_traceback(self):
+        doc = self._board()
+        doc["claims"].append({"id": ["uart-rx"], "value": "DIO12"})
+        doc["claims"].append({"id": {"n": 1}, "value": "DIO13"})
+        errors = val.validate_board(doc)
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(all("nonempty string" in e for e in errors))
 
     def test_duplicate_key_rejected_at_load(self):
         text = (B0 / "B0_DONOR_INVENTORY.json").read_text(encoding="utf-8")

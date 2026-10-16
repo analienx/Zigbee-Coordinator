@@ -31,13 +31,16 @@ EXPECTED_PINS = {
 # Closed allowlist: exact upstream paths verified present with
 # `git ls-tree -r FETCH_HEAD` at the pinned SHAs (issue #90).
 # Nothing may be added here without a hosted ls-tree re-derivation.
+# The linked linker script is the projectspec-linked board .cmd
+# (projectspec blob 4d05569e line 566 -> SDK blob 1e5777c2), NOT
+# the ancillary source/ti/devices/.../linker_files/cc13x2x7.cmd.
 EXPECTED_INVENTORY_PATHS = frozenset([
     "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec",
     "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg",
     "source/ti/zstack/startup/main.c",
     "source/ti/zstack/npi/npi_task.c",
     "source/ti/zstack/mt/mt_sys.c",
-    "source/ti/devices/cc13x2x7_cc26x2x7/linker_files/cc13x2x7.cmd",
+    "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd",
     "source/ti/devices/cc13x2x7_cc26x2x7/startup_files/startup_ticlang.c",
     "cc13xx_cc26xx_sdk",
     "README.md",
@@ -59,6 +62,13 @@ ALLOWED_CLAIM_STATUS = ("SOURCE_CONFIRMED", "PHYSICAL_UNVERIFIED", "OPEN")
 
 EXPECTED_UART = {"rx": "DIO12", "tx": "DIO13", "baud": 115200, "flow": "OFF"}
 
+# Reconciliation of the TOOLCHAIN_DOWNLOAD_DIGEST_FIELDS finding
+# (issue #90 comment 6213411102): this single canonical constant is
+# the validator allowlist; the inventory document records UNKNOWN in
+# all three fields (never fabricated digests); hosted proof lives
+# only in the `r4-b0-upstream-inventory` CI job (upstream ls-tree
+# re-derivation) plus the provision receipt. UNKNOWN here is an
+# explicitly recorded gap, never a pass.
 TOOLCHAIN_DOWNLOAD_DIGEST_FIELDS = (
     "ccs_download_sha256",
     "ti_arm_clang_download_sha256",
@@ -182,6 +192,9 @@ def validate_board(doc):
             errors.append("board claim must be an object")
             continue
         cid = claim.get("id")
+        if not isinstance(cid, str) or not cid.strip():
+            errors.append("board claim id must be a nonempty string")
+            continue
         if cid in by_id:
             errors.append("board duplicate claim id: %s" % cid)
         by_id[cid] = claim

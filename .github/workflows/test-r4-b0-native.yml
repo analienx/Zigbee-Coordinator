@@ -35,7 +35,7 @@ jobs:
         run: python -m unittest -v tests.test_r4_b0_audit
       - name: Validate real B0 overlay documents
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
-      - name: Audit valid artifact fixture
+      - name: Unit oracle sanity on valid vector (NOT native proof)
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-valid
       - name: Negative control (o1) corrupted image must fail hash binding
         run: |
@@ -80,6 +80,45 @@ jobs:
           fi
           echo "$out" | grep -F "B0-AUDIT-BLOCKED"
           echo "control (o5) blocked without binary claim as required"
+      - name: Negative control (o6) fake ELF must fail ELF gate
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-elf 2>&1); then
+            echo "control (o6) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "ELF"
+          echo "control (o6) rejected fake ELF as required"
+      - name: Negative control (o7) path traversal must fail confined
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-path-traversal 2>&1); then
+            echo "control (o7) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "traversal"
+          echo "control (o7) rejected path traversal as required"
+      - name: Negative control (o8) synthetic map format must fail
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-synthetic-map 2>&1); then
+            echo "control (o8) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "synthetic"
+          echo "control (o8) rejected synthetic map format as required"
+      - name: Negative control (o9) unhashable board claim id must fail without traceback
+        run: |
+          rm -rf /tmp/b0neg_ids
+          cp -r firmware/slzb-06p7u/r4/b0 /tmp/b0neg_ids
+          python -c "import json; p='/tmp/b0neg_ids/B0_BOARD_CONTRACT.json'; d=json.load(open(p)); d['claims'].append({'id':['uart-rx'],'value':'DIO12'}); json.dump(d,open(p,'w'),indent=1)"
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate /tmp/b0neg_ids 2>&1); then
+            echo "control (o9) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "nonempty string"
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o9) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o9) rejected unhashable claim id as required"
 
   r4-b0-upstream-inventory:
     runs-on: ubuntu-latest
@@ -128,7 +167,7 @@ jobs:
             "source/ti/zstack/startup/main.c" \
             "source/ti/zstack/npi/npi_task.c" \
             "source/ti/zstack/mt/mt_sys.c" \
-            "source/ti/devices/cc13x2x7_cc26x2x7/linker_files/cc13x2x7.cmd" \
+            "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
             "source/ti/devices/cc13x2x7_cc26x2x7/startup_files/startup_ticlang.c"; do
             (cd sdk && git ls-tree "$EXPECT_TI_SDK_SHA" "$p" | grep -F "$p") || { echo "upstream mismatch (missing SDK path: $p)"; exit 1; }
             echo "upstream OK: SDK path present: $p"
@@ -149,7 +188,7 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout pull request head
         if: github.event_name == 'pull_request'
@@ -167,23 +206,36 @@ jobs:
       # Fail-closed provision gate: with no verified TI toolchain
       # distribution provisioned, this emits a BLOCKED receipt and
       # fails the job. It never fabricates ELF/HEX/BIN and never
-      # reports a build PASS. When the toolchain becomes available,
-      # the READY branch below performs the real CCS headless build.
+      # reports a build PASS. SysConfig 1.21.1.3772 must be present
+      # as an explicit standalone install: CCS 12.8 bundles only
+      # 1.21.0.3721, which never satisfies the pin. When the
+      # toolchain becomes available, the READY branch below performs
+      # the real CCS headless build. Fixture vectors in
+      # firmware/slzb-06p7u/r4/b0/fixtures/ are unit oracle sanity
+      # inputs only and are NEVER audited here as native proof.
       - name: Provision gate (fail closed without toolchain)
         run: |
           python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
       - name: Real native build (only when provision is READY)
         run: |
-          echo "provision READY: performing donor fetch, SDK library build, CCS headless import/build"
-          rm -rf /tmp/b0src && mkdir -p /tmp/b0src && cd /tmp/b0src
+          rm -rf /tmp/b0src /tmp/b0out && mkdir -p /tmp/b0src /tmp/b0out && cd /tmp/b0src
           git clone --depth 1 https://github.com/TexasInstruments/simplelink-zstack-examples.git examples
           git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
           git -C examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
           git -C examples submodule update --init cc13xx_cc26xx_sdk
           [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
-          echo "SDK library build per SDK README at pinned SHA (see firmware/slzb-06p7u/r4/b0/README.md)"
+          sysconfig_cli --version | grep -F "1.21.1.3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
+          tiarmclang --version | grep -F "3.2.2" || { echo "B0-BUILD-BLOCKED: TI-ARM-CLANG 3.2.2.LTS not provisioned; no dummy firmware produced"; exit 1; }
+          echo "building SDK libraries first (upstream README requirement at the pinned SHA)"
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/cc13xx_cc26xx_sdk/source
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects driverlib
+          echo "importing and building the pinned ZNP projectspec"
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang
+          echo "collecting genuine TI link outputs (ELF + --xml_link_info XML + HEX + BIN) into /tmp/b0out"
+          cp /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_linkInfo.xml /tmp/b0out/
+          cp /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/Release/znp.out /tmp/b0out/
+          cp /tmp/b0src/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/Release/znp.hex /tmp/b0out/
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
       - name: Upload native artifacts and receipts
         if: always()

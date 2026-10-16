@@ -1,9 +1,12 @@
 """R4-B0 image audit tests (stdlib unittest only, offline).
 
 Exercises the real b0_image_audit logic against the committed
-hostile artifact fixtures. If the audit logic is removed or
-weakened (hash binding, linker-invocation evidence, NV/CCFG
-separation, CCFG/vector presence, donor stack size), these tests
+unit-test vectors. The vectors are synthetic oracle sanity inputs,
+NEVER native proof: a passing fixture audit proves only the
+validator logic, never a genuine TI CCS build. If the audit logic
+is removed or weakened (hash binding, linker-invocation evidence,
+TI XML + ELF cross-check, NV/CCFG separation, CCFG/vector
+presence, donor stack size, traversal confinement), these tests
 fail. No hardware, no network, no secrets.
 """
 import contextlib
@@ -33,7 +36,7 @@ class B0ImageAuditTests(unittest.TestCase):
     def _audit(self, name):
         return audit.audit(B0, FIX / name)
 
-    def test_valid_artifacts_pass(self):
+    def test_valid_vector_passes_oracle_sanity(self):
         code, message = self._audit("artifacts-valid")
         self.assertEqual(code, 0)
         self.assertIn("R4-B0 image audit OK", message)
@@ -47,6 +50,21 @@ class B0ImageAuditTests(unittest.TestCase):
         code, message = self._audit("artifacts-no-link")
         self.assertEqual(code, 1)
         self.assertIn("no actual linker invocation", message)
+
+    def test_fake_elf_rejected(self):
+        code, message = self._audit("artifacts-fake-elf")
+        self.assertEqual(code, 1)
+        self.assertIn("ELF", message)
+
+    def test_path_traversal_rejected(self):
+        code, message = self._audit("artifacts-path-traversal")
+        self.assertEqual(code, 1)
+        self.assertIn("traversal", message)
+
+    def test_synthetic_map_format_rejected(self):
+        code, message = self._audit("artifacts-synthetic-map")
+        self.assertEqual(code, 1)
+        self.assertIn("synthetic", message)
 
     def test_nv_ccfg_overlap_rejected(self):
         code, message = self._audit("artifacts-overlap")
@@ -73,7 +91,7 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("B0-AUDIT-BLOCKED", message)
 
-    def test_cli_valid_pair(self):
+    def test_cli_valid_vector(self):
         code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
                                          str(FIX / "artifacts-valid")])
         self.assertEqual(code, 0)
@@ -84,6 +102,13 @@ class B0ImageAuditTests(unittest.TestCase):
                                          str(FIX / "artifacts-overlap")])
         self.assertEqual(code, 1)
         self.assertIn("NV/CCFG overlap", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_cli_traversal_fails_without_traceback(self):
+        code, out = run_cli(audit.main, ["audit", str(B0), "--artifacts",
+                                         str(FIX / "artifacts-path-traversal")])
+        self.assertEqual(code, 1)
+        self.assertIn("traversal", out)
         self.assertNotIn("Traceback", out)
 
     def test_cli_blocked_without_traceback(self):
