@@ -152,6 +152,9 @@ def main():
     for name, generator, flag, input_path, scenarios in (
         ("management", "make_management_harness.py", "--sdk", sdk, MANAGEMENT_SCENARIOS),
         ("boot", "make_boot_harness.py", "--source", sdk / SOURCE_PATHS[1], BOOT_SCENARIOS),
+        ("npi_rx_overflow", "make_npi_overflow_harness.py", "--source",
+         sdk / "source/ti/zstack/npi/npi_task.c",
+         ("healthy", "overflow", "oversize", "negative", "empty")),
     ):
         source = work / f"actual_{name}.c"
         run([sys.executable, b1 / "tools" / generator,
