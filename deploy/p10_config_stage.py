@@ -50,12 +50,12 @@ def render_minimal(raw: bytes, host: str, port: int) -> bytes:
     # Rewrite only the direct serial scalars; optional baud/flow values
     # must be normalized or inserted (review P2). Preserve the rest of
     # the configuration byte-for-byte, including comments and CRLF.
-    newline = '\\r\\n' if b'\\r\\n' in raw else '\\n'
+    newline = '\r\n' if b'\r\n' in raw else '\n'
     targets = (('port', f'tcp://{host}:{port}'), ('adapter', 'zstack'),
                ('baudrate', '115200'), ('rtscts', 'false'))
     additions = []
     for key, value in targets:
-        matches = [(i, re.fullmatch(r'  ' + key + r':[^\\r\\n]*(\\r?\\n?)', lines[i]))
+        matches = [(i, re.fullmatch(r'  ' + key + r':[^\r\n]*(\r?\n?)', lines[i]))
                    for i in range(start, stop)]
         matches = [(i, match) for i, match in matches if match is not None]
         if len(matches) > 1 or (len(matches) == 0 and key in ('port', 'adapter')):
@@ -67,7 +67,7 @@ def render_minimal(raw: bytes, host: str, port: int) -> bytes:
             lines[i] = '  ' + key + ': ' + value + match.group(1)
     if additions:
         # An unterminated final scalar would otherwise swallow additions.
-        if stop > start and not lines[stop-1].endswith(('\\n', '\\r')):
+        if stop > start and not lines[stop-1].endswith(('\n', '\r')):
             lines[stop-1] += newline
         lines[stop:stop] = additions
     return ''.join(lines).encode('utf-8')
