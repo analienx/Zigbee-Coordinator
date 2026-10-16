@@ -28,6 +28,10 @@ typedef struct {
     uint8_t candidate_pages;
 } b1_nv_probe_result;
 
+/* Sticky, monotonically asserted on backend failures, never auto-cleared. */
+void b1_nv_runtime_hold_latch(void);
+int b1_nv_runtime_hold_active(void);
+
 b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
                                bool factory_new_authorized);
 #endif
