@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/b3host
           cp /tmp/b3sdk/source/ti/zstack/osal/osal_nv.c /tmp/b3host/osal_nv.c
-          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -DZSTACK_GPD \
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-parameter -DZSTACK_GPD \
             -I tests/b3_host /tmp/b3host/osal_nv.c \
             tests/b3_host/osal_driver_test.c -o /tmp/b3host/b3_osal_test
           /tmp/b3host/b3_osal_test
@@ -77,7 +77,7 @@ jobs:
           assert s.count(old) == 1
           f.write_text(s.replace(old, '  uint8_t rtrn = SUCCESS;\n  uint8_t status;'))
           PY
-          gcc -std=c11 -O0 -Wall -Wextra -Werror -DZSTACK_GPD \
+          gcc -std=c11 -O0 -Wall -Wextra -Werror -Wno-unused-parameter -DZSTACK_GPD \
             -I tests/b3_host /tmp/b3host/osal_nv.c \
             tests/b3_host/osal_driver_test.c -o /tmp/b3host/b3_mutant
           ulimit -c 0
