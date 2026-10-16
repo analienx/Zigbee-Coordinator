@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/analienx/Zigbee-Coordinator/docs/r4/b3/B3_RESTORE_DECISION_SCHEMA.json",
+  "title": "R4 B3 synthetic-only offline restore decision, never authorization",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "reason_codes",
+    "synthetic_only",
+    "source_authentication",
+    "restore_authorized",
+    "flash_authorized",
+    "network_mutation_authorized"
+  ],
+  "properties": {
+    "schema": {
+      "const": "r4-b3-restore-decision-v1"
+    },
+    "status": {
+      "enum": [
+        "NOT_RESTORE_READY",
+        "OFFLINE_CONSISTENT_FOR_REVIEW"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]+$"
+      },
+      "uniqueItems": true
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "db_devices",
+        "latest_security_rows",
+        "db_missing_security",
+        "security_not_in_db",
+        "snapshots"
+      ],
+      "properties": {
+        "db_devices": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 192
+        },
+        "latest_security_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 192
+        },
+        "db_missing_security": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 192
+        },
+        "security_not_in_db": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 192
+        },
+        "snapshots": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 192
+        }
+      }
+    },
+    "synthetic_only": {
+      "const": true
+    },
+    "source_authentication": {
+      "const": "NOT_ESTABLISHED"
+    },
+    "restore_authorized": {
+      "const": false
+    },
+    "flash_authorized": {
+      "const": false
+    },
+    "network_mutation_authorized": {
+      "const": false
+    }
+  },
+  "additionalProperties": false
+}

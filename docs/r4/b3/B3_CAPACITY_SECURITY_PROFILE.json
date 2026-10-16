@@ -1,0 +1,35 @@
+{
+  "schema": "r4-b3-capacity-security-v1",
+  "status": "NOT_PROFILE_LOCKED",
+  "pin": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "source_commit": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "device_scenarios": [
+    106,
+    128,
+    160,
+    192
+  ],
+  "required_real_serialized_rows": [
+    "NWK/NIB and outgoing NWK counter",
+    "TC link keys and key sequence",
+    "per-peer APS/TCLK key and outgoing counters",
+    "BDB state",
+    "address manager",
+    "binding and group tables",
+    "source-proven persisted routing only"
+  ],
+  "actual_compiled_bytes_per_row": null,
+  "peak_compaction_copy_bytes": null,
+  "b2_final_tc_rows": null,
+  "source_counter_reservation_proof": false,
+  "commit_generation_proof": false,
+  "b1_rf_hold_binding": false,
+  "usable_per_active_page_bytes": 8176,
+  "per_item_compressed_header_bytes": 7,
+  "layouts_experimental": [
+    "NV3",
+    "NV5"
+  ],
+  "decision": "HOLD_NORESTORE",
+  "flash_authorized": false
+}
