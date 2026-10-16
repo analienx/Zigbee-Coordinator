@@ -53,7 +53,7 @@ VERSION_PINS = {
 
 BINARIES = {
     "ccs": ("eclipse", "eclipsec"),
-    "sysconfig": ("sysconfig_cli",),
+    "sysconfig": ("sysconfig_cli", "sysconfig_cli.sh"),
     "ti_arm_clang": ("tiarmclang",),
 }
 
