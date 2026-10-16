@@ -200,10 +200,10 @@ def patch(source: str) -> str:
     old_state = extract_function(source, state_sig)
     new_state = replace_once(
         old_state, "    devState = state;",
-        "    devState = state;\\n"
-        "    b1_management_note_zdo_state((uint8_t)(state == DEV_ZB_COORD),\\n"
-        "        (uint8_t)(state == DEV_ZB_COORD && FrameCounterUpdated &&\\n"
-        "                  b1_nv_existing_header_candidate() &&\\n"
+        "    devState = state;\n"
+        "    b1_management_note_zdo_state((uint8_t)(state == DEV_ZB_COORD),\n"
+        "        (uint8_t)(state == DEV_ZB_COORD && FrameCounterUpdated &&\n"
+        "                  b1_nv_existing_header_candidate() &&\n"
         "                  b1_sec_restored_network_validated()));",
         "ZDO actual state-change ready attestation")
     source = replace_once(source, old_state, new_state, "actual ZDO callback body")
