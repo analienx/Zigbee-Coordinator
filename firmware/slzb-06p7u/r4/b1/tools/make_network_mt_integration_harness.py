@@ -18,7 +18,26 @@ typedef uint8_t devStates_t;
 static devStates_t devState=DEV_INIT;
 static unsigned zdo_events;
 static uint8_t FrameCounterUpdated=1u;
-int b1_nv_existing_header_candidate(void) {return 1;}
+/* Generate a complete two-page coherent NV2 candidate with PUBLIC dummy
+ * headers: the real admission C must grant it before ZDO can report ready. */
+static uint8_t candidate_nv2[B1_NV2_REGION_SIZE];
+static int_fast16_t candidate_read(void *opaque,uint32_t off,uint8_t *dst,uint32_t len)
+{
+  (void)opaque;assert(off<=sizeof(candidate_nv2) && len<=sizeof(candidate_nv2)-off);
+  memcpy(dst,candidate_nv2+off,len);return 0;
+}
+static void seed_candidate(void)
+{
+  memset(candidate_nv2,0xFF,sizeof(candidate_nv2));
+  candidate_nv2[0]=0x7Cu;
+  candidate_nv2[1]=1u;candidate_nv2[2]=0x0Fu;
+  candidate_nv2[3]=candidate_nv2[7]=candidate_nv2[11]=candidate_nv2[15]=0x96u;
+  candidate_nv2[8192]=0xFEu;candidate_nv2[8193]=2u;candidate_nv2[8194]=0x0Fu;
+  candidate_nv2[8195]=candidate_nv2[8199]=candidate_nv2[8203]=candidate_nv2[8207]=0x96u;
+  assert(b1_nv_probe(candidate_read,NULL,false).code==B1_NV2_HEADER_CANDIDATE);
+  assert(b1_nv_existing_header_candidate());
+  b1_management_note_nv_candidate();
+}
 int b1_sec_restored_network_validated(void) {return 1;}
 static void OsalPort_setEvent(uint8_t task,uint32_t event)
 {
@@ -30,7 +49,7 @@ static void OsalPort_setEvent(uint8_t task,uint32_t event)
 SCENARIO = r'''
     if(strcmp(s,"network_ready_e2e")==0) {
         static const uint8_t q[8]={'B','1','Q','1',1,8,0,0};
-        b1_management_note_nv_candidate();
+        seed_candidate();
         b1_management_note_mt_registered();
         NPITask_Fxn(0,0);
         assert(process_started==1 && b1_management_npi_initialized());
