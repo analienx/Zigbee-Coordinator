@@ -51,7 +51,7 @@ static void verify_silent(void)
     assert(write_count == 0u);
     assert(erase_count == 0u);
     assert(max_read_end <= sizeof(nv));
-    assert(rd_count <= (B1_NV2_REGION_SIZE / 32u));
+    /* rd_count is cumulative within a fixture; bound each probe below. */
 }
 
 static b1_nv_probe_result probe(int factory_approved)
@@ -61,12 +61,14 @@ static b1_nv_probe_result probe(int factory_approved)
 
 static void check(uint32_t index, b1_nv_probe_code expected, int approved)
 {
+    uint32_t before_reads = rd_count;
     b1_nv_probe_result r = probe(approved);
     if (r.code != expected) {
         fprintf(stderr, "case %u: got %d expected %d\n",
                 index, (int)r.code, (int)expected);
         assert(r.code == expected);
     }
+    assert(rd_count - before_reads <= (B1_NV2_REGION_SIZE / 32u));
     verify_silent();
 }
 
