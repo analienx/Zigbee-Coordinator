@@ -58,7 +58,7 @@ REPO_SHA_KEY = {
     "ti_lowpower_f2_sdk": "ti_sdk_sha",
 }
 
-ALLOWED_CLAIM_STATUS = ("SOURCE_CONFIRMED", "PHYSICAL_UNVERIFIED", "OPEN")
+ALLOWED_CLAIM_STATUS = ("SOURCE_CONFIRMED", "HARDWARE_OPERATIONALLY_PROVEN", "PHYSICAL_UNVERIFIED", "OPEN")
 
 EXPECTED_UART = {"rx": "DIO12", "tx": "DIO13", "baud": 115200, "flow": "OFF"}
 
@@ -212,9 +212,40 @@ def validate_board(doc):
         got = by_id.get(cid, {}).get("value")
         if got != want:
             errors.append("board %s must be %r" % (cid, want))
-    for cid in ("uart-rx", "uart-tx", "uart-baud", "uart-flow"):
-        if by_id.get(cid, {}).get("status") == "SOURCE_CONFIRMED":
-            errors.append("board %s must not claim SOURCE_CONFIRMED (unverified on fitted unit)" % cid)
+    # Historical fitted P7U facts have been proven, not merely
+    # conjectured. R2 ELF UART pinmux matched vendor 20240710, and
+    # the original board answered stock ZNP across its USB bridge.
+    # These checks never qualify the newly compiled R4 image.
+    for cid in ("uart-rx", "uart-tx", "uart-baud", "uart-flow", "target-part"):
+        claim = by_id.get(cid, {})
+        if claim.get("status") != "HARDWARE_OPERATIONALLY_PROVEN":
+            errors.append("board %s must be HARDWARE_OPERATIONALLY_PROVEN per issue #80" % cid)
+        if "6198198498" not in str(claim.get("evidence", "")) and cid != "target-part":
+            errors.append("board %s lacks actual UART source evidence #80/6198198498" % cid)
+    if doc.get("board", {}).get("status") != "HARDWARE_OPERATIONALLY_PROVEN":
+        errors.append("fitted P7U board identity evidence not acknowledged")
+    hardware = doc.get("hardware_evidence", {})
+    if not isinstance(hardware, dict) or hardware.get("status") != "HARDWARE_OPERATIONALLY_PROVEN":
+        errors.append("board historical hardware evidence missing")
+    else:
+        ref = hardware.get("manufacturer_esp_board_def", {})
+        if not isinstance(ref, dict) or any(ref.get(k) != v for k, v in (
+            ("repo", "smlight-tech/slzb-esphome"),
+            ("commit", "3397f6ffe7b0a58cf1546c8293bfa644235a9769"),
+            ("esp_tx_to_radio_rx", "GPIO17 -> radio DIO12"),
+            ("radio_tx_to_esp_rx", "radio DIO13 -> GPIO18")
+        )):
+            errors.append("SMLIGHT fitted board UART evidence pin mismatch")
+    vendor = doc.get("vendor_20240710_ccfg", {})
+    if not isinstance(vendor, dict) or (vendor.get("vendor_digest_sha256") !=
+            "1defedbd2f474ee8b7385476801a63de95f55c3dd51115e29f97c69196049af7"
+            or vendor.get("syscfg_override") != "device.enableDCDC = false;"):
+        errors.append("vendor 20240710 CCFG DC/DC evidence mismatch")
+    image = doc.get("r4_image", {})
+    if not isinstance(image, dict) or image.get("status") != "R4_IMAGE_UNVERIFIED":
+        errors.append("new R4 image must remain explicitly UNVERIFIED")
+    elif image.get("flash_authorized") is not False:
+        errors.append("new R4 image must not authorize flash")
     if by_id.get("nv-pages", {}).get("value") != 2:
         errors.append("board nv-pages must be 2 (donor NVOCMP_NVPAGES=2)")
     if not isinstance(doc.get("open_items"), list) or len(doc["open_items"]) < 4:
