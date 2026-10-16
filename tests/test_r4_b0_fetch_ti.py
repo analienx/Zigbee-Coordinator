@@ -21,6 +21,13 @@ class FetchTests(unittest.TestCase):
             self.assertIn(version.split(".")[0], url)
             self.assertTrue(parsed.path.endswith("/" + filename))
 
+    def test_exact_vendor_pins_are_present_and_distinct(self):
+        self.assertEqual(set(mod.VENDOR_SHA256), set(mod.ARTIFACTS))
+        self.assertEqual(len(set(mod.VENDOR_SHA256.values())), 3)
+        for key, digest in mod.VENDOR_SHA256.items():
+            self.assertTrue(mod.valid_digest(digest), key)
+            self.assertTrue(mod.PUBLISHER_PAGES[key].startswith("https://www.ti.com/tool/download/"))
+
     def test_missing_or_invalid_sha_blocks_before_network(self):
         with tempfile.TemporaryDirectory() as folder:
             for bad in ("UNKNOWN", "", "0" * 63, "G" * 64):
