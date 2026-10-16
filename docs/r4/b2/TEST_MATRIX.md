@@ -27,7 +27,7 @@ classifies Z-Stack as binary and limited source.
 | T07 | Source-route failure stale invalidation | BLOCKED_TI_INTERNAL_C | Closed routing-body failure call path; no pre/post fix |
 | T08 | NWK_NO_ROUTE return and AF status | BLOCKED_TI_INTERNAL_C | Cannot equate SRSP with on-air MAC; no compiled native hostile trace |
 | T09 | RREQ retry/discovery timeout | BLOCKED_TI_INTERNAL_C | Closed rtg.o; no timer proof |
-| T10 | MTO cadence and broadcast boundedness | PARTIAL_SOURCE_CONFIRMED | Default zd_app.c failure callback calls RTG_MTORouteReq; active NV/air behavior unknown |
+| T10 | MTO cadence and broadcast boundedness | PARTIAL_HOSTED_REAL_TI_C_ASAN | [Real pinned `zd_app.c` callback ASan/UBSan + killed source mutation](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38966389472); 1/2/1000 failure callbacks produce 1/2/1000 calls to stubbed RTG boundary; *no* closed RTG, timer or actual RF proof |
 | T11 | Source relay hops 0/1/max/too long | BLOCKED_TI_INTERNAL_C | Closed RTG_ValidateSrcRtg; no harness |
 | T12 | Duplicate/self relay and malformed NWK16 | BLOCKED_TI_INTERNAL_C | Closed route-validation implementation |
 | T13 | Cache eviction during AF enqueue | BLOCKED_TI_INTERNAL_C | Closed rtg.o ownership/lifetime |
@@ -60,6 +60,11 @@ classifies Z-Stack as binary and limited source.
 - Host Python arithmetic/ELF/overlay/profile negative oracles: hosted
   **synthetic**, not native routing behavior. 31 tests passed before the
   comparator expansion. Exact last CI run is authoritative.
+- B2 T10 callback ASan/UBSan source-run and source mutation: real
+  `source/ti/zstack/stack/zdo/zd_app.c` function body compiled at pinned
+  SDK SHA (hosted run 38966389472), only opaque `RTG_MTORouteReq()` API
+  stubbed. This proves direct repetition and absence of a local callback
+  cooldown, **not** on-air MTO cadence or closed routing behavior.
 - P1 new native CCS binary and two independently linked replicas:
   status governed only by the latest green linked-profile and binary
   reproducibility workflows, **do not treat this document as a PASS claim**.
