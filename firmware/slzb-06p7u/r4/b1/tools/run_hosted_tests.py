@@ -175,6 +175,15 @@ def main():
         for scenario in scenarios:
             positive(binary, (scenario,))
 
+    # Real TI ZDO callback -> the same original NPI/MT/SYS F1 transport
+    # functions in one host binary. Tests READY, role loss and no regrant.
+    n30_integrated_source = work / "actual_network_mt_integration.c"
+    run([sys.executable, b1 / "tools/make_network_mt_integration_harness.py",
+         "--sdk", sdk, "--output", n30_integrated_source], check=True)
+    generated["n30_network_mt"] = n30_integrated_source
+    positive(compile_c(n30_integrated_source, "n30_network_mt",
+                       admission=False, management=True), ("network_ready_e2e",))
+
     backend_scenarios = ("healthy", "write_ok", "erase_ok", "crc_corrupt", "header_corrupt",
         "init_read_fail", "init_repair", "init_scan_corrupt", "init_page_signature",
         "init_page_version", "init_page_state", "read_fail", "read_bounds",
