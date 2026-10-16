@@ -1,0 +1,38 @@
+# B4 ABI decision — issue #98
+
+**Decision: source-verifiable SYS F0 is unallocated in pinned sources, but R4 V3 is NOT NATIVE-LINKED.** Do not route host traffic to an unbuilt firmware handler. Status: `B4_SOURCE_READY=BLOCKED`, `PHYSICAL_UNVERIFIED`, `HOST_NOT_INSTALLED`.
+
+## Evidence (not extrapolation)
+
+* `TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58` `source/ti/zstack/mt/mt.h:100-146` enumerates SYS IDs, none 0xF0; `mt_sys.c:246-398` dispatches real `MT_SysCommandProcessing`, no F0 case; unknowns return `MT_RPC_ERR_COMMAND_ID`.
+* `Koenkk/zigbee-herdsman@0968f979d558874b17396c96b66382d4236bbdcd` `src/adapter/z-stack/znp/definition.ts:20-422` has no SYS command ID 240.
+* `b4_verify_source.py` checks *both* pinned checkouts at exact HEAD and fails on a dictionary or dispatch collision, missing stock SYS paths, altered owner, or unverified source. Successful source check is **not** native handler or deployed host proof.
+
+## Historical v2 (P10 donor, not R4)
+
+MT SYS `0xF0` response payload exactly 102 bytes: version `0x02`, flags only bits 0–2, 25 little-endian uint32 values. No validity mask, boot identity, timestamp, monotonic sequence, or UNKNOWN sentinel. A numeric `0xffffffff` is a legal reading. No counter subtraction is permitted without separate trustworthy continuity (unavailable for v2).
+
+## R4 proposed v3 (wire design ONLY)
+
+MT SYS `0xF0`, SRSP CMD0 0x61, CMD1 0xF0, and proposed fixed **132-byte** reply:
+
+| Offset | Type | Field |
+|---|---|---|
+| 0 | 4 bytes | magic `R4D3` |
+| 4 | u8 | major 3 |
+| 5 | u8 | legacy flags bits 0–2 |
+| 6 | u16 LE | payload length 132 |
+| 8 | u32 LE | capabilities, bit 0 potential radio boot identity |
+| 12 | u32 LE | validity bits 0–24 |
+| 16 | u64 LE | radio_boot_id |
+| 24 | u32 LE | uptime_ms |
+| 28 | u32 LE | sample_seq |
+| 32 | 25 × u32 LE | counters |
+
+The existing contract contains no minor version, source digest, build ID or native reset reason. **Do not pretend those requirements are satisfied**: adding them needs a separately versioned ABI and revalidated MT-length/capability budget. Current `b4_protocol.py` rejects every unknown version, reserved bit, malformed body, FCS, command, length and unbounded input. It never sends a request.
+
+Even if a wire response declares boot-identity capability, identity continuity remains **UNKNOWN** until a native, independently qualified generator and reset evidence exist. Matching process generations never qualify radio epochs. `radio_boot_id_verified` in the historical reference decoder means only the *wire capability assertion*, not independent trust; `trustworthy_radio_epoch()` requires `source_qualified=True`. The B4 branch never sets it true based on a frame.
+
+## Failure and acceptance
+
+No opaque F0 fallback to raw ZNP, no SYS_PING/SYS_VERSION changes, no direct UART owner, no NV/security/network information, no RF side effects. A dead NPI cannot answer diagnostics; rely on a last-good passive host snapshot only. HAL event instrumentation, two genuine native ELF links, B1/B2/B3 integration, actual herdsman patch and full D01–D36 proof are **not yet completed**.
