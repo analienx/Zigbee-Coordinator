@@ -33,17 +33,23 @@ def collect(workspace, out, clang_dir, build_log):
     if not tool.is_file():
         raise RuntimeError("missing TI tiarmobjcopy")
     items = {"elf": elf, "xml": xml, "hex": hexfile}
+    # Preserve native TI filenames. The linker XML output_file names the
+    # original ELF; renaming it to znp.out would invalidate cross-binding.
+    names = {}
     for kind, origin in items.items():
-        shutil.copyfile(origin, out / ("znp" + {"elf": ".out", "xml": "_linkInfo.xml", "hex": ".hex"}[kind]))
-    subprocess.run([str(tool), "-O", "binary", str(elf), str(out / "znp.bin")], check=True)
+        target = out / origin.name
+        shutil.copyfile(origin, target)
+        names[kind] = origin.name
+    bin_name = elf.stem + ".bin"
+    subprocess.run([str(tool), "-O", "binary", str(elf), str(out / bin_name)], check=True)
     if build_log.resolve() != (out / "build.log").resolve():
         shutil.copyfile(build_log, out / "build.log")
-    items = {"elf": "znp.out", "xml": "znp_linkInfo.xml", "hex": "znp.hex", "bin": "znp.bin"}
+    names["bin"] = bin_name
     manifest = {
         "schema": "r4-b0-artifact-manifest-v1",
         "build_log": "build.log",
         "files": {key: {"file": name, "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()}
-                  for key, name in items.items()},
+                  for key, name in names.items()},
         "provenance": {"elf_source": str(elf), "xml_source": str(xml),
                        "hex_source": str(hexfile), "kind": "NATIVE_DONOR_UNQUALIFIED"},
     }
