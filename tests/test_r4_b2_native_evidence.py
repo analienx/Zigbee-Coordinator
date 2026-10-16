@@ -20,7 +20,7 @@ class NativeEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/"fake.out"
             blob=bytearray(52)
-            blob[:4]=b"\\x7fELF"
+            blob[:4]=bytes([0x7f])+b"ELF"
             blob[4]=1
             blob[5]=1
             blob[18:20]=(40).to_bytes(2,"little")
