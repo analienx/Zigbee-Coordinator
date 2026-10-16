@@ -257,6 +257,24 @@ int main(void)
     assert(rd_count == 0u);
     verify_silent();
 
+    /* N24 partial: inject a media read fault at EVERY 32-byte NV2
+     * transaction boundary. None may be misclassified as factory blank or
+     * trigger any destructive repair. Power-loss between writes still OPEN. */
+    {
+        uint32_t offset;
+        for (offset = 0; offset < B1_NV2_REGION_SIZE; offset += 32u) {
+            reset();
+            fail_at = offset;
+            r = probe(0);
+            assert(r.code == B1_NV_HOLD_READ_FAILED);
+            assert(r.first_fault_offset == offset);
+            assert(rd_count == (offset / 32u + 1u));
+            assert(!b1_nv_existing_header_candidate());
+            verify_silent();
+        }
+        puts("B1_N24_ALL_512_NV2_READ_BOUNDARIES_FAIL_CLOSED_SYNTHETIC_PASS");
+    }
+
     /* Linked sticky NV fault latch (host C control, not a MAC RF proof). */
     assert(b1_nv_runtime_hold_active() == 0);
     b1_nv_runtime_hold_latch();
