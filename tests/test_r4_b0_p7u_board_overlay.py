@@ -30,7 +30,8 @@ class BoardOverlayTests(unittest.TestCase):
         self.assertIn('Display_UART.uart.uart.$assign = "UART0";', result)
         self.assertIn("Display_UART.uart.flowControl = false;", result)
         self.assertIn("device.enableDCDC = false;", result)
-        self.assertNotIn("Display_UART.$hardware", result)
+        # Pinmux alias is retained: native removal was proven to map UART to DIO16/17.
+        self.assertIn("Display_UART.$hardware = system.deviceData.board.components.XDS110UART", result)
         with self.assertRaisesRegex(ValueError, "ALREADY_PRESENT"):
             board.transform(result)
 
