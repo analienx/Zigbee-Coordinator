@@ -31,13 +31,13 @@ NOT_MEASURED. Each remaining requirement below keeps the full case open.
 | N21 | Actual UART open/read and NPI init boundary failures | Physical transport death and host timeout unknown |
 | N22 | Actual ZMac data/no-data reject post-fault; bypass mutants fail | Queued/ROM RF not cancelled/proven |
 | N23 | Actual FCS rejection; strict F1 magic/version/length/reserved query | Host decoder/all framing adversaries not exhausted |
-| N24 | 512 bounded read-cut cases; real source-extracted NVOCMP writeItem/erase and compact-state/header NOR 1→0 power-cut fixtures; read-only persisted-image revalidation | **OPEN:** full NVOCMP_compactPage/compact/cleanPage cut enumeration, verified counter continuity on every accepted reboot, physical brownout |
+| N24 | 512 bounded read-cut cases; real source-extracted NVOCMP writeItem/erase and compact-state/header NOR 1→0 power-cut fixtures; read-only persisted-image revalidation | **OPEN:** NV2 two-page NVOCMP_compactPage/compact cuts now hosted; cleanPage is compiled only for >2 pages; exhaustive reboot/security-counter persistence and physical brownout still open, verified counter continuity on every accepted reboot, physical brownout |
 | N25 | Key generation, index, seed/counter and restored inconsistencies | Full NIB/APS/TCLK generation/identity review remains |
 | N26 | Sticky state; benign candidate/traffic cannot clear HOLD | Reboot must revalidate; no recovery API added |
 | N27 | Authorized blank/configured-new use actual donor dispatch | Every optional singleton/library path not exhausted |
 | N28 | Empty optional APS versus missing referenced APS/TCLK | Full table variants need independent review |
 | N29 | 128 dummy rows and 1001 management events, bounded reads/allocations | **Not** an RF soak or native stack high-water measurement |
-| N30 | Actual TI ZDApp_ChangeState(DEV_ZB_COORD) hooks cached valid restored security + persisted NWK reserve and NV2 candidate; SYS F1 readiness bit3/stage5, retracted on ZDO loss/HOLD; hosted healthy/missing/late-failure source scenarios and disconnected-callback mutant | **OPEN:** whole-stack restored network, real ZDO AREQ/AF/ZDO host startup, new-network readiness, physical UART/RF acceptance |
+| N30 | Actual TI ZDApp_ChangeState(DEV_ZB_COORD) hooks cached valid restored security + persisted NWK reserve and NV2 candidate; SYS F1 readiness bit3/stage5, revoked permanently after coordinator role loss until fresh boot validation or on any HOLD; hosted healthy/missing/late-failure source scenarios and disconnected-callback mutant | **OPEN:** whole-stack restored network, real ZDO AREQ/AF/ZDO host startup, new-network readiness, physical UART/RF acceptance |
 
 Every test uses synthetic bytes. No keys, raw NV, IEEE/PAN values, rosters or
 packet payloads from a real household network enter logs or artifacts.
