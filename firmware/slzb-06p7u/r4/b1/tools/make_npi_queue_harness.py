@@ -21,7 +21,7 @@ typedef int NPIMSG_Type;
 typedef struct {uint8_t *pBuf; uint16_t pBufSize; uint8_t msgType;} NPIMSG_msg_t;
 typedef struct {int _elem; NPIMSG_msg_t *npiMsg;} NPI_QueueRec;
 static uintptr_t cs_depth;
-static unsigned allocations, free_count, live_alloc, posts, enqueued, events;
+static unsigned allocations, free_count, live_alloc, posts, enqueued;
 static unsigned fail_at;
 static NPI_QueueRec *queued;
 static int rx_queue, npi_semaphore;
