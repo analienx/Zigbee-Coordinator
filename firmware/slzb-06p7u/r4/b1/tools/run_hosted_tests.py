@@ -199,6 +199,15 @@ def main():
          "--output", powercut_source], check=True)
     generated["nv_media_powercut"] = powercut_source
     positive(compile_c(powercut_source, "nv_media_powercut"))
+    # Real NV2 two-page compactPage()/compact() bodies, not just the
+    # compaction metadata primitives. Keep its own exact-source evidence.
+    full_compact_source = work / "actual_nv_full_compaction_powercut.c"
+    run([sys.executable, b1 / "tools/make_nv_full_compaction_harness.py",
+         "--source", sdk / SOURCE_PATHS[0], "--crc-source", sdk / SOURCE_PATHS[6],
+         "--output", full_compact_source], check=True)
+    generated["nv_full_compaction"] = full_compact_source
+    positive(compile_c(full_compact_source, "nv_full_compaction"))
+
 
     source = work / "actual_nv_authorized_blank.c"
     run([sys.executable, b1 / "tools/make_nv_backend_harness.py",
