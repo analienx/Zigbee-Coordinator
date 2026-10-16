@@ -77,7 +77,7 @@ def replay(case, *, events=None):
                        "power/connector path"),
     }
     # "no match" is a description of the replay, NOT proof of zero live failures.
-    evidence_level = "DIRECT_OBSERVED" if case == "p7u_oct16" else "HOSTED_SYNTHETIC"
+    evidence_level = "HOSTED_SYNTHETIC"  # scenario is synthetic even if counts are historically observed
     counts = {key: total.get(key, 0) for key in (
         "AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "SYS_SREQ_TIMEOUT",
         "ZCL_TIMEOUT", "HOST_SIGTERM", "USB_DISCONNECTED",
@@ -87,6 +87,7 @@ def replay(case, *, events=None):
         "schema": "r4-b4-replay-receipt-v1",
         "case": case,
         "evidence": evidence_level,
+        "count_provenance": "DIRECT_OBSERVED" if case == "p7u_oct16" else "HOSTED_SYNTHETIC",
         "timings": "HOSTED_SYNTHETIC_NOT_EXACT_HISTORICAL_TIMESTAMPS",
         "event_counts_in_fixture": counts,
         "window_ms": snap["window_ms"],
