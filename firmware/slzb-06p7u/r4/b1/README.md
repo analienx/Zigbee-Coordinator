@@ -12,6 +12,9 @@ No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counte
    buffers, fixed maximum 512 reads. No NVS write/erase APIs or heap.
 2. Distinguish two genuinely all-FF pages from recognizable NVOCMP v3 header
    candidates, unrecognized populated pages, mixed pages and failed reads.
+   Only an active/full + XDST header pair is even considered for normal
+   existing-network boot; RDY+ACT, dual-active, dual-destination and XSRC
+   compaction pairs HOLD instead of permitting the donor's auto-erase path.
    `B1_NV2_HEADER_CANDIDATE` is **not** a validated Zigbee NIB, security key,
    CRC, TCLK record, frame-counter, or production-stock NV layout. The header
    proof is intentionally weak; full security acceptance remains blocked.
