@@ -27,6 +27,8 @@ SOURCE_PATHS = (
     "source/ti/zstack/stack/zdo/zd_sec_mgr.c",
     "source/ti/zstack/stack/sys/zglobals.c",
     "source/ti/common/nv/crc.c",
+    "source/ti/zstack/startup/zstackstartup.c",
+    "source/ti/zstack/osal/osal_nv.c",
 )
 
 
@@ -125,6 +127,8 @@ def main():
             "wrong_generic_identity"))),
         ("security", "make_security_harness.py", SOURCE_PATHS[4],
          tuple((name,) for name in SECURITY_SCENARIOS)),
+        ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
+        ("osal_nv", "make_osal_nv_harness.py", SOURCE_PATHS[8], ((),)),
     )
     generated = {}
     for name, generator, relative, scenarios in harnesses:
