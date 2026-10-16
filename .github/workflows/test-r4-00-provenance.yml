@@ -99,9 +99,12 @@ jobs:
       # manifest-consistency still passes and the intended stage is
       # what rejects (hand-traced per control).
       - name: Negative control (a) zero SHAs must fail fetch closed
+        # Quoted: unquoted all-digit YAML scalars coerce to
+        # number/float (0 / 1.11e+39) and would trip the identity
+        # gate instead of the fetch stage.
         env:
-          EXPECT_TI_SDK_SHA: 0000000000000000000000000000000000000000
-          EXPECT_TI_EXAMPLES_SHA: 1111111111111111111111111111111111111111
+          EXPECT_TI_SDK_SHA: "0000000000000000000000000000000000000000"
+          EXPECT_TI_EXAMPLES_SHA: "1111111111111111111111111111111111111111"
         run: |
           rm -rf /tmp/r4neg_a
           cp -r firmware/slzb-06p7u/r4 /tmp/r4neg_a
