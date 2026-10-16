@@ -137,6 +137,12 @@ int main(void)
     assert(rd_count == 0u);
     verify_silent();
 
+    /* Linked sticky NV fault latch (host C control, not a MAC RF proof). */
+    assert(b1_nv_runtime_hold_active() == 0);
+    b1_nv_runtime_hold_latch();
+    assert(b1_nv_runtime_hold_active() == 1);
+    b1_nv_runtime_hold_latch();
+    assert(b1_nv_runtime_hold_active() == 1);
     puts("B1_NATIVE_ADMISSION_SYNTHETIC_PASS: bounded/zero-write; no RF, no stock NV assertion");
     return 0;
 }
