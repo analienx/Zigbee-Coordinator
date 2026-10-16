@@ -133,6 +133,25 @@ int main(int argc, char **argv)
             assert(rows_written==1 && !b1_nv_runtime_hold_active());
             assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
             assert(rows_written==1); /* no repeated reserve write */
+        } else if (strcmp(scenario,"two_reboots")==0) {
+            uint8_t original_pan[8];
+            memcpy(original_pan,fake_rows[0].extendedPanID,sizeof(original_pan));
+            assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
+            assert(fake_rows[0].FrameCounter==1125u && nwkFrameCounter==1125u);
+            assert(rows_written==1u && FrameCounterUpdated);
+            /* Reboot resets ONLY RAM: persisted material, identity and counter
+             * are kept in synthetic NV and read through actual donor code. */
+            FrameCounterUpdated=FALSE;
+            nwkFrameCounter=0u;
+            nwkFrameCounterChanges=71u;
+            assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
+            assert(rows_written==2u);
+            assert(fake_rows[0].FrameCounter==1250u);
+            assert(nwkFrameCounter==1250u && FrameCounterUpdated);
+            assert(nwkFrameCounterChanges==0u);
+            assert(memcmp(original_pan,fake_rows[0].extendedPanID,8u)==0);
+            assert(!b1_nv_runtime_hold_active());
+            puts("B1_N13_TWO_REBOOTS_MONOTONIC_NWK_COUNTER_AND_IDENTITY_PASS");
         } else if (strcmp(scenario,"generic")==0) {
             row_present[0]=FALSE;
             row_present[3]=TRUE;
