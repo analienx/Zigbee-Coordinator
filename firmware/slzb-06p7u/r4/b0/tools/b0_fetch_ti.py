@@ -60,7 +60,7 @@ def acquire(kind, digest, destination):
         req = urllib.request.Request(url, headers={"User-Agent": "R4-B0-pinned-fetch/1"})
         with urllib.request.urlopen(req, timeout=45) as response, temporary.open("wb") as target:
             final = urllib.parse.urlparse(response.geturl())
-            if final.scheme != "https" or final.hostname not in ("dr-download.ti.com", "downloads.ti.com"):
+            if final.scheme != "https" or final.hostname not in ("dr-download.ti.com", "dr-download-cdn.ti.com", "downloads.ti.com"):
                 raise RuntimeError("TI download redirected to untrusted origin: %s (%s)" % (final.hostname, final.scheme))
             while True:
                 chunk = response.read(1024 * 1024)
