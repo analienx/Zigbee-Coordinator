@@ -102,6 +102,54 @@ class B0ImageAuditTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("no actual linker invocation", message)
 
+    def test_fabricated_single_line_log_rejected(self):
+        # Log-provenance tripwire: one fabricated line carrying every
+        # marker substring (with correct manifest digests, since the
+        # log itself is unhashed) must fail at the log tripwire --
+        # never reach content-binding, never pass.
+        code, message = self._audit("artifacts-fake-log")
+        self.assertEqual(code, 1)
+        self.assertIn("no actual linker invocation", message)
+        self.assertNotIn("content-binding", message)
+        self.assertNotIn("R4-B0 image audit OK", message)
+
+    def test_shuffled_pipeline_order_rejected(self):
+        # Markers in implausible order (projectBuild before syscfg)
+        # fail the pipeline-order tripwire even at full log length.
+        with tempfile.TemporaryDirectory() as tmp:
+            art = Path(tmp) / "art"
+            shutil.copytree(FIX / "artifacts-valid", art)
+            rows = (art / "build.log").read_text(
+                encoding="utf-8").splitlines()
+            syscfg_at = next(i for i, row in enumerate(rows)
+                             if row.startswith("$ syscfg"))
+            build_at = next(i for i, row in enumerate(rows)
+                            if "projectBuild -ccs.projects" in row)
+            block = rows[syscfg_at:build_at]
+            rest = rows[:syscfg_at] + rows[build_at:]
+            (art / "build.log").write_text(
+                "\n".join(rest + block) + "\n", encoding="utf-8")
+            code, message = audit.audit(B0, art)
+            self.assertEqual(code, 1)
+            self.assertIn("no actual linker invocation", message)
+            self.assertIn("pipeline order", message)
+
+    def test_fixture_text_vectors_pinned_to_lf(self):
+        # CRLF-drift guard: fixture text vectors are hashed with LF
+        # bytes, so the fixtures .gitattributes must pin eol=lf and
+        # no text vector may carry CR bytes in the working tree.
+        attrs = (FIX / ".gitattributes").read_text(encoding="utf-8")
+        for ext in (".hex", ".json", ".log", ".map", ".txt", ".xml"):
+            pinned = [line for line in attrs.splitlines()
+                      if ext in line and "eol=lf" in line]
+            self.assertTrue(pinned,
+                            "missing eol=lf pin for *%s" % ext)
+        for path in sorted(FIX.rglob("*")):
+            if path.is_file() and path.suffix in (
+                    ".hex", ".json", ".log", ".map", ".txt", ".xml"):
+                self.assertNotIn(b"\r", path.read_bytes(),
+                                 "CRLF drift in %s" % path.name)
+
     def test_fake_elf_rejected(self):
         code, message = self._audit("artifacts-fake-elf")
         self.assertEqual(code, 1)

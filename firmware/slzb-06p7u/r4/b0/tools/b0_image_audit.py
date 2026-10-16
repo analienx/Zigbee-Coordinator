@@ -4,7 +4,9 @@ Audits a native-build artifacts directory produced by the hosted
 CCS build: a manifest binding logical artifacts (elf/xml/hex/bin)
 to SHA256 digests, the CCS build log (must show a real SysConfig +
 headless CCS projectBuild + tiarmclang --xml_link_info + objcopy
-pipeline, never a bare `echo pass`), the genuine TI-ARM-CLANG
+pipeline spread over a long multi-line log in pipeline order,
+never a bare `echo pass` and never a fabricated one-liner; the
+log markers are a tripwire only, never proof), the genuine TI-ARM-CLANG
 3.2.2 `--xml_link_info` XML document, and an actual ELF cross-check.
 
 Authoritative memory layout comes from the pinned TI objects
@@ -52,6 +54,13 @@ REQUIRED_LOGICALS = ("elf", "xml", "hex", "bin")
 # of them, including the exact headless application id and the XML
 # evidence channel flag. A log with any missing (e.g. a bare
 # `echo pass` workflow) is rejected as `no actual linker invocation`.
+#
+# These markers are a tripwire only, never proof: one fabricated line
+# can contain every substring, so a genuine pipeline must additionally
+# clear structural tripwires -- minimum length, markers spread over
+# distinct lines, and plausible pipeline order (syscfg generation
+# before projectBuild before tiarmclang/tiarmobjcopy). Real proof is
+# the ELF/XML content-binding plus hosted provenance, never the log.
 LOG_MARKERS = {
     "CCS headless projectBuild": "com.ti.ccstudio.apps.projectbuild",
     "linker invocation": "tiarmclang",
@@ -59,6 +68,13 @@ LOG_MARKERS = {
     "hex emission": "tiarmobjcopy",
     "syscfg generation": "syscfg",
 }
+
+# Build-log tripwire depth: defeats single-line fabrications carrying
+# all marker substrings. A genuine CCS pipeline log is hundreds of
+# lines with the markers spread across the syscfg -> projectBuild ->
+# link -> objcopy stages.
+LOG_MIN_NONEMPTY_LINES = 20
+LOG_MIN_MARKER_LINES = 3
 
 # Donor geometry from the genuine linked .cmd (SDK blob 1e5777c2).
 # The full FLASH/FLASH_NV/FLASH_LAST/SRAM layout is pinned by the
@@ -544,7 +560,11 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
 
 
 def audit(base, artifacts):
-    """Returns (exit_code, message). Never raises."""
+    """Returns (exit_code, message). Never raises.
+
+    Log markers are a tripwire only -- real proof is the ELF/XML
+    content-binding plus hosted provenance, never the log.
+    """
     try:
         manifest_text = (artifacts / "manifest.json").read_text(encoding="utf-8")
     except OSError:
@@ -594,11 +614,42 @@ def audit(base, artifacts):
         log_text = log_target.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return 1, "audit build log unreadable (%s)" % exc
+    lines = log_text.splitlines()
+    nonempty = [line for line in lines if line.strip()]
+    if len(nonempty) < LOG_MIN_NONEMPTY_LINES:
+        return 1, ("audit no actual linker invocation "
+                   "(build log has %d non-empty lines; a genuine CCS "
+                   "pipeline log is far longer; one-liners rejected)"
+                   % len(nonempty))
     lowered = log_text.lower()
     for label, marker in LOG_MARKERS.items():
         if marker not in lowered:
             return 1, ("audit no actual linker invocation "
                        "(build log lacks %s)" % label)
+    lowered_lines = [line.lower() for line in nonempty]
+    marker_lines = {index for index, line in enumerate(lowered_lines)
+                    if any(m in line for m in LOG_MARKERS.values())}
+    if len(marker_lines) < LOG_MIN_MARKER_LINES:
+        return 1, ("audit no actual linker invocation "
+                   "(build log markers share a single line; fabricated "
+                   "one-liner rejected)")
+    ordered = ("syscfg", "com.ti.ccstudio.apps.projectbuild",
+               "tiarmclang", "tiarmobjcopy")
+
+    def _first(sub):
+        for index, line in enumerate(lowered_lines):
+            if sub in line:
+                return index
+        return None
+
+    positions = [_first(sub) for sub in ordered]
+    if (any(pos is None for pos in positions)
+            or not (positions[0] < positions[1] < positions[2])
+            or not (positions[1] < positions[3])):
+        return 1, ("audit no actual linker invocation "
+                   "(build log pipeline order implausible: syscfg "
+                   "generation must precede projectBuild, which must "
+                   "precede tiarmclang/tiarmobjcopy)")
     try:
         if targets["xml"].stat().st_size > XML_SIZE_CAP:
             return 1, "audit XML exceeds size cap (synthetic summary rejected)"

@@ -29,6 +29,16 @@ jobs:
       - name: Compile R4-B0 tools and tests
         run: |
           python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py
+      - name: Assert R4-B0 fixture LF pin holds (CRLF drift guard)
+        run: |
+          test -f firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
+          grep -q "eol=lf" firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
+          git ls-files --eol firmware/slzb-06p7u/r4/b0/fixtures/ | tee /tmp/b0eol.txt
+          if grep -E '^i/(mixed|crlf)|w/crlf' /tmp/b0eol.txt; then
+            echo "R4-B0 fixtures have CRLF drift; text vectors must stay LF for the sha256 binding"
+            exit 1
+          fi
+          echo "R4-B0 fixture LF pin holds"
       - name: Run R4-B0 overlay tests
         run: python -m unittest -v tests.test_r4_b0_overlay
       - name: Run R4-B0 image audit tests
@@ -170,6 +180,18 @@ jobs:
             exit 1
           fi
           echo "control (o12) rejected deviant FLASH geometry as required"
+      - name: Negative control (o13) fabricated one-line log must fail log tripwire
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-log 2>&1); then
+            echo "control (o13) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "no actual linker invocation"
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o13) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o13) rejected fabricated one-line log as required"
 
   r4-b0-upstream-inventory:
     runs-on: ubuntu-latest
