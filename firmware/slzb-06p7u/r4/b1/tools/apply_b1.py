@@ -41,6 +41,30 @@ def overlay(sdk, b1_dir):
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
         raise RuntimeError("BLOCKED: missing B1 linked admission C/H files")
 
+    # ZMac wrappers in the pinned projectspec reach the actual MAC request
+    # API. Gating this layer covers new APP-origin RF requests after NV faults,
+    # but NOT ROM-originated requests or already queued frames.
+    zmac = replace_once(
+        zmac, '#include "mac_api.h"',
+        '#include "mac_api.h"\n'
+        'extern int b1_nv_runtime_hold_active(void);',
+        "linked ZMac include")
+    for signature, refused in (
+        ("uint8_t ZMacAssociateReq( ZMacAssociateReq_t *pData )", "MAC_NO_RESOURCES"),
+        ("uint8_t ZMacDisassociateReq( ZMacDisassociateReq_t *pData )", "MAC_NO_RESOURCES"),
+        ("uint8_t ZMacScanReq( ZMacScanReq_t *pData )", "MAC_NO_RESOURCES"),
+        ("uint8_t ZMacStartReq( ZMacStartReq_t *pData )", "MAC_NO_RESOURCES"),
+        ("uint8_t ZMacSyncReq( ZMacSyncReq_t *pData )", "MAC_NO_RESOURCES"),
+        ("uint8_t ZMacPollReq( ZMacPollReq_t *pData )", "MAC_NO_RESOURCES"),
+        ("uint8_t ZMacDataReqSec( ZMacDataReq_t *pData, applySecCB_t secCB )", "MAC_NO_RESOURCES"),
+        ("void ZMacSendNoData( uint16_t DstAddr, uint16_t DstPANId )", ""),
+    ):
+        guard = ("  if (b1_nv_runtime_hold_active()) return " + refused + ";"
+                 if refused else "  if (b1_nv_runtime_hold_active()) return;")
+        zmac = replace_once(zmac, signature + "\n{",
+                            signature + "\n{\n" + guard,
+                            "ZMac RF admission " + signature)
+
     # Compile the actual admission C as part of the SDK's nvocmp.c TU, avoiding
     # any CCS projectspec alias/new compile-unit ambiguity.
     source = replace_once(source, '#include "ti/common/nv/crc.h"',
