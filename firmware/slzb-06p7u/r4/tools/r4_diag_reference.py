@@ -129,7 +129,7 @@ def u32_delta(current, previous, *, continuous_epoch=False):
 
 
 def classify_host_observation(*, af_sreq_timeouts, zdo_sreq_timeouts=0,
-                              zcl_timeouts=0, window_seconds=60,
+                              sys_sreq_timeouts=0, zcl_timeouts=0, window_seconds=60,
                               sigterm=False, usb_disconnected=False,
                               ota_overlap=False):
     """Host-level symptoms ONLY, never firmware root-cause attribution.
@@ -137,7 +137,7 @@ def classify_host_observation(*, af_sreq_timeouts, zdo_sreq_timeouts=0,
     Host counts must be independently captured and time-windowed by SREQ
     waiter ID. This does not claim a radio hang or prove an OTA trigger.
     """
-    for count in (af_sreq_timeouts, zdo_sreq_timeouts, zcl_timeouts):
+    for count in (af_sreq_timeouts, zdo_sreq_timeouts, sys_sreq_timeouts, zcl_timeouts):
         if type(count) is not int or count < 0:
             raise ValueError("counts must be nonnegative integers")
     if (type(window_seconds) not in (int, float)
@@ -154,6 +154,8 @@ def classify_host_observation(*, af_sreq_timeouts, zdo_sreq_timeouts=0,
         signals.append("AF_SREQ_TIMEOUT_BURST_OBSERVED")
     if zdo_sreq_timeouts:
         signals.append("ZDO_SREQ_TIMEOUT_OBSERVED")
+    if sys_sreq_timeouts:
+        signals.append("SYS_SREQ_TIMEOUT_OBSERVED")
     if zcl_timeouts:
         signals.append("ZCL_TIMEOUT_OBSERVED")
     return {

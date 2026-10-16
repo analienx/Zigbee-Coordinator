@@ -14,10 +14,11 @@ from pathlib import Path
 from r4_diag_reference import classify_host_observation
 
 EVENT_KINDS = frozenset((
-    "AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "ZCL_TIMEOUT",
-    "HOST_SIGTERM", "USB_DISCONNECTED", "OTA_START", "OTA_STOP",
+    "AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "SYS_SREQ_TIMEOUT",
+    "ZCL_TIMEOUT", "HOST_SIGTERM", "USB_DISCONNECTED", "OTA_START",
+    "OTA_STOP", "DIAG_F0_RESPONSIVE",
 ))
-WAITER_KINDS = frozenset(("AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT"))
+WAITER_KINDS = frozenset(("AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "SYS_SREQ_TIMEOUT"))
 WINDOW_MS = 120_000
 
 
@@ -140,13 +141,17 @@ class PassiveR4Recorder:
         """Finite sanitized numeric/event metadata; no raw event payloads."""
         af = sum(kind == "AF_SREQ_TIMEOUT" for _, kind in self.window_events)
         zdo = sum(kind == "ZDO_SREQ_TIMEOUT" for _, kind in self.window_events)
+        sys = sum(kind == "SYS_SREQ_TIMEOUT" for _, kind in self.window_events)
+        f0 = any(kind == "DIAG_F0_RESPONSIVE" for _, kind in self.window_events)
         zcl = sum(kind == "ZCL_TIMEOUT" for _, kind in self.window_events)
         signals = classify_host_observation(
             af_sreq_timeouts=af, zdo_sreq_timeouts=zdo,
-            zcl_timeouts=zcl, window_seconds=WINDOW_MS / 1000,
+            sys_sreq_timeouts=sys, zcl_timeouts=zcl, window_seconds=WINDOW_MS / 1000,
             sigterm=self.sigterm, usb_disconnected=self.usb_disconnected,
             ota_overlap=self.ota,
         )
+        if f0:
+            signals["signals"].append("F0_RESPONSIVE_OBSERVED")
         return {
             "schema": "r4-offline-host-observation-v1",
             "process_generation": self.process_generation,
@@ -155,6 +160,7 @@ class PassiveR4Recorder:
             "window_ms": WINDOW_MS,
             "af_sreq_timeouts": af,
             "zdo_sreq_timeouts": zdo,
+            "sys_sreq_timeouts": sys,
             "zcl_timeouts": zcl,
             "dropped": self.dropped,
             "signals": signals["signals"],
@@ -217,7 +223,7 @@ class PassiveR4Recorder:
             raise ValueError("untrusted snapshot schema")
         expected = {
             "schema", "process_generation", "last_at_ms", "window_ms", "recent_events",
-            "af_sreq_timeouts", "zdo_sreq_timeouts", "zcl_timeouts", "dropped",
+            "af_sreq_timeouts", "zdo_sreq_timeouts", "sys_sreq_timeouts", "zcl_timeouts", "dropped",
             "signals", "root_cause", "ota_temporal_overlap", "ota_causal",
             "radio_boot_identity", "source",
         }
@@ -233,7 +239,8 @@ class PassiveR4Recorder:
                 or len(obj["signals"]) > 7
                 or any(s not in (
                     "AF_SREQ_TIMEOUT_BURST_OBSERVED", "ZDO_SREQ_TIMEOUT_OBSERVED",
-                    "ZCL_TIMEOUT_OBSERVED", "HOST_SIGTERM_OBSERVED",
+                    "ZCL_TIMEOUT_OBSERVED", "SYS_SREQ_TIMEOUT_OBSERVED",
+                    "F0_RESPONSIVE_OBSERVED", "HOST_SIGTERM_OBSERVED",
                     "USB_DISCONNECTED_OBSERVED", "NO_MATCHING_HOST_SYMPTOM"
                 ) for s in obj["signals"])):
             raise ValueError("untrusted signals")
@@ -241,7 +248,7 @@ class PassiveR4Recorder:
                 or obj["ota_causal"] is not False):
             raise ValueError("untrusted boolean state")
         for field in ("process_generation", "window_ms", "af_sreq_timeouts",
-                      "zdo_sreq_timeouts", "zcl_timeouts", "dropped"):
+                      "zdo_sreq_timeouts", "sys_sreq_timeouts", "zcl_timeouts", "dropped"):
             _int(obj[field], field)
         if obj["last_at_ms"] is not None:
             _int(obj["last_at_ms"], "last_at_ms")

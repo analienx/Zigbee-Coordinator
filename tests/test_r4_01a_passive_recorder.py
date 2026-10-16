@@ -215,5 +215,65 @@ class PassiveRecorderTests(unittest.TestCase):
         self.assertNotIn("serialPort",source)
 
 
+class FourSyntheticIncidentReplays(unittest.TestCase):
+    # Time values are illustrative and deliberately NOT copies of private logs.
+    def test_p7u_oct16_af_zdo_ota_and_later_sigterm(self):
+        # 64 AF across 43 minutes is not automatically an 8/120s burst.
+        r=PassiveR4Recorder(process_generation=1)
+        entries=[event("OTA_START",0),event("OTA_STOP",35*60_000)]
+        for i in range(64):
+            entries.append(event("AF_SREQ_TIMEOUT",35*60_000+i*41_000,i))
+        for i in range(6):
+            entries.append(event("ZDO_SREQ_TIMEOUT",52*60_000+i*7000,1000+i))
+        for i in range(69):
+            entries.append(event("ZCL_TIMEOUT",36*60_000+i*36_000))
+        entries.append(event("HOST_SIGTERM",79*60_000))
+        for item in sorted(entries,key=lambda o:o["at_ms"]):
+            r.offer(item)
+            r.drain()
+        final=r.snapshot()
+        self.assertIn("HOST_SIGTERM_OBSERVED",final["signals"])
+        self.assertFalse(final["ota_causal"])
+        self.assertEqual(final["root_cause"],"UNDETERMINED")
+        self.assertNotIn("AF_SREQ_TIMEOUT_BURST_OBSERVED",final["signals"])
+        # ZDO events were earlier; no last-window evidence at teardown.
+        self.assertEqual(final["zdo_sreq_timeouts"],0)
+
+    def test_p10_oct2_af_then_zdo_then_sys(self):
+        r=PassiveR4Recorder(process_generation=2)
+        for i in range(8):
+            r.offer(event("AF_SREQ_TIMEOUT",i*3000,i))
+        r.offer(event("ZDO_SREQ_TIMEOUT",25_000,100))
+        r.offer(event("SYS_SREQ_TIMEOUT",30_000,200))
+        r.drain()
+        signals=r.snapshot()["signals"]
+        self.assertIn("AF_SREQ_TIMEOUT_BURST_OBSERVED",signals)
+        self.assertIn("ZDO_SREQ_TIMEOUT_OBSERVED",signals)
+        self.assertIn("SYS_SREQ_TIMEOUT_OBSERVED",signals)
+        self.assertEqual(r.snapshot()["root_cause"],"UNDETERMINED")
+
+    def test_p10_oct12_usb_drop_is_not_an_af_timeout(self):
+        r=PassiveR4Recorder(process_generation=3)
+        r.offer(event("USB_DISCONNECTED",100))
+        r.drain()
+        self.assertEqual(r.snapshot()["signals"],["USB_DISCONNECTED_OBSERVED"])
+        self.assertEqual(r.snapshot()["af_sreq_timeouts"],0)
+
+    def test_p10_oct13_zdo_timeout_then_f0_responsive(self):
+        r=PassiveR4Recorder(process_generation=4)
+        r.offer(event("ZDO_SREQ_TIMEOUT",100,10))
+        r.offer(event("DIAG_F0_RESPONSIVE",30_000))
+        r.drain()
+        self.assertIn("ZDO_SREQ_TIMEOUT_OBSERVED",r.snapshot()["signals"])
+        self.assertIn("F0_RESPONSIVE_OBSERVED",r.snapshot()["signals"])
+        self.assertEqual(r.snapshot()["radio_boot_identity"],"UNKNOWN")
+        self.assertEqual(r.snapshot()["root_cause"],"UNDETERMINED")
+
+    def test_sys_no_waiter_is_rejected(self):
+        r=PassiveR4Recorder(process_generation=5)
+        with self.assertRaises(ValueError):
+            r.offer(event("SYS_SREQ_TIMEOUT",100))
+
+
 if __name__=="__main__":
     unittest.main()

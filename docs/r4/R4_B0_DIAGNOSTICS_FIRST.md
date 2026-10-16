@@ -79,3 +79,15 @@ All counter semantics: SYNTHETIC INJECTION until B0-D firmware exists and hosted
 Supervisor separately inspected Z2M log chronology read-only
 (issue #85 comment 6211227402). No raw private logs or keys are
 committed. Native P7U radio counters are still NOT MEASURED.
+
+
+## Four-incident synthetic replay clarification
+
+The hosted offline recorder suite models four strictly synthetic
+episodes separately: P7U 16 Oct AF/ZDO/OTA/SIGTERM chronology,
+P10 2 Oct progressive AF/ZDO/SYS, P10 12 Oct USB detach, and P10
+13 Oct ZDO startup timeout followed by F0 responsiveness. Every
+classification stays UNDETERMINED for root cause. P7U's 64 AF
+failures across ~44 minutes do not alone establish an 8-in-120s
+cluster. Synthetic illustrative event times are not private Z2M
+logs and are not evidence of real radio queue state.
