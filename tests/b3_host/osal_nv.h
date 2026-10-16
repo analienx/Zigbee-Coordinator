@@ -1,6 +1,7 @@
 #ifndef B3_OSAL_NV_H
 #define B3_OSAL_NV_H
 #include <stdint.h>
+#include <stddef.h>
 #define SUCCESS 0
 #define NV_OPER_FAILED 11
 #define NV_ITEM_UNINIT 12
