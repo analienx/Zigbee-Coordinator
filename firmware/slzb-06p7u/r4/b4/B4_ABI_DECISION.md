@@ -1,6 +1,6 @@
 # B4 ABI decision — issue #98
 
-**Decision: source-verifiable SYS F0 is unallocated in pinned sources, but R4 V3 is NOT NATIVE-LINKED.** Do not route host traffic to an unbuilt firmware handler. Status: `B4_SOURCE_READY=BLOCKED`, `PHYSICAL_UNVERIFIED`, `HOST_NOT_INSTALLED`.
+**Decision: source-verifiable SYS F0 is unallocated in pinned sources, but R4 V3 is NOT NATIVE-LINKED.** Do not route live host traffic to an experimental source-only firmware handler until a real native-link receipt, safety review and separate deployment authorization exist. Status: `B4_SOURCE_READY=BLOCKED`, `PHYSICAL_UNVERIFIED`, `HOST_NOT_INSTALLED`.
 
 ## Evidence (not extrapolation)
 
@@ -12,7 +12,7 @@
 
 MT SYS `0xF0` response payload exactly 102 bytes: version `0x02`, flags only bits 0–2, 25 little-endian uint32 values. No validity mask, boot identity, timestamp, monotonic sequence, or UNKNOWN sentinel. A numeric `0xffffffff` is a legal reading. No counter subtraction is permitted without separate trustworthy continuity (unavailable for v2).
 
-## R4 proposed v3 (wire design ONLY)
+## R4 proposed v3 (wire design, experimental source overlay only)
 
 MT SYS `0xF0`, SRSP CMD0 0x61, CMD1 0xF0, and proposed fixed **132-byte** reply:
 
@@ -35,4 +35,4 @@ Even if a wire response declares boot-identity capability, identity continuity r
 
 ## Failure and acceptance
 
-No opaque F0 fallback to raw ZNP, no SYS_PING/SYS_VERSION changes, no direct UART owner, no NV/security/network information, no RF side effects. A dead NPI cannot answer diagnostics; rely on a last-good passive host snapshot only. HAL event instrumentation, two genuine native ELF links, B1/B2/B3 integration, actual herdsman patch and full D01–D36 proof are **not yet completed**.
+No opaque F0 fallback to raw ZNP, no SYS_PING/SYS_VERSION changes, no direct UART owner, no NV/security/network information, no RF side effects. A dead NPI cannot answer diagnostics; rely on a last-good passive host snapshot only. Only the experimental NPI synchronous-SRSP enqueue counter has a C source hook in `b4_native_patch.py`; it marks only validity bit 4 if NPI_SREQRSP is compiled and deliberately reports boot-epoch capability=0. An experimental opt-in herdsman adapter patch exists as source in `host/r4-b4/herdsman_overlay.py`. Neither patch is proven linked/compiled, deployed or safe under real load as of this receipt. Complete HAL instrumentation, two genuine native ELF links with matching artifacts, B1/B2/B3 integration, host passive waiter capture, and full D01–D36 proof are **not yet completed**.
