@@ -87,8 +87,23 @@ int main(void)
     check(2u, B1_NV2_HEADER_CANDIDATE, 0);
     assert(rd_count == 512u);
 
+    reset(); set_header(0, 0x78u); set_header(1, 0xFEu);
+    check(27u, B1_NV2_HEADER_CANDIDATE, 0); /* FULL + XDST */
+
+    reset(); set_header(0, 0xFEu); set_header(1, 0x7Cu);
+    check(28u, B1_NV2_HEADER_CANDIDATE, 0); /* reverse page roles */
+
     reset(); set_header(0, 0x7Cu); set_header(1, 0x7Eu);
-    check(27u, B1_NV2_HEADER_CANDIDATE, 0);
+    check(29u, B1_NV_HOLD_MIXED_LAYOUT, 0); /* donor would erase RDY */
+
+    reset(); set_header(0, 0x7Cu); set_header(1, 0x7Cu);
+    check(30u, B1_NV_HOLD_MIXED_LAYOUT, 0); /* ambiguous two actives */
+
+    reset(); set_header(0, 0x70u); set_header(1, 0xFEu);
+    check(31u, B1_NV_HOLD_MIXED_LAYOUT, 0); /* interrupted compaction */
+
+    reset(); set_header(0, 0xFEu); set_header(1, 0xFEu);
+    check(32u, B1_NV_HOLD_MIXED_LAYOUT, 0); /* ambiguous two destinations */
 
     reset(); set_header(0, 0x7Cu);
     /* N10: mixed blank/formatted: no unsafe implicit compaction */
