@@ -42,12 +42,15 @@ def install(destination, hashes):
     if len(installers) != 1:
         raise RuntimeError("CCS offline tarball must expose one ccs_setup installer")
     ccs_dir = roots / "ccs"
-    installers[0].chmod(installers[0].stat().st_mode | 0o100)\n    checked([str(installers[0]), "--mode", "unattended", "--prefix", str(ccs_dir)])
+    installers[0].chmod(installers[0].stat().st_mode | 0o100)
+    checked([str(installers[0]), "--mode", "unattended", "--prefix", str(ccs_dir)])
     syscfg_dir = roots / "sysconfig"
-    (packages / "sysconfig-1.21.1_3772-setup.run").chmod(0o755)\n    checked([str(packages / "sysconfig-1.21.1_3772-setup.run"),
+    (packages / "sysconfig-1.21.1_3772-setup.run").chmod(0o755)
+    checked([str(packages / "sysconfig-1.21.1_3772-setup.run"),
              "--mode", "unattended", "--prefix", str(syscfg_dir)])
     clang_dir = roots / "clang"
-    (packages / "ti_cgt_armllvm_3.2.2.LTS_linux-x64_installer.bin").chmod(0o755)\n    checked([str(packages / "ti_cgt_armllvm_3.2.2.LTS_linux-x64_installer.bin"),
+    (packages / "ti_cgt_armllvm_3.2.2.LTS_linux-x64_installer.bin").chmod(0o755)
+    checked([str(packages / "ti_cgt_armllvm_3.2.2.LTS_linux-x64_installer.bin"),
              "--mode", "unattended", "--prefix", str(clang_dir)])
     eclipse = list(ccs_dir.rglob("eclipse"))
     eclipse = [p for p in eclipse if p.is_file() and os.access(p, os.X_OK)]
