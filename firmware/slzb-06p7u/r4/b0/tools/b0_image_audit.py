@@ -631,6 +631,35 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
     return None
 
 
+def _validate_reset_vectors(payload, evidence, elf_segments):
+    """Require plausible Cortex-M reset vector words in actual linked bytes.
+
+    TI's real P7U vector table starts at zero and contains an 8-byte
+    aligned initial MSP in the 0x20000000 SRAM region and an odd/Thumb
+    reset address inside allocated .text; the reset handler is NOT
+    assumed equal to the ELF entry symbol.
+    """
+    reset = evidence["sections"].get(".resetVecs")
+    if reset is None or reset[0] != 0 or reset[1] is None or reset[1] < 8:
+        return "audit invalid reset vector placement or extent"
+    if any(i not in payload or i not in elf_segments for i in range(8)):
+        return "audit invalid reset vector bytes missing from native image"
+    words = bytes(payload[i] for i in range(8))
+    sp = int.from_bytes(words[:4], "little")
+    handler = int.from_bytes(words[4:8], "little")
+    sram_start, sram_size = evidence["areas"]["SRAM"]
+    if not (sram_start < sp <= sram_start + sram_size) or sp % 8:
+        return "audit invalid reset vector initial SP outside aligned SRAM"
+    text = evidence["sections"].get(".text")
+    target = handler & ~1
+    if (not handler & 1 or text is None or text[0] is None
+            or text[1] is None or text[1] == 0
+            or not text[0] <= target < text[0] + text[1]
+            or target not in payload or target not in elf_segments):
+        return "audit invalid reset vector Thumb handler outside linked .text"
+    return None
+
+
 def audit(base, artifacts):
     """Returns (exit_code, message). Never raises.
 
@@ -765,6 +794,9 @@ def audit(base, artifacts):
         return 1, err
     err = _check_hex_bin_binding(payload, targets["bin"], evidence,
                                  elf_entry, elf_segments)
+    if err:
+        return 1, err
+    err = _validate_reset_vectors(payload, evidence, elf_segments)
     if err:
         return 1, err
     return 0, "R4-B0 image audit OK"
