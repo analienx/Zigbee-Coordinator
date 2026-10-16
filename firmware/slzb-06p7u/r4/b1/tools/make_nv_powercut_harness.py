@@ -85,9 +85,15 @@ static void operation(unsigned kind)
     memset(&h,0,sizeof(h));h.sysid=1u;h.itemid=2u;h.len=sizeof(data);
     for(size_t i=0;i<sizeof(data);++i)data[i]=(uint8_t)(i+30u);
     NVOCMP_writeItem(&NVOCMP_nvHandle,&h,0u,NVOCMP_nvHandle.actOffset,data);
-  } else {
-    assert(kind==1u);
+  } else if(kind==1u) {
     (void)NVOCMP_erase(&NVOCMP_nvHandle,1u);
+  } else {
+    /* Real NVOCMP compaction page-transition and header write primitives.
+     * This is metadata cut coverage, not full compactPage() recovery. */
+    assert(kind==2u);
+    NVOCMP_changePageState(&NVOCMP_nvHandle,0u,NVOCMP_PGXSRC);
+    NVOCMP_changePageState(&NVOCMP_nvHandle,1u,NVOCMP_PGXDST);
+    NVOCMP_writeByte(1u,NVOCMP_COMPMODEOFS,NVOCMP_PGCDST);
   }
 }
 static void reset_trial(void)
@@ -119,7 +125,7 @@ int main(void)
     b1_nv_probe_result probe=b1_nv_probe(media_read,NULL,false);
     assert(probe.code==B1_NV2_HEADER_CANDIDATE);
   }
-  for(unsigned kind=0u;kind<2u;++kind) {
+  for(unsigned kind=0u;kind<3u;++kind) {
     unsigned total;
     reset_trial();
     power_cut_enabled=0u;
@@ -166,7 +172,7 @@ int main(void)
   }
   assert(tests==2u*observed_ops && safe_holds>0u);
   printf("B1_N24_REAL_TI_NV_WRITE_ERASE_MEDIA_CUTS_PASS tests=%u operations=%u holds=%u admitted=%u "
-         "NOT_MEASURED=full_compaction,physical_brownout\n",
+         "NOT_MEASURED=full_compaction_recovery,physical_brownout\n",
          tests,observed_ops,safe_holds,admitted);
   return 0;
 }
