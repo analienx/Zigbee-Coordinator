@@ -26,14 +26,16 @@ BUT HEAVIER per scout).
 
 ## Schema fields (per sample)
 
-- `ts_wall`, `ts_monotonic`, `boot_epoch` (host-stamped; v2 has no
-  on-wire epoch/seq).
+- Wall and monotonic timestamp, host_process_epoch, and a separately
+  sourced radio_boot_id (UNKNOWN for V2). Host restart is NOT proof of
+  radio restart or radio continuity.
 - `transport`: serial port id, baud, USB path if known.
 - `srsp_outcome` per SREQ: ok / timeout / status-mismatch, with
   `waiterId` and timeout ms (mirrors `znp.ts` SREQ semantics).
 - `zcl_outcome` per transaction: ok / timeout (never a fault locus).
-- `f0_present` bool + `f0_counters[25]` (u32, UNKNOWN sentinel where
-  unmeasured) + `f0_rtt_ms`.
+- f0_present, F0 ABI version, 25 u32 counter fields, RTT;
+  V3 additionally has an explicit validity bitmap and qualified
+  radio boot identity. V2 has no UNKNOWN sentinel or boot ID.
 - `fault_label` from classifier below + `confidence` from the
   Deliverable A taxonomy.
 
@@ -66,41 +68,35 @@ BUT HEAVIER per scout).
 
 ## Single-owner hard negatives (never do)
 
-- Never open the serial port directly (passive tap reads Z2M/herdsman
-  events or a tee, never the port).
+- Never open serial directly OR via independent serial tee. Passive
+  mode needs one audited in-process Z2M/herdsman callback that cannot
+  block the actual ZNP owner. That callback is NOT PROVEN yet.
 - Never hand-build `UnpiFrame` + private `unpiWriter` (bypasses the
   `createRequest` name lookup that rejects unknown commands).
 - Never `(adapter as any).znp` casts or foreign definition entries.
 - Never send MT during OTA, during an open SREQ wait, or from more
   than one owner.
 
-## Fault classifier + 4 synthetic incident fixtures
 
-Classifier (passive + optional F0; all thresholds are defaults,
-tunable; burst default N = 8):
+## Offline fault classification, not a deployed recorder
 
-0. Fail-closed guards (evaluated first, in order): SIGTERM/close →
-   `host_teardown`; F0 read absent → `unknown_needs_counters`;
-   boot-epoch changed across the sample pair → `unknown_needs_counters`
-   (cross-reboot deltas are spurious); any input counter equal to the
-   UNKNOWN sentinel → `unknown_needs_counters` (UNKNOWN is never a
-   measurement; `delta(UNKNOWN, UNKNOWN) == 0` must not read as a
-   stall). No radio-fault label is reachable through these guards.
-1. `srsp_absence_burst`: >= N SREQ timeouts in window with F0
-   showing srspEnqueued stall and flat AF confirms.
-2. `af_confirm_failure`: SRSPs ok, afConfirm* deltas move with ZCL
-   timeouts.
-3. `host_teardown`: SIGTERM/close observed; samples after it ignored.
-4. `unknown_needs_counters`: ZCL timeouts with no F0 (passive only).
+Reference model r4_diag_reference.py returns HOST observations with
+root_cause=UNDETERMINED, never an asserted radio root cause. An AF
+SREQ burst requires >=8 independent timed-out waiter IDs in <=120s.
+The model consumes already deduplicated counts; source-verified
+host event ingestion and IDs are NOT implemented and are a gate.
 
-Synthetic fixtures (inline in `tests/test_r4_01a_diag_contracts.py`,
-synthetic-only, no secrets/hardware):
+AF SREQ, ZDO SREQ, ZCL timeouts, USB loss and SIGTERM may all coexist.
+A later SIGTERM does not erase earlier AF failure evidence and does
+not indicate a spontaneous crash. OTA overlap is temporal only.
+V2 counter deltas remain UNKNOWN without independently verified
+radio continuity; V3 needs source-verified boot identity, monotonic
+uptime/sequence, and validity on both counters.
 
-- F1 `synthetic_srsp_absence`: 64 AF SREQs, all SRSP-timeout, F0
-  shows srspEnqueued frozen + txRejectedDrops rising.
-- F2 `synthetic_af_confirm`: SRSPs ok, afConfirmOtherFailed rising,
-  ZCL timeouts.
-- F3 `synthetic_teardown`: samples stop at SIGTERM marker; tail
-  samples absent, last-good snapshot asserted.
-- F4 `synthetic_ota_overlap`: OTA flag overlaps burst; classifier
-  still returns burst label with `ota_causal=false`.
+Offline synthetic tests include short/overlong frames, invalid flags,
+valid 0xFFFFFFFF counters, v3 validity bitmap, cross-radio boot,
+USB/SIGTERM, OTA temporal overlap and bounded timeout windows.
+These do not qualify a production recorder, an active firmware
+extension or a safe external API. Production host hooks, explicit
+waiter-ID correlation, atomic bounded rotation, crash recovery,
+redaction and backpressure require their own independent review.

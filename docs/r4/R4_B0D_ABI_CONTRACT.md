@@ -62,9 +62,11 @@ decoder names (`firmware/t832/min/npi_diag_decode.py` L12-20):
 Every hook above is UNPROVEN at R4-B0 contract time: each counter's
 exact TI source hook (e.g. `NPITask_ProcessTXQ`, `NPITask_sendToHost`,
 `NPITask_processStackMsg`, `NPITL_checkNpiBusy`) must be pinned to a
-repo@sha path:line before implementation. Any counter whose hook
-cannot be pinned reads UNKNOWN (fixed sentinel, never zero-fill
-masquerading as measured zero).
+repo@sha path:line before implementation. No numeric UNKNOWN sentinel exists in P10 V2; all 25 u32 fields,
+including 0xFFFFFFFF, are legitimate measurements. A counter without
+source-proven hooks disqualifies the claimed V2 evidence and must not
+be zero-filled or replaced with 0xFFFFFFFF. Partially implemented
+counter sets require a distinctly versioned ABI validity bitmap.
 
 ### Header fields
 
@@ -76,12 +78,11 @@ masquerading as measured zero).
   bit 2 `uart_transport_busy`; any other bit set is rejected, never
   preserved). B0-D adopts donor strictness exactly; this corrects the
   earlier draft claim that v2 defines no bits.
-- boot-epoch: NOT a separate field in v2 wire format; host recorder
-  stamps boot-epoch per sample (see recorder contract). A future
-  version may add it; v2 decoders must reject longer frames.
-- sample_seq: NOT a separate field in v2 wire format; the 32-bit
-  counters are free-running and the host derives seq/delta per poll.
-  Rollover rule below covers wrap.
+- Radio boot epoch is absent in V2: a host restart timestamp does not
+  identify radio-only resets. V2 decoders reject longer frames.
+- Sample sequence is absent in V2; a host sample number does not prove
+  the radio has not rebooted. Compute no deltas without verified
+  radio-epoch continuity.
 
 ### Safety invariants (B0-D)
 
@@ -90,8 +91,9 @@ masquerading as measured zero).
   discipline as the donor (`OsalPort_enterCS`/`leaveCS` call sites
   in `npi_task.c`/`npi_tl.c` at `3615ad5d`); snapshot counters under
   CS, build/send outside CS.
-- Wrap: all counters u32 wrap modulo 2^32; host computes deltas with
-  unsigned arithmetic; wrap is NOT an error.
+- All u32 counters can wrap modulo 2^32, but arithmetic deltas are
+  valid only after radio continuity is independently verified.
+  A reboot with zeroed RAM counters can masquerade as numeric wrap.
 - No RF side effects: handler never calls AF/NWK/TX paths; it only
   snapshots and replies.
 
@@ -111,3 +113,28 @@ masquerading as measured zero).
   herdsman `definition.ts` ID scan), keeping version 2 / 102 B /
   25-counter layout unchanged. Version field, not command ID, carries
   compatibility.
+
+### Proposed V3 ABI — source-only specification
+
+Legacy P10 V2 remains exactly 102 bytes and cannot encode UNKNOWN.
+R4 V3 is a separate 132-byte design, with LE fields:
+
+Offset 0: ASCII R4D3 magic, 4 bytes; offset 4: version=3, u8;
+offset 5: flags, u8 (legacy bits 0-2 only); offset 6: size=132, u16;
+offset 8: capabilities, u32 (bit 0 = valid radio boot identity);
+offset 12: validity bitmap, u32 (counter bits 0-24 only);
+offset 16: radio_boot_id, u64; offset 24: uptime_ms, u32;
+offset 28: sample_seq, u32; offsets 32-131: 25 u32 counters.
+A cleared validity bit means unavailable, not a reserved numeric value.
+
+The boot-id capability MUST remain disabled unless the native firmware
+can prove a per-boot source of sufficiently unique identity. If not,
+send ID zero and disallow radio continuity conclusions. Matching host
+epochs are never enough. Counter deltas additionally require matching
+radio ID, valid fields and coherent uptime/sequence.
+
+The pure offline reference is under firmware/slzb-06p7u/r4/tools/
+r4_diag_reference.py, verified only against synthetic fixtures here.
+V3 MT command ID allocation, TI source hooks, actual compiled ELF,
+entropy and field qualification remain separate future acceptance
+gates. This stage does NOT implement firmware/host diagnostics.

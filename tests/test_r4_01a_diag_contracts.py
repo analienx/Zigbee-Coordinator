@@ -1,184 +1,164 @@
-"""R4-01a diagnostic contracts (stdlib unittest only, offline, synthetic-only).
+"""Offline R4-01a reference-contract regressions, not device/HA tests.
 
-No hardware, no network, no secrets, no serial/MQTT. All fixtures are
-synthetic values constructed inline, never field captures.
-Covers Deliverable D: strict B0-D decoder hostile tests (items 1-4)
-plus negative safety oracle (item 5).
+Legacy donor v2 is 102 B and immutable. Proposed v3 is 132 B; no firmware
+or Zigbee2MQTT integration is implied by these pure synthetic fixtures.
 """
+from pathlib import Path
+import sys
 import struct
 import unittest
 
-VERSION = 2
-NCOUNTERS = 25
-SIZE = 2 + NCOUNTERS * 4  # 102
-UNKNOWN = 0xFFFFFFFF
-# Donor-strict flags mask (P10 npi_diag_decode.py): bits 0-2 defined,
-# any other bit rejected. B0-D adopts donor strictness exactly.
-FLAGS_KNOWN_MASK = 0x07
-SRSP_BURST_N = 8  # default tunable burst threshold (see recorder contract)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
+                       "firmware" / "slzb-06p7u" / "r4" / "tools"))
+from r4_diag_reference import (
+    CAP_RADIO_BOOT_ID, COUNTERS, V2_SIZE, V3_SIZE, V3_MAGIC,
+    VALID_COUNTER_MASK, classify_host_observation, decode_v2,
+    decode_v3, trustworthy_radio_epoch, u32_delta,
+)
 
-NAMES = [
-    "srsp_depth", "srsp_high_water", "async_depth", "async_high_water",
-    "srsp_enqueued", "srsp_uart_accepted", "async_uart_accepted",
-    "tx_immediate_rejects", "tx_rejected_drops", "stack_frame_failures",
-    "stack_queue_failures", "srsp_allocation_failures",
-    "srsp_enqueue_failures", "rx_frame_failures", "srsp_queue_fallbacks",
-    "af_direct_accepted", "af_direct_buffer_full", "af_direct_memory_failure",
-    "af_direct_other", "af_source_accepted", "af_source_buffer_full",
-    "af_confirm_cca_failure", "af_confirm_other_failure",
-    "rx_overflow_events", "rx_overflow_discarded_bytes",
-]
+def v2(vals=None, *, version=2, flags=0):
+    values = ([0] * 25) if vals is None else list(vals)
+    return struct.pack("<BB25I", version, flags, *values)
 
+def v3(vals=None, *, version=3, flags=0, caps=CAP_RADIO_BOOT_ID,
+       valid=VALID_COUNTER_MASK, radio_boot=123, uptime=1000, seq=1,
+       magic=V3_MAGIC, declared_len=V3_SIZE):
+    values = ([0] * 25) if vals is None else list(vals)
+    return struct.pack("<4sBBHIIQII25I", magic, version, flags,
+                       declared_len, caps, valid, radio_boot, uptime, seq,
+                       *values)
 
-def decode(frame: bytes):
-    """Strict B0-D v2 decoder: 102 bytes exactly (u8 version, u8 flags,
-    25 x u32 LE, matching the proven P10 F0 v2 wire format).
-    Donor-strict: unknown flag bits are rejected, never preserved."""
-    if len(frame) != SIZE:
-        raise ValueError("length must be exactly %d, got %d" % (SIZE, len(frame)))
-    version, flags = struct.unpack_from("<BB", frame, 0)
-    if version != VERSION:
-        raise ValueError("unsupported version %d" % version)
-    if flags & ~FLAGS_KNOWN_MASK:
-        raise ValueError("unknown flags bits 0x%02x" % flags)
-    counters = list(struct.unpack_from("<%dI" % NCOUNTERS, frame, 2))
-    return {"version": version, "flags": flags,
-            "srsp_priority_queue_enabled": bool(flags & 1),
-            "uart_retry_pending": bool(flags & 2),
-            "uart_transport_busy": bool(flags & 4),
-            "counters": dict(zip(NAMES, counters))}
+class V2DonorTests(unittest.TestCase):
+    def test_legacy_shape_and_values(self):
+        body=v2([1]*25)
+        self.assertEqual(len(body), V2_SIZE)
+        parsed=decode_v2(body)
+        self.assertEqual(len(parsed["counters"]),25)
+        self.assertEqual(parsed["counter_validity"],"LEGACY_ASSUMED_ALL")
+        self.assertFalse(parsed["radio_boot_id_verified"])
 
+    def test_all_ffffffff_is_valid_not_unknown(self):
+        parsed=decode_v2(v2([0xFFFFFFFF]*25))
+        self.assertEqual(len([v for v in parsed["counters"].values()
+                              if v==0xFFFFFFFF]),25)
+        self.assertNotIn(None, parsed["counters"].values())
+        self.assertIsNone(u32_delta(0,0xFFFFFFFF,continuous_epoch=False))
 
-def make_frame(counters=None, version=VERSION, flags=0):
-    vals = list(counters) if counters is not None else [0] * NCOUNTERS
-    assert len(vals) == NCOUNTERS
-    return struct.pack("<BB", version, flags) + struct.pack("<%dI" % NCOUNTERS, *vals)
+    def test_known_p10_flags(self):
+        self.assertEqual(decode_v2(v2(flags=7))["flags"],7)
+        for flags in (8,128,255):
+            with self.subTest(flags=flags),self.assertRaises(ValueError):
+                decode_v2(v2(flags=flags))
 
+    def test_bad_lengths_and_versions(self):
+        good=v2()
+        for item in (b"",good[:-1],good+b"\0",b"\x02",b"\0"*500,
+                     v2(version=3),v2(version=0)):
+            with self.subTest(length=len(item)),self.assertRaises(ValueError):
+                decode_v2(item)
 
-def delta(new, old):
-    """Unsigned u32 delta (wrap-safe)."""
-    return (new - old) & 0xFFFFFFFF
+    def test_wrong_types(self):
+        for item in (None,0,"body",[],{}):
+            with self.subTest(value=type(item).__name__),self.assertRaises(ValueError):
+                decode_v2(item)
 
+class V3DesignTests(unittest.TestCase):
+    def test_exact_132_byte_contract(self):
+        raw=v3()
+        self.assertEqual(len(raw),132)
+        self.assertEqual(len(raw),V3_SIZE)
+        parsed=decode_v3(raw)
+        self.assertEqual(parsed["abi"],3)
+        self.assertEqual(len(parsed["counters"]),25)
+        self.assertTrue(parsed["radio_boot_id_verified"])
 
-def classify(sreq_timeouts, zcl_timeouts, d_enq, d_af_confirm, sigterm=False,
-             ota_overlap=False, f0_present=True, same_boot_epoch=True,
-             counters_unknown=False):
-    """Synthetic fault classifier (Deliverable C logic). Fail-closed
-    guards first: teardown beats everything; without an F0 read, with
-    a boot-epoch change, or with UNKNOWN-sentinel inputs the answer is
-    unknown_needs_counters, never a radio-fault label."""
-    if sigterm:
-        return {"label": "host_teardown", "ota_causal": False}
-    if not f0_present or not same_boot_epoch or counters_unknown:
-        return {"label": "unknown_needs_counters", "ota_causal": False}
-    if sreq_timeouts >= SRSP_BURST_N and d_enq <= 0:
-        return {"label": "srsp_absence_burst",
-                "ota_causal": False}  # OTA overlap never implies cause
-    if sreq_timeouts == 0 and d_af_confirm > 0 and zcl_timeouts > 0:
-        return {"label": "af_confirm_failure", "ota_causal": False}
-    return {"label": "unknown_needs_counters", "ota_causal": False}
+    def test_counter_validity_is_separate_from_numeric_value(self):
+        arr=[0xFFFFFFFF]*25
+        parsed=decode_v3(v3(arr,valid=0b101))
+        self.assertEqual(parsed["counters"][COUNTERS[0]],0xFFFFFFFF)
+        self.assertIsNone(parsed["counters"][COUNTERS[1]])
+        self.assertEqual(parsed["counters"][COUNTERS[2]],0xFFFFFFFF)
+        self.assertIsNone(parsed["counters"][COUNTERS[24]])
 
+    def test_reject_unknown_versions_magic_length(self):
+        for body in (v3(magic=b"XXXX"),v3(version=2),v3(declared_len=131),
+                     v3()[:-1],v3()+b"x"):
+            with self.subTest(body=body[:10]),self.assertRaises(ValueError):
+                decode_v3(body)
 
-class DecoderStrictTests(unittest.TestCase):
-    def test_item1_accepts_exact_102b_v2(self):
-        frame = make_frame([1] * NCOUNTERS)
-        out = decode(frame)
-        self.assertEqual(out["version"], 2)
-        self.assertEqual(len(out["counters"]), 25)
-
-    def test_item2_rejects_bad_lengths(self):
-        good = make_frame()
-        self.assertEqual(len(good), SIZE)
-        for bad_len in (0, 1, 4, 101):
+    def test_reject_reserved_bits(self):
+        for body in (v3(flags=8),v3(caps=2,radio_boot=0),
+                     v3(valid=1<<25)):
             with self.assertRaises(ValueError):
-                decode(good[:bad_len])
-        # Overlong frames are built by APPENDING bytes (slicing a longer
-        # buffer clamps back to SIZE and would vacuously pass).
-        for over_len in (103, 104, 204):
-            with self.assertRaises(ValueError):
-                decode(good + b"\x00" * (over_len - SIZE))
+                decode_v3(body)
 
-    def test_item3_rejects_wrong_version_and_strict_flags(self):
-        # u8 version: only 2 accepted. 0xFFFF is unrepresentable on the
-        # wire, so it is tested as a constructor error, not a decode.
-        for v in (0, 1, 3, 255):
-            with self.assertRaises(ValueError):
-                decode(make_frame(version=v))
-        with self.assertRaises(struct.error):
-            make_frame(version=0xFFFF)
-        # Raw hostile version byte (not via make_frame).
+    def test_no_unclaimed_boot_capability(self):
         with self.assertRaises(ValueError):
-            decode(bytes([7, 0]) + b"\x00" * 100)
-        # Donor-strict flags: bits 0-2 defined, all others rejected.
-        out = decode(make_frame(flags=0x07))
-        self.assertEqual(out["flags"], 0x07)
-        self.assertTrue(out["srsp_priority_queue_enabled"])
-        self.assertTrue(out["uart_retry_pending"])
-        self.assertTrue(out["uart_transport_busy"])
-        for bad_flags in (0x08, 0xA5, 0x80, 0xFF):
-            with self.assertRaises(ValueError):
-                decode(make_frame(flags=bad_flags))
+            decode_v3(v3(caps=0,radio_boot=123))
+        parsed=decode_v3(v3(caps=0,radio_boot=0))
+        self.assertFalse(parsed["radio_boot_id_verified"])
+        self.assertIsNone(parsed["radio_boot_id"])
 
-    def test_item4_hostile_bytes_and_wrap(self):
-        # all-0xFF decodes (UNKNOWN sentinel), does not raise
-        out = decode(b"\x02\x00" + b"\xff" * 100)
-        self.assertEqual(out["counters"]["srsp_depth"], UNKNOWN)
-        # wrap delta: 0xFFFFFFFE -> 3 crosses 2^32
-        self.assertEqual(delta(3, 0xFFFFFFFE), 5)
-        # truncated + overlong hostile frames rejected
-        with self.assertRaises(ValueError):
-            decode(b"\x02\x00" + b"\x00" * 200)
-        with self.assertRaises(ValueError):
-            decode(b"")
+    def test_cross_boot_never_treated_as_counter_wrap(self):
+        prev=decode_v3(v3(radio_boot=44,uptime=100,seq=3))
+        after=decode_v3(v3(radio_boot=45,uptime=8,seq=1))
+        self.assertFalse(trustworthy_radio_epoch(prev,after))
+        self.assertIsNone(u32_delta(2,0xFFFFFFFE,continuous_epoch=False))
 
+    def test_legacy_host_epoch_cannot_authorize_delta(self):
+        a=decode_v2(v2());b=decode_v2(v2([1]*25))
+        self.assertFalse(trustworthy_radio_epoch(a,b))
+        self.assertIsNone(u32_delta(1,0,continuous_epoch=False))
 
-class SafetyOracleTests(unittest.TestCase):
-    def test_item5_negative_safety_oracle(self):
-        # Oracle: classifier must never blame OTA, never fill UNKNOWN
-        # as measured zero, never label teardown as radio fault.
-        r = classify(sreq_timeouts=64, zcl_timeouts=69, d_enq=0,
-                     d_af_confirm=0, ota_overlap=True)
-        self.assertEqual(r["label"], "srsp_absence_burst")
-        self.assertFalse(r["ota_causal"])
-        r2 = classify(0, 0, 0, 0, sigterm=True)
-        self.assertEqual(r2["label"], "host_teardown")
-        # UNKNOWN sentinel is not a measurement
-        frame = make_frame([UNKNOWN] * NCOUNTERS)
-        out = decode(frame)
-        unmeasured = [k for k, v in out["counters"].items() if v == UNKNOWN]
-        self.assertEqual(len(unmeasured), 25)
-        # Fail-closed guards: no F0, epoch change, or UNKNOWN inputs
-        # can ever yield a radio-fault label.
-        for kw in ({"f0_present": False}, {"same_boot_epoch": False},
-                   {"counters_unknown": True}):
-            r = classify(sreq_timeouts=64, zcl_timeouts=69, d_enq=0,
-                         d_af_confirm=0, **kw)
-            self.assertEqual(r["label"], "unknown_needs_counters")
-            self.assertFalse(r["ota_causal"])
+    def test_radio_epoch_with_source_proven_identity(self):
+        a=decode_v3(v3(radio_boot=44,uptime=100,seq=3))
+        b=decode_v3(v3(radio_boot=44,uptime=200,seq=4))
+        self.assertTrue(trustworthy_radio_epoch(a,b))
+        self.assertEqual(u32_delta(3,0xFFFFFFFE,continuous_epoch=True),5)
 
+    def test_unknown_and_regressing_sequence_fail_closed(self):
+        a=decode_v3(v3(radio_boot=0,uptime=100,seq=2))
+        b=decode_v3(v3(radio_boot=0,uptime=200,seq=3))
+        self.assertFalse(trustworthy_radio_epoch(a,b))
+        a=decode_v3(v3(seq=3))
+        b=decode_v3(v3(seq=2))
+        self.assertFalse(trustworthy_radio_epoch(a,b))
 
-class FixtureTests(unittest.TestCase):
-    def test_f1_synthetic_srsp_absence(self):
-        r = classify(sreq_timeouts=64, zcl_timeouts=69, d_enq=0,
-                     d_af_confirm=0)
-        self.assertEqual(r["label"], "srsp_absence_burst")
+class HostObservationTests(unittest.TestCase):
+    def test_af_timeout_is_a_symptom_not_root_cause(self):
+        result=classify_host_observation(af_sreq_timeouts=64,
+                         zdo_sreq_timeouts=6,zcl_timeouts=69,
+                         window_seconds=60,ota_overlap=True)
+        self.assertIn("AF_SREQ_TIMEOUT_BURST_OBSERVED",result["signals"])
+        self.assertIn("ZDO_SREQ_TIMEOUT_OBSERVED",result["signals"])
+        self.assertFalse(result["ota_causal"])
+        self.assertTrue(result["ota_temporal_overlap"])
+        self.assertEqual(result["root_cause"],"UNDETERMINED")
 
-    def test_f2_synthetic_af_confirm(self):
-        r = classify(sreq_timeouts=0, zcl_timeouts=20, d_enq=5,
-                     d_af_confirm=18)
-        self.assertEqual(r["label"], "af_confirm_failure")
+    def test_sigterm_and_timeout_can_coexist(self):
+        result=classify_host_observation(af_sreq_timeouts=64,
+                         window_seconds=30,sigterm=True)
+        self.assertIn("HOST_SIGTERM_OBSERVED",result["signals"])
+        self.assertIn("AF_SREQ_TIMEOUT_BURST_OBSERVED",result["signals"])
 
-    def test_f3_synthetic_teardown(self):
-        r = classify(sreq_timeouts=64, zcl_timeouts=69, d_enq=0,
-                     d_af_confirm=0, sigterm=True)
-        self.assertEqual(r["label"], "host_teardown")
+    def test_usb_failure_distinct_from_radio(self):
+        result=classify_host_observation(af_sreq_timeouts=0,
+                         usb_disconnected=True)
+        self.assertEqual(result["signals"],["USB_DISCONNECTED_OBSERVED"])
 
-    def test_f4_synthetic_ota_overlap(self):
-        r = classify(sreq_timeouts=64, zcl_timeouts=69, d_enq=0,
-                     d_af_confirm=0, ota_overlap=True)
-        self.assertEqual(r["label"], "srsp_absence_burst")
-        self.assertFalse(r["ota_causal"])
+    def test_window_is_required_for_burst(self):
+        result=classify_host_observation(af_sreq_timeouts=64,
+                         window_seconds=3600)
+        self.assertNotIn("AF_SREQ_TIMEOUT_BURST_OBSERVED",result["signals"])
 
+    def test_inputs_fail_closed(self):
+        for count in (-1,1.5,True,None):
+            with self.subTest(count=count),self.assertRaises(ValueError):
+                classify_host_observation(af_sreq_timeouts=count)
+        for window in (0,-1,float("nan"),float("inf")):
+            with self.subTest(window=window),self.assertRaises(ValueError):
+                classify_host_observation(af_sreq_timeouts=64,
+                                           window_seconds=window)
 
 if __name__ == "__main__":
     unittest.main()

@@ -48,7 +48,8 @@ No causality claims beyond cited evidence.
 
 ### 5. P10 comparators (NOT same-root as P7U)
 
-- DIRECTLY OBSERVED (external comment HA#73 `6139149384`): P10 F0 v2 live read showed asyncHWM 158 with 25 of 26 counters zero, RTT 147-1549 ms; separate 13 Oct `startupFromApp` 40 s timeout at 06:07:57.
+- DIRECTLY OBSERVED (external comment HA#73 `6139149384`): P10 F0 v2 live read on 13 Oct showed asyncHWM 158,
+with SRSP enqueue/accept advancing from 25 to 26, RTT 147-1549 ms; separate 13 Oct `startupFromApp` 40 s timeout at 06:07:57.
 - P10-2Oct vs P10-12Oct-USB-drop vs P10-13Oct-cold-start are three DISTINCT P10 episodes; the USB-drop and cold-start episodes implicate bridge/host path, the F0 live read implicates async-queue pressure on that P10 unit.
 - P7U is NOT same-root as P10: different board/radio/firmware lineage; P10 evidence is comparator only, never P7U diagnosis.
 
@@ -58,7 +59,7 @@ B0-D counters must let a future reader distinguish, per incident:
 
 | Signal | SRSP-absence | AF-confirm failure | ZCL-timeout-only |
 |---|---|---|---|
-| srspEnqueued / srspTxAccepted stall | moves | flat | flat/unknown |
+| srspEnqueued / srspTxAccepted | may stall or move | may move | UNKNOWN absent radio telemetry |
 | txImmediateRejects / txRejectedDrops | may move | flat | flat |
 | afDirect*/afSource* + afConfirm* | flat | move | ambiguous |
 | rxOverflowEvents | independent flag | independent flag | independent flag |
@@ -70,8 +71,11 @@ All counter semantics: SYNTHETIC INJECTION until B0-D firmware exists and hosted
 | Episode | Key signal | Confidence | Gap |
 |---|---|---|---|
 | P7U-16Oct (#87 body) | 64 AF/6 s, 6 ZDO, 69 TIMEOUT, SIGTERM 09:43:58, OTA 08:25-09:00 | DIRECTLY OBSERVED (prose counts) | raw Z2M logs uninspected; no counters (NOT MEASURED) |
-| P10-2Oct (F0 live) | asyncHWM 158, 25/26 zero, RTT 147-1549 ms | DIRECTLY OBSERVED (external comment) | single snapshot; no P7U transfer |
+| P10-2Oct | progressive AF to ZDO to SYS, NO contemporaneous F0 | DIRECTLY OBSERVED | no radio counters at failure |
+| P10-13Oct after cold start | F0 async HWM 158, SRSP 25 to 26, RTT 147-1549 ms | DIRECTLY OBSERVED | captured after failure, not causal |
 | P10-12Oct-USB-drop | bridge/host path implicated | DIRECTLY OBSERVED (comment) | no byte-level bridge trace |
 | P10-13Oct-cold-start | startupFromApp 40 s timeout 06:07:57 | DIRECTLY OBSERVED (comment) | host vs radio split unknown |
 
-Raw Z2M logs: uninspected (named gap from scout). Board subtree: unlisted (named gap).
+Supervisor separately inspected Z2M log chronology read-only
+(issue #85 comment 6211227402). No raw private logs or keys are
+committed. Native P7U radio counters are still NOT MEASURED.
