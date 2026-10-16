@@ -222,6 +222,12 @@ def main():
              "mutant_osal_nv_nonzero_status",
              "osal_nv_read(7,0,1,&value)==NV_OPER_FAILED")
 
+    mutation(generated["network_ready"],
+             "b1_management_note_zdo_state((uint8_t)(state == DEV_ZB_COORD),",
+             "b1_management_note_zdo_state((uint8_t)(0 && state == DEV_ZB_COORD),",
+             "mutant_zdo_missing_coordinator_transition",
+             "b1_management_network_ready()==ready", ("healthy",),
+             admission=False, management=True)
     mutation(generated["zmac"],
              "if (b1_nv_runtime_hold_active()) return MAC_NO_RESOURCES;",
              "if (0) return MAC_NO_RESOURCES;", "mutant_zmac_data_hold",
