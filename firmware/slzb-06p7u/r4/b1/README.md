@@ -3,7 +3,8 @@
 **DRAFT. B1_SOURCE_READY has not been established. No merge, release or flash.**
 
 Issue [#92](https://github.com/analienx/Zigbee-Coordinator/issues/92), PR
-[#93](https://github.com/analienx/Zigbee-Coordinator/pull/93). The direct branch
+[#93](https://github.com/analienx/Zigbee-Coordinator/pull/93) and the
+current integrated draft [#94](https://github.com/analienx/Zigbee-Coordinator/pull/94). The direct branch
 starts from B0 native-green `1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe`.
 The earlier B1 `c86ccd1` also produced a genuine successful native build in
 [run 38943298953](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38943298953).
@@ -27,7 +28,22 @@ That older build does not verify changes made after that commit.
   read-only SYS F1 status; it rejects mutating SREQ and drops other traffic
   under HOLD. F0 remains reserved. UART/queue/registration failure is
   classified honestly; a failed transport cannot promise host receipt.
-- Eight actual ZMac request entrypoints reject new submissions after HOLD.
+- N24 media-cut source harness now uses the genuine TI NVOCMP item writer,
+  erase, compaction page-state and header primitives with NOR-like 1-to-0
+  programming and partial operation cuts. Read-only revalidation must either
+  admit a coherent source image or HOLD without destructive writes. The full
+  TI compaction recovery graph and physical brownout are still OPEN.
+- N30 source-backed restored coordinator readiness now observes the real TI
+  ZDApp_ChangeState(DEV_ZB_COORD), a validated existing NV2/security state,
+  a persisted/read-back NWK frame-counter reserve, and MT registration.
+  SYS F1 capability bit3 and stage5 report the bounded attestation; later
+  holds/role loss revoke it. Whole-stack startup and new-network readiness
+  remain OPEN. Details in [N24_N30_IMPLEMENTATION.md](N24_N30_IMPLEMENTATION.md).
+- Host UART failure is separately classified from NV/security fault: NPI
+  no longer spins on overflow, but transport-only HOLD does not poison the
+  ZMac RF safety predicate and shut down a healthy Zigbee network.
+- Eight actual ZMac request entrypoints reject new submissions after **NV
+  or SECURITY HOLD**.
   **Queued frames, autonomous MAC/ROM traffic and physical RF silence are
   not established by these source tests.**
 
