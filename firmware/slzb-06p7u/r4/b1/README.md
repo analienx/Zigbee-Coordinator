@@ -22,7 +22,7 @@ No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counte
    `B1_FACTORY_BOOT_AUTHORIZED` may permit it for a disposable lab board only.
    Never set that define from production runtime commands.
 4. Exact SHA-1-blob preimage checks against pinned TI 8.33 `nvocmp.c`,
-   `zmac.c` and `main.c`, then inject admission into the **actual NVOCMP_initNvApi**
+   `zmac.c`, `zd_app.c` and `main.c`, then inject admission into the **actual NVOCMP_initNvApi**
    compiled source. Fix NULL-before-getAttrs (`N04`), catch non-successful
    `NVS_read` (`N05`) and suppress subsequent NVS_write/erase on fatal
    NVOCMP errors. `main.c` now checks the initNV result and refuses stack
@@ -30,7 +30,16 @@ No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counte
    on detected backend failures and guarded in eight real ZMac request
    wrappers; transmissions already queued or originating within MAC ROM
    are NOT proven blocked. These are linked-source changes, not a model.
-5. Exact source-only receipt, C ASan/UBSan harness on synthetic dummy flash
+5. Actual linked `ZDApp_RestoreNwkSecMaterial()` and
+   `ZDApp_RestoreNwkKey()` are pinned to the TI blob and modified to verify a
+   nonzero restored NWK key BEFORE publishing a new frame counter. A counter
+   reserve is rejected on overflow; writes require successful NVS status and
+   byte-coherent readback before RAM `nwkFrameCounter` or
+   `FrameCounterUpdated` are touched. Missing mandatory existing-network
+   rows/keys and any readback mismatch latch HOLD. Authorized factory-new
+   optional absence remains a distinct control. This does **not** validate
+   TCLK/APS consistency or every other caller of the underlying security API.
+6. Exact source-only receipt, C ASan/UBSan harness on synthetic dummy flash
    and unchanged B0 native toolchain/ELF/CCFG audit on GitHub-hosted runners.
 
 ## Explicitly blocked / not implemented
@@ -46,13 +55,18 @@ No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counte
 - **B1-03:** a sticky guard on eight real ZMac wrappers after any detected
   backend read/write/erase failure is implemented in linked TI source.
   **It does NOT prove** protection from queued frames, MAC ROM/direct callers,
-  or invalid security accepted at initial boot. Coherent NWK NIB/APS/TCLK,
-  keys and frame-counter continuity are NOT yet implemented or validated.
+  or every invalid security record accepted at initial boot. Specific
+  NWK key-presence and monotonic frame-counter reserve/write/readback checks
+  are source-linked and hosted-tested. Complete NIB/APS/TCLK consistency,
+  source-qualified boot identity, all key generations and end-to-end security
+  continuity are STILL NOT PROVEN.
 - **B1-04:** there is no status ABI in a reachable HOLD transport state,
   no proven `HOST_MANAGEMENT_READY`, no herdsman integration.
 - **B1-05:** N01-N30 acceptance matrix remains largely OPEN. The included C
-  harness tests a subset of NV-only controls, not actual production stack
-  restoration. GitHub native build, when green, proves source linkage and
+  harness tests source-bound NVOCMP init, actual ZMac data/no-data
+  submission gates and ZDApp key/counter restore against synthetic NVS/RTOS
+  faults and healthy controls. These are **not** whole-stack or physical
+  restoration acceptance. GitHub native build, when green, proves linkage and
   artifact geometry only; it does NOT close these safety gates.
 - Independent sealed reviewer / Wonder HIGH verdict and actual spare-board
   startup, live RF, 100+ mesh soak remain OPEN. Physical/stock-NV compatibility
