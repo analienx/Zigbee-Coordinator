@@ -399,6 +399,11 @@ jobs:
             --out /tmp/b0out/b2-linked-baseline \
             --source-sha "$(git rev-parse HEAD)" \
             --run-id "$GITHUB_RUN_ID"
+          python tools/b2_verify_profile.py \
+            --native /tmp/b0out/b2-linked-baseline/B2_BASELINE_ELF_SYMBOLS.json \
+            --overlay "/tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json" \
+            --profile "${{ matrix.b2_profile }}" \
+            --out "/tmp/b0out/b2-linked-baseline/B2_PROFILE_${{ matrix.b2_profile }}_RECEIPT.json"
           cat /tmp/b0out/b2-linked-baseline/BASELINE_ELF_SYMBOLS.md >> "$GITHUB_STEP_SUMMARY"
           cat /tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json >> "$GITHUB_STEP_SUMMARY"
       - name: Upload native artifacts and receipts
