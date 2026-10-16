@@ -122,7 +122,7 @@ def main():
         ("nvocmp_init", "make_nvocmp_init_harness.py", SOURCE_PATHS[0], ((),)),
         ("zmac", "make_zmac_harness.py", SOURCE_PATHS[2], ((),)),
         ("zdapp", "make_zdapp_harness.py", SOURCE_PATHS[3], tuple((name,) for name in (
-            "new_empty", "positive", "generic", "missing_key", "zero_key",
+            "new_empty", "positive", "two_reboots", "generic", "missing_key", "zero_key",
             "missing_row", "overflow", "write_fail", "readback", "read_fail",
             "wrong_generic_identity"))),
         ("security", "make_security_harness.py", SOURCE_PATHS[4],
