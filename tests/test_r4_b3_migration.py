@@ -152,7 +152,7 @@ class OfflineAuthorityTests(unittest.TestCase):
                           "ZIP_MEMBER_SELECTION")
 
     def test_m27_zip_duplicate_member(self):
-        self.assertDenied(check(add=("manifest.json", b"{}")), "ZIP_MEMBER_SELECTION")
+        self.assertDenied(check(add=("manifest.json", b"{}")), "ZIP_DUPLICATE_MEMBER")
 
     def test_m27_zip_path_traversal(self):
         self.assertDenied(check(add=("../coordinator_backup.json", b"{}")),
@@ -200,6 +200,59 @@ class OfflineAuthorityTests(unittest.TestCase):
     def test_non_synthetic_marker_rejected(self):
         self.assertDenied(check(mutate=lambda man, _: man.__setitem__("synthetic", False)),
                           "NON_SYNTHETIC_BUNDLE")
+
+    def test_m27_zip_symlink(self):
+        parts = good()
+        raw, _ = archive(parts)
+        # A ZIP symlink is metadata-driven, not a filename ending in /.
+        with zipfile.ZipFile(io.BytesIO(raw), "r") as z:
+            members = {n: z.read(n) for n in z.namelist()}
+        with io.BytesIO() as out:
+            with zipfile.ZipFile(out, "w") as z:
+                for n, data in members.items():
+                    info = zipfile.ZipInfo(n)
+                    if n == "manifest.json":
+                        info.create_system = 3
+                        info.external_attr = (0o120777 << 16)
+                    z.writestr(info, data)
+            hostile = out.getvalue()
+        self.assertDenied(sim.judge(hostile, hashlib.sha256(hostile).hexdigest()),
+                          "ZIP_SYMLINK")
+
+    def test_bad_layout_is_typechecked_not_traceback(self):
+        self.assertDenied(check(mutate=lambda man, _: man.__setitem__(
+            "target_layout", {"nested": "NV2"})), "UNKNOWN_TARGET_LAYOUT")
+
+    def test_bad_snapshot_layout_is_typechecked_not_traceback(self):
+        parts = good()
+        parts["coordinator_backup.json"]["snapshots"][0]["layout"] = ["NV2"]
+        self.assertDenied(check(parts), "UNKNOWN_NV_LAYOUT")
+
+    def test_invalid_calendar_date_rejected(self):
+        parts = good()
+        parts["coordinator_backup.json"]["snapshots"][0][
+            "captured_utc"] = "2026-99-99T14:00:00Z"
+        self.assertDenied(check(parts), "INVALID_SNAPSHOT_TIME")
+
+    def test_missing_snapshot_network_key_rejected(self):
+        parts = good()
+        del parts["coordinator_backup.json"]["snapshots"][0]["network"]["nwk_key_ref"]
+        self.assertDenied(check(parts), "INVALID_NETWORK_IDENTITY")
+
+    def test_external_pin_required(self):
+        raw, _ = archive()
+        self.assertDenied(sim.judge(raw, ""), "EXTERNAL_SHA_REQUIRED")
+
+    def test_oversize_archive_fails_before_zip_parse(self):
+        huge = b"x" * (sim.MAX_ARCHIVE + 1)
+        self.assertDenied(sim.judge(huge, hashlib.sha256(huge).hexdigest()),
+                          "ARCHIVE_SIZE")
+
+    def test_manifest_false_auth_claim_never_grants_authority(self):
+        result = check(mutate=lambda man, _: man.__setitem__(
+            "origin_signature_verified", True))
+        self.assertDenied(result)
+        self.assertEqual(result["status"], "OFFLINE_CONSISTENT_FOR_REVIEW")
 
     def test_hostile_duplicate_json_field_rejected(self):
         def mutate(man, contents):
