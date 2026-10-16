@@ -30,6 +30,12 @@ def osal_changes(source):
         "  uint8_t rtrn = SUCCESS;\n  uint8_t status;\n",
         "  uint8_t rtrn = NV_OPER_FAILED;\n  uint8_t status;\n")
     source = one(source,
+        "if ( pZStackCfg && pZStackCfg->nvFps.createItem )",
+        "if ( pZStackCfg && pZStackCfg->nvFps.createItem && pZStackCfg->nvFps.getItemLen )")
+    source = one(source,
+        "    }\n  }\n\n  // NV was created\n  return ( NV_ITEM_UNINIT );",
+        "    }\n    return ( NV_ITEM_UNINIT );\n  }\n\n  // Missing backend is a failure, never a created record.\n  return ( NV_OPER_FAILED );")
+    source = one(source,
         "if ( pZStackCfg->nvFps.createItem( nvId, len, buf ) == NVINTF_FAILURE )",
         "if ( pZStackCfg->nvFps.createItem( nvId, len, buf ) != NVINTF_SUCCESS )")
     source = one(source,
@@ -40,7 +46,7 @@ def osal_changes(source):
         "  uint8_t ret = NV_OPER_FAILED;\n\n  if ( pZStackCfg && pZStackCfg->nvFps.deleteItem )")
     source = one(source,
         "  if ( pZStackCfg && pZStackCfg->nvFps.deleteItem )\n  {\n    uint32_t nvLen = 0;",
-        "  if ( pZStackCfg && pZStackCfg->nvFps.deleteItem )\n  {\n    ret = SUCCESS;\n    uint32_t nvLen = 0;")
+        "  if ( pZStackCfg && pZStackCfg->nvFps.deleteItem && pZStackCfg->nvFps.getItemLen )\n  {\n    ret = SUCCESS;\n    uint32_t nvLen = 0;")
     source = one(source,
         "else if ( pZStackCfg->nvFps.deleteItem( nvId ) == NVINTF_FAILURE )",
         "else if ( pZStackCfg->nvFps.deleteItem( nvId ) != NVINTF_SUCCESS )")
@@ -70,6 +76,22 @@ def nvocmp_changes(source):
              "            return(NVOCMP_failF);\n"
              "        }\n")
     source = one(source, prior, "")
+    source = one(source,
+        "        NVOCMP_nvHandle.nvSize = NVOCMP_nvsAttrs.regionSize/NVOCMP_nvsAttrs.sectorSize;\n"
+        "        NVOCMP_nvHandle.nvSize = NVOCMP_nvHandle.nvSize > NVOCMP_NVPAGES ? NVOCMP_NVPAGES : NVOCMP_nvHandle.nvSize;\n"
+        "        NVOCMP_size = NVOCMP_nvHandle.nvSize;\n\n"
+        "        // Confirm NV region has expected characteristics\n"
+        "        if (FLASH_PAGE_SIZE != NVOCMP_nvsAttrs.sectorSize ||\n"
+        "                (NVOCMP_NVSIZE * FLASH_PAGE_SIZE > NVOCMP_nvsAttrs.regionSize))",
+        "        // Validate exact page count BEFORE any division or flash scan.\n"
+        "        // A bigger region is not proof that its format is compatible.\n"
+        "        if (NVOCMP_nvsAttrs.sectorSize != FLASH_PAGE_SIZE ||\n"
+        "            NVOCMP_nvsAttrs.regionSize != (uint32_t)NVOCMP_NVPAGES * FLASH_PAGE_SIZE)")
+    source = one(source,
+        "        // Initialize force compaction to false",
+        "        NVOCMP_nvHandle.nvSize = NVOCMP_NVPAGES;\n"
+        "        NVOCMP_size = NVOCMP_NVPAGES;\n\n"
+        "        // Initialize force compaction to false")
     return source
 
 
