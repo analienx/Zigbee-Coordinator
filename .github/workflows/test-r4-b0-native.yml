@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Compile R4-B0 tools and tests
         run: |
-          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py tests/test_r4_b0_bind_sysconfig.py firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py tests/test_r4_b0_p7u_board_overlay.py firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py tests/test_r4_b0_verify_generated_board.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py tests/test_r4_b0_bind_sysconfig.py firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py tests/test_r4_b0_p7u_board_overlay.py firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py tests/test_r4_b0_verify_generated_board.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_flash_boundary.py tests/test_r4_b0_flash_boundary.py tests/test_r4_b0_artifact_publication.py
       - name: Assert R4-B0 fixture LF pin holds (CRLF drift guard)
         run: |
           test -f firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
@@ -59,6 +59,10 @@ jobs:
         run: python -m unittest -v tests.test_r4_b0_provision_versions
       - name: Test generated P7U UART and whole-CFG audit negative controls
         run: python -m unittest -v tests.test_r4_b0_verify_generated_board
+      - name: Test native artifact publication fail-closed
+        run: python -m unittest -v tests.test_r4_b0_artifact_publication
+      - name: Test protected-NV nonflashable image boundary
+        run: python -m unittest -v tests.test_r4_b0_flash_boundary
       - name: Validate real B0 overlay documents
         run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
       - name: Unit oracle sanity on valid vector (NOT native proof)
@@ -271,6 +275,11 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
+    # A green native link alone cannot authorize publication if the
+    # source/hostile controls or pinned-upstream inventory are red.
+    # Enforce both as DAG prerequisites, not just independent jobs in
+    # the same workflow; success() is job-local for artifact upload.
+    needs: [r4-b0-overlay, r4-b0-upstream-inventory]
     concurrency:
       group: r4-b0-native-${{ github.event.pull_request.head.ref || github.ref_name }}
       cancel-in-progress: true
@@ -381,13 +390,33 @@ jobs:
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
-      - name: Upload native artifacts and receipts
-        if: always()
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_flash_boundary.py" \
+            --artifacts /tmp/b0out --receipt /tmp/b0out/DO_NOT_FLASH_NV_BOUNDARY.json
+      # Full binaries must NOT be published if the native compile,
+      # generated pin checks, image audit or DO_NOT_FLASH NV gate fails.
+      # In a failed job, publish *only* non-flashable diagnostics.
+      - name: Upload audited nonproduction firmware and safety receipts
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b0-native-${{ github.sha }}
+          name: r4-b0-NOT_FLASH_QUALIFIED-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
             /tmp/b0out/
+          if-no-files-found: error
+      - name: Upload FAILED native diagnostic receipts (NO FIRMWARE)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b0-FAILED_DIAGNOSTICS_NO_FIRMWARE-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/b0-provision-receipt.json
+            /tmp/b0-sysconfig-binding.json
+            /tmp/b0out/build.log
+            /tmp/b0out/sdk-scope-receipt.json
+            /tmp/b0out/p7u-board-overlay.json
+            /tmp/b0out/p7u-generated-preflight.json
+            /tmp/b0out/p7u-generated-native.json
+            /tmp/b0out/DO_NOT_FLASH_NV_BOUNDARY.json
           if-no-files-found: warn
