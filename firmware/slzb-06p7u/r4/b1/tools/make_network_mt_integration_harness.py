@@ -58,14 +58,14 @@ SCENARIO = r'''
         assert(zdo_events==1u && b1_management_network_ready());
         route(0x21,B1_STATUS_COMMAND,q,sizeof(q));
         assert(last_reply[0]==B1_STATUS_REPLY_SIZE && last_reply[9]==B1_STAGE_NETWORK_READY);
-        assert((last_reply[12]&8u)!=0u && sent==1u && forwarded==0u);
+        assert((last_reply[12]&8u)!=0u && sent==1u && forwarded==1u);
         ZDApp_ChangeState(DEV_INIT);
         assert(!b1_management_network_ready());
         route(0x21,B1_STATUS_COMMAND,q,sizeof(q));
-        assert((last_reply[12]&8u)==0u && sent==2u);
+        assert((last_reply[12]&8u)==0u && sent==2u && forwarded==2u);
         ZDApp_ChangeState(DEV_ZB_COORD);
         route(0x21,B1_STATUS_COMMAND,q,sizeof(q));
-        assert((last_reply[12]&8u)==0u && sent==3u);
+        assert((last_reply[12]&8u)==0u && sent==3u && forwarded==3u);
         assert(zdo_events==3u && mutations==0u && live_alloc==0u);
         puts("B1_N30_ACTUAL_ZDO_NPI_MT_SYS_F1_ROUNDTRIP_SOURCE_PASS");
         return 0;
