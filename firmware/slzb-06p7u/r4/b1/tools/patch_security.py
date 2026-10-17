@@ -73,7 +73,8 @@ int b1_sec_validate_restored(void)
     return FALSE;
   }
   if (!onNetwork) return TRUE; /* Verified new NIB; APS may be empty. */
-  b1_sec_existing_network = TRUE;
+  /* Do not publish restored-network validation until ALL APS/TCLK checks
+   * finish. The ZDO readiness hook must not see a partial preflight. */
   if (osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(nwk), &nwk) != SUCCESS ||
       osal_nv_read(ZCD_NV_NWK_ACTIVE_KEY_INFO, 0, sizeof(active), &active) != SUCCESS ||
       OsalPort_memcmp(nwk.active.key, zeroKey, SEC_KEY_LEN) ||
@@ -161,6 +162,7 @@ int b1_sec_validate_restored(void)
     b1_security_runtime_hold_latch();
     return FALSE;
   }
+  b1_sec_existing_network = TRUE; /* Successful complete preflight only. */
   return TRUE;
 }
 
