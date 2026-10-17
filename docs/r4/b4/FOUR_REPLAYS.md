@@ -12,3 +12,7 @@ The original #87 recorder is reused; `b4_replay.py` generates normalized test ev
 Counter arithmetic is disallowed without a **source-qualified** radio epoch, both valid counter bits and proven wrap semantics. No host-process reset or post-failure frame is sufficient. Test results are available only after the corresponding GitHub Actions job actually finishes green; a replay code file is not execution proof.
 
 **Missing:** authoritative date-stamped private incident records (not needed or allowed in public repo), full exact #87 four fixture provenance comparison, live host telemetry, actual coordinator observations and hardware qualification.
+
+## Original #87 PR #89 provenance cross-check
+
+The original exact [PR #89](https://github.com/analienx/Zigbee-Coordinator/pull/89) reference at source SHA `512e620f1901bf83c6453410d7e411126b7853a3` contains these same four synthetic scenario shapes in `tests/test_r4_01a_passive_recorder.py`. The B4 branch retains that test file byte-identically (Git blob SHA `453bcfd91ac3dfa3437851eff5937a39ce4c15c3`) and retains `r4_diag_reference.py` byte-identically (blob `911f9ab3471910007cd2b4478c188c2b52bd4290`), while extending its passive recorder safety. Neither PR #89 nor B4 provides the original private incident log timestamps. The 64/6/69 observed counts and illustrative synthetic offsets remain clearly separated.

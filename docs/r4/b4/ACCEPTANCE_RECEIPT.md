@@ -17,16 +17,16 @@
 | D09 | BLOCKED unqualified radio epoch |
 | D10 | BLOCKED trusted boot source absent |
 | D11 | UNIT_REFERENCE only; native cannot qualify epoch |
-| D12 | BLOCKED TX_FINISHED counter absent |
-| D13 | BLOCKED verified UART distinction absent |
-| D14 | BLOCKED AF_CONFIRM vs SRSP lifecycle host hook missing |
-| D15 | BLOCKED B2 route metric not integrated |
+| D12 | HOSTED_SYNTHETIC qualified/unqualified UART interval tests; native TX_FINISHED counter absent and no physical completion claim |
+| D13 | HOSTED_SYNTHETIC accepted/finished equal still host receipt UNKNOWN; actual callback identity not proven |
+| D14 | HOSTED_SYNTHETIC independent AF_CONFIRM after local SRSP timeout is not ZCL success; native AF_CONFIRM hook still missing |
+| D15 | HOSTED_SYNTHETIC AF SRSP success + NWK_NO_ROUTE classified distinct from UART timeout; B2 real metric unintegrated |
 | D16 | HOSTED_NODE: opt-in actual pinned Znp SYS timeout event captured; AF/ZDO in-memory source hooks, real incidents not captured |
 | D17 | HOSTED_NODE: real AsyncMutex active lock rejects diagnostic; 200 concurrent offers coalesce and 40 genuine in-memory pinned SYS_PING requests complete in order; real UART/OTA/RF fairness still unverified |
 | D18 | HOSTED_NODE: disabled, busy and explicit OTA suppression controls passed, real OTA pacing not tested |
-| D19 | PARTIAL SIGTERM host category, not live process |
-| D20 | PARTIAL USB detach replay; no actual USB source |
-| D21 | PARTIAL last-good preserved; no installed host hook |
+| D19 | HOSTED_SYNTHETIC SIGTERM explicitly not crash; no live process evidence |
+| D20 | HOSTED_SYNTHETIC USB detach disables F0 availability, prevents firmware attribution; host USB source not installed |
+| D21 | HOSTED_SYNTHETIC serial-present MT nonresponse remains UNKNOWN cause, earlier last-good remains passive offline only |
 | D22 | HOSTED_NODE: genuine pinned diagnostic Waitress timeout removes its waiter; control SREQ policy unchanged, real load unverified |
 | D23 | NODE_SOURCE existing owner only; second-client hostile test missing |
 | D24 | SOURCE_PROVEN exact Zigbee2MQTT 2.14.0 upstream commit 62b02e2a declares herdsman 10.9.1, Extension base has no supported raw MT method; internal existing-owner patch only, installed release still UNKNOWN |
@@ -40,8 +40,10 @@
 | D32 | HOSTED_SYNTHETIC P10 starvation replay; pre-reset F0 UNKNOWN |
 | D33 | HOSTED_SYNTHETIC post-restart F0 replay; previous radio epoch UNKNOWN |
 | D34 | HOSTED_SYNTHETIC detach replay, no firmware root attribution |
-| D35 | BLOCKED B1 real HOLD source integration |
-| D36 | SOURCE_ONLY all unavailable counters remain UNKNOWN |
+| D35 | HOSTED_SYNTHETIC B1 HOLD_NV/HOLD_SECURITY retains zero diagnostic RF authorization; real B1 integration BLOCKED |
+| D36 | HOSTED_SYNTHETIC missing B2/B3 status stays UNKNOWN not zero; native sibling integration BLOCKED |
+
+The `b4_inference.py` offline reference now has 15 adversarial cases ([staging run 39003058774](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39003058774)) spanning D12–D16, D19–D21, D35–D36 and privacy/counter validity. These are source-only synthetic categories, **not** native telemetry or independent peer approval.
 
 ## Five independent challenger scenarios (proposed, NOT reviewer-executed)
 

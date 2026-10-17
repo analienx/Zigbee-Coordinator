@@ -11,6 +11,8 @@ Source branch `feat/p7u-r4-b4-issue98` branches from **exact B0 `1baefbee8e4de2c
 - `host/r4-b4/herdsman_overlay.py`: separate opt-in experimental patch for pinned herdsman. The default is **no polling**, no serial sidecar. Calls the existing `ZStackAdapter.znp.requestWithReply` through Znp mutex, skip while genuinely ZNP-mutex-busy/OTA, 30s cooldown; opt-in bounded metadata-only AF/ZDO/SYS timeout capture, no synchronous disk writes.
 - `../tools/r4_passive_recorder.py`: reused #87 offline forensic model; no production hook or host install.
 - `b4_hosted_c_probe.py`: real B4 function text compiled with hosted GCC ASan/UBSan and an invalidity mutant that must fail; this is not TI native linkage.
+- `b4_inference.py`: strict offline evidence classifier and source-qualified-only UART interval oracle; no attribution or external data source.
+- `host/r4-b4/b4_verify_z2m_source.py`: pins upstream Zigbee2MQTT 2.14.0 release SHA and its herdsman 10.9.1 dependency/public extension API; NOT an installed-version check.
 - `b4_replay.py`: four time-labeled synthetic incident replays with observed counts where available. Unknown remains unknown.
 
 ## Verification gates
