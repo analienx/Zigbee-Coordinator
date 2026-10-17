@@ -21,6 +21,10 @@ HOST_C_PROLOGUE = r"""
 #include <string.h>
 #define NPI_SREQRSP 1
 #define MT_SRSP_SYS 0x61
+volatile uint32_t B4_NpiSrspDepth;
+volatile uint32_t B4_NpiSrspHighWater;
+volatile uint32_t B4_NpiAsyncDepth;
+volatile uint32_t B4_NpiAsyncHighWater;
 volatile uint32_t B4_NpiSrspEnqueued;
 static uint8_t last_payload[132];
 static uint8_t last_len, last_cmd0, last_cmd1;
@@ -54,6 +58,10 @@ HOST_C_MAIN = r"""
 int main(void) {
     const uint32_t values[] = {0u, 1u, 0xFFFFFFFFu, 42u};
     for (unsigned int i = 0; i < sizeof(values)/sizeof(values[0]); i++) {
+        B4_NpiSrspDepth = 1u;
+        B4_NpiSrspHighWater = 5u;
+        B4_NpiAsyncDepth = 2u;
+        B4_NpiAsyncHighWater = 6u;
         B4_NpiSrspEnqueued = values[i];
         B4_SysReadOnlyDiagnostics();
         assert(transmit_count == (int)i + 1);
@@ -63,12 +71,16 @@ int main(void) {
         assert(last_payload[4] == 3 && last_payload[5] == 0);
         assert(last_payload[6] == 132 && last_payload[7] == 0);
         assert(read_u32(last_payload + 8) == 0); /* epoch unavailable */
-        assert(read_u32(last_payload + 12) == 0x10); /* exactly counter 4 */
+        assert(read_u32(last_payload + 12) == 0x1Fu); /* counters 0..4 */
         for (unsigned int j = 16; j < 28; ++j) assert(last_payload[j] == 0);
         assert(read_u32(last_payload + 28) == i + 1);
         for (unsigned int j = 0; j < 25; ++j) {
             const uint32_t counter = read_u32(last_payload + 32 + 4*j);
-            assert(counter == (j == 4 ? values[i] : 0u));
+            assert(counter == (j == 0 ? 1u :
+                             j == 1 ? 5u :
+                             j == 2 ? 2u :
+                             j == 3 ? 6u :
+                             j == 4 ? values[i] : 0u));
         }
         assert(B4_NpiSrspEnqueued == values[i]); /* observation only */
     }
@@ -82,7 +94,7 @@ def build_and_run(*, compiler, mutant=False):
         raise ValueError("host C compiler must be an existing absolute file")
     function = B4_FUNCTION
     if mutant:
-        old = "payload[12] = 0x10;"
+        old = "payload[12] = 0x1F;"
         if function.count(old) != 1:
             raise ValueError("mutant no longer attacks expected validity code")
         function = function.replace(old, "payload[12] = 0;")
