@@ -176,8 +176,8 @@ jobs:
             /tmp/b0out/
           if-no-files-found: warn
 
-  b4-compare-two-native-artifacts:
-    needs: b4-native-experimental-link
+  b5-compare-two-native-artifacts:
+    needs: b5-native-composed-link
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
