@@ -307,7 +307,7 @@ def prepare(sdk, definition):
     }
     return modified, {"source_pins": dict(PINS, **EXTRA_PINS), "collision": collision,
                       "transport": "single original NPI owner; HOSTED_SYNTHETIC until exact native build",
-                      "readiness": "no NETWORK_READY capability; no host receipt attestation"}
+                      "readiness": "restored-only ZDO attested NETWORK_READY at B1S1 stage 5 / capability bit 3; no physical UART host receipt attestation"}
 
 
 # Filled with Git blob IDs of exact prerequisite sources, not a URL trust claim.
