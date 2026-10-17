@@ -1,9 +1,6 @@
 name: R4 B4 pinned herdsman existing-owner compile and tests
 
 on:
-  push:
-    branches:
-      - feat/p7u-r4-b4-queued-f0-racefix
   pull_request:
     paths:
       - ".github/workflows/test-r4-b4-host.yml"
