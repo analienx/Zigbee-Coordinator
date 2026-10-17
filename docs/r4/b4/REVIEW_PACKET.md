@@ -23,3 +23,9 @@ Audit exact pinned sources and hashes, real CCS two native builds, actual ELFs a
 Reproduce at least five *new* distinct failure paths not already in source tests, each with offending line, adverse observable, failing test then repair. Suggested starting points (do not count as independently executed): renamed SYS command alias, length truncation in Buffalo, stale host-issued probe after OTA begins, directory fsync post-rename hazard, NPI rollback with live waiter stuck; independently extend beyond these.
 
 No reviewer PASSED, no unconditional source-ready label or merge.
+
+## Current staged evidence for review, not independent approval
+
+- [Host/TypeScript 39002832223](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002832223): actual pinned `Znp` queue and Waitress exercised with 200 simultaneous F0 offers coalescing to one, 40 normal SYS_PING requests preserved; no live port.
+- [Source 39002832220](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002832220): exact Z2M 2.14.0 release dependency+public extension API mutation source gate. Installed Z2M remains unknown.
+- These are automated self-authored tests, **not** the independent four-lens approvals required by #98.

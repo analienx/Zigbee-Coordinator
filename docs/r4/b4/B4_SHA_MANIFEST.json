@@ -35,5 +35,10 @@
   "native_parity_recheck_run": 39002075430,
   "host_actions_run": 39001497672,
   "elf_memory_comparison_run": 39002225494,
-  "source_ready": false
+  "source_ready": false,
+  "z2m_source_sha": "62b02e2aa1997c574223b80c196677b63a25f4a7",
+  "z2m_source_version": "2.14.0",
+  "z2m_source_package_herdsman": "10.9.1",
+  "z2m_source_validation_run": 39002832220,
+  "z2m_pinned_host_stress_run": 39002832223
 }

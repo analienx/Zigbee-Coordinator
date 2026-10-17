@@ -22,14 +22,14 @@
 | D14 | BLOCKED AF_CONFIRM vs SRSP lifecycle host hook missing |
 | D15 | BLOCKED B2 route metric not integrated |
 | D16 | HOSTED_NODE: opt-in actual pinned Znp SYS timeout event captured; AF/ZDO in-memory source hooks, real incidents not captured |
-| D17 | HOSTED_NODE: real AsyncMutex active lock with zero pending count rejects diagnostic, native load fairness still unverified |
+| D17 | HOSTED_NODE: real AsyncMutex active lock rejects diagnostic; 200 concurrent offers coalesce and 40 genuine in-memory pinned SYS_PING requests complete in order; real UART/OTA/RF fairness still unverified |
 | D18 | HOSTED_NODE: disabled, busy and explicit OTA suppression controls passed, real OTA pacing not tested |
 | D19 | PARTIAL SIGTERM host category, not live process |
 | D20 | PARTIAL USB detach replay; no actual USB source |
 | D21 | PARTIAL last-good preserved; no installed host hook |
 | D22 | HOSTED_NODE: genuine pinned diagnostic Waitress timeout removes its waiter; control SREQ policy unchanged, real load unverified |
 | D23 | NODE_SOURCE existing owner only; second-client hostile test missing |
-| D24 | SOURCE_PROVEN ZStackAdapter.znp private; unsupported extension |
+| D24 | SOURCE_PROVEN exact Zigbee2MQTT 2.14.0 upstream commit 62b02e2a declares herdsman 10.9.1, Extension base has no supported raw MT method; internal existing-owner patch only, installed release still UNKNOWN |
 | D25 | HOSTED_PYTHON: pre-rename last-good survives; exclusive random temp files defeat predicted .pending symlink; post-rename fsync failure cannot guarantee pre-rename identity |
 | D26 | HOSTED_PYTHON: I/O/fsync failure rejects; no production async worker |
 | D27 | HOSTED_PYTHON + NODE: 256 event ring cap and dropped accounting |
@@ -56,7 +56,7 @@
 - The **minimal experimental native F0 handler is truly linked** and reproducible; this is only one counter (`srsp_enqueued`). Missing native boot epoch, source digest, ABI minor/reset reason, UART accepted-versus-finished, AF confirm, B2 routing and B3 NV producer validity remain unresolved.
 - **Two clean native builds:** GitHub Actions [39000883442](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39000883442), jobs `117303587721` and `117303587798`, both passed at `cf92fc07df7b25a7ad6bfbf380f6ae4b3c0dc5ca`. The *original inline* raw-XML comparison failed solely on nonsemantic `link_time`; the fixed strict comparator tested against both archived native artifacts passed on [39002075430](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002075430), permitting **only** that one independently observed XML timestamp difference. Final integrated native Actions run remains a new gate.
 - **Real linked B0→B4 allocated section delta:** +156 bytes FLASH app and +8 bytes RAM based on the same real ELF manifests, [39002225494](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002225494). Runtime RTOS/IRQ stack high-water, NPI pressure and real AF/ZDO fairness are NOT_MEASURED.
-- Host pinned TypeScript and genuine `Znp.request`/waiter/active-mutex tests passed [39001497672](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001497672). Opt-in in-memory AF/ZDO/SYS timeout observations are *source-tested*, not installed. There is no deployed Zigbee2MQTT 2.14.0 confirmation, disk worker integration, or independently validated USB observer.
+- Upstream Zigbee2MQTT 2.14.0 source SHA `62b02e2aa1997c574223b80c196677b63a25f4a7` + its public extension boundary and herdsman 10.9.1 package dependency were independently checked in [39002832220](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002832220). **This does not verify installed HA/Z2M versions.** Host pinned TypeScript and genuine `Znp.request`/waiter/active-mutex tests passed [39001497672](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001497672). Opt-in in-memory AF/ZDO/SYS timeout observations are *source-tested*, not installed. There is no deployed Zigbee2MQTT 2.14.0 confirmation, disk worker integration, or independently validated USB observer.
 - B1/B2/B3 combined integration and HOLD safety are still blocked by separate source-ready approval; no unauthorized cross-phase merges.
 - No source-qualified radio epoch/no physical coordinator qualification. Independent four-lane reviewer sign-offs and >=5 independently reproduced blind-spot mutants remain unavailable.
 
