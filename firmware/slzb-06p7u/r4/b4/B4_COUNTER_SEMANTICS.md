@@ -1,6 +1,6 @@
 # B4 counter semantics / proof boundary
 
-Status: **not native-linked**. `B4_SOURCE_HOOK_MATRIX.json` is a source-to-function research crosswalk, not a claim that any counter increments at runtime.
+Status (2026-10-17): **one experimental SRSP-enqueued counter is native-linked in both real P7U CCS builds; other counters remain NOT_MEASURED.** `B4_SOURCE_HOOK_MATRIX.json` is a source-to-function research crosswalk, not a claim that any counter increments at runtime.
 
 A metric may transition `NOT_MEASURED -> SOURCE_PATH_IDENTIFIED -> HOSTED_NATIVE_LINKED` only when a real event producer, caller context (ISR/callback/task), increment, type, storage, validity and output serialization are each verified at the pinned source and in the actual linked ELF. Only then may CI qualify width, saturation/wrap, concurrency, stack overhead and performance under loaded SRSP/AREQ traffic. In particular, a function name match is not a counter hook.
 
@@ -14,3 +14,9 @@ A metric may transition `NOT_MEASURED -> SOURCE_PATH_IDENTIFIED -> HOSTED_NATIVE
 * **Saturation and provenance:** explicit per-counter validity plus wrap/saturation policy must come from actual native code. Placeholder data is never serialized into F0 to manufacture coverage.
 
 **Native gate:** verify compiled TI 8.33 source, two genuine CCS 12.8 + ARM Clang 3.2.2 links at identical head, ELF/XML/HEX/BIN hashes, map symbols and SRAM/heap/stack delta, protected NV `0xAA000..0xADFFF`, CCFG geometry and known UART0 DIO12/DIO13 at 115200 without RTS/CTS. Do not treat offline Python or C fixture success as linked firmware evidence.
+
+## Probe-generated counter side effect and late-SRSP ambiguity (direct code-review finding)
+
+The observed `srsp_enqueued` count includes the diagnostic command's own SRSP enqueue if the previous F0 command reaches the queue. It is **not** a count of independent application/ZDO/AF work, and a delta cannot be adjusted by subtracting 1 without transaction/boot identity. `B4_NpiSrspEnqueued` is updated in both pinned TI `NPITask_sendToHost` and `NPITask_processStackMsg` pre-existing critical sections.
+
+F0 v3 requests carry no unique nonce and responses no echo. A late SRSP after a waiter timeout can alias a later request; 30-second cooldown alone cannot guarantee transport drain. The host now disables **only experimental F0** for the remainder of that Znp owner session after an ambiguous failure, while ordinary SYS_PING/AF/ZDO remain enabled. Counter discontinuity or untrusted reboot is not a qualified epoch. A future ABI v4 would need authenticated/uniquely correlated request–response semantics plus source-backed boot generation; no v4 was implemented.

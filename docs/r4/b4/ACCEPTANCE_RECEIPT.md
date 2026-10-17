@@ -27,7 +27,7 @@
 | D19 | HOSTED_SYNTHETIC SIGTERM explicitly not crash; no live process evidence |
 | D20 | HOSTED_SYNTHETIC USB detach disables F0 availability, prevents firmware attribution; host USB source not installed |
 | D21 | HOSTED_SYNTHETIC serial-present MT nonresponse remains UNKNOWN cause, earlier last-good remains passive offline only |
-| D22 | HOSTED_NODE: genuine pinned diagnostic Waitress timeout removes its waiter; control SREQ policy unchanged, real load unverified |
+| D22 | HOSTED_NODE: genuine diagnostic timeout removes its waiter AND quarantines transaction-ID-less F0 for existing owner; sync UNPI write throw also removes waiter; ordinary SYS_PING remains enabled; live load unverified |
 | D23 | NODE_SOURCE existing owner only; second-client hostile test missing |
 | D24 | SOURCE_PROVEN exact Zigbee2MQTT 2.14.0 upstream commit 62b02e2a declares herdsman 10.9.1, Extension base has no supported raw MT method; internal existing-owner patch only, installed release still UNKNOWN |
 | D25 | HOSTED_PYTHON: pre-rename last-good survives; exclusive random temp files defeat predicted .pending symlink; post-rename fsync failure cannot guarantee pre-rename identity |
@@ -54,6 +54,8 @@ The `b4_inference.py` offline reference now has 15 adversarial cases ([staging r
 5. **SERIAL owner leak through external cast:** plugin casts private `ZStackAdapter.znp` or constructs a second `Znp`. No external API permitted; native host overlay only on existing adapter. **Hard second-owner rejection test is still MISSING**—staged source test is not enough.
 
 ## P0/P1 blockers — do not waive
+
+Direct in-repo review (not independent peer approval): [CODE_REVIEW_2026-10-17.md](CODE_REVIEW_2026-10-17.md). P0 stale F0 SRSP alias and pre-write orphan diagnostic waiter are now guarded in a staging revision with compiled pinned-source Node tests; final PR-head CI must still pass. Remaining P0/P1 issues are explicitly enumerated there.
 
 - The **minimal experimental native F0 handler is truly linked** and reproducible; this is only one counter (`srsp_enqueued`). Missing native boot epoch, source digest, ABI minor/reset reason, UART accepted-versus-finished, AF confirm, B2 routing and B3 NV producer validity remain unresolved.
 - **Two clean native builds:** GitHub Actions [39000883442](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39000883442), jobs `117303587721` and `117303587798`, both passed at `cf92fc07df7b25a7ad6bfbf380f6ae4b3c0dc5ca`. The *original inline* raw-XML comparison failed solely on nonsemantic `link_time`; the fixed strict comparator tested against both archived native artifacts passed on [39002075430](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002075430), permitting **only** that one independently observed XML timestamp difference. Final integrated native Actions run remains a new gate.
