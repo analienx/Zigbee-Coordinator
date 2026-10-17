@@ -2,7 +2,7 @@
   "schema": "b4-hook-matrix-v1",
   "issue": 98,
   "source": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/",
-  "stage": "FIVE_QUEUE_METRICS_REAL_TI_NATIVE_LINKED_ONLY; OTHER_COUNTERS_UNKNOWN",
+  "stage": "SIX_METRICS_SOURCE_PATCHED_PENDING_EXACT_NATIVE_LINK; RADIO_BOOT_UNKNOWN",
   "counters": [
     {
       "name": "mt_sys_sreq_dispatch",
@@ -145,7 +145,18 @@
       "wrap_policy": "UNKNOWN",
       "validity": null,
       "status": "SOURCE_PATH_IDENTIFIED",
-      "qualification": "callback reports completion; explicit UART2_EVENT_TX_FINISHED absent; do not relabel as physical host receipt"
+      "qualification": "Existing NPITLUART_writeCallBack is FIFO-handoff callback and must not be represented as UART TX-pin-finished, USB receipt, or host parser success."
+    },
+    {
+      "name": "npi_uart_tx_pin_finished_events",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_tl_uart.c NPITLUART_initializeTransport UART2_Params.eventMask/eventCallback and UART2_EVENT_TX_FINISHED; source/ti/drivers/UART2.h",
+      "producer_context": "UART2 driver event callback, task or IRQ",
+      "unit": "TX_PIN_FINISHED notifications, NOT bytes or frames",
+      "width_bits": 32,
+      "wrap_policy": "SATURATED_U32; RADIO_EPOCH_UNQUALIFIED",
+      "validity": "V3_BIT5_ONLY_WITH_REAL_PIN_EVENT_CALLBACK",
+      "status": "SOURCE_PATCHED_PENDING_EXACT_TI_NATIVE_LINK",
+      "qualification": "Uses existing UART2_open handle; eventMask TX_FINISHED and a single bounded callback increments index5 under OsalPort critical section; no second UART, no ISR logging, no RF, no proof of USB/host receipt. Native test pending."
     },
     {
       "name": "npi_async_queue_drop",
