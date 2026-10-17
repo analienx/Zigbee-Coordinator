@@ -178,6 +178,23 @@ class FlashBoundaryTests(unittest.TestCase):
             self.assertEqual(state["status"], "FAILED_CLOSED")
             self.assertNotIn("STALE", receipt.read_text())
 
+    def test_malformed_manifest_cannot_preserve_stale_flash_authorization(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            receipt = root / "DO_NOT_FLASH_NV_BOUNDARY.json"
+            for invalid in ("[]", "null", '"not a manifest"',
+                            '{"schema":"r4-b0-artifact-manifest-v1","files":[]}',
+                            " " * 131073):
+                with self.subTest(manifest=invalid[:40]):
+                    receipt.write_text('{"flash_authorized":true}')
+                    (root / "manifest.json").write_text(invalid)
+                    with patch.object(sys, "argv", ["b0_flash_boundary.py",
+                         "--artifacts", str(root), "--receipt", str(receipt)]):
+                        self.assertEqual(gate.main(), 1)
+                    result = json.loads(receipt.read_text())
+                    self.assertIs(result["flash_authorized"], False)
+                    self.assertEqual(result["status"], "FAILED_CLOSED")
+
     def test_receipt_does_not_pretend_to_prove_native_provenance(self):
         with tempfile.TemporaryDirectory() as td:
             state = gate.inspect(setup(td))
