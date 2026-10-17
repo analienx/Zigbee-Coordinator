@@ -63,7 +63,9 @@ def _load(directory):
             or proof.get("host_installed") is not False
             or patch.get("stage") != "PATCHED_DISPOSABLE_SDK_NOT_LINKED"
             or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4]
-            or patch.get("radio_boot_identity") != "UNKNOWN"):
+            or patch.get("radio_boot_identity") != "UNKNOWN"
+            or patch.get("sync_npi_compiled_required") is not True
+            or patch.get("sync_transport_changed_from_stock") is not True):
         raise ValueError("native linker proof/patch receipt not qualified")
     files = {}
     sha = {}
