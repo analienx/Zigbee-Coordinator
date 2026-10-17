@@ -29,6 +29,9 @@ SOURCE_PATHS = (
     "source/ti/common/nv/crc.c",
     "source/ti/zstack/startup/zstackstartup.c",
     "source/ti/zstack/osal/osal_nv.c",
+    # B1+B3 entropy integration also changes checked RNG header and ZStack API.
+    "source/ti/zstack/stack/zdo/zd_sec_mgr.h",
+    "source/ti/zstack/stack/api/zstacktask.c",
 )
 
 
