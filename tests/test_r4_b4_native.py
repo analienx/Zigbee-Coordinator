@@ -38,6 +38,7 @@ key = OsalPort_enterCS();
 #if defined(NPI_SREQRSP)
 Queue_enqueue(npiSyncTxQueue, &recPtr->_elem);
 #endif
+Queue_enqueue(npiTxQueue, &recPtr->_elem);
 OsalPort_leaveCS(key);
 }
 static void NPITask_processStackMsg(uint8_t *pMsg)
@@ -46,6 +47,21 @@ key = OsalPort_enterCS();
 #if defined(NPI_SREQRSP)
 Queue_enqueue(npiSyncTxQueue, &recPtr->_elem);
 #endif
+Queue_enqueue(npiTxQueue, &recPtr->_elem);
+OsalPort_leaveCS(key);
+}
+static void NPITask_ProcessTXQ(void)
+{
+key = OsalPort_enterCS();
+recPtr = Queue_dequeue(npiTxQueue);
+if (recPtr != NULL) {}
+OsalPort_leaveCS(key);
+}
+static void NPITask_ProcessSyncTXQ(void)
+{
+key = OsalPort_enterCS();
+recPtr = Queue_dequeue(npiSyncTxQueue);
+if (recPtr != NULL) {}
 OsalPort_leaveCS(key);
 }
 """
@@ -77,11 +93,15 @@ class NativeOverlayProofs(unittest.TestCase):
             with patch("b4_native_patch._git", side_effect=git):
                 out = patch_native(root)
                 self.assertEqual(out["stage"], "PATCHED_DISPOSABLE_SDK_NOT_LINKED")
-                self.assertEqual(out["valid_counter_indices"], [4])
+                self.assertEqual(out["valid_counter_indices"], [0, 1, 2, 3, 4])
                 self.assertEqual(out["radio_boot_identity"], "UNKNOWN")
                 self.assertEqual(len(out["written"]), 2)
                 self.assertIn("case 0xF0", (root / MT_SYS).read_text())
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspEnqueued;"), 2)
+                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspDepth;"), 2)
+                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiAsyncDepth;"), 2)
+                self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiSrspDepth;"), 1)
+                self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiAsyncDepth;"), 1)
                 self.assertEqual((root / NPI_CLIENT).read_text(), CLIENT)
                 # A repeat patch cannot silently duplicate the new handler.
                 with self.assertRaisesRegex(ValueError, "modified before"):
@@ -136,7 +156,7 @@ class BinaryAuditOracleMutants(unittest.TestCase):
         patchreceipt = root / "overlay.json"
         patchreceipt.write_text(json.dumps({
             "stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "payload_bytes": 132,
-            "valid_counter_indices": [4], "radio_boot_identity": "UNKNOWN",
+            "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
             "written": {"mt.c": {}, "npi.c": {}},
         }))
         nm = root / "tiarmnm"
@@ -165,7 +185,11 @@ class BinaryAuditOracleMutants(unittest.TestCase):
             from subprocess import CompletedProcess
             listing = ("0010 T MT_SysCommandProcessing\n"
                        "0020 T B4_SysReadOnlyDiagnostics\n"
-                       "0030 T B4_NpiSrspEnqueued\n")
+                       "0030 B B4_NpiSrspDepth\n"
+                       "0040 B B4_NpiSrspHighWater\n"
+                       "0050 B B4_NpiAsyncDepth\n"
+                       "0060 B B4_NpiAsyncHighWater\n"
+                       "0070 T B4_NpiSrspEnqueued\n")
             with patch("b4_native_link_audit.subprocess.run",
                        return_value=CompletedProcess([], 0, stdout=listing)):
                 with self.assertRaisesRegex(ValueError, "not native RAM"):
