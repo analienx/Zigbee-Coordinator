@@ -14,7 +14,9 @@ import subprocess
 from herdsman_overlay import SHA, DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER
 
 MARKER = "B4_V4_NONCE_AND_BOOT"
-PATHS = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER)
+PARSER = "src/adapter/z-stack/unpi/parser.ts"
+WRITER = "src/adapter/z-stack/unpi/writer.ts"
+PATHS = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER, PARSER, WRITER)
 
 def _git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args],
@@ -133,7 +135,7 @@ def plan(root, v3_receipt):
             prior.get("sha") != SHA or prior.get("serial_owner") != "EXISTING_ZNP_ONLY" or
             prior.get("default_off") is not True or
             prior.get("native_or_host_installed") is not False or
-            not set(PATHS).issubset(prior.get("files", {}))):
+            not set(PATHS[:-2]).issubset(prior.get("files", {}))):
         raise ValueError("verified v3 owner source receipt required")
     src = {}
     for name in PATHS:
@@ -141,10 +143,16 @@ def plan(root, v3_receipt):
         if not path.is_file() or path.is_symlink():
             raise ValueError("missing actual patched herdsman file")
         content = path.read_bytes()
-        receipt = prior["files"][name]
-        if (hashlib.sha256(content).hexdigest() != receipt["after_sha256"] or
-                hashlib.sha256(_git(root, "show", SHA+":"+name)).hexdigest() != receipt["before_sha256"]):
-            raise ValueError("v3 source drift against exact pin")
+        pristine = _git(root, "show", SHA+":"+name)
+        if name in (PARSER, WRITER):
+            # v3 doesn't touch these; demand pristine exact pinned transport.
+            if content != pristine:
+                raise ValueError("v4 transport logger source changed from pinned upstream")
+        else:
+            receipt = prior["files"][name]
+            if (hashlib.sha256(content).hexdigest() != receipt["after_sha256"] or
+                    hashlib.sha256(pristine).hexdigest() != receipt["before_sha256"]):
+                raise ValueError("v3 source drift against exact pin")
         src[name] = content.decode()
     if any(MARKER in text for text in src.values()):
         raise ValueError("v4 already present")
@@ -215,6 +223,25 @@ def plan(root, v3_receipt):
     znp = replace(znp,
         "            logger.debug(() => `--> ${object}`, NS);",
         "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SREQ (diagnostic nonce redacted)\", NS);\n            } else {\n                logger.debug(() => `--> ${object}`, NS);\n            }")
+    # ZNP logging redaction alone is insufficient: pinned UNPI transport
+    # DEBUG logging prints raw chunks/frame buffers, including boot token.
+    writer = src[WRITER]
+    writer = replace(writer,
+        "        logger.debug(`--> frame [${[...buffer]}]`, NS);",
+        "        logger.debug(`--> frame ${buffer.length} bytes (payload redacted)`, NS);")
+    writer = replace(writer,
+        "        logger.debug(`--> buffer [${[...buffer]}]`, NS);",
+        "        logger.debug(`--> buffer ${buffer.length} bytes (payload redacted)`, NS);")
+    parser = src[PARSER]
+    parser = replace(parser,
+        "        logger.debug(`<-- [${[...chunk]}]`, NS);",
+        "        logger.debug(`<-- ${chunk.length} bytes (payload redacted)`, NS);")
+    parser = replace(parser,
+        "        logger.debug(`--- parseNext [${[...this.buffer]}]`, NS);",
+        "        logger.debug(`--- parseNext ${this.buffer.length} buffered bytes (payload redacted)`, NS);")
+    parser = replace(parser,
+        "                    logger.debug(`--> parsed ${frame}`, NS);",
+        "                    logger.debug(`--> parsed type=${frame.type} subsystem=${frame.subsystem} command=${frame.commandID} bytes=${frame.data.length}`, NS);")
     controller = replace(src[CONTROLLER],
         "    public isStopping(): boolean {",
         """    /** B4_V4_NONCE_AND_BOOT: guarded internal v4, never new serial. */
@@ -236,7 +263,9 @@ def plan(root, v3_receipt):
             BUFFALO: (src[BUFFALO], buffalo),
             ADAPTER: (src[ADAPTER], adapter),
             ZNP: (src[ZNP], znp),
-            CONTROLLER: (src[CONTROLLER], controller)}
+            CONTROLLER: (src[CONTROLLER], controller),
+            WRITER: (src[WRITER], writer),
+            PARSER: (src[PARSER], parser)}
 
 def apply(root, v3_receipt):
     changes = plan(root, v3_receipt)
