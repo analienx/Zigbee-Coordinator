@@ -15,6 +15,8 @@ DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 ADAPTER = "src/adapter/z-stack/adapter/zStackAdapter.ts"
+ZNP = "src/adapter/z-stack/znp/znp.ts"
+MUTEX = "src/utils/async-mutex.ts"
 MARKER = "B4_EXPERIMENTAL_EXISTING_OWNER"
 
 ADAPTER_METHOD = r"""
@@ -35,6 +37,7 @@ ADAPTER_METHOD = r"""
             this.closing ||
             !this.queue ||
             this.queue.count() !== 0 ||
+            !this.znp.b4CanProbe() ||
             this.interpanLock
         ) {
             return undefined;
@@ -102,7 +105,7 @@ def plan(root):
     if _git(root, "rev-parse", "HEAD").decode().strip() != SHA:
         raise ValueError("herdsman source HEAD not exact version 10.9.1 pin")
     originals = {}
-    for name in (DEFINITION, PARAM, BUFFALO, ADAPTER):
+    for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX):
         actual = (root / name).read_bytes()
         if actual != _git(root, "show", SHA + ":" + name):
             raise ValueError("dirty or wrong upstream source: " + name)
@@ -165,6 +168,32 @@ def plan(root):
        "    public async stop(): Promise<void> {",
        ADAPTER_METHOD + "    public async stop(): Promise<void> {")
     changes[ADAPTER] = adapter
+    # The pinned AsyncMutex.count counts *queued* requests, not the
+    # in-flight lock. An empty queue is NOT sufficient to prove ZNP idle.
+    changes[MUTEX] = replace_once(
+        originals[MUTEX],
+        "    get count() {\\n        return this.#queue.length;\\n    }".replace("\\\\n", "\\n"),
+        """    get count() {
+        return this.#queue.length;
+    }
+
+    // B4_EXPERIMENTAL_EXISTING_OWNER: observation only; never alters locking.
+    isIdle(): boolean {
+        return !this.#locked && this.#queue.length === 0;
+    }""",
+    )
+    changes[ZNP] = replace_once(
+        originals[ZNP],
+        "    public isInitialized(): boolean {",
+        """    /** B4_EXPERIMENTAL_EXISTING_OWNER: query in-process mutex state.
+     *  Neither a queue-length=0 nor serial present proves radio health.
+     */
+    public b4CanProbe(): boolean {
+        return this.initialized && this.queue.isIdle();
+    }
+
+    public isInitialized(): boolean {""",
+    )
     return {k: (originals[k], changes[k]) for k in changes}
 
 def apply(root):
