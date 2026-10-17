@@ -4,6 +4,7 @@ on:
     paths:
       - 'tools/b2_compile_actual_zdo_callback.py'
       - 'tools/b2_compile_actual_mt_parser.py'
+      - 'tools/b2_compile_actual_mto_nv_timer.py'
       - '.github/workflows/test-r4-b2-ti-c-callback.yml'
       - 'docs/r4/b2/TEST_MATRIX.md'
   push:
@@ -98,6 +99,42 @@ jobs:
             exit 1
           fi
           echo 'T32 limited: deliberate TI MT length-check mutation correctly killed by response oracle.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile actual TI MTO NV/timer C callback in host ASan and exercise NV failed reads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_mto_nv_timer.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-mto-nv-original
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-mto-nv-original/ti_zdo_nv_mto_host.c -o /tmp/b2-mto-nv-original/ti_zdo_nv_mto_host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-mto-nv-original/ti_zdo_nv_mto_host
+          echo 'T10 NV path: real TI ZDApp_ForceConcentratorChange starts 100ms timer when enabled, stops when disabled, and ignores failed NV-read return (stale RAM state may remain).' >> "$GITHUB_STEP_SUMMARY"
+      - name: Two mutated TI NV callback bodies must fail exact start and stop assertions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for variant in start-delay-1000 skip-stop; do
+            out="/tmp/b2-mto-nv-$variant"
+            python tools/b2_compile_actual_mto_nv_timer.py --sdk /tmp/b2-zdo-sdk --out "$out" --mutation "$variant"
+            clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+              -fsanitize=address,undefined "$out/ti_zdo_nv_mto_host.c" -o "$out/ti_zdo_nv_mto_host"
+            set +e
+            (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+              "$out/ti_zdo_nv_mto_host") > "$out/negative-test.log" 2>&1
+            result=$?
+            set -e
+            if [[ "$result" -eq 0 ]]; then
+              echo "B2-T10-BLOCKED: $variant source mutant incorrectly survived"
+              exit 1
+            fi
+            if [[ "$variant" == "start-delay-1000" ]]; then
+              grep -E 'Assertion.*last_timer_delay|assertion.*last_timer_delay' "$out/negative-test.log" || exit 1
+            else
+              grep -E 'Assertion.*stop_count|assertion.*stop_count' "$out/negative-test.log" || exit 1
+            fi
+          done
+          echo 'T10 native TI MTO timer callback start-delay and stop-path mutants both killed by real host source assertions.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload original source-body and mutation receipts (no keys or real network)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -110,5 +147,10 @@ jobs:
             /tmp/b2-mt-original/B2_MT_HOST_SOURCE_RECEIPT.json
             /tmp/b2-mt-mutant/B2_MT_HOST_SOURCE_RECEIPT.json
             /tmp/b2-mt-mutant/negative-test.log
+            /tmp/b2-mto-nv-original/B2_T10_NV_TIMER_SOURCE_RECEIPT.json
+            /tmp/b2-mto-nv-start-delay-1000/B2_T10_NV_TIMER_SOURCE_RECEIPT.json
+            /tmp/b2-mto-nv-start-delay-1000/negative-test.log
+            /tmp/b2-mto-nv-skip-stop/B2_T10_NV_TIMER_SOURCE_RECEIPT.json
+            /tmp/b2-mto-nv-skip-stop/negative-test.log
           if-no-files-found: warn
           retention-days: 30
