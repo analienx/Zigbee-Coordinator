@@ -344,6 +344,151 @@ def entropy_zstacktask_changes(source):
         '      }')
 
 
+def b3_replace_function(source, signature, replacement, required):
+    """Replace only one exact pinned-TI function. Never touch similarly named callers."""
+    if source.count(signature) != 1:
+        raise ValueError("B3 function declaration absent or ambiguous: " + signature)
+    start = source.index(signature)
+    end = source.index("\n}\n", start) + 2
+    original = source[start:end]
+    if len(original) > 6000:
+        raise ValueError("B3 source function boundary unexpected")
+    for needle in required:
+        if needle not in original:
+            raise ValueError("B3 security caller drift: " + needle)
+    return one(source, original, replacement)
+
+
+def nwk_checkpoint_changes(source):
+    """Conservative source repair, not a B1 RF hold or key-transaction proof."""
+    save = r'''void ZDApp_SaveNwkKey( void )
+{
+  nwkActiveKeyItems keyItems;
+  nwkSecMaterialDesc_t nwkSecMaterialDesc = {0};
+  uint8_t found = FALSE;
+  uint8_t i;
+
+  SSP_ReadNwkActiveKey( &keyItems );
+
+  // Do not claim a security checkpoint if ANY table read/write was rejected.
+  // Keep RAM's pending counter changes so a later controlled retry can see them.
+  for( i = 0; i < gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES; i++)
+  {
+    if (osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i, 0,
+                        sizeof(nwkSecMaterialDesc_t),
+                        &nwkSecMaterialDesc) != SUCCESS)
+    {
+      goto b3_checkpoint_done;
+    }
+    if (OsalPort_memcmp(_NIB.extendedPANID,
+                        nwkSecMaterialDesc.extendedPanID,Z_EXTADDR_LEN))
+    {
+      nwkSecMaterialDesc.FrameCounter = keyItems.frameCounter;
+      found = TRUE;
+      if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i,
+                           sizeof(nwkSecMaterialDesc_t),
+                           &nwkSecMaterialDesc) != SUCCESS)
+      {
+        goto b3_checkpoint_done;
+      }
+      break;
+    }
+  }
+
+  if (!found)
+  {
+    if (gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES == 0)
+    {
+      goto b3_checkpoint_done;
+    }
+    // The last slot is the generic item, NEVER unsigned i-1 on no slots.
+    memset(nwkSecMaterialDesc.extendedPanID,0xFF,Z_EXTADDR_LEN);
+    nwkSecMaterialDesc.FrameCounter = keyItems.frameCounter;
+    if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE,
+                         gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1,
+                         sizeof(nwkSecMaterialDesc_t),
+                         &nwkSecMaterialDesc) != SUCCESS)
+    {
+      goto b3_checkpoint_done;
+    }
+  }
+
+  // Save key snapshot after counter material: a failure cannot falsely
+  // acknowledge both records. This is NOT cross-item atomic key rotation.
+  if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),
+                    (void *)&keyItems) == SUCCESS)
+  {
+    nwkFrameCounterChanges = 0;
+  }
+
+b3_checkpoint_done:
+  memset(&keyItems, 0, sizeof(keyItems));
+}'''
+    source = b3_replace_function(
+        source, "void ZDApp_SaveNwkKey( void )", save,
+        ["nwkFrameCounterChanges = 0;", "i - 1,", "SSP_ReadNwkActiveKey"])
+    restore = r'''void ZDApp_RestoreNwkSecMaterial(void)
+{
+  uint8_t Found = FALSE;
+  uint8_t i;
+  nwkSecMaterialDesc_t nwkSecMaterialDesc = {0};
+  uint8_t UpdateFrameCounter = FALSE;
+  const uint32_t reserve = (uint32_t)MAX_NWK_FRAMECOUNTER_CHANGES +
+                           (uint32_t)NWK_FRAMECOUNTER_CHANGES_RESTORE_DELTA;
+
+  // Reject absent/corrupt NV instead of comparing a stale/uninitialized row.
+  for( i = 0; i < gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES; i++)
+  {
+    if (osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i, 0,
+                        sizeof(nwkSecMaterialDesc_t),
+                        &nwkSecMaterialDesc) != SUCCESS)
+    {
+      return;
+    }
+    if (OsalPort_memcmp(_NIB.extendedPANID,
+                        nwkSecMaterialDesc.extendedPanID,Z_EXTADDR_LEN))
+    {
+      UpdateFrameCounter = TRUE;
+      Found = TRUE;
+      break;
+    }
+  }
+
+  if (!Found && gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES > 0 &&
+      nwkSecMaterialDesc.FrameCounter)
+  {
+    UpdateFrameCounter = TRUE;
+    i = gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1;
+  }
+
+  if (UpdateFrameCounter && (!FrameCounterUpdated))
+  {
+    // Never wrap the TX frame counter for the active key.
+    if (reserve == 0 || nwkSecMaterialDesc.FrameCounter > 0xFFFFFFFFUL - reserve)
+    {
+      return;
+    }
+    nwkSecMaterialDesc.FrameCounter += reserve;
+
+    // Durable reservation BEFORE publishing either the RAM floor or
+    // FrameCounterUpdated. B1 must still gate all encrypted RF sends.
+    if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i,
+                         sizeof(nwkSecMaterialDesc_t),
+                         &nwkSecMaterialDesc) != SUCCESS)
+    {
+      return;
+    }
+    nwkFrameCounter = nwkSecMaterialDesc.FrameCounter;
+    FrameCounterUpdated = TRUE;
+    nwkFrameCounterChanges = 0;
+  }
+}'''
+    source = b3_replace_function(
+        source, "void ZDApp_RestoreNwkSecMaterial(void)", restore,
+        ["FrameCounterUpdated = TRUE;", "nwkFrameCounter =", "osal_nv_read_ex"])
+    return source
+
+
 def apply(sdk, receipt):
     sdk = Path(sdk).resolve()
     prepared = []
@@ -361,7 +506,7 @@ def apply(sdk, receipt):
             "nvocmp.c": nvocmp_changes,
             "zd_sec_mgr.c": security_changes,
             "zd_sec_mgr.h": entropy_header_changes,
-            "zd_app.c": entropy_zdapp_changes,
+            "zd_app.c": lambda src: nwk_checkpoint_changes(entropy_zdapp_changes(src)),
             "zglobals.c": entropy_zglobals_changes,
             "zstacktask.c": entropy_zstacktask_changes,
         }
