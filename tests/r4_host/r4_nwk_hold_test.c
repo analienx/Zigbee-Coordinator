@@ -10,6 +10,10 @@
 
 extern int b1_nv_runtime_hold_active(void);
 extern void ZDApp_SaveNwkKey(void);
+/* Real TI ZMac function bodies, synthetic MAP_MAC boundary in other TU. */
+extern unsigned r4_mac_submitted(void);
+extern uint8_t r4_mac_attempt_secured_and_nodata(void);
+#define R4_MAC_HOLD_NO_RESOURCES 0x11u
 b3_nib_t _NIB;
 uint8_t gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES=3u;
 uint32_t nwkFrameCounter, nwkFrameCounterChanges=9u;
@@ -85,9 +89,15 @@ int main(int argc,char **argv)
 
     assert(!b1_nv_runtime_hold_active());
     assert(!b1_management_get_hold_active());
+    /* Exact B1 admission shared between this fused NWK C, B1 management
+     * and TWO real patched TI ZMac request C bodies. Baseline must submit. */
+    assert(r4_mac_attempt_secured_and_nodata()==SUCCESS);
+    assert(r4_mac_submitted()==2u);
     ZDApp_SaveNwkKey();
 
     if(strcmp(s,"healthy")==0) {
+        assert(r4_mac_attempt_secured_and_nodata()==SUCCESS);
+        assert(r4_mac_submitted()==4u);
         assert(rows[1].FrameCounter==2000u);
         assert(key_write_count==1 && savedKey.frameCounter==2000u);
         assert(nwkFrameCounterChanges==0u);
@@ -100,6 +110,10 @@ int main(int argc,char **argv)
         assert(b1_management_get_hold_active());
         assert(b1_nv_runtime_hold_active());
         assert(!b1_management_network_ready());
+        /* Genuine source-extracted TI MAC requests are denied AFTER
+         * failed checkpoint/HOLD, not just an isolated boolean fixture. */
+        assert(r4_mac_attempt_secured_and_nodata()==R4_MAC_HOLD_NO_RESOURCES);
+        assert(r4_mac_submitted()==2u);
         const int table_before=table_write_count,key_before=key_write_count;
         ZDApp_SaveNwkKey();
         assert(table_write_count==table_before && key_write_count==key_before);
