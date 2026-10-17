@@ -1,8 +1,6 @@
 name: R4 B4 bounded diagnostics source guards
 
 on:
-  push:
-    branches: [feat/p7u-r4-b4-native-npi-depth-counters]
   pull_request:
     paths:
       - ".github/workflows/test-r4-b4.yml"
@@ -76,7 +74,7 @@ jobs:
       - name: Verify experimental pinned TI patch on disposable source and never conflate source with native linkage
         run: |
           python firmware/slzb-06p7u/r4/b4/b4_native_patch.py --sdk /tmp/b4-sources/ti --receipt /tmp/b4-native-source-only.json
-          python -c 'import json; d=json.load(open("/tmp/b4-native-source-only.json")); assert d["stage"]=="PATCHED_DISPOSABLE_SDK_NOT_LINKED"; assert d["valid_counter_indices"]==[4]'
+          python -c 'import json; d=json.load(open("/tmp/b4-native-source-only.json")); assert d["stage"]=="PATCHED_DISPOSABLE_SDK_NOT_LINKED"; assert d["valid_counter_indices"]==[0,1,2,3,4]'
       - name: Verify pinned herdsman single-owner overlay exists and remains default-off
         run: |
           python host/r4-b4/herdsman_overlay.py --checkout /tmp/b4-sources/herdsman --receipt /tmp/b4-herdsman-source-only.json
