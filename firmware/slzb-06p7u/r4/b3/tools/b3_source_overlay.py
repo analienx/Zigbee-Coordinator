@@ -317,13 +317,19 @@ def security_changes(source):
     source = one(source,
         "  ZDSecMgrGenerateRndKey(SeedKey);\n\n  if((SUCCESS == osal_nv_item_init",
         "  if (ZDSecMgrGenerateRndKey(SeedKey) != ZSuccess)\n  {\n    memset(SeedKey, 0, SEC_KEY_LEN);\n    return; // never create or overwrite TC seed with failed entropy\n  }\n\n  if((SUCCESS == osal_nv_item_init")
+    source = one(source, "void ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, uint8_t shift, uint8_t *key)\n{\n  uint8_t i;\n  uint8_t tempKey[SEC_KEY_LEN];\n  //shift must be less than SEC_KEY_LEN. This is to handle the cases where SeedShift is >= SEC_KEY_LEN.\n  shift &= 0x0F;\n\n  if((key != NULL) && (extAddr != NULL))\n  {\n    //Read the key\n    osal_nv_read(ZCD_NV_TCLK_SEED,0,SEC_KEY_LEN,tempKey);\n\n    //shift the seed\n    OsalPort_memcpy(key, &tempKey[shift], SEC_KEY_LEN - shift);\n    OsalPort_memcpy(&key[SEC_KEY_LEN - shift], tempKey, shift);\n\n    //Create the key from the seed\n    for(i = 0; i < Z_EXTADDR_LEN; i++)\n    {\n      key[i] ^= extAddr[i];\n      key[i+Z_EXTADDR_LEN] ^= extAddr[i];\n    }\n  }\n}", "ZStatus_t ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, uint8_t shift, uint8_t *key)\n{\n  uint8_t i;\n  uint8_t tempKey[SEC_KEY_LEN] = {0};\n  // Never turn a failed seed NV read into a newly derived TC transport key.\n  if (key == NULL || extAddr == NULL) return ZFailure;\n  memset(key, 0, SEC_KEY_LEN);\n  if (osal_nv_read(ZCD_NV_TCLK_SEED, 0, SEC_KEY_LEN, tempKey) != SUCCESS)\n  {\n    memset(tempKey, 0, sizeof(tempKey));\n    return ZFailure;\n  }\n  shift &= 0x0F;\n  OsalPort_memcpy(key, &tempKey[shift], SEC_KEY_LEN - shift);\n  OsalPort_memcpy(&key[SEC_KEY_LEN - shift], tempKey, shift);\n  for (i = 0; i < Z_EXTADDR_LEN; i++)\n  {\n    key[i] ^= extAddr[i];\n    key[i + Z_EXTADDR_LEN] ^= extAddr[i];\n  }\n  memset(tempKey, 0, sizeof(tempKey));\n  return ZSuccess;\n}")
+    source = one(source, "      ZDSecMgrGenerateKeyFromSeed(TCLKDevEntry.extAddr,TCLKDevEntry.SeedShift,req.key);", "      if (ZDSecMgrGenerateKeyFromSeed(TCLKDevEntry.extAddr,\n                                      TCLKDevEntry.SeedShift, req.key) != ZSuccess)\n      {\n        memset(key, 0, SEC_KEY_LEN);\n        return; // No APSME_TransportKeyReq on unreadable seed\n      }")
+    source = one(source, "    // set key data to all 0s if NV read fails\n    memset(&tmpKey, 0x00, sizeof(tmpKey));", "    // Reject unreadable NWK key; zero is NEVER a substitute transport key.\n    memset(&tmpKey, 0x00, sizeof(tmpKey));\n    return ZFailure;")
     return source
 
 
 def entropy_header_changes(source):
-    return one(source,
+    source = one(source,
         'extern void ZDSecMgrGenerateRndKey(uint8_t* pKey);',
         'extern uint8_t ZDSecMgrGenerateRndKey(uint8_t* pKey);')
+    return one(source,
+        'extern void ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, uint8_t shift, uint8_t *key);',
+        'extern ZStatus_t ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, uint8_t shift, uint8_t *key);')
 
 
 def entropy_zdapp_changes(source):
@@ -535,7 +541,8 @@ def apply(sdk, receipt):
                   "osal_nv_init void ABI drops initialization failure",
                   "B1 HOLD_SECURITY integration unimplemented",
                   "per-key reserve-before-send and native B1 hold wiring not proven",
-                  "TRNG status checked at all public TI callers, RF blocking on hold still unintegrated"],
+                  "TRNG status checked at all public TI callers, RF blocking on hold still unintegrated",
+              "TC seed-derived and NWK key transport read failures now denied in actual TI source; B1 RF gate still unintegrated"],
               "files": [{"path": path, "original_blob_sha1": old,
                          "modified_sha256": hashlib.sha256(raw).hexdigest()}
                         for _, raw, path, old in prepared]}
