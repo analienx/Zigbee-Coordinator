@@ -201,8 +201,12 @@ def plan(root):
     # subsequent response. Do not change AF/ZDO/stock SYS waiter policy.
     changes[ZNP] = replace_once(
         changes[ZNP],
-        "                const result = await waiter.start().promise;",
-        """                // B4_EXPERIMENTAL_EXISTING_OWNER: prevent a timed-out
+        """                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);
+                this.unpiWriter.writeFrame(object.unpiFrame);
+                const result = await waiter.start().promise;""",
+        """                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);
+                this.unpiWriter.writeFrame(object.unpiFrame);
+                // B4_EXPERIMENTAL_EXISTING_OWNER: prevent a timed-out
                 // diagnostic waiter lingering when the radio stays silent.
                 const result = object.command.name === "r4DiagReadOnly"
                     ? await waiter.start().promise.catch((error: unknown) => {
