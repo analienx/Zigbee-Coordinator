@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'tools/b2_scope_guard.py'
+      - 'tools/b2_b1_patch_compat.py'
+      - 'tests/test_r4_b2_b1_patch_compat.py'
       - 'tests/test_r4_b2_scope_guard.py'
       - '.github/workflows/test-r4-b2-scope-guard.yml'
   push:
@@ -22,13 +24,23 @@ jobs:
       - name: Run hostile B2 scope and ancestry tests
         run: |
           set -Eeuo pipefail
-          python -m unittest -v tests.test_r4_b2_scope_guard
+          python -m unittest -v tests.test_r4_b2_scope_guard tests.test_r4_b2_b1_patch_compat
           python tools/b2_scope_guard.py --repo . --out /tmp/b2-scope/B2_OWNER_BOUNDARY.json
           cat /tmp/b2-scope/B2_OWNER_BOUNDARY.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Inspect DRAFT B1 PR 93 source patch against sealed common B0 (NO merge)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin refs/pull/93/head
+          python tools/b2_b1_patch_compat.py --repo . --b1-ref FETCH_HEAD \
+            --out /tmp/b2-scope/B2_B1_DRAFT_PATH_COMPAT.json
+          cat /tmp/b2-scope/B2_B1_DRAFT_PATH_COMPAT.json >> "$GITHUB_STEP_SUMMARY"
       - name: Archive exact source ownership proof
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: r4-b2-owner-boundary-${{ github.event.pull_request.head.sha || github.sha }}
-          path: /tmp/b2-scope/B2_OWNER_BOUNDARY.json
+          path: |
+            /tmp/b2-scope/B2_OWNER_BOUNDARY.json
+            /tmp/b2-scope/B2_B1_DRAFT_PATH_COMPAT.json
           if-no-files-found: error
           retention-days: 30
