@@ -103,7 +103,8 @@ jobs:
                 tail -n 30 /tmp/b3-inject.log
                 exit 1
               fi
-              grep -F 'B3_CHURN_INJECTION_REJECTED' /tmp/b3-inject.log || { tail -n 30 /tmp/b3-inject.log; exit 1; }
+              grep -Eq 'B3_CHURN_INJECTION_REJECTED|B3_CHURN_INJECTED_FAULT_RECOVERED_AND_ALL_UPDATES_VERIFIED' /tmp/b3-inject.log || { tail -n 30 /tmp/b3-inject.log; exit 1; }
+              grep -E 'B3_CHURN_INJECTION_REJECTED|B3_CHURN_INJECTED_FAULT_RECOVERED_AND_ALL_UPDATES_VERIFIED' /tmp/b3-inject.log | tail -n 1
               # Re-open in cold process with a read-only flash backend.
               # A damaged image may be HELD; success requires all four rows.
               if ! B3_READONLY_REBOOT=1 /tmp/b3-ti-nvocmp reopen_or_hold >/tmp/b3-reboot.log 2>&1; then

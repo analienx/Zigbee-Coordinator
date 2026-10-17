@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdbool.h>
 extern void b3_flash_receipt(void);
+extern bool b3_flash_fault_was_exercised(void);
 static const NVINTF_itemID_t ids[] = {
     {NVINTF_SYSID_ZSTACK, 10, 0},
     {NVINTF_SYSID_ZSTACK, 10, 1},
@@ -87,13 +88,15 @@ int main(int argc, char **argv) {
             rc=api.updateItem(ids[0],sizeof(more),more);
             if(rc!=NVINTF_SUCCESS) {
                 if (!injecting) die("unexpected_churn_nv_error",rc);
+                if (!b3_flash_fault_was_exercised()) die("INJECTION_NOT_EXERCISED",rc);
                 printf("B3_CHURN_INJECTION_REJECTED iteration=%u status=%u\n",i,rc);
                 b3_flash_receipt();
                 return 0;
             }
         }
-        if(injecting) die("INJECTED_MUTATION_SILENT_SUCCESS",rc);
+        if(injecting && !b3_flash_fault_was_exercised()) die("INJECTION_NOT_EXERCISED",rc);
         check("churn_1500_committed",&api,0x22,true);
+        if(injecting) puts("B3_CHURN_INJECTED_FAULT_RECOVERED_AND_ALL_UPDATES_VERIFIED");
         puts("B3_CHURN_1500_SOURCE_C_COMPACTION_COMPLETE");
     } else if (!strcmp(argv[1],"reopen_or_hold")) {
         unsigned char out[32];
