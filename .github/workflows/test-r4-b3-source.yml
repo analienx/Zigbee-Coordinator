@@ -87,3 +87,35 @@ jobs:
           fi
           grep -E 'Assertion|Aborted' /tmp/b3-mutant.log
           echo "Mutation rejected at actual OSAL write function"
+
+      - name: Compile exact TI APS/TCLK security checkpoint bodies and exercise failures
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_security_extract.py \
+            --source /tmp/b3sdk/source/ti/zstack/stack/zdo/zd_sec_mgr.c \
+            --out /tmp/b3host/ti_security_bodies.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_security_bodies.c \
+            tests/b3_host/b3_security_test.c -o /tmp/b3host/ti_security
+          /tmp/b3host/ti_security
+      - name: Security mutant must fail the pending-write assertion, not a superficial checksum
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          f=Path('/tmp/b3host/ti_security_bodies.c')
+          s=f.read_text()
+          anchor='pKeyData) == SUCCESS)'
+          assert s.count(anchor)==2
+          f.write_text(s.replace(anchor,'pKeyData) >= 0)'))
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Wno-type-limits \
+            -I tests/b3_host /tmp/b3host/ti_security_bodies.c \
+            tests/b3_host/b3_security_test.c -o /tmp/b3host/ti_security_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_security_mutant > /tmp/b3-security-mutant.log 2>&1; then
+            echo "Mutant SURVIVED security pending-write assertion"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-security-mutant.log
+          echo "Negative security mutant rejected by actual function-body assertion"
