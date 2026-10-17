@@ -335,7 +335,6 @@ SIGNATURES = (
     'static uint8_t b1_sec_validate_nib(uint8_t onNetwork)',
     'int b1_sec_validate_restored(void)',
     'int b1_sec_restored_network_validated(void)',
-    'void ZDSecMgrEntryInit(uint8_t state)',
     'static void ZDSecMgrRestoreFromNV( void )',
     'void ZDSecMgrEntryInit(uint8_t state)',
     'void APSME_TCLinkKeyInit(uint8_t setDefault)',
