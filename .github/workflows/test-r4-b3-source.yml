@@ -135,6 +135,39 @@ jobs:
           /tmp/b3host/ti_security_types | tee /tmp/b3-types.out
           grep -Fx "B3_TI_833_REAL_TYPES APS=24 TCLK=20 item_hdr=7" /tmp/b3-types.out
 
+
+      - name: Compile real TI NWK save and restore bodies with rejection and overflow cases
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_nwk_extract.py \
+            --source /tmp/b3sdk/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/b3host/ti_nwk.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_nwk.c \
+            tests/b3_host/b3_nwk_test.c -o /tmp/b3host/ti_nwk
+          /tmp/b3host/ti_nwk
+      - name: NWK negative control must catch rejected-save acknowledgment
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/b3host/ti_nwk.c')
+          s=p.read_text()
+          old='if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),'
+          assert s.count(old)==1
+          s=s.replace(old,'if (1 || osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),')
+          p.write_text(s)
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Wno-error \
+            -I tests/b3_host /tmp/b3host/ti_nwk.c \
+            tests/b3_host/b3_nwk_test.c -o /tmp/b3host/ti_nwk_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_nwk_mutant >/tmp/b3-nwk-mutant.log 2>&1; then
+            echo "Mutant survived failed NWK key write acknowledgment"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-nwk-mutant.log
+
       - name: Test real TI generated-key entropy failure and four publishing caller guards
         run: |
           set -euo pipefail
