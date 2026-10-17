@@ -394,7 +394,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b0-NOT_FLASH_QUALIFIED-${{ github.sha }}
+          name: r4-b0-NOT_FLASH_QUALIFIED-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
@@ -404,7 +404,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b0-FAILED_DIAGNOSTICS_NO_FIRMWARE-${{ github.sha }}
+          name: r4-b0-FAILED_DIAGNOSTICS_NO_FIRMWARE-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
