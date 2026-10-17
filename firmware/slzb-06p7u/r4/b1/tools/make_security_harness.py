@@ -76,6 +76,7 @@ typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t pendingFlag, entryUsed; 
 typedef struct { uint8_t extAddr[8], dstExtAddr[8], seedShift, keyID; uint16_t keyNvId, keyNvSection; uint32_t frmCntr; } SSP_Info_t;
 typedef struct { uint16_t user, nwkAddr; } AddrMgrEntry_t;
 static uint8_t held, existing = TRUE, b1_sec_existing_network;
+static uint8_t fail_alloc;
 static uint8_t probe_during_security_preflight;
 static unsigned preflight_observation_count;
 int b1_sec_restored_network_validated(void);
@@ -102,7 +103,8 @@ static int b1_nv_existing_header_candidate(void) { return existing; }
 static void b1_security_runtime_hold_latch(void) { held = TRUE; }
 static uint8_t OsalPort_memcmp(const void *a, const void *b, size_t n) { return memcmp(a,b,n)==0; }
 #define OsalPort_memcpy memcpy
-#define OsalPort_malloc malloc
+#define OsalPort_malloc b1_security_test_malloc
+static void *b1_security_test_malloc(size_t n) {return fail_alloc ? NULL : malloc(n);}
 static uint8_t osal_nv_read(uint16_t id, uint16_t off, uint16_t len, void *dst)
 {
   const void *src = NULL; size_t total = 0;
@@ -195,7 +197,19 @@ MAIN = r'''
 int main(int argc,char **argv)
 {
   assert(argc==2); const char *s=argv[1]; setup();
-  if(!strcmp(s,"preflight_publication")) {
+  if(!strcmp(s,"entry_allocation_fail")) {
+    ZDSecMgrEntries=NULL; fail_alloc=TRUE;
+    ZDSecMgrEntryInit(ZDO_INITDEV_NEW_NETWORK_STATE);
+    assert(held && ZDSecMgrEntries==NULL && writes==0 && creates==0);
+    puts("B1_SECURITY_ENTRY_ALLOCATION_FAILURE_LATCHED_PASS");
+  } else if(!strcmp(s,"entry_allocation_ok")) {
+    ZDSecMgrEntries=NULL;
+    ZDSecMgrEntryInit(ZDO_INITDEV_NEW_NETWORK_STATE);
+    assert(!held && ZDSecMgrEntries!=NULL && writes==0 && creates==0);
+    assert(ZDSecMgrEntries[0].ami==INVALID_NODE_ADDR);
+    free(ZDSecMgrEntries); ZDSecMgrEntries=NULL;
+    puts("B1_SECURITY_ENTRY_ALLOCATION_HEALTHY_PASS");
+  } else if(!strcmp(s,"preflight_publication")) {
     probe_during_security_preflight=TRUE;
     assert(!b1_sec_restored_network_validated());
     assert(b1_sec_validate_restored());
@@ -321,6 +335,7 @@ SIGNATURES = (
     'static uint8_t b1_sec_validate_nib(uint8_t onNetwork)',
     'int b1_sec_validate_restored(void)',
     'int b1_sec_restored_network_validated(void)',
+    'void ZDSecMgrEntryInit(uint8_t state)',
     'static void ZDSecMgrRestoreFromNV( void )',
     'void ZDSecMgrEntryInit(uint8_t state)',
     'void APSME_TCLinkKeyInit(uint8_t setDefault)',
@@ -330,7 +345,7 @@ SIGNATURES = (
 )
 
 SCENARIOS = (
-    'positive', 'preflight_publication', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
+    'positive', 'preflight_publication', 'entry_allocation_fail', 'entry_allocation_ok', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
     'missing_nwk', 'missing_seed', 'missing_bdb', 'missing_tc', 'zero_tc', 'wrong_generation',
     'missing_aps', 'missing_tclk', 'bad_aps_index', 'aps_overflow',
     'tclk_overflow', 'bad_header_count', 'bad_seed_shift',
@@ -343,6 +358,9 @@ SCENARIOS = (
 )
 
 MUTANTS = {
+    'entry_allocation': ('entry_allocation_fail',
+        '      b1_security_runtime_hold_latch(); /* no uninitialized security table */',
+        '      /* MUTANT: silently return without latching security failure */'),
     'early_security_attestation': ('preflight_publication',
         '  if (osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(nwk), &nwk) != SUCCESS ||',
         '  b1_sec_existing_network = TRUE; /* MUTANT: trust before checks */\n'
