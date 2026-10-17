@@ -1,4 +1,4 @@
-name: R4 final B0-B4 seed+NVOCMP dual TI native (NOT FLASH)
+name: R4 direct ROM boot B0-B4 dual native (NOT FLASH)
 
 on:
   pull_request:
@@ -70,6 +70,7 @@ jobs:
         run: |
           python -m unittest -v tests.test_r4_preserve_resident_boot_nvs
           python -m unittest -v tests.test_r4_package_resident_app
+          python -m unittest -v tests.test_r4_prepare_direct_rom_boot
       - name: P7U fitted MCUboot signature verification and adversarial denial (synthetic only)
         run: |
           python -m pip install cryptography==44.0.2
@@ -488,12 +489,12 @@ jobs:
             --receipt /tmp/b0out/b2-p1-composite-compiler-opts.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
             --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
-          # Preserve fitted ROM->0xAC000 resident stage and its CCFG unchanged.
-          # Only the disposable pinned CCS source and linker layout are altered.
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_preserve_resident_boot_nvs.py" \
+          # Direct ROM boot at vector 0; keep 0xA0000 NVS and resident boot bytes.
+          # Offline build only; no CCFG modification or hardware flash.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_prepare_direct_rom_boot.py" \
             --syscfg "$project/znp.syscfg" \
             --linker "$sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
-            --receipt /tmp/b0out/r4-preserve-boot-nvs.json
+            --receipt /tmp/b0out/r4-direct-rom-source.json
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
@@ -516,9 +517,8 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
             --out-dir "$project/default/syscfg" \
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
-            --resident-vectors \
             --receipt /tmp/b0out/p7u-generated-native.json
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --preserve-resident-boot
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --direct-rom-boot
           # Independently prove the REAL linked HEX intersects boot CCFG's
           # whole 8KiB erase sector, even if its sparse records omit NV.
           # This is a DENIAL, never a flash/erase/restore authorization.
@@ -539,34 +539,19 @@ jobs:
           # Check exact native app sectors below historical NV5/NV2 union.
           # Does not generate a flashable image, read private NV, or authorize flash.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_flash_preflight.py" \
-            --artifacts /tmp/b0out --resident-vectors --receipt /tmp/b0out/r4-app-sector-preflight.json
-          # Package the exact linked 0x80 vectors with the verified original
-          # resident-loader header. This is an offline APP-ONLY artifact,
-          # never a programmer invocation or flash authorization.
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_package_resident_app.py" \
-            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-resident-app
-          # The preliminary R4 image has no matching ECDSA signature.
-          # This negative control must explicitly refuse to treat it as
-          # a flash-ready artifact, even after native CI succeeds.
+            --artifacts /tmp/b0out --receipt /tmp/b0out/r4-app-sector-preflight.json
+          # Direct-ROM native vector image starts at physical flash address 0.
+          # Refuse signed-container packaging: that belongs to the other boot path.
           python - <<'PY'
-          import importlib.util
           import json
           from pathlib import Path
-          root=Path('firmware/slzb-06p7u/r4/release')
-          spec=importlib.util.spec_from_file_location('signed_gate',root/'r4_verify_mcuboot_signed_image.py')
-          mod=importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(mod)
-          output=Path('/tmp/b0out/r4-resident-app')
-          receipt=json.loads((output/'receipt.json').read_text())
-          assert receipt['flash_authorized'] is False
-          unsigned=output/receipt['output_hex']
-          try:
-              mod.read_app_only_hex(unsigned)
-          except mod.Rejected as exc:
-              assert 'R4_SIGNED_IMAGE_REQUIRED_TLV_MISSING' in str(exc), str(exc)
-              print('REAL NATIVE R4: UNSIGNED MCUboot image correctly DENIED for flash')
-          else:
-              raise AssertionError('Unsigned MCUboot app unexpectedly passed trust gate')
+          r=json.loads(Path('/tmp/b0out/r4-app-sector-preflight.json').read_text())
+          assert r['expected_vector_offset']=='0x0'
+          assert r['last_application_byte_exclusive'].startswith('0x')
+          assert int(r['last_application_byte_exclusive'],16)<0xA0000
+          assert len(r['application_sectors'])==23
+          assert r['flash_authorized'] is False
+          print('DIRECT ROM 0x0 LINKED / INTERNAL NVS BELOW 0xA4000; FLASH NOT AUTHORIZED')
           PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
