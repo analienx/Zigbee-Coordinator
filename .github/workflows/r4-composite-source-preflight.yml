@@ -1,0 +1,53 @@
+name: R4 Review II composite overlap denial (NO NATIVE BUILD, NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'tools/r4_composite_source_preflight.py'
+      - '.github/workflows/r4-composite-source-preflight.yml'
+permissions:
+  contents: read
+jobs:
+  detect-unresolved-overlap:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout this exact PR HEAD (not a merge candidate)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Retrieve exact public sibling Git objects read only
+        run: |
+          set -euo pipefail
+          for sha in \
+            dc74b44019853f8b6cadf75c4e6e940fc715c906 \
+            140c38f19dbd90225ba86e0511f24469e0d243f0 \
+            d13a48f5226d42e247a17d9198d84c94a4415030 \
+            b481e0beabf1966900644f69d7f5d024708ebf73 \
+            3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
+              git -c protocol.version=2 fetch -q --no-tags --depth 1 origin "$sha"
+              test "$(git rev-parse "$sha")" = "$sha"
+          done
+      - name: Assert blocked-by-overlap status (a green DENIAL is not firmware green)
+        run: |
+          set -euo pipefail
+          python3 tools/r4_composite_source_preflight.py \
+            --repo . --receipt /tmp/r4-composite-source-denial.json \
+            --expect-blocked
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('/tmp/r4-composite-source-denial.json').read_text())
+          assert x['source_ready'] is False
+          assert x['flash_authorized'] is False
+          assert x['native_composite_built'] is False
+          assert x['integrated_sha'] is None
+          assert len(x['b1_b3_unreconciled_donor_paths']) >= 3
+          print('EXPECTED_COMPOSITE_DENIAL_VERIFIED — no release/native/flash claims')
+          PY
+      - name: Upload only blocked compatibility receipt, NEVER firmware
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r4-composite-BLOCKED-NO-FLASH-${{ github.event.pull_request.head.sha }}
+          path: /tmp/r4-composite-source-denial.json
+          if-no-files-found: warn
