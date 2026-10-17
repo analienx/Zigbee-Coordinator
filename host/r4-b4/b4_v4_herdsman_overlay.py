@@ -222,11 +222,12 @@ def plan(root):
     znp = original[ZNP]
     # Both transport checks must also apply to F1, but ONLY the optional
     # diagnostic opcodes. All ordinary command handling remains unmodified.
-    znp = once(znp,
-        'object.command.name === "r4DiagReadOnly" &&',
-        '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
-    znp = once(znp,
-        'object.command.name === "r4DiagReadOnly" &&',
+    # The pinned v3 overlay inserts exactly TWO pre-write optional-only
+    # checks (disconnected/Waitress and late OTA veto). Extend both.
+    old_check = 'object.command.name === "r4DiagReadOnly" &&'
+    if znp.count(old_check) != 2:
+        raise ValueError("v3 diagnostic owner mutex guard count drift")
+    znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
     return {DEFINITION: (original[DEFINITION], definition),
             PARAM: (original[PARAM], params), BUFFALO: (original[BUFFALO], buffalo),
