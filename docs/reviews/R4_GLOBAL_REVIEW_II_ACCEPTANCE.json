@@ -151,13 +151,12 @@
       "pr": 105,
       "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a",
       "verdict": "PARTIAL",
-      "ci": "NATIVE_IN_PROGRESS_AT_OBSERVATION",
+      "ci": "PASS_HOSTED_NATIVE_STANDALONE_EXACT_HEAD",
       "run_ids": [
         39024103773,
         39024103860
       ],
       "blockers": [
-        "EXACT_HEAD_NATIVE_FINAL",
         "TRNG_RUNTIME_LINK_STACK",
         "B1_HOLD_F2_UNAVAILABLE",
         "PHYSICAL_EPOCH"
@@ -254,8 +253,8 @@
     },
     {
       "id": "R4-II-08",
-      "severity": "P1",
-      "title": "B4 F2 exact-head native pending",
+      "severity": "P2",
+      "title": "Exact-head native now green; do not rely on stale old-head receipts",
       "owner": "B4_V4_F2"
     },
     {
@@ -297,5 +296,16 @@
     "G3_B2_SCOPE",
     "G4_COMPOSITE_NATIVE",
     "G5_AUTHORIZED_PHYSICAL"
-  ]
+  ],
+  "latest_native_recheck": {
+    "pr": 105,
+    "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a",
+    "run_ids": [
+      39024103773,
+      39024103860
+    ],
+    "status": "COMPLETED_SUCCESS",
+    "seven_workflows": "SUCCESS",
+    "scope": "STANDALONE_ONLY_NOT_COMPOSITE_OR_HARDWARE"
+  }
 }
