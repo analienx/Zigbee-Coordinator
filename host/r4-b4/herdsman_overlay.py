@@ -219,6 +219,36 @@ def plan(root):
        "    public async stop(): Promise<void> {",
        ADAPTER_METHOD + "    public async stop(): Promise<void> {")
     changes[ADAPTER] = adapter
+    # Internal herdsman Controller is the owner of its private Adapter.
+    # Z2M never casts/accesses private .adapter or instantiates a second Znp.
+    controller = replace_once(
+        originals[CONTROLLER],
+        'import assert from "node:assert";',
+        'import assert from "node:assert";\nimport {ZStackAdapter} from "../adapter/z-stack/adapter/zStackAdapter";',
+    )
+    controller = replace_once(
+        controller,
+        "    public isStopping(): boolean {",
+        """    /** B4_EXPERIMENTAL_EXISTING_OWNER: internal existing-owner only.
+     *  A real Z2M OTA predicate is required and rechecked before TX.
+     */
+    public async b4ReadOnlyDiagnosticsFromExistingOwner(input: {
+        enabled: boolean;
+        hostIdle: boolean;
+        otaActive: boolean;
+        stillAllowed: () => boolean;
+    }) {
+        if (this.stopping || this.adapterDisconnected ||
+            typeof input?.stillAllowed !== "function" ||
+            !(this.adapter instanceof ZStackAdapter)) {
+            return undefined;
+        }
+        return await this.adapter.b4ReadOnlyDiagnostics(input);
+    }
+
+    public isStopping(): boolean {""",
+    )
+    changes[CONTROLLER] = controller
     # The pinned AsyncMutex.count counts *queued* requests, not the
     # in-flight lock. An empty queue is NOT sufficient to prove ZNP idle.
     changes[MUTEX] = replace_once(
