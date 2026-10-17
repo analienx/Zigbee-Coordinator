@@ -7,6 +7,7 @@
 #define ZSuccess 0
 #define ZFailure 1
 #define TRUE 1
+#define FALSE 0
 #define SEC_KEY_LEN 16
 #define Z_EXTADDR_LEN 8
 #define ZCD_NV_TCLK_SEED 0x101
