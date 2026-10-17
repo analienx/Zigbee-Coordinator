@@ -164,6 +164,41 @@ jobs:
           if [ "$rc" -eq 0 ]; then echo "MUTANT SURVIVED: checkpoint rollback not caught"; exit 1; fi
           grep -Ei 'Assertion|assertion' /tmp/r4-nwk-mutant.log
           echo "Deliberate rollback guard removal KILLED by actual B1+B3 integration oracle." >> "$GITHUB_STEP_SUMMARY"
+      - name: Security key-checkpoint failure must latch B1 HOLD (mutation killed)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          original=Path('/tmp/r4-fused-nwk-save.c').read_text()
+          guard=(
+              "  else\n  {\n    b1_security_runtime_hold_latch();\n"
+              "    /* NWKKEY failed, was unreadable, or returned corrupt bytes. */\n"
+              "  }"
+          )
+          assert original.count(guard)==1, "one exact NWKKEY checkpoint HOLD failure guard"
+          Path('/tmp/r4-fused-nwk-no-key-hold-mutant.c').write_text(
+              original.replace(guard,"  else\n  {\n    /* deliberate missing B1 security latch */\n  }"))
+          PY
+          clang -std=c11 -g -O1 -Wall -Wextra -Werror \
+            -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
+            -fno-omit-frame-pointer -fsanitize=address,undefined \
+            -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/r4-fused-nwk-no-key-hold-mutant.c \
+            /tmp/r4-fused-zmac-admissions.c \
+            tests/r4_host/r4_nwk_hold_test.c \
+            firmware/slzb-06p7u/r4/b1/b1_management.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/r4-nwk-no-key-hold-mutant
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            /tmp/r4-nwk-no-key-hold-mutant key-write-fail) >/tmp/r4-nwk-key-hold-mutant.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -E "Assertion.*b1_management_get_hold_active|assertion.*b1_management_get_hold_active" /tmp/r4-nwk-key-hold-mutant.log
+          echo "NWKKEY failure-to-HOLD mutant KILLED by actual cross-phase TI C oracle." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload only source receipts, no ELF
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -178,4 +213,5 @@ jobs:
             /tmp/r4-fused-nwk-save-receipt.json
             /tmp/r4-fused-zmac-admission-receipt.json
             /tmp/r4-nwk-mutant.log
+            /tmp/r4-nwk-key-hold-mutant.log
           if-no-files-found: warn
