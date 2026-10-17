@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL https://dev.meta.ai/install.sh -o "$RUNNER_TEMP/muse-install.sh"
-          sh "$RUNNER_TEMP/muse-install.sh"
+          bash "$RUNNER_TEMP/muse-install.sh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Verify Spark 1.3 XHIGH flags without model inference
         shell: bash
@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL https://dev.meta.ai/install.sh -o "$RUNNER_TEMP/muse-install.sh"
-          sh "$RUNNER_TEMP/muse-install.sh"
+          bash "$RUNNER_TEMP/muse-install.sh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Prepare source-only review task (no repository scripts)
         shell: bash
