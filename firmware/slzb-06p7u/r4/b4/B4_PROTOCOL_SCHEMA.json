@@ -131,14 +131,20 @@
     "native_b4_experimental": {
       "wire": "r4_proposed_v3",
       "supported_counter_indices": [
+        0,
+        1,
+        2,
+        3,
         4
       ],
-      "validity": "0x00000010 or 0 when NPI_SREQRSP not compiled",
+      "validity": "0x0000001F when NPI_SREQRSP built; 0x0000000C otherwise (async depth and HWM only)",
       "capabilities": 0,
       "radio_boot_id": 0,
       "uptime_ms": 0,
       "sample_seq": "static RAM only",
-      "host_enabled_by_default": false
+      "host_enabled_by_default": false,
+      "queue_depth_semantics": "Current NPI TX queue record count, captured under TI preexisting OsalPort CS, without measuring UART completion",
+      "high_water_semantics": "Maximum observed NPI TX depth since cold RAM initialization; no radio epoch proof"
     }
   },
   "privacy": {
