@@ -203,10 +203,9 @@ def main():
     # P0 negative mutation: without bounded poisoning, a corrupt NV item
     # read length can smash the caller's stack despite fail-closed NVS I/O.
     mutation(generated["nv_backend_slow"],
-             "if (pBuf != NULL && pg < NVOCMP_NVPAGES &&\\n"
-             "            off <= FLASH_PAGE_SIZE && len <= FLASH_PAGE_SIZE - off)\\n"
-             "            memset(pBuf, 0, len);",
-             "if (pBuf != NULL) memset(pBuf, 0, len);",
+             "if (pBuf != NULL && pg < NVOCMP_NVPAGES &&" + "\n" +
+             "            off <= FLASH_PAGE_SIZE && len <= FLASH_PAGE_SIZE - off)",
+             "if (pBuf != NULL)",
              "mutant_nv_corrupt_length_stack_overwrite",
              "stack-buffer-overflow", ("read_oversized",))
 
