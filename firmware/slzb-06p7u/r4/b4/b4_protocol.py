@@ -57,7 +57,13 @@ def decode_frame(raw, *, expected_cmd0=SRSP_SYS, expected_cmd1=DIAG_ID):
     # No fallback from a malformed v3 to v2, or vice versa.
     if size == V2_SIZE:
         return decode_v2(body)
-    return decode_v3(body)
+    decoded = decode_v3(body)
+    # #87 reference decoder intentionally retains legacy v2 counter name at
+    # index 5. R4 B4 experimental v3 assigns this previously-invalid slot
+    # to real UART2_EVENT_TX_FINISHED notifications; relabel ONLY v3 here.
+    counters = decoded["counters"]
+    counters["uart_tx_pin_finished_events"] = counters.pop("srsp_uart_accepted")
+    return decoded
 
 @dataclass
 class BoundedMtStream:

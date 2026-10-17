@@ -38,6 +38,18 @@ class MTFormat(unittest.TestCase):
         self.assertIsNone(parsed["counters"]["srsp_high_water"])
         self.assertFalse(parsed["radio_boot_id_verified"])
 
+    def test_v3_tx_pin_finished_index5_does_not_relabel_p10_v2(self):
+        vals = [0] * 25
+        vals[5] = 17
+        v3 = decode_frame(frame(SRSP_SYS, DIAG_ID, proposed(vals, valid=0x3F)))
+        self.assertEqual(v3["counters"]["uart_tx_pin_finished_events"], 17)
+        self.assertNotIn("srsp_uart_accepted", v3["counters"])
+        legacy_out = decode_frame(frame(SRSP_SYS, DIAG_ID, legacy(vals)))
+        self.assertEqual(legacy_out["counters"]["srsp_uart_accepted"], 17)
+        self.assertNotIn("uart_tx_pin_finished_events", legacy_out["counters"])
+        v3_absent = decode_frame(frame(SRSP_SYS, DIAG_ID, proposed(vals, valid=0)))
+        self.assertIsNone(v3_absent["counters"]["uart_tx_pin_finished_events"])
+
     def test_d05_wrong_size_version_flags_caps_and_magic(self):
         good = frame(SRSP_SYS, DIAG_ID, proposed())
         corrupt = [
