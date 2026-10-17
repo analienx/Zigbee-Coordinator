@@ -22,7 +22,7 @@
 | D14 | HOSTED_SYNTHETIC independent AF_CONFIRM after local SRSP timeout is not ZCL success; native AF_CONFIRM hook still missing |
 | D15 | HOSTED_SYNTHETIC AF SRSP success + NWK_NO_ROUTE classified distinct from UART timeout; B2 real metric unintegrated |
 | D16 | HOSTED_NODE: opt-in actual pinned Znp SYS timeout event captured; AF/ZDO in-memory source hooks, real incidents not captured |
-| D17 | HOSTED_NODE: real AsyncMutex active lock rejects diagnostic; 200 concurrent offers coalesce and 40 genuine in-memory pinned SYS_PING requests complete in order; real UART/OTA/RF fairness still unverified |
+| D17 | HOSTED_NODE: real AsyncMutex active lock AND actual Waitress pending entries block diagnostic; 200 simultaneous offers coalesce and 40 genuine in-memory pinned SYS_PING requests complete; no real UART/OTA/RF fairness proof |
 | D18 | HOSTED_NODE: disabled, busy and explicit OTA suppression controls passed, real OTA pacing not tested |
 | D19 | HOSTED_SYNTHETIC SIGTERM explicitly not crash; no live process evidence |
 | D20 | HOSTED_SYNTHETIC USB detach disables F0 availability, prevents firmware attribution; host USB source not installed |
@@ -55,7 +55,7 @@ The `b4_inference.py` offline reference now has 15 adversarial cases ([staging r
 
 ## P0/P1 blockers — do not waive
 
-Direct in-repo review (not independent peer approval): [CODE_REVIEW_2026-10-17.md](CODE_REVIEW_2026-10-17.md). P0 stale F0 SRSP alias and pre-write orphan diagnostic waiter are now guarded in a staging revision with compiled pinned-source Node tests; final PR-head CI must still pass. Remaining P0/P1 issues are explicitly enumerated there.
+Direct in-repo review (not independent peer approval): [CODE_REVIEW_2026-10-17.md](CODE_REVIEW_2026-10-17.md). P0 stale F0 SRSP alias and pre-write orphan diagnostic waiter are guarded, plus P1 occupied normal Waitress; **17 compiled pinned-source Node tests PASSED [39003959612](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39003959612)**. Final PR-head CI must still pass. Remaining P0/P1 issues are explicitly enumerated there.
 
 - The **minimal experimental native F0 handler is truly linked** and reproducible; this is only one counter (`srsp_enqueued`). Missing native boot epoch, source digest, ABI minor/reset reason, UART accepted-versus-finished, AF confirm, B2 routing and B3 NV producer validity remain unresolved.
 - **Two clean native builds:** GitHub Actions [39000883442](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39000883442), jobs `117303587721` and `117303587798`, both passed at `cf92fc07df7b25a7ad6bfbf380f6ae4b3c0dc5ca`. The *original inline* raw-XML comparison failed solely on nonsemantic `link_time`; the fixed strict comparator tested against both archived native artifacts passed on [39002075430](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002075430), permitting **only** that one independently observed XML timestamp difference. Final integrated native Actions run remains a new gate.

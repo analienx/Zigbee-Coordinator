@@ -24,3 +24,7 @@ Source branch `feat/p7u-r4-b4-issue98` branches from **exact B0 `1baefbee8e4de2c
 Do not run on an HA device, active coordinator, live Z2M process, EMQX, or actual USB/UART. Do not flash, restart, alter Zigbee NV/security, open another serial port, build a persistent service or merge without explicit independent review. B1 hold, B2 route and B3 protected state remain externally owned; combined B5/R4-07 gates are separate.
 
 The native experimental ABI is incomplete relative to issue #98: no verified minor version, source digest, trusted radio epoch, reset status, or verified UART TX_FINISHED; the source hook matrix records those as UNKNOWN. It must not be advertised as the full diagnostics feature.
+
+## Code-review follow-up: host-only opt-in F0 quarantine
+
+Direct self-review found that the v3 F0 reply has no request correlation ID, so a timed-out request followed by a delayed SRSP can impersonate a fresh sample. The pinned host overlay now quarantines **only the diagnostic command** after ambiguous errors and never automatically retries it; stock ZNP commands remain usable. It also checks both ZNP mutex idleness **and** the actual pending/timed-out Waitress registry, protects a synchronous writer-error waiter, rejects nonzero invalid counter slots and nonadvancing sequences. Full review: `docs/r4/b4/CODE_REVIEW_2026-10-17.md`; compiled Node success [39003959612](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39003959612). No production access or deployment occurred.
