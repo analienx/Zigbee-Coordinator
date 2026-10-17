@@ -48,7 +48,7 @@ jobs:
             --source /tmp/r4b2mto/source/ti/zstack/stack/zdo/zd_app.c \
             --out /tmp/r4b2-test/old_donor.c --donor-negative
           gcc -std=c11 -O0 -Wall -Wextra -Werror \
-            -I tests/b2_mto_host /tmp/r4b2-test/old_donor.c \
+            -I firmware/slzb-06p7u/r4/b2/tests /tmp/r4b2-test/old_donor.c \
             firmware/slzb-06p7u/r4/b2/tests/mto_test.c -o /tmp/r4b2-test/old_donor
           ulimit -c 0
           if /tmp/r4b2-test/old_donor > /tmp/r4b2-test/old-failure.txt 2>&1; then
@@ -65,7 +65,7 @@ jobs:
             --source /tmp/r4b2mto/source/ti/zstack/stack/zdo/zd_app.c \
             --out /tmp/r4b2-test/mto_real.c
           gcc -std=c11 -O0 -Wall -Wextra -Werror \
-            -I tests/b2_mto_host /tmp/r4b2-test/mto_real.c \
+            -I firmware/slzb-06p7u/r4/b2/tests /tmp/r4b2-test/mto_real.c \
             firmware/slzb-06p7u/r4/b2/tests/mto_test.c -o /tmp/r4b2-test/mto_real
           /tmp/r4b2-test/mto_real
           python3 - <<'PY'
