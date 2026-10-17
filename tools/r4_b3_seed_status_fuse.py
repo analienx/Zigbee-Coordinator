@@ -80,8 +80,8 @@ def run(sdk,b3_script,b1_receipt,b3sha):
     new=one(new,CALL,DENIED,"TC_TRANSPORT_FAILSTOP_CALLER")
     h=(sdk/HDR).read_text()
     hnew=one(h,"extern "+SIGN_VOID+";","extern "+SIGN_STATUS+";","SDK_HEADER_STATUS_ABI")
-    if "ZDSecMgrGenerateKeyFromSeed(" not in new or
-        new.count("ZDSecMgrGenerateKeyFromSeed(")!=3:
+    if ("ZDSecMgrGenerateKeyFromSeed(" not in new or
+        new.count("ZDSecMgrGenerateKeyFromSeed(")!=3):
         raise ValueError("UNREVIEWED_KEY_FROM_SEED_CALLSITE_COUNT")
     if "APSME_TransportKeyReq" not in new:
         raise ValueError("TC_TRANSPORT_PUBLICATION_GATE_ABSENT")
