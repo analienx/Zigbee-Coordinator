@@ -63,7 +63,7 @@ jobs:
       - name: Install official Muse Code CLI
         run: |
           curl -fsSL https://dev.meta.ai/install.sh -o "$RUNNER_TEMP/muse-install.sh"
-          sh "$RUNNER_TEMP/muse-install.sh"
+          bash "$RUNNER_TEMP/muse-install.sh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Verify installed features
