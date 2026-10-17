@@ -137,7 +137,9 @@ class V4Native(unittest.TestCase):
                 "sdk_sha": TI_SHA, "command": "SYS_F2",
                 "stage": "PATCHED_DISPOSABLE_TI_NOT_NATIVE_PROOF",
                 "payload_bytes": 160, "request_bytes": 8,
-                "boot_cap_on_failure": 0, "full_image_build_digest": "NOT_CLAIMED",
+                "boot_cap_on_failure": 0,
+                "trng_timeout_cancellation": "CANCEL_QUEUED_JOB_BEFORE_SEMAPHORE_DESTRUCT",
+                "full_image_build_digest": "NOT_CLAIMED",
                 "flash_authorized": False, "physical_verified": False,
                 "files": {MT_SYS: {}, NPI_TASK: {}}
             }
@@ -157,6 +159,7 @@ class V4Native(unittest.TestCase):
                 self.assertFalse(result["radio_epoch_hardware_verified"])
                 for field, wrong in (("command", "SYS_F1"),
                                      ("sdk_sha", "wrong"),
+                                     ("trng_timeout_cancellation", "MISSING"),
                                      ("flash_authorized", True),
                                      ("full_image_build_digest", "SELF_ATTESTED")):
                     changed = {**base, field: wrong}

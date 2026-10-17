@@ -24,6 +24,7 @@ def verify(elf, nm, manifest, v4receipt):
             p.get("stage") != "PATCHED_DISPOSABLE_TI_NOT_NATIVE_PROOF" or
             p.get("payload_bytes") != 160 or p.get("request_bytes") != 8 or
             p.get("boot_cap_on_failure") != 0 or
+            p.get("trng_timeout_cancellation") != "CANCEL_QUEUED_JOB_BEFORE_SEMAPHORE_DESTRUCT" or
             p.get("full_image_build_digest") != "NOT_CLAIMED" or
             p.get("flash_authorized") is not False or
             p.get("physical_verified") is not False or
