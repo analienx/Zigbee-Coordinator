@@ -18,6 +18,7 @@ ADAPTER = "src/adapter/z-stack/adapter/zStackAdapter.ts"
 ZNP = "src/adapter/z-stack/znp/znp.ts"
 MUTEX = "src/utils/async-mutex.ts"
 WAITRESS = "src/utils/waitress.ts"
+CONTROLLER = "src/controller/controller.ts"
 MARKER = "B4_EXPERIMENTAL_EXISTING_OWNER"
 
 ADAPTER_METHOD = r"""
@@ -30,11 +31,14 @@ ADAPTER_METHOD = r"""
         enabled: boolean;
         hostIdle: boolean;
         otaActive: boolean;
+        stillAllowed?: () => boolean;
     }): Promise<{abi: 3; validityMask: number; srspDepth: number | null; srspHighWater: number | null; asyncDepth: number; asyncHighWater: number; srspEnqueued: number | null; uartTxFinishedEvents: number; sequence: number; radioEpoch: "UNKNOWN"} | undefined> {
         if (
             input?.enabled !== true ||
             input?.hostIdle !== true ||
             input?.otaActive !== false ||
+            (input.stillAllowed !== undefined &&
+                (typeof input.stillAllowed !== "function" || input.stillAllowed() !== true)) ||
             this.closing ||
             !this.queue ||
             this.queue.count() !== 0 ||
@@ -51,6 +55,7 @@ ADAPTER_METHOD = r"""
         // retry within a burst or modify ordinary ZNP SRSP policy.
         this.b4DiagInFlight = true;
         this.b4NextAllowedMs = now + 30_000;
+        this.znp.b4SetProbeGuard(input.stillAllowed);
         try {
             const result = await this.znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 1200);
             const data = result.payload.diagnostic;
@@ -106,7 +111,11 @@ ADAPTER_METHOD = r"""
                 sequence,
                 radioEpoch: "UNKNOWN",
             };
-        } catch {
+        } catch (error: unknown) {
+            // A live OTA veto means SKIPPED, not a radio fault.
+            if (error instanceof Error && error.message === "B4 F0 runtime admission vetoed") {
+                return undefined;
+            }
             // A late F0 SRSP has NO transaction ID and could otherwise be
             // mistaken for another F0. Poison this diagnostic session for
             // its lifetime after any ambiguous failure. Normal commands
@@ -114,6 +123,7 @@ ADAPTER_METHOD = r"""
             this.znp.b4PoisonDiagSession();
             return undefined;
         } finally {
+            this.znp.b4SetProbeGuard(undefined);
             this.b4DiagInFlight = false;
         }
     }
@@ -145,7 +155,7 @@ def plan(root):
     if _git(root, "rev-parse", "HEAD").decode().strip() != SHA:
         raise ValueError("herdsman source HEAD not exact version 10.9.1 pin")
     originals = {}
-    for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS):
+    for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS, CONTROLLER):
         actual = (root / name).read_bytes()
         if actual != _git(root, "show", SHA + ":" + name):
             raise ValueError("dirty or wrong upstream source: " + name)
@@ -246,7 +256,8 @@ def plan(root):
     private b4HostForensicsEnabled = false;
     private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}> = [];
     private b4HostDropped = 0;
-    private b4DiagPoisoned = false;""",
+    private b4DiagPoisoned = false;
+    private b4ProbeGuard: (() => boolean) | undefined;""",
     )
     changes[ZNP] = replace_once(
         changes[ZNP],
@@ -315,6 +326,11 @@ def plan(root):
         this.b4DiagPoisoned = true;
     }
 
+    /** Read-only in-process admission predicate; no new owner. */
+    public b4SetProbeGuard(guard: (() => boolean) | undefined): void {
+        this.b4ProbeGuard = guard;
+    }
+
     public b4CanProbe(): boolean {
         return this.initialized && !this.b4DiagPoisoned &&
             this.queue.isIdle() && this.waitress.b4IsIdle();
@@ -355,6 +371,12 @@ def plan(root):
                 object.command.name === "r4DiagReadOnly" &&
                 (!this.initialized || this.b4DiagPoisoned || !this.waitress.b4IsIdle())) {
                 throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");
+            }
+            if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
+                object.command.name === "r4DiagReadOnly" &&
+                this.b4ProbeGuard !== undefined &&
+                this.b4ProbeGuard() !== true) {
+                throw new Error("B4 F0 runtime admission vetoed");
             }
             logger.debug(() => `--> ${object}`, NS);""",
     )
