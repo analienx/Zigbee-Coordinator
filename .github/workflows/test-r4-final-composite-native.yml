@@ -60,8 +60,10 @@ jobs:
           echo "R4-B0 fixture LF pin holds"
       - name: Run R4-B0 overlay tests
         run: python -m unittest -v tests.test_r4_b0_overlay
-      - name: Run R4-B0 image audit tests
-        run: python -m unittest -v tests.test_r4_b0_audit
+      - name: Run R4-B0 image audit tests and seven NV/CCFG erase-denial cases
+        run: |
+          python -m unittest -v tests.test_r4_b0_audit
+          python -m unittest -v tests.test_r4_b0_sector_erase_denial
       - name: Test strict native artifact collector (synthetic test only)
         run: python -m unittest -v tests.test_r4_b0_collect_native
       - name: Test SHA-gated TI toolchain acquisition (offline)
