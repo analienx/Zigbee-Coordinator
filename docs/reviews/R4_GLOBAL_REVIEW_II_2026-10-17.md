@@ -17,7 +17,7 @@ Independently read GitHub PR metadata, native code/patch generators, security/ho
 | B3 | #99 | 9b72e4fee2cb8adca89c4afed72dfa7db90d5163 | two native suites 39011537997 and 39011538069 FAILED |
 | B4 v3 | #100 | 981ce098658a40aa3145916a2f08a155aaa0367e | seven hosted workflows including native dual-link green |
 | B4 v4 alternative (REJECT) | #104 | b0559920af1321edf0f3f661abfdd7f8ac14504f | native 39020665837 FAILED; SYS F1 conflict |
-| B4 v4 preferred F2 candidate | #105 | b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a | five hosted workflows green, native B0 39024103773 and dual 39024103860 still IN_PROGRESS at observation |
+| B4 v4 preferred F2 candidate | #105 | b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a | all seven exact-head workflows now COMPLETED SUCCESS; native B0 39024103773 and dual 39024103860 passed on recheck |
 
 Author descriptions/packet referring to older #105 heads 26b0fbe3 or 4019a7da are NOT exact-head green evidence for b09c6c1c.
 
@@ -31,7 +31,7 @@ Author descriptions/packet referring to older #105 heads 26b0fbe3 or 4019a7da ar
 | B2 | FAIL for requested full B2 scope; PARTIAL capacity-only | linked source-route 192, neighbor 64, NWK route 128; TC 192 / child 96 not yet delivered, MTO default disabled; proprietary TI RTG body unavailable; T05–T28 largely blocked |
 | B3 | FAIL | compiler type conflict in genuine NV2 and NV3/NV5 CCS builds; counter reservation lacks enforced readback/RF admission; old-stock NV decision unknown |
 | B4 v3 | PARTIAL | real TI dual-link and disposable herdsman tests green, but no real UART/OTA/hardware demonstration or composite |
-| B4 v4 F2 (#105) | PARTIAL, native acceptance PENDING | collision-safe SYS F2 exists in source; newest native jobs still in progress; B1 HOLD blocks F2 until combined change, boot TRNG is unmeasured |
+| B4 v4 F2 (#105) | PARTIAL, standalone native GREEN | collision-safe SYS F2 exists in source; newest native jobs passed at exact SHA; B1 HOLD still blocks F2 until combined change, boot TRNG is unmeasured |
 | B4 v4 F1 (#104) | FAIL / REJECT | SYS F1 directly conflicts with B1 status; native ELF audit failed at exact HEAD |
 | B5 optional | DEFER | no proven transport-scheduler performance deficit; avoid resurrecting G7 latch |
 | Composite B0+B1+B2+B3+B4 | FAIL / ABSENT | no common reviewed image SHA, no integrated ELF/HEX/linker/MTO/HOLD evidence |
@@ -73,9 +73,9 @@ No individual green branch equates to an accepted production coordinator.
 - B1 b1_management.c includes sticky HOLD and an MT command filter plus a new-ZMac-submission gate, but the B1 documentation explicitly exempts already executing operations; queued/in-flight and ROM paths are NOT_MEASURED. B3 admits its void-ABI and key/counter failure handling does not yet wire all failures into B1 HOLD_SECURITY.
 - Test denial at enqueue, dequeue, MAC handoff, late callback and power-cut/reboot with zero new secured sends after an asserted hold. Explicitly describe irreducible in-flight radio limits rather than claiming physical zero-RF.
 
-### R4-II-08 [P1 — latest native evidence] #105's current head is not the earlier green release candidate
-- Exact #105 head b09c6c1c, not packet 26b0fbe3 or previous reviewer 4019a7da. At this audit, runs 39024103860 (native dual) and 39024103773 (B0 native) were IN_PROGRESS, so claim **PENDING**, not PASSED at b09c6c1c. The earlier green native run 39020297149 belongs to an older commit.
-- Recheck completed run status; rerun after any changes and attach SHA-bound manifests, link symbols, true TRNG driver linking and clean independently reproduced binaries.
+### R4-II-08 [P2 — source-evidence freshness] #105's current head required an exact-SHA recheck
+- Exact #105 head b09c6c1c, not packet 26b0fbe3 or previous reviewer 4019a7da. At first observation runs 39024103860 (native dual) and 39024103773 (B0 native) were IN_PROGRESS. On a later same-session GitHub recheck **BOTH COMPLETED SUCCESS for b09c6c1c**, and all seven exact-HEAD checks were green. Prior run 39020297149 remains stale/irrelevant to the newer head. This clears the standalone native CI gate only, not B1/B4 integration or physical TRNG proof.
+- Persist the successful 39024103773/39024103860 exact-head receipts and SHA-bound manifests, inspect compiled TRNG linkage/stack evidence, and rerun after any HEAD change. Native success is not evidence of real TRNG operation or the combined firmware.
 
 ### R4-II-09 [P2 — boot/entropy/stack] #105 F2 boot token remains a source-only identity heuristic
 - Native overlay b4_v4_native_patch.py uses one 8-byte TI TRNG sample from existing NPI task and a computed 100 ms Clock_tickPeriod timeout. Timeout/error now cancels queued job before close, avoiding the identified dangling-semaphore/stack-buffer risk. This is a meaningful *source fix*, but the ELF audit lists four v4 symbols; it does **not** alone prove generated TRNG instance, task stack headroom, radio liveness, true entropy quality or bounded hardware startup.
@@ -106,7 +106,7 @@ No individual green branch equates to an accepted production coordinator.
 
 **G1 — fix B3 compiler P0 and durable security.** Compile genuine NV2/3/5 after consistent function declarations; readback/assert persisted floors, forced write-corruption and cold-reboot tests; no new/random keys or RF on HOLD.
 
-**G2 — qualify #105 as alternative, reject #104.** Wait for 7 exact-head hosted checks, two reproducible TI binaries, link symbol and SysConfig TRNG evidence; explicitly retain B1 F1 during HOLD. Review async host abort/OTA race and UART response behavior.
+**G2 — qualify #105 as alternative, reject #104.** Its 7 exact-head hosted checks are now GREEN, including genuine native B0/dual links. Preserve SHA-bound receipts, independently inspect TRNG symbol/config/stack and host guards; explicitly retain B1 F1 during HOLD. Do not treat this as physical approval. Review async host abort/OTA race and UART response behavior.
 
 **G3 — B2 disposition.** Either lawful closed-stack seam with source-backed tests and RAM/heap+NV MTO effective evidence, or relabel capacity-only with T05–T28 still blocked. No invented completed mesh reliability tests.
 
@@ -116,4 +116,4 @@ No individual green branch equates to an accepted production coordinator.
 
 ## Verdict
 
-**GLOBAL FAIL for source-ready/production-ready acceptance. No release, no flash, no merger of implementation candidates, no automatic phase promotion.** Creditable partial deliveries: R4-00 provenance, B0 native source and image-denial audit, B1 fault-source mechanisms, B2 linked capacity, B4 v3 hosted native+host tests, and B4 v4 F2 design. Key executable gates missing or failed: B3 native signature, verified per-key durable high-water and RF HOLD integration, B2 opaque route behavior, #105 current-head native seal, and single composite hosted build. Exact working P7U hardware and household Zigbee network remain untouched.
+**GLOBAL FAIL for source-ready/production-ready acceptance. No release, no flash, no merger of implementation candidates, no automatic phase promotion.** Creditable partial deliveries: R4-00 provenance, B0 native source and image-denial audit, B1 fault-source mechanisms, B2 linked capacity, B4 v3 hosted native+host tests, and B4 v4 F2 design. Key executable gates missing or failed: B3 native signature, verified per-key durable high-water and RF HOLD integration, B2 opaque route behavior, #105 B1-HOLD F2 admission/real TRNG qualification, and single composite hosted build. Exact working P7U hardware and household Zigbee network remain untouched.
