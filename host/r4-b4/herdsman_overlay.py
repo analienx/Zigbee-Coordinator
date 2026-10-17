@@ -194,8 +194,8 @@ def plan(root):
         return !this.#locked && this.#queue.length === 0;
     }""",
     )
-    // B4: bounded in-process timeout metadata, entirely free of device IDs,
-    // IEEE addresses, raw frames, payloads, serial paths and disk access.
+    # B4: bounded in-process timeout metadata, entirely free of device IDs,
+    # IEEE addresses, raw frames, payloads, serial paths and disk access.
     changes[ZNP] = replace_once(
         originals[ZNP],
         "    private waitress: Waitress<ZpiObject, WaitressMatcher>;",
@@ -254,7 +254,7 @@ def plan(root):
         }
         if (this.b4HostTimeouts.length >= 256) {
             this.b4HostTimeouts.shift();
-            this.b4HostDropped++;
+            this.b4HostDropped = Math.min(Number.MAX_SAFE_INTEGER, this.b4HostDropped + 1);
         }
         this.b4HostTimeouts.push({at_ms, kind});
     }
