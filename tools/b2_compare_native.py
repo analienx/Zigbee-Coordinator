@@ -7,6 +7,7 @@ profile's ELF symbol gate. This is static linker proof, NOT runtime/RF proof.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 EXPECTED=(("source_routes",12,192,8),("neighbors",16,64,28),
@@ -41,17 +42,31 @@ def read(root,profile):
         raise CompareError("profile linked gate not passed")
     if native.get("status")!="HOSTED_NATIVE_LINKED_TABLES" or native.get("sdk_source_sha")!=SDK_SHA:
         raise CompareError("missing source-pinned ELF proof")
+    # Bind the independently hashed manifest's *actual native artifact*
+    # digests to the linked-table extractor receipt. A swapped receipt with
+    # accurate-looking counts must not satisfy the acceptance contract.
+    digests=native.get("artifact_sha256",{})
+    for kind in ("elf","xml","hex","bin"):
+        if digests.get(kind)!=manifest.get("files",{}).get(kind,{}).get("sha256"):
+            raise CompareError("ELF extractor/manifest digest mismatch: "+kind)
     if receipt.get("physical_verified") is not False or receipt.get("source_ready") is not False:
         raise CompareError("unsafe RF/readiness claim in receipt")
     return native,receipt,manifest
 
-def compute(p0,p1a,p1b):
+def compute(p0,p1a,p1b,expected_source_sha,expected_run_id):
     n0,r0,m0=p0
     n1,r1,m1=p1a
     n2,r2,m2=p1b
+    if not isinstance(expected_source_sha,str) or not re.fullmatch(r"[0-9a-f]{40}",expected_source_sha):
+        raise CompareError("invalid expected checked-out source SHA")
+    if not isinstance(expected_run_id,str) or not re.fullmatch(r"[0-9]{8,20}",expected_run_id):
+        raise CompareError("invalid expected GitHub Actions run ID")
     commits={n["b2_repository_sha"] for n in (n0,n1,n2)}
-    if len(commits)!=1 or any("UNKNOWN" in s for s in commits):
-        raise CompareError("nonmatching native source checkout commits")
+    if commits!={expected_source_sha}:
+        raise CompareError("native source SHA differs from checked-out PR HEAD: "+str(commits))
+    runs={str(n.get("github_run_id")) for n in (n0,n1,n2)}
+    if runs!={expected_run_id}:
+        raise CompareError("native builds from wrong workflow run: "+str(runs))
     if {n["memory_regions"]["SRAM"]["size"] for n in (n0,n1,n2)}!={MIN_SRAM}:
         raise CompareError("SRAM geometry drift")
     delta=0
@@ -90,8 +105,10 @@ def compute(p0,p1a,p1b):
     reserved_p0=partitions[0]["below_heap_linker_reserved_span_bytes"]
     reserved_p1=partitions[1]["below_heap_linker_reserved_span_bytes"]
     unattributed=(reserved_p1-reserved_p0)-delta
-    if partitions[1]["heap_linker_address_span_bytes"]!=partitions[2]["heap_linker_address_span_bytes"]:
-        raise CompareError("P1 replicas have different linked SRAM heap spans")
+    if partitions[1]!=partitions[2]:
+        raise CompareError("P1 replicas have different linked SRAM partitions")
+    if unattributed!=0:
+        raise CompareError("P1 has unexplained below-heap SRAM change: "+str(unattributed))
     return {
         "status":"B2_NATIVE_CAPACITY_EVIDENCE_COMPLETE_NOT_B2_SOURCE_READY",
         "source_sha":next(iter(commits)),
@@ -110,10 +127,13 @@ def compute(p0,p1a,p1b):
 def main():
     p=argparse.ArgumentParser()
     for name in ("p0","p1a","p1b"):p.add_argument("--"+name,type=Path,required=True)
+    p.add_argument("--expected-source-sha",required=True)
+    p.add_argument("--expected-run-id",required=True)
     p.add_argument("--out",type=Path,required=True)
     a=p.parse_args()
     try:
-        result=compute(read(a.p0,"P0"),read(a.p1a,"P1"),read(a.p1b,"P1"))
+        result=compute(read(a.p0,"P0"),read(a.p1a,"P1"),read(a.p1b,"P1"),
+                       a.expected_source_sha,a.expected_run_id)
     except (CompareError,KeyError,ValueError,OSError,TypeError) as err:
         p.exit(2,"B2-NATIVE-DELTA-BLOCKED: "+str(err)+"\n")
     a.out.parent.mkdir(parents=True,exist_ok=True)
