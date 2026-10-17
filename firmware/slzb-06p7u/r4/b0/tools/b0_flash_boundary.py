@@ -35,6 +35,8 @@ def _artifact(directory, manifest, logical):
     file, err = _safe_artifact(directory, entry.get("file"))
     if err or not file.is_file():
         raise ValueError("B0_FLASH_BOUNDARY_UNSAFE_%s_PATH" % logical)
+    if file.stat().st_size > (IMAGE_LEN if logical == "bin" else 4 * 1024 * 1024):
+        raise ValueError("B0_FLASH_BOUNDARY_%s_EXCEEDS_SIZE_CAP" % logical)
     if _digest(file.read_bytes()) != entry.get("sha256"):
         raise ValueError("B0_FLASH_BOUNDARY_%s_SHA256_MISMATCH" % logical)
     return file
@@ -55,6 +57,13 @@ def inspect(directory):
     nv_payload = [addr for addr in payload if NV_BEGIN <= addr < NV_END]
     if nv_payload:
         raise ValueError("B0_FLASH_BOUNDARY_HEX_WRITES_PROTECTED_NV")
+    # Keep the safety receipt independently trustworthy even when run
+    # outside the immediately preceding full ELF/XML native auditor.
+    # A manifest SHA only authenticates two files separately; it does
+    # NOT prove the BIN actually contains the HEX-programmed bytes.
+    for address, byte in payload.items():
+        if address >= IMAGE_LEN or binary[address] != byte:
+            raise ValueError("B0_FLASH_BOUNDARY_HEX_BIN_PROGRAMMED_BYTES_DIFFER")
     protected = binary[NV_BEGIN:NV_END]
     if len(protected) != NV_END - NV_BEGIN or len(set(protected)) != 1:
         raise ValueError("B0_FLASH_BOUNDARY_NV_PADDING_NOT_UNIFORM")
