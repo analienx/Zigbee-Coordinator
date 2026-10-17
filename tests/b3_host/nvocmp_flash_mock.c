@@ -16,7 +16,7 @@
 static uint8_t flash[B3_SIZE];
 static const char *file_path;
 static unsigned long op_number, reads, writes, erases;
-static unsigned long inject_op;
+static unsigned long inject_op, inject_read;
 static int inject_mode; /* 1 pre-write fail, 2 partial mutation fail */
 static int persist(void) {
     FILE *f = fopen(file_path, "wb");
@@ -42,12 +42,15 @@ void NV_LINUX_init(void) {
     load();
     const char *p = getenv("B3_FAULT_NUMBER");
     inject_op = p ? strtoul(p, NULL, 10) : 0;
+    p = getenv("B3_FAIL_READ_NUMBER");
+    inject_read = p ? strtoul(p, NULL, 10) : 0;
     p = getenv("B3_FAULT_MODE");
     inject_mode = p ? atoi(p) : 1;
 }
 void NV_LINUX_save(void) { /* every operation is already flash-persistent */ }
 int NV_LINUX_read(uint8_t pg, uint16_t off, void *dest, uint16_t length) {
     reads++;
+    if (inject_read && reads == inject_read) return -1;
     if (!bounds(pg,off,length)) { fprintf(stderr,"B3_READ_OOB\n"); exit(92); }
     if (length && !dest) return -1;
     memcpy(dest, flash + pg*B3_SECTOR + off, length);
@@ -78,6 +81,6 @@ int NV_LINUX_erase(uint8_t pg) {
     return 0;
 }
 void b3_flash_receipt(void) {
-    printf("B3_NVS_SIM pages=%d reads=%lu writes=%lu erases=%lu ops=%lu fault_op=%lu\n",
-           NVOCMP_NVPAGES,reads,writes,erases,op_number,inject_op);
+    printf("B3_NVS_SIM pages=%d reads=%lu writes=%lu erases=%lu ops=%lu fault_op=%lu read_fault=%lu\n",
+           NVOCMP_NVPAGES,reads,writes,erases,op_number,inject_op,inject_read);
 }
