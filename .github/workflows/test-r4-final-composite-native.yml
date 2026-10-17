@@ -441,8 +441,10 @@ jobs:
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4-composite-sources/b2_mto_fail_closed_overlay.py
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compile_actual_mto_nv_timer.py > /tmp/r4-composite-sources/b2_compile_actual_mto_nv_timer.py
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compose.py > /tmp/r4-composite-sources/b2_compose.py
+          git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_collect_native_evidence.py > /tmp/r4-composite-sources/b2_collect_native_evidence.py
           git -C /tmp/r4-composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_native_patch.py > /tmp/r4-composite-sources/b4_native_patch.py
           git -C /tmp/r4-composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py > /tmp/r4-composite-sources/b4_v4_native_patch.py
+          git -C /tmp/r4-composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_v4_native_link_audit.py > /tmp/r4-composite-sources/b4_v4_native_link_audit.py
           python "$GITHUB_WORKSPACE/tools/r4_b0_b4_composite_stage.py" \
             --sdk "$sdk" --baseline /tmp/r4-composite-sources \
             --b1-receipt /tmp/b0out/b1-overlay.json \
@@ -492,11 +494,42 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
+          echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
+          python /tmp/r4-composite-sources/b2_collect_native_evidence.py \
+            --artifacts /tmp/b0out --out /tmp/b0out/b2-linked \
+            --source-sha "$B1_SOURCE_SHA" --run-id "$GITHUB_RUN_ID"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('/tmp/b0out/b2-linked/B2_BASELINE_ELF_SYMBOLS.json').read_text())
+          expected={'source_routes':192,'neighbors':64,'nwk_routes':128}
+          for name,size in expected.items():
+              observed=result['tables'][name]
+              assert observed['status']=='HOSTED_NATIVE_LINKED', (name,observed)
+              assert observed['linked_count']==size, (name,observed)
+          assert result['b2_repository_sha']==__import__('os').environ['B1_SOURCE_SHA']
+          print('EXACT TI ELF B2 P1 CAPACITIES:',expected)
+          PY
+          echo "Verify canonical F2 boot initializer and read-only SYS handler in compiled ELF"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          composite=json.loads(Path('/tmp/b0out/r4-composite-source.json').read_text())
+          v4=composite['b4_v4_patch_evidence']
+          Path('/tmp/b0out/b4-v4-native-receipt.json').write_text(json.dumps(v4,indent=2,sort_keys=True)+'\\n')
+          PY
+          ELF_NAME="$(python -c "import json;print(json.load(open('/tmp/b0out/manifest.json'))['files']['elf']['file'])")"
+          test -x "$TICLANG_ARMCOMPILER/bin/tiarmnm"
+          python /tmp/r4-composite-sources/b4_v4_native_link_audit.py \
+            --elf "/tmp/b0out/$ELF_NAME" --nm "$TICLANG_ARMCOMPILER/bin/tiarmnm" \
+            --manifest /tmp/b0out/manifest.json \
+            --v4-receipt /tmp/b0out/b4-v4-native-receipt.json \
+            --output /tmp/b0out/b4-linked-f2-symbols.json
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-${{ matrix.replica }}
+          name: r4-final-verified-native-${{ env.B1_SOURCE_SHA }}-${{ matrix.replica }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
@@ -512,11 +545,11 @@ jobs:
           ref: ${{ env.B1_SOURCE_SHA }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-1
+          name: r4-final-verified-native-${{ env.B1_SOURCE_SHA }}-1
           path: /tmp/b1-replica-1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-2
+          name: r4-final-verified-native-${{ env.B1_SOURCE_SHA }}-2
           path: /tmp/b1-replica-2
       - name: Compare independent clean native replicas
         run: |
