@@ -244,15 +244,16 @@ def judge(raw, expected_sha):
         manifest, data = validate_archive(raw, expected_sha)
         return evaluate(manifest, data)
     except (KeyError, TypeError, OverflowError, RecursionError):
-        exc = EvidenceError("INVALID_INPUT_STRUCTURE")
-    except EvidenceError as exc:
-        pass
-    # Every rejected structure MUST return a complete denial, never None.
+        code = "INVALID_INPUT_STRUCTURE"
+    except EvidenceError as error:
+        code = error.code
+    # The except-bound exception variable is destroyed by Python on exit.
+    # Keep only the nonsecret code and return denial on ALL failure paths.
     return {"schema": "r4-b3-restore-decision-v1", "status": "NOT_RESTORE_READY",
-                "reason_codes": [exc.code], "synthetic_only": True,
-                "source_authentication": "NOT_ESTABLISHED",
-                "restore_authorized": False, "flash_authorized": False,
-                "network_mutation_authorized": False}
+            "reason_codes": [code], "synthetic_only": True,
+            "source_authentication": "NOT_ESTABLISHED",
+            "restore_authorized": False, "flash_authorized": False,
+            "network_mutation_authorized": False}
 
 
 def main():
