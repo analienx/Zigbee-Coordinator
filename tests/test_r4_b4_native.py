@@ -14,7 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firmware" / "slzb-06p7u" / "r4" / "b4"))
 from b4_native_patch import (
-    TI_SHA, MT_SYS, NPI_TASK, NPI_CLIENT, B4_FUNCTION,
+    TI_SHA, MT_SYS, NPI_TASK, NPI_CLIENT, NPI_UART, B4_FUNCTION,
     apply as patch_native, build_patches,
 )
 from b4_native_link_audit import verify as verify_link
@@ -66,11 +66,19 @@ OsalPort_leaveCS(key);
 }
 """
 CLIENT = "void MT_BuildAndSendZToolResponse() { OsalPort_msgAllocate(1); }"
+UART = """void NPITLUART_initializeTransport(uint8_t *tRxBuf, uint8_t *tTxBuf, npiCB_t npiCBack)
+{
+UART2_Params params;
+params.writeCallback = NPITLUART_writeCallBack;
+uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);
+}
+"""
+UART2H = "UART2_EVENT_TX_FINISHED\nUART2_EventCallback eventCallback;\nuint32_t eventMask;\n"
 MTC = "#if !defined(NPI)\nvoid MT_BuildAndSendZToolResponse() {}\n#endif\n"
 
 class NativeOverlayProofs(unittest.TestCase):
     def fixture(self, root):
-        items = {MT_SYS: SYS, NPI_TASK: TASK, NPI_CLIENT: CLIENT}
+        items = {MT_SYS: SYS, NPI_TASK: TASK, NPI_CLIENT: CLIENT, NPI_UART: UART}
         for name, source in items.items():
             p = root / name
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +90,8 @@ class NativeOverlayProofs(unittest.TestCase):
                 name = arguments[1].split(":", 1)[1]
                 if name == "source/ti/zstack/mt/mt.c":
                     return MTC.encode()
+                if name == "source/ti/drivers/UART2.h":
+                    return UART2H.encode()
                 return items[name].encode()
             raise RuntimeError("unexpected git command")
         return items, git
@@ -93,15 +103,18 @@ class NativeOverlayProofs(unittest.TestCase):
             with patch("b4_native_patch._git", side_effect=git):
                 out = patch_native(root)
                 self.assertEqual(out["stage"], "PATCHED_DISPOSABLE_SDK_NOT_LINKED")
-                self.assertEqual(out["valid_counter_indices"], [0, 1, 2, 3, 4])
+                self.assertEqual(out["valid_counter_indices"], [0, 1, 2, 3, 4, 5])
                 self.assertEqual(out["radio_boot_identity"], "UNKNOWN")
-                self.assertEqual(len(out["written"]), 2)
+                self.assertEqual(len(out["written"]), 3)
                 self.assertIn("case 0xF0", (root / MT_SYS).read_text())
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspEnqueued;"), 2)
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspDepth;"), 2)
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiAsyncDepth;"), 2)
                 self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiSrspDepth;"), 1)
                 self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiAsyncDepth;"), 1)
+                self.assertIn("params.eventMask = UART2_EVENT_TX_FINISHED;", (root / NPI_UART).read_text())
+                self.assertIn("params.eventCallback = B4_NpiUartTxFinishedCallback;", (root / NPI_UART).read_text())
+                self.assertEqual((root / NPI_UART).read_text().count("++B4_NpiUartTxFinishedEvents;"), 1)
                 self.assertEqual((root / NPI_CLIENT).read_text(), CLIENT)
                 # A repeat patch cannot silently duplicate the new handler.
                 with self.assertRaisesRegex(ValueError, "modified before"):
@@ -113,6 +126,7 @@ class NativeOverlayProofs(unittest.TestCase):
             (MT_SYS, SYS.replace("    case MT_SYS_VERSION:", "    case 0xF0:\n    case MT_SYS_VERSION:")),
             (NPI_TASK, TASK.replace("Queue_enqueue", "Queue_push")),
             (NPI_CLIENT, CLIENT.replace("OsalPort_msgAllocate", "malloc")),
+            (NPI_UART, UART.replace("params.writeCallback = NPITLUART_writeCallBack;", "params.writeCallback = another;")),
         ]
         for name, mutation in mutations:
             with self.subTest(path=name), tempfile.TemporaryDirectory(dir="/tmp") as d:
@@ -157,7 +171,7 @@ class BinaryAuditOracleMutants(unittest.TestCase):
         patchreceipt.write_text(json.dumps({
             "stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "payload_bytes": 132,
             "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
-            "written": {"mt.c": {}, "npi.c": {}},
+            "written": {"mt.c": {}, "npi.c": {}, "uart.c": {}},
         }))
         nm = root / "tiarmnm"
         nm.touch()
@@ -189,7 +203,8 @@ class BinaryAuditOracleMutants(unittest.TestCase):
                        "0040 B B4_NpiSrspHighWater\n"
                        "0050 B B4_NpiAsyncDepth\n"
                        "0060 B B4_NpiAsyncHighWater\n"
-                       "0070 T B4_NpiSrspEnqueued\n")
+                       "0070 T B4_NpiSrspEnqueued\n"
+                       "0080 B B4_NpiUartTxFinishedEvents\n")
             with patch("b4_native_link_audit.subprocess.run",
                        return_value=CompletedProcess([], 0, stdout=listing)):
                 with self.assertRaisesRegex(ValueError, "not native RAM"):
