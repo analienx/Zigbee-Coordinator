@@ -260,9 +260,10 @@ def patch_uart(text):
 {
     uint32_t key;
     key = OsalPort_enterCS();
-    if (status != UART2_STATUS_SUCCESS || b1_management_transport_unavailable())
+    if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||
+        b1_management_transport_unavailable())
     {
-        if (status != UART2_STATUS_SUCCESS)
+        if (status != UART2_STATUS_SUCCESS || size != TransportTxLen)
             b1_management_transport_failed(B1_ERROR_UART_WRITE);
         OsalPort_leaveCS(key);
         return; /* Do not claim completed host write after failure. */
