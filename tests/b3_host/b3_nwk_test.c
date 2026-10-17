@@ -9,6 +9,8 @@ uint32_t nwkFrameCounter;
 uint32_t nwkFrameCounterChanges;
 uint8_t FrameCounterUpdated;
 static nwkSecMaterialDesc_t rows[3];
+static nwkActiveKeyItems key_store;
+static int table_corrupt_success, key_corrupt_success, key_read_fail;
 static int read_fail, table_write_fail, key_write_fail, reads, table_writes, key_writes;
 static uint32_t tx_counter;
 void ZDApp_SaveNwkKey(void);
@@ -30,12 +32,21 @@ uint8_t osal_nv_write_ex(uint16_t id,uint16_t row,uint16_t len,void *buf) {
     ++table_writes;
     if (table_write_fail || row>=3 || len!=sizeof(rows[0])) return NV_OPER_FAILED;
     memcpy(&rows[row],buf,len);
+    if (table_corrupt_success) rows[row].FrameCounter ^= 1u; /* dishonest SUCCESS */
     return SUCCESS;
 }
 uint8_t osal_nv_write(uint16_t id,uint16_t len,void *buf) {
-    (void)id;(void)buf;
+    (void)id;
     ++key_writes;
     if (key_write_fail || len!=sizeof(nwkActiveKeyItems)) return NV_OPER_FAILED;
+    memcpy(&key_store,buf,len);
+    if (key_corrupt_success) key_store.frameCounter ^= 1u;
+    return SUCCESS;
+}
+uint8_t osal_nv_read(uint16_t id,uint16_t offset,uint16_t len,void *buf) {
+    (void)id;(void)offset;
+    if (key_read_fail || len != sizeof(key_store)) return NV_OPER_FAILED;
+    memcpy(buf,&key_store,len);
     return SUCCESS;
 }
 static void reset(void) {
@@ -46,6 +57,8 @@ static void reset(void) {
     rows[1].FrameCounter=100;
     rows[2].FrameCounter=99;
     read_fail=table_write_fail=key_write_fail=reads=table_writes=key_writes=0;
+    table_corrupt_success=key_corrupt_success=key_read_fail=0;
+    memset(&key_store,0,sizeof(key_store));
     gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES=3;
     tx_counter=2000;
     nwkFrameCounter=4;
@@ -63,6 +76,15 @@ int main(void) {
     reset(); key_write_fail=1;
     ZDApp_SaveNwkKey();
     assert(nwkFrameCounterChanges==9 && key_writes==1);
+    reset(); table_corrupt_success=1;
+    ZDApp_SaveNwkKey();
+    assert(nwkFrameCounterChanges==9 && key_writes==0);
+    reset(); key_corrupt_success=1;
+    ZDApp_SaveNwkKey();
+    assert(nwkFrameCounterChanges==9 && key_writes==1);
+    reset(); key_read_fail=1;
+    ZDApp_SaveNwkKey();
+    assert(nwkFrameCounterChanges==9 && key_writes==1);
     reset(); read_fail=1;
     ZDApp_SaveNwkKey();
     assert(nwkFrameCounterChanges==9 && table_writes==0 && key_writes==0);
@@ -76,6 +98,9 @@ int main(void) {
     reset(); table_write_fail=1;
     ZDApp_RestoreNwkSecMaterial();
     assert(FrameCounterUpdated==FALSE && nwkFrameCounter==4 && nwkFrameCounterChanges==9);
+    reset(); table_corrupt_success=1;
+    ZDApp_RestoreNwkSecMaterial();
+    assert(FrameCounterUpdated==FALSE && nwkFrameCounter==4 && nwkFrameCounterChanges==9);
     reset(); read_fail=1;
     ZDApp_RestoreNwkSecMaterial();
     assert(FrameCounterUpdated==FALSE && nwkFrameCounter==4 && table_writes==0);
@@ -85,6 +110,6 @@ int main(void) {
     reset(); FrameCounterUpdated=TRUE;
     ZDApp_RestoreNwkSecMaterial();
     assert(nwkFrameCounter==4 && table_writes==0);
-    puts("B3_ACTUAL_TI_NWK_COUNTER_REJECT_OVERFLOW_AND_COMMIT_ORDER_PASS");
+    puts("B3_ACTUAL_TI_NWK_COUNTER_READBACK_CORRUPT_SUCCESS_NEGATIVE_PASS");
     return 0;
 }
