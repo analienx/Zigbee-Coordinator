@@ -178,6 +178,37 @@ jobs:
             -I tests/b3_host /tmp/b3host/ti_entropy.c \
             tests/b3_host/b3_entropy_test.c -o /tmp/b3host/ti_entropy
           /tmp/b3host/ti_entropy
+
+      - name: Compile actual TI TC seed-derived and NWK key transport denial paths
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_transport_extract.py \
+            --sdk-stack /tmp/b3sdk/source/ti/zstack/stack \
+            --out /tmp/b3host/ti_transports.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_transports.c \
+            tests/b3_host/b3_transport_test.c -o /tmp/b3host/ti_transports
+          /tmp/b3host/ti_transports
+      - name: Negative control — ignored TC seed NV read must fail transport assertion
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/b3host/ti_transports.c')
+          s=p.read_text()
+          needle='osal_nv_read(ZCD_NV_TCLK_SEED, 0, SEC_KEY_LEN, tempKey) != SUCCESS'
+          assert s.count(needle)==1
+          p.write_text(s.replace(needle, 'osal_nv_read(ZCD_NV_TCLK_SEED, 0, SEC_KEY_LEN, tempKey) == 255'))
+          PY
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_transports.c \
+            tests/b3_host/b3_transport_test.c -o /tmp/b3host/ti_transport_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_transport_mutant > /tmp/b3-tc-mutant.log 2>&1; then
+            echo "TC seed read error mutant survived"; exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-tc-mutant.log
+
       - name: Deliberately ignoring failed TRNG must fail actual C negative assertion
         run: |
           set -euo pipefail
