@@ -440,7 +440,7 @@ def overlay(sdk, b1_dir):
         "preflight": "read only (0x4000), no NVS_write/NVS_erase",
         "factory_boot": "unauthorized by default",
         "hold_transport": "existing NPI task only on early NV HOLD; physical UART/RF NOT_MEASURED",
-        "security_and_mac_tx": "runtime NV failure -> linked ZMac wrapper HOLD; ROM, queued RF and restored-security gate OPEN"
+        "security_and_mac_tx": "NV/security HOLD gates linked ZMac new submissions; restored-security/counter checks source-linked; ROM and queued/in-flight RF NOT_MEASURED"
     }
 
 
