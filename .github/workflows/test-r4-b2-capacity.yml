@@ -1,0 +1,29 @@
+name: R4 B2 capacity gate (synthetic unit checks)
+on:
+  push:
+    branches:
+      - 'feat/p7u-r4-b2-routing-capacity'
+  pull_request:
+    paths:
+      - 'tools/b2_capacity_gate.py'
+      - 'tests/test_r4_b2_capacity_gate.py'
+      - 'tests/test_r4_b2_compose.py'
+      - 'tests/test_r4_b2_profile.py'
+      - 'tests/test_r4_b2_compare_native.py'
+      - 'tests/test_r4_b2_reextracted_elf.py'
+      - 'tests/test_r4_b2_native_capacity_seal.py'
+      - 'tools/b2_seal_native_capacity.py'
+      - 'tools/b2_verify_reextracted_elf.py'
+      - 'tests/test_r4_b2_p3_native.py'
+      - 'tools/b2_p3_force_link_overbudget.py'
+      - 'tools/b2_verify_p3_link.py'
+      - '.github/workflows/test-r4-b2-capacity.yml'
+jobs:
+  arithmetic-negative-controls:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python synthetic negative controls (NOT native TI proof)
+        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence tests.test_r4_b2_compose tests.test_r4_b2_profile tests.test_r4_b2_compare_native tests.test_r4_b2_reextracted_elf tests.test_r4_b2_native_capacity_seal tests.test_r4_b2_p3_native

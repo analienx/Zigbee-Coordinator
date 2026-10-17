@@ -1,0 +1,156 @@
+name: R4 B2 real TI ZDO and MT C bodies with ASan
+on:
+  pull_request:
+    paths:
+      - 'tools/b2_compile_actual_zdo_callback.py'
+      - 'tools/b2_compile_actual_mt_parser.py'
+      - 'tools/b2_compile_actual_mto_nv_timer.py'
+      - '.github/workflows/test-r4-b2-ti-c-callback.yml'
+      - 'docs/r4/b2/TEST_MATRIX.md'
+  push:
+    branches: [feat/p7u-r4-b2-routing-capacity]
+permissions:
+  contents: read
+jobs:
+  compiled-ti-c-callback:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch exact TI SDK pin and verify real C source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init -q /tmp/b2-zdo-sdk
+          git -C /tmp/b2-zdo-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b2-zdo-sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/b2-zdo-sdk checkout --quiet FETCH_HEAD
+          test "$(git -C /tmp/b2-zdo-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          test -f /tmp/b2-zdo-sdk/source/ti/zstack/stack/zdo/zd_app.c
+      - name: Compile and execute original actual TI ZDO callback source with ASan and UBSan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_zdo_callback.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-zdo-original
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-zdo-original/ti_zdo_mto_host.c -o /tmp/b2-zdo-original/ti_zdo_mto_host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-zdo-original/ti_zdo_mto_host
+          echo 'T10 actual TI ZDO C callback: 1,2,1000 calls correctly forwarded (no flood suppression in this function).' >> "$GITHUB_STEP_SUMMARY"
+      - name: Deliberately mutate exact TI C body and require sanitizer-host test to detect missing MTO call
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_zdo_callback.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-zdo-mutant --mutation drop-mto-call
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-zdo-mutant/ti_zdo_mto_host.c -o /tmp/b2-zdo-mutant/ti_zdo_mto_host
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-zdo-mutant/ti_zdo_mto_host) > /tmp/b2-zdo-mutant/negative-test.log 2>&1
+          result=$?
+          set -e
+          if [[ "$result" -eq 0 ]]; then
+            echo 'B2-T10-BLOCKED: mutated TI callback incorrectly passed'
+            exit 1
+          fi
+          if ! grep -E 'Assertion.*mto_requests|assertion.*mto_requests' /tmp/b2-zdo-mutant/negative-test.log; then
+            echo 'B2-T10-BLOCKED: mutation failed for the wrong reason'
+            cat /tmp/b2-zdo-mutant/negative-test.log
+            exit 1
+          fi
+          echo 'T10 source mutation removal of MTO call correctly failed the exact request-count assertion.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile genuine TI MT_ProcessIncoming parser with ASan/UBSan hostile frame suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_mt_parser.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-mt-original
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-mt-original/mt_actual_source_host.c -o /tmp/b2-mt-original/mt_actual_source_host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-mt-original/mt_actual_source_host
+          echo 'T32 limited: pinned TI MT_ProcessIncoming C actual-source ASan passed 2,000 malformed SREQ frames and healthy SREQ/AREQ boundary semantics.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Mutation must kill the authentic MT C parser length guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_mt_parser.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-mt-mutant --mutation invert-length-guard
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-mt-mutant/mt_actual_source_host.c -o /tmp/b2-mt-mutant/mt_actual_source_host
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-mt-mutant/mt_actual_source_host) > /tmp/b2-mt-mutant/negative-test.log 2>&1
+          result=$?
+          set -e
+          if [[ "$result" -eq 0 ]]; then
+            echo 'B2-T32-BLOCKED: mutated TI MT parser incorrectly passed'
+            exit 1
+          fi
+          if ! grep -E 'Assertion.*reply_count|assertion.*reply_count' /tmp/b2-mt-mutant/negative-test.log; then
+            echo 'B2-T32-BLOCKED: mutation failed for the wrong reason'
+            cat /tmp/b2-mt-mutant/negative-test.log
+            exit 1
+          fi
+          echo 'T32 limited: deliberate TI MT length-check mutation correctly killed by response oracle.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile actual TI MTO NV/timer C callback in host ASan and exercise NV failed reads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_compile_actual_mto_nv_timer.py --sdk /tmp/b2-zdo-sdk --out /tmp/b2-mto-nv-original
+          clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined \
+            /tmp/b2-mto-nv-original/ti_zdo_nv_mto_host.c -o /tmp/b2-mto-nv-original/ti_zdo_nv_mto_host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b2-mto-nv-original/ti_zdo_nv_mto_host
+          echo 'T10 NV path: real TI ZDApp_ForceConcentratorChange starts 100ms timer when enabled, stops when disabled, and ignores failed NV-read return (stale RAM state may remain).' >> "$GITHUB_STEP_SUMMARY"
+      - name: Two mutated TI NV callback bodies must fail exact start and stop assertions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for variant in start-delay-1000 skip-stop; do
+            out="/tmp/b2-mto-nv-$variant"
+            python tools/b2_compile_actual_mto_nv_timer.py --sdk /tmp/b2-zdo-sdk --out "$out" --mutation "$variant"
+            clang -O1 -g -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+              -fsanitize=address,undefined "$out/ti_zdo_nv_mto_host.c" -o "$out/ti_zdo_nv_mto_host"
+            set +e
+            (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+              "$out/ti_zdo_nv_mto_host") > "$out/negative-test.log" 2>&1
+            result=$?
+            set -e
+            if [[ "$result" -eq 0 ]]; then
+              echo "B2-T10-BLOCKED: $variant source mutant incorrectly survived"
+              exit 1
+            fi
+            if [[ "$variant" == "start-delay-1000" ]]; then
+              grep -E 'Assertion.*last_timer_delay|assertion.*last_timer_delay' "$out/negative-test.log" || exit 1
+            else
+              grep -E 'Assertion.*stop_count|assertion.*stop_count' "$out/negative-test.log" || exit 1
+            fi
+          done
+          echo 'T10 native TI MTO timer callback start-delay and stop-path mutants both killed by real host source assertions.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload original source-body and mutation receipts (no keys or real network)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-ti-zdo-t10-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/b2-zdo-original/B2_T10_COMPILED_TI_CALLBACK_RECEIPT.json
+            /tmp/b2-zdo-mutant/B2_T10_COMPILED_TI_CALLBACK_RECEIPT.json
+            /tmp/b2-zdo-mutant/negative-test.log
+            /tmp/b2-mt-original/B2_MT_HOST_SOURCE_RECEIPT.json
+            /tmp/b2-mt-mutant/B2_MT_HOST_SOURCE_RECEIPT.json
+            /tmp/b2-mt-mutant/negative-test.log
+            /tmp/b2-mto-nv-original/B2_T10_NV_TIMER_SOURCE_RECEIPT.json
+            /tmp/b2-mto-nv-start-delay-1000/B2_T10_NV_TIMER_SOURCE_RECEIPT.json
+            /tmp/b2-mto-nv-start-delay-1000/negative-test.log
+            /tmp/b2-mto-nv-skip-stop/B2_T10_NV_TIMER_SOURCE_RECEIPT.json
+            /tmp/b2-mto-nv-skip-stop/negative-test.log
+          if-no-files-found: warn
+          retention-days: 30

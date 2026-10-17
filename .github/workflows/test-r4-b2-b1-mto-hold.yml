@@ -1,0 +1,140 @@
+name: R4 B2 B1 late MTO wrapper admission (host C only)
+on:
+  pull_request:
+    paths:
+      - 'tools/b2_compile_b1_mto_hold.py'
+      - '.github/workflows/test-r4-b2-b1-mto-hold.yml'
+  push:
+    branches: [feat/p7u-r4-b2-routing-capacity]
+permissions:
+  contents: read
+jobs:
+  actual-b1-b2-mto-host-boundary:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 source without stored Git credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Retrieve exact pinned B1 sibling and TI vendor source (read only)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          b1_sha=c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f
+          ti_sha=3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git init -q /tmp/b1-integration-git
+          git -C /tmp/b1-integration-git remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/b1-integration-git fetch --depth 1 origin "$b1_sha"
+          test "$(git -C /tmp/b1-integration-git rev-parse FETCH_HEAD)" = "$b1_sha"
+          mkdir -p /tmp/b1-integration-source
+          git -C /tmp/b1-integration-git archive FETCH_HEAD firmware/slzb-06p7u/r4/b1/ | tar -xf - -C /tmp/b1-integration-source
+          git init -q /tmp/b1-integration-ti
+          git -C /tmp/b1-integration-ti remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b1-integration-ti fetch --depth 1 origin "$ti_sha"
+          git -C /tmp/b1-integration-ti checkout -q FETCH_HEAD
+          test "$(git -C /tmp/b1-integration-ti rev-parse HEAD)" = "$ti_sha"
+      - name: Patch pristine TI source with exact B1 admission source overlay
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          b1=/tmp/b1-integration-source/firmware/slzb-06p7u/r4/b1
+          python "$b1/tools/apply_b1.py" --sdk /tmp/b1-integration-ti --receipt /tmp/b1-source-apply.json
+          test -s /tmp/b1-source-apply.json
+          python "$b1/tools/make_zmac_harness.py" \
+            --source /tmp/b1-integration-ti/source/ti/zstack/zmac/f8w/zmac.c \
+            --output /tmp/b1-zmac-real-functions.c
+          test -s /tmp/b1-zmac-real-functions.c
+      - name: Compile and run actual TI MTO and B1 patched ZMac wrappers with ASan/UBSan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          b1=/tmp/b1-integration-source/firmware/slzb-06p7u/r4/b1
+          python tools/b2_compile_b1_mto_hold.py \
+            --zmac-host /tmp/b1-zmac-real-functions.c \
+            --zdapp /tmp/b1-integration-ti/source/ti/zstack/stack/zdo/zd_app.c \
+            --b1-sha c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f \
+            --b1-overlay-receipt /tmp/b1-source-apply.json \
+            --patched-zmac /tmp/b1-integration-ti/source/ti/zstack/zmac/f8w/zmac.c \
+            --out /tmp/b1-b2-positive
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -I "$b1" \
+            /tmp/b1-b2-positive/b1_b2_mto_rf_hold_host.c \
+            "$b1/b1_admission.c" -o /tmp/b1-b2-positive/test-mto-hold
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b1-b2-positive/test-mto-hold
+          echo 'SOURCE-BOUND B1 HOLD after pending TI MTO callback: new ZMac wrapper submissions rejected. ROM, queued frames and RTG internals NOT TESTED.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Deliberately remove real B1 data RF admission guard and REQUIRE failure
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          b1=/tmp/b1-integration-source/firmware/slzb-06p7u/r4/b1
+          python tools/b2_compile_b1_mto_hold.py \
+            --zmac-host /tmp/b1-zmac-real-functions.c \
+            --zdapp /tmp/b1-integration-ti/source/ti/zstack/stack/zdo/zd_app.c \
+            --b1-sha c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f \
+            --b1-overlay-receipt /tmp/b1-source-apply.json \
+            --patched-zmac /tmp/b1-integration-ti/source/ti/zstack/zmac/f8w/zmac.c \
+            --variant remove-hold-data --out /tmp/b1-b2-mutant
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -I "$b1" \
+            /tmp/b1-b2-mutant/b1_b2_mto_rf_hold_host.c \
+            "$b1/b1_admission.c" -o /tmp/b1-b2-mutant/test-mto-hold
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/b1-b2-mutant/test-mto-hold) > /tmp/b1-b2-mutant/negative-test.log 2>&1
+          result=$?
+          set -e
+          if [[ "$result" -eq 0 ]]; then
+            echo 'B1+B2-BLOCKED: removed source RF hold guard incorrectly survived'
+            exit 1
+          fi
+          grep -F 'status==MAC_NO_RESOURCES' /tmp/b1-b2-mutant/negative-test.log || {
+            echo 'B1+B2-BLOCKED: mutation failed for a reason other than RF gate bypass'
+            cat /tmp/b1-b2-mutant/negative-test.log
+            exit 1
+          }
+          echo 'B1+B2 patched actual-source hold guard mutation correctly killed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Seal actual host-test PASS only after both source test and guard mutant complete
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path=Path("/tmp/b1-b2-positive/B1_B2_MTO_HOST_RECEIPT.json")
+          receipt=json.loads(path.read_text())
+          assert receipt["B1_B2_INTEGRATED_READY"] is False
+          assert receipt["B2_ROUTING_CORE_NOT_TESTED"] is True
+          assert receipt["MAC_ROM_AND_QUEUED_RF_NOT_TESTED"] is True
+          assert receipt["variant"]=="none"
+          acceptance={
+              "status":"B1_B2_SOURCE_BOUND_HOST_RF_WRAPPER_TEST_PASSED",
+              "b1_source_sha":receipt["b1_source_sha"],
+              "b2_source_sha":"${{ github.event.pull_request.head.sha || github.sha }}",
+              "runtime_host_asan_ubsan_passed":True,
+              "removed_ZMacDataReqSec_hold_guard_mutation_killed":True,
+              "host_scope":"new ZMac wrapper requests following latched NV hold and MTO callbacks",
+              "MAC_ROM_QUEUED_RF_NOT_TESTED":True,
+              "TI_CLOSED_ROUTING_LIBRARY_NOT_TESTED":True,
+              "B1_B2_INTEGRATED_READY":False,
+              "PHYSICAL_UNVERIFIED":True,
+          }
+          Path("/tmp/b1-b2-positive/B1_B2_MTO_HOST_ACCEPTANCE.json").write_text(
+              json.dumps(acceptance,indent=2,sort_keys=True)+"\n")
+          print(json.dumps(acceptance,sort_keys=True))
+          PY
+      - name: Upload source receipts only, never production images, flash, NV, PAN or keys
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: b2-b1-mto-hold-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/b1-source-apply.json
+            /tmp/b1-b2-positive/B1_B2_MTO_HOST_RECEIPT.json
+            /tmp/b1-b2-positive/B1_B2_MTO_HOST_ACCEPTANCE.json
+            /tmp/b1-b2-mutant/B1_B2_MTO_HOST_RECEIPT.json
+            /tmp/b1-b2-mutant/negative-test.log
+          if-no-files-found: warn
+          retention-days: 30

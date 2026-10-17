@@ -1,0 +1,22 @@
+{
+  "schema": "r4-b2-genuine-ti-p3-negative-evidence-v1",
+  "original_run_id": 38967417545,
+  "original_job_id": 117197244529,
+  "artifact_id": 12077258161,
+  "source_commit": "45967d0a96de3562b60bbb0e30fb01b1918512d9",
+  "historical_workflow_conclusion": "FAILURE_ORACLE_MISCLASSIFIED_LINKER_WRAPPER",
+  "native_ccs_build_had_errors": true,
+  "genuine_ti_ccs_linker_invoked": true,
+  "native_link_diagnostic": "error #10099-D: program will not fit into available memory ... run placement ... GROUP_1 size 0x292cd",
+  "native_memory_region": "SRAM size 0x24000",
+  "native_project_build_report": "CCS headless build complete! 1 out of 1 projects have errors.",
+  "expected_ti_compiler_error_wrapper": "tiarmclang: error: tiarmlnk command failed with exit code 1",
+  "forced_bss_bytes": 147456,
+  "log_sha256": "448250ca7ee82c8631abc1e4ca243865d3632fa6b52e855c6db1accade2a4c7c",
+  "injection_receipt_sha256": "77dab94346f2cb03f7f25545ae686d947d42d77f83de972e7503bad371f64f5b",
+  "disposition": "AUTHENTIC_HISTORICAL_NATIVE_LINK_REJECTION_CONFIRMED__UPDATED_ORACLE_CI_PENDING",
+  "P3_release_candidate": false,
+  "runtime_heap_high_water": null,
+  "B2_SOURCE_READY": false,
+  "source_note": "Direct hash/reinspection of the exact native workflow artifact. Native #10099 already occurred, but the historical job was red because oracle treated expected TI linker wrapper as unrelated compiler failure. Green updated P3 CI needed before final T04 PASS."
+}

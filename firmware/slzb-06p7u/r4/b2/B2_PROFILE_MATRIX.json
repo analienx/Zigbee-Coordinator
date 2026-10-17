@@ -1,0 +1,75 @@
+{
+  "schema": "b2-profile-matrix-source-stage-v1",
+  "source_pin": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "base_b0": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "baseline_linked_native_run_id": 38952302280,
+  "baseline_note": "Read authentic B0 ELF/map; not production validation",
+  "profiles": {
+    "P0": {
+      "status": "NATIVE_BASELINE_OBSERVED",
+      "source_routes": 12,
+      "neighbors": 16,
+      "nwk_routes": 40,
+      "direct_child_list": 21,
+      "route_discoveries": 8,
+      "source_relay_depth": 12,
+      "delta_static_tables_bytes": 0,
+      "queue_retry_policy": "B0_UNCHANGED",
+      "bin_sha256": "6bf9def769cbbdf41a7e876ec745a067fffc862b0ba6b4adc4acda1bc224748d",
+      "linked_heap_span_bytes": 121808
+    },
+    "P1": {
+      "status": "NATIVE_VERIFIED_INDEPENDENT_TWICE_AT_f18d962a",
+      "source_routes": 192,
+      "neighbors": 64,
+      "nwk_routes": 128,
+      "direct_child_list": 21,
+      "route_discoveries": 8,
+      "source_relay_depth": 12,
+      "delta_static_tables_bytes_expected": 3488,
+      "queue_retry_policy": "B0_UNCHANGED",
+      "mto_policy": "B0_UNCHANGED",
+      "security_nv": "B0_UNCHANGED",
+      "bin_sha256": "105fa0a3cf35d1ed0d25f42c2a7b68ce858144c9316c19011f9b05cb9ae2762e",
+      "elf_sha256": "54427f7e2712ba45b9f8f9ef5122aa88e946b0d210917992273083bf0fbd780d",
+      "linked_heap_span_bytes": 118320,
+      "source_sha": "f18d962af6b3976a196faf869ebca7d1609c80a5",
+      "native_run_id": 38964092055,
+      "historical_status_only": true
+    },
+    "P2": {
+      "status": "BLOCKED_NO_REPRODUCED_QUEUE_FAILURE",
+      "queue_retry_policy": "NOT_PROPOSED_YET",
+      "linked_effective_values": null,
+      "static_delta_bytes": null
+    },
+    "P3": {
+      "status": "DISPOSABLE_NATIVE_CCS_LINKER_OVERBUDGET_NEGATIVE_UNDER_TEST",
+      "expected_result": "SRAM_BUDGET_EXCEEDED",
+      "native_build": true,
+      "not_validated_as_native": true,
+      "test_only_sram_allocation_bytes": 147456,
+      "native_linker_rejection_proven": false,
+      "candidate_release": false,
+      "negative_type": "TI_CC2652P7_LINKER_SRAM_10099"
+    }
+  },
+  "linked_structure_entry_bytes": {
+    "source_routes": 8,
+    "neighbors": 28,
+    "nwk_routes": 8,
+    "direct_child_list": 36,
+    "route_discoveries": 10,
+    "source_relay_depth": 2
+  },
+  "observed_sram_bytes": 147456,
+  "observed_c_irq_stack_bytes": 1024,
+  "observed_heap_linker_start": 536895536,
+  "observed_heap_linker_end": 537017344,
+  "actual_runtime_heap_high_water": null,
+  "physical_rf_verified": false,
+  "B2_SOURCE_READY": false,
+  "independent_p1_builds": 2,
+  "native_profile_reproducibility_proof": "firmware/slzb-06p7u/r4/b2/B2_CAPACITY_BUDGET.json",
+  "runtime_heap_high_water_bytes": null
+}

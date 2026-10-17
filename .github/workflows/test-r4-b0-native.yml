@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Each push/PR head supersedes older B2 native candidates. Avoid exhausting
+# costly TI toolchain runners on stale SHAs while preserving completed artifacts.
+concurrency:
+  group: r4-b2-native-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   r4-b0-overlay:
     runs-on: ubuntu-latest
@@ -271,8 +277,16 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {b2_profile: P0, replica: 1}
+          - {b2_profile: P1, replica: 1}
+          - {b2_profile: P1, replica: 2}
+          - {b2_profile: P3, replica: 1}
     concurrency:
-      group: r4-b0-native-${{ github.event.pull_request.head.ref || github.ref_name }}
+      group: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.b2_profile }}-${{ matrix.replica }}
       cancel-in-progress: true
     runs-on: ubuntu-22.04
     steps:
@@ -366,6 +380,10 @@ jobs:
           test -f "$project/znp.syscfg"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
             --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
+          python "$GITHUB_WORKSPACE/tools/b2_compose.py" \
+            --opts "$project/Stack/Config/znp_cnf.opts" \
+            --profile "${{ matrix.b2_profile }}" \
+            --receipt "/tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json"
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
@@ -373,6 +391,25 @@ jobs:
             --out-dir /tmp/b0out/preflight-syscfg \
             --receipt /tmp/b0out/p7u-generated-preflight.json
           echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
+          if [[ "${{ matrix.b2_profile }}" == "P3" ]]; then
+            # P3 is a negative-control ONLY: genuine TI CC1352P7 build must fail
+            # at SRAM allocation. A compiler failure or forged echo is NOT accepted.
+            python "$GITHUB_WORKSPACE/tools/b2_p3_force_link_overbudget.py" \
+              --sdk "$sdk" --receipt /tmp/b0out/b2-p3-injection.json
+            set +e
+            eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang > /tmp/b0out/b2-p3-native-build.log 2>&1
+            p3_result=$?
+            set -e
+            cat /tmp/b0out/b2-p3-native-build.log | tee -a /tmp/b0out/build.log
+            python "$GITHUB_WORKSPACE/tools/b2_verify_p3_link.py" \
+              --build-log /tmp/b0out/b2-p3-native-build.log \
+              --injection /tmp/b0out/b2-p3-injection.json \
+              --exit-code "$p3_result" \
+              --out /tmp/b0out/B2_PROFILE_P3_NATIVE_REJECTION.json
+            cat /tmp/b0out/B2_PROFILE_P3_NATIVE_REJECTION.json >> "$GITHUB_STEP_SUMMARY"
+            # No ELF/BIN collector for an intentionally unlinked test.
+            exit 0
+          fi
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
           echo "Collecting real linker artifacts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
@@ -381,13 +418,119 @@ jobs:
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+      - name: B2 read-only linked baseline from actual B0 ELF (not physical proof)
+        if: (github.head_ref == 'feat/p7u-r4-b2-routing-capacity' || github.ref_name == 'feat/p7u-r4-b2-routing-capacity') && matrix.b2_profile != 'P3'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_collect_native_evidence.py \
+            --artifacts /tmp/b0out \
+            --out /tmp/b0out/b2-linked-baseline \
+            --source-sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID"
+          python tools/b2_verify_profile.py \
+            --native /tmp/b0out/b2-linked-baseline/B2_BASELINE_ELF_SYMBOLS.json \
+            --overlay "/tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json" \
+            --profile "${{ matrix.b2_profile }}" \
+            --out "/tmp/b0out/b2-linked-baseline/B2_PROFILE_${{ matrix.b2_profile }}_RECEIPT.json"
+          cat /tmp/b0out/b2-linked-baseline/BASELINE_ELF_SYMBOLS.md >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/b0out/b2-compose-${{ matrix.b2_profile }}.json >> "$GITHUB_STEP_SUMMARY"
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b0-native-${{ github.sha }}
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.b2_profile }}-replica${{ matrix.replica }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
             /tmp/b0out/
           if-no-files-found: warn
+
+  r4-b2-capacity-compare:
+    if: github.head_ref == 'feat/p7u-r4-b2-routing-capacity'
+    needs: [r4-b0-native-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact B2 implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch P0 independent native proof
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P0-replica1
+          path: /tmp/b2-compare/p0
+      - name: Fetch P1 native proof A
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P1-replica1
+          path: /tmp/b2-compare/p1a
+      - name: Fetch P1 native proof B
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P1-replica2
+          path: /tmp/b2-compare/p1b
+      - name: Fetch genuine same-run P3 native SRAM rejection proof
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P3-replica1
+          path: /tmp/b2-compare/p3
+      - name: Strict exact-source, exact-binary linked-capacity and SRAM delta comparison
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Re-run the independent B0 image/CCFG/NV geometry audit on all
+          # downloaded native artifacts; do not trust uploaded JSON receipts.
+          for profile in p0 p1a p1b; do
+            python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit \
+              firmware/slzb-06p7u/r4/b0 \
+              --artifacts "/tmp/b2-compare/$profile/b0out"
+          done
+          # Do not trust B2_BASELINE_ELF_SYMBOLS.json even if all raw file
+          # digests are valid. Re-run the independent actual ARM ELF parser
+          # against each downloaded binary and compare its exact result.
+          for profile in p0 p1a p1b; do
+            python tools/b2_collect_native_evidence.py \
+              --artifacts "/tmp/b2-compare/$profile/b0out" \
+              --out "/tmp/b2-rederived/$profile" \
+              --source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+              --run-id "$GITHUB_RUN_ID"
+            python tools/b2_verify_reextracted_elf.py \
+              --claimed "/tmp/b2-compare/$profile/b0out/b2-linked-baseline/B2_BASELINE_ELF_SYMBOLS.json" \
+              --fresh "/tmp/b2-rederived/$profile/B2_BASELINE_ELF_SYMBOLS.json" \
+              --out "/tmp/b2-rederived/$profile/B2_REEXTRACTED_ELF_PROOF.json"
+          done
+          python tools/b2_compare_native.py \
+            --p0 /tmp/b2-compare/p0 \
+            --p1a /tmp/b2-compare/p1a \
+            --p1b /tmp/b2-compare/p1b \
+            --expected-source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --out /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
+          cat /tmp/b2-comparison/B2_CAPACITY_BUDGET.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Seal native capacity-only milestone; full B2 readiness remains prohibited
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_seal_native_capacity.py \
+            --comparison /tmp/b2-comparison/B2_CAPACITY_BUDGET.json \
+            --p0 /tmp/b2-rederived/p0/B2_REEXTRACTED_ELF_PROOF.json \
+            --p1a /tmp/b2-rederived/p1a/B2_REEXTRACTED_ELF_PROOF.json \
+            --p1b /tmp/b2-rederived/p1b/B2_REEXTRACTED_ELF_PROOF.json \
+            --p3 /tmp/b2-compare/p3/b0out/B2_PROFILE_P3_NATIVE_REJECTION.json \
+            --p3-output /tmp/b2-compare/p3/b0out \
+            --source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --run-id "$GITHUB_RUN_ID" \
+            --out /tmp/b2-comparison/B2_NATIVE_CAPACITY_ONLY_SEAL.json
+          cat /tmp/b2-comparison/B2_NATIVE_CAPACITY_ONLY_SEAL.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish exact-SHA B2 capacity acceptance receipt (not RF proof)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b2-capacity-budget-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
+            /tmp/b2-comparison/B2_NATIVE_CAPACITY_ONLY_SEAL.json
+          if-no-files-found: warn
+          retention-days: 30
