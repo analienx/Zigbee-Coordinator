@@ -27,7 +27,7 @@ def input_set():
     e=[{"status":"B2_NATIVE_CLAIMS_INDEPENDENTLY_REDERIVED",
         "source_sha":SHA,"run_id":RUN,"elf_sha256":h,
         "runtime_heap_high_water_measured":False,"B2_SOURCE_READY":False,
-        "linked_tables_verified":TABS} for h in ("1"*64,"2"*64,"2"*64)]
+        "linked_tables_verified":list(TABS)} for h in ("1"*64,"2"*64,"2"*64)]
     p3={"status":"HOSTED_NATIVE_LINKER_OVERBUDGET_REJECTED",
         "reason":"TI_CLANG_CCS_ERROR_10099_SRAM_EXHAUSTION",
         "linker_exit_status":1,"sram_bytes":147456,
