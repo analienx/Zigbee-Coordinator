@@ -84,6 +84,42 @@ with the donor default preserved. Production-stock-NV boot is
 PROHIBITED until a read-only compatibility proof plus an
 authorized disposable-device trial both exist.
 
+## 2a. Reviewed B0 status and protected-NV flash boundary (17 October 2026)
+
+**Source/native build PASS, physical boot NOT PROVEN.** Actual source
+PR [#91](https://github.com/analienx/Zigbee-Coordinator/pull/91)
+merged by squash commit `512e620f1901bf83c6453410d7e411126b7853a3`
+into `review/p7u-r4-issue87-independent-fixes` (**PR #89 HEAD,
+NOT `main`**). Integration to `main` remains staged behind open
+R4 provenance/diagnostic PRs #86 and #89. Genuine exact-PR-head native
+build [38923787459](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38923787459)
+was green with actual ELF/XML/HEX/BIN, verified generated UART/CCFG,
+strict reset-vector audit, and toolchain receipts.
+
+**Do NOT flash the native 704 KiB `.bin` directly.** TI
+`tiarmobjcopy -O binary` spans `0x00000..0xAFFFF`, including 16 KiB
+of artificial padding across reserved **FLASH_NV
+`0xAA000..0xADFFF`**. A flasher writing all `.bin` bytes would write
+that padding into NV and can destroy Zigbee identity, counters or
+keys. The Intel HEX has NO actual NV DATA records, but this does not
+establish safety of a particular programmer, OTA method or hardware.
+
+`tools/b0_flash_boundary.py` verifies hashed collected HEX/BIN
+contents, absence of HEX NV writes, the exact flat BIN span and
+its uniform synthetic NV padding, then emits
+`DO_NOT_FLASH_NV_BOUNDARY.json` with **flash/release/migration all
+FALSE**. This is a denial/traceability certificate, **never an
+authorization to flash either HEX or BIN**. Standalone hostile tests
+also fail on manifest digest mismatch, mixed NV padding, inserted NV
+records, altered app payload and out-of-range HEX writes.
+
+Separate future approval still requires a dedicated offline-protected
+**address-aware writer** specification, verifiable NV-safe flash
+range/erase operations, backed-up security identity and monotonic
+counters, independent review, physical cold boots / SYS_PING / RF
+validation on an isolated board. No source CI success changes those
+requirements. See [#90](https://github.com/analienx/Zigbee-Coordinator/issues/90).
+
 ## 3. Hosted native build path (staged, fail-closed)
 
 Toolchain: CCS `12.8.0.00012`, TI-ARM-CLANG `3.2.2.LTS`, SysConfig
@@ -99,12 +135,12 @@ build. The CCS 12.8 bundled SysConfig 1.21.0 launcher is dispatched,
 with a reversible hosted-only binding receipt, to verified standalone
 SysConfig 1.21.1+3772; it is NEVER used as the old 1.21.0 binary.
 
-The hosted pipeline has already compiled the pinned SDK libraries and
-imported the ZNP projectspec. Native ZNP compile/link and genuine
-ELF/XML/HEX/BIN audit remain independent acceptance gates: until those
-all pass, no firmware is claimed. Regardless of native build outcome,
-P7U UART, PA/RF, CCFG and vendor NV/security compatibility remain
-PHYSICAL_UNVERIFIED and production flashing is prohibited.
+The native SDK + ZNP CCS compile/link and genuine ELF/XML/HEX/BIN
+checks have passed on the pinned B0 source SHA. The enhanced offline
+flash boundary remains separate from the native ELF acceptance. The
+physical behavior of the NEW R4 image, PA/RF/clock and later vendor
+NV/security compatibility remain UNVERIFIED. Source success never
+authorizes hardware flash or production deployment.
 
 Publisher SHA-256 evidence:
 - CCS 12.8 Linux: `fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d`
