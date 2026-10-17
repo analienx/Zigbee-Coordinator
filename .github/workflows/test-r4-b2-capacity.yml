@@ -11,6 +11,8 @@ on:
       - 'tests/test_r4_b2_profile.py'
       - 'tests/test_r4_b2_compare_native.py'
       - 'tests/test_r4_b2_reextracted_elf.py'
+      - 'tests/test_r4_b2_native_capacity_seal.py'
+      - 'tools/b2_seal_native_capacity.py'
       - 'tools/b2_verify_reextracted_elf.py'
       - 'tests/test_r4_b2_p3_native.py'
       - 'tools/b2_p3_force_link_overbudget.py'
@@ -24,4 +26,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Python synthetic negative controls (NOT native TI proof)
-        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence tests.test_r4_b2_compose tests.test_r4_b2_profile tests.test_r4_b2_compare_native tests.test_r4_b2_reextracted_elf tests.test_r4_b2_p3_native
+        run: python -m unittest -v tests.test_r4_b2_capacity_gate tests.test_r4_b2_native_evidence tests.test_r4_b2_compose tests.test_r4_b2_profile tests.test_r4_b2_compare_native tests.test_r4_b2_reextracted_elf tests.test_r4_b2_native_capacity_seal tests.test_r4_b2_p3_native
