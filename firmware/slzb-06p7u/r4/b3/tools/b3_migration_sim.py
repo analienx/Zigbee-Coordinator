@@ -60,8 +60,11 @@ def validate_archive(raw, expected_sha):
     require(isinstance(raw, bytes) and len(raw) <= MAX_ARCHIVE, "ARCHIVE_SIZE")
     require(isinstance(expected_sha, str) and bool(SHA.fullmatch(expected_sha)), "EXTERNAL_SHA_REQUIRED")
     require(hashlib.sha256(raw).hexdigest() == expected_sha, "EXTERNAL_SHA_MISMATCH")
+    require(raw.startswith(bytes((0x50, 0x4B, 0x03, 0x04))),
+            "ZIP_NON_CANONICAL_PREAMBLE")
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            require(archive.comment == b"", "ZIP_COMMENT_FORBIDDEN")
             names = archive.namelist()
             require(len(names) == len(set(names)), "ZIP_DUPLICATE_MEMBER")
             require(len(names) == len(MEMBERS) and set(names) == set(MEMBERS),
@@ -87,6 +90,8 @@ def validate_archive(raw, expected_sha):
     manifest = json_strict(contents["manifest.json"])
     require(isinstance(manifest, dict) and manifest.get("schema") == SCHEMA
             and manifest.get("synthetic") is True, "NON_SYNTHETIC_BUNDLE")
+    require(set(manifest) == {"schema", "synthetic", "target_layout", "member_sha256"},
+            "UNRECOGNIZED_MANIFEST_FIELDS")
     hashes = manifest.get("member_sha256")
     require(isinstance(hashes, dict) and set(hashes) == set(MEMBERS) - {"manifest.json"},
             "MANIFEST_MEMBERS")
@@ -145,9 +150,11 @@ def evaluate(manifest, data):
     floors = {}
     observed = {}
     dates = []
+    highest_nwk_counter = 0
     for snap in snapshots:
         require(isinstance(snap, dict) and set(snap) ==
-                {"network", "captured_utc", "source_radio", "online", "layout", "security"},
+                {"network", "captured_utc", "source_radio", "online", "layout",
+                 "security", "nwk_tx_counter"},
                 "INVALID_SNAPSHOT_SCHEMA")
         require(identity(snap["network"]) == base, "CROSS_NETWORK_CONFLICT")
         require(isinstance(snap["captured_utc"], str)
@@ -158,6 +165,8 @@ def evaluate(manifest, data):
         except ValueError:
             raise EvidenceError("INVALID_SNAPSHOT_TIME") from None
         dates.append(snap["captured_utc"])
+        nwk_tx = counter(snap["nwk_tx_counter"])
+        highest_nwk_counter = max(highest_nwk_counter, nwk_tx)
         radio = sim(snap["source_radio"])
         require(type(snap["online"]) is bool, "INVALID_ONLINE_FLAG")
         require(isinstance(snap["layout"], str) and snap["layout"] in ALLOWED_LAYOUTS,
@@ -185,6 +194,14 @@ def evaluate(manifest, data):
         current = (snap, entries)
     require(dates == sorted(set(dates)), "SNAPSHOT_TIME_ORDER")
     latest, current_entries = current
+    if latest["nwk_tx_counter"] < highest_nwk_counter:
+        findings.add("NWK_TX_FLOOR_CONFLICT")
+    if highest_nwk_counter == MAX_COUNTER:
+        findings.add("NWK_COUNTER_OVERFLOW")
+    if not current_entries or not roster:
+        findings.add("EMPTY_SECURITY_TABLE")
+    if floors.keys() - current_entries.keys():
+        findings.add("DROPPED_HISTORICAL_SECURITY_RECORDS")
     require(latest["source_radio"] == config["active_radio"], "ACTIVE_RADIO_MISMATCH")
     missing = roster - current_entries.keys()
     extra = current_entries.keys() - roster
@@ -229,7 +246,9 @@ def judge(raw, expected_sha):
     except (KeyError, TypeError, OverflowError, RecursionError):
         exc = EvidenceError("INVALID_INPUT_STRUCTURE")
     except EvidenceError as exc:
-        return {"schema": "r4-b3-restore-decision-v1", "status": "NOT_RESTORE_READY",
+        pass
+    # Every rejected structure MUST return a complete denial, never None.
+    return {"schema": "r4-b3-restore-decision-v1", "status": "NOT_RESTORE_READY",
                 "reason_codes": [exc.code], "synthetic_only": True,
                 "source_authentication": "NOT_ESTABLISHED",
                 "restore_authorized": False, "flash_authorized": False,

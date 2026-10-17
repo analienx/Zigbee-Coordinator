@@ -22,7 +22,7 @@ def network():
 
 def snapshot(n=3, counter=102, layout="NV2", time="2026-10-16T14:00:00Z"):
     return {"network": network(), "captured_utc": time, "source_radio": "SIM-RADIO-A",
-            "online": False, "layout": layout,
+            "online": False, "layout": layout, "nwk_tx_counter": counter,
             "security": [{"device": f"SIM-D{i:03}", "key_ref": f"SIM-LINK-{i:03}",
                           "tx_counter": counter + i} for i in range(n)]}
 
@@ -168,7 +168,7 @@ class OfflineAuthorityTests(unittest.TestCase):
     def test_m34_untrusted_claim_not_authenticated(self):
         result = check(mutate=lambda man, _: man.__setitem__("source_authenticated", True))
         self.assertEqual(result["source_authentication"], "NOT_ESTABLISHED")
-        self.assertDenied(result)
+        self.assertDenied(result, "UNRECOGNIZED_MANIFEST_FIELDS")
 
     def test_duplicate_security_device(self):
         parts = good()
@@ -252,7 +252,8 @@ class OfflineAuthorityTests(unittest.TestCase):
         result = check(mutate=lambda man, _: man.__setitem__(
             "origin_signature_verified", True))
         self.assertDenied(result)
-        self.assertEqual(result["status"], "OFFLINE_CONSISTENT_FOR_REVIEW")
+        self.assertEqual(result["status"], "NOT_RESTORE_READY")
+        self.assertIn("UNRECOGNIZED_MANIFEST_FIELDS", result["reason_codes"])
 
     def test_hostile_duplicate_json_field_rejected(self):
         def mutate(man, contents):
@@ -261,6 +262,62 @@ class OfflineAuthorityTests(unittest.TestCase):
             man["member_sha256"]["z2m_config.json"] = hashlib.sha256(
                 contents["z2m_config.json"]).hexdigest()
         self.assertDenied(check(mutate=mutate), "DUPLICATE_JSON_KEY")
+
+
+    def test_structural_error_exception_returns_deny_object_never_none(self):
+        from unittest.mock import patch
+        raw, digest = archive()
+        for failure in (TypeError("ill-typed"), KeyError("missing"),
+                        OverflowError("overflow"), RecursionError("cycle")):
+            with self.subTest(kind=type(failure).__name__):
+                with patch.object(sim, "evaluate", side_effect=failure):
+                    result = sim.judge(raw, digest)
+                self.assertIsInstance(result, dict)
+                self.assertDenied(result, "INVALID_INPUT_STRUCTURE")
+
+    def test_network_tx_counter_rollback_is_denied(self):
+        parts = good()
+        parts["coordinator_backup.json"]["snapshots"].insert(
+            0, snapshot(counter=1000, time="2026-10-14T14:00:00Z"))
+        self.assertDenied(check(parts), "NWK_TX_FLOOR_CONFLICT")
+
+    def test_network_counter_wrap_denied(self):
+        parts = good()
+        parts["coordinator_backup.json"]["snapshots"][0][
+            "nwk_tx_counter"] = sim.MAX_COUNTER
+        self.assertDenied(check(parts), "NWK_COUNTER_OVERFLOW")
+
+    def test_network_counter_boolean_denied(self):
+        parts = good()
+        parts["coordinator_backup.json"]["snapshots"][0][
+            "nwk_tx_counter"] = True
+        self.assertDenied(check(parts), "INVALID_TX_COUNTER")
+
+    def test_missing_nwk_tx_counter_never_consistent(self):
+        parts = good()
+        del parts["coordinator_backup.json"]["snapshots"][0]["nwk_tx_counter"]
+        self.assertDenied(check(parts), "INVALID_SNAPSHOT_SCHEMA")
+
+    def test_empty_security_table_denied(self):
+        parts = good(0)
+        self.assertDenied(check(parts), "EMPTY_SECURITY_TABLE")
+
+    def test_dropped_historical_key_without_current_record_denied(self):
+        parts = good(2)
+        parts["coordinator_backup.json"]["snapshots"].insert(
+            0, snapshot(3, time="2026-10-14T14:00:00Z"))
+        self.assertDenied(check(parts), "DROPPED_HISTORICAL_SECURITY_RECORDS")
+
+    def test_noncanonical_zip_prefix_rejected_even_when_external_hash_matches(self):
+        raw, _ = archive()
+        malformed = b"UNTRUSTED-PREFIX" + raw
+        self.assertDenied(
+            sim.judge(malformed, hashlib.sha256(malformed).hexdigest()),
+            "ZIP_NON_CANONICAL_PREAMBLE")
+
+    def test_unexpected_manifest_authority_flags_rejected(self):
+        result = check(mutate=lambda m, _: m.update({"restore_authorized": True}))
+        self.assertDenied(result, "UNRECOGNIZED_MANIFEST_FIELDS")
 
 
 if __name__ == "__main__":

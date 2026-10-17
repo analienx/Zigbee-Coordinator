@@ -23,3 +23,7 @@ The decision JSON reports redacted counts and nonsecret reason codes, and **ALWA
 ## Not implemented — hard migration blockers
 
 Actual Zigbee2MQTT backup archive canonical selection, versioned Zigbee coordinator-backup JSON schema, configuration serial binding, original radio metadata binding and authenticity, real key-byte equality through private enclave/redacted cryptographic proof, address-manager verification, binding/group/TC rows, per-device RX vs TX distinction from TI call graph, source-age provenance beyond synthetic timestamps and physical isolation are not implemented. Current stock 20260310/20260311 NV layout is **UNKNOWN**. The historical #84 mismatch counts (106/106, 3 + 3 stale) are private observations, not new verified input or authorization. A future **separate** operator-approved R4-07 must run outside public CI after real authenticated backup escrow and isolated hardware planning.
+
+## Source-review hardening — 17 October 2026
+
+The original synthetic v1 schema did not record a NWK TX floor and its broad malformed-input handler could return `None`. It now requires `nwk_tx_counter` in **every** snapshot (older synthetic v1 fixtures without it fail closed), conservatively refuses NWK counter rollback/overflow, empty tables, dropped older device keys, unexpected synthetic-manifest trust claims, ZIP prefix/comment ambiguity and disallows implicit `None` decisions for unexpected structural errors. These are synthetic-only judgments, not real backup parsing. The source hash pin still does not authenticate an issuer.
