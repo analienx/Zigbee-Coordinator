@@ -1,0 +1,144 @@
+# R4 Spark 1.3 XHIGH - no-spend CI plumbing pilot.
+# Subscription-only inference remains deliberately locked until separately verified.
+name: R4 Spark 1.3 XHIGH subscription pilot
+
+on:
+  push:
+    branches:
+      - research/r4-spark13-xhigh-subscription-ci-pilot-20261017
+    paths:
+      - .github/workflows/r4-spark13-xhigh-review-pilot.yml
+  workflow_dispatch:
+    inputs:
+      exact_sha:
+        description: 'Full 40-hex SHA in analienx/Zigbee-Coordinator'
+        required: true
+        type: string
+      run_review:
+        description: 'I verified this key belongs to the Muse Code subscription, not pay-as-you-go'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r4-spark13-pilot-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  runtime-smoke:
+    name: Linux CLI capability smoke (NO MODEL REQUEST)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Install official Muse CLI (no credentials in this job)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://dev.meta.ai/install.sh -o "$RUNNER_TEMP/muse-install.sh"
+          bash "$RUNNER_TEMP/muse-install.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Verify Spark 1.3 XHIGH flags without model inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          muse --version
+          muse exec --help > "$RUNNER_TEMP/muse-help.txt"
+          grep -F -- '--model <ID>' "$RUNNER_TEMP/muse-help.txt"
+          grep -F -- '--reasoning-effort <EFFORT>' "$RUNNER_TEMP/muse-help.txt"
+          grep -F -- '--disable-shell' "$RUNNER_TEMP/muse-help.txt"
+          grep -F -- '--disable-write' "$RUNNER_TEMP/muse-help.txt"
+          echo 'PASS: GitHub-hosted Muse Code CLI options present. Model was NOT called.'
+  subscription-only-review:
+    name: Subscription-authenticated R4 source review (EXPLICITLY GATED)
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' && inputs.run_review == true
+          && vars.R4_SUBSCRIPTION_CLI_BILLING_CONFIRMED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: r4-subscription-review
+    env:
+      META_API_KEY: ${{ secrets.R4_MUSE_SUBSCRIPTION_CLI_KEY }}
+    steps:
+      - name: Fail closed without a validated subscription-only credential
+        shell: bash
+        run: |
+          if [ -z "${META_API_KEY:-}" ]; then
+            echo 'BLOCKED: no confirmed subscription-only Muse Code CI credential configured.'
+            exit 1
+          fi
+      - name: Validate requested exact SHA
+        shell: bash
+        env:
+          SHA: ${{ inputs.exact_sha }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          assert re.fullmatch(r"[0-9a-fA-F]{40}", os.environ["SHA"]), "Expected full 40-hex SHA"
+          PY
+      - name: Checkout source without retained GitHub token
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.exact_sha }}
+          persist-credentials: false
+          path: source
+      - name: Confirm source revision
+        env:
+          SHA: ${{ inputs.exact_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git -C source rev-parse HEAD)" = "$(echo "$SHA" | tr 'A-F' 'a-f')" ]
+      - name: Install Muse CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://dev.meta.ai/install.sh -o "$RUNNER_TEMP/muse-install.sh"
+          bash "$RUNNER_TEMP/muse-install.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prepare source-only review task (no repository scripts)
+        shell: bash
+        env:
+          SHA: ${{ inputs.exact_sha }}
+        run: |
+          cat > "$RUNNER_TEMP/r4-review-task.txt" <<'EOF'
+          Review the checked-out Zigbee-Coordinator R4 source adversarially.
+          Scope: R4-00/01a/B0/B1/B2/B3/B4, NV/security/frame counters/RTOS,
+          B2 opaque TI routing limitations, B4 F0/F1/F2 clashes, host and CCFG.
+          For each source-backed P0-P3 finding identify exact file and line,
+          concrete failure scenario, proof and recommended negative test.
+          Explicitly mark absent phases/branches and any incomplete combined
+          R4 candidate; do not claim a successful integrated or physical review.
+          This is source analysis only. Do NOT edit, test, execute source code,
+          access secrets, publish comments or change GitHub state.
+          EOF
+          printf '\nExact candidate SHA: %s\n' "$SHA" >> "$RUNNER_TEMP/r4-review-task.txt"
+      - name: Muse Spark 1.3 XHIGH (subscription only)
+        working-directory: source
+        env:
+          MUSE_CONTRIBUTOR_MODE: 'off'
+        shell: bash
+        run: |
+          set -euo pipefail
+          muse exec \
+            --model muse-spark-1.3 \
+            --reasoning-effort xhigh \
+            --contributor-mode off \
+            --disable-write --disable-shell \
+            --disable-web-tools --disable-request-user-input \
+            --sandbox-network restricted \
+            --no-foreign-personal-context --no-session-log \
+            --max-model-steps 45 \
+            --prompt-file "$RUNNER_TEMP/r4-review-task.txt" \
+            > "$RUNNER_TEMP/r4-spark13-review.md"
+          test -s "$RUNNER_TEMP/r4-spark13-review.md"
+      - name: Upload review draft (never automatically approve)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-spark13-review-${{ github.run_id }}
+          path: ${{ runner.temp }}/r4-spark13-review.md
+          if-no-files-found: ignore
+          retention-days: 14
