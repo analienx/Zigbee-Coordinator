@@ -86,7 +86,12 @@ class V4Native(unittest.TestCase):
                 self.assertIn("trngResult != TRNG_STATUS_SUCCESS", task)
                 self.assertLess(task.index("(void)TRNG_cancelOperation(handle);"),
                                 task.index("TRNG_close(handle);"))
-                self.assertIn("params.timeout = 25u;", task)
+                self.assertIn("Clock_tickPeriod == 0u", task)
+                self.assertIn("Clock_tickPeriod > 100000u", task)
+                self.assertIn("100000u / Clock_tickPeriod", task)
+                self.assertIn("100000u % Clock_tickPeriod", task)
+                self.assertEqual(result["trng_timeout_bound_us"], 100000)
+                self.assertEqual(result["trng_timeout_unit"], "CEIL_MICROSECONDS_TO_RTOS_TICKS")
                 self.assertIn("B4_V4BootValid = 0u;", task)
                 self.assertIn("B4_V4BootId[i] = 0u;", task)
                 self.assertIn("B4_V4BootInitialize();", task)

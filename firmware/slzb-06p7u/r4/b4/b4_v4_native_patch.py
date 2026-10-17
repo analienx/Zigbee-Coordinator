@@ -53,7 +53,16 @@ static void B4_V4BootInitialize(void)
     TRNG_init();
     TRNG_Params_init(&params);
     params.returnBehavior = TRNG_RETURN_BEHAVIOR_BLOCKING;
-    params.timeout = 25u; /* RTOS ticks, strictly bounded at boot only */
+    /* Exact pinned donor ZNP SysConfig sets Clock.tickPeriod=10 us.
+     * 25 ticks would mean only 250 us, NOT 25 ms. Require sensible
+     * positive tick period and convert 100 ms into rounded-up RTOS
+     * ticks using quotient + remainder (no overflowing addition).
+     * On a nonsensical clock period, leave boot identity unavailable.
+     */
+    if (Clock_tickPeriod == 0u || Clock_tickPeriod > 100000u)
+        return;
+    params.timeout = (100000u / Clock_tickPeriod) +
+                     ((100000u % Clock_tickPeriod) != 0u);
     handle = TRNG_open(0, &params); /* existing SysConfig TRNG instance */
     if (handle == NULL)
         return;
@@ -237,6 +246,8 @@ def apply(root):
         "sdk_sha": TI_SHA, "command": "SYS_F2", "request_bytes": 8,
         "payload_bytes": V4_BYTES, "boot_entropy": "TRNG_GET_RANDOM_BYTES_ONCE_IN_NPI_TASK",
         "boot_cap_on_failure": 0,
+        "trng_timeout_bound_us": 100000,
+        "trng_timeout_unit": "CEIL_MICROSECONDS_TO_RTOS_TICKS",
         "trng_timeout_cancellation": "CANCEL_QUEUED_JOB_BEFORE_SEMAPHORE_DESTRUCT",
         "full_image_build_digest": "NOT_CLAIMED",
         "flash_authorized": False, "physical_verified": False,
