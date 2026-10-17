@@ -1,0 +1,32 @@
+name: R4-B0 NV/CCFG sector DENIAL only (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/b0/tools/b0_sector_dryrun.py'
+      - 'tests/test_r4_b0_sector_denial.py'
+      - '.github/workflows/test-r4-b0-sector-denial.yml'
+permissions:
+  contents: read
+jobs:
+  deny-unqualified-erase-map:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact reviewed PR HEAD
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Real B0 source analysis policy; hostile synthetic address records
+        run: |
+          set -euo pipefail
+          python -m unittest -v tests.test_r4_b0_sector_denial
+          python - <<'PY'
+          import sys
+          sys.path.insert(0,"firmware/slzb-06p7u/r4/b0/tools")
+          from b0_sector_dryrun import classify_payload,CCFG_BEGIN
+          receipt=classify_payload({0x100:0x01,CCFG_BEGIN:0x02})
+          assert receipt["status"] == "NO_SAFE_FULL_IMAGE_SECTOR_PLAN"
+          assert receipt["flash_authorized"] is False
+          assert receipt["programmer_commands"] is None
+          print("R4_B0_EXPECTED_SECTOR_ERASE_DENIAL_NOT_A_FLASH_PLAN")
+          PY
