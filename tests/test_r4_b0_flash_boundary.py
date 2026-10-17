@@ -106,8 +106,8 @@ class FlashBoundaryTests(unittest.TestCase):
             root = setup(td)
             data = build_hex().decode()
             data = data.replace(intel_hex(0, 0, 1),
-                intel_hex(2, 0, 4, b"\\x00\\x0b") +
-                intel_hex(4, 0, 0, b"\\x12\\x34\\x56\\x78") +
+                intel_hex(2, 0, 4, bytes((0, 11))) +
+                intel_hex(4, 0, 0, bytes((0x12, 0x34, 0x56, 0x78))) +
                 intel_hex(0, 0, 1))
             blob = data.encode()
             (root / "znp.hex").write_bytes(blob)
