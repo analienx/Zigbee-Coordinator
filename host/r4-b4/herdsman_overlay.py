@@ -17,6 +17,7 @@ BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 ADAPTER = "src/adapter/z-stack/adapter/zStackAdapter.ts"
 ZNP = "src/adapter/z-stack/znp/znp.ts"
 MUTEX = "src/utils/async-mutex.ts"
+WAITRESS = "src/utils/waitress.ts"
 MARKER = "B4_EXPERIMENTAL_EXISTING_OWNER"
 
 ADAPTER_METHOD = r"""
@@ -135,7 +136,7 @@ def plan(root):
     if _git(root, "rev-parse", "HEAD").decode().strip() != SHA:
         raise ValueError("herdsman source HEAD not exact version 10.9.1 pin")
     originals = {}
-    for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX):
+    for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS):
         actual = (root / name).read_bytes()
         if actual != _git(root, "show", SHA + ":" + name):
             raise ValueError("dirty or wrong upstream source: " + name)
@@ -217,6 +218,18 @@ def plan(root):
     )
     # B4: bounded in-process timeout metadata, entirely free of device IDs,
     # IEEE addresses, raw frames, payloads, serial paths and disk access.
+    # A mutex can become idle while Waitress still retains a pending or
+    # timed-out SRSP record. No diagnostics in that ambiguous owner state.
+    changes[WAITRESS] = replace_once(
+        originals[WAITRESS],
+        "    public clear(): void {",
+        """    /** B4_EXPERIMENTAL_EXISTING_OWNER: observation only. */
+    public b4IsIdle(): boolean {
+        return this.waiters.size === 0;
+    }
+
+    public clear(): void {""",
+    )
     changes[ZNP] = replace_once(
         originals[ZNP],
         "    private waitress: Waitress<ZpiObject, WaitressMatcher>;",
@@ -294,7 +307,8 @@ def plan(root):
     }
 
     public b4CanProbe(): boolean {
-        return this.initialized && !this.b4DiagPoisoned && this.queue.isIdle();
+        return this.initialized && !this.b4DiagPoisoned &&
+            this.queue.isIdle() && this.waitress.b4IsIdle();
     }
 
     public isInitialized(): boolean {""",
