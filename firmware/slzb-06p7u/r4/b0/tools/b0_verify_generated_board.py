@@ -133,7 +133,7 @@ def inspect_native_image(binary, *, resident_vectors=False):
     blob = binary.read_bytes()
     offset = 0x80 if resident_vectors else 0
     if len(blob) != BINARY_SIZE - offset:
-        raise ValueError("B0_R4_NATIVE_IMAGE_SIZE_NOT_EXPECTED_LINKED_SPAN")
+        raise ValueError("B0_R4_NATIVE_IMAGE_SIZE_NOT_P7_EXPECTED_LINKED_SPAN")
     ccfg = blob[CCFG_BASE-offset:CCFG_BASE-offset + CCFG_LEN]
     if len(ccfg) != CCFG_LEN:
         raise ValueError("B0_R4_NATIVE_CCFG_TRUNCATED")
