@@ -330,6 +330,22 @@ def plan(root):
             throw new Error("B4 F0 session poisoned; no automatic diagnostic retry");
         }""",
     )
+    # The early Znp.request() poison test is not sufficient: an F0 may be
+    # queued in AsyncMutex before a preceding F0 times out. Recheck *inside*
+    # the owner mutex just before any UNPI writer; never permit a queued
+    # second F0 to escape after the first quarantines diagnostics.
+    changes[ZNP] = replace_once(
+        changes[ZNP],
+        """        return this.queue.run<ZpiObject | undefined>(async () => {
+            logger.debug(() => `--> ${object}`, NS);""",
+        """        return this.queue.run<ZpiObject | undefined>(async () => {
+            if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
+                object.command.name === "r4DiagReadOnly" &&
+                (this.b4DiagPoisoned || !this.waitress.b4IsIdle())) {
+                throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");
+            }
+            logger.debug(() => `--> ${object}`, NS);""",
+    )
     changes[ZNP] = replace_once(
         changes[ZNP],
         """                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);
