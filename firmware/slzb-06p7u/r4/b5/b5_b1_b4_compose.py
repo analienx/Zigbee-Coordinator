@@ -17,6 +17,8 @@ def require(ok,reason):
 def main():
     ap=argparse.ArgumentParser()
     for name in ("sdk","b1","definition","receipt"): ap.add_argument("--"+name,required=True,type=Path)
+    for flag in ("b4-v3-receipt","b4-v4-receipt","b1-receipt"):
+        ap.add_argument("--"+flag,type=Path)
     a=ap.parse_args()
     sdk=a.sdk.resolve(); b1=a.b1.resolve()
     require(str(sdk).startswith("/tmp/") and str(b1).startswith("/tmp/"),"disposable source only")
@@ -33,6 +35,9 @@ def main():
     require(proof["collision"]["command"]=="MT SYS 0xF1","B1 opcode")
     v3=b4_native_patch.apply(sdk)
     v4=b4_v4_native_patch.apply(sdk)
+    for destination,evidence in ((a.b4_v3_receipt,v3),(a.b4_v4_receipt,v4)):
+        if destination:
+            destination.write_text(json.dumps(evidence,sort_keys=True,indent=2)+"\n")
     require(v3["f0_opcode"]=="0xF0" and v4["command"]=="SYS_F2","B4 owners")
     before={p:(sdk/p).read_text() for p in (MT,NPI,UART,SYS)}
     # Actual B1 MT/NPI/UART transforms on B4-patched source, no guessed splice.
@@ -71,6 +76,8 @@ def main():
     os.environ["B1_SOURCE_SHA"]=B1
     with patch.object(b1management,"prepare",return_value=(patches,proof)):
         full=apply_b1.overlay(sdk,b1/"firmware/slzb-06p7u/r4/b1")
+    if a.b1_receipt:
+        a.b1_receipt.write_text(json.dumps(full,sort_keys=True,indent=2)+"\n")
     require(full["schema"]=="r4-b1-admission-overlay-v2" and
             full["source_sha"]==B1 and
             full["management"]["collision"]["command"]=="MT SYS 0xF1",
