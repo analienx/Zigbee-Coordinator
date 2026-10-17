@@ -29,6 +29,17 @@ class ArtifactPublicationTests(unittest.TestCase):
         self.assertIn("/tmp/b0out/DO_NOT_FLASH_NV_BOUNDARY.json\n", failed)
         self.assertIn("if-no-files-found: warn", failed)
 
+    def test_native_publication_depends_on_green_overlay_and_upstream_inventory(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        # Native success() by itself refers only to this job, not
+        # failing parallel jobs in the same workflow. Both must be
+        # explicit job dependencies so a red overlay cannot coexist
+        # with a downloadable "success" candidate image.
+        native = workflow.split("  r4-b0-native-build:\n", 1)[1]
+        job_header = native.split("    steps:\n", 1)[0]
+        self.assertIn("needs: [r4-b0-overlay, r4-b0-upstream-inventory]", job_header)
+        self.assertNotIn("continue-on-error: true", job_header)
+
     def test_artifact_name_identifies_actual_checked_out_pr_head(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         # GitHub's github.sha on pull_request is a synthetic merge-ref
