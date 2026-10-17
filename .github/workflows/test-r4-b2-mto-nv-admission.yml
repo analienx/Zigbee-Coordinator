@@ -15,7 +15,21 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify B2 existing sealed-owner boundary (never weaken)
+        run: |
+          set -euo pipefail
+          python -m unittest -v tests.test_r4_b2_scope_guard tests.test_r4_b2_b1_patch_compat
+          python tools/b2_scope_guard.py --repo . --out /tmp/b2-owner-scope.json
+          python - <<'PY'
+          import json
+          s=json.load(open("/tmp/b2-owner-scope.json"))
+          assert s["status"] == "B2_SCOPE_ACCEPTED"
+          assert s["B2_SOURCE_READY"] is False
+          assert s["physical_verified"] is False
+          print("B2_SEALED_OWNER_SCOPE_CONFIRMED")
+          PY
       - name: Fetch exact TI 8.33 donor from Texas Instruments
         run: |
           set -euo pipefail
