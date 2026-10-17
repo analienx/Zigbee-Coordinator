@@ -1,0 +1,21 @@
+# R4 B5 — source-only B1/B4 coexistence probe
+
+**DRAFT / NOT SOURCE READY / NO FLASH.**
+
+Pinned B4 canonical base: \`3231abb1f13210eb88afe13ff7b7f9f29709cd6b\`. B1 #94 source is read by immutable SHA, never merged. B1's own production management patch preflights genuine pristine TI 8.33 and exact herdsman before authentic B4 F0/F2 source overlays are applied. Its MT/NPI/UART transformations then run against the actual B4-modified code, with fail-closed checks for F0/F1/F2 command ownership, B1 HOLD, UART events, NPI counters and TRNG one-attempt guard.
+
+**Scope limitation:** Only B1 management MT/NPI/UART source patch *compatibility*, not full B1 NV/security, B2/B3, native CCS link, startup/runtime stacks, host installation or physical safety. This probe cannot authorize merge, native rollout or flash. Do not modify real devices or network. A subsequent isolated full native integration/independent review and complete backup/rollback are mandatory.
+
+## Full B1 source extension
+
+After exact B1 management preflight and authentic B4 overlays, the runner now invokes B1's **actual complete `apply_b1.overlay()`** for NV admission, security, ZMac, ZDO, startup and transport; only the management preparer is replaced with the exact already-preflighted B1 transforms recomputed on post-B4 source. Every other B1 input SHA check and source mutation remains active. This is *full source composition*, **NOT a native/linked image**. In particular B1's embedded public source prefix identifies B1 only, not the composite binary; a combined image digest must be redesigned before any B5 acceptance or release. B1/NV security has no physical approval and real coordinator flash is forbidden.
+
+## Separate native experiment
+
+The B5-native workflow stages full B1 NV/security source after canonical B4 F0/F2 and executes genuine pinned TI CCS dual-link ELF/HEX/BIN, both B4 native audits and the B1 native seal. This is *not* a release image or physical verification. The B1 public digest still identifies B1 only, **not the combined B5 image**; independent merged-image provenance, B2/B3 integration, complete NV/security backup and rollback, and hardware stack/RF/USB/OTA validation are blockers. No flash or live changes.
+
+## Offline composite build identity (not radio authentication)
+
+Native CI additionally verifies exact B1, B4-v3 and B4-v4 receipts as a cryptographic SHA-256 preimage chain across the *actual final combined* MT, NPI, UART, NV/security sources; it binds the native ELF/HEX/BIN/XML file digests and exact TI SDK/B1/B5 commit SHAs into `b5-native-offline-provenance.json`. The SHA is an **off-device reproducibility identifier**, not an embedded image digest, authentication signature, or proof a coordinator booted/accepted the image. B1 F1's existing four-byte source prefix remains B1-only, not B5. All B2/B3/physical gates remain blocked.
+
+**Reproducibility correction:** TI XML records a volatile `<link_time>`; the existing B4 native pair auditor validates the complete XML after normalizing only that source-proven timestamp. The B5 composite ID therefore hashes the exact deterministic ELF/HEX/BIN and final source files, while preserving raw XML SHA256 in the receipt without including it in the stable ID. A second B5 pair comparison verifies matching IDs/material and rejects deliberate source mutations, forged hashes, unqualified hardware claims or XML entering the stable identifier.

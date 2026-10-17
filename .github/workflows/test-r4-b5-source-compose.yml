@@ -1,0 +1,48 @@
+name: R4 B5 B1 management and B4 source composition
+on:
+  pull_request:
+    paths:
+      - "firmware/slzb-06p7u/r4/b5/**"
+      - ".github/workflows/test-r4-b5-source-compose.yml"
+  push:
+    paths:
+      - "firmware/slzb-06p7u/r4/b5/**"
+      - ".github/workflows/test-r4-b5-source-compose.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-only-compose:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify script compiles
+        run: python -m py_compile firmware/slzb-06p7u/r4/b5/b5_b1_b4_compose.py firmware/slzb-06p7u/r4/b5/b5_native_attestation.py firmware/slzb-06p7u/r4/b5/b5_attestation_parity.py tests/test_r4_b5_attestation_parity.py
+      - name: Exercise hostile synthetic offline attestation mutants
+        run: python -m unittest -v tests.test_r4_b5_attestation_parity
+      - name: Fetch immutable TI and B1 sources (offline from radio)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/b5-ti /tmp/b5-b1 /tmp/b5-herdsman
+          git -C /tmp/b5-ti init -q
+          git -C /tmp/b5-ti remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b5-ti fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/b5-ti checkout --detach -q FETCH_HEAD
+          git -C /tmp/b5-b1 init -q
+          git -C /tmp/b5-b1 remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/b5-b1 fetch --depth 1 origin a514c194ea0d94b5d38b28c7b07ca5caba9aeffd
+          git -C /tmp/b5-b1 checkout --detach -q FETCH_HEAD
+          curl --fail --location --silent --show-error --retry 2 --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts -o /tmp/b5-herdsman/definition.ts
+      - name: Run real source patchers in guarded order
+        run: |
+          python firmware/slzb-06p7u/r4/b5/b5_b1_b4_compose.py --sdk /tmp/b5-ti --b1 /tmp/b5-b1 --definition /tmp/b5-herdsman/definition.ts --receipt /tmp/b5-source-compose.json
+          python -c "import json; r=json.load(open('/tmp/b5-source-compose.json')); assert r['stage']=='FULL_B1_B4_SOURCE_COMPOSE_NOT_NATIVE_LINKED' and not r['flash_authorized'] and not r['native_linked']"
+      - name: Archive source provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b5-b1-b4-source-compose
+          path: /tmp/b5-source-compose.json
+          if-no-files-found: warn
