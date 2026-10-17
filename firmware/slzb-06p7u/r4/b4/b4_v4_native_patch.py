@@ -40,14 +40,23 @@ static void B4_V4InitializeBootOnce(void)
     TRNG_init();
     TRNG_Params_init(&params);
     params.returnBehavior = TRNG_RETURN_BEHAVIOR_BLOCKING;
-    params.timeout = 100u; /* finite RTOS ticks; never WAIT_FOREVER */
+    /* Clock_tickPeriod is microseconds, semaphoreTimeout uses RTOS ticks.
+     * Bound NPI startup delay to <=100ms, never WAIT_FOREVER. */
+    params.timeout = (100000u + Clock_tickPeriod - 1u) / Clock_tickPeriod;
     handle = TRNG_open(0, &params);
     if (handle == NULL)
         return;
     status = TRNG_getRandomBytes(handle, bytes, sizeof(bytes));
-    TRNG_close(handle);
     if (status != TRNG_STATUS_SUCCESS)
+    {
+        /* Pinned TRNGCC26XX_waitForResult may return after SemaphoreP timeout
+         * while the entropy job is STILL queued. Cancel it before close;
+         * never destroy an operationSemaphore with a live ISR producer. */
+        TRNG_cancelOperation(handle);
+        TRNG_close(handle);
         return;
+    }
+    TRNG_close(handle);
     lo = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8)
          | ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
     hi = (uint32_t)bytes[4] | ((uint32_t)bytes[5] << 8)
@@ -149,7 +158,7 @@ def plan(root, v3_receipt):
         original[path] = data.decode("utf-8")
     rng = _git(root, "show", TI_SHA + ":" + TRNG_HEADER).decode()
     if not all(key in rng for key in ("TRNG_getRandomBytes(", "TRNG_open(",
-               "TRNG_close(", "TRNG_Params_init(", "TRNG_STATUS_SUCCESS",
+               "TRNG_close(", "TRNG_cancelOperation(", "TRNG_Params_init(", "TRNG_STATUS_SUCCESS",
                "TRNG_RETURN_BEHAVIOR_BLOCKING", "timeout")):
         raise ValueError("TRNG pinned 8.33 API incompatible")
     sys = original[MT_SYS]
@@ -208,7 +217,7 @@ def apply(root, v3_receipt):
         "response_length": V4_RESPONSE_BYTES,
         "request_nonce_bytes": 8,
         "source_fingerprint64": "0x%016x" % tag,
-        "entropy_policy": "ONE_SHOT_IN_NPI_START_BEFORE_READY;FINITE_TIMEOUT;FAIL_CLOSED",
+        "entropy_policy": "ONE_SHOT_IN_NPI_START_BEFORE_READY;TICK_CONVERTED_TIMEOUT;CANCEL_BEFORE_CLOSE;FAIL_CLOSED",
         "boot_epoch": "UNVERIFIED_UNTIL_TRUE_NATIVE_AND_PHYSICAL",
         "host_installed": False,
         "written": {},
