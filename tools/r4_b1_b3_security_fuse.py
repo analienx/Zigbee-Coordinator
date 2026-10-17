@@ -122,6 +122,21 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
     save=save.replace("goto b3_checkpoint_done;",
                       "do { b1_security_runtime_hold_latch(); "
                       "goto b3_checkpoint_done; } while (0);")
+    # The B3 standalone checkpoint deliberately leaves pendingFlag set if
+    # NWKKEY write/readback fails. In the composite, B1 must ALSO latch the
+    # sticky security HOLD or secured RF could continue with torn key/counter
+    # materials even though pending changes remain. Branch only on the
+    # immutable B3 exact source shape; missing guard is a fatal preflight.
+    save=replace_one(save,
+        "    nwkFrameCounterChanges = 0;\n  }\n\n"
+        "b3_checkpoint_done:",
+        "    nwkFrameCounterChanges = 0;\n  }\n"
+        "  else\n  {\n"
+        "    b1_security_runtime_hold_latch();\n"
+        "    /* NWKKEY failed, was unreadable, or returned corrupt bytes. */\n"
+        "  }\n\n"
+        "b3_checkpoint_done:",
+        "B3_NWKKEY_COMPOSITE_STICKY_HOLD")
     source=raw[ZD]
     baseline_save=function(source,"void ZDApp_SaveNwkKey( void )")
     if baseline_save!=function(vendor[ZD],"void ZDApp_SaveNwkKey( void )"):
