@@ -19,11 +19,11 @@ def synthetic_response(nonce=NONCE, *, boot=0x1234, status=1, caps=3, valid=0x3F
             + COUNTERS.pack(*arr)
             + TAIL.pack(nonce, 6, fp, 0, status, 0))
     assert len(body) == V4_RESPONSE_BYTES
-    return frame(0x61, 0xF1, body)
+    return frame(0x61, 0xF2, body)
 
 class StrictV4(unittest.TestCase):
     def test_nonce_request_has_new_opcode_and_8_bytes(self):
-        self.assertEqual(request_frame(NONCE), frame(0x21, 0xF1, NONCE))
+        self.assertEqual(request_frame(NONCE), frame(0x21, 0xF2, NONCE))
         for bad in (b"", bytes(8), b"x", bytearray(NONCE), "string"):
             with self.subTest(bad=bad), self.assertRaises(InvalidV4):
                 request_frame(bad)
@@ -59,7 +59,7 @@ class StrictV4(unittest.TestCase):
         def mutate(start, content):
             t = bytearray(valid)
             t[4 + start:4 + start + len(content)] = content
-            return frame(0x61, 0xF1, bytes(t[4:-1]))
+            return frame(0x61, 0xF2, bytes(t[4:-1]))
         mutants = [
             mutate(0, b"R4D3"), mutate(4, b"\x03"),
             mutate(6, b"\x9f\x00"), mutate(8, b"\x07"),

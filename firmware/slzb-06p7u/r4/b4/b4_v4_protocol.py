@@ -1,4 +1,4 @@
-"""Proposed R4 B4 v4 SYS F1 protocol, independently versioned from v3 SYS F0.
+"""Proposed R4 B4 v4 SYS F2 protocol, independently versioned from v3 SYS F0.
 
 Pure bounded decoder: no serial, radio, files, secrets or false radio-epoch
 continuity. Source-level diagnostic data are only valid if native firmware
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import struct
 from b4_protocol import frame, SOF, fcs, SRSP_SYS
 
-V4_OPCODE = 0xF1
+V4_OPCODE = 0xF2
 V4_REQUEST_BYTES = 8
 V4_RESPONSE_BYTES = 160
 V4_MAGIC = b"R4D4"

@@ -1,4 +1,4 @@
-"""B4 v4 isolated candidate: additive F1 alongside unchanged, proven F0.
+"""B4 v4 isolated candidate: additive F2 alongside unchanged, proven F0.
 
 Applies ONLY after b4_native_patch.py's exact source-verified v3 overlay in
 a disposable exact-SHA TI 8.33 SDK. One-shot opportunistic TRNG in the
@@ -9,6 +9,7 @@ Hardware/stack/fairness are NOT qualified by a hosted build.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -20,7 +21,7 @@ TRNG_HEADER = "source/ti/drivers/TRNG.h"
 
 V4_BOOT_INIT = r"""
 /* B4_V4_NONCE_AND_BOOT_DIAGNOSTICS: boot identity from bounded one-shot
- * hardware TRNG attempt. No entropy work, NV access or retry in SYS F1.
+ * hardware TRNG attempt. No entropy work, NV access or retry in SYS F2.
  * A failure leaves the radio epoch capability EXPLICITLY unavailable.
  */
 volatile uint32_t B4_V4BootLo = 0;
@@ -123,7 +124,7 @@ __attribute__((noinline)) static void B4_V4ReadOnlyDiagnostics(const uint8_t *no
     B4_DiagPutU32(payload + 144, __B4_V4_FP_LO__);
     B4_DiagPutU32(payload + 148, __B4_V4_FP_HI__);
     /* minor 0, reserved bits 0; no fake ABI extensions. */
-    MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF1, sizeof(payload), payload);
+    MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF2, sizeof(payload), payload);
 }
 """
 
@@ -156,6 +157,11 @@ def plan(root, v3_receipt):
         if hashlib.sha256(src).hexdigest() != old["written"][path]["before_sha256"]:
             raise ValueError("v3 native receipt cannot bind pinned upstream")
         original[path] = data.decode("utf-8")
+    # B1 management/HOLD reserves SYS F1; F2 must remain free in the
+    # exact pinned TI upstream SYS symbol table before creating this addon.
+    mt_header = _git(root, "show", TI_SHA + ":source/ti/zstack/mt/mt.h").decode()
+    if re.search(r"^#define\\s+MT_SYS_\\w+\\s+0xF2\\b", mt_header, re.M):
+        raise ValueError("SYS F2 opcode collision with pinned TI mt.h")
     rng = _git(root, "show", TI_SHA + ":" + TRNG_HEADER).decode()
     if not all(key in rng for key in ("TRNG_getRandomBytes(", "TRNG_open(",
                "TRNG_close(", "TRNG_cancelOperation(", "TRNG_Params_init(", "TRNG_STATUS_SUCCESS",
@@ -163,7 +169,7 @@ def plan(root, v3_receipt):
         raise ValueError("TRNG pinned 8.33 API incompatible")
     sys = original[MT_SYS]
     task = original[NPI_TASK]
-    if MARKER in sys or MARKER in task or "case 0xF1:" in sys:
+    if MARKER in sys or MARKER in task or "case 0xF2:" in sys:
         raise ValueError("v4 source already added or collision")
     if sys.count("uint8_t MT_SysCommandProcessing(uint8_t *pBuf)") != 1:
         raise ValueError("TI dispatcher source drift")
@@ -189,7 +195,7 @@ def plan(root, v3_receipt):
     dispatch = "    case 0xF0:\n      if (pBuf[MT_RPC_POS_LEN] != 0)"
     if sys.count(dispatch) != 1:
         raise ValueError("v3 exact F0 LEN gate changed")
-    sys = sys.replace(dispatch, """    case 0xF1:
+    sys = sys.replace(dispatch, """    case 0xF2:
       if (pBuf[MT_RPC_POS_LEN] != 8)
         status = MT_RPC_ERR_LENGTH;
       else
@@ -213,7 +219,7 @@ def apply(root, v3_receipt):
         "stage": "SOURCE_PATCHED_NOT_NATIVE_LINKED",
         "parent_v3_verified": True,
         "ti_sha": TI_SHA,
-        "opcode": "0xF1",
+        "opcode": "0xF2",
         "response_length": V4_RESPONSE_BYTES,
         "request_nonce_bytes": 8,
         "source_fingerprint64": "0x%016x" % tag,

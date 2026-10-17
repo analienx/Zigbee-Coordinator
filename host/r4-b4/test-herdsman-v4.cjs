@@ -63,11 +63,11 @@ test("V4: real ZpiObject encodes 8-byte SREQ and decodes 160-byte SRSP",()=>{
     const nonce=Buffer.from("ab1204fe0034ef05","hex");
     const p=ZpiObject.createRequest(Subsystem.SYS,"r4DiagReadOnlyV4",{nonce});
     const req=p.unpiFrame;
-    assert.equal(req.commandID,241);
+    assert.equal(req.commandID,242);
     assert.deepEqual(req.data,nonce);
-    const full=new Frame(Type.SRSP,Subsystem.SYS,241,makeResponse(nonce)).toBuffer();
+    const full=new Frame(Type.SRSP,Subsystem.SYS,242,makeResponse(nonce)).toBuffer();
     assert.equal(ZpiObject.fromUnpiFrame(Frame.fromBuffer(160,full.length-1,full)).payload.diagnostic.length,160);
-    assert.throws(()=>ZpiObject.fromUnpiFrame(new Frame(Type.SRSP,Subsystem.SYS,241,Buffer.alloc(159))));
+    assert.throws(()=>ZpiObject.fromUnpiFrame(new Frame(Type.SRSP,Subsystem.SYS,242,Buffer.alloc(159))));
 });
 
 test("V4: valid nonce echoed, entropy qualified and original six counters decoded",async()=>{
@@ -92,7 +92,7 @@ test("V4: failed radio TRNG exposes UNKNOWN rather than guessed boot epoch",asyn
     assert.equal(res.bootEpochAvailable,false);
     assert.equal(owner.znp.poison,false);
 });
-test("V4: late F1 nonce alias poisoned instead of returning a forged sample",async()=>{
+test("V4: late F2 nonce alias poisoned instead of returning a forged sample",async()=>{
     const owner=fakeAdapter(x=>{
         const b=Buffer.from(x);b[132]^=0x01;return b;
     });
@@ -131,7 +131,7 @@ test("V4: manual default OFF, OTA and stale owner never send F1",async()=>{
         assert.equal(owner.znp.poison,false);
     }
 });
-test("V4: true pinned ZNP mutex veto prevents F1 after OTA starts while queued",async()=>{
+test("V4: true pinned ZNP mutex veto prevents F2 after OTA starts while queued",async()=>{
     const znp=new Znp("/dev/never-opened",115200,false);
     znp.initialized=true;
     let otaSafe=true;

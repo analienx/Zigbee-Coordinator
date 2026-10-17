@@ -1,13 +1,14 @@
-"""Additive v4 (SYS F1) to exact already-audited B4 v3 herdsman 10.9.1.
+"""Additive v4 (SYS F2) to exact already-audited B4 v3 herdsman 10.9.1.
 
 No change to v3 F0 opcode/request/payload or its default-off policy.
 Pins pristine upstream by comparing the v3 overlay receipt's before/after
 SHA with actual pinned tree. Caller-supplied random nonce is echoed and
-verified after SREQ waiter resolution; stale F1 can never be a valid sample.
+verified after SREQ waiter resolution; stale F2 can never be a valid sample.
 """
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -156,6 +157,10 @@ def plan(root, v3_receipt):
         src[name] = content.decode()
     if any(MARKER in text for text in src.values()):
         raise ValueError("v4 already present")
+    # B1 already owns 0xF1. V4 F2 requires a free pinned SYS entry.
+    sys_block = src[DEFINITION].split("[Subsystem.SYS]: [", 1)[1].split("[Subsystem.MAC]: [", 1)[0]
+    if re.search(r"\\bID:\\s*242\\b", sys_block):
+        raise ValueError("SYS F2 command collision with pinned herdsman")
     definition = replace(src[DEFINITION],
         '            name: "r4DiagReadOnly",',
         '''            name: "r4DiagReadOnly",''')
@@ -165,7 +170,7 @@ def plan(root, v3_receipt):
     definition = replace(definition, anchor, anchor + '''
         // B4_V4_NONCE_AND_BOOT: separate opcode; F0 v3 is untouched.
         {
-            name: "r4DiagReadOnlyV4", ID: 241,
+            name: "r4DiagReadOnlyV4", ID: 242,
             type: CommandType.SREQ,
             request: [{name: "nonce", parameterType: ParameterType.BUFFER8}],
             response: [{name: "diagnostic", parameterType: ParameterType.BUFFER160}],
@@ -273,7 +278,7 @@ def apply(root, v3_receipt):
         "source_sha": SHA,
         "stage": "PINNED_COMPILED_NOT_INSTALLED",
         "same_znp_owner": True,
-        "request": {"opcode": 241, "nonce_bytes": 8},
+        "request": {"opcode": 242, "nonce_bytes": 8},
         "response_bytes": 160,
         "auto_enabled": False,
         "files": {}}

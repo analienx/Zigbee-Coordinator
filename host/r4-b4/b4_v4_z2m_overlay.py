@@ -40,7 +40,7 @@ def plan(root, v3_receipt):
     src = content.decode()
     if MARKER in src:
         raise ValueError("v4 already present")
-    insert = """    /** B4_V4_NONCE_AND_BOOT: optional v4 F1, no automatic polling.
+    insert = """    /** B4_V4_NONCE_AND_BOOT: optional v4 F2, no automatic polling.
      *  Same actual OTA extension, existing controller, one ZNP owner.
      */
     public async b4ProbeReadOnlyDiagnosticsV4(enabled = false) {
