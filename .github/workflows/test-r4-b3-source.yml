@@ -153,9 +153,9 @@ jobs:
           from pathlib import Path
           p=Path('/tmp/b3host/ti_nwk.c')
           s=p.read_text()
-          old='if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),'
+          old='(void *)&keyItems) == SUCCESS)'
           assert s.count(old)==1
-          s=s.replace(old,'if (1 || osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),')
+          s=s.replace(old,'(void *)&keyItems) >= SUCCESS)')
           p.write_text(s)
           PY
           gcc -std=c11 -O0 -Wall -Wextra -Wno-error \
