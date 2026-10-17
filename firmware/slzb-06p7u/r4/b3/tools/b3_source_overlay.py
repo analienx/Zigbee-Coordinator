@@ -92,6 +92,114 @@ def nvocmp_changes(source):
         "        NVOCMP_nvHandle.nvSize = NVOCMP_NVPAGES;\n"
         "        NVOCMP_size = NVOCMP_NVPAGES;\n\n"
         "        // Initialize force compaction to false")
+    # All the modifications below run in the EXACT pinned original TI source.
+    # Void NVOCMP_read formerly threw away NVS failure status. A sticky fatal
+    # state plus caller-output wipe prevents fake success or mutating damaged NV.
+    source = one(source,
+        "static inline void NVOCMP_read(uint8_t pg, uint16_t off, uint8_t *pBuf, uint16_t len)\n"
+        "{\n"
+        "#ifndef NV_LINUX\n"
+        "    NVS_read(NVOCMP_nvsHandle, NVOCMP_FLASHOFFSET(pg, off), (uint8_t *)pBuf, len);\n"
+        "#else\n"
+        "    NV_LINUX_read(pg, off, pBuf, len);\n"
+        "#endif\n"
+        "}",
+        "static inline void NVOCMP_read(uint8_t pg, uint16_t off, uint8_t *pBuf, uint16_t len)\n"
+        "{\n"
+        "    int_fast16_t status;\n"
+        "#ifndef NV_LINUX\n"
+        "    status = NVS_read(NVOCMP_nvsHandle, NVOCMP_FLASHOFFSET(pg, off), (uint8_t *)pBuf, len);\n"
+        "#else\n"
+        "    status = NV_LINUX_read(pg, off, pBuf, len);\n"
+        "#endif\n"
+        "    if (status != 0)\n"
+        "    {\n"
+        "        memset(pBuf, 0, len);\n"
+        "        NVOCMP_failF = NVINTF_FAILURE;\n"
+        "        NVOCMP_failW = NVINTF_FAILURE;\n"
+        "    }\n"
+        "}")
+
+    # A rejected data write MUST NOT be followed by a committed-looking
+    # record header or an offset advance. This is a real TI NVOCMP defect
+    # reproduced in the NV2/3/5 source-compiled crash harness.
+    source = one(source,
+        "            NVOCMP_failW = NVOCMP_write(dstPg, dstOff,\n"
+        "                                        NVOCMP_itemBuffer, iLen);\n"
+        "            // Advance to next location",
+        "            NVOCMP_failW = NVOCMP_write(dstPg, dstOff,\n"
+        "                                        NVOCMP_itemBuffer, iLen);\n"
+        "            if (NVOCMP_failW != NVINTF_SUCCESS)\n"
+        "            {\n"
+        "                NVOCMP_failF = NVINTF_FAILURE;\n"
+        "                return;\n"
+        "            }\n"
+        "            // Advance to next location")
+    source = one(source,
+        "            NVOCMP_failW = NVOCMP_write(dstPg, dstOff, pBuf, dLen);\n"
+        "            // Write header\n"
+        "            NVOCMP_failW |= NVOCMP_write(dstPg, hOfs, cHdr, NVOCMP_ITEMHDRLEN);",
+        "            NVOCMP_failW = NVOCMP_write(dstPg, dstOff, pBuf, dLen);\n"
+        "            if (NVOCMP_failW != NVINTF_SUCCESS)\n"
+        "            {\n"
+        "                NVOCMP_failF = NVINTF_FAILURE;\n"
+        "                return;\n"
+        "            }\n"
+        "            // Header is the final validity/commit marker.\n"
+        "            NVOCMP_failW = NVOCMP_write(dstPg, hOfs, cHdr, NVOCMP_ITEMHDRLEN);\n"
+        "            if (NVOCMP_failW != NVINTF_SUCCESS)\n"
+        "            {\n"
+        "                NVOCMP_failF = NVINTF_FAILURE;\n"
+        "                return;\n"
+        "            }")
+
+    # Stop all further writes, erases and normal NV reads after a hard I/O
+    # failure. In-flight RAM is not authority to transmit; B1 must still
+    # independently enforce HOLD_SECURITY on caller errors.
+    source = one(source,
+        "static uint8_t NVOCMP_write(uint8_t dstPg, uint16_t off, uint8_t *pBuf, uint16_t len)\n"
+        "{\n"
+        "    uint8_t err = NVINTF_SUCCESS;",
+        "static uint8_t NVOCMP_write(uint8_t dstPg, uint16_t off, uint8_t *pBuf, uint16_t len)\n"
+        "{\n"
+        "    if (NVOCMP_failF != NVINTF_SUCCESS) return(NVINTF_FAILURE);\n"
+        "    uint8_t err = NVINTF_SUCCESS;")
+    source = one(source,
+        "static uint8_t NVOCMP_erase(NVOCMP_nvHandle_t *pNvHandle, uint8_t dstPg)\n"
+        "{\n"
+        "    uint8_t err = NVINTF_SUCCESS;",
+        "static uint8_t NVOCMP_erase(NVOCMP_nvHandle_t *pNvHandle, uint8_t dstPg)\n"
+        "{\n"
+        "    if (NVOCMP_failF != NVINTF_SUCCESS) return(NVINTF_FAILURE);\n"
+        "    uint8_t err = NVINTF_SUCCESS;")
+    source = one(source,
+        "    // Read Item\n"
+        "    if (!err)\n"
+        "    {\n"
+        "        err = NVOCMP_readItem(&iHdr, ofs, len, pBuf, false);\n"
+        "    }\n\n"
+        "    NVOCMP_UNLOCK(err);",
+        "    // Read Item\n"
+        "    if (!err)\n"
+        "    {\n"
+        "        err = NVOCMP_readItem(&iHdr, ofs, len, pBuf, false);\n"
+        "    }\n"
+        "    if (NVOCMP_failF != NVINTF_SUCCESS)\n"
+        "    {\n"
+        "        memset(pBuf, 0, len);\n"
+        "        err = NVINTF_FAILURE;\n"
+        "    }\n"
+        "    NVOCMP_UNLOCK(err);")
+    source = one(source,
+        "    return(NVOCMP_failW);\n"
+        "}\n\n"
+        "/******************************************************************************\n"
+        " * @fn      NVOCMP_eraseNvApi",
+        "    if (NVOCMP_failF != NVINTF_SUCCESS) return(NVINTF_FAILURE);\n"
+        "    return(NVOCMP_failW);\n"
+        "}\n\n"
+        "/******************************************************************************\n"
+        " * @fn      NVOCMP_eraseNvApi")
     return source
 
 
@@ -114,7 +222,7 @@ def apply(sdk, receipt):
     report = {"schema": "r4-b3-source-overlay-v1",
               "donor_sdk_commit": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
               "production_flash_authorized": False, "unresolved": [
-                  "NVOCMP_read ignores NVS_read status",
+                  "NVOCMP read/compaction full negative matrix and actual device power-loss still pending",
                   "osal_nv_init void ABI drops initialization failure",
                   "B1 HOLD_SECURITY integration unimplemented",
                   "counter reservation and interrupted compaction not proven"],
