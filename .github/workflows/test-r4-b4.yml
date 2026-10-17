@@ -20,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   b4-offline-hostile:
@@ -87,3 +88,37 @@ jobs:
           test ! -e firmware/slzb-06p7u/r4/b4/native-linked.ok
           test ! -e firmware/slzb-06p7u/r4/b4/host-installed.ok
           echo "B4 SOURCE_RESEARCH_ONLY: NOT native-linked, NOT host-installed, NOT flashed"
+
+  b4-temp-compare-existing-native:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: 39000883442
+          github-token: ${{ github.token }}
+          pattern: r4-b4-native-*-bee3ea96348260fe7abd70a640febec8b3fd40ab
+          merge-multiple: false
+          path: /tmp/b4-existing-native
+      - name: Log exact distinct native artifact digests without weakening the gate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          root = Path('/tmp/b4-existing-native')
+          dirs = sorted(x for x in root.iterdir() if x.is_dir())
+          if len(dirs) != 2:
+              raise SystemExit(f'expected two real artifact directories, found {len(dirs)}')
+          all_checks = []
+          for d in dirs:
+              manifests = list(d.rglob('manifest.json'))
+              if len(manifests) != 1:
+                  raise SystemExit('invalid native artifact manifest count')
+              m = json.loads(manifests[0].read_text())
+              checks = {k:m['files'][k]['sha256'] for k in ('elf','xml','hex','bin')}
+              print(d.name, json.dumps(checks, sort_keys=True))
+              all_checks.append(checks)
+          difference = [k for k in ('elf','xml','hex','bin') if all_checks[0][k]!=all_checks[1][k]]
+          print('NATIVE_OUTPUT_MISMATCH_FIELDS', difference)
+          PY
