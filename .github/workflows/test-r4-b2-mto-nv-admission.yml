@@ -1,0 +1,86 @@
+name: R4-B2 real TI MTO NV read-admission C tests (SOURCE ONLY)
+on:
+  pull_request:
+    paths:
+      - "firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py"
+      - "firmware/slzb-06p7u/r4/b2/tests/**"
+      - ".github/workflows/test-r4-b2-mto-nv-admission.yml"
+permissions:
+  contents: read
+jobs:
+  pinned-real-ti-c:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact untrusted PR HEAD
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify B2 existing sealed-owner boundary (never weaken)
+        run: |
+          set -euo pipefail
+          python -m unittest -v tests.test_r4_b2_scope_guard tests.test_r4_b2_b1_patch_compat
+          python tools/b2_scope_guard.py --repo . --out /tmp/b2-owner-scope.json
+          python - <<'PY'
+          import json
+          s=json.load(open("/tmp/b2-owner-scope.json"))
+          assert s["status"] == "B2_SCOPE_ACCEPTED"
+          assert s["B2_SOURCE_READY"] is False
+          assert s["physical_verified"] is False
+          print("B2_SEALED_OWNER_SCOPE_CONFIRMED")
+          PY
+      - name: Fetch exact TI 8.33 donor from Texas Instruments
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r4b2mto
+          git -C /tmp/r4b2mto init -q
+          git -C /tmp/r4b2mto remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4b2mto fetch -q --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4b2mto checkout -q FETCH_HEAD
+          test "$(git -C /tmp/r4b2mto rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          test "$(git -C /tmp/r4b2mto hash-object source/ti/zstack/stack/zdo/zd_app.c)" = d67a7798a3e6a8681faddebf5e4b87b4b4c60421
+      - name: Compile original donor and prove NV-failure mutant is caught
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r4b2-test
+          python firmware/slzb-06p7u/r4/b2/tests/mto_extract.py \
+            --source /tmp/r4b2mto/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/r4b2-test/old_donor.c --donor-negative
+          gcc -std=c11 -O0 -Wall -Wextra -Werror \
+            -I firmware/slzb-06p7u/r4/b2/tests /tmp/r4b2-test/old_donor.c \
+            firmware/slzb-06p7u/r4/b2/tests/mto_test.c -o /tmp/r4b2-test/old_donor
+          ulimit -c 0
+          if /tmp/r4b2-test/old_donor > /tmp/r4b2-test/old-failure.txt 2>&1; then
+            echo "B2_MUTANT_SURVIVED: original unchecked NV allowed"; exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/r4b2-test/old-failure.txt
+          echo B2_ORIGINAL_TI_UNCHECKED_NV_BUG_REPRODUCED
+      - name: Apply guarded change to disposable checkout and execute exact TI function
+        run: |
+          set -euo pipefail
+          python firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py \
+            --sdk /tmp/r4b2mto --receipt /tmp/r4b2-test/receipt.json
+          python firmware/slzb-06p7u/r4/b2/tests/mto_extract.py \
+            --source /tmp/r4b2mto/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/r4b2-test/mto_real.c
+          gcc -std=c11 -O0 -Wall -Wextra -Werror \
+            -I firmware/slzb-06p7u/r4/b2/tests /tmp/r4b2-test/mto_real.c \
+            firmware/slzb-06p7u/r4/b2/tests/mto_test.c -o /tmp/r4b2-test/mto_real
+          /tmp/r4b2-test/mto_real
+          python3 - <<'PY'
+          import json
+          r=json.load(open("/tmp/r4b2-test/receipt.json"))
+          assert r["nv_writes"] is False
+          assert r["production_flash_authorized"] is False
+          assert r["routing_body_verified"] is False
+          assert r["defaults_changed"] is False
+          print("B2_EXPERIMENTAL_MTO_NV_ADMISSION_ONLY_NOT_NATIVE_OR_RF")
+          PY
+      - name: Upload sanitized source-only evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: b2-mto-disposable-source-receipt-${{ github.event.pull_request.head.sha }}
+          path: /tmp/r4b2-test/receipt.json
+          if-no-files-found: warn
