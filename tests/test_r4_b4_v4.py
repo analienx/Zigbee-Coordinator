@@ -94,6 +94,12 @@ class V4Native(unittest.TestCase):
                 self.assertEqual(result["trng_timeout_unit"], "CEIL_MICROSECONDS_TO_RTOS_TICKS")
                 self.assertIn("B4_V4BootValid = 0u;", task)
                 self.assertIn("B4_V4BootId[i] = 0u;", task)
+                self.assertIn("B4_V4BootInitAttempted = 0u;", task)
+                self.assertIn("if (B4_V4BootInitAttempted != 0u)", task)
+                self.assertEqual(task.count("B4_V4BootInitAttempted = 1u;"), 1)
+                self.assertLess(task.index("B4_V4BootInitAttempted = 1u;"),
+                                task.index("TRNG_init();"))
+                self.assertEqual(task.count("TRNG_getRandomBytes(handle, sample, sizeof(sample))"), 1)
                 self.assertIn("B4_V4BootInitialize();", task)
                 self.assertLess(task.index("B4_V4BootInitialize();"),
                                 task.index("NPITL_initTL();"))
@@ -154,6 +160,7 @@ class V4Native(unittest.TestCase):
                 "00000080 B B4_V4BootId",
                 "00000088 B B4_V4BootValid",
                 "00000090 D B4_V4ResetReason",
+                "00000094 B B4_V4BootInitAttempted",
                 "00001000 t B4_SysReadOnlyDiagnosticsV4",
                 "00001100 t B4_V4BootInitialize",
             )) + "\n"

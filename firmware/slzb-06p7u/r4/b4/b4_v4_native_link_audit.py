@@ -11,6 +11,7 @@ NAMES = {
     "B4_V4BootId": ("b", "d"),
     "B4_V4BootValid": ("b", "d"),
     "B4_V4ResetReason": ("b", "d"),
+    "B4_V4BootInitAttempted": ("b", "d"),
     "B4_V4BootInitialize": ("t",),
     "B4_SysReadOnlyDiagnosticsV4": ("t",),
 }

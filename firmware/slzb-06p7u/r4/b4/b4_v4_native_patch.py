@@ -28,6 +28,8 @@ BOOT_SOURCE = r"""
 uint8_t B4_V4BootId[8] = {0};
 volatile uint32_t B4_V4BootValid = 0u;
 volatile uint32_t B4_V4ResetReason = 0xFFu;
+/* .bss resets on real chip boot, not on NPI task re-entry. */
+volatile uint32_t B4_V4BootInitAttempted = 0u;
 __attribute__((noinline)) static void B4_V4BootInitialize(void)
 {
     TRNG_Params params;
@@ -37,9 +39,13 @@ __attribute__((noinline)) static void B4_V4BootInitialize(void)
     uint32_t i;
     uint8_t nonzero = 0u;
     int_fast16_t trngResult;
-    /* Re-entry after any partial task restart must NOT reuse previous
-     * entropy. No UART is open yet; all writes precede host observations.
+    /* A re-entered NPI task must NOT manufacture a new radio boot epoch.
+     * Preserve the first result (including failed entropy). The .bss flag
+     * is reset only by an actual chip boot. No UART is open yet.
      */
+    if (B4_V4BootInitAttempted != 0u)
+        return;
+    B4_V4BootInitAttempted = 1u;
     for (i = 0u; i < sizeof(B4_V4BootId); ++i)
         B4_V4BootId[i] = 0u;
     B4_V4BootValid = 0u;
