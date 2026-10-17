@@ -231,6 +231,9 @@ def nvocmp_changes(source):
         "}\n\n"
         "/******************************************************************************\n"
         " * @fn      NVOCMP_eraseNvApi")
+    # NV2 source-retention journal ordering. Never erase the prior
+    # authoritative page before the destination's PGCDONE commit succeeds.
+    source = one(source, "#if(NVOCMP_NVPAGES > NVOCMP_NVONEP)\n  // clean XSRC pages\n  NVOCMP_failW = NVOCMP_erase(pNvHandle, srcPg);\n#endif\n\n  // mark XDST page as done\n  NVOCMP_writeByte(dstPg, NVOCMP_COMPMODEOFS, NVOCMP_PGCDONE);\n  pNvHandle->pageInfo[dstPg].mode = NVOCMP_PGCDONE;", "// The destination completion marker is the durable handoff: it MUST\n  // be committed successfully BEFORE the last valid source is erased.\n  // The upstream NV2 sequence erased the source first, then wrote this\n  // marker, allowing a failed marker write to lose necessary security rows.\n  NVOCMP_writeByte(dstPg, NVOCMP_COMPMODEOFS, NVOCMP_PGCDONE);\n  if (NVOCMP_failW != NVINTF_SUCCESS)\n  {\n    NVOCMP_failF = NVINTF_FAILURE;\n    return(0);\n  }\n  pNvHandle->pageInfo[dstPg].mode = NVOCMP_PGCDONE;\n\n#if(NVOCMP_NVPAGES > NVOCMP_NVONEP)\n  // Only now may the source be erased: a failed erase leaves a fully\n  // committed destination and is latched by B3 NVOCMP_erase.\n  NVOCMP_failW = NVOCMP_erase(pNvHandle, srcPg);\n  if (NVOCMP_failW != NVINTF_SUCCESS) return(0);\n#endif")
     return source
 
 
