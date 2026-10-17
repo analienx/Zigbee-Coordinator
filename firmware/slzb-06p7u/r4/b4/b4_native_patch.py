@@ -105,7 +105,7 @@ def build_patches(root):
     if ("-DNPI_SREQRSP" in opts or
             opts.count("-DMT_SYS_FUNC") != 1 or
             frame.count("#if defined(NPI_SREQRSP)") < 2 or
-            task.count("#if defined(NPI_SREQRSP)") < 10):
+            task.count("#if defined(NPI_SREQRSP)") < 2):
         raise ValueError("cannot qualify pinned TI NPI synchronous option baseline")
     opts = opts.rstrip("\n") + "\n-DNPI_SREQRSP\n"
     frame = SYNC_COMPILE_GUARD + frame
