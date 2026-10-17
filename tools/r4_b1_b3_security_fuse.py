@@ -194,7 +194,7 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
         "B3 checked seed-derived key status ABI",
         "B2/B4 cross-phase composition",
     ]
-    b1_receipt.write_text(json.dumps(original_b1,indent=2,sort_keys=True)+"\\n")
+    b1_receipt.write_text(json.dumps(original_b1,indent=2,sort_keys=True)+"\n")
     return {
         "schema":"r4-b1-b3-partial-security-fusion-v1",
         "ti_sdk_sha":TI_SHA,"b3_input_sha":B3_SHA,
