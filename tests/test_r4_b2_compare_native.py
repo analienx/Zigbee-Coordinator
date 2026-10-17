@@ -28,7 +28,8 @@ def fixture(profile, binhash):
                 "above_heap_linker_reserved_span_bytes":1024},"tables":tables}
     receipt={"result":"NATIVE_STATIC_PROFILE_CONFIRMED","profile":profile,
              "delta_static_table_bytes_vs_p0":3488 if p1 else 0}
-    manifest={"files":{"bin":{"sha256":binhash}}}
+    manifest={"files":{"bin":{"sha256":binhash},
+                       "elf":{"sha256":("c" if p1 else "d")*64}}}
     return source,receipt,manifest
 
 class TwoNativeBuildComparatorTests(unittest.TestCase):
@@ -45,6 +46,11 @@ class TwoNativeBuildComparatorTests(unittest.TestCase):
         a=self.valid()
         a[2][2]["files"]["bin"]["sha256"]="c"*64
         with self.assertRaisesRegex(CompareError,"not reproducible"):
+            checked(a)
+    def test_unreproducible_elves_rejected(self):
+        a=self.valid()
+        a[2][2]["files"]["elf"]["sha256"]="f"*64
+        with self.assertRaisesRegex(CompareError,"ELF not reproducible"):
             checked(a)
     def test_noop_profile_rejected(self):
         a=self.valid()
@@ -88,14 +94,12 @@ class TwoNativeBuildComparatorTests(unittest.TestCase):
             root=Path(temp)/"download"
             out=root/"b0out"
             (out/"b2-linked-baseline").mkdir(parents=True)
-            blob=b"NOT_A_REAL_TI_BIN"
-            (out/"candidate.bin").write_bytes(blob)
-            files={
-                "bin":{"file":"candidate.bin","sha256":hashlib.sha256(blob).hexdigest()},
-                "elf":{"file":"candidate.out","sha256":"a"*64},
-                "xml":{"file":"candidate.xml","sha256":"b"*64},
-                "hex":{"file":"candidate.hex","sha256":"c"*64},
-            }
+            files={}
+            for kind,ext in (("bin","bin"),("elf","out"),("xml","xml"),("hex","hex")):
+                blob=("SYNTHETIC_"+kind).encode()
+                name="candidate."+ext
+                (out/name).write_bytes(blob)
+                files[kind]={"file":name,"sha256":hashlib.sha256(blob).hexdigest()}
             (out/"manifest.json").write_text(json.dumps({
                 "schema":"r4-b0-artifact-manifest-v1","files":files}))
             native={
@@ -110,6 +114,28 @@ class TwoNativeBuildComparatorTests(unittest.TestCase):
             (out/"b2-linked-baseline"/"B2_BASELINE_ELF_SYMBOLS.json").write_text(json.dumps(native))
             (out/"b2-linked-baseline"/"B2_PROFILE_P1_RECEIPT.json").write_text(json.dumps(receipt))
             with self.assertRaisesRegex(CompareError,"ELF extractor/manifest digest mismatch"):
+                read(root,"P1")
+    def test_mutated_raw_elf_rejected_despite_consistent_manifest_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)/"download"
+            out=root/"b0out"
+            (out/"b2-linked-baseline").mkdir(parents=True)
+            records={}
+            for kind,ext in (("elf","out"),("xml","xml"),("hex","hex"),("bin","bin")):
+                raw=("ORIGINAL_"+kind).encode()
+                path=out/("znp."+ext)
+                path.write_bytes(raw)
+                records[kind]={"file":path.name,"sha256":hashlib.sha256(raw).hexdigest()}
+            (out/"manifest.json").write_text(json.dumps({
+                "schema":"r4-b0-artifact-manifest-v1","files":records}))
+            (out/"b2-linked-baseline"/"B2_BASELINE_ELF_SYMBOLS.json").write_text(json.dumps({
+                "status":"HOSTED_NATIVE_LINKED_TABLES","sdk_source_sha":SDK_SHA,
+                "artifact_sha256":{k:v["sha256"] for k,v in records.items()}}))
+            (out/"b2-linked-baseline"/"B2_PROFILE_P1_RECEIPT.json").write_text(json.dumps({
+                "result":"NATIVE_STATIC_PROFILE_CONFIRMED","profile":"P1",
+                "physical_verified":False,"source_ready":False}))
+            (out/"znp.out").write_bytes(b"TAMPERED ELF")
+            with self.assertRaisesRegex(CompareError,"raw native elf hash mismatch"):
                 read(root,"P1")
     def test_invalid_commit_or_workflow_run_rejected(self):
         with self.assertRaisesRegex(CompareError,"invalid expected"):
