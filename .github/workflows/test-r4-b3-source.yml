@@ -111,6 +111,9 @@ jobs:
           pattern=r'(if \(osal_nv_write_ex\([\s\S]*?pKeyData\)) == SUCCESS\)'
           mutant,n=re.subn(pattern,r'\1 >= 0)',s)
           assert n==2, f"expected two write guards, got {n}"
+          checked='OsalPort_memcmp(&persisted, pKeyData, sizeof(persisted))'
+          assert mutant.count(checked)==2
+          mutant=mutant.replace(checked, '1')  # deliberately bypass readback too
           f.write_text(mutant)
           PY
           gcc -std=c11 -O0 -Wall -Wextra -Wno-type-limits \
