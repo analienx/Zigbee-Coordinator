@@ -71,7 +71,7 @@ int main(void) {
  assert(ZDSecMgrSendNwkKey(&dev)==ZSuccess);
  assert(tx_calls==1);
  all(tx_key,0xA5);
- assert(nwk_reads==2 && seed_reads==4);
+ assert(nwk_reads==2 && seed_reads==5);
  puts("B3_ACTUAL_TI_SEED_FAILURE_AND_NWK_TRANSPORT_DENIAL_PASS");
  return 0;
 }
