@@ -1,6 +1,9 @@
 name: R4 B4 bounded diagnostics source guards
 
 on:
+  push:
+    branches:
+      - feat/p7u-r4-b4-z2m-source-gate
   pull_request:
     paths:
       - ".github/workflows/test-r4-b4.yml"
