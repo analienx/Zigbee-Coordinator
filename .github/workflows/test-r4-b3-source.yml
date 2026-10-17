@@ -153,9 +153,15 @@ jobs:
           from pathlib import Path
           p=Path('/tmp/b3host/ti_nwk.c')
           s=p.read_text()
-          old='(void *)&keyItems) == SUCCESS)'
-          assert s.count(old)==1
-          s=s.replace(old,'(void *)&keyItems) >= SUCCESS)')
+          old='''  if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),
+                    (void *)&keyItems) == SUCCESS &&
+      osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(persistedKey),
+                   &persistedKey) == SUCCESS &&
+      OsalPort_memcmp(&persistedKey, &keyItems, sizeof(keyItems)))'''
+          assert s.count(old)==1, "B3 checked NWK save guard drift"
+          mutant='''  if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),
+                    (void *)&keyItems) >= SUCCESS)'''
+          s=s.replace(old,mutant)
           p.write_text(s)
           PY
           gcc -std=c11 -O0 -Wall -Wextra -Wno-error \
