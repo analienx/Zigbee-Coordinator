@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect genuine B0-linked ELF, TI XML and manifest for B2 baseline tables.
+"""Inspect genuine CCS-linked ELF, TI XML and manifest for B2 P0/P1 table evidence.
 
 The B0 image audit MUST pass first. This collector reports missing symbols as
 UNKNOWN, never as zero. It does not claim dynamic high-water, RF, or B2 readiness.
@@ -238,7 +238,7 @@ def derive(root, source_sha, out, run_id):
         "status":"HOSTED_NATIVE_LINKED_PARTIAL"
                  if any(x["status"]!="HOSTED_NATIVE_LINKED" for x in table_result.values())
                  else "HOSTED_NATIVE_LINKED_TABLES",
-        "scope":"B0_REFERENCE_ONLY; no B2 tuning, RAM high-water or RF qualification",
+        "scope":"P0_OR_P1_NATIVE_LINKED_TABLES; NO_RUNTIME_HIGH_WATER_OR_RF_PROOF",
         "b2_repository_sha":source_sha,"github_run_id":run_id or "UNKNOWN",
         "sdk_source_sha":"3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
         "artifact_sha256":{k:v["sha256"] for k,v in files.items()},
@@ -255,9 +255,9 @@ def derive(root, source_sha, out, run_id):
     }
     out.mkdir(parents=True,exist_ok=True)
     (out/"B2_BASELINE_ELF_SYMBOLS.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
-    lines=["# B2 actual linked P0 baseline — TI B0 reference",
+    lines=["# B2 authentic TI CCS linked ELF table evidence (P0/P1)",
            "", "**HOSTED_NATIVE**, not B2_SOURCE_READY or physical proof.",
-           "B0 native image audit must be independently green.",
+           "B0 native image auditor must independently pass for this exact image.",
            f"Build source commit: \`{source_sha}\`; run: \`{run_id}\`.",
            "", "| Table | Linked count | Linked bytes | Derived entry bytes | ELF section |"]
     lines.append("|---|---:|---:|---:|---|")
