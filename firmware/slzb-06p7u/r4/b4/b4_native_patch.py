@@ -15,9 +15,15 @@ TI_SHA = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 MT_SYS = "source/ti/zstack/mt/mt_sys.c"
 NPI_TASK = "source/ti/zstack/npi/npi_task.c"
 NPI_CLIENT = "source/ti/zstack/npi/npi_client_mt.c"
+NPI_FRAME = "source/ti/zstack/npi/npi_frame_mt.c"
+NPI_OPTS = "source/ti/zstack/apps/znp/znp_cnf.opts"
+SYNC_COMPILE_GUARD = """#if !defined(NPI_SREQRSP)
+#error B4_SYNC_NPI_BUILD_UNQUALIFIED_NO_SRSP_PRODUCERS
+#endif
+"""
 MARKER = "B4_EXPERIMENTAL_DIAG_READ_ONLY"
 
-B4_FUNCTION = r"""
+B4_FUNCTION = SYNC_COMPILE_GUARD + r"""
 /* B4_EXPERIMENTAL_DIAG_READ_ONLY: snapshot preexisting NPI queue metrics. */
 extern volatile uint32_t B4_NpiSrspDepth;
 extern volatile uint32_t B4_NpiSrspHighWater;
@@ -81,7 +87,7 @@ def build_patches(root):
     if _git(root, "rev-parse", "HEAD").decode().strip() != TI_SHA:
         raise ValueError("not the pinned TI 8.33 SDK")
     initial = {}
-    for path in (MT_SYS, NPI_TASK, NPI_CLIENT):
+    for path in (MT_SYS, NPI_TASK, NPI_CLIENT, NPI_FRAME, NPI_OPTS):
         actual = (root / path).read_bytes()
         pristine = _git(root, "show", TI_SHA + ":" + path)
         if actual != pristine:
@@ -90,6 +96,20 @@ def build_patches(root):
     sys = initial[MT_SYS]
     task = initial[NPI_TASK]
     client = initial[NPI_CLIENT]
+    frame = initial[NPI_FRAME]
+    opts = initial[NPI_OPTS]
+    # The pinned example ZNP projectspec copies SDK znp_cnf.opts into
+    # the global compiler option set. It has no stock NPI_SREQRSP flag.
+    # Opt-in changes stock synchronous priority/watchdog logic; DISPOSABLE
+    # experimental B4 compilation only, never the sealed B0 build.
+    if ("-DNPI_SREQRSP" in opts or
+            opts.count("-DMT_SYS_FUNC") != 1 or
+            frame.count("#if defined(NPI_SREQRSP)") < 2 or
+            task.count("#if defined(NPI_SREQRSP)") < 10):
+        raise ValueError("cannot qualify pinned TI NPI synchronous option baseline")
+    opts = opts.rstrip("\\n") + "\\n-DNPI_SREQRSP\\n"
+    frame = SYNC_COMPILE_GUARD + frame
+    task = SYNC_COMPILE_GUARD + task
     if ("void MT_BuildAndSendZToolResponse(" not in client or
             "OsalPort_msgAllocate(" not in client or
             "#if !defined(NPI)" not in _git(root, "show", TI_SHA + ":source/ti/zstack/mt/mt.c").decode()):
@@ -183,13 +203,23 @@ def build_patches(root):
     for name in ("B4_NpiSrspDepth", "B4_NpiAsyncDepth"):
         if task.count("++" + name) != 2 or task.count("--" + name) != 1:
             raise ValueError("incomplete NPI TX queue depth instrumentation: " + name)
-    return {MT_SYS: (initial[MT_SYS], sys), NPI_TASK: (initial[NPI_TASK], task)}
+    # Compile-time (not symbol-only) proof for every affected translation unit.
+    if (opts.count("-DNPI_SREQRSP") != 1 or
+            any("B4_SYNC_NPI_BUILD_UNQUALIFIED_NO_SRSP_PRODUCERS" not in x
+                for x in (frame, sys, task))):
+        raise ValueError("unqualified synchronous NPI build after overlay")
+    return {MT_SYS: (initial[MT_SYS], sys),
+            NPI_TASK: (initial[NPI_TASK], task),
+            NPI_FRAME: (initial[NPI_FRAME], frame),
+            NPI_OPTS: (initial[NPI_OPTS], opts)}
 
 def apply(root):
     patches = build_patches(root)
     receipt = {"stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "ti_sha": TI_SHA,
                "f0_opcode": "0xF0", "payload_bytes": 132,
                "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
+               "sync_npi_compiled_required": True,
+               "sync_transport_changed_from_stock": True,
                "written": {}}
     # All anchors, files and Git pins are verified BEFORE the first write.
     for name, (old, new) in patches.items():
