@@ -471,6 +471,11 @@ jobs:
         with:
           name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P1-replica2
           path: /tmp/b2-compare/p1b
+      - name: Fetch genuine same-run P3 native SRAM rejection proof
+        uses: actions/download-artifact@v4
+        with:
+          name: r4-b2-native-${{ github.event.pull_request.head.sha || github.sha }}-P3-replica1
+          path: /tmp/b2-compare/p3
       - name: Strict exact-source, exact-binary linked-capacity and SRAM delta comparison
         shell: bash
         run: |
@@ -504,11 +509,28 @@ jobs:
             --expected-run-id "$GITHUB_RUN_ID" \
             --out /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
           cat /tmp/b2-comparison/B2_CAPACITY_BUDGET.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Seal native capacity-only milestone; full B2 readiness remains prohibited
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_seal_native_capacity.py \
+            --comparison /tmp/b2-comparison/B2_CAPACITY_BUDGET.json \
+            --p0 /tmp/b2-rederived/p0/B2_REEXTRACTED_ELF_PROOF.json \
+            --p1a /tmp/b2-rederived/p1a/B2_REEXTRACTED_ELF_PROOF.json \
+            --p1b /tmp/b2-rederived/p1b/B2_REEXTRACTED_ELF_PROOF.json \
+            --p3 /tmp/b2-compare/p3/b0out/B2_PROFILE_P3_NATIVE_REJECTION.json \
+            --p3-output /tmp/b2-compare/p3/b0out \
+            --source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --run-id "$GITHUB_RUN_ID" \
+            --out /tmp/b2-comparison/B2_NATIVE_CAPACITY_ONLY_SEAL.json
+          cat /tmp/b2-comparison/B2_NATIVE_CAPACITY_ONLY_SEAL.json >> "$GITHUB_STEP_SUMMARY"
       - name: Publish exact-SHA B2 capacity acceptance receipt (not RF proof)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: r4-b2-capacity-budget-${{ github.event.pull_request.head.sha || github.sha }}
-          path: /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
+          path: |
+            /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
+            /tmp/b2-comparison/B2_NATIVE_CAPACITY_ONLY_SEAL.json
           if-no-files-found: warn
           retention-days: 30
