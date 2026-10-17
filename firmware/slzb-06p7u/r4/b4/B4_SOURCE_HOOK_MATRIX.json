@@ -2,7 +2,7 @@
   "schema": "b4-hook-matrix-v1",
   "issue": 98,
   "source": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/",
-  "stage": "SOURCE_RESEARCH_NOT_NATIVE_INSTRUMENTATION",
+  "stage": "MINIMAL_COUNTER4_HOSTED_NATIVE_LINKED_OTHERS_NOT_MEASURED",
   "counters": [
     {
       "name": "mt_sys_sreq_dispatch",
@@ -61,14 +61,14 @@
     },
     {
       "name": "npi_srsp_enqueued",
-      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:656 NPITask_sendToHost",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:656-700 NPITask_sendToHost AND :758-833 NPITask_processStackMsg",
       "producer_context": "task",
       "unit": "frames",
-      "width_bits": null,
-      "wrap_policy": "UNKNOWN",
-      "validity": null,
-      "status": "SOURCE_PATH_IDENTIFIED",
-      "qualification": "enqueue success state not yet instrumented"
+      "width_bits": 32,
+      "wrap_policy": "UINT32_WRAP; NO_DELTAS_WITHOUT_SOURCE_QUALIFIED_RADIO_EPOCH",
+      "validity": "V3_BIT4_ONLY_IF_NPI_SREQRSP_COMPILED",
+      "status": "HOSTED_NATIVE_LINKED",
+      "qualification": "Both real TI synchronous-response enqueue producers increment a single volatile uint32 counter in pre-existing critical sections; compiled ARM ELF/CCFG source-linked twice at SHA cf92fc07; no radio epoch and no UART TX_DONE proof"
     },
     {
       "name": "npi_srsp_queue_hwm",

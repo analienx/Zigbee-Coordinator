@@ -1,7 +1,18 @@
-# R4 B4 memory/performance proof — deliberately blocked
+# B4 pinned actual CCS ELF linked allocation delta (2026-10-17)
 
-**Baseline native ELF memory budget:** NOT_MEASURED (awaiting successful B0 and B4 link artifacts). **Experimental B4 native stack delta:** NOT_MEASURED. Do not treat `sizeof(payload)==132` as a stack-budget proof; C compiler may spill or optimize, and RTOS stack headroom is unknown.
+**Evidence: [hosted real ELF comparison run 39002225494](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002225494)**. Native files were built from pinned B0 and the minimal B4 image and manifest hash verified; numeric allocation is from actual ARM32 ELF sections, not source size guesses.
 
-The source-only F0 handler allocates a fixed 132-byte array on the MT task stack. The only additional NPI state is one static volatile 32-bit counter; one static 32-bit sample sequence. It takes an existing tiny `OsalPort_enterCS` around two scalar values, then constructs and queues the reply outside the critical section. This is an architectural claim to test on genuine TI ARM ELF/map, not an observed timing guarantee. F0 increases SRSP traffic only when explicitly requested; on stock firmware, no poll.
+| Actual ELF allocated section measure | B0 | B4 | B4 − B0 |
+|---|---:|---:|---:|
+| App FLASH allocated bytes | 176,282 | 176,438 | **+156** |
+| RAM allocated bytes | 18,845 | 18,853 | **+8** |
+| `.text` allocated section | — | — | +152 |
+| `.cinit` allocated section | — | — | +4 |
+| `.data` allocated section | — | — | +8 |
 
-**Required evidence:** compare pinned B0 ELF and B4 ELF maps/sections, executable size, .bss, task/IRQ stack analysis, TI linker XML, SRAM stack low-water, SysConfig pin proof, NV 0xAA000..0xADFFF exclusion and CCFG 88 bytes. Two independent B4 builds must match/produce provenance; no B4_SOURCE_READY without measured deltas and actual source-to-symbol call reachability. Real hardware/RTOS saturation and radio load remain PHYSICAL_UNVERIFIED. The draft must remain blocked if the toolchain is missing or sample-rate/probe overhead is unknown.
+- B0 ELF SHA-256 `9ae5b2f12baea84b9a68eac015052194dd29774e3d1209d90303c55c36d56549`
+- B4 ELF SHA-256 `de2321668f07dcbd53c79eaf6ae480231bc2f3f7134f90625edcf53f0a6274f4`
+- Both native B4 binaries identical ELF/HEX/BIN. Raw CCS XML reports differ **solely** in volatile `<link_time>`; corrected comparator validates no other XML differences and was verified against the real artifacts [39002075430](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002075430).
+- Native B4 symbols: `B4_NpiSrspEnqueued` at RAM `0x2000266c`; `B4_SysReadOnlyDiagnostics` linked in text `0x19aa4`. There are two guarded enqueue source hooks, not two separate counters.
+
+**Unknown:** runtime MT task-stack consumption (function has a 132-byte automatic payload but compiler stack frame and RTOS headroom are unmeasured), IRQ stack high-water, heap fragmentation, ISR latency under sustained load, SRSP/AREQ fairness under live traffic. `+8` allocated RAM is **not** a proof of `+8` max runtime RAM use. No RF or NV writes and no physical tests were performed. All image proofs are `HOSTED_NATIVE_LINKED`, not `PRODUCTION_READY`.

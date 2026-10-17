@@ -6,7 +6,7 @@ Source branch `feat/p7u-r4-b4-issue98` branches from **exact B0 `1baefbee8e4de2c
 
 - `b4_protocol.py`: finite offline UNPI SYS F0 framing/strict P10 v2 and proposed R4 v3 decoders. No serial access.
 - `b4_native_patch.py`: **experimental** hash-guarded source patch to disposable exact-TI-SHA `/tmp` checkout. Instruments both verified TI SRSP enqueue producers in existing NPI critical sections for one static-RAM `srsp_enqueued` counter. Exposes 132-byte v3 with only validity bit 4, boot cap 0 and boot ID 0; never claims missing metrics.
-- `b4_native_link_audit.py`: native manifest+real ELF+TI nm symbol check. Hosted linker + full B0 CCFG/NV/board tests required before native evidence.
+- `b4_native_link_audit.py`: native manifest+real ELF+TI nm symbol check. Both real CCS native builds, B0 CCFG and real ELF symbol verification have now passed (run 39000883442); image reproducibility checked separately (run 39002075430).
 - `b4_verify_source.py`: checks exact TI/herdsman pins, F0 collision, stock SYS Ping/Version, NPI-specific `npi_client_mt.c` and owner/Waitress.
 - `host/r4-b4/herdsman_overlay.py`: separate opt-in experimental patch for pinned herdsman. The default is **no polling**, no serial sidecar. Calls the existing `ZStackAdapter.znp.requestWithReply` through Znp mutex, skip while genuinely ZNP-mutex-busy/OTA, 30s cooldown; opt-in bounded metadata-only AF/ZDO/SYS timeout capture, no synchronous disk writes.
 - `../tools/r4_passive_recorder.py`: reused #87 offline forensic model; no production hook or host install.
@@ -15,7 +15,7 @@ Source branch `feat/p7u-r4-b4-issue98` branches from **exact B0 `1baefbee8e4de2c
 
 ## Verification gates
 
-`.github/workflows/test-r4-b4.yml` runs offline hostile Python tests and checks/patches *actual* pinned TI and herdsman source in disposable checkouts. `test-r4-b4-native.yml` attempts two independent CCS 12.8/Clang 3.2.2 full native links and B0 artifacts+board checks; if toolchain or artifacts missing, **fails closed**. `test-r4-b4-host.yml` attempts real herdsman 10.9.1 Node/TypeScript compile and tests. **Workflow presence or queued run does not equal PASS.** See `docs/r4/b4/ACCEPTANCE_RECEIPT.md`.
+`b4_artifact_parity.py` accepts only a documented volatile CCS XML linker timestamp mismatch after proving byte-identical ELF/HEX/BIN; `b4_elf_budget.py` measures real B0/B4 allocated ELF sections (+156 bytes FLASH, +8 RAM; task/IRQ runtime stack unknown). `.github/workflows/test-r4-b4.yml` runs offline hostile Python tests and checks/patches *actual* pinned TI and herdsman source in disposable checkouts. `test-r4-b4-native.yml` attempts two independent CCS 12.8/Clang 3.2.2 full native links and B0 artifacts+board checks; if toolchain or artifacts missing, **fails closed**. `test-r4-b4-host.yml` attempts real herdsman 10.9.1 Node/TypeScript compile and tests. **Workflow presence or queued run does not equal PASS.** See `docs/r4/b4/ACCEPTANCE_RECEIPT.md`.
 
 ## Restrictions
 

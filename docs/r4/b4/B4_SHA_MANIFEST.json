@@ -15,10 +15,25 @@
     "sysconfig": "1.21.1.3772",
     "host": "GitHub Ubuntu 22.04"
   },
-  "artifact_sha256s": "NOT_YET_AVAILABLE",
-  "native_linked": false,
-  "host_compiled": "PENDING_ACTIONS",
+  "artifact_sha256s": {
+    "elf": "de2321668f07dcbd53c79eaf6ae480231bc2f3f7134f90625edcf53f0a6274f4",
+    "hex": "91646502e8ccf4312fcdfd67c9b9b2db302e1c4c0250ad948c81bd477bd16362",
+    "bin": "e222dede534e704bf5112ec55698b59448a6640b404edc0463e1e2b0bd9f55cf",
+    "linker_xml_sha256_raw": [
+      "40ebbce65dc2de9783e27d2a0be9775396ed2901c92f853c7377fdd73838380d",
+      "e655cba63dad3c5e8b6c5a34087c3d09383fd6bb6201372418dc6c7b9a2950d8"
+    ],
+    "only_linker_xml_difference": "link_time"
+  },
+  "native_linked": true,
+  "host_compiled": "PASS_PINNED_SOURCE_SYNTHETIC_ONLY",
   "physical_verified": false,
   "combined_integration": false,
-  "independent_review": false
+  "independent_review": false,
+  "native_link_evidence_head": "cf92fc07df7b25a7ad6bfbf380f6ae4b3c0dc5ca",
+  "native_actions_run": 39000883442,
+  "native_parity_recheck_run": 39002075430,
+  "host_actions_run": 39001497672,
+  "elf_memory_comparison_run": 39002225494,
+  "source_ready": false
 }

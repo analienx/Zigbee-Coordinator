@@ -1,18 +1,18 @@
 # R4 B4 acceptance receipt — PR #100, issue #98
 
-**Status as of 2026-10-17:** **B4_SOURCE_READY = BLOCKED**; HOST_SOURCE_READY = BLOCKED; NATIVE_LINKED = **NOT VERIFIED**; HOST_INSTALLED = **FALSE**; COMBINED_INTEGRATION = **PENDING**; PHYSICAL_VERIFIED = **FALSE**; independent reviewer PASS = **NOT AVAILABLE**.
+**Status 2026-10-17:** `B4_SOURCE_READY=BLOCKED`; `HOST_SOURCE_READY=BLOCKED`; `NATIVE_LINKED=YES (minimal experimental F0 and one counter only)`; `HOST_INSTALLED=FALSE`; `COMBINED_INTEGRATION=PENDING`; `PHYSICAL_VERIFIED=FALSE`; independent review `NOT AVAILABLE`.
 
-This is an *implementation/coverage ledger*, **not a green CI report**. GitHub-hosted pinned herdsman staging run **39001497672 PASSED**; staging source/adversarial run **39001497710 PASSED**; main B4 native dual-link run **39000883442** was still running at this receipt and is NOT a pass. Tests below are scoped to exact evidence and are not hardware/deployment claims. CI IDs/review signatures must be filled from actual completed runs. No hardware actions took place.
+**Evidence** (not deployment): real SDK CCS native build ×2 passed [39000883442](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39000883442); actual pinned herdsman 10.9.1 TS/Node tests passed [39001497672](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001497672); source/hostile Python/hosted-C checks passed [39002225494](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002225494), linked ELF delta verified there. Corrected strict parity oracle qualified on archived real CCS artifacts [39002075430](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002075430). Source branch integration with new full CI still required.
 
 | Annex | State of evidence / blocker |
 |---|---|
 | D01 | HOSTED_NODE: actual Znp.request/Waitress ping SRSP + F0 owner path passed; real radio baseline unverified |
 | D02 | HOSTED_PYTHON: source opcode collision mutants verified at exact source pin |
 | D03 | PYTHON_ORACLE_PRESENT; native v2 reference only |
-| D04 | PYTHON_ORACLE_PRESENT; experimental native partial |
+| D04 | HOSTED_NATIVE_LINKED: exact 132-byte v3 F0 handler and counter 4 in two genuine CCS ELFs; incomplete ABI remains |
 | D05 | UNIT_PRESENT; native unknown minor not representable |
 | D06 | UNIT_PRESENT; no true hardware stream |
-| D07 | ALLOWLIST_TEST_PRESENT; no installed recorder |
+| D07 | HOSTED_PYTHON: strict event allowlist and symlink-race snapshot hardening; no installed recorder |
 | D08 | REFERENCE_TEST_PRESENT; source-qualified wrap proof missing |
 | D09 | BLOCKED unqualified radio epoch |
 | D10 | BLOCKED trusted boot source absent |
@@ -30,16 +30,16 @@ This is an *implementation/coverage ledger*, **not a green CI report**. GitHub-h
 | D22 | HOSTED_NODE: genuine pinned diagnostic Waitress timeout removes its waiter; control SREQ policy unchanged, real load unverified |
 | D23 | NODE_SOURCE existing owner only; second-client hostile test missing |
 | D24 | SOURCE_PROVEN ZStackAdapter.znp private; unsupported extension |
-| D25 | HOSTED_PYTHON: prior valid snapshot survives pre-rename failure; post-rename fsync remains qualified failure |
+| D25 | HOSTED_PYTHON: pre-rename last-good survives; exclusive random temp files defeat predicted .pending symlink; post-rename fsync failure cannot guarantee pre-rename identity |
 | D26 | HOSTED_PYTHON: I/O/fsync failure rejects; no production async worker |
 | D27 | HOSTED_PYTHON + NODE: 256 event ring cap and dropped accounting |
 | D28 | HOSTED_PYTHON: monotonic reversal rejected |
 | D29 | HOSTED_PYTHON: duplicate waiter rejection, NODE diagnostic Waitress cleanup |
 | D30 | HOSTED_PYTHON and NODE: strict raw-field rejection, metadata-only timeout ring and bounded retention; no deployment |
-| D31 | OFFLINE_REPLAY staged with actual historical counts |
-| D32 | OFFLINE_REPLAY staged synthetic starvation |
-| D33 | OFFLINE_REPLAY staged unknown prior radio epoch |
-| D34 | OFFLINE_REPLAY staged USB alternate root |
+| D31 | HOSTED_SYNTHETIC replay verified with 64 AF/6 ZDO/69 downstream historical event counts; timeline offsets synthetic |
+| D32 | HOSTED_SYNTHETIC P10 starvation replay; pre-reset F0 UNKNOWN |
+| D33 | HOSTED_SYNTHETIC post-restart F0 replay; previous radio epoch UNKNOWN |
+| D34 | HOSTED_SYNTHETIC detach replay, no firmware root attribution |
 | D35 | BLOCKED B1 real HOLD source integration |
 | D36 | SOURCE_ONLY all unavailable counters remain UNKNOWN |
 
@@ -53,10 +53,11 @@ This is an *implementation/coverage ledger*, **not a green CI report**. GitHub-h
 
 ## P0/P1 blockers — do not waive
 
-- Native CCS full-link output, actual registered F0 packet on real source, pinned SHA binary/map/CCFG, two reproducible builds, SRAM/stack delta and source-linked/RTOS callback/queue fairness tests are unverified.
-- Host compiled TypeScript and actual owner/waiter lifecycle tests queued, no Z2M2.14.0 installation audit, no live Z2M or extension. No injected capture in real AF/ZDO/SYS waiter paths.
-- Native radio boot identity is unknown, no minor/build digest/reset cause in v3, missing UART FINISHED and AF_CONFIRM routing state, no causal conclusions.
-- B1/B2/B3 sealed combined integration missing; safety and regression cannot be guaranteed.
-- Independent four-lane reviews, blind-spot reviewer with reproduced novel mutations, P0/P1 re-reviews and R4-07 physical qualification not obtained.
+- The **minimal experimental native F0 handler is truly linked** and reproducible; this is only one counter (`srsp_enqueued`). Missing native boot epoch, source digest, ABI minor/reset reason, UART accepted-versus-finished, AF confirm, B2 routing and B3 NV producer validity remain unresolved.
+- **Two clean native builds:** GitHub Actions [39000883442](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39000883442), jobs `117303587721` and `117303587798`, both passed at `cf92fc07df7b25a7ad6bfbf380f6ae4b3c0dc5ca`. The *original inline* raw-XML comparison failed solely on nonsemantic `link_time`; the fixed strict comparator tested against both archived native artifacts passed on [39002075430](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002075430), permitting **only** that one independently observed XML timestamp difference. Final integrated native Actions run remains a new gate.
+- **Real linked B0→B4 allocated section delta:** +156 bytes FLASH app and +8 bytes RAM based on the same real ELF manifests, [39002225494](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002225494). Runtime RTOS/IRQ stack high-water, NPI pressure and real AF/ZDO fairness are NOT_MEASURED.
+- Host pinned TypeScript and genuine `Znp.request`/waiter/active-mutex tests passed [39001497672](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001497672). Opt-in in-memory AF/ZDO/SYS timeout observations are *source-tested*, not installed. There is no deployed Zigbee2MQTT 2.14.0 confirmation, disk worker integration, or independently validated USB observer.
+- B1/B2/B3 combined integration and HOLD safety are still blocked by separate source-ready approval; no unauthorized cross-phase merges.
+- No source-qualified radio epoch/no physical coordinator qualification. Independent four-lane reviewer sign-offs and >=5 independently reproduced blind-spot mutants remain unavailable.
 
-**STOP / NOT READY.** PR remains draft and unmerged. Once actual Actions terminate, record exact head SHA, run+job IDs, two ELF manifest hashes, relevant counter validity, linked map/memory budget and proven independent reviewer verdicts before changing any status.
+**STOP / NOT READY.** Keep PR draft and unmerged. Do not flash, restart, access NV/keys or install host patches. Any later Actions should be recorded against their own exact head SHA.
