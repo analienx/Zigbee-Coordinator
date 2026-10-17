@@ -43,7 +43,8 @@ def parse_image(data: bytes) -> dict:
     require((major, minor, revision, build) >= (1, 0, 0, 0), "VERSION_ROLLBACK_RISK")
     require(size >= 0x1000 and size % 4 == 0, "IMAGE_SIZE")
     end = hdr + size
-    require(end + 4 <= len(data) and end + 4 <= APP_LIMIT, "SLOT_BOUNDS")
+    require(end + 4 <= APP_LIMIT, "SLOT_BOUNDS")
+    require(end + 4 <= len(data), "TLV_MISSING")
     magic_tlv, total = struct.unpack_from("<HH", data, end)
     require(magic_tlv == 0x6907, "TLV_MISSING")
     require(total >= 4 and end + total <= len(data) and end + total <= APP_LIMIT, "TLV_BOUNDS")
