@@ -67,7 +67,9 @@ jobs:
       - name: Adversarial P7U app-sector and private duplicate-backup controls (synthetic only)
         run: python -m unittest -v tests.test_r4_flash_preflight
       - name: Exact-anchor resident boot preservation and NVS relocation hostile controls
-        run: python -m unittest -v tests.test_r4_preserve_resident_boot_nvs
+        run: |
+          python -m unittest -v tests.test_r4_preserve_resident_boot_nvs
+          python -m unittest -v tests.test_r4_package_resident_app
       - name: Test strict native artifact collector (synthetic test only)
         run: python -m unittest -v tests.test_r4_b0_collect_native
       - name: Test SHA-gated TI toolchain acquisition (offline)
@@ -533,6 +535,11 @@ jobs:
           # Does not generate a flashable image, read private NV, or authorize flash.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_flash_preflight.py" \
             --artifacts /tmp/b0out --resident-vectors --receipt /tmp/b0out/r4-app-sector-preflight.json
+          # Package the exact linked 0x80 vectors with the verified original
+          # resident-loader header. This is an offline APP-ONLY artifact,
+          # never a programmer invocation or flash authorization.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_package_resident_app.py" \
+            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-resident-app
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
