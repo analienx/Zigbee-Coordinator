@@ -36,7 +36,9 @@ function fakeOwner(data = frame()) {
     owner.b4DiagInFlight = false;
     owner.b4NextAllowedMs = 0;
     owner.znp = {
-        b4CanProbe() {return true;},
+        poisoned: false,
+        b4CanProbe() {return !this.poisoned;},
+        b4PoisonDiagSession() {this.poisoned = true;},
         async requestWithReply(system, command, payload, waiterID, timeout) {
             calls++;
             assert.equal(system, Subsystem.SYS);
@@ -276,4 +278,57 @@ test("D17/D18: 200 concurrent diagnostic offers coalesce while stock SYS request
     assert.ok(issued.every(code => code === 1)); // no extra diagnostic traffic
     assert.ok(pings.every(response => response.payload.capabilities === 1));
     assert.equal(znp.waitress.waiters.size, 0);
+});
+
+test("REVIEW-P0: real diagnostic timeout permanently quarantines ambiguous F0; ordinary SYS ping unaffected", async () => {
+    const znp = new Znp("/dev/no-serial", 115200, false);
+    znp.initialized = true;
+    const writes = [];
+    znp.unpiWriter.writeFrame = (request) => {
+        writes.push(request.commandID);
+        if (request.commandID === 1) {
+            queueMicrotask(() => znp.onUnpiParsed(
+                new Frame(Type.SRSP, Subsystem.SYS, request.commandID, Buffer.from([1, 0]))
+            ));
+        }
+    };
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 15));
+    assert.equal(znp.b4CanProbe(), false);
+    assert.equal(znp.b4DiagPoisoned, true);
+    assert.equal(znp.waitress.waiters.size, 0);
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 15), /poisoned/);
+    assert.deepEqual(writes, [240]); // never transmit second F0
+    const ping = await znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 200);
+    assert.equal(ping.payload.capabilities, 1);
+    assert.deepEqual(writes, [240, 1]);
+});
+
+test("REVIEW-P0: synchronous F0 write error cleans orphan waiter and latches diagnostic shutdown", async () => {
+    const znp = new Znp("/dev/no-serial", 115200, false);
+    znp.initialized = true;
+    znp.unpiWriter.writeFrame = () => { throw Error("simulated synchronous UART failure"); };
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 20),
+                         /simulated synchronous UART failure/);
+    assert.equal(znp.waitress.waiters.size, 0);
+    assert.equal(znp.b4CanProbe(), false);
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 20), /poisoned/);
+});
+
+test("REVIEW-P0: fail closed on unqualified reserved counters and nonadvancing sample sequence", async () => {
+    const dirty = frame();
+    dirty.writeUInt32LE(0x77777777, 32 + 4 * 23); // invalid native bit 23
+    const first = fakeOwner(dirty);
+    assert.equal(await first.owner.b4ReadOnlyDiagnostics(allow), undefined);
+    assert.equal(first.owner.znp.poisoned, true);
+    assert.equal(first.calls(), 1);
+    const good = fakeOwner();
+    assert.equal((await good.owner.b4ReadOnlyDiagnostics(allow)).sequence, 8);
+    good.owner.b4NextAllowedMs = 0; // simulate an authorized later offer
+    assert.equal(await good.owner.b4ReadOnlyDiagnostics(allow), undefined);
+    assert.equal(good.owner.znp.poisoned, true);
+    assert.equal(good.calls(), 2);
+    const nonpositive = frame();
+    nonpositive.writeUInt32LE(0, 28);
+    const zero = fakeOwner(nonpositive);
+    assert.equal(await zero.owner.b4ReadOnlyDiagnostics(allow), undefined);
 });
