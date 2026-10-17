@@ -54,6 +54,40 @@ unguarded `0xA4000..0xA9FFF` band with independently refreshed SHA
 digests. This does not replace proof of the actual installed-stock
 storage map; it is a conservative denial gate.
 
+### Additional P1 — parallel red gate still allowed native artifact publication
+
+A separate review of the GitHub Actions job graph found that the native
+firmware job originally ran **in parallel** with `r4-b0-overlay` and
+`r4-b0-upstream-inventory`. The uploader's `if: success()` only
+tested success of **its own job**. Therefore a broken hostile source
+test or failed TI upstream donor validation could coexist with a green
+native job and a downloadable firmware artifact on an overall red run.
+This invalidated the stronger claim that *all* source/provenance gates
+must pass before images are published.
+
+The native job now explicitly declares
+`needs: [r4-b0-overlay, r4-b0-upstream-inventory]`, so it does
+not start (or publish candidate files) until both independent gates
+succeed. A static regression test rejects removal of this dependency.
+This is source-workflow control, not a tested production deployment
+interlock. The native job still labels every artifact NOT_FLASH_QUALIFIED.
+
+### Manifest failure and GitHub provenance hardening
+
+The NV safety tool previously assumed the root `manifest.json` was
+always a mapping. A top-level JSON list could throw outside its
+fail-closed exception handler, leaving a stale on-disk receipt from
+an earlier invocation. It now checks a 128 KiB manifest size cap and
+JSON root type before accessing keys, and emits a fresh
+`FAILED_CLOSED` receipt for malformed inputs. Hostile tests exercise
+malformed null/list/scalar and oversized manifests.
+
+On pull-request runs, the workflow builds the explicit
+`pull_request.head.sha` while `github.sha` can identify GitHub's
+synthetic PR merge commit. Artifact names now use the **actually
+checked-out** `github.event.pull_request.head.sha || github.sha`,
+with source checks that reject a misleading label.
+
 ## Verification matrix
 
 PR #102 has source negative tests against (1) HEX programming NV,
