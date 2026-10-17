@@ -35,7 +35,7 @@ jobs:
           python -m py_compile firmware/slzb-06p7u/r4/b4/*.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py tests/test_r4_b4_*.py
       - name: Run original #87 contract and recorder regressions plus B4 attacks
         run: |
-          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source tests.test_r4_b4_replays tests.test_r4_b4_native tests.test_r4_b4_parity tests.test_r4_b4_z2m_source tests.test_r4_b4_z2m_ota tests.test_r4_b4_inference
+          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source tests.test_r4_b4_replays tests.test_r4_b4_native tests.test_r4_b4_parity tests.test_r4_b4_z2m_source tests.test_r4_b4_z2m_ota tests.test_r4_b4_v4 tests.test_r4_b4_v4_cross_phase tests.test_r4_b4_inference
       - name: Re-run adversarial source and protocol checks independently
         run: python -m unittest -v tests.test_r4_b4_source tests.test_r4_b4_protocol
       - name: Execute exact B4 native handler with host ASan UBSan and a defeated counter-validity mutant
@@ -76,10 +76,20 @@ jobs:
         run: |
           python firmware/slzb-06p7u/r4/b4/b4_native_patch.py --sdk /tmp/b4-sources/ti --receipt /tmp/b4-native-source-only.json
           python -c 'import json; d=json.load(open("/tmp/b4-native-source-only.json")); assert d["stage"]=="PATCHED_DISPOSABLE_SDK_NOT_LINKED"; assert d["valid_counter_indices"]==[0,1,2,3,4,5]'
+          python firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py --sdk /tmp/b4-sources/ti --receipt /tmp/b4-v4-native-source-only.json
+      - name: Prove B1 SYS F1 is reserved and B4 F2 is disjoint on actual pinned source
+        run: |
+          set -euo pipefail
+          git init -q /tmp/b4-b1-source
+          git -C /tmp/b4-b1-source remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/b4-b1-source fetch --depth 1 origin a514c194ea0d94b5d38b28c7b07ca5caba9aeffd
+          git -C /tmp/b4-b1-source checkout --detach FETCH_HEAD
+          python firmware/slzb-06p7u/r4/b4/b4_v4_cross_phase_gate.py             --b1 /tmp/b4-b1-source             --b4-mt /tmp/b4-sources/ti/source/ti/zstack/mt/mt_sys.c
       - name: Verify pinned herdsman single-owner overlay exists and remains default-off
         run: |
           python host/r4-b4/herdsman_overlay.py --checkout /tmp/b4-sources/herdsman --receipt /tmp/b4-herdsman-source-only.json
           python -c 'import json; d=json.load(open("/tmp/b4-herdsman-source-only.json")); assert d["default_off"] is True; assert d["serial_owner"]=="EXISTING_ZNP_ONLY"'
+          python host/r4-b4/b4_v4_herdsman_overlay.py --checkout /tmp/b4-sources/herdsman --receipt /tmp/b4-v4-herdsman-source-only.json
       - name: Independently verify actual Zigbee2MQTT 2.14.0 API/dependency pin
         run: |
           git init -q /tmp/b4-z2m
@@ -88,6 +98,7 @@ jobs:
           git -C /tmp/b4-z2m checkout --detach FETCH_HEAD
           python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m
           python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m --receipt /tmp/b4-z2m-source-only.json
+          python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m --receipt /tmp/b4-v4-z2m-source-only.json
           python -c 'import json; o=json.load(open("/tmp/b4-z2m-source-only.json")); assert o["enabled_by_default"] is False and o["no_secondary_serial_owner"] is True and o["host_installed"] is False'
       - name: Explicitly deny a native linked or installed claim
         run: |
