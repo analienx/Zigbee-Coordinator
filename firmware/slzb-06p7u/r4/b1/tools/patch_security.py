@@ -343,6 +343,24 @@ def patch(source: str) -> str:
     ]
     for signature, replacement in replacements:
         source = replace_once(source, extract_function(source, signature), replacement, signature)
+    # TI's original ZDSecMgrEntryInit() silently returns on a failed
+    # security-table allocation. The existing ZDSecMgrInit() HOLD check
+    # cannot catch that failure unless the callee latches it first.
+    entry_sig = 'void ZDSecMgrEntryInit(uint8_t state)'
+    entry_body = extract_function(source, entry_sig)
+    secured_entry = replace_once(
+        entry_body,
+        '    if ((ZDSecMgrEntries = OsalPort_malloc(sizeof(ZDSecMgrEntry_t) * gZDSECMGR_ENTRY_MAX)) == NULL)\n'
+        '    {\n'
+        '      return;\n'
+        '    }',
+        '    if ((ZDSecMgrEntries = OsalPort_malloc(sizeof(ZDSecMgrEntry_t) * gZDSECMGR_ENTRY_MAX)) == NULL)\n'
+        '    {\n'
+        '      b1_security_runtime_hold_latch(); /* no uninitialized security table */\n'
+        '      return;\n'
+        '    }', 'security table allocation must HOLD')
+    source = replace_once(source, entry_body, secured_entry,
+                          'ZDSecMgrEntryInit allocation failure HOLD')
     # On restored network, validation has checked the mandatory records. Do
     # not run item_init loops that silently create absent zero key/counter rows.
     for signature in ('void ZDSecMgrNwkKeyInit(uint8_t setDefault)',
