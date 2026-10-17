@@ -1,0 +1,56 @@
+{
+  "schema": "b4-source-research-provenance-v1",
+  "repo": "analienx/Zigbee-Coordinator",
+  "issue": 98,
+  "pr": 100,
+  "base_commit": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe",
+  "sdk": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "examples": "87ff5b638b632050228a7504f35cf3b95581c278",
+  "herdsman": "0968f979d558874b17396c96b66382d4236bbdcd",
+  "installed_z2m_version": "NOT_VERIFIED",
+  "installed_herdsman_version": "NOT_VERIFIED",
+  "toolchain": {
+    "ccs": "12.8.0.00012",
+    "ti_arm_clang": "3.2.2.LTS",
+    "sysconfig": "1.21.1.3772",
+    "host": "GitHub Ubuntu 22.04"
+  },
+  "artifact_sha256s": {
+    "elf": "aca1b55c6e506c1c0f068d8d7a4d06ce40e63c51f99a1bcb7389ffde2f69ae28",
+    "hex": "7f3443c5e0da87292a66d40c1d1ad98e2f8f73e9a46c19fb256319c895a7426a",
+    "bin": "760bb967e9ee6f9a942d282117acb0c5321de71902aa09aa48ba6a0b3a90704d",
+    "linker_xml_sha256_raw": [
+      "da29bf4bb3ef94fdb74ed8811bb0ce6dfdcbfc8225d78a073d8296f7e4e501fd",
+      "c6ef7e596ddeb01117cd60e6578ccd774353d84ea63f12d35deca99c4fa4bd42"
+    ],
+    "only_linker_xml_difference": "link_time"
+  },
+  "native_linked": true,
+  "host_compiled": "PASS_PINNED_SOURCE_SYNTHETIC_ONLY",
+  "physical_verified": false,
+  "combined_integration": false,
+  "independent_review": false,
+  "native_link_evidence_head": "d75e6ab8dece5ad6f8fe549de5f30de5dfc71386",
+  "native_actions_run": 39012416673,
+  "native_parity_recheck_run": 39012416673,
+  "host_actions_run": 39012416638,
+  "elf_memory_comparison_run": 39002225494,
+  "source_ready": false,
+  "z2m_source_sha": "62b02e2aa1997c574223b80c196677b63a25f4a7",
+  "z2m_source_version": "2.14.0",
+  "z2m_source_package_herdsman": "10.9.1",
+  "z2m_source_validation_run": 39002832220,
+  "z2m_pinned_host_stress_run": 39002832223,
+  "native_valid_counter_indices": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "host_counters_validity_when_npi_sreqrsp_disabled": [
+    2,
+    3
+  ],
+  "native_b4_budget": "NEEDS_REMEASUREMENT_NEW_ELF; prior +156 flash/+8 RAM relates to one-counter build"
+}

@@ -1,0 +1,181 @@
+{
+  "schema": "r4-b4-mt-f0-protocol-v1",
+  "reference": "R4 #98 and #87 source; proposed R4 v3, not firmware release",
+  "transport": {
+    "sof": "0xFE",
+    "request": {
+      "cmd0": "0x21",
+      "cmd1": "0xF0",
+      "payload_length": 0
+    },
+    "response": {
+      "cmd0": "0x61",
+      "cmd1": "0xF0"
+    },
+    "frame_length_formula": "5+payload_length",
+    "fcs": "xor(LEN,CMD0,CMD1,payload)",
+    "max_payload_bytes": 255
+  },
+  "versions": {
+    "p10_donor_v2": {
+      "abi_major": 2,
+      "magic": null,
+      "payload_bytes": 102,
+      "legacy_flags_mask": "0x07",
+      "counter_encoding": "25 little-endian u32",
+      "radio_boot_identity": false,
+      "counter_validity": "legacy assumed all; unproven epoch: never use deltas",
+      "host_read_permission": "REFERENCE_DECODE_ONLY"
+    },
+    "r4_proposed_v3": {
+      "abi_major": 3,
+      "magic_ascii": "R4D3",
+      "payload_bytes": 132,
+      "fields": [
+        [
+          "magic",
+          0,
+          4,
+          "4 raw ASCII bytes"
+        ],
+        [
+          "major",
+          4,
+          1,
+          "u8"
+        ],
+        [
+          "flags",
+          5,
+          1,
+          "u8 bits 0..2"
+        ],
+        [
+          "payload_length",
+          6,
+          2,
+          "u16 LE"
+        ],
+        [
+          "capabilities",
+          8,
+          4,
+          "u32 LE"
+        ],
+        [
+          "validity",
+          12,
+          4,
+          "u32 LE"
+        ],
+        [
+          "radio_boot_id",
+          16,
+          8,
+          "u64 LE"
+        ],
+        [
+          "uptime_ms",
+          24,
+          4,
+          "u32 LE"
+        ],
+        [
+          "sample_seq",
+          28,
+          4,
+          "u32 LE"
+        ],
+        [
+          "counters",
+          32,
+          100,
+          "25 u32 LE"
+        ]
+      ],
+      "counter_names": [
+        "srsp_depth",
+        "srsp_high_water",
+        "async_depth",
+        "async_high_water",
+        "srsp_enqueued",
+        "uart_tx_pin_finished_events",
+        "async_uart_accepted",
+        "tx_immediate_rejects",
+        "tx_rejected_drops",
+        "stack_frame_failures",
+        "stack_queue_failures",
+        "srsp_allocation_failures",
+        "srsp_enqueue_failures",
+        "rx_frame_failures",
+        "srsp_queue_fallbacks",
+        "af_direct_accepted",
+        "af_direct_buffer_full",
+        "af_direct_memory_failure",
+        "af_direct_other",
+        "af_source_accepted",
+        "af_source_buffer_full",
+        "af_confirm_cca_failure",
+        "af_confirm_other_failure",
+        "rx_overflow_events",
+        "rx_overflow_discarded_bytes"
+      ],
+      "validity_mask_max": "0x01FFFFFF",
+      "capability_bit0": "radio boot ID present but source still unqualified",
+      "firmware_build_digest": "NOT_PRESENT",
+      "minor_version": "NOT_PRESENT",
+      "reset_reason": "NOT_PRESENT",
+      "status_domain": "NOT_PRESENT",
+      "independent_epoch_qualification": "BLOCKED",
+      "counter_index_5_compatibility": "Previously reserved/unimplemented in B4 experimental firmware. New bit5=1 only when actual UART2 event callback is wired; earlier bit5=0 must not be reported as zero. This is NOT deployed versioned ABI."
+    },
+    "native_b4_experimental": {
+      "wire": "r4_proposed_v3",
+      "supported_counter_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "validity": "0x0000003F when NPI_SREQRSP built; 0x0000002C otherwise (async queue + UART TX-pin-finished events)",
+      "capabilities": 0,
+      "radio_boot_id": 0,
+      "uptime_ms": 0,
+      "sample_seq": "static RAM only",
+      "host_enabled_by_default": false,
+      "queue_depth_semantics": "NPI software TX queue record count, captured under existing critical section; never physical UART occupancy",
+      "high_water_semantics": "Maximum observed NPI TX depth since cold RAM initialization; no radio epoch proof",
+      "tx_pin_completion_semantics": "Counter index 5 counts UART2_EVENT_TX_FINISHED notifications from pinned TI UART2 driver, one event per notification; not bytes, packets or USB/host delivery",
+      "tx_pin_counter_policy": "saturating unsigned 32-bit; no cross-reset deltas without source-qualified radio boot epoch"
+    }
+  },
+  "privacy": {
+    "forbidden_fields": [
+      "ieee",
+      "pan_id",
+      "network_key",
+      "nv_bytes",
+      "raw_packets",
+      "serial_path",
+      "mqtt_payload",
+      "usb_serial_number"
+    ],
+    "runtime_probe_persistence": "only sanitized numeric event allowlist on low priority worker"
+  },
+  "error_policy": {
+    "unknown_major": "REJECT",
+    "nonempty_request": "REJECT",
+    "short_long_frame": "REJECT",
+    "bad_fcs": "REJECT",
+    "reserved_bits": "REJECT",
+    "unqualified_boot_identity": "NO_DELTAS",
+    "usb_disconnected": "UNAVAILABLE",
+    "npi_starved": "UNAVAILABLE",
+    "stock_firmware_unsupported": "SKIP_NOT_FAILURE"
+  },
+  "source_ready": false,
+  "host_installed": false,
+  "physical_verified": false
+}

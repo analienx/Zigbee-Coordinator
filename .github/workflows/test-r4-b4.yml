@@ -1,0 +1,97 @@
+name: R4 B4 bounded diagnostics source guards
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/test-r4-b4.yml"
+      - "firmware/slzb-06p7u/r4/b4/**"
+      - "host/r4-b4/**"
+      - "firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py"
+      - "firmware/slzb-06p7u/r4/tools/r4_diag_reference.py"
+      - "tests/test_r4_b4_*.py"
+      - "tests/test_r4_01a_*.py"
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  b4-offline-hostile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Syntax and static source compile
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/b4/*.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py tests/test_r4_b4_*.py
+      - name: Run original #87 contract and recorder regressions plus B4 attacks
+        run: |
+          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source tests.test_r4_b4_replays tests.test_r4_b4_native tests.test_r4_b4_parity tests.test_r4_b4_z2m_source tests.test_r4_b4_z2m_ota tests.test_r4_b4_inference
+      - name: Re-run adversarial source and protocol checks independently
+        run: python -m unittest -v tests.test_r4_b4_source tests.test_r4_b4_protocol
+      - name: Execute exact B4 native handler with host ASan UBSan and a defeated counter-validity mutant
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_hosted_c_probe.py --cc /usr/bin/gcc
+
+  b4-pinned-source-proof:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      TI: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      HERDSMAN: 0968f979d558874b17396c96b66382d4236bbdcd
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Fetch source exactly pinned to TI SDK and herdsman
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b4-sources
+          git -C /tmp/b4-sources init -q ti
+          git -C /tmp/b4-sources/ti remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b4-sources/ti fetch --depth 1 origin "$TI"
+          git -C /tmp/b4-sources/ti checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/b4-sources/ti rev-parse HEAD)" = "$TI"
+          git -C /tmp/b4-sources init -q herdsman
+          git -C /tmp/b4-sources/herdsman remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C /tmp/b4-sources/herdsman fetch --depth 1 origin "$HERDSMAN"
+          git -C /tmp/b4-sources/herdsman checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/b4-sources/herdsman rev-parse HEAD)" = "$HERDSMAN"
+      - name: Assert stock SYS and single ZNP owner source invariants
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_verify_source.py --ti /tmp/b4-sources/ti --herdsman /tmp/b4-sources/herdsman
+      - name: Verify experimental pinned TI patch on disposable source and never conflate source with native linkage
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_native_patch.py --sdk /tmp/b4-sources/ti --receipt /tmp/b4-native-source-only.json
+          python -c 'import json; d=json.load(open("/tmp/b4-native-source-only.json")); assert d["stage"]=="PATCHED_DISPOSABLE_SDK_NOT_LINKED"; assert d["valid_counter_indices"]==[0,1,2,3,4,5]'
+      - name: Verify pinned herdsman single-owner overlay exists and remains default-off
+        run: |
+          python host/r4-b4/herdsman_overlay.py --checkout /tmp/b4-sources/herdsman --receipt /tmp/b4-herdsman-source-only.json
+          python -c 'import json; d=json.load(open("/tmp/b4-herdsman-source-only.json")); assert d["default_off"] is True; assert d["serial_owner"]=="EXISTING_ZNP_ONLY"'
+      - name: Independently verify actual Zigbee2MQTT 2.14.0 API/dependency pin
+        run: |
+          git init -q /tmp/b4-z2m
+          git -C /tmp/b4-z2m remote add origin https://github.com/Koenkk/zigbee2mqtt.git
+          git -C /tmp/b4-z2m fetch --depth 1 origin 62b02e2aa1997c574223b80c196677b63a25f4a7
+          git -C /tmp/b4-z2m checkout --detach FETCH_HEAD
+          python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m
+          python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m --receipt /tmp/b4-z2m-source-only.json
+          python -c 'import json; o=json.load(open("/tmp/b4-z2m-source-only.json")); assert o["enabled_by_default"] is False and o["no_secondary_serial_owner"] is True and o["host_installed"] is False'
+      - name: Explicitly deny a native linked or installed claim
+        run: |
+          test ! -e firmware/slzb-06p7u/r4/b4/native-linked.ok
+          test ! -e firmware/slzb-06p7u/r4/b4/host-installed.ok
+          echo "B4 SOURCE_RESEARCH_ONLY: NOT native-linked, NOT host-installed, NOT flashed"
+

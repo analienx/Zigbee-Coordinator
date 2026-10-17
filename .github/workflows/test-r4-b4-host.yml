@@ -1,0 +1,81 @@
+name: R4 B4 pinned herdsman existing-owner compile and tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/test-r4-b4-host.yml"
+      - "host/r4-b4/**"
+      - "firmware/slzb-06p7u/r4/b4/B4_ABI_DECISION.md"
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  b4-herdsman-real-source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      HERDSMAN_PIN: 0968f979d558874b17396c96b66382d4236bbdcd
+      B4_HERDSMAN_ROOT: /tmp/b4-herdsman-src
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Checkout actual pinned herdsman without worktree contamination
+        run: |
+          set -euo pipefail
+          git init -q "$B4_HERDSMAN_ROOT"
+          git -C "$B4_HERDSMAN_ROOT" remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C "$B4_HERDSMAN_ROOT" fetch --depth 1 origin "$HERDSMAN_PIN"
+          git -C "$B4_HERDSMAN_ROOT" checkout --detach FETCH_HEAD
+          test "$(git -C "$B4_HERDSMAN_ROOT" rev-parse HEAD)" = "$HERDSMAN_PIN"
+      - name: Stage audited existing-owner F0 source overlay only
+        run: |
+          python host/r4-b4/herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-overlay.json
+          test "$(python -c 'import json; print(json.load(open("/tmp/b4-herdsman-overlay.json"))["serial_owner"])')" = EXISTING_ZNP_ONLY
+      - name: Install exact herdsman package-manager version
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm --version | grep -Fx "10.33.0"
+      - name: Native pinned TypeScript build (no adapter opened)
+        working-directory: /tmp/b4-herdsman-src
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
+        run: node --test host/r4-b4/test-herdsman-owner.cjs
+      - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
+        run: |
+          set -euo pipefail
+          git init -q /tmp/b4-z2m-host
+          git -C /tmp/b4-z2m-host remote add origin https://github.com/Koenkk/zigbee2mqtt.git
+          git -C /tmp/b4-z2m-host fetch --depth 1 origin 62b02e2aa1997c574223b80c196677b63a25f4a7
+          git -C /tmp/b4-z2m-host checkout --detach FETCH_HEAD
+          python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
+          python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
+      - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@10.18.3
+          cd /tmp/b4-z2m-host
+          pnpm install --frozen-lockfile
+          test -d "$B4_HERDSMAN_ROOT/dist"
+          # Z2M sees the ACTUAL compiled pinned herdsman overlay, not a stub.
+          rm node_modules/zigbee-herdsman
+          ln -s "$B4_HERDSMAN_ROOT" node_modules/zigbee-herdsman
+          pnpm exec tsc --noEmit
+      - name: Deny any production installation inference
+        run: |
+          echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
+          test ! -e host/r4-b4/z2m-installed.ok
