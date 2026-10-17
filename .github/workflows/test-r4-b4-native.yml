@@ -161,36 +161,17 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: r4-b4-native-*-${{ github.sha }}
           path: /tmp/b4-compare
           merge-multiple: false
-      - name: Verify two independently compiled native ELF XML HEX BIN hashes
+      - name: Assert ELF HEX BIN exact byte identity, separately qualify CCS XML-only link_time
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import json
-          root = Path('/tmp/b4-compare')
-          dirs = sorted(d for d in root.iterdir() if d.is_dir())
-          if len(dirs) != 2:
-              raise SystemExit('FAILED: expected two separately uploaded native outputs')
-          files = []
-          for d in dirs:
-              manifest = list(d.rglob('manifest.json'))
-              links = list(d.rglob('b4-native-linked.json'))
-              patches = list(d.rglob('b4-native-overlay.json'))
-              if len(manifest) != 1 or len(links) != 1 or len(patches) != 1:
-                  raise SystemExit('FAILED: real linker, manifest or patch receipt missing in '+d.name)
-              m = json.loads(manifest[0].read_text())
-              l = json.loads(links[0].read_text())
-              if l.get('evidence') != 'HOSTED_NATIVE_LINKED' or not l.get('f0_native_handler_linked'):
-                  raise SystemExit('FAILED: no genuine B4 F0 linked proof')
-              digest = {k: m['files'][k]['sha256'] for k in ('elf','xml','hex','bin')}
-              if l['elf_sha256'] != digest['elf']:
-                  raise SystemExit('FAILED: ELF linked proof disagrees with manifest')
-              files.append(digest)
-          if files[0] != files[1]:
-              raise SystemExit('FAILED: independent native outputs differ; investigate compiler nondeterminism or source drift')
-          print('TWO_REAL_NATIVE_OUTPUTS_MATCH: only hosted linker parity, not physical proof')
-          PY
+          python firmware/slzb-06p7u/r4/b4/b4_artifact_parity.py --artifacts /tmp/b4-compare
