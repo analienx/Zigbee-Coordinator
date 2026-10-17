@@ -109,12 +109,13 @@ def apply(sdk, receipt):
         "production_flash_authorized": False,
         "status": "DISPOSABLE_TI_SOURCE_ONLY_NO_COMPOSITE",
     }
-    # All source preimages validated BEFORE write. Receipt is outside SDK.
-    target.write_text(updated, encoding="utf-8")
+    # Validate every destination BEFORE touching even a disposable SDK.
     receipt = Path(receipt)
-    if not receipt.resolve().is_relative_to(Path("/tmp")):
-        raise ValueError("receipt outside /tmp")
+    if (not receipt.resolve().is_relative_to(Path("/tmp")) or
+            receipt.is_symlink() or receipt.resolve().is_relative_to(sdk)):
+        raise ValueError("receipt outside /tmp or inside pinned SDK")
     receipt.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(updated, encoding="utf-8")
     receipt.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
     return data
 
