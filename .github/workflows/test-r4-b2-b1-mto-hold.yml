@@ -53,6 +53,9 @@ jobs:
           python tools/b2_compile_b1_mto_hold.py \
             --zmac-host /tmp/b1-zmac-real-functions.c \
             --zdapp /tmp/b1-integration-ti/source/ti/zstack/stack/zdo/zd_app.c \
+            --b1-sha c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f \
+            --b1-overlay-receipt /tmp/b1-source-apply.json \
+            --patched-zmac /tmp/b1-integration-ti/source/ti/zstack/zmac/f8w/zmac.c \
             --out /tmp/b1-b2-positive
           gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer \
             -fsanitize=address,undefined -I "$b1" \
@@ -70,6 +73,9 @@ jobs:
           python tools/b2_compile_b1_mto_hold.py \
             --zmac-host /tmp/b1-zmac-real-functions.c \
             --zdapp /tmp/b1-integration-ti/source/ti/zstack/stack/zdo/zd_app.c \
+            --b1-sha c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f \
+            --b1-overlay-receipt /tmp/b1-source-apply.json \
+            --patched-zmac /tmp/b1-integration-ti/source/ti/zstack/zmac/f8w/zmac.c \
             --variant remove-hold-data --out /tmp/b1-b2-mutant
           gcc -std=c11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer \
             -fsanitize=address,undefined -I "$b1" \
@@ -90,6 +96,35 @@ jobs:
             exit 1
           }
           echo 'B1+B2 patched actual-source hold guard mutation correctly killed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Seal actual host-test PASS only after both source test and guard mutant complete
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path=Path("/tmp/b1-b2-positive/B1_B2_MTO_HOST_RECEIPT.json")
+          receipt=json.loads(path.read_text())
+          assert receipt["B1_B2_INTEGRATED_READY"] is False
+          assert receipt["B2_ROUTING_CORE_NOT_TESTED"] is True
+          assert receipt["MAC_ROM_AND_QUEUED_RF_NOT_TESTED"] is True
+          assert receipt["variant"]=="none"
+          acceptance={
+              "status":"B1_B2_SOURCE_BOUND_HOST_RF_WRAPPER_TEST_PASSED",
+              "b1_source_sha":receipt["b1_source_sha"],
+              "b2_source_sha":"${{ github.event.pull_request.head.sha || github.sha }}",
+              "runtime_host_asan_ubsan_passed":True,
+              "removed_ZMacDataReqSec_hold_guard_mutation_killed":True,
+              "host_scope":"new ZMac wrapper requests following latched NV hold and MTO callbacks",
+              "MAC_ROM_QUEUED_RF_NOT_TESTED":True,
+              "TI_CLOSED_ROUTING_LIBRARY_NOT_TESTED":True,
+              "B1_B2_INTEGRATED_READY":False,
+              "PHYSICAL_UNVERIFIED":True,
+          }
+          Path("/tmp/b1-b2-positive/B1_B2_MTO_HOST_ACCEPTANCE.json").write_text(
+              json.dumps(acceptance,indent=2,sort_keys=True)+"\\n")
+          print(json.dumps(acceptance,sort_keys=True))
+          PY
       - name: Upload source receipts only, never production images, flash, NV, PAN or keys
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -98,6 +133,7 @@ jobs:
           path: |
             /tmp/b1-source-apply.json
             /tmp/b1-b2-positive/B1_B2_MTO_HOST_RECEIPT.json
+            /tmp/b1-b2-positive/B1_B2_MTO_HOST_ACCEPTANCE.json
             /tmp/b1-b2-mutant/B1_B2_MTO_HOST_RECEIPT.json
             /tmp/b1-b2-mutant/negative-test.log
           if-no-files-found: warn
