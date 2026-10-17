@@ -26,7 +26,10 @@ def validate(log, exit_code, injection):
         raise P3ValidationError("CCS linker never executed")
     if not re.search(r"(?:error\s*#10099-D:|error\s*#10099:)[\s\S]{0,240}?program will not fit into available\s+memory",log,re.I):
         raise P3ValidationError("missing genuine TI memory placement diagnostic #10099")
-    if not re.search(r"(?:available memory ranges|\bSRAM\b|\.bss)",log,re.I):
+    # A real #10099 on FLASH or CCFG is not an SRAM-overbudget success.
+    # Bind the *same TI diagnostic* to the CC2652P7 SRAM geometry, rather
+    # than accepting a stray "SRAM" reference elsewhere in the compiler log.
+    if not re.search(r"error\\s*#10099-D:[\\s\\S]{0,500}?Available memory ranges:\\s*SRAM\\s+size:\\s*0x24000\\b",log,re.I):
         raise P3ValidationError("failure not demonstrated in SRAM placement")
     # TI Clang reports the linker failure twice: the real #10099-D from
     # tiarmlnk, then its own expected "tiarmlnk command failed" wrapper.
