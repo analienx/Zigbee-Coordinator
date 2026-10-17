@@ -41,7 +41,10 @@ def merge_lines(original, b1, b4):
             right="".join(a[i2:min(len(a),i2+context)])
             target="".join(a[i1:i2])
             needle=left+target+right
-            if not needle or text.count(needle)!=1:
+            # The ORIGINAL donor must also identify this hunk uniquely.
+            # SequenceMatcher may otherwise align a repeated line at an
+            # arbitrary later occurrence and incorrectly call it disjoint.
+            if not needle or original.count(needle)!=1 or text.count(needle)!=1:
                 continue
             text=text.replace(needle,left+replacement+right,1)
             receipts.append({"mode":mode,"source_start_line":i1+1,
