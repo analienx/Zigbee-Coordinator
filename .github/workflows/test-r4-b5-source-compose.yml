@@ -36,7 +36,7 @@ jobs:
       - name: Run real source patchers in guarded order
         run: |
           python firmware/slzb-06p7u/r4/b5/b5_b1_b4_compose.py --sdk /tmp/b5-ti --b1 /tmp/b5-b1 --definition /tmp/b5-herdsman/definition.ts --receipt /tmp/b5-source-compose.json
-          python -c "import json; r=json.load(open('/tmp/b5-source-compose.json')); assert r['stage']=='SOURCE_COMPOSE_ONLY_NOT_LINKED' and not r['flash_authorized'] and not r['native_linked']"
+          python -c "import json; r=json.load(open('/tmp/b5-source-compose.json')); assert r['stage']=='FULL_B1_B4_SOURCE_COMPOSE_NOT_NATIVE_LINKED' and not r['flash_authorized'] and not r['native_linked']"
       - name: Archive source provenance
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

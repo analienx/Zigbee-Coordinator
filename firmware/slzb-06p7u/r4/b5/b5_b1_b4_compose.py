@@ -1,5 +1,6 @@
 """Exact-pinned source-only B1 management/B4 coexistence check. No hardware."""
-import argparse, hashlib, json, sys, subprocess
+import argparse, hashlib, json, os, sys, subprocess
+from unittest.mock import patch
 from pathlib import Path
 B1="a514c194ea0d94b5d38b28c7b07ca5caba9aeffd"
 TI="3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
@@ -22,6 +23,7 @@ def main():
     require(head(sdk)==TI and head(b1)==B1,"immutable upstream refs")
     sys.path.insert(0,str(b1/"firmware/slzb-06p7u/r4/b1/tools"))
     import patch_management as b1management
+    import apply_b1
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"b4"))
     import b4_native_patch,b4_v4_native_patch
     definition=a.definition.read_text()
@@ -57,12 +59,35 @@ def main():
             "return B1_MT_REJECT;" in cs and
             "frame[2] == B1_STATUS_COMMAND" in cs and "0xF2" not in cs,
             "F2 not rejected via default HOLD")
-    for path,body in patches.items(): (sdk/path).write_text(body,encoding="utf-8",newline="")
-    require((sdk/SYS).read_text()==before[SYS],"F2 altered")
+    # Full B1 NV/security/boot source overlay now executes against real
+    # pinned TI sources. The ONLY substituted action is management.prepare:
+    # it was already run on genuinely pristine TI and is replaced by the
+    # exact B1 management transformations freshly computed against actual
+    # B4-patched MT/NPI/UART. All other B1 source pins, linked changes and
+    # guards are still executed by B1's original apply_b1.overlay.
+    prerequisite=sdk/".b1-prerequisites/herdsman-definition.ts"
+    prerequisite.parent.mkdir(parents=True,exist_ok=True)
+    prerequisite.write_text(definition,encoding="utf-8",newline="")
+    os.environ["B1_SOURCE_SHA"]=B1
+    with patch.object(b1management,"prepare",return_value=(patches,proof)):
+        full=apply_b1.overlay(sdk,b1/"firmware/slzb-06p7u/r4/b1")
+    require(full["schema"]=="r4-b1-admission-overlay-v2" and
+            full["source_sha"]==B1 and
+            full["management"]["collision"]["command"]=="MT SYS 0xF1",
+            "full B1 overlay failed authentic source contract")
+    require(full["mode"]=="B1_SOURCE_ONLY_NOT_PHYSICALLY_TESTED",
+            "B1 physical qualification unexpectedly claimed")
+    require((sdk/SYS).read_text()==before[SYS],"F2 altered by B1")
+    require("B4_V4BootInitAttempted" in (sdk/NPI).read_text() and
+            "B4_NpiUartTxFinishedCallback" in (sdk/UART).read_text(),
+            "B4 hooks lost after complete B1 source overlay")
     receipt={"schema":"b5-b1-management-b4-sources-v1",
-      "stage":"SOURCE_COMPOSE_ONLY_NOT_LINKED","b1_sha":B1,"ti_sha":TI,
+      "stage":"FULL_B1_B4_SOURCE_COMPOSE_NOT_NATIVE_LINKED","b1_sha":B1,"ti_sha":TI,
+      "b1_source_overlay_schema":full["schema"],
+      "full_b1_nv_security_source_applied":True,
+      "public_build_digest_is_b1_only_not_composite":True,
       "b4_sha":head(Path(__file__).resolve().parents[4]),
-      "scope":"B1_MANAGEMENT_ONLY_NOT_FULL_NV_SECURITY","b1_hold_allows_f2":False,
+      "scope":"FULL_B1_NV_SECURITY_SOURCE_AND_B4_F0_F2_NOT_NATIVE_LINKED","b1_hold_allows_f2":False,
       "commands":{"B4_F0":240,"B1_F1":241,"B4_F2":242},
       "flash_authorized":False,"native_linked":False,"physical_verified":False,
       "files":{p:{"before":sha(before[p]),"after":sha(patches[p])} for p in patches},
