@@ -33,6 +33,12 @@ int main(int argc, char **argv) {
     if (!api.initNV || !api.createItem || !api.updateItem || !api.readItem ||
         !api.compactNV) die("no_api",0);
     uint8_t rc=api.initNV(NULL);
+    if (!strcmp(argv[1], "fail_read")) {
+        if (rc==NVINTF_SUCCESS) die("SILENT_INIT_READ_FAILURE",rc);
+        puts("B3_INJECTED_READ_REJECTED");
+        b3_flash_receipt();
+        return 0;
+    }
     if (rc != NVINTF_SUCCESS) die("init",rc);
     unsigned char data[32],more[32];
     memset(data,0x11,sizeof(data));
