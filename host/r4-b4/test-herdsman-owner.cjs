@@ -243,3 +243,37 @@ test("D24/D30: adapter exposes only explicit sanitized opt-in owner forensics", 
     assert.equal(adapter.b4GetPassiveHostForensics().recent_events.length, 0);
     assert.equal(Object.keys(view).some(key=>/pan|ieee|network|serial|payload|key/i.test(key)), false);
 });
+
+test("D17/D18: 200 concurrent diagnostic offers coalesce while stock SYS requests keep single-owner order", async () => {
+    const {owner} = fakeOwner();
+    let diagnostics = 0;
+    let resolve;
+    owner.znp.requestWithReply = async () => {
+        diagnostics++;
+        return new Promise(r => {resolve = r;});
+    };
+    const first = owner.b4ReadOnlyDiagnostics(allow);
+    const burst = await Promise.all(Array.from({length: 200}, () => owner.b4ReadOnlyDiagnostics(allow)));
+    assert.ok(burst.every(x => x === undefined));
+    assert.equal(diagnostics, 1);
+    resolve({payload:{diagnostic:frame()}});
+    assert.equal((await first).srspEnqueued, 0xffffffff);
+    assert.equal(await owner.b4ReadOnlyDiagnostics(allow), undefined);
+    assert.equal(diagnostics, 1);
+
+    const znp = new Znp("/dev/never-opened", 115200, false);
+    znp.initialized = true;  // mock already-existing owner; no actual port opened
+    const issued = [];
+    znp.unpiWriter.writeFrame = (request) => {
+        issued.push(request.commandID);
+        queueMicrotask(() => znp.onUnpiParsed(
+            new Frame(Type.SRSP, Subsystem.SYS, request.commandID, Buffer.from([1,0]))
+        ));
+    };
+    const pings = await Promise.all(Array.from({length: 40},
+        () => znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 300)));
+    assert.equal(issued.length, 40);
+    assert.ok(issued.every(code => code === 1)); // no extra diagnostic traffic
+    assert.ok(pings.every(response => response.payload.capabilities === 1));
+    assert.equal(znp.waitress.waiters.size, 0);
+});
