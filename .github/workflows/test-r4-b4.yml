@@ -34,7 +34,7 @@ jobs:
           python -m py_compile firmware/slzb-06p7u/r4/b4/*.py firmware/slzb-06p7u/r4/tools/r4_diag_reference.py firmware/slzb-06p7u/r4/tools/r4_passive_recorder.py tests/test_r4_b4_*.py
       - name: Run original #87 contract and recorder regressions plus B4 attacks
         run: |
-          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source tests.test_r4_b4_replays tests.test_r4_b4_native tests.test_r4_b4_parity tests.test_r4_b4_z2m_source
+          python -m unittest -v tests.test_r4_01a_diag_contracts tests.test_r4_01a_passive_recorder tests.test_r4_b4_protocol tests.test_r4_b4_recorder tests.test_r4_b4_source tests.test_r4_b4_replays tests.test_r4_b4_native tests.test_r4_b4_parity tests.test_r4_b4_z2m_source tests.test_r4_b4_inference
       - name: Re-run adversarial source and protocol checks independently
         run: python -m unittest -v tests.test_r4_b4_source tests.test_r4_b4_protocol
       - name: Execute exact B4 native handler with host ASan UBSan and a defeated counter-validity mutant
