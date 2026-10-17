@@ -69,6 +69,14 @@ def main():
     sdk = work / "sdk"
     fetch_sources(sdk)
     receipt = overlay(sdk, b1)
+    # Genuine pinned NVOCMP source must complete the destination journal
+    # before attempting to erase the old source, and remain sticky-HOLD.
+    from b1_b3_compaction_journal import NEW as B1_B3_JOURNAL
+    journal_source=(sdk/"source/ti/common/nv/nvocmp.c").read_text()
+    assert journal_source.count(B1_B3_JOURNAL)==1, "B1+B3 journal missing"
+    assert journal_source.count("NVOCMP_erase(pNvHandle, srcPg);")==1
+    assert B1_B3_JOURNAL.index("NVOCMP_writeByte(dstPg") < B1_B3_JOURNAL.index("NVOCMP_erase(pNvHandle, srcPg)")
+    print("B1_B3_TI_NV_JOURNAL_DESTINATION_FIRST_AND_HOLD_GUARDED",flush=True)
     source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True).strip()
     if source_sha != os.environ["B1_SOURCE_SHA"]:

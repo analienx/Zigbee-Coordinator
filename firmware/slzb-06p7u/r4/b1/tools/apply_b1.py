@@ -13,6 +13,7 @@ from b1_b3_nwk_checkpoint import patch as patch_b1_b3_nwk
 from b1_b3_entropy import compose as compose_b1_b3_entropy
 from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
 from patch_nv_integrity import patch as patch_nv_integrity
+from b1_b3_compaction_journal import patch as patch_b1_b3_journal
 import patch_management
 import subprocess
 
@@ -349,6 +350,8 @@ def overlay(sdk, b1_dir):
         "main absent NV init function fail-closed")
 
     source = patch_nv_integrity(source)
+    # B3 source retention journal fused into B1's existing NV fail-closed gate.
+    source = patch_b1_b3_journal(source)
 
     # Runtime NWK counter continuity: persist, read back, then publish.
     zdapp = patch_zdapp(zdapp)
@@ -461,6 +464,7 @@ def overlay(sdk, b1_dir):
         "b1_b3_entropy_status_and_publishers": "SOURCE_COMPOSED_B1_HOLD_PENDING_CI",
         "modified_security_header_sha256": hashlib.sha256(security_header.encode()).hexdigest(),
         "modified_zstacktask_sha256": hashlib.sha256(zstacktask.encode()).hexdigest(),
+        "b1_b3_compaction_journal": "SOURCE_COMPOSED_B1_HOLD_PENDING_NATIVE_CI",
         "b1_b3_rest_of_nv_security": "NOT_COMPOSED",
         "mode": "B1_SOURCE_ONLY_NOT_PHYSICALLY_TESTED",
         "preflight": "read only (0x4000), no NVS_write/NVS_erase",
