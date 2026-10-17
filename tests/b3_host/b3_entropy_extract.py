@@ -16,6 +16,16 @@ CALLERS = {
 
 def extract(root):
     source = (root / "zdo/zd_sec_mgr.c").read_text()
+    # The TI .c file contains a separate local forward declaration in addition
+    # to the header. Missing this change caused a real CCS compiler failure.
+    checked_seed = ("ZStatus_t ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, "
+                    "uint8_t shift, uint8_t *key);")
+    if source.count(checked_seed) != 1 or (
+            "void ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr" in source):
+        raise ValueError("B3 TI .c seed function declaration ABI mismatch")
+    header = (root / "zdo/zd_sec_mgr.h").read_text()
+    if header.count("extern " + checked_seed) != 1:
+        raise ValueError("B3 TI header seed function declaration ABI mismatch")
     if source.count(HEAD) != 1:
         raise ValueError("B3 original SDK entropy function is absent/ambiguous")
     start = source.index(HEAD)
