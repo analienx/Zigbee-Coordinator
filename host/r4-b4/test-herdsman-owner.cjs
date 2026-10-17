@@ -228,3 +228,18 @@ test("D14/D16/D19/D30: exact Waitress timeout only, bounded privacy-safe host fo
     assert.equal(znp.b4ReadPassiveForensics().recent_events.length, 0);
     assert.equal(znp.b4ReadPassiveForensics().dropped, 0);
 });
+
+test("D24/D30: adapter exposes only explicit sanitized opt-in owner forensics", () => {
+    const adapter = Object.create(ZStackAdapter.prototype);
+    adapter.znp = new Znp("/dev/not-opened", 115200, false);
+    adapter.b4SetPassiveHostForensics(true);
+    adapter.znp.b4RecordHostSreqTimeout(Subsystem.ZDO, "permitJoin", 100,
+                                     new Error("SRSP - ZDO - permitJoin after 100ms"));
+    const view = adapter.b4GetPassiveHostForensics();
+    assert.equal(view.schema, "r4-b4-inprocess-host-sreq-v1");
+    assert.deepEqual(view.recent_events.map(x=>x.kind), ["ZDO_SREQ_TIMEOUT"]);
+    assert.equal(view.radio_epoch, "UNKNOWN");
+    adapter.b4SetPassiveHostForensics(false);
+    assert.equal(adapter.b4GetPassiveHostForensics().recent_events.length, 0);
+    assert.equal(Object.keys(view).some(key=>/pan|ieee|network|serial|payload|key/i.test(key)), false);
+});
