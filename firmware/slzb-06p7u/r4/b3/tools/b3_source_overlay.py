@@ -12,6 +12,7 @@ from pathlib import Path
 PINNED_BLOBS = {
     "source/ti/zstack/osal/osal_nv.c": "65c7667475627989cbe2e3f5fdd46335b50eb660",
     "source/ti/common/nv/nvocmp.c": "01b2b0827d278c10c012b33e5791e53bc5662f10",
+    "source/ti/zstack/stack/zdo/zd_sec_mgr.c": "65d7857cc9c62b75419807a8c0d03a62ec1a5574",
 }
 
 
@@ -203,6 +204,41 @@ def nvocmp_changes(source):
     return source
 
 
+def security_changes(source):
+    # The actual TI APS/TCLK checkpoint routines used to clear pendingFlag
+    # even when the persistence write was rejected. Do not make a failed
+    # checkpoint look durable. B1 still owns RF HOLD on failed persistence.
+    source = one(source,
+        "          // Write the APS link key back to the NV\n"
+        "          osal_nv_write_ex(ZCD_NV_EX_APS_KEY_DATA_TABLE, i,\n"
+        "                        sizeof(APSME_ApsLinkKeyNVEntry_t),\n"
+        "                        pKeyData);\n\n"
+        "          // clear the pending write flag\n"
+        "          ApsLinkKeyRAMEntry[i].pendingFlag = FALSE;",
+        "          // Clear pending ONLY if the actual NV backend accepted the write.\n"
+        "          if (osal_nv_write_ex(ZCD_NV_EX_APS_KEY_DATA_TABLE, i,\n"
+        "                               sizeof(APSME_ApsLinkKeyNVEntry_t),\n"
+        "                               pKeyData) == SUCCESS)\n"
+        "          {\n"
+        "              ApsLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+        "          }")
+    source = one(source,
+        "          // Write the TC link key back to the NV\n"
+        "          osal_nv_write_ex(ZCD_NV_EX_TCLK_TABLE, i,\n"
+        "                           sizeof(APSME_TCLinkKeyNVEntry_t),\n"
+        "                           pKeyData);\n\n"
+        "          // clear the pending write flag\n"
+        "          TCLinkKeyRAMEntry[i].pendingFlag = FALSE;",
+        "          // Clear pending ONLY if the actual NV backend accepted the write.\n"
+        "          if (osal_nv_write_ex(ZCD_NV_EX_TCLK_TABLE, i,\n"
+        "                               sizeof(APSME_TCLinkKeyNVEntry_t),\n"
+        "                               pKeyData) == SUCCESS)\n"
+        "          {\n"
+        "              TCLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+        "          }")
+    return source
+
+
 def apply(sdk, receipt):
     sdk = Path(sdk).resolve()
     prepared = []
@@ -215,7 +251,9 @@ def apply(sdk, receipt):
         if blob_id(raw) != expected:
             raise ValueError("B3 donor git blob mismatch: " + path)
         orig = raw.decode("utf-8")
-        changed = osal_changes(orig) if path.endswith("osal_nv.c") else nvocmp_changes(orig)
+        changed = (osal_changes(orig) if path.endswith("osal_nv.c") else
+                   security_changes(orig) if path.endswith("zd_sec_mgr.c") else
+                   nvocmp_changes(orig))
         prepared.append((target, changed.encode("utf-8"), path, expected))
     for target, changed, _, _ in prepared:
         target.write_bytes(changed)
@@ -225,7 +263,7 @@ def apply(sdk, receipt):
                   "NVOCMP read/compaction full negative matrix and actual device power-loss still pending",
                   "osal_nv_init void ABI drops initialization failure",
                   "B1 HOLD_SECURITY integration unimplemented",
-                  "counter reservation and interrupted compaction not proven"],
+                  "per-key reserve-before-send and native B1 hold wiring not proven"],
               "files": [{"path": path, "original_blob_sha1": old,
                          "modified_sha256": hashlib.sha256(raw).hexdigest()}
                         for _, raw, path, old in prepared]}
