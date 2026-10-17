@@ -64,6 +64,17 @@ jobs:
           /tmp/b3-ti-nvocmp seed
           B3_FAULT_NUMBER=1 B3_FAULT_MODE=1 /tmp/b3-ti-nvocmp fail_update
           /tmp/b3-ti-nvocmp verify
+      - name: Read failure during real TI NVOCMP boot must not initialize or mutate flash
+        run: |
+          set -euo pipefail
+          export B3_SYNTHETIC_FLASH=/tmp/b3-readfault-${{ matrix.pages }}.bin
+          rm -f "$B3_SYNTHETIC_FLASH"
+          /tmp/b3-ti-nvocmp seed
+          old_sha=$(sha256sum "$B3_SYNTHETIC_FLASH" | cut -d' ' -f1)
+          B3_FAIL_READ_NUMBER=1 /tmp/b3-ti-nvocmp fail_read
+          new_sha=$(sha256sum "$B3_SYNTHETIC_FLASH" | cut -d' ' -f1)
+          test "$old_sha" = "$new_sha"
+          /tmp/b3-ti-nvocmp verify
       - name: Source-only matrix acceptance disclaimer
         run: |
           echo "Compiled genuine TI NVOCMP; mocked NV_LINUX I/O. NOT native NVS, not real power loss."
