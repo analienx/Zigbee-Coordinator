@@ -1,6 +1,10 @@
 import copy
+import hashlib
+import json
+import tempfile
 import unittest
-from tools.b2_compare_native import EXPECTED, SDK_SHA, compute, CompareError
+from pathlib import Path
+from tools.b2_compare_native import EXPECTED, SDK_SHA, compute, CompareError, read
 
 SOURCE_SHA="e"*40
 RUN_ID="39001340291"
@@ -77,6 +81,36 @@ class TwoNativeBuildComparatorTests(unittest.TestCase):
         partition["heap_linker_address_span_bytes"]-=4
         with self.assertRaisesRegex(CompareError,"different linked SRAM partitions"):
             checked(a)
+    def test_swapped_native_symbol_receipt_rejected_against_manifest(self):
+        # Synthetic metadata only; does not substitute for preceding B0
+        # cryptographic ELF/XML/HEX/BIN image audit in the real workflow.
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)/"download"
+            out=root/"b0out"
+            (out/"b2-linked-baseline").mkdir(parents=True)
+            blob=b"NOT_A_REAL_TI_BIN"
+            (out/"candidate.bin").write_bytes(blob)
+            files={
+                "bin":{"file":"candidate.bin","sha256":hashlib.sha256(blob).hexdigest()},
+                "elf":{"file":"candidate.out","sha256":"a"*64},
+                "xml":{"file":"candidate.xml","sha256":"b"*64},
+                "hex":{"file":"candidate.hex","sha256":"c"*64},
+            }
+            (out/"manifest.json").write_text(json.dumps({
+                "schema":"r4-b0-artifact-manifest-v1","files":files}))
+            native={
+                "status":"HOSTED_NATIVE_LINKED_TABLES","sdk_source_sha":SDK_SHA,
+                "artifact_sha256":{key:meta["sha256"] for key,meta in files.items()},
+            }
+            native["artifact_sha256"]["elf"]="f"*64
+            receipt={
+                "result":"NATIVE_STATIC_PROFILE_CONFIRMED","profile":"P1",
+                "physical_verified":False,"source_ready":False,
+            }
+            (out/"b2-linked-baseline"/"B2_BASELINE_ELF_SYMBOLS.json").write_text(json.dumps(native))
+            (out/"b2-linked-baseline"/"B2_PROFILE_P1_RECEIPT.json").write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(CompareError,"ELF extractor/manifest digest mismatch"):
+                read(root,"P1")
     def test_invalid_commit_or_workflow_run_rejected(self):
         with self.assertRaisesRegex(CompareError,"invalid expected"):
             checked(self.valid(),expected="HEAD")
