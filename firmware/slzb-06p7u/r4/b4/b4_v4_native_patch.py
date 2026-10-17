@@ -27,7 +27,7 @@ volatile uint32_t B4_V4BootLo = 0;
 volatile uint32_t B4_V4BootHi = 0;
 volatile uint32_t B4_V4ResetReason = 0;
 volatile uint32_t B4_V4BootReady = 0;
-static void B4_V4InitializeBootOnce(void)
+__attribute__((noinline, used)) static void B4_V4InitializeBootOnce(void)
 {
     uint8_t bytes[8] = {0};
     uint32_t reason = SysCtrlResetSourceGet();
