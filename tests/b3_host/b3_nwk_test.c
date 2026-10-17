@@ -70,6 +70,19 @@ int main(void) {
     ZDApp_SaveNwkKey();
     assert(nwkFrameCounterChanges==0 && table_writes==1 && key_writes==1);
     assert(rows[1].FrameCounter==2000);
+    /* A successful checkpoint may advance but must NEVER decrease a
+     * persisted active row, including if the RAM counter is stale. */
+    reset(); rows[1].FrameCounter=2500;
+    ZDApp_SaveNwkKey();
+    assert(rows[1].FrameCounter==2500 && table_writes==0);
+    assert(key_writes==0 && nwkFrameCounterChanges==9);
+    /* The generic slot must get the same protection when no active
+     * extended PAN ID row matches. */
+    reset(); memset(rows[1].extendedPanID,0,Z_EXTADDR_LEN);
+    rows[2].FrameCounter=2500;
+    ZDApp_SaveNwkKey();
+    assert(rows[2].FrameCounter==2500 && table_writes==0);
+    assert(key_writes==0 && nwkFrameCounterChanges==9);
     reset(); table_write_fail=1;
     ZDApp_SaveNwkKey();
     assert(nwkFrameCounterChanges==9 && key_writes==0);

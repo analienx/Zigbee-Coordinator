@@ -420,6 +420,12 @@ def nwk_checkpoint_changes(source):
     if (OsalPort_memcmp(_NIB.extendedPANID,
                         nwkSecMaterialDesc.extendedPanID,Z_EXTADDR_LEN))
     {
+      /* A persisted high-water floor must NEVER move backwards to a
+       * lagging in-RAM SSP counter, including after interrupted restore. */
+      if (nwkSecMaterialDesc.FrameCounter > keyItems.frameCounter)
+      {
+        goto b3_checkpoint_done;
+      }
       nwkSecMaterialDesc.FrameCounter = keyItems.frameCounter;
       found = TRUE;
       if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i,
@@ -438,6 +444,11 @@ def nwk_checkpoint_changes(source):
   if (!found)
   {
     if (gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES == 0)
+    {
+      goto b3_checkpoint_done;
+    }
+    // The generic slot also carries an independent persisted high-water.
+    if (nwkSecMaterialDesc.FrameCounter > keyItems.frameCounter)
     {
       goto b3_checkpoint_done;
     }
