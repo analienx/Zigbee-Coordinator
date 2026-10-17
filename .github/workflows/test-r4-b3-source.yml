@@ -149,6 +149,26 @@ jobs:
             -I tests/b3_host /tmp/b3host/ti_nwk.c \
             tests/b3_host/b3_nwk_test.c -o /tmp/b3host/ti_nwk
           /tmp/b3host/ti_nwk
+      - name: Counter floor rollback mutation must fail real TI save-function assertion
+        run: |
+          set -euo pipefail
+          cp /tmp/b3host/ti_nwk.c /tmp/b3host/ti_nwk_floor_mutant.c
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/b3host/ti_nwk_floor_mutant.c')
+          s=p.read_text()
+          old='if (nwkSecMaterialDesc.FrameCounter > keyItems.frameCounter)'
+          assert s.count(old)==2, 'active and generic monotonic floor guard must both exist'
+          p.write_text(s.replace(old,'if (0)'))
+          PY
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror             -I tests/b3_host /tmp/b3host/ti_nwk_floor_mutant.c             tests/b3_host/b3_nwk_test.c -o /tmp/b3host/ti_nwk_floor_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_nwk_floor_mutant > /tmp/b3-nwk-floor-mutant.log 2>&1; then
+            echo "B3 P0 regression: floor rollback mutant SURVIVED"
+            exit 1
+          fi
+          grep -E 'Assertion.*rows\[1\].FrameCounter|assertion.*rows\[1\].FrameCounter' /tmp/b3-nwk-floor-mutant.log
+
       - name: NWK negative control must catch rejected-save acknowledgment
         run: |
           set -euo pipefail
