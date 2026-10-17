@@ -28,7 +28,7 @@ BOOT_SOURCE = r"""
 uint8_t B4_V4BootId[8] = {0};
 volatile uint32_t B4_V4BootValid = 0u;
 volatile uint32_t B4_V4ResetReason = 0xFFu;
-static void B4_V4BootInitialize(void)
+__attribute__((noinline)) static void B4_V4BootInitialize(void)
 {
     TRNG_Params params;
     TRNG_Handle handle;
