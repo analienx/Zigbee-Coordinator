@@ -1,8 +1,9 @@
 """B4 experimental, guarded overlay on real pinned TI SDK (DISPOSABLE CI ONLY).
 
-Does not touch repo worktrees, production coordinators or flashing. The only
-native measurement initially qualified is successful NPI SRSP queue enqueue.
-All other P10-layout counters have validity=0. Boot ID cap is always 0.
+Does not touch production coordinators or flashing. Source-qualified metrics:
+SRSP and AREQ NPI queue depth/high-water and sync enqueue count, each at the
+actual pinned producer/consumer with preexisting TI critical sections.
+No UART completion, radio boot identity or unqualified RF/NV telemetry.
 """
 import argparse
 import hashlib
@@ -17,7 +18,11 @@ NPI_CLIENT = "source/ti/zstack/npi/npi_client_mt.c"
 MARKER = "B4_EXPERIMENTAL_DIAG_READ_ONLY"
 
 B4_FUNCTION = r"""
-/* B4_EXPERIMENTAL_DIAG_READ_ONLY: read-only, static RAM, no radio or NV. */
+/* B4_EXPERIMENTAL_DIAG_READ_ONLY: snapshot preexisting NPI queue metrics. */
+extern volatile uint32_t B4_NpiSrspDepth;
+extern volatile uint32_t B4_NpiSrspHighWater;
+extern volatile uint32_t B4_NpiAsyncDepth;
+extern volatile uint32_t B4_NpiAsyncHighWater;
 extern volatile uint32_t B4_NpiSrspEnqueued;
 static uint32_t B4_DiagSampleSequence = 0;
 static void B4_DiagPutU32(uint8_t *dest, uint32_t v)
@@ -30,25 +35,38 @@ static void B4_DiagPutU32(uint8_t *dest, uint32_t v)
 __attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
 {
     uint8_t payload[132] = {0};
-    uint32_t count;
+    uint32_t srsp_depth;
+    uint32_t srsp_high_water;
+    uint32_t async_depth;
+    uint32_t async_high_water;
+    uint32_t srsp_enqueued;
     uint32_t seq;
     uint32_t key = OsalPort_enterCS();
-    count = B4_NpiSrspEnqueued;
+    srsp_depth = B4_NpiSrspDepth;
+    srsp_high_water = B4_NpiSrspHighWater;
+    async_depth = B4_NpiAsyncDepth;
+    async_high_water = B4_NpiAsyncHighWater;
+    srsp_enqueued = B4_NpiSrspEnqueued;
     seq = ++B4_DiagSampleSequence;
     OsalPort_leaveCS(key);
     payload[0] = 'R';
     payload[1] = '4';
     payload[2] = 'D';
     payload[3] = '3';
-    payload[4] = 3;     /* exact version 3, no minor version implied */
+    payload[4] = 3;     /* exact version 3; no minor version implied */
     payload[6] = 132;   /* full u16 LE length 132 */
+    payload[12] = 0x0C; /* async queue: validity bits 2,3 always compiled */
 #if defined(NPI_SREQRSP)
-    payload[12] = 0x10; /* only counter 4 (srsp_enqueued) is known */
+    payload[12] = 0x1F; /* sync depth/HWM + async depth/HWM + sync enqueue */
+    B4_DiagPutU32(payload + 32, srsp_depth);
+    B4_DiagPutU32(payload + 36, srsp_high_water);
+    B4_DiagPutU32(payload + 48, srsp_enqueued);
 #endif
     /* capabilities=0, radio_boot_id=0 and uptime_ms=0: epoch UNKNOWN */
     B4_DiagPutU32(payload + 28, seq);
-    B4_DiagPutU32(payload + 32 + (4 * 4), count);
-    /* The MT response path can fail when NPI is starved; no guarantee. */
+    B4_DiagPutU32(payload + 40, async_depth);
+    B4_DiagPutU32(payload + 44, async_high_water);
+    /* Neither reported depth nor UART callback proves physical delivery. */
     MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF0, sizeof(payload), payload);
 }
 """
@@ -98,7 +116,11 @@ def build_patches(root):
     if task.count(task_anchor) != 1:
         raise ValueError("NPI sender drift")
     task = task.replace(task_anchor,
-        "/* " + MARKER + ": RAM-only counter; updates inside preexisting CS. */\n"
+        "/* " + MARKER + ": RAM queue metrics updated in preexisting CS. */\n"
+        "volatile uint32_t B4_NpiSrspDepth = 0;\n"
+        "volatile uint32_t B4_NpiSrspHighWater = 0;\n"
+        "volatile uint32_t B4_NpiAsyncDepth = 0;\n"
+        "volatile uint32_t B4_NpiAsyncHighWater = 0;\n"
         "volatile uint32_t B4_NpiSrspEnqueued = 0;\n" + task_anchor, 1)
     # Both real source producers enqueue the same synchronous response
     # queue: NPITask_sendToHost() and NPITask_processStackMsg(). Each
@@ -119,16 +141,55 @@ def build_patches(root):
                 "#if defined(NPI_SREQRSP)" not in scope):
             raise ValueError("missing preexisting critical section for " + function_name)
     task = task.replace(enqueue,
-        enqueue + "\n                ++B4_NpiSrspEnqueued; /* existing OsalPort CS */")
+        enqueue + "\n                ++B4_NpiSrspEnqueued; /* existing OsalPort CS */"
+        "\n                if (B4_NpiSrspDepth != 0xFFFFFFFFu) ++B4_NpiSrspDepth;"
+        "\n                if (B4_NpiSrspDepth > B4_NpiSrspHighWater)"
+        "\n                    B4_NpiSrspHighWater = B4_NpiSrspDepth;")
     if task.count("++B4_NpiSrspEnqueued;") != 2:
         raise ValueError("cannot prove both synchronous response producer increments")
+
+    # Two actual async NPI TX producers, same guarded critical sections.
+    async_enqueue = "Queue_enqueue(npiTxQueue, &recPtr->_elem);"
+    if task.count(async_enqueue) != 2:
+        raise ValueError("NPI ASYNC TX queue producer count drift")
+    task = task.replace(async_enqueue,
+        async_enqueue +
+        "\n                if (B4_NpiAsyncDepth != 0xFFFFFFFFu) ++B4_NpiAsyncDepth;"
+        "\n                if (B4_NpiAsyncDepth > B4_NpiAsyncHighWater)"
+        "\n                    B4_NpiAsyncHighWater = B4_NpiAsyncDepth;")
+    # Single existing consumer for each TX queue. Preserve TI scheduling;
+    # never invoke Queue_dequeue independently or change empty handling.
+    for queue, name, function in (
+            ("npiSyncTxQueue", "B4_NpiSrspDepth",
+             "static void NPITask_ProcessSyncTXQ(void)"),
+            ("npiTxQueue", "B4_NpiAsyncDepth",
+             "static void NPITask_ProcessTXQ(void)")):
+        anchor = "recPtr = Queue_dequeue(" + queue + ");"
+        if task.count(anchor) != 1:
+            raise ValueError("TX queue dequeue consumer drift: " + queue)
+        start = task.find(function + "\n{")
+        stop = task.find(anchor, start)
+        if start < 0 or stop < 0 or stop - start > 1500:
+            raise ValueError("source consumer definition missing: " + function)
+        scope = task[start:stop]
+        if "OsalPort_enterCS()" not in scope:
+            raise ValueError("dequeue not protected by existing CS")
+        after = task[stop + len(anchor):stop + len(anchor) + 160]
+        if "if (recPtr != NULL)" not in after:
+            raise ValueError("unexpected existing TI dequeue branch")
+        task = task.replace(anchor,
+            anchor + "\n    if (recPtr != NULL && " + name +
+            " != 0u) --" + name + "; /* preexisting CS */", 1)
+    for name in ("B4_NpiSrspDepth", "B4_NpiAsyncDepth"):
+        if task.count("++" + name) != 2 or task.count("--" + name) != 1:
+            raise ValueError("incomplete NPI TX queue depth instrumentation: " + name)
     return {MT_SYS: (initial[MT_SYS], sys), NPI_TASK: (initial[NPI_TASK], task)}
 
 def apply(root):
     patches = build_patches(root)
     receipt = {"stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "ti_sha": TI_SHA,
                "f0_opcode": "0xF0", "payload_bytes": 132,
-               "valid_counter_indices": [4], "radio_boot_identity": "UNKNOWN",
+               "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
                "written": {}}
     # All anchors, files and Git pins are verified BEFORE the first write.
     for name, (old, new) in patches.items():
