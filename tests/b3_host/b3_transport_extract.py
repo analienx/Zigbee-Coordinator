@@ -10,9 +10,10 @@ SIGNATURES = (
 )
 
 def function_body(source, signature):
-    if source.count(signature) != 1:
-        raise ValueError("TI SDK signature missing/ambiguous: " + signature)
-    start = source.index(signature)
+    definition = signature + "\n{"
+    if source.count(definition) != 1:
+        raise ValueError("TI SDK function definition missing/ambiguous: " + signature)
+    start = source.index(definition)
     opening = source.index("{", start + len(signature))
     depth = 0
     for pos in range(opening, len(source)):
