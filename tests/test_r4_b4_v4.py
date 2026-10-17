@@ -76,6 +76,8 @@ class V4Native(unittest.TestCase):
                 self.assertIn("payload[132u + i] = pBuf[MT_RPC_POS_DAT0 + i]", sys)
                 self.assertIn("TRNG_getRandomBytes(handle, sample, sizeof(sample))", task)
                 self.assertIn("params.timeout = 25u;", task)
+                self.assertIn("B4_V4BootValid = 0u;", task)
+                self.assertIn("B4_V4BootId[i] = 0u;", task)
                 self.assertIn("B4_V4BootInitialize();", task)
                 self.assertLess(task.index("B4_V4BootInitialize();"),
                                 task.index("NPITL_initTL();"))

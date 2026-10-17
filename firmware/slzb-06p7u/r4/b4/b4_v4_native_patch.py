@@ -36,6 +36,13 @@ static void B4_V4BootInitialize(void)
     uint32_t resetSource;
     uint32_t i;
     uint8_t nonzero = 0u;
+    /* Re-entry after any partial task restart must NOT reuse previous
+     * entropy. No UART is open yet; all writes precede host observations.
+     */
+    for (i = 0u; i < sizeof(B4_V4BootId); ++i)
+        B4_V4BootId[i] = 0u;
+    B4_V4BootValid = 0u;
+    B4_V4ResetReason = 0xFFu;
     /* Actual pinned CC13x2x7/CC26x2x7 ROM/driverlib provider.
      * Reset cause is NOT entropy and never interpreted as generation ID. */
     resetSource = SysCtrlResetSourceGet();
