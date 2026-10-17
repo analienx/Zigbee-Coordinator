@@ -178,6 +178,26 @@ class FlashBoundaryTests(unittest.TestCase):
             self.assertEqual(state["status"], "FAILED_CLOSED")
             self.assertNotIn("STALE", receipt.read_text())
 
+    def test_symlink_receipt_is_replaced_with_denial_not_followed(self):
+        # Previously a symlink caused return 1 but left the stale link
+        # and potentially an old flash_authorized:true receipt intact.
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            victim = root / "unrelated.json"
+            victim.write_text('{"flash_authorized":true,"keep":"unmodified"}')
+            receipt = root / "DO_NOT_FLASH_NV_BOUNDARY.json"
+            receipt.symlink_to(victim)
+            with patch.object(sys, "argv", ["b0_flash_boundary.py",
+                     "--artifacts", str(root), "--receipt", str(receipt)]):
+                self.assertEqual(gate.main(), 1)
+            self.assertFalse(receipt.is_symlink())
+            self.assertEqual(json.loads(victim.read_text())["keep"], "unmodified")
+            self.assertTrue(json.loads(victim.read_text())["flash_authorized"])
+            new = json.loads(receipt.read_text())
+            self.assertIs(new["flash_authorized"], False)
+            self.assertIs(new["network_migration_authorized"], False)
+            self.assertEqual(new["status"], "FAILED_CLOSED")
+
     def test_malformed_manifest_cannot_preserve_stale_flash_authorization(self):
         with tempfile.TemporaryDirectory() as td:
             root = setup(td)
