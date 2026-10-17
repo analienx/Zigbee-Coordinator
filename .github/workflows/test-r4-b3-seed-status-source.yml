@@ -1,0 +1,86 @@
+name: R4 B1+B3 source seed ABI + NVOCMP reconciled (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'tools/r4_b1_b3_security_fuse.py'
+      - '.github/workflows/test-r4-b3-seed-status-source.yml'
+      - 'tools/r4_b3_seed_status_fuse.py'
+      - 'tools/r4_b3_nvocmp_compaction_fuse.py'
+permissions:
+  contents: read
+jobs:
+  source-fusion:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact branch commit, no checkout auth persistence
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Checkout exact pinned TI 8.33 code and immutable B3 #123
+        run: |
+          set -Eeuo pipefail
+          git init -q /tmp/r4fusion-sdk
+          git -C /tmp/r4fusion-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4fusion-sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4fusion-sdk checkout -q FETCH_HEAD
+          test "$(git -C /tmp/r4fusion-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git init -q /tmp/r4fusion-b3
+          git -C /tmp/r4fusion-b3 remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/r4fusion-b3 fetch --depth 1 origin b481e0beabf1966900644f69d7f5d024708ebf73
+          test "$(git -C /tmp/r4fusion-b3 rev-parse FETCH_HEAD)" = b481e0beabf1966900644f69d7f5d024708ebf73
+          git -C /tmp/r4fusion-b3 show b481e0beabf1966900644f69d7f5d024708ebf73:firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py > /tmp/r4fusion-b3-overlay.py
+          mkdir -p /tmp/r4fusion-sdk/.b1-prerequisites
+          curl -fLsS --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts \
+            -o /tmp/r4fusion-sdk/.b1-prerequisites/herdsman-definition.ts
+      - name: B1 actual pinned TI source patch, then B3 fusion
+        env:
+          B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          python firmware/slzb-06p7u/r4/b1/tools/apply_b1.py --sdk /tmp/r4fusion-sdk --receipt /tmp/r4fusion-b1.json
+          python tools/r4_b1_b3_security_fuse.py --sdk /tmp/r4fusion-sdk \
+            --b3-script /tmp/r4fusion-b3-overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/r4fusion-b1.json \
+            --receipt /tmp/r4fusion-receipt.json
+          echo "Reconcile exact B3 NVOCMP data/header and NV2 page commit with B1 HOLD"
+          python tools/r4_b3_nvocmp_compaction_fuse.py \
+            --sdk /tmp/r4fusion-sdk \
+            --b3-script /tmp/r4fusion-b3-overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/r4fusion-b1.json \
+            --receipt /tmp/r4-b1b3-nvocmp.json
+          python tools/r4_b3_seed_status_fuse.py \
+            --sdk /tmp/r4fusion-sdk \
+            --b3-script /tmp/r4fusion-b3-overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/r4fusion-b1.json \
+            --receipt /tmp/r4-seed-checked.json
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          d=json.loads(Path('/tmp/r4fusion-receipt.json').read_text())
+          b=json.loads(Path('/tmp/r4fusion-b1.json').read_text())
+          assert d['source_ready'] is False and d['flash_authorized'] is False
+          assert d['b3_nwk_save_monotonic_and_B1_HOLD'] is True
+          assert len(d['changed']) == 5
+          nv=json.loads(Path('/tmp/r4-b1b3-nvocmp.json').read_text())
+          assert len(nv['reconciled_guards'])==3 and nv['source_ready'] is False
+          seed=json.loads(Path('/tmp/r4-seed-checked.json').read_text())
+          assert seed['checked_return_status'] and seed['b1_sticky_HOLD_on_missing_seed']
+          assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
+          print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
+          PY
+      - name: Upload only source receipts, no ELF
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r4-seed-status-SOURCE-NOT-FLASH-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/r4fusion-receipt.json
+            /tmp/r4fusion-b1.json
+            /tmp/r4-b1b3-nvocmp.json
+            /tmp/r4-seed-checked.json
+          if-no-files-found: warn
