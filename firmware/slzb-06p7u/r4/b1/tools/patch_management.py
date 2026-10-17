@@ -249,6 +249,38 @@ def patch_uart(text):
         "        return; /* No reads/responses from failed physical transport */\n"
         "    }\n\n    if (size)",
         "UART callback cannot revive transport after RX loss")
+    # Both async completion and synchronous submission must report failed TX.
+    # Never claim a host SRSP was actually transmitted after UART2 failure.
+    text = once(text,
+        """static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)
+{
+    uint32_t key;
+    key = OsalPort_enterCS();""",
+        """static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)
+{
+    uint32_t key;
+    key = OsalPort_enterCS();
+    if (status != UART2_STATUS_SUCCESS || b1_management_transport_unavailable())
+    {
+        if (status != UART2_STATUS_SUCCESS)
+            b1_management_transport_failed(B1_ERROR_UART_WRITE);
+        OsalPort_leaveCS(key);
+        return; /* Do not claim completed host write after failure. */
+    }""", "UART TX callback completion status")
+    text = once(text,
+        """    if(UART2_write(uartHandle, TransportTxBuf, TransportTxLen, NULL) != UART2_STATUS_SUCCESS )
+    {
+      TransportTxLen = 0;
+    }""",
+        """    if (b1_management_transport_unavailable())
+    {
+        TransportTxLen = 0; /* No more writes on failed transport. */
+    }
+    else if (UART2_write(uartHandle, TransportTxBuf, TransportTxLen, NULL) != UART2_STATUS_SUCCESS)
+    {
+        TransportTxLen = 0;
+        b1_management_transport_failed(B1_ERROR_UART_WRITE);
+    }""", "UART TX immediate submission status")
     return text
 
 
