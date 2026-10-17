@@ -18,6 +18,11 @@ from pathlib import Path
 
 from b0_image_audit import _parse_intel_hex, _safe_artifact, loads_strict
 
+# Conservative safety envelope: previous R2 source described an NV5
+# *candidate* beginning at 0xA4000. This is NOT proof of the installed
+# stock NV layout; protecting the union prevents an otherwise-valid
+# source receipt from normalizing HEX writes over that candidate area.
+CONSERVATIVE_NV_BEGIN = 0xA4000
 NV_BEGIN = 0xAA000
 NV_END = 0xAE000
 CCFG_BEGIN = 0xAFFA8
@@ -57,9 +62,10 @@ def inspect(directory):
     payload, error = _parse_intel_hex(hex_file)
     if error:
         raise ValueError("B0_FLASH_BOUNDARY_INVALID_INTEL_HEX: " + error)
-    nv_payload = [addr for addr in payload if NV_BEGIN <= addr < NV_END]
-    if nv_payload:
-        raise ValueError("B0_FLASH_BOUNDARY_HEX_WRITES_PROTECTED_NV")
+    conservative_hits = [addr for addr in payload
+                         if CONSERVATIVE_NV_BEGIN <= addr < NV_END]
+    if conservative_hits:
+        raise ValueError("B0_FLASH_BOUNDARY_HEX_WRITES_PROTECTED_NV_OR_HISTORICAL_NV5_CANDIDATE")
     # Keep the safety receipt independently trustworthy even when run
     # outside the immediately preceding full ELF/XML native auditor.
     # A manifest SHA only authenticates two files separately; it does
@@ -68,9 +74,11 @@ def inspect(directory):
         if address >= IMAGE_LEN or binary[address] != byte:
             raise ValueError("B0_FLASH_BOUNDARY_HEX_BIN_PROGRAMMED_BYTES_DIFFER")
     protected = binary[NV_BEGIN:NV_END]
-    if len(protected) != NV_END - NV_BEGIN or len(set(protected)) != 1:
+    conservative = binary[CONSERVATIVE_NV_BEGIN:NV_END]
+    if (len(conservative) != NV_END - CONSERVATIVE_NV_BEGIN
+            or len(set(conservative)) != 1):
         raise ValueError("B0_FLASH_BOUNDARY_NV_PADDING_NOT_UNIFORM")
-    if protected[0] not in (0, 255):
+    if conservative[0] not in (0, 255):
         raise ValueError("B0_FLASH_BOUNDARY_NV_PADDING_UNEXPECTED_FILL")
     if not any(addr < NV_BEGIN for addr in payload):
         raise ValueError("B0_FLASH_BOUNDARY_APP_HEX_EMPTY")
@@ -90,6 +98,13 @@ def inspect(directory):
             "hex_has_nv_data_records": False,
             "raw_bin_includes_nv_address_range": True,
             "raw_bin_nv_pad_byte": protected[0],
+            "historical_nv5_candidate_start": "0xA4000",
+            "conservative_protected_begin": "0xA4000",
+            "conservative_protected_end_exclusive": "0xAE000",
+            "conservative_protected_bytes": 0xA000,
+            "historical_nv5_layout_verified_on_current_stock": False,
+            "hex_has_historical_nv5_candidate_records": False,
+            "raw_bin_candidate_nv_pad_byte": conservative[0],
             "warning": "FLAT_BIN_WRITER_CAN_ERASE_NV_SECURITY_AND_COUNTERS",
         },
         "bin": {"name": bin_file.name, "sha256": _digest(binary),
