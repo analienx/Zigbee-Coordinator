@@ -24,13 +24,16 @@ LINKER = (
     "#define FLASH_NV_SIZE           0x4000\n"
     "#define FLASH_LAST_BASE         0xAE000\n"
     "#define FLASH_LAST_SIZE         0x2000\n"
+    "    .resetVecs: load > 0\n"
 )
 
 class ResidentBootTests(unittest.TestCase):
     def test_explicit_two_page_relocation(self):
         sc, ld = m.transform(SYSCFG, LINKER)
         self.assertIn("regionBase = 0xA0000;", sc)
-        self.assertIn("FLASH_SIZE              0xA0000", ld)
+        self.assertIn("FLASH_BASE              0x00000080", ld)
+        self.assertIn("FLASH_SIZE              0x9FF80", ld)
+        self.assertIn(".resetVecs: load > 0x80", ld)
         self.assertIn("FLASH_NV_BASE           0xA0000", ld)
         self.assertIn("FLASH_LAST_BASE         0xAE000", ld)
         self.assertNotIn("regionBase = 0xAA000;", sc)
@@ -63,6 +66,7 @@ class ResidentBootTests(unittest.TestCase):
             self.assertFalse(report["resident_stage_handoff_proven"])
             self.assertFalse(report["installed_ccfg_to_be_written"])
             self.assertEqual(report["relocated_nvs_range"],["0xA0000","0xA4000"])
+            self.assertEqual(report["linker_vectors_expected"],"0x00080")
             self.assertEqual(report["reserved_existing_region"],["0xA4000","0xB0000"])
             self.assertIn("regionBase = 0xA0000", s.read_text())
             self.assertTrue(r.is_file())
