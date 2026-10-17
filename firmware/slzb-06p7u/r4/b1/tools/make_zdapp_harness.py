@@ -16,6 +16,8 @@ PREAMBLE = r"""
 #include <string.h>
 #include <assert.h>
 #include "b1_admission.h"
+/* Boundary bridge; management-domain classification is tested separately. */
+void b1_security_runtime_hold_latch(void) { b1_nv_runtime_hold_latch(); }
 
 #define Z_EXTADDR_LEN 8
 #define SEC_KEY_LEN 16
@@ -90,10 +92,10 @@ static void existing(void)
     memset(fake_flash, 0xFF, sizeof(fake_flash));
     fake_flash[0] = 0x7Cu; fake_flash[1] = 1;
     fake_flash[2] = 0x0Fu; fake_flash[3] = 0x96u;
-    fake_flash[20] = 0x55;
+    fake_flash[7] = fake_flash[11] = fake_flash[15] = 0x96u;
     fake_flash[8192] = 0xFEu; fake_flash[8193] = 2;
     fake_flash[8194] = 0x0Fu; fake_flash[8195] = 0x96u;
-    fake_flash[8212] = 0x11;
+    fake_flash[8199] = fake_flash[8203] = fake_flash[8207] = 0x96u;
     assert(b1_nv_probe(read_flash, NULL, false).code == B1_NV2_HEADER_CANDIDATE);
     assert(b1_nv_existing_header_candidate());
 }
@@ -131,6 +133,25 @@ int main(int argc, char **argv)
             assert(rows_written==1 && !b1_nv_runtime_hold_active());
             assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
             assert(rows_written==1); /* no repeated reserve write */
+        } else if (strcmp(scenario,"two_reboots")==0) {
+            uint8_t original_pan[8];
+            memcpy(original_pan,fake_rows[0].extendedPanID,sizeof(original_pan));
+            assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
+            assert(fake_rows[0].FrameCounter==1125u && nwkFrameCounter==1125u);
+            assert(rows_written==1u && FrameCounterUpdated);
+            /* Reboot resets ONLY RAM: persisted material, identity and counter
+             * are kept in synthetic NV and read through actual donor code. */
+            FrameCounterUpdated=FALSE;
+            nwkFrameCounter=0u;
+            nwkFrameCounterChanges=71u;
+            assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
+            assert(rows_written==2u);
+            assert(fake_rows[0].FrameCounter==1250u);
+            assert(nwkFrameCounter==1250u && FrameCounterUpdated);
+            assert(nwkFrameCounterChanges==0u);
+            assert(memcmp(original_pan,fake_rows[0].extendedPanID,8u)==0);
+            assert(!b1_nv_runtime_hold_active());
+            puts("B1_N13_TWO_REBOOTS_MONOTONIC_NWK_COUNTER_AND_IDENTITY_PASS");
         } else if (strcmp(scenario,"generic")==0) {
             row_present[0]=FALSE;
             row_present[3]=TRUE;
@@ -141,6 +162,14 @@ int main(int argc, char **argv)
             assert(nwkFrameCounter==625u && !b1_nv_runtime_hold_active());
         } else if (strcmp(scenario,"missing_key")==0) {
             key_present=FALSE;
+            assert(ZDApp_RestoreNwkKey(TRUE)==FALSE);
+            assert(b1_nv_runtime_hold_active());
+            assert(rows_written==0 && !FrameCounterUpdated && nwkFrameCounter==0);
+        } else if (strcmp(scenario,"wrong_generic_identity")==0) {
+            row_present[0]=FALSE;
+            row_present[3]=TRUE;
+            memset(fake_rows[3].extendedPanID,0x33,8);
+            fake_rows[3].FrameCounter=500u;
             assert(ZDApp_RestoreNwkKey(TRUE)==FALSE);
             assert(b1_nv_runtime_hold_active());
             assert(rows_written==0 && !FrameCounterUpdated && nwkFrameCounter==0);
@@ -196,7 +225,7 @@ def main():
         extract_function(contents, "void ZDApp_RestoreNwkSecMaterial(void)"),
         extract_function(contents, "uint8_t ZDApp_RestoreNwkKey( uint8_t incrFrmCnt )")
     ]
-    if any("b1_nv_runtime_hold_latch()" not in func for func in functions):
+    if any("b1_security_runtime_hold_latch()" not in func for func in functions):
         raise RuntimeError("ZDAPP_REAL_SECURITY_HOLD_NOT_COMPILED")
     a.output.write_text(PREAMBLE + "\n\n".join(functions) + TESTMAIN,
                         encoding="utf-8")

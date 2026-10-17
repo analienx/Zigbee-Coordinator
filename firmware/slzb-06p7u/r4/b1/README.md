@@ -1,88 +1,69 @@
-# B1 direct-source NV admission prototype — issue #92
+# R4 B1 — NV admission, security persistence and held management
 
-**Status: INCOMPLETE, SOURCE-ONLY. DO NOT FLASH, MERGE OR INSTALL.**
-The direct branch is separate from the earlier Muse B1 worktree. It starts at the exact
-B0 native-build green commit `1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe`.
-No change to an actual Zigbee coordinator, serial port, HA, MQTT, keys or counters.
+**DRAFT. B1_SOURCE_READY has not been established. No merge, release or flash.**
 
-## Implemented in compiled source
+Issue [#92](https://github.com/analienx/Zigbee-Coordinator/issues/92), PR
+[#93](https://github.com/analienx/Zigbee-Coordinator/pull/93) and the
+current integrated draft [#94](https://github.com/analienx/Zigbee-Coordinator/pull/94). The direct branch
+starts from B0 native-green `1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe`.
+The earlier B1 `c86ccd1` also produced a genuine successful native build in
+[run 38943298953](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38943298953).
+That older build does not verify changes made after that commit.
 
-1. `b1_admission.c` and `b1_admission.h`: bounded, read-only full 16 KiB
-   NV2 scan using the caller's NVS read callback. Two 8192-byte pages, 32-byte
-   buffers, fixed maximum 512 reads. No NVS write/erase APIs or heap.
-2. Distinguish two genuinely all-FF pages from recognizable NVOCMP v3 header
-   candidates, unrecognized populated pages, mixed pages and failed reads.
-   Only an active/full + XDST header pair is even considered for normal
-   existing-network boot; RDY+ACT, dual-active, dual-destination and XSRC
-   compaction pairs HOLD instead of permitting the donor's auto-erase path.
-   `B1_NV2_HEADER_CANDIDATE` is **not** a validated Zigbee NIB, security key,
-   CRC, TCLK record, frame-counter, or production-stock NV layout. The header
-   proof is intentionally weak; full security acceptance remains blocked.
-3. Deny blank factory provisioning by default; a separately compiled explicit
-   `B1_FACTORY_BOOT_AUTHORIZED` may permit it for a disposable lab board only.
-   Never set that define from production runtime commands.
-4. Exact SHA-1-blob preimage checks against pinned TI 8.33 `nvocmp.c`,
-   `zmac.c`, `zd_app.c` and `main.c`, then inject admission into the **actual NVOCMP_initNvApi**
-   compiled source. Fix NULL-before-getAttrs (`N04`), catch non-successful
-   `NVS_read` (`N05`) and suppress subsequent NVS_write/erase on fatal
-   NVOCMP errors. `main.c` now checks the initNV result and refuses stack
-   initialization on a failed NV boot. A sticky runtime latch is asserted
-   on detected backend failures and guarded in eight real ZMac request
-   wrappers; transmissions already queued or originating within MAC ROM
-   are NOT proven blocked. These are linked-source changes, not a model.
-5. Actual linked `ZDApp_RestoreNwkSecMaterial()` and
-   `ZDApp_RestoreNwkKey()` are pinned to the TI blob and modified to verify a
-   nonzero restored NWK key BEFORE publishing a new frame counter. A counter
-   reserve is rejected on overflow; writes require successful NVS status and
-   byte-coherent readback before RAM `nwkFrameCounter` or
-   `FrameCounterUpdated` are touched. Missing mandatory existing-network
-   rows/keys and any readback mismatch latch HOLD. Authorized factory-new
-   optional absence remains a distinct control. This does **not** validate
-   TCLK/APS consistency or every other caller of the underlying security API.
-6. Exact source-only receipt, C ASan/UBSan harness on synthetic dummy flash
-   and unchanged B0 native toolchain/ELF/CCFG audit on GitHub-hosted runners.
+## Implemented source
 
-## Explicitly blocked / not implemented
+- Read-only, bounded 16 KiB NV2 admission now checks actual TI item packing,
+  CRCs and compaction metadata, including obsolete-row positive controls.
+  Ambiguous, interrupted and unknown layouts never enter automatic repair.
+  Existing-state boot cannot write/erase even if the donor requests repair.
+- Real NVOCMP handle, geometry, lock, read/write/erase, item scan, live-header,
+  CRC and voltage failures propagate and latch HOLD. Page and offset bounds
+  are checked before reaching the backend. See [NV_INTEGRITY.md](NV_INTEGRITY.md).
+- Missing restored security rows cannot silently become default keys or
+  zero counters. APS/TCLK and NWK checkpoint updates require persistence and
+  matching readback before RAM publication. Failed checkpoints retain their
+  pending flags. See [B1_SECURITY_GATE.md](B1_SECURITY_GATE.md).
+- Early NV failure skips stack task creation and reaches the original NPI
+  task. A strict existing-owner MT filter permits PING, VERSION and a small
+  read-only SYS F1 status; it rejects mutating SREQ and drops other traffic
+  under HOLD. F0 remains reserved. UART/queue/registration failure is
+  classified honestly; a failed transport cannot promise host receipt.
+- N24 media-cut source harness now uses the genuine TI NVOCMP item writer,
+  erase, compaction page-state and header primitives with NOR-like 1-to-0
+  programming and partial operation cuts. Read-only revalidation must either
+  admit a coherent source image or HOLD without destructive writes. The full
+  TI compaction recovery graph and physical brownout are still OPEN.
+- N30 source-backed restored coordinator readiness now observes the real TI
+  ZDApp_ChangeState(DEV_ZB_COORD), a validated existing NV2/security state,
+  a persisted/read-back NWK frame-counter reserve, and MT registration.
+  SYS F1 capability bit3 and stage5 report the bounded attestation; later
+  holds/role loss revoke it. Whole-stack startup and new-network readiness
+  remain OPEN. Details in [N24_N30_IMPLEMENTATION.md](N24_N30_IMPLEMENTATION.md).
+- Host UART failure is separately classified from NV/security fault: NPI
+  no longer spins on overflow, but transport-only HOLD does not poison the
+  ZMac RF safety predicate and shut down a healthy Zigbee network.
+- Eight actual ZMac request entrypoints reject new submissions after **NV
+  or SECURITY HOLD**.
+  **Queued frames, autonomous MAC/ROM traffic and physical RF silence are
+  not established by these source tests.**
 
-- **B1-01:** returning from `main` before NPI on NV hold is conservatively
-  `NOT_OBSERVABLE`, not a healthy SYS_PING or host-readable HOLD response.
-  The true single-owner NPI-without-stack startup call graph and semaphore
-  dependency are unresolved. No secondary serial owner or fake SRSP added.
-- **B1-02:** NVOCMP item-header CRC and interrupted compaction, complete
-  damaged-page provenance and post-boot backend failure behavior are not
-  fully verified. Header admission alone cannot guarantee no subsequent
-  implicit media write, particularly in ambiguous legacy-like layouts.
-- **B1-03:** a sticky guard on eight real ZMac wrappers after any detected
-  backend read/write/erase failure is implemented in linked TI source.
-  **It does NOT prove** protection from queued frames, MAC ROM/direct callers,
-  or every invalid security record accepted at initial boot. Specific
-  NWK key-presence and monotonic frame-counter reserve/write/readback checks
-  are source-linked and hosted-tested. Complete NIB/APS/TCLK consistency,
-  source-qualified boot identity, all key generations and end-to-end security
-  continuity are STILL NOT PROVEN.
-- **B1-04:** there is no status ABI in a reachable HOLD transport state,
-  no proven `HOST_MANAGEMENT_READY`, no herdsman integration.
-- **B1-05:** N01-N30 acceptance matrix remains largely OPEN. The included C
-  harness tests source-bound NVOCMP init, actual ZMac data/no-data
-  submission gates and ZDApp key/counter restore against synthetic NVS/RTOS
-  faults and healthy controls. These are **not** whole-stack or physical
-  restoration acceptance. GitHub native build, when green, proves linkage and
-  artifact geometry only; it does NOT close these safety gates.
-- Independent sealed reviewer / Wonder HIGH verdict and actual spare-board
-  startup, live RF, 100+ mesh soak remain OPEN. Physical/stock-NV compatibility
-  stays UNKNOWN. No deployment authorization.
+## Evidence and remaining gates
 
-## Native CI
+`tools/run_hosted_tests.py` downloads exact pinned upstream inputs, composes
+the actual TI bodies, compiles them with GCC ASan/UBSan and runs fault controls.
+Mutants are changed after function extraction and must fail their intended
+compiled assertions. The runner emits an exact-source JSON receipt. Local
+development runs do not count as GitHub-hosted acceptance.
 
-`.github/workflows/test-r4-b1-direct-native.yml` has a dedicated hosted
-GCC ASan/UBSan test, a pinned-source source-overlay integration gate, and a
-copy of the B0 native toolchain build with B1 overlay applied after SDK library
-build but before CCS import. The workflow must fail if upstream source blobs
-change, if source patch markers disappear, native CCS fails, linked B1 symbol
-is absent, or ELF/HEX/BIN/CCFG audit fails.
+The workflow builds two clean CCS images after the source gate passes.
+The inherited ELF/XML/HEX/BIN/CCFG/UART audit runs first. `seal_native.py`
+then checks executable ELF function symbols and binds artifacts to exact
+source and overlay hashes. `compare_native.py` requires equal ELF/HEX/BIN
+bytes and equal linker XML after normalizing only `link_time`.
 
-Only actual successful jobs at an exact commit SHA count. Any synthetic PASS
-must remain labeled `HOSTED_SYNTHETIC`, not `NETWORK_READY`.
-
-Next work should start with actual NPI path and MAC/security gate. Do not
-expand the documentation assertion loop as a substitute for these hard gates.
+[FAULT_MATRIX.md](FAULT_MATRIX.md) distinguishes implemented fault coverage
+from the full N01–N30 acceptance claims. Whole-stack healthy AF/ZDO behavior,
+complete restoration/identity and ROM RF proof, every interrupted compaction
+operation, independently sealed review and physical testing remain gates.
+No test status promotes B1 to production or permits installed vendor NV to
+be overwritten. No device, serial port, HA, Zigbee2MQTT or MQTT is accessed.

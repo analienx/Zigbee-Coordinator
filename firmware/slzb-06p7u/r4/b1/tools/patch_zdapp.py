@@ -81,8 +81,13 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
     if (i == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1 &&
         row.FrameCounter != 0)
     {
-      generic = row;
-      genericFound = TRUE;
+      uint8_t genericID[Z_EXTADDR_LEN];
+      memset(genericID, 0xFF, sizeof(genericID));
+      if (OsalPort_memcmp(row.extendedPanID, genericID, sizeof(genericID)))
+      {
+        generic = row;
+        genericFound = TRUE;
+      }
     }
     if (OsalPort_memcmp(_NIB.extendedPANID, row.extendedPanID,
                         Z_EXTADDR_LEN))
@@ -151,7 +156,9 @@ def patch(source: str) -> str:
         '/* R4-B1 source-linked fault policy; no second serial owner. */\n'
         'extern void b1_nv_runtime_hold_latch(void);\n'
         'extern int b1_nv_runtime_hold_active(void);\n'
-        'extern int b1_nv_existing_header_candidate(void);',
+        'extern int b1_nv_existing_header_candidate(void);\n'
+        'extern int b1_sec_restored_network_validated(void);\n'
+        'extern void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore_ok);',
         "ZDApp security declarations")
 
     old_counter = extract_function(source, "void ZDApp_RestoreNwkSecMaterial(void)")
@@ -187,4 +194,23 @@ def patch(source: str) -> str:
 }"""
     source = replace_once(source, old_key, new_key, "key before counter")
 
+    # Only the actual donor ZDO state transition can attest restored
+    # coordinator startup. A queued SYS_PING/NPI response is never sufficient.
+    state_sig = "void ZDApp_ChangeState( devStates_t state )"
+    old_state = extract_function(source, state_sig)
+    new_state = replace_once(
+        old_state, "    devState = state;",
+        "    devState = state;\n"
+        "    b1_management_note_zdo_state((uint8_t)(state == DEV_ZB_COORD),\n"
+        "        (uint8_t)(state == DEV_ZB_COORD && FrameCounterUpdated &&\n"
+        "                  b1_nv_existing_header_candidate() &&\n"
+        "                  b1_sec_restored_network_validated()));",
+        "ZDO actual state-change ready attestation")
+    source = replace_once(source, old_state, new_state, "actual ZDO callback body")
+
+    # A persistence fault in these paths is a security-domain failure.
+    source = source.replace('b1_nv_runtime_hold_latch()',
+                            'b1_security_runtime_hold_latch()')
+    source = source.replace('extern void b1_nv_runtime_hold_latch(void);',
+                            'extern void b1_security_runtime_hold_latch(void);')
     return source
