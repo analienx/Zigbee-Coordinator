@@ -257,14 +257,14 @@ def main():
     for tx_mode in ("healthy", "failed_completion", "short_success", "failed_submit", "preheld"):
         positive(tx_binary, (tx_mode,))
     mutation(generated["uart_tx"],
-             "if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||\\n"
+             "if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||\n"
              "        b1_management_transport_unavailable())",
              "if (b1_management_transport_unavailable())",
              "mutant_uart_tx_completion_failure_suppressed",
              "callback_count==0u && b1_management_transport_unavailable()",
              ("failed_completion",), admission=False, management=True)
     mutation(generated["uart_tx"],
-             "if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||\\n"
+             "if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||\n"
              "        b1_management_transport_unavailable())",
              "if (status != UART2_STATUS_SUCCESS || b1_management_transport_unavailable())",
              "mutant_uart_tx_short_completion_accepted",
