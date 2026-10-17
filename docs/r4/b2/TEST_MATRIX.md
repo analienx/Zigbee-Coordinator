@@ -1,6 +1,6 @@
 # B2 Annex A T01–T32 actual evidence matrix — fail closed
 
-As of 2026-10-16. Normative matrix is issue #95 comment
+Updated 2026-10-17. Normative matrix is issue #95 comment
 [6222647561](https://github.com/analienx/Zigbee-Coordinator/issues/95#issuecomment-6222647561).
 
 **DO NOT equate passing Python fixtures, authentic ELF static sizes, or hosted
@@ -19,9 +19,9 @@ classifies Z-Stack as binary and limited source.
 | Test | Scenario | Actual disposition | Evidence/blocker |
 |---|---|---|---|
 | T01 | B0 linked table/byte baseline | HOSTED_NATIVE_LINKED | Six true ELF symbols with byte sizes, native CCS run 38952302280; repeated historical acceptance run 38957349766 |
-| T02 | P1 192/64/128 plus 96 direct children | PARTIAL_PENDING | P1 native build and memory compare in flight; child 96 intentionally excluded as B3/NV/child-schema concern |
+| T02 | P1 192/64/128 plus 96 direct children | PARTIAL_HOSTED_NATIVE_LINKED | Two identical P1 native BIN/ELF builds + comparator [39001340291](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001340291); child 96 and TC 192 deliberately B3-owned/not implemented |
 | T03 | P2 queue and relay peak | BLOCKED | No source-backed capacity/replay/peak or bounded queue failure yet |
-| T04 | P3 actual SRAM-overbudget image | HOSTED_SYNTHETIC_ONLY | Python negative budget control exists; actual TI CCS linker overbudget proof not supplied |
+| T04 | P3 actual SRAM-overbudget image | HOSTED_NATIVE_LINKER_NEGATIVE_PASS | [Native run 39001340291](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001340291) genuinely rejected disposable 144 KiB volatile BSS via TI `#10099-D` SRAM linker failure; no usable P3 BIN |
 | T05 | Full neighbor admission | BLOCKED_TI_INTERNAL_C | Closed NWK lib routing/neighbor behavior; no actual-source C sanitizer harness |
 | T06 | Source cache saturation/in-flight eviction | BLOCKED_TI_INTERNAL_C | Closed rtg.o; no actual C bodies |
 | T07 | Source-route failure stale invalidation | BLOCKED_TI_INTERNAL_C | Closed routing-body failure call path; no pre/post fix |
@@ -49,7 +49,7 @@ classifies Z-Stack as binary and limited source.
 | T29 | B1 HOLD_SECURITY/HOLD_NV mid-send | BLOCKED_B1_INTEGRATION | B1 PR #93 draft; must verify zero newly admitted RF after hold |
 | T30 | Healthy B1 NETWORK_READY | BLOCKED_B1_INTEGRATION | Separate combined exact-source worktree/CI not built |
 | T31 | OTA-like AF and route storm SRSP deadlines | BLOCKED | No compiled source host MT queue/latency trace |
-| T32 | Malformed MT during route failures | BLOCKED | No compiled parser/RTG concurrent hostile harness |
+| T32 | Malformed MT during route failures | PARTIAL_HOSTED_REAL_TI_MT_C_ASAN | Actual TI `mt.c::MT_ProcessIncoming` with pinned `mt_rpc.h` compiled ASan/UBSan, bounded SREQ/AREQ malformed length/error semantics and killed length-guard mutant [39001340406](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001340406). No concurrent closed RTG or NPI UART queue, so full T32 remains blocked |
 
 ## Native and synthetic controls
 
@@ -57,18 +57,17 @@ classifies Z-Stack as binary and limited source.
   [38952302280](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38952302280)
   and [38957349766](https://github.com/analienx/Zigbee-Coordinator/actions/runs/38957349766).
   P0 six physical arrays' effective counts/sizeof and 144-KiB SRAM verified.
-- Host Python arithmetic/ELF/overlay/profile negative oracles: hosted
-  **synthetic**, not native routing behavior. 31 tests passed before the
-  comparator expansion. Exact last CI run is authoritative.
+- Host Python arithmetic/ELF/overlay/profile negative oracles: **49 hosted unit/negative tests** passed on [39001340265](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001340265) before later review hardening. These are not routing-behavior source tests; the exact-head workflow is authoritative.
 - B2 T10 callback ASan/UBSan source-run and source mutation: real
   `source/ti/zstack/stack/zdo/zd_app.c` function body compiled at pinned
   SDK SHA (hosted run 38966389472), only opaque `RTG_MTORouteReq()` API
   stubbed. This proves direct repetition and absence of a local callback
   cooldown, **not** on-air MTO cadence or closed routing behavior.
+- B2 T32 actual TI `MT_ProcessIncoming()` and `mt_rpc.h` compiled with ASan/UBSan in run 39001340406. A deliberate inverted length guard is detected. No NPI backpressure or closed RTG concurrent work tested.
 - P1 new native CCS binary and two independently linked replicas:
   status governed only by the latest green linked-profile and binary
   reproducibility workflows, **do not treat this document as a PASS claim**.
-- P2 deliberate deferral; P3 hosted synthetic negative only.
+- P2 remains a justified deferral. P3 authentic native linker overbudget rejection PASSED on run 39001340291; this is a negative build, not working firmware.
 - No source mutation test can legitimately target proprietary TI RTG
   C body unless a lawful complete source baseline becomes available.
   Stubbing the *algorithm* would not count; a stub is allowed only at
