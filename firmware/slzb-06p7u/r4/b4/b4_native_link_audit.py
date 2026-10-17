@@ -33,7 +33,14 @@ def verify(elf, nm, manifest, receipt):
             or patch.get("payload_bytes") != 132
             or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4]
             or patch.get("radio_boot_identity") != "UNKNOWN"
-            or len(patch.get("written", {})) != 2):
+            or patch.get("sync_npi_compiled_required") is not True
+            or patch.get("sync_transport_changed_from_stock") is not True
+            or set(patch.get("written", {})) != {
+                "source/ti/zstack/mt/mt_sys.c",
+                "source/ti/zstack/npi/npi_task.c",
+                "source/ti/zstack/npi/npi_frame_mt.c",
+                "source/ti/zstack/apps/znp/znp_cnf.opts",
+            }):
         raise ValueError("native patch input is not proven")
     if not Path(nm).is_file():
         raise ValueError("actual TI nm tool absent")
