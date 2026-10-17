@@ -25,6 +25,8 @@ def verify(elf, nm, manifest, v4receipt):
             p.get("payload_bytes") != 160 or p.get("request_bytes") != 8 or
             p.get("boot_cap_on_failure") != 0 or
             p.get("trng_timeout_cancellation") != "CANCEL_QUEUED_JOB_BEFORE_SEMAPHORE_DESTRUCT" or
+            p.get("trng_timeout_bound_us") != 100000 or
+            p.get("trng_timeout_unit") != "CEIL_MICROSECONDS_TO_RTOS_TICKS" or
             p.get("full_image_build_digest") != "NOT_CLAIMED" or
             p.get("flash_authorized") is not False or
             p.get("physical_verified") is not False or

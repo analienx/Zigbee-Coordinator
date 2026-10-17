@@ -144,6 +144,8 @@ class V4Native(unittest.TestCase):
                 "payload_bytes": 160, "request_bytes": 8,
                 "boot_cap_on_failure": 0,
                 "trng_timeout_cancellation": "CANCEL_QUEUED_JOB_BEFORE_SEMAPHORE_DESTRUCT",
+                "trng_timeout_bound_us": 100000,
+                "trng_timeout_unit": "CEIL_MICROSECONDS_TO_RTOS_TICKS",
                 "full_image_build_digest": "NOT_CLAIMED",
                 "flash_authorized": False, "physical_verified": False,
                 "files": {MT_SYS: {}, NPI_TASK: {}}
@@ -165,6 +167,8 @@ class V4Native(unittest.TestCase):
                 for field, wrong in (("command", "SYS_F1"),
                                      ("sdk_sha", "wrong"),
                                      ("trng_timeout_cancellation", "MISSING"),
+                                     ("trng_timeout_unit", "WRONG"),
+                                     ("trng_timeout_bound_us", 250),
                                      ("flash_authorized", True),
                                      ("full_image_build_digest", "SELF_ATTESTED")):
                     changed = {**base, field: wrong}
