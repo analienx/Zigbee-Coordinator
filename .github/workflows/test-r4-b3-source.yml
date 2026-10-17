@@ -105,9 +105,12 @@ jobs:
           from pathlib import Path
           f=Path('/tmp/b3host/ti_security_bodies.c')
           s=f.read_text()
-          anchor='pKeyData) == SUCCESS)'
-          assert s.count(anchor)==2
-          f.write_text(s.replace(anchor,'pKeyData) >= 0)'))
+          import re
+          # Match only the two *write* result guards, not preceding read guards.
+          pattern=r'(if \\(osal_nv_write_ex\\([\\s\\S]*?pKeyData\\)) == SUCCESS\\)'
+          mutant,n=re.subn(pattern,r'\\1 >= 0)',s)
+          assert n==2, f"expected two write guards, got {n}"
+          f.write_text(mutant)
           PY
           gcc -std=c11 -O0 -Wall -Wextra -Wno-type-limits \
             -I tests/b3_host /tmp/b3host/ti_security_bodies.c \
