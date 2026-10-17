@@ -76,6 +76,9 @@ typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t pendingFlag, entryUsed; 
 typedef struct { uint8_t extAddr[8], dstExtAddr[8], seedShift, keyID; uint16_t keyNvId, keyNvSection; uint32_t frmCntr; } SSP_Info_t;
 typedef struct { uint16_t user, nwkAddr; } AddrMgrEntry_t;
 static uint8_t held, existing = TRUE, b1_sec_existing_network;
+static uint8_t probe_during_security_preflight;
+static unsigned preflight_observation_count;
+int b1_sec_restored_network_validated(void);
 static uint32_t reads, writes, creates, events, erases;
 static uint16_t missing_singleton, missing_table, missing_index;
 static uint8_t write_fail, readback_corrupt, search_found = TRUE;
@@ -141,6 +144,10 @@ static void *row(uint16_t table, uint16_t i, uint16_t len)
 static uint8_t osal_nv_read_ex(uint16_t table,uint16_t i,uint16_t off,uint16_t len,void *dst)
 {
   ++reads; assert(off==0);
+  if(probe_during_security_preflight && table==ZCD_NV_EX_TCLK_TABLE && i==0u) {
+    ++preflight_observation_count;
+    assert(!b1_sec_restored_network_validated()); /* security not yet fully checked */
+  }
   if(missing_table==table && missing_index==i) return 1;
   memcpy(dst,row(table,i,len),len);
   if(readback_corrupt && writes) ((uint8_t*)dst)[0]^=1u;
@@ -188,7 +195,15 @@ MAIN = r'''
 int main(int argc,char **argv)
 {
   assert(argc==2); const char *s=argv[1]; setup();
-  if(!strcmp(s,"positive")) {
+  if(!strcmp(s,"preflight_publication")) {
+    probe_during_security_preflight=TRUE;
+    assert(!b1_sec_restored_network_validated());
+    assert(b1_sec_validate_restored());
+    probe_during_security_preflight=FALSE;
+    assert(preflight_observation_count==1u && b1_sec_restored_network_validated());
+    assert(writes==0 && creates==0 && !held);
+    puts("B1_RESTORED_SECURITY_ATTESTATION_NOT_PUBLISHED_EARLY_PASS");
+  } else if(!strcmp(s,"positive")) {
     assert(b1_sec_validate_restored()); assert(writes==0 && creates==0);
     APSME_TCLinkKeyInit(FALSE); ZDSecMgrRestoreFromNV();
     assert(!held && creates==0 && writes==2);
@@ -305,6 +320,7 @@ SIGNATURES = (
     'static uint8_t b1_sec_write_checked(uint16_t table, uint16_t index,\n                                    uint16_t len, void *value)',
     'static uint8_t b1_sec_validate_nib(uint8_t onNetwork)',
     'int b1_sec_validate_restored(void)',
+    'int b1_sec_restored_network_validated(void)',
     'static void ZDSecMgrRestoreFromNV( void )',
     'void ZDSecMgrEntryInit(uint8_t state)',
     'void APSME_TCLinkKeyInit(uint8_t setDefault)',
@@ -314,7 +330,7 @@ SIGNATURES = (
 )
 
 SCENARIOS = (
-    'positive', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
+    'positive', 'preflight_publication', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
     'missing_nwk', 'missing_seed', 'missing_bdb', 'missing_tc', 'zero_tc', 'wrong_generation',
     'missing_aps', 'missing_tclk', 'bad_aps_index', 'aps_overflow',
     'tclk_overflow', 'bad_header_count', 'bad_seed_shift',
@@ -327,6 +343,10 @@ SCENARIOS = (
 )
 
 MUTANTS = {
+    'early_security_attestation': ('preflight_publication',
+        '  if (osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(nwk), &nwk) != SUCCESS ||',
+        '  b1_sec_existing_network = TRUE; /* MUTANT: trust before checks */\n'
+        '  if (osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(nwk), &nwk) != SUCCESS ||'),
     'aps_publish': ('aps_write_fail',
         '    if (!b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, entry.keyNvId,',
         '    ZDSecMgrEntries[x] = entry;\n'
