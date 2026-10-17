@@ -196,6 +196,21 @@ def plan(root):
 
     public isInitialized(): boolean {""",
     )
+    # Only the opt-in diagnostic waiter needs explicit cleanup on timeout:
+    # pinned Waitress marks timedout=true but keeps it in its map until a
+    # subsequent response. Do not change AF/ZDO/stock SYS waiter policy.
+    changes[ZNP] = replace_once(
+        changes[ZNP],
+        "                const result = await waiter.start().promise;",
+        """                // B4_EXPERIMENTAL_EXISTING_OWNER: prevent a timed-out
+                // diagnostic waiter lingering when the radio stays silent.
+                const result = object.command.name === "r4DiagReadOnly"
+                    ? await waiter.start().promise.catch((error: unknown) => {
+                          this.waitress.remove(waiter.ID);
+                          throw error;
+                      })
+                    : await waiter.start().promise;""",
+    )
     return {k: (originals[k], changes[k]) for k in changes}
 
 def apply(root):
