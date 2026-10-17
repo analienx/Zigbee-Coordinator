@@ -246,6 +246,22 @@ def main():
              "copied==0 && notifications==0 && uart_reads==0 && !cs_depth",
              ("driver_error",), admission=False, management=True)
 
+    # Actual TI UART TX callback and synchronous submission must report
+    # completion only on successful driver status; never claim false SRSP.
+    tx_source = work / "actual_uart_tx.c"
+    run([sys.executable, b1 / "tools/make_uart_write_harness.py",
+         "--source", sdk / "source/ti/zstack/npi/npi_tl_uart.c",
+         "--output", tx_source], check=True)
+    generated["uart_tx"] = tx_source
+    tx_binary = compile_c(tx_source, "uart_tx", admission=False, management=True)
+    for tx_mode in ("healthy", "failed_completion", "failed_submit", "preheld"):
+        positive(tx_binary, (tx_mode,))
+    mutation(generated["uart_tx"],
+             "if (status != UART2_STATUS_SUCCESS || b1_management_transport_unavailable())",
+             "if (b1_management_transport_unavailable())",
+             "mutant_uart_tx_completion_failure_suppressed",
+             "callback_count==0u && b1_management_transport_unavailable()",
+             ("failed_completion",), admission=False, management=True)
     # The real ZMac entrypoints share the native NV/security-only safety
     # predicate. A host UART overflow must NOT shut down healthy RF traffic.
     domain_source = work / "actual_zmac_hold_domains.c"
