@@ -1,0 +1,197 @@
+name: R4 B5 combined B1 + B4 native dual-link SOURCE ONLY
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/test-r4-b5-native-compose.yml"
+      - "firmware/slzb-06p7u/r4/b5/**"
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  b5-native-composed-link:
+    concurrency:
+      group: r4-b5-native-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ matrix.replica }}
+      cancel-in-progress: true
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      # Fail-closed provision gate: with no verified TI toolchain
+      # distribution provisioned, this emits a BLOCKED receipt and
+      # fails the job. It never fabricates ELF/HEX/BIN and never
+      # reports a build PASS. SysConfig 1.21.1.3772 must be present
+      # as an explicit standalone install: CCS 12.8 bundles only
+      # 1.21.0.3721, which never satisfies the pin. When the
+      # toolchain becomes available, the READY branch below performs
+      # the real CCS headless build. Fixture vectors in
+      # firmware/slzb-06p7u/r4/b0/fixtures/ are unit oracle sanity
+      # inputs only and are NEVER audited here as native proof.
+      - name: Restore checksum-pinned TI distribution cache
+        id: ti_archive_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/b0ti/downloads
+          key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
+      - name: Install TI ARM Clang Linux runtime dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libtinfo5
+          ldconfig -p | grep -F 'libtinfo.so.5'
+      - name: Authenticated TI bootstrap (hash pins required)
+        env:
+          TI_CCS_SHA256: ${{ secrets.TI_CCS_SHA256 }}
+          TI_SYSCONFIG_SHA256: ${{ secrets.TI_SYSCONFIG_SHA256 }}
+          TI_CLANG_SHA256: ${{ secrets.TI_CLANG_SHA256 }}
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py --root /tmp/b0ti --github-env "$GITHUB_ENV" --github-path "$GITHUB_PATH"
+      - name: Save authenticated TI archives before potentially failing compilation
+        if: steps.ti_archive_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/b0ti/downloads
+          key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
+      - name: Provision gate (fail closed without toolchain)
+        run: |
+          export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
+          python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
+      - name: Bind CCS SysConfig invocation to exact standalone pin
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py \
+            --ccs-eclipse "$CCS_ECLIPSE" --standalone-cli "$SYSCONFIG_CLI" \
+            --receipt /tmp/b0-sysconfig-binding.json
+      - name: Real native build (only when provision is READY)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf /tmp/b0src /tmp/b0out && mkdir -p /tmp/b0src /tmp/b0out && cd /tmp/b0src
+          git init -q examples
+          git -C examples remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git
+          git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples submodule update --init cc13xx_cc26xx_sdk
+          [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
+          "$SYSCONFIG_CLI" --version | grep -F "1.21.1+3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
+          tiarmclang --version | grep -F "3.2.2" || { echo "B0-BUILD-BLOCKED: TI-ARM-CLANG 3.2.2.LTS not provisioned; no dummy firmware produced"; exit 1; }
+          echo "Building pinned TI SDK libraries with GNU make" | tee /tmp/b0out/build.log
+          sdk=/tmp/b0src/examples/cc13xx_cc26xx_sdk
+          # Patch only pristine TI SDK source in disposable CI workspace.
+          git init -q /tmp/b5-b1
+          git -C /tmp/b5-b1 remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/b5-b1 fetch --depth 1 origin a514c194ea0d94b5d38b28c7b07ca5caba9aeffd
+          git -C /tmp/b5-b1 checkout -q --detach FETCH_HEAD
+          mkdir -p /tmp/b5-herdsman
+          curl --fail --location --silent --show-error --retry 2 --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts -o /tmp/b5-herdsman/definition.ts
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b5/b5_b1_b4_compose.py" \
+            --sdk "$sdk" --b1 /tmp/b5-b1 --definition /tmp/b5-herdsman/definition.ts \
+            --receipt /tmp/b0out/b5-source-compose.json \
+            --b4-v3-receipt /tmp/b0out/b4-native-overlay.json \
+            --b4-v4-receipt /tmp/b0out/b4-v4-overlay.json \
+            --b1-receipt /tmp/b0out/b1-overlay.json
+          test -s /tmp/b0out/b5-source-compose.json
+          test -s /tmp/b0out/b1-overlay.json
+          test -f "$sdk/imports.mak"
+          : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
+          : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
+          printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\nCMAKE := %s\nPYTHON := python3\nGCC_ARMCOMPILER :=\nIAR_ARMCOMPILER :=\n' "$SYSCONFIG_CLI" "$TICLANG_ARMCOMPILER" "$(command -v cmake)" >> "$sdk/imports.mak"
+          # Scoped workaround for upstream generic M4 ASM/FPU mismatch.
+          # Keep the target CC2652P7 M4F library compiled in this SDK.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py" --sdk "$sdk" --receipt /tmp/b0out/sdk-scope-receipt.json
+          (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
+          find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
+          test -s /tmp/b0out/sdk-libraries.txt
+          echo "Discover pinned TI compiler and SDK product in CCS" | tee -a /tmp/b0out/build.log
+          "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/b0out/build.log
+          "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
+          echo "importing and building the pinned ZNP projectspec"
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec 2>&1 | tee -a /tmp/b0out/build.log
+          project=/tmp/b0ws/znp_LP_CC1352P7_4_tirtos7_ticlang
+          test -f "$project/znp.syscfg"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
+            --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
+          echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
+          "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
+            -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir /tmp/b0out/preflight-syscfg \
+            --receipt /tmp/b0out/p7u-generated-preflight.json
+          echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          echo "Collecting real linker artifacts"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir "$project/default/syscfg" \
+            --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+            --receipt /tmp/b0out/p7u-generated-native.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+          # Independent *binary* gate; source strings alone never PASS.
+          elf_name=$(python -c 'import json; print(json.load(open("/tmp/b0out/manifest.json"))["files"]["elf"]["file"])')
+          test -f "/tmp/b0out/$elf_name"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b4/b4_native_link_audit.py" \
+            --elf "/tmp/b0out/$elf_name" \
+            --nm "$TICLANG_ARMCOMPILER/bin/tiarmnm" \
+            --manifest /tmp/b0out/manifest.json \
+            --patch-receipt /tmp/b0out/b4-native-overlay.json \
+            --output /tmp/b0out/b4-native-linked.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b4/b4_v4_native_link_audit.py" \
+            --elf "/tmp/b0out/$elf_name" \
+            --nm "$TICLANG_ARMCOMPILER/bin/tiarmnm" \
+            --manifest /tmp/b0out/manifest.json \
+            --v4-receipt /tmp/b0out/b4-v4-overlay.json \
+            --output /tmp/b0out/b4-v4-native-linked.json
+          python /tmp/b5-b1/firmware/slzb-06p7u/r4/b1/tools/seal_native.py \
+            --artifacts /tmp/b0out --sdk "$sdk" \
+            --expected-sha a514c194ea0d94b5d38b28c7b07ca5caba9aeffd
+          echo "B5 combined native: SOURCE-ONLY, physical and composite digest not verified"
+      - name: Upload native artifacts and receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b5-native-${{ matrix.replica }}-${{ github.sha }}
+          path: |
+            /tmp/b0-provision-receipt.json
+            /tmp/b0-sysconfig-binding.json
+            /tmp/b0out/
+          if-no-files-found: warn
+
+  b4-compare-two-native-artifacts:
+    needs: b4-native-experimental-link
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: r4-b5-native-*-${{ github.sha }}
+          path: /tmp/b4-compare
+          merge-multiple: false
+      - name: Assert ELF HEX BIN exact byte identity, separately qualify CCS XML-only link_time
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_artifact_parity.py --artifacts /tmp/b4-compare

@@ -9,3 +9,7 @@ Pinned B4 canonical base: \`3231abb1f13210eb88afe13ff7b7f9f29709cd6b\`. B1 #94 s
 ## Full B1 source extension
 
 After exact B1 management preflight and authentic B4 overlays, the runner now invokes B1's **actual complete `apply_b1.overlay()`** for NV admission, security, ZMac, ZDO, startup and transport; only the management preparer is replaced with the exact already-preflighted B1 transforms recomputed on post-B4 source. Every other B1 input SHA check and source mutation remains active. This is *full source composition*, **NOT a native/linked image**. In particular B1's embedded public source prefix identifies B1 only, not the composite binary; a combined image digest must be redesigned before any B5 acceptance or release. B1/NV security has no physical approval and real coordinator flash is forbidden.
+
+## Separate native experiment
+
+The B5-native workflow stages full B1 NV/security source after canonical B4 F0/F2 and executes genuine pinned TI CCS dual-link ELF/HEX/BIN, both B4 native audits and the B1 native seal. This is *not* a release image or physical verification. The B1 public digest still identifies B1 only, **not the combined B5 image**; independent merged-image provenance, B2/B3 integration, complete NV/security backup and rollback, and hardware stack/RF/USB/OTA validation are blockers. No flash or live changes.
