@@ -107,7 +107,20 @@ int main(void)
 '''
     return prefix+bridge+callback+"\n"+failure+"\n"+main
 
-def run(zmac_host,zdapp,out,variant):
+def run(zmac_host,zdapp,out,variant,b1_sha,overlay_receipt,patched_zmac):
+    if b1_sha!=B1_SHA:
+        raise IntegrationError("B1 checkout SHA differs from reviewed pinned commit")
+    if overlay_receipt.is_symlink() or not overlay_receipt.is_file() or overlay_receipt.stat().st_size>32768:
+        raise IntegrationError("missing or unsafe actual B1 source-overlay receipt")
+    if patched_zmac.is_symlink() or not patched_zmac.is_file():
+        raise IntegrationError("missing/symlinked patched B1 ZMac C")
+    receipt=json.loads(overlay_receipt.read_text())
+    if receipt.get("schema")!="r4-b1-admission-overlay-v1":
+        raise IntegrationError("invalid B1 patched source receipt")
+    if hashlib.sha256(patched_zmac.read_bytes()).hexdigest()!=receipt.get("modified_zmac_sha256"):
+        raise IntegrationError("B1 ZMac source not bound to exact overlay receipt")
+    if hashlib.sha256(zdapp.read_bytes()).hexdigest()!=receipt.get("modified_zdapp_sha256"):
+        raise IntegrationError("B1 ZDApp source not bound to exact overlay receipt")
     if zmac_host.is_symlink() or zdapp.is_symlink():
         raise IntegrationError("symlinked input not authorized")
     c=compose(zmac_host.read_text(),zdapp.read_text(),variant)
@@ -117,6 +130,9 @@ def run(zmac_host,zdapp,out,variant):
     receipt={
         "status":"B1_B2_ACTUAL_SOURCE_MTO_RF_WRAPPER_HOST_TEST_PENDING_COMPILATION",
         "b1_source_sha":B1_SHA,
+        "b1_overlay_receipt_sha256":hashlib.sha256(overlay_receipt.read_bytes()).hexdigest(),
+        "patched_zmac_sha256":receipt["modified_zmac_sha256"],
+        "patched_zdapp_sha256":receipt["modified_zdapp_sha256"],
         "real_TI_functions":["ZMacDataReqSec","ZMacSendNoData",
                               "ZDApp_ForceConcentratorChange",
                               "ZDO_ManytoOneFailureIndicationCB"],
@@ -138,6 +154,9 @@ def main():
     a.add_argument("--zdapp",type=Path,required=True)
     a.add_argument("--out",type=Path,required=True)
     a.add_argument("--variant",choices=("none","remove-hold-data"),default="none")
+    a.add_argument("--b1-sha",required=True)
+    a.add_argument("--b1-overlay-receipt",type=Path,required=True)
+    a.add_argument("--patched-zmac",type=Path,required=True)
     x=a.parse_args()
-    print(json.dumps(run(x.zmac_host,x.zdapp,x.out,x.variant),sort_keys=True))
+    print(json.dumps(run(x.zmac_host,x.zdapp,x.out,x.variant,x.b1_sha,x.b1_overlay_receipt,x.patched_zmac),sort_keys=True))
 if __name__=="__main__":main()
