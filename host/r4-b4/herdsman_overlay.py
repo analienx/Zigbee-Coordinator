@@ -184,8 +184,75 @@ def plan(root):
         return !this.#locked && this.#queue.length === 0;
     }""",
     )
+    // B4: bounded in-process timeout metadata, entirely free of device IDs,
+    // IEEE addresses, raw frames, payloads, serial paths and disk access.
     changes[ZNP] = replace_once(
         originals[ZNP],
+        "    private waitress: Waitress<ZpiObject, WaitressMatcher>;",
+        """    private waitress: Waitress<ZpiObject, WaitressMatcher>;
+    private b4HostForensicsEnabled = false;
+    private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}> = [];
+    private b4HostDropped = 0;""",
+    )
+    changes[ZNP] = replace_once(
+        changes[ZNP],
+        "    public isInitialized(): boolean {",
+        """    // B4_EXPERIMENTAL_EXISTING_OWNER: OFF by default. No writer or timer.
+    public b4EnablePassiveForensics(enabled: boolean): void {
+        this.b4HostForensicsEnabled = enabled === true;
+        if (!this.b4HostForensicsEnabled) {
+            this.b4HostTimeouts.length = 0;
+            this.b4HostDropped = 0;
+        }
+    }
+
+    public b4ReadPassiveForensics(): {
+        schema: "r4-b4-inprocess-host-sreq-v1";
+        recent_events: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}>;
+        dropped: number;
+        radio_epoch: "UNKNOWN";
+    } {
+        const now = Math.floor(performance.now());
+        this.b4HostTimeouts = this.b4HostTimeouts.filter((item) => item.at_ms >= now - 86_400_000);
+        return {
+            schema: "r4-b4-inprocess-host-sreq-v1",
+            recent_events: this.b4HostTimeouts.map((event) => ({...event})),
+            dropped: this.b4HostDropped,
+            radio_epoch: "UNKNOWN",
+        };
+    }
+
+    private b4RecordHostSreqTimeout(subsystem: Subsystem, command: string, timeout: number, error: unknown): void {
+        if (!this.b4HostForensicsEnabled || !(error instanceof Error)) {
+            return;
+        }
+        // Match the exact pinned Waitress-generated SRSP timeout error.
+        // A transport write rejection or other exception is NOT a timeout.
+        if (error.message !== this.waitressTimeoutFormatter({type: Type.SRSP, subsystem, command}, timeout)) {
+            return;
+        }
+        const kind = subsystem === Subsystem.AF ? "AF_SREQ_TIMEOUT"
+            : subsystem === Subsystem.ZDO ? "ZDO_SREQ_TIMEOUT"
+            : subsystem === Subsystem.SYS ? "SYS_SREQ_TIMEOUT" : null;
+        if (kind === null) {
+            return;
+        }
+        const at_ms = Math.floor(performance.now());
+        if (!Number.isSafeInteger(at_ms) || at_ms < 0) {
+            this.b4HostDropped++;
+            return;
+        }
+        if (this.b4HostTimeouts.length >= 256) {
+            this.b4HostTimeouts.shift();
+            this.b4HostDropped++;
+        }
+        this.b4HostTimeouts.push({at_ms, kind});
+    }
+
+    public isInitialized(): boolean {""",
+    )
+    changes[ZNP] = replace_once(
+        changes[ZNP],
         "    public isInitialized(): boolean {",
         """    /** B4_EXPERIMENTAL_EXISTING_OWNER: query in-process mutex state.
      *  Neither a queue-length=0 nor serial present proves radio health.
@@ -208,12 +275,31 @@ def plan(root):
                 this.unpiWriter.writeFrame(object.unpiFrame);
                 // B4_EXPERIMENTAL_EXISTING_OWNER: prevent a timed-out
                 // diagnostic waiter lingering when the radio stays silent.
-                const result = object.command.name === "r4DiagReadOnly"
-                    ? await waiter.start().promise.catch((error: unknown) => {
-                          this.waitress.remove(waiter.ID);
-                          throw error;
-                      })
-                    : await waiter.start().promise;""",
+                const result = await waiter.start().promise.catch((error: unknown) => {
+                    this.b4RecordHostSreqTimeout(object.subsystem, object.command.name, timeout || t, error);
+                    // The pinned Waitress keeps a timed-out waiter until its
+                    // next response; only B4 F0 alters stock cleanup policy.
+                    if (object.command.name === "r4DiagReadOnly") {
+                        this.waitress.remove(waiter.ID);
+                    }
+                    throw error;
+                });""",
+    )
+    changes[ZNP] = replace_once(
+        changes[ZNP],
+        """            const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: Subsystem.ZDO, command: cmd.name}, timeouts.SREQ);
+
+            this.unpiWriter.writeFrame(unpiFrame);
+
+            const result = await waiter.start().promise;""",
+        """            const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: Subsystem.ZDO, command: cmd.name}, timeouts.SREQ);
+
+            this.unpiWriter.writeFrame(unpiFrame);
+
+            const result = await waiter.start().promise.catch((error: unknown) => {
+                this.b4RecordHostSreqTimeout(Subsystem.ZDO, cmd.name, timeouts.SREQ, error);
+                throw error;
+            });""",
     )
     return {k: (originals[k], changes[k]) for k in changes}
 
