@@ -122,7 +122,7 @@ jobs:
               "PHYSICAL_UNVERIFIED":True,
           }
           Path("/tmp/b1-b2-positive/B1_B2_MTO_HOST_ACCEPTANCE.json").write_text(
-              json.dumps(acceptance,indent=2,sort_keys=True)+"\\n")
+              json.dumps(acceptance,indent=2,sort_keys=True)+"\n")
           print(json.dumps(acceptance,sort_keys=True))
           PY
       - name: Upload source receipts only, never production images, flash, NV, PAN or keys
