@@ -16,12 +16,12 @@
     "host": "GitHub Ubuntu 22.04"
   },
   "artifact_sha256s": {
-    "elf": "de2321668f07dcbd53c79eaf6ae480231bc2f3f7134f90625edcf53f0a6274f4",
-    "hex": "91646502e8ccf4312fcdfd67c9b9b2db302e1c4c0250ad948c81bd477bd16362",
-    "bin": "e222dede534e704bf5112ec55698b59448a6640b404edc0463e1e2b0bd9f55cf",
+    "elf": "aca1b55c6e506c1c0f068d8d7a4d06ce40e63c51f99a1bcb7389ffde2f69ae28",
+    "hex": "7f3443c5e0da87292a66d40c1d1ad98e2f8f73e9a46c19fb256319c895a7426a",
+    "bin": "760bb967e9ee6f9a942d282117acb0c5321de71902aa09aa48ba6a0b3a90704d",
     "linker_xml_sha256_raw": [
-      "40ebbce65dc2de9783e27d2a0be9775396ed2901c92f853c7377fdd73838380d",
-      "e655cba63dad3c5e8b6c5a34087c3d09383fd6bb6201372418dc6c7b9a2950d8"
+      "da29bf4bb3ef94fdb74ed8811bb0ce6dfdcbfc8225d78a073d8296f7e4e501fd",
+      "c6ef7e596ddeb01117cd60e6578ccd774353d84ea63f12d35deca99c4fa4bd42"
     ],
     "only_linker_xml_difference": "link_time"
   },
@@ -30,15 +30,27 @@
   "physical_verified": false,
   "combined_integration": false,
   "independent_review": false,
-  "native_link_evidence_head": "cf92fc07df7b25a7ad6bfbf380f6ae4b3c0dc5ca",
-  "native_actions_run": 39000883442,
-  "native_parity_recheck_run": 39002075430,
-  "host_actions_run": 39001497672,
+  "native_link_evidence_head": "d75e6ab8dece5ad6f8fe549de5f30de5dfc71386",
+  "native_actions_run": 39012416673,
+  "native_parity_recheck_run": 39012416673,
+  "host_actions_run": 39012416638,
   "elf_memory_comparison_run": 39002225494,
   "source_ready": false,
   "z2m_source_sha": "62b02e2aa1997c574223b80c196677b63a25f4a7",
   "z2m_source_version": "2.14.0",
   "z2m_source_package_herdsman": "10.9.1",
   "z2m_source_validation_run": 39002832220,
-  "z2m_pinned_host_stress_run": 39002832223
+  "z2m_pinned_host_stress_run": 39002832223,
+  "native_valid_counter_indices": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "host_counters_validity_when_npi_sreqrsp_disabled": [
+    2,
+    3
+  ],
+  "native_b4_budget": "NEEDS_REMEASUREMENT_NEW_ELF; prior +156 flash/+8 RAM relates to one-counter build"
 }

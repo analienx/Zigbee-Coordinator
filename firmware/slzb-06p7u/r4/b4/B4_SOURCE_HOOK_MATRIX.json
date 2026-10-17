@@ -2,7 +2,7 @@
   "schema": "b4-hook-matrix-v1",
   "issue": 98,
   "source": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/",
-  "stage": "FIVE_QUEUE_METRICS_SOURCE_PATCHED_WAIT_NATIVE_ELF_PROOF",
+  "stage": "FIVE_QUEUE_METRICS_REAL_TI_NATIVE_LINKED_ONLY; OTHER_COUNTERS_UNKNOWN",
   "counters": [
     {
       "name": "mt_sys_sreq_dispatch",
@@ -67,8 +67,8 @@
       "width_bits": 32,
       "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
       "validity": "V3_ONLY_IF_NPI_SREQRSP_COMPILED",
-      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
-      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+      "status": "HOSTED_NATIVE_LINKED",
+      "qualification": "Two exact-pinned TI CCS builds passed actual ELF symbol/link and exact-image parity (run 39012416673). Both queue producers plus the one queue consumer are instrumented inside preexisting critical sections. No radio epoch, physical traffic/stack, TX pin or causality proof."
     },
     {
       "name": "npi_srsp_high_water",
@@ -78,8 +78,8 @@
       "width_bits": 32,
       "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
       "validity": "V3_ONLY_IF_NPI_SREQRSP_COMPILED",
-      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
-      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+      "status": "HOSTED_NATIVE_LINKED",
+      "qualification": "Two exact-pinned TI CCS builds passed actual ELF symbol/link and exact-image parity (run 39012416673). Both queue producers plus the one queue consumer are instrumented inside preexisting critical sections. No radio epoch, physical traffic/stack, TX pin or causality proof."
     },
     {
       "name": "npi_async_depth",
@@ -89,8 +89,8 @@
       "width_bits": 32,
       "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
       "validity": "V3_ALWAYS",
-      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
-      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+      "status": "HOSTED_NATIVE_LINKED",
+      "qualification": "Two exact-pinned TI CCS builds passed actual ELF symbol/link and exact-image parity (run 39012416673). Both queue producers plus the one queue consumer are instrumented inside preexisting critical sections. No radio epoch, physical traffic/stack, TX pin or causality proof."
     },
     {
       "name": "npi_async_high_water",
@@ -100,8 +100,8 @@
       "width_bits": 32,
       "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
       "validity": "V3_ALWAYS",
-      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
-      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+      "status": "HOSTED_NATIVE_LINKED",
+      "qualification": "Two exact-pinned TI CCS builds passed actual ELF symbol/link and exact-image parity (run 39012416673). Both queue producers plus the one queue consumer are instrumented inside preexisting critical sections. No radio epoch, physical traffic/stack, TX pin or causality proof."
     },
     {
       "name": "npi_srsp_enqueued",
@@ -111,8 +111,8 @@
       "width_bits": 32,
       "wrap_policy": "UINT32_WRAP; NO_DELTAS_WITHOUT_SOURCE_QUALIFIED_RADIO_EPOCH",
       "validity": "V3_BIT4_ONLY_IF_NPI_SREQRSP_COMPILED",
-      "status": "PREVIOUS_NATIVE_LINK_VERIFIED_NEW_IMAGE_PENDING",
-      "qualification": "Both actual TI synchronous response enqueue producers, compiled previously in genuine CCS; updated five-counter native overlay awaiting independent twin link"
+      "status": "HOSTED_NATIVE_LINKED",
+      "qualification": "Both pinned synchronous enqueue producers and actual native TI ELF under new five-counter image verified at Actions run 39012416673; no radio epoch/AF_CONFIRM/UART-TX-FINISHED proof."
     },
     {
       "name": "npi_srsp_queue_hwm",
@@ -122,8 +122,8 @@
       "width_bits": null,
       "wrap_policy": "UNKNOWN",
       "validity": null,
-      "status": "SOURCE_PATH_IDENTIFIED",
-      "qualification": "actual SRSP queue semantics require code-path proof"
+      "status": "SUPERSEDED_BY_NPI_SRSP_HIGH_WATER",
+      "qualification": "Canonical indexed metric 1 npi_srsp_high_water is source and actual TI ELF linked; this row is a legacy crosswalk name."
     },
     {
       "name": "npi_uart_write_accepted",
@@ -166,8 +166,8 @@
       "width_bits": null,
       "wrap_policy": "UNKNOWN",
       "validity": null,
-      "status": "SOURCE_PATH_IDENTIFIED",
-      "qualification": "bounded HWM implementation pending"
+      "status": "SUPERSEDED_BY_NPI_ASYNC_HIGH_WATER",
+      "qualification": "Canonical indexed metric 3 npi_async_high_water is source and actual TI ELF linked; legacy research alias."
     },
     {
       "name": "af_data_request_srsp_ok",

@@ -1,3 +1,5 @@
+**Supersession notice (2026-10-17):** The +156B FLASH / +8B RAM numbers below were measured for the OLD one-counter B4 image. The NEW five-metric native ELF passed dual-build and byte parity [39012416673](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39012416673) (ELF SHA `aca1b55c6e506c1c0f068d8d7a4d06ce40e63c51f99a1bcb7389ffde2f69ae28`). **A new exact ELF B0→B4 allocated-section delta has not been measured and no current runtime MT/IRQ stack peak is available. Never reuse the old figures as the new build's budget.**
+
 # B4 pinned actual CCS ELF linked allocation delta (2026-10-17)
 
 **Evidence: [hosted real ELF comparison run 39002225494](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002225494)**. Native files were built from pinned B0 and the minimal B4 image and manifest hash verified; numeric allocation is from actual ARM32 ELF sections, not source size guesses.
