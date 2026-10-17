@@ -156,7 +156,7 @@ jobs:
           assert s.count(a)==1
           p.write_text(s.replace(a, "if (0)"))
           PY
-          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-variable \
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-but-set-variable \
             -I tests/b3_host /tmp/b3host/ti_entropy.c \
             tests/b3_host/b3_entropy_test.c -o /tmp/b3host/ti_entropy_mutant
           ulimit -c 0
