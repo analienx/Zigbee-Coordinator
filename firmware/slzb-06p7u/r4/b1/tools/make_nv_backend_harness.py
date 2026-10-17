@@ -207,11 +207,24 @@ int main(int argc,char **argv)
    } else if(strcmp(mode,"erase_ok")==0) {
      assert(NVOCMP_erase(&NVOCMP_nvHandle,1u)==NVINTF_SUCCESS);
      assert(erase_calls==1u && write_calls==4u && !b1_nv_runtime_hold_active());
-   } else if(strcmp(mode,"read_fail")==0 || strcmp(mode,"read_bounds")==0) {
+   } else if(strcmp(mode,"read_fail")==0 || strcmp(mode,"read_bounds")==0 ||
+             strcmp(mode,"read_oversized")==0) {
+     /* Invalid page or absurd length must not zero outside caller RAM.
+      * Only a backend failure for an otherwise bounded request poisons it. */
+     unsigned before_reads=read_calls;
+     memset(data,0xA5u,sizeof(data));
      read_error=strcmp(mode,"read_fail")==0?-9:0;
-     NVOCMP_read(strcmp(mode,"read_bounds")==0?2u:0u,16u,data,8u);
+     NVOCMP_read(strcmp(mode,"read_bounds")==0?2u:0u,
+                 strcmp(mode,"read_oversized")==0?8190u:16u,
+                 data,strcmp(mode,"read_oversized")==0?UINT16_MAX:8u);
      assert(NVOCMP_failF==NVINTF_FAILURE && b1_nv_runtime_hold_active());
-     assert(!memcmp(data,(uint8_t[8]){0},8u));
+     if(strcmp(mode,"read_fail")==0) {
+       assert(!memcmp(data,(uint8_t[8]){0},8u));
+       assert(read_calls==before_reads+1u);
+     } else {
+       for(unsigned j=0;j<sizeof(data);++j) assert(data[j]==0xA5u);
+       assert(read_calls==before_reads);
+     }
    } else if(strncmp(mode,"write",5u)==0 || strcmp(mode,"low_write")==0) {
      write_error=strcmp(mode,"write_fail")==0?-1:strcmp(mode,"write_positive_error")==0?1:0;
      denied=strcmp(mode,"low_write")==0;
