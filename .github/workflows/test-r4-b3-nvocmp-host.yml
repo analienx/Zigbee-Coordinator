@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           export B3_SYNTHETIC_FLASH=/tmp/b3-churn-cut-${{ matrix.pages }}.bin
-          first_erase=$(sed -nE 's/^B3_ERASE_AT op=([0-9]+) pg=.*/\\1/p' /tmp/b3-churn.log | head -n1)
+          first_erase=$(sed -nE 's/^B3_ERASE_AT op=([0-9]+) pg=.*/\1/p' /tmp/b3-churn.log | head -n1)
           test -n "$first_erase"
           for fault in 1 2 3 "$((first_erase - 1))" "$first_erase" "$((first_erase + 1))"; do
             for mode in 1 2; do
