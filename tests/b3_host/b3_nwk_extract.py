@@ -30,7 +30,7 @@ def extract(source):
     combined = "\n\n".join(output) + "\n"
     if combined.count("nwkFrameCounterChanges = 0;") != 2:
         raise ValueError("NWK security acknowledgment drift")
-    if combined.count("osal_nv_write_ex") != 2:
+    if combined.count("osal_nv_write_ex") != 3:
         raise ValueError("Expected two source-path writes")
     return combined
 
