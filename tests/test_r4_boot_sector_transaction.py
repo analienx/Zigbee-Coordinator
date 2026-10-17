@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import struct
 import unittest
+from unittest.mock import patch
 
 PATH = Path(__file__).resolve().parents[1]/"firmware/slzb-06p7u/r4/release/r4_boot_sector_transaction.py"
 spec=importlib.util.spec_from_file_location("boot_sector_tx",PATH)
@@ -97,6 +98,43 @@ class SingleBootSectorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"TOKEN"):
                 await m.write_single_boot_sector(rom,self.before,self.after,self.app,approval,"0"*64)
             self.assertFalse(rom.erase_calls)
+        asyncio.run(scenario())
+
+    def test_recovery_from_partially_erased_handoff_only_exact_factory(self):
+        async def scenario():
+            rom=FakeROM(self.before,self.app)
+            rom.bytes[0]^=1    # Simulate interrupted erase/write; unknown boot CRC.
+            with self.assertRaisesRegex(ValueError,"BOOT_SECTOR_NOT_EXPECTED"):
+                await m.boot_sector_admission(rom,self.before,self.after,self.app)
+            with self.assertRaisesRegex(ValueError,"PARTIAL_RECOVERY_REQUIRES_EXACT_FACTORY_BOOT"):
+                await m.boot_sector_admission(rom,self.before,self.after,self.app,
+                                              recover_partially_written_boot=True)
+            with patch.object(m,"STOCK_BOOT_SHA",m.hashlib.sha256(self.after).hexdigest()), \
+                 patch.object(m,"STOCK_BOOT_CRC",m.crc(self.after)):
+                approval=await m.boot_sector_admission(
+                    rom,self.before,self.after,self.app,recover_partially_written_boot=True)
+                self.assertTrue(approval["partial_stock_recovery_only"])
+                result=await m.write_single_boot_sector(
+                    rom,self.before,self.after,self.app,approval,approval["binding_sha256"],
+                    recover_partially_written_boot=True)
+                self.assertEqual(result["status"],"SINGLE_BOOT_SECTOR_WRITE_CRC_VERIFIED")
+                self.assertEqual(bytes(rom.bytes),self.after)
+                self.assertEqual(rom.erase_calls,[m.BOOT])
+        asyncio.run(scenario())
+
+    def test_stale_recovery_token_denied_without_erase(self):
+        async def scenario():
+            rom=FakeROM(self.before,self.app)
+            with patch.object(m,"STOCK_BOOT_SHA",m.hashlib.sha256(self.after).hexdigest()), \
+                 patch.object(m,"STOCK_BOOT_CRC",m.crc(self.after)):
+                approval=await m.boot_sector_admission(
+                    rom,self.before,self.after,self.app,recover_partially_written_boot=True)
+                rom.bytes[1]^=1
+                with self.assertRaisesRegex(ValueError,"TOKEN"):
+                    await m.write_single_boot_sector(
+                        rom,self.before,self.after,self.app,approval,approval["binding_sha256"],
+                        recover_partially_written_boot=True)
+                self.assertEqual(rom.erase_calls,[])
         asyncio.run(scenario())
 
     def test_data_transfer_failure_no_false_success(self):
