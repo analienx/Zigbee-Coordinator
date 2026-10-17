@@ -398,6 +398,30 @@ jobs:
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec 2>&1 | tee -a /tmp/b0out/build.log
           project=/tmp/b0ws/znp_LP_CC1352P7_4_tirtos7_ticlang
           test -f "$project/znp.syscfg"
+          # B2 owns only the THREE native table compiler options, not MTO or NV.
+          # Pull exact reviewed source by immutable Git SHA. Neither project
+          # nor PR implementation depends on mutable B2 branch names.
+          B2_CAPACITY_SOURCE_SHA=0b06ef8b2fd4fc3008c228208e7a16e1c86d8492
+          git -C "$GITHUB_WORKSPACE" fetch -q --no-tags --depth 1 origin "$B2_CAPACITY_SOURCE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse "$B2_CAPACITY_SOURCE_SHA")" = "$B2_CAPACITY_SOURCE_SHA"
+          mkdir -p /tmp/b2-native-review-tools
+          for item in b2_compose.py b2_collect_native_evidence.py b2_verify_profile.py; do
+            git -C "$GITHUB_WORKSPACE" show "$B2_CAPACITY_SOURCE_SHA:tools/$item" > "/tmp/b2-native-review-tools/$item"
+            test -s "/tmp/b2-native-review-tools/$item"
+          done
+          python /tmp/b2-native-review-tools/b2_compose.py \
+            --opts "$project/Stack/Config/znp_cnf.opts" --profile P1 \
+            --receipt /tmp/b0out/b2-p1-capacity-overlay.json
+          python - <<'PY'
+          import json
+          x=json.load(open("/tmp/b0out/b2-p1-capacity-overlay.json"))
+          assert x["compiler_defines"]=={
+            "MAX_RTG_SRC_ENTRIES":192,
+            "MAX_NEIGHBOR_ENTRIES":64,"MAX_RTG_ENTRIES":128}
+          assert x["tc_nv_security_mto_untouched"] is True
+          assert x["native_linked_proof"]=="REQUIRED_POST_BUILD"
+          print("R4_B1_B2_B3_SOURCE_PROFILE_P1_REVIEWED_NATIVE_PRELINK")
+          PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
             --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
@@ -416,6 +440,13 @@ jobs:
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+          python /tmp/b2-native-review-tools/b2_collect_native_evidence.py \
+            --artifacts /tmp/b0out --out /tmp/b0out/b2-reviewed \
+            --source-sha "$B1_SOURCE_SHA" --run-id "$GITHUB_RUN_ID"
+          python /tmp/b2-native-review-tools/b2_verify_profile.py \
+            --native /tmp/b0out/b2-reviewed/B2_BASELINE_ELF_SYMBOLS.json \
+            --overlay /tmp/b0out/b2-p1-capacity-overlay.json --profile P1 \
+            --out /tmp/b0out/b2-p1-integration-verified.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
       - name: Upload native artifacts and receipts
