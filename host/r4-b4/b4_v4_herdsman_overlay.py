@@ -16,6 +16,8 @@ PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 ADAPTER = "src/adapter/z-stack/adapter/zStackAdapter.ts"
 ZNP = "src/adapter/z-stack/znp/znp.ts"
+PARSER = "src/adapter/z-stack/unpi/parser.ts"
+WRITER = "src/adapter/z-stack/unpi/writer.ts"
 CONTROLLER = "src/controller/controller.ts"
 MARKER = "B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE"
 
@@ -140,8 +142,13 @@ def plan(root):
         raise ValueError("only disposable /tmp herdsman source")
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("herdsman HEAD drift")
-    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER)
+    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER, PARSER, WRITER)
     original = {p: (root / p).read_text() for p in paths}
+    # Raw UNPI logging paths were untouched by v3. Verify pristine blobs
+    # before redaction; no second logger/transport or broad source guessing.
+    for path in (PARSER, WRITER):
+        if original[path].encode() != git(root, "show", PIN + ":" + path):
+            raise ValueError("pinned UNPI parser/writer provenance drift")
     if any(MARKER in val for val in original.values()):
         raise ValueError("v4 already applied")
     if ("B4_EXPERIMENTAL_EXISTING_OWNER" not in original[ADAPTER] or
@@ -229,17 +236,46 @@ def plan(root):
         raise ValueError("v3 diagnostic owner mutex guard count drift")
     znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
+    # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
+    znp = once(znp,
+        "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",
+        "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SRSP (diagnostic body redacted)\", NS);\n            } else {\n                logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);\n            }")
+    znp = once(znp,
+        "            logger.debug(() => `--> ${object}`, NS);",
+        "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SREQ (diagnostic nonce redacted)\", NS);\n            } else {\n                logger.debug(() => `--> ${object}`, NS);\n            }")
+    # ZNP logging redaction alone is insufficient: pinned UNPI transport
+    # DEBUG logging prints raw chunks/frame buffers, including boot token.
+    writer = original[WRITER]
+    writer = once(writer,
+        "        logger.debug(`--> frame [${[...buffer]}]`, NS);",
+        "        logger.debug(`--> frame ${buffer.length} bytes (payload redacted)`, NS);")
+    writer = once(writer,
+        "        logger.debug(`--> buffer [${[...buffer]}]`, NS);",
+        "        logger.debug(`--> buffer ${buffer.length} bytes (payload redacted)`, NS);")
+    parser = original[PARSER]
+    parser = once(parser,
+        "        logger.debug(`<-- [${[...chunk]}]`, NS);",
+        "        logger.debug(`<-- ${chunk.length} bytes (payload redacted)`, NS);")
+    parser = once(parser,
+        "        logger.debug(`--- parseNext [${[...this.buffer]}]`, NS);",
+        "        logger.debug(`--- parseNext ${this.buffer.length} buffered bytes (payload redacted)`, NS);")
+    parser = once(parser,
+        "                    logger.debug(`--> parsed ${frame}`, NS);",
+        "                    logger.debug(`--> parsed type=${frame.type} subsystem=${frame.subsystem} command=${frame.commandID} bytes=${frame.data.length}`, NS);")
+
     return {DEFINITION: (original[DEFINITION], definition),
             PARAM: (original[PARAM], params), BUFFALO: (original[BUFFALO], buffalo),
             ADAPTER: (original[ADAPTER], adapter), ZNP: (original[ZNP], znp),
-            CONTROLLER: (original[CONTROLLER], controller)}
+            CONTROLLER: (original[CONTROLLER], controller),
+            PARSER: (original[PARSER], parser), WRITER: (original[WRITER], writer)}
 
 def apply(root):
     items = plan(root)
     evidence = {"schema": "r4-b4-v4-herdsman-source-v1",
                 "stage": "PINNED_DISPOSABLE_SOURCE_ONLY",
                 "original_znp_owner": True, "hardware_verified": False,
-                "installed": False, "v3_preserved": True, "files": {}}
+                "installed": False, "v3_preserved": True,
+                "unpi_raw_debug_payload_logging": False, "files": {}}
     for path, (before, after) in items.items():
         (Path(root) / path).write_text(after, encoding="utf-8", newline="")
         evidence["files"][path] = {"sha256_before": hashlib.sha256(before.encode()).hexdigest(),
