@@ -64,7 +64,9 @@ class SectorEraseDenialTests(unittest.TestCase):
     def test_bad_checksum_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             p=Path(temp)/"image.hex"
-            p.write_text(hex_image(0xAA000).replace(":0100000000FF",":010000000000"))
+            lines = hex_image(0xAA000).splitlines()
+            lines[1] = lines[1][:-2] + ("00" if lines[1][-2:] != "00" else "FF")
+            p.write_text("\n".join(lines) + "\n")
             with self.assertRaisesRegex(ValueError,"INVALID_OR_EMPTY"):
                 evaluate(p)
 
