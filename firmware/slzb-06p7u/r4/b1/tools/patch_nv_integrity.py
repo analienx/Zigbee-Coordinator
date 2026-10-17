@@ -67,7 +67,10 @@ def patch(source):
         "        NVOCMP_failF = NVINTF_FAILURE;\n"
         "        NVOCMP_failW = NVINTF_FAILURE;\n"
         "        b1_nv_runtime_hold_latch();\n"
-        "        /* Never overwrite caller RAM with an untrusted oversized len. */\n"\n        "        if (pBuf != NULL && pg < NVOCMP_NVPAGES &&\n"\n        "            off <= FLASH_PAGE_SIZE && len <= FLASH_PAGE_SIZE - off)\n"\n        "            memset(pBuf, 0, len);\n"
+        "        /* Never overwrite caller RAM with an untrusted oversized len. */\n"
+        "        if (pBuf != NULL && pg < NVOCMP_NVPAGES &&\n"
+        "            off <= FLASH_PAGE_SIZE && len <= FLASH_PAGE_SIZE - off)\n"
+        "            memset(pBuf, 0, len);\n"
         "        return;\n"
         "    }\n", 1)
     source = once(source, body, changed, "bounded real NVS read")
