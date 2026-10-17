@@ -30,3 +30,10 @@ Sign-off: **PENDING B1/B2/native/reviewer gates**; B3_SOURCE_READY=false, B3_INT
 
 ## 17 October APS/TCLK row-byte sensitivity
 The pinned original TI `aps_mede.h` persisted row definitions are APS 24 bytes and TCLK 20 bytes. Per NVOCMP record the 7-byte compressed metadata brings these to 31 and 27 bytes respectively. A **conditional** fully populated APS+TCLK pair per device consumes 6,148 / 7,424 / 9,280 / 11,136 bytes at 106 / 128 / 160 / 192 devices, excluding all other live NV state and compaction. NV2 with 8,176 nominal active bytes is impossible for 160/192 both-full tables, but actual B2 TC/APS occupancy is not yet established. The correct profile remains **NO_PROFILE_LOCKED**; NV3/NV5 native links are experimental and do not authorize migration.
+
+
+## Conditional capacity choice — FINAL SOURCE CANDIDATE, not deployment
+
+For a capacity target allowing both APS and TC rows populated at 192 devices, **NV5 is the preferred experimental profile** (32,704 nominal live bytes vs 16,352 NV3 and 8,176 NV2). In the conditional 192-device example, both all-full tables consume 11,136 bytes, leaving 21,568 bytes nominal in NV5 vs only 5,216 in NV3 for NIB/address/binding, obsolete rows, other item classes and free reserve. That is a margin comparison, not proof of actual layout occupancy or durability. NV2 cannot fit the stated both-full 192-row scenario; B2 may select materially smaller tables, in which case NV3 is a legitimate alternative.
+
+**Production layout remains UNLOCKED** until B1 unknown-format HOLD, B2 actual heap/table evidence, existing-stock NV version and separate operator-authorized migration. Preserve native NV2 B0 as the unchanged compatibility reference. Never reformat or erase installed unknown/NV2/NV3 media to implement a preference.

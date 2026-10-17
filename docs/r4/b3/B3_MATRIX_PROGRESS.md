@@ -6,7 +6,7 @@ The issue #97 annex is the acceptance source. Only cases which actually exercise
 |---|---|---|
 | M01–M06 | OPEN | Native NV2/3/5 persisted item recovery, page data, correct empty vs error, capacity, malformed NVS geometry still need actual compiled fault harness. |
 | M07 | PARTIAL | NVS_open NULL check patched; not yet executed in actual NVOCMP fault harness. |
-| M08 | OPEN | Void `NVOCMP_read` ignored NVS status unresolved. |
+| M08 | PARTIAL | Actual TI source read failure guard plus sticky fatal handling; physical NVS evidence still open. |
 | M09 | PARTIAL | Actual TI OSAL C mocked write callback failures; NVS driver/compaction test OPEN. |
 | M10–M16 | OPEN | NVS erase fail, malformed header, interrupted compaction, generations, tombstone, free-space/wear all OPEN. |
 | M17 | PARTIAL | 106/128/160/192 mock identities tested; no actual serialized source row/native capacity proof. |
@@ -38,3 +38,10 @@ Verified GitHub Actions successful latest-head jobs: [NV3 and NV5](https://githu
 Source review of `b3_source_overlay.py` identifies a security-critical unresolved contract: `NVOCMP_read` is a void-returning function, sets global `NVOCMP_failF` and wipes a bounded buffer, but several internal callers may continue using the output unless they explicitly inspect the sticky failure; the external `readItem` wrapper detects failure only after its inner call. Audit every internal caller, compaction and initialization before asserting that a read failure cannot promote partial state. Another hazard: the `NVOCMP_read` bounds check validates `pg` against `NVOCMP_NVPAGES` but does not independently validate that the runtime NVS handle and page layout are initialized before use. No claim of physical safety follows from passing mocked tests.
 
 Security review: `ZDSecMgrGenerateRndKey` now returns a checked status, but its failure path zeroes the caller buffer and all call sites must be shown to suppress **subsequent** publication, fallback, and commissioning side effects. `ZDApp_SaveNwkKey` still ignores persistence status and clears `nwkFrameCounterChanges`; counter reservation-before-send and B1 RF hold remain P0. Treat the current build as experimental and not flashable.
+
+
+## Final narrow regression results
+
+The original NV2 interrupted-compaction failed at flash op 627 with missing NV rows after restart. B3 now latches **every** failed primitive write, including page-state/commit metadata. All real-source NVOCMP NV2/3/5 mock flash cases PASS: https://github.com/analienx/Zigbee-Coordinator/actions/runs/39010415494 . Later hardening adds failF-aware NVOCMP_checkItem and the read-after-rejected-write denial oracle to distinguish fatal I/O from NOTFOUND.
+
+Real TI ZDApp_SaveNwkKey and ZDApp_RestoreNwkSecMaterial C bodies were extracted and passed rejection/overflow/order tests with negative mutant: https://github.com/analienx/Zigbee-Coordinator/actions/runs/39010726085 . These are source-hosted results, not physical RF or a complete Annex M01-M36 certification.

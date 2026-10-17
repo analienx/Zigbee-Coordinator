@@ -169,6 +169,20 @@ def nvocmp_changes(source):
         "                return;\n"
         "            }")
 
+    # After fatal write/read, do not let readItem disguise the I/O error
+    # as missing security state (NOTFOUND). Inspect failF in every API.
+    source = one(source,
+        '    if(NVOCMP_failF == NVINTF_NOTREADY)\n'
+        '    {\n'
+        '        // NV driver has not been initialized\n'
+        '        NVOCMP_ASSERT(false, "Driver uninitialized.")\n'
+        '        return(NVINTF_NOTREADY);\n'
+        '    }',
+        '    if(NVOCMP_failF != NVINTF_SUCCESS)\n'
+        '    {\n'
+        '        // Fatal storage failure is never equivalent to missing NV.\n'
+        '        return(NVOCMP_failF);\n'
+        '    }')
     # Stop all further writes, erases and normal NV reads after a hard I/O
     # failure. In-flight RAM is not authority to transmit; B1 must still
     # independently enforce HOLD_SECURITY on caller errors.

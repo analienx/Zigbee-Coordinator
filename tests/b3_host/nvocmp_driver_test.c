@@ -79,7 +79,10 @@ int main(int argc, char **argv) {
         check("pre_injected_update",&api,0x11,true);
         rc=api.updateItem(ids[0],sizeof(more),more);
         if (rc==NVINTF_SUCCESS) die("SILENT_WRITE_FAILURE",rc);
-        puts("B3_INJECTED_WRITE_REJECTED");
+        unsigned char after[32]={0};
+        uint8_t after_rc=api.readItem(ids[0],0,sizeof(after),after);
+        if (after_rc!=NVINTF_FAILURE) die("READ_AFTER_FATAL_WRITE_NOT_HELD",after_rc);
+        puts("B3_INJECTED_WRITE_REJECTED_AND_READ_HELD");
     } else if (!strcmp(argv[1],"churn") || !strcmp(argv[1],"churn_injected")) {
         bool injecting = !strcmp(argv[1],"churn_injected");
         check("churn_baseline",&api,0x11,true);
