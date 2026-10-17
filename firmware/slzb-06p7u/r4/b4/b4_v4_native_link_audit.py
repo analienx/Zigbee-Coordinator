@@ -28,7 +28,7 @@ def verify(elf, nm, manifest, receipt):
         or patch.get("parent_v3_verified") is not True
         or patch.get("response_length") != 160
         or patch.get("request_nonce_bytes") != 8
-        or patch.get("entropy_policy") != "ONE_SHOT_IN_NPI_START_BEFORE_READY;FINITE_TIMEOUT;FAIL_CLOSED"
+        or patch.get("entropy_policy") != "ONE_SHOT_IN_NPI_START_BEFORE_READY;TICK_CONVERTED_TIMEOUT;CANCEL_BEFORE_CLOSE;FAIL_CLOSED"
         or len(patch.get("written", {})) != 2):
         raise ValueError("v4 addon receipt incomplete")
     sha = patch.get("source_fingerprint64", "")
