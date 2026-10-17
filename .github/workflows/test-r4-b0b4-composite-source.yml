@@ -3,7 +3,8 @@ on:
   pull_request:
     paths:
       - 'tools/r4_b1_b3_security_fuse.py'
-      - '.github/workflows/test-r4-b1b3-fusion-source.yml'
+      - '.github/workflows/test-r4-b0b4-composite-source.yml'
+      - 'tools/r4_b0_b4_composite_stage.py'
 permissions:
   contents: read
 jobs:
