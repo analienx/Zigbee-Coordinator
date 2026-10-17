@@ -75,6 +75,7 @@ jobs:
           python -m unittest -v tests.test_r4_make_rom_handoff_sector
           python -m unittest -v tests.test_r4_boot_sector_transaction
           python -m unittest -v tests.test_r4_fitted_native_direct_ccfg_offline
+          python -m unittest -v tests.test_r4_fitted_ccfg_source_differential
           python -m unittest -v tests.test_r4_direct_ccfg_offline_plan
       - name: P7U fitted MCUboot signature verification and adversarial denial (synthetic only)
         run: |
