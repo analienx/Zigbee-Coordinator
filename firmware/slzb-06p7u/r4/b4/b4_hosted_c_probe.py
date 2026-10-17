@@ -26,6 +26,7 @@ volatile uint32_t B4_NpiSrspHighWater;
 volatile uint32_t B4_NpiAsyncDepth;
 volatile uint32_t B4_NpiAsyncHighWater;
 volatile uint32_t B4_NpiSrspEnqueued;
+volatile uint32_t B4_NpiUartTxFinishedEvents;
 static uint8_t last_payload[132];
 static uint8_t last_len, last_cmd0, last_cmd1;
 static int transmit_count, irq_depth;
@@ -63,6 +64,7 @@ int main(void) {
         B4_NpiAsyncDepth = 2u;
         B4_NpiAsyncHighWater = 6u;
         B4_NpiSrspEnqueued = values[i];
+        B4_NpiUartTxFinishedEvents = values[i];
         B4_SysReadOnlyDiagnostics();
         assert(transmit_count == (int)i + 1);
         assert(irq_depth == 0);
@@ -71,7 +73,7 @@ int main(void) {
         assert(last_payload[4] == 3 && last_payload[5] == 0);
         assert(last_payload[6] == 132 && last_payload[7] == 0);
         assert(read_u32(last_payload + 8) == 0); /* epoch unavailable */
-        assert(read_u32(last_payload + 12) == 0x1Fu); /* counters 0..4 */
+        assert(read_u32(last_payload + 12) == 0x3Fu); /* queue indices 0..4; UART TX pin event index 5 */
         for (unsigned int j = 16; j < 28; ++j) assert(last_payload[j] == 0);
         assert(read_u32(last_payload + 28) == i + 1);
         for (unsigned int j = 0; j < 25; ++j) {
@@ -80,7 +82,8 @@ int main(void) {
                              j == 1 ? 5u :
                              j == 2 ? 2u :
                              j == 3 ? 6u :
-                             j == 4 ? values[i] : 0u));
+                             j == 4 ? values[i] :
+                             j == 5 ? values[i] : 0u));
         }
         assert(B4_NpiSrspEnqueued == values[i]); /* observation only */
     }
@@ -94,7 +97,7 @@ def build_and_run(*, compiler, mutant=False):
         raise ValueError("host C compiler must be an existing absolute file")
     function = B4_FUNCTION
     if mutant:
-        old = "payload[12] = 0x1F;"
+        old = "payload[12] = 0x3F;"
         if function.count(old) != 1:
             raise ValueError("mutant no longer attacks expected validity code")
         function = function.replace(old, "payload[12] = 0;")

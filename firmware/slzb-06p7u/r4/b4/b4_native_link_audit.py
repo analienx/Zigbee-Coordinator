@@ -11,7 +11,8 @@ import re
 import subprocess
 
 RAM_COUNTERS = ("B4_NpiSrspDepth", "B4_NpiSrspHighWater",
-                "B4_NpiAsyncDepth", "B4_NpiAsyncHighWater", "B4_NpiSrspEnqueued")
+                "B4_NpiAsyncDepth", "B4_NpiAsyncHighWater", "B4_NpiSrspEnqueued",
+                "B4_NpiUartTxFinishedEvents")
 REQUIRED = RAM_COUNTERS + ("B4_SysReadOnlyDiagnostics", "MT_SysCommandProcessing")
 SYMBOL = re.compile(r"^([0-9a-fA-F]+)\s+([TtBbDd])\s+([A-Za-z_][A-Za-z_0-9]*)$")
 
@@ -31,9 +32,9 @@ def verify(elf, nm, manifest, receipt):
     patch = json.loads(Path(receipt).read_text())
     if (patch.get("stage") != "PATCHED_DISPOSABLE_SDK_NOT_LINKED"
             or patch.get("payload_bytes") != 132
-            or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4]
+            or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4, 5]
             or patch.get("radio_boot_identity") != "UNKNOWN"
-            or len(patch.get("written", {})) != 2):
+            or len(patch.get("written", {})) != 3):
         raise ValueError("native patch input is not proven")
     if not Path(nm).is_file():
         raise ValueError("actual TI nm tool absent")

@@ -15,6 +15,7 @@ TI_SHA = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 MT_SYS = "source/ti/zstack/mt/mt_sys.c"
 NPI_TASK = "source/ti/zstack/npi/npi_task.c"
 NPI_CLIENT = "source/ti/zstack/npi/npi_client_mt.c"
+NPI_UART = "source/ti/zstack/npi/npi_tl_uart.c"
 MARKER = "B4_EXPERIMENTAL_DIAG_READ_ONLY"
 
 B4_FUNCTION = r"""
@@ -24,6 +25,7 @@ extern volatile uint32_t B4_NpiSrspHighWater;
 extern volatile uint32_t B4_NpiAsyncDepth;
 extern volatile uint32_t B4_NpiAsyncHighWater;
 extern volatile uint32_t B4_NpiSrspEnqueued;
+extern volatile uint32_t B4_NpiUartTxFinishedEvents;
 static uint32_t B4_DiagSampleSequence = 0;
 static void B4_DiagPutU32(uint8_t *dest, uint32_t v)
 {
@@ -40,6 +42,7 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
     uint32_t async_depth;
     uint32_t async_high_water;
     uint32_t srsp_enqueued;
+    uint32_t uart_tx_finished_events;
     uint32_t seq;
     uint32_t key = OsalPort_enterCS();
     srsp_depth = B4_NpiSrspDepth;
@@ -47,6 +50,7 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
     async_depth = B4_NpiAsyncDepth;
     async_high_water = B4_NpiAsyncHighWater;
     srsp_enqueued = B4_NpiSrspEnqueued;
+    uart_tx_finished_events = B4_NpiUartTxFinishedEvents;
     seq = ++B4_DiagSampleSequence;
     OsalPort_leaveCS(key);
     payload[0] = 'R';
@@ -55,9 +59,9 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
     payload[3] = '3';
     payload[4] = 3;     /* exact version 3; no minor version implied */
     payload[6] = 132;   /* full u16 LE length 132 */
-    payload[12] = 0x0C; /* async queue: validity bits 2,3 always compiled */
+    payload[12] = 0x2C; /* async queues bits 2,3 + UART TX-pin event bit 5 */
 #if defined(NPI_SREQRSP)
-    payload[12] = 0x1F; /* sync depth/HWM + async depth/HWM + sync enqueue */
+    payload[12] = 0x3F; /* five NPI queue metrics + TX_PIN_FINISHED_EVENTS */
     B4_DiagPutU32(payload + 32, srsp_depth);
     B4_DiagPutU32(payload + 36, srsp_high_water);
     B4_DiagPutU32(payload + 48, srsp_enqueued);
@@ -66,6 +70,7 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
     B4_DiagPutU32(payload + 28, seq);
     B4_DiagPutU32(payload + 40, async_depth);
     B4_DiagPutU32(payload + 44, async_high_water);
+    B4_DiagPutU32(payload + 52, uart_tx_finished_events);
     /* Neither reported depth nor UART callback proves physical delivery. */
     MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF0, sizeof(payload), payload);
 }
@@ -81,7 +86,7 @@ def build_patches(root):
     if _git(root, "rev-parse", "HEAD").decode().strip() != TI_SHA:
         raise ValueError("not the pinned TI 8.33 SDK")
     initial = {}
-    for path in (MT_SYS, NPI_TASK, NPI_CLIENT):
+    for path in (MT_SYS, NPI_TASK, NPI_CLIENT, NPI_UART):
         actual = (root / path).read_bytes()
         pristine = _git(root, "show", TI_SHA + ":" + path)
         if actual != pristine:
@@ -90,10 +95,16 @@ def build_patches(root):
     sys = initial[MT_SYS]
     task = initial[NPI_TASK]
     client = initial[NPI_CLIENT]
+    uart = initial[NPI_UART]
     if ("void MT_BuildAndSendZToolResponse(" not in client or
             "OsalPort_msgAllocate(" not in client or
             "#if !defined(NPI)" not in _git(root, "show", TI_SHA + ":source/ti/zstack/mt/mt.c").decode()):
         raise ValueError("NPI response producer not independently sourced")
+    driver = _git(root, "show", TI_SHA + ":source/ti/drivers/UART2.h").decode()
+    if ("UART2_EVENT_TX_FINISHED" not in driver or
+            "UART2_EventCallback eventCallback;" not in driver or
+            "uint32_t eventMask;" not in driver):
+        raise ValueError("pinned UART2 event callback/mask source not proven")
     dispatch = "    case MT_SYS_VERSION:\n      MT_SysVersion();\n      break;"
     if sys.count(dispatch) != 1:
         raise ValueError("SYS_VERSION dispatch drift")
@@ -183,13 +194,52 @@ def build_patches(root):
     for name in ("B4_NpiSrspDepth", "B4_NpiAsyncDepth"):
         if task.count("++" + name) != 2 or task.count("--" + name) != 1:
             raise ValueError("incomplete NPI TX queue depth instrumentation: " + name)
-    return {MT_SYS: (initial[MT_SYS], sys), NPI_TASK: (initial[NPI_TASK], task)}
+    # Pinned TI UART2 callback is invoked after bytes reach FIFO. TX_FINISHED
+    # is a *separate* event after UART shift register reaches the TX pin.
+    # Register through the existing UART2_open Params, no second port.
+    # The callback runs in interrupt or task context: bounded O(1), no log or
+    # allocation, same OsalPort critical-section primitive used by stock NPI.
+    callback_anchor = "void NPITLUART_initializeTransport(uint8_t *tRxBuf, uint8_t *tTxBuf, npiCB_t npiCBack)"
+    if (uart.count(callback_anchor) != 1 or
+            uart.count("params.writeCallback = NPITLUART_writeCallBack;") != 1 or
+            uart.count("uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);") != 1):
+        raise ValueError("actual NPI UART owner/initialization source drift")
+    if "params.eventCallback" in uart or "params.eventMask" in uart:
+        raise ValueError("existing UART event subscriber: do not replace ownership")
+    uart = uart.replace(callback_anchor, """/* B4_EXPERIMENTAL_DIAG_READ_ONLY: real UART2 TX-pin complete events.
+ * This is neither a UART FIFO callback nor evidence of USB/host receipt.
+ */
+volatile uint32_t B4_NpiUartTxFinishedEvents = 0;
+static void B4_NpiUartTxFinishedCallback(UART2_Handle handle, uint32_t event,
+                                         uint32_t data, void *userArg)
+{
+    (void)handle;
+    (void)data;
+    (void)userArg;
+    if ((event & UART2_EVENT_TX_FINISHED) != 0u)
+    {
+        uint32_t key = OsalPort_enterCS();
+        if (B4_NpiUartTxFinishedEvents != 0xFFFFFFFFu)
+            ++B4_NpiUartTxFinishedEvents;
+        OsalPort_leaveCS(key);
+    }
+}
+
+""" + callback_anchor, 1)
+    uart = uart.replace("params.writeCallback = NPITLUART_writeCallBack;",
+        "params.writeCallback = NPITLUART_writeCallBack;\n"
+        "    /* B4: one added callback on the existing UART2 owner, never\n"
+        "     * confuse it with the standard write-to-FIFO callback. */\n"
+        "    params.eventMask = UART2_EVENT_TX_FINISHED;\n"
+        "    params.eventCallback = B4_NpiUartTxFinishedCallback;", 1)
+    return {MT_SYS: (initial[MT_SYS], sys), NPI_TASK: (initial[NPI_TASK], task),
+            NPI_UART: (initial[NPI_UART], uart)}
 
 def apply(root):
     patches = build_patches(root)
     receipt = {"stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "ti_sha": TI_SHA,
                "f0_opcode": "0xF0", "payload_bytes": 132,
-               "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
+               "valid_counter_indices": [0, 1, 2, 3, 4, 5], "radio_boot_identity": "UNKNOWN",
                "written": {}}
     # All anchors, files and Git pins are verified BEFORE the first write.
     for name, (old, new) in patches.items():
