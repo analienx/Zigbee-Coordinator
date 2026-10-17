@@ -1,0 +1,70 @@
+name: R4-B3 real TI NVOCMP host fault matrix (NOT FLASH)
+on:
+  push:
+    branches:
+      - codex/r4-b3-nv-security-offline
+  pull_request:
+    paths:
+      - 'tests/b3_host/**'
+      - 'firmware/slzb-06p7u/r4/b3/**'
+      - '.github/workflows/test-r4-b3-nvocmp-host.yml'
+permissions:
+  contents: read
+jobs:
+  actual-ti-nvocmp:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pages: [2, 3, 5]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Retrieve exact TI 8.33 SDK, no generic fallback
+        run: |
+          set -euo pipefail
+          git init -q /tmp/b3nv-sdk
+          git -C /tmp/b3nv-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/b3nv-sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          test "$(git -C /tmp/b3nv-sdk rev-parse FETCH_HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
+          git -C /tmp/b3nv-sdk -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C /tmp/b3nv-sdk hash-object source/ti/common/nv/nvocmp.c)" = "01b2b0827d278c10c012b33e5791e53bc5662f10"
+      - name: Apply candidate patch from exact TI preimages
+        run: |
+          python firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py --sdk /tmp/b3nv-sdk --receipt /tmp/b3-host-${{ matrix.pages }}-overlay.json
+      - name: Compile actual TI NVOCMP + CRC with synthetic flash injection
+        run: |
+          set -euo pipefail
+          sdk=/tmp/b3nv-sdk/source
+          gcc -std=c11 -O0 -g -D_GNU_SOURCE -DNV_LINUX -DNVOCMP_POSIX_MUTEX \
+            -DNVOCMP_NVPAGES=${{ matrix.pages }} -Wno-unused-parameter \
+            -I tests/b3_host -I "$sdk" -I "$sdk/ti/common/nv" \
+            "$sdk/ti/common/nv/nvocmp.c" "$sdk/ti/common/nv/crc.c" \
+            tests/b3_host/nvocmp_flash_mock.c tests/b3_host/nvocmp_driver_test.c \
+            -pthread -o /tmp/b3-ti-nvocmp
+          file /tmp/b3-ti-nvocmp
+      - name: Healthy write, cold process restart, update and compaction controls
+        run: |
+          set -euo pipefail
+          export B3_SYNTHETIC_FLASH=/tmp/b3-valid-${{ matrix.pages }}.bin
+          rm -f "$B3_SYNTHETIC_FLASH"
+          /tmp/b3-ti-nvocmp seed
+          /tmp/b3-ti-nvocmp verify
+          /tmp/b3-ti-nvocmp compact
+          /tmp/b3-ti-nvocmp verify
+          /tmp/b3-ti-nvocmp update
+          /tmp/b3-ti-nvocmp verify_update
+          test "$(stat -c %s "$B3_SYNTHETIC_FLASH")" -eq $((8192 * ${{ matrix.pages }}))
+      - name: Failed NVS mutation must not return silent success
+        run: |
+          set -euo pipefail
+          export B3_SYNTHETIC_FLASH=/tmp/b3-fail-${{ matrix.pages }}.bin
+          rm -f "$B3_SYNTHETIC_FLASH"
+          /tmp/b3-ti-nvocmp seed
+          B3_FAULT_NUMBER=1 B3_FAULT_MODE=1 /tmp/b3-ti-nvocmp fail_update
+          /tmp/b3-ti-nvocmp verify
+      - name: Source-only matrix acceptance disclaimer
+        run: |
+          echo "Compiled genuine TI NVOCMP; mocked NV_LINUX I/O. NOT native NVS, not real power loss."
+          echo "No security counter-before-send, radio, migration or flash qualification."
