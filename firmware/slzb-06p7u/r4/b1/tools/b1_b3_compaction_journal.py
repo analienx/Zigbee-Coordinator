@@ -14,12 +14,26 @@ OLD = """#if(NVOCMP_NVPAGES > NVOCMP_NVONEP)
   pNvHandle->pageInfo[dstPg].mode = NVOCMP_PGCDONE;"""
 NEW = """  // B1+B3: publish destination's completion marker before erasing
   // the last authoritative source. A failed journal marker must HOLD.
+  // A successful NVS write return alone is not durable completion.
+  // Read the one-byte marker back before sacrificing the source page.
   NVOCMP_writeByte(dstPg, NVOCMP_COMPMODEOFS, NVOCMP_PGCDONE);
   if (NVOCMP_failW != NVINTF_SUCCESS || b1_nv_runtime_hold_active())
   {
     NVOCMP_failF = NVINTF_FAILURE;
     b1_nv_runtime_hold_latch();
     return(0);
+  }
+  {
+    uint8_t b1_journal_readback = 0u;
+    NVOCMP_read(dstPg, NVOCMP_COMPMODEOFS, &b1_journal_readback, 1u);
+    if (NVOCMP_failF != NVINTF_SUCCESS ||
+        b1_journal_readback != NVOCMP_PGCDONE ||
+        b1_nv_runtime_hold_active())
+    {
+      NVOCMP_failF = NVINTF_FAILURE;
+      b1_nv_runtime_hold_latch();
+      return(0);
+    }
   }
   pNvHandle->pageInfo[dstPg].mode = NVOCMP_PGCDONE;
 #if(NVOCMP_NVPAGES > NVOCMP_NVONEP)
