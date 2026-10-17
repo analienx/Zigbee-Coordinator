@@ -17,6 +17,8 @@ import json
 import pathlib
 import urllib.request
 
+from p10_quarantine_identity import check as identity_gates, refusal_reasons
+
 from zigpy.exceptions import NetworkNotFormed
 from zigpy_znp.api import ZNP
 from zigpy_znp.commands import SYS
@@ -46,6 +48,9 @@ async def audit(args: argparse.Namespace) -> None:
         "slzb_radio_hw": radio.get("zb_hw"),
         "slzb_radio_revision": radio.get("zb_version"),
         "slzb_revision_expected": int(args.expected_revision),
+        "znp_revision_match": False,
+        "radio_hardware_match": False,
+        "management_socket_binding_match": False,
         "slzb_revision_match": int(radio.get("zb_version", 0))
         == int(args.expected_revision),
         "expected_link_keys": expected["link_keys"],
@@ -64,6 +69,13 @@ async def audit(args: argparse.Namespace) -> None:
         await znp.connect()
         version = await znp.request(SYS.Version.Req(), timeout=3)
         report["znp_code_revision"] = int(version.CodeRevision or 0)
+        exposed_port = next((radio[k] for k in (
+            "socket_port", "zb_socket_port", "zb_port", "port")
+            if k in radio), None)
+        report.update(identity_gates(
+            args.expected_revision, report["znp_code_revision"],
+            radio.get("zb_version"), radio.get("zb_hw"),
+            args.expected_radio_hw, exposed_port, args.port))
 
         # Length-only probes. No Trust Center key bytes are requested.
         for sub_id in args.tclk_probe:
@@ -101,10 +113,7 @@ async def audit(args: argparse.Namespace) -> None:
     minimum_probe = args.minimum_tclk_subid
     minimum_length = report["tclk_slot_lengths"].get(str(minimum_probe), 0)
 
-    if not report["slzb_revision_match"]:
-        report["reasons"].append(
-            "SLZB-OS does not report the expected radio revision"
-        )
+    report["reasons"].extend(refusal_reasons(report))
 
     if minimum_length == 0:
         report["reasons"].append(
@@ -140,6 +149,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=7638)
     parser.add_argument("--radio-index", type=int, default=1)
     parser.add_argument("--expected-revision", required=True)
+    parser.add_argument("--expected-radio-hw", required=True,
+                        help="Exact zb_hw value independently verified for this P10 hardware")
+
     parser.add_argument("--expected-backup", required=True)
     parser.add_argument(
         "--minimum-tclk-subid",

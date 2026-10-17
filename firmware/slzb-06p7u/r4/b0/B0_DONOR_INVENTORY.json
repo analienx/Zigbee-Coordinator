@@ -1,0 +1,94 @@
+{
+ "board_overlay_scope": "UART RX DIO12 / TX DIO13, 115200, hardware flow OFF only, plus P7U-gated board delta. No custom scheduler, no custom UART/NV driver, no diagnostics in B0.",
+ "donor_files": [
+  {
+   "evidence": "git ls-tree -r FETCH_HEAD examples/rtos/LP_CC1352P7_4/zstack/znp/ at 87ff5b63 lists exactly this path; device Cortex M.CC1352P7, TICLANG cgtVersion 3.2.2, NVOCMP_NVPAGES=2, ti_utils_build_linker.cmd.genlibs + timac_rom_PG2_0_rom_api_linker.cmd + driverlib.lib, post-build tiarmobjcopy HEX emission",
+   "kind": "ccs_projectspec",
+   "path": "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec",
+   "repo": "TexasInstruments/simplelink-zstack-examples",
+   "sha": "87ff5b638b632050228a7504f35cf3b95581c278",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "git show FETCH_HEAD:.../znp.syscfg at 87ff5b63: cliArgs board /ti/boards/LP_CC1352P7_4 rtos tirtos7; NVS1 CONFIG_NVSINTERNAL regionBase 0xAA000 regionSize 0x4000; NVS2 external MX25R8035F; CCFG via lprf_ccfg_settings.js; no NPI UART pin override (board-defined, P7U delta stays OPEN)",
+   "kind": "syscfg",
+   "path": "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg",
+   "repo": "TexasInstruments/simplelink-zstack-examples",
+   "sha": "87ff5b638b632050228a7504f35cf3b95581c278",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "projectspectext at 87ff5b63 links ${SDK}/source/ti/zstack/startup/main.c into Application/StartUp; startupFromApp behavior stock, unmodified in B0",
+   "kind": "app_main",
+   "path": "source/ti/zstack/startup/main.c",
+   "repo": "TexasInstruments/simplelink-lowpower-f2-sdk",
+   "sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "projectspectext at 87ff5b63 links npi_client_mt.c, npi_frame_mt.c, npi_rxbuf.c, npi_task.c, npi_tl.c, npi_tl_uart.c (+headers) into Application/npi with -DNPI -DNPI_USE_UART -DZNP_NPI; stock NPI ownership kept, no extra serial owner in B0",
+   "kind": "npi_group",
+   "path": "source/ti/zstack/npi/npi_task.c",
+   "repo": "TexasInstruments/simplelink-lowpower-f2-sdk",
+   "sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "projectspectext at 87ff5b63 links mt_*.c (mt_af/mt_app/mt_app_config/mt_debug/mt_gp/...) into Application/mt; MT SYS_PING/SYS_VERSION dispatch per R4_SOURCE_CROSSWALK.md mt_sys.c:246-398 anchors",
+   "kind": "mt_group",
+   "path": "source/ti/zstack/mt/mt_sys.c",
+   "repo": "TexasInstruments/simplelink-lowpower-f2-sdk",
+   "sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "projectspec blob 4d05569e line 566 links this board .cmd (SDK blob 1e5777c2): FLASH app 0x00000..0xA9FFF, FLASH_NV 0xAA000..0xADFFF, FLASH_LAST 0xAE000..0xAFFFF (.ccfg HIGH), .resetVecs, --stack_size=1024; SysConfig generates ti_utils_build_linker.cmd.genlibs per projectspec linkerBuildOptions",
+   "kind": "linker",
+   "path": "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd",
+   "repo": "TexasInstruments/simplelink-lowpower-f2-sdk",
+   "sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "git ls-tree -r FETCH_HEAD at 3615ad5d lists source/ti/devices/cc13x2x7_cc26x2x7/startup_files/startup_ticlang.c and ccfg.c; boot vectors/BSL via SysConfig-generated CCFG, unmodified in B0",
+   "kind": "startup_ccfg",
+   "path": "source/ti/devices/cc13x2x7_cc26x2x7/startup_files/startup_ticlang.c",
+   "repo": "TexasInstruments/simplelink-lowpower-f2-sdk",
+   "sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "git ls-tree FETCH_HEAD cc13xx_cc26xx_sdk at 87ff5b63: mode 160000 commit 3615ad5d3f4f271258d18a2f5ce1785064ff9a58; examples message names 8.33.00.16, SDK message 'SimpleLink lpf2-8.33.00.16 update'",
+   "kind": "sdk_gitlink",
+   "path": "cc13xx_cc26xx_sdk",
+   "repo": "TexasInstruments/simplelink-zstack-examples",
+   "sha": "87ff5b638b632050228a7504f35cf3b95581c278",
+   "status": "SOURCE_CONFIRMED"
+  },
+  {
+   "evidence": "Upstream README.md at 87ff5b63 section 'Build SDK Libraries': 'Each time you update an SDK submodule, you will need to build its libraries' before project build",
+   "kind": "build_order",
+   "path": "README.md",
+   "repo": "TexasInstruments/simplelink-zstack-examples",
+   "sha": "87ff5b638b632050228a7504f35cf3b95581c278",
+   "status": "SOURCE_CONFIRMED"
+  }
+ ],
+ "forbidden_statuses": [
+  "HARDWARE_PROVEN",
+  "NATIVE_CI",
+  "SYNTHETIC_TEST",
+  "BINARY_EQUIVALENT"
+ ],
+ "issue": 90,
+ "phase": "R4-B0",
+ "schema": "r4-b0-donor-inventory-v1",
+ "toolchain": {
+  "ccs": "12.8.0.00012",
+  "ccs_download_sha256": "fa807c9ea3bc8a558c4c9bef64c37261c1146d0b9da96ae7867e1b5e3046e06d",
+  "sysconfig": "1.21.1.3772",
+  "sysconfig_download_sha256": "0c1674f82a53b187f60e376de3da2b719f003187c7437998c2ce3f975504d1d5",
+  "ti_arm_clang": "3.2.2.LTS",
+  "ti_arm_clang_download_sha256": "2864bb1013ec60b1290f92ff723a4fc222653db1278c08ad81af6063f698dec9"
+ }
+}

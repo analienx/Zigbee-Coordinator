@@ -42,11 +42,16 @@ def inspect_effective_serial(config: dict, options: dict) -> dict:
     addon = options.get('serial')
     if not isinstance(src, dict) or not isinstance(addon, dict):
         raise ValueError('Both data-folder and add-on serial configuration are required')
-    for name in ('port', 'adapter', 'baudrate'):
-        if name not in src or not isinstance(addon.get(name), type(src[name])) or addon[name] != src[name]:
+    # Require shared explicit source port/adapter; optional source baud
+    # and HWFC fields may be absent in either configuration. Only allow
+    # absent-vs-present when the explicit value equals the known default.
+    for name in ('port', 'adapter'):
+        if name not in src or type(addon.get(name)) is not type(src[name]) or addon[name] != src[name]:
             raise ValueError('Serial setting disagreement between YAML and add-on options: ' + name)
-    if 'rtscts' in addon and addon['rtscts'] != src.get('rtscts'):
-        raise ValueError('Flow-control mismatch in add-on serial options')
+    for name, default in (('baudrate', 115200), ('rtscts', False)):
+        left, right = src.get(name, default), addon.get(name, default)
+        if type(left) is not type(default) or type(right) is not type(default) or left != right:
+            raise ValueError('Serial setting disagreement between YAML and add-on options: ' + name)
     socat = options.get('socat')
     if isinstance(socat, dict) and socat.get('enabled') is True:
         raise ValueError('Enabled socat override needs its own reviewed migration path')
@@ -60,12 +65,14 @@ def render_addon_options(options: dict, host: str, port: int) -> dict:
     target = deepcopy(options)
     target['serial']['port'] = f'tcp://{host}:{port}'
     target['serial']['adapter'] = 'zstack'
+    target['serial']['baudrate'] = 115200
+    target['serial']['rtscts'] = False
     original_without_serial = deepcopy(options); original_without_serial.pop('serial')
     target_without_serial = deepcopy(target); target_without_serial.pop('serial')
     if original_without_serial != target_without_serial:
         raise RuntimeError('Unexpected change to non-serial add-on options')
     for key in options['serial']:
-        if key not in ('port', 'adapter') and target['serial'][key] != options['serial'][key]:
+        if key not in ('port', 'adapter', 'baudrate', 'rtscts') and target['serial'][key] != options['serial'][key]:
             raise RuntimeError('Unexpected add-on serial option changed')
     return target
 
