@@ -20,6 +20,11 @@ PATHS=(
     "source/ti/zstack/npi/npi_tl_uart.c",
 )
 
+def unique_occurrence(source, needle):
+    """str.count misses OVERLAPPING duplicates; find the next start instead."""
+    first=source.find(needle)
+    return first>=0 and source.find(needle,first+1)<0
+
 def merge_lines(original, b1, b4):
     if original==b4:
         return b1, []
@@ -44,7 +49,7 @@ def merge_lines(original, b1, b4):
             # The ORIGINAL donor must also identify this hunk uniquely.
             # SequenceMatcher may otherwise align a repeated line at an
             # arbitrary later occurrence and incorrectly call it disjoint.
-            if not needle or original.count(needle)!=1 or text.count(needle)!=1:
+            if not needle or not unique_occurrence(original, needle) or not unique_occurrence(text, needle):
                 continue
             text=text.replace(needle,left+replacement+right,1)
             receipts.append({"mode":mode,"source_start_line":i1+1,
