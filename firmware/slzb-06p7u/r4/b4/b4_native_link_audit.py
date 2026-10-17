@@ -10,7 +10,9 @@ from pathlib import Path
 import re
 import subprocess
 
-REQUIRED = ("B4_NpiSrspEnqueued", "B4_SysReadOnlyDiagnostics", "MT_SysCommandProcessing")
+RAM_COUNTERS = ("B4_NpiSrspDepth", "B4_NpiSrspHighWater",
+                "B4_NpiAsyncDepth", "B4_NpiAsyncHighWater", "B4_NpiSrspEnqueued")
+REQUIRED = RAM_COUNTERS + ("B4_SysReadOnlyDiagnostics", "MT_SysCommandProcessing")
 SYMBOL = re.compile(r"^([0-9a-fA-F]+)\s+([TtBbDd])\s+([A-Za-z_][A-Za-z_0-9]*)$")
 
 def verify(elf, nm, manifest, receipt):
@@ -29,7 +31,7 @@ def verify(elf, nm, manifest, receipt):
     patch = json.loads(Path(receipt).read_text())
     if (patch.get("stage") != "PATCHED_DISPOSABLE_SDK_NOT_LINKED"
             or patch.get("payload_bytes") != 132
-            or patch.get("valid_counter_indices") != [4]
+            or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4]
             or patch.get("radio_boot_identity") != "UNKNOWN"
             or len(patch.get("written", {})) != 2):
         raise ValueError("native patch input is not proven")
@@ -44,7 +46,7 @@ def verify(elf, nm, manifest, receipt):
         raise ValueError("B4 functions/counter not in actual ELF symbols: " + ", ".join(missing))
     # B4 counter must have a RAM data/BSS storage symbol, not a source
     # string or a mislinked function. Native ELF memory budget is B0's job.
-    if names["B4_NpiSrspEnqueued"][1].lower() not in ("b", "d"):
+    if any(names[name][1].lower() not in ("b", "d") for name in RAM_COUNTERS):
         raise ValueError("B4 counter not native RAM data")
     if names["B4_SysReadOnlyDiagnostics"][1].lower() != "t":
         raise ValueError("B4 MT handler not native code")
