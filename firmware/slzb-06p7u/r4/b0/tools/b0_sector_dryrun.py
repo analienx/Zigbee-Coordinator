@@ -9,7 +9,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from b0_image_audit import _parse_intel_hex
+from b0_image_audit import _parse_intel_hex, _safe_artifact, loads_strict
 from b0_flash_boundary import (
     inspect, CONSERVATIVE_NV_BEGIN, NV_END, CCFG_BEGIN, IMAGE_LEN,
 )
@@ -67,8 +67,13 @@ def classify_payload(payload):
 
 def inspect_image(directory):
     audit = inspect(directory)  # independent SHA, HEX/BIN and NV checks
-    manifest=json.loads((directory/"manifest.json").read_text())
-    hex_file=directory / manifest["files"]["hex"]["file"]
+    manifest=loads_strict((directory/"manifest.json").read_text())
+    entry=manifest["files"]["hex"]
+    hex_file, err=_safe_artifact(directory,entry["file"])
+    if err or not hex_file.is_file() or hex_file.is_symlink():
+        raise ValueError("B0_SECTOR_UNSAFE_HEX_PATH")
+    if hashlib.sha256(hex_file.read_bytes()).hexdigest()!=entry["sha256"]:
+        raise ValueError("B0_SECTOR_HEX_DIGEST_CHANGED_AFTER_PARENT_AUDIT")
     payload, error=_parse_intel_hex(hex_file)
     if error: raise ValueError("B0_SECTOR_HEX_INVALID: "+error)
     result=classify_payload(payload)
