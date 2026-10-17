@@ -29,7 +29,7 @@ def validate(log, exit_code, injection):
     # A real #10099 on FLASH or CCFG is not an SRAM-overbudget success.
     # Bind the *same TI diagnostic* to the CC2652P7 SRAM geometry, rather
     # than accepting a stray "SRAM" reference elsewhere in the compiler log.
-    if not re.search(r"error\\s*#10099-D:[\\s\\S]{0,500}?Available memory ranges:\\s*SRAM\\s+size:\\s*0x24000\\b",log,re.I):
+    if not re.search(r"error\s*#10099-D:[\s\S]{0,500}?Available memory ranges:\s*SRAM\s+size:\s*0x24000\b",log,re.I):
         raise P3ValidationError("failure not demonstrated in SRAM placement")
     # TI Clang reports the linker failure twice: the real #10099-D from
     # tiarmlnk, then its own expected "tiarmlnk command failed" wrapper.
