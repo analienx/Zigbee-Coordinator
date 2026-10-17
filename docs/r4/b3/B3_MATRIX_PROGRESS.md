@@ -1,6 +1,6 @@
 # B3-04 — mandatory Annex M01–M36 status (no result inflation)
 
-The issue #97 annex is the acceptance source. Only cases which actually exercise the specified function/failure qualify as PASS. Current `tests/test_r4_b3_migration.py` uses invented JSON/ZIP fixtures, and `tests/b3_host/osal_driver_test.c` executes the original pinned TI OSAL C with narrow patches and callback mocks. Neither is the required NVOCMP crash/reboot harness. The native workflow, if green, compiles an NV2 image **but does not** prove real radio/NV retention.
+The issue #97 annex is the acceptance source. Only cases which actually exercise the specified function/failure qualify as PASS. Current `tests/test_r4_b3_migration.py` uses invented JSON/ZIP fixtures, and `tests/b3_host/osal_driver_test.c` executes the original pinned TI OSAL C with narrow patches and callback mocks. Neither is the required NVOCMP crash/reboot harness. Native TI CCS NV2/NV3/NV5 builds have passed, **but do not** prove real radio/NV retention.
 
 | Annex | State | Current coverage / missing oracle |
 |---|---|---|
@@ -23,10 +23,18 @@ The issue #97 annex is the acceptance source. Only cases which actually exercise
 | M35 | OPEN | B1 HOLD_SECURITY with real queued RF and B2 routing interactions unimplemented. |
 | M36 | PARTIAL | Synthetic consistency always returns three false mutation authorities. No restoration capability whatsoever. |
 
-**No M01–M36 full result is asserted yet**; success in partial tests must not be converted to test PASS without actual source-compiled injection, flashed data digest, functional NVS op receipts and independent review. Native NV3/NV5, 1k/10k/100k wear, cold-power recovery and physical RF remain OPEN. Test run IDs and exact current SHA belong in #97 progress comment only after verified CI conclusion.
+**No M01–M36 full result is asserted yet**; success in partial tests must not be converted to test PASS without actual source-compiled injection, flashed data digest, functional NVS op receipts and independent review. Native NV3/NV5 builds passed (not deployment-qualified); 1k/10k/100k wear, cold-power recovery and physical RF remain OPEN. Test run IDs and exact current SHA belong in #97 progress comment only after verified CI conclusion.
 
 ## 17 October actual source-C supplemental coverage (not full Annex acceptance)
-M01/M03/M04: original TI 8.33 NVOCMP C host runs healthy NV2/NV3/NV5 seed/update/compaction, with persistent mock flash re-open across process restarts; native NV3/NV5 linker workflow newly proposed and not yet accepted.
+M01/M03/M04: original TI 8.33 NVOCMP C host runs healthy NV2/NV3/NV5 seed/update/compaction, with persistent mock flash re-open across process restarts; native NV3/NV5 CCS builds subsequently passed in run 39002607845.
 M08/M09: real TI NVOCMP source write/read status injections (bounded) now exercised; first red CI reproduced data-write rejection followed by invalid item header; narrow TI patch repaired it, as shown by NV2/3/5 passing [write run 39001593062](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001593062) and [read run 39001618236](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001618236).
 M12: actual compaction healthy, but not all mutation-boundary cuts and repair states; still PARTIAL. M17: actual pinned TI APS/TCLK native types 24/20 bytes plus NVOCMP item header 7; no whole table native capacity guarantee. M18: source-extracted actual TI APS/TCLK saving routines retain pending after rejected writes; no B1 RF block or reserve-before-send. M25: no cross-item transactional generation. M01–M36 full case matrix and independent reviewer proof **remain OPEN**.
 Real NVS hardware, preserved pre/post every step SHA, physical cold-brownout behavior, flash lifetime and radio security never claimed.
+
+## Native CCS verification and independent code-review findings — 17 October
+
+Verified GitHub Actions successful latest-head jobs: [NV3 and NV5](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002607845), [NV2](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002607852), [B0 native baseline](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39002607854). These validate compiler/linker/audit paths, **not** hardware persistence, power-cut recovery, capacity or RF authorization.
+
+Source review of `b3_source_overlay.py` identifies a security-critical unresolved contract: `NVOCMP_read` is a void-returning function, sets global `NVOCMP_failF` and wipes a bounded buffer, but several internal callers may continue using the output unless they explicitly inspect the sticky failure; the external `readItem` wrapper detects failure only after its inner call. Audit every internal caller, compaction and initialization before asserting that a read failure cannot promote partial state. Another hazard: the `NVOCMP_read` bounds check validates `pg` against `NVOCMP_NVPAGES` but does not independently validate that the runtime NVS handle and page layout are initialized before use. No claim of physical safety follows from passing mocked tests.
+
+Security review: `ZDSecMgrGenerateRndKey` now returns a checked status, but its failure path zeroes the caller buffer and all call sites must be shown to suppress **subsequent** publication, fallback, and commissioning side effects. `ZDApp_SaveNwkKey` still ignores persistence status and clears `nwkFrameCounterChanges`; counter reservation-before-send and B1 RF hold remain P0. Treat the current build as experimental and not flashable.
