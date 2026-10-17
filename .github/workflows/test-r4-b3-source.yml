@@ -111,6 +111,9 @@ jobs:
           pattern=r'(if \(osal_nv_write_ex\([\s\S]*?pKeyData\)) == SUCCESS\)'
           mutant,n=re.subn(pattern,r'\1 >= 0)',s)
           assert n==2, f"expected two write guards, got {n}"
+          checked='OsalPort_memcmp(&persisted, pKeyData, sizeof(persisted))'
+          assert mutant.count(checked)==2
+          mutant=mutant.replace(checked, '1')  # deliberately bypass readback too
           f.write_text(mutant)
           PY
           gcc -std=c11 -O0 -Wall -Wextra -Wno-type-limits \
@@ -153,9 +156,19 @@ jobs:
           from pathlib import Path
           p=Path('/tmp/b3host/ti_nwk.c')
           s=p.read_text()
-          old='(void *)&keyItems) == SUCCESS)'
-          assert s.count(old)==1
-          s=s.replace(old,'(void *)&keyItems) >= SUCCESS)')
+          old = (
+          "  if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),\n"
+          "                    (void *)&keyItems) == SUCCESS &&\n"
+          "      osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(persistedKey),\n"
+          "                   &persistedKey) == SUCCESS &&\n"
+          "      OsalPort_memcmp(&persistedKey, &keyItems, sizeof(keyItems)))"
+          )
+          assert s.count(old)==1, "B3 checked NWK save guard drift"
+          mutant = (
+          "  if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),\n"
+          "                    (void *)&keyItems) >= SUCCESS)"
+          )
+          s=s.replace(old,mutant)
           p.write_text(s)
           PY
           gcc -std=c11 -O0 -Wall -Wextra -Wno-error \

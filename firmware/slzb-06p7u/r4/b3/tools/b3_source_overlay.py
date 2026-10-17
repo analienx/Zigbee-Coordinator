@@ -279,6 +279,11 @@ def nvocmp_changes(source):
 
 
 def security_changes(source):
+    # The pinned donor also declares this function locally in zd_sec_mgr.c
+    # (near line 280), independently of zd_sec_mgr.h. Update both ABI sites.
+    source = one(source,
+        "void ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, uint8_t shift, uint8_t *key);",
+        "ZStatus_t ZDSecMgrGenerateKeyFromSeed(uint8_t *extAddr, uint8_t shift, uint8_t *key);")
     # The actual TI APS/TCLK checkpoint routines used to clear pendingFlag
     # even when the persistence write was rejected. Do not make a failed
     # checkpoint look durable. B1 still owns RF HOLD on failed persistence.
@@ -294,7 +299,12 @@ def security_changes(source):
         "                               sizeof(APSME_ApsLinkKeyNVEntry_t),\n"
         "                               pKeyData) == SUCCESS)\n"
         "          {\n"
-        "              ApsLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+        "              APSME_ApsLinkKeyNVEntry_t persisted = {0};\n"
+"              if (osal_nv_read_ex(ZCD_NV_EX_APS_KEY_DATA_TABLE, i, 0,\n"
+"                                  sizeof(persisted), &persisted) == SUCCESS &&\n"
+"                  OsalPort_memcmp(&persisted, pKeyData, sizeof(persisted)))\n"
+"                  ApsLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+"              memset(&persisted, 0, sizeof(persisted));\n"
         "          }")
     source = one(source,
         "          // Write the TC link key back to the NV\n"
@@ -308,7 +318,12 @@ def security_changes(source):
         "                               sizeof(APSME_TCLinkKeyNVEntry_t),\n"
         "                               pKeyData) == SUCCESS)\n"
         "          {\n"
-        "              TCLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+        "              APSME_TCLinkKeyNVEntry_t persisted = {0};\n"
+"              if (osal_nv_read_ex(ZCD_NV_EX_TCLK_TABLE, i, 0,\n"
+"                                  sizeof(persisted), &persisted) == SUCCESS &&\n"
+"                  OsalPort_memcmp(&persisted, pKeyData, sizeof(persisted)))\n"
+"                  TCLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+"              memset(&persisted, 0, sizeof(persisted));\n"
         "          }")
     # Pinned source P0: TI TRNG failure branch did NOTHING and still
     # published uninitialized entropy bytes. Change API to a checked status;
@@ -385,6 +400,8 @@ def nwk_checkpoint_changes(source):
 {
   nwkActiveKeyItems keyItems;
   nwkSecMaterialDesc_t nwkSecMaterialDesc = {0};
+  nwkSecMaterialDesc_t persisted = {0};
+  nwkActiveKeyItems persistedKey = {0};
   uint8_t found = FALSE;
   uint8_t i;
 
@@ -407,7 +424,10 @@ def nwk_checkpoint_changes(source):
       found = TRUE;
       if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i,
                            sizeof(nwkSecMaterialDesc_t),
-                           &nwkSecMaterialDesc) != SUCCESS)
+                           &nwkSecMaterialDesc) != SUCCESS ||
+          osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i, 0,
+                          sizeof(persisted), &persisted) != SUCCESS ||
+          !OsalPort_memcmp(&persisted, &nwkSecMaterialDesc, sizeof(persisted)))
       {
         goto b3_checkpoint_done;
       }
@@ -427,7 +447,11 @@ def nwk_checkpoint_changes(source):
     if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE,
                          gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1,
                          sizeof(nwkSecMaterialDesc_t),
-                         &nwkSecMaterialDesc) != SUCCESS)
+                         &nwkSecMaterialDesc) != SUCCESS ||
+        osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE,
+                        gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1, 0,
+                        sizeof(persisted), &persisted) != SUCCESS ||
+        !OsalPort_memcmp(&persisted, &nwkSecMaterialDesc, sizeof(persisted)))
     {
       goto b3_checkpoint_done;
     }
@@ -436,12 +460,16 @@ def nwk_checkpoint_changes(source):
   // Save key snapshot after counter material: a failure cannot falsely
   // acknowledge both records. This is NOT cross-item atomic key rotation.
   if (osal_nv_write(ZCD_NV_NWKKEY, sizeof(nwkActiveKeyItems),
-                    (void *)&keyItems) == SUCCESS)
+                    (void *)&keyItems) == SUCCESS &&
+      osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(persistedKey),
+                   &persistedKey) == SUCCESS &&
+      OsalPort_memcmp(&persistedKey, &keyItems, sizeof(keyItems)))
   {
     nwkFrameCounterChanges = 0;
   }
 
 b3_checkpoint_done:
+  memset(&persistedKey, 0, sizeof(persistedKey));
   memset(&keyItems, 0, sizeof(keyItems));
 }'''
     source = b3_replace_function(
@@ -452,6 +480,7 @@ b3_checkpoint_done:
   uint8_t Found = FALSE;
   uint8_t i;
   nwkSecMaterialDesc_t nwkSecMaterialDesc = {0};
+  nwkSecMaterialDesc_t persisted = {0};
   uint8_t UpdateFrameCounter = FALSE;
   const uint32_t reserve = (uint32_t)MAX_NWK_FRAMECOUNTER_CHANGES +
                            (uint32_t)NWK_FRAMECOUNTER_CHANGES_RESTORE_DELTA;
@@ -494,9 +523,12 @@ b3_checkpoint_done:
     // FrameCounterUpdated. B1 must still gate all encrypted RF sends.
     if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i,
                          sizeof(nwkSecMaterialDesc_t),
-                         &nwkSecMaterialDesc) != SUCCESS)
+                         &nwkSecMaterialDesc) != SUCCESS ||
+        osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i, 0,
+                        sizeof(persisted), &persisted) != SUCCESS ||
+        !OsalPort_memcmp(&persisted, &nwkSecMaterialDesc, sizeof(persisted)))
     {
-      return;
+      return; // never publish a floor that NV did not retain byte-for-byte
     }
     nwkFrameCounter = nwkSecMaterialDesc.FrameCounter;
     FrameCounterUpdated = TRUE;
