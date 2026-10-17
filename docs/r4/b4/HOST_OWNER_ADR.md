@@ -32,3 +32,7 @@ In addition to the active `Znp` mutex, `Waitress.b4IsIdle()` requires no normal 
 ## CR-13: the decisive F0 guard must execute INSIDE ZNP AsyncMutex
 
 A pre-mutex poison test alone is insufficient: caller A's F0 can time out while a second F0 call, already past the early check, waits in the `AsyncMutex` queue. The pinned overlay now checks `b4DiagPoisoned` **and** normal `Waitress.b4IsIdle()` again *inside* `Znp.request()`'s existing mutex callback **before** writing any frame. This change has no stock SYS_PING/AF/ZDO scheduling or retry effect. It only prevents uncorrelatable experimental F0 retry traffic. Real Node test: `REVIEW-P0: F0 queued before first timeout cannot escape the mutex after quarantine` and direct pending-Waitress F0 denial; verified [39004432505](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39004432505). No serial device opened.
+
+## Final admission rule: owner can close after queue admission
+
+The pinned `Znp.request()` checks `initialized` before entering `AsyncMutex.run()`, while a genuine port-close callback sets it false. An experimental F0 queued behind an ordinary SRSP can outlive the serial-owner connection. Before transmitting optional F0, the already-existing ZNP mutex callback now requires **currently initialized** *and* not quarantined *and* Waitress idle. Otherwise it rejects that F0 with no serial write. Source-linked regression test covers this exact order. No second port, no reset, no impact on ordinary ZNP request policy.

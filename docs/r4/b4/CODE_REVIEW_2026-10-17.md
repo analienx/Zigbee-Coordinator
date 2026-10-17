@@ -35,3 +35,11 @@ The initial 17 real pinned herdsman Node tests passed at `61adb636a3f3097b18c5b9
 ## Release decision
 
 **`B4_SOURCE_READY = BLOCKED`.** Native minimal F0 plus one counter is genuinely linked, but this is not a finished versioned diagnostics subsystem; `HOST_NOT_INSTALLED`, `PHYSICAL_UNVERIFIED`, `INTEGRATION_PENDING`, `INDEPENDENT_REVIEW_NOT_DONE`, no merge, flash, reset or live HA/USB/MQTT modification. The new defensive patch only narrows exposure of uncorrelatable F0; it does not recover a dead NPI or identify firmware root cause.
+
+## CR-14 P0 — disconnected owner while diagnostic queued (final source-only correction)
+
+Pinned herdsman `Znp.request()` checks `this.initialized` **before** `AsyncMutex.run()` (`znp.ts:243–249`), but `onPortClose()` sets `initialized=false` asynchronously (`znp.ts:87–90`). A pending F0 can therefore enter its mutex callback after the UART/USB owner has closed, despite having passed initial admission while connected. This is separate from CR-13's diagnostic timeout quarantine.
+
+**Fix:** `herdsman_overlay.py` adds `!this.initialized` to the diagnostic-only **intra-mutex, pre-write** reject predicate. Ordinary AF/ZDO/SYS request logic is unchanged, as are no-retry and fail-closed F0 semantics. **Proof:** `REVIEW-P0: a queued F0 never writes after the existing owner is disconnected` constructs actual compiled pinned `Znp`, occupies its existing mutex with a real `ping` waiter, queues an F0, simulates the pinned `onPortClose` state transition, then releases `ping`. It asserts zero F0 UNPI writes, no leaked waiter and rejected F0; no port opened.
+
+This source correction was reviewed directly against `Koenkk/zigbee-herdsman@0968f979d558874b17396c96b66382d4236bbdcd` and the actual generic `AsyncMutex.run()` implementation. Independent review and physical proof remain absent. Prior exact-head source/firmware CI **7/7 PASS** at `82c1ddb1e7cc948c274fc744434a97cb1c7cb9bc`; a final amended-head CI verdict must be captured separately.
