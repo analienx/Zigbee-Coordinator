@@ -107,8 +107,8 @@ jobs:
           s=f.read_text()
           import re
           # Match only the two *write* result guards, not preceding read guards.
-          pattern=r'(if \\(osal_nv_write_ex\\([\\s\\S]*?pKeyData\\)) == SUCCESS\\)'
-          mutant,n=re.subn(pattern,r'\\1 >= 0)',s)
+          pattern=r'(if \(osal_nv_write_ex\([\s\S]*?pKeyData\)) == SUCCESS\)'
+          mutant,n=re.subn(pattern,r'\1 >= 0)',s
           assert n==2, f"expected two write guards, got {n}"
           f.write_text(mutant)
           PY
