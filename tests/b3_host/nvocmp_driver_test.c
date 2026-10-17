@@ -39,6 +39,11 @@ int main(int argc, char **argv) {
         b3_flash_receipt();
         return 0;
     }
+    if (!strcmp(argv[1],"reopen_or_hold") && rc != NVINTF_SUCCESS) {
+        puts("B3_REOPEN_FAIL_CLOSED_HOLD");
+        b3_flash_receipt();
+        return 0;
+    }
     if (rc != NVINTF_SUCCESS) die("init",rc);
     unsigned char data[32],more[32];
     memset(data,0x11,sizeof(data));
@@ -74,6 +79,38 @@ int main(int argc, char **argv) {
         rc=api.updateItem(ids[0],sizeof(more),more);
         if (rc==NVINTF_SUCCESS) die("SILENT_WRITE_FAILURE",rc);
         puts("B3_INJECTED_WRITE_REJECTED");
+    } else if (!strcmp(argv[1],"churn") || !strcmp(argv[1],"churn_injected")) {
+        bool injecting = !strcmp(argv[1],"churn_injected");
+        check("churn_baseline",&api,0x11,true);
+        for (unsigned i=0;i<1500;i++) {
+            memset(more, (i % 2) ? 0x22 : 0x11, sizeof(more));
+            rc=api.updateItem(ids[0],sizeof(more),more);
+            if(rc!=NVINTF_SUCCESS) {
+                if (!injecting) die("unexpected_churn_nv_error",rc);
+                printf("B3_CHURN_INJECTION_REJECTED iteration=%u status=%u\n",i,rc);
+                b3_flash_receipt();
+                return 0;
+            }
+        }
+        if(injecting) die("INJECTED_MUTATION_SILENT_SUCCESS",rc);
+        check("churn_1500_committed",&api,0x22,true);
+        puts("B3_CHURN_1500_SOURCE_C_COMPACTION_COMPLETE");
+    } else if (!strcmp(argv[1],"reopen_or_hold")) {
+        unsigned char out[32];
+        for(size_t k=0;k<sizeof(ids)/sizeof(ids[0]);k++) {
+            memset(out,0,sizeof(out));
+            rc=api.readItem(ids[k],0,sizeof(out),out);
+            if(rc!=NVINTF_SUCCESS) die("REOPEN_READ_NOT_FAIL_CLOSED",rc);
+            if(k==0) {
+                if(out[0]!=0x11 && out[0]!=0x22) die("TORN_OR_FABRICATED_PRIMARY",rc);
+                for(size_t j=1;j<sizeof(out);j++)
+                    if(out[j]!=out[0]) die("MIXED_PRIMARY_RECORD",rc);
+            } else {
+                for(size_t j=0;j<sizeof(out);j++)
+                    if(out[j]!=0x11) die("SECONDARY_KEY_LOST",rc);
+            }
+        }
+        puts("B3_REOPEN_PRESERVED_ALL_SYNTHETIC_KEYS");
     } else if (!strcmp(argv[1],"fail_compact")) {
         check("pre_injected_compact",&api,0x11,true);
         rc=api.compactNV(0);

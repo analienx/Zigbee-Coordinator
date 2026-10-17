@@ -75,6 +75,36 @@ jobs:
           new_sha=$(sha256sum "$B3_SYNTHETIC_FLASH" | cut -d' ' -f1)
           test "$old_sha" = "$new_sha"
           /tmp/b3-ti-nvocmp verify
+      - name: Real TI NVOCMP 1500-update churn must actually erase and compact
+        run: |
+          set -euo pipefail
+          export B3_SYNTHETIC_FLASH=/tmp/b3-churn-${{ matrix.pages }}.bin
+          rm -f "$B3_SYNTHETIC_FLASH"
+          /tmp/b3-ti-nvocmp seed >/tmp/b3-churn-seed.log 2>&1
+          cp "$B3_SYNTHETIC_FLASH" /tmp/b3-churn-baseline-${{ matrix.pages }}.bin
+          /tmp/b3-ti-nvocmp churn >/tmp/b3-churn.log 2>&1
+          grep -F 'B3_CHURN_1500_SOURCE_C_COMPACTION_COMPLETE' /tmp/b3-churn.log
+          grep -E '^B3_ERASE_AT op=[0-9]+ pg=' /tmp/b3-churn.log | head -n 4
+          B3_READONLY_REBOOT=1 /tmp/b3-ti-nvocmp reopen_or_hold >/tmp/b3-reopen.log 2>&1
+          grep -F 'B3_REOPEN_PRESERVED_ALL_SYNTHETIC_KEYS' /tmp/b3-reopen.log
+      - name: Interrupted genuine TI compaction mutation probes (synthetic, never live)
+        run: |
+          set -euo pipefail
+          export B3_SYNTHETIC_FLASH=/tmp/b3-churn-cut-${{ matrix.pages }}.bin
+          first_erase=$(sed -nE 's/^B3_ERASE_AT op=([0-9]+) pg=.*/\\1/p' /tmp/b3-churn.log | head -n1)
+          test -n "$first_erase"
+          for fault in 1 2 3 "$((first_erase - 1))" "$first_erase" "$((first_erase + 1))"; do
+            for mode in 1 2; do
+              cp /tmp/b3-churn-baseline-${{ matrix.pages }}.bin "$B3_SYNTHETIC_FLASH"
+              B3_FAULT_NUMBER="$fault" B3_FAULT_MODE="$mode" /tmp/b3-ti-nvocmp churn_injected > /tmp/b3-inject.log 2>&1
+              grep -F 'B3_CHURN_INJECTION_REJECTED' /tmp/b3-inject.log
+              # Re-open in cold process with a read-only flash backend.
+              # A damaged image may be HELD; success requires all four rows.
+              B3_READONLY_REBOOT=1 /tmp/b3-ti-nvocmp reopen_or_hold >/tmp/b3-reboot.log 2>&1
+              grep -Eq 'B3_REOPEN_FAIL_CLOSED_HOLD|B3_REOPEN_PRESERVED_ALL_SYNTHETIC_KEYS' /tmp/b3-reboot.log
+              echo "B3_MUTATION_PROBE pages=${{ matrix.pages }} mode=$mode op=$fault accepted"
+            done
+          done
       - name: Source-only matrix acceptance disclaimer
         run: |
           echo "Compiled genuine TI NVOCMP; mocked NV_LINUX I/O. NOT native NVS, not real power loss."

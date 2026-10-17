@@ -18,6 +18,7 @@ static const char *file_path;
 static unsigned long op_number, reads, writes, erases;
 static unsigned long inject_op, inject_read;
 static int inject_mode; /* 1 pre-write fail, 2 partial mutation fail */
+static bool readonly_mode;
 static int persist(void) {
     FILE *f = fopen(file_path, "wb");
     if (!f) return -1;
@@ -46,6 +47,8 @@ void NV_LINUX_init(void) {
     inject_read = p ? strtoul(p, NULL, 10) : 0;
     p = getenv("B3_FAULT_MODE");
     inject_mode = p ? atoi(p) : 1;
+    p = getenv("B3_READONLY_REBOOT");
+    readonly_mode = p && strcmp(p,"1")==0;
 }
 void NV_LINUX_save(void) { /* every operation is already flash-persistent */ }
 int NV_LINUX_read(uint8_t pg, uint16_t off, void *dest, uint16_t length) {
@@ -58,6 +61,7 @@ int NV_LINUX_read(uint8_t pg, uint16_t off, void *dest, uint16_t length) {
 }
 int NV_LINUX_write(uint8_t pg, uint16_t off, uint8_t *src, uint16_t length) {
     writes++; op_number++;
+    if (readonly_mode) { fprintf(stderr,"B3_REBOOT_WRITE_BLOCKED op=%lu\\n",op_number); return -1; }
     if (!bounds(pg,off,length) || (length && !src)) { fprintf(stderr,"B3_WRITE_OOB\n"); exit(93); }
     if (inject_op == op_number && inject_mode == 1) return -1;
     uint8_t *dst = flash + pg*B3_SECTOR + off;
@@ -72,6 +76,8 @@ int NV_LINUX_write(uint8_t pg, uint16_t off, uint8_t *src, uint16_t length) {
 }
 int NV_LINUX_erase(uint8_t pg) {
     erases++; op_number++;
+    fprintf(stderr,"B3_ERASE_AT op=%lu pg=%u\\n",op_number,pg);
+    if (readonly_mode) { fprintf(stderr,"B3_REBOOT_ERASE_BLOCKED op=%lu\\n",op_number); return -1; }
     if (!bounds(pg,0,B3_SECTOR)) { fprintf(stderr,"B3_ERASE_OOB\n"); exit(94); }
     if (inject_op == op_number && inject_mode == 1) return -1;
     size_t bytes=(inject_op == op_number && inject_mode == 2) ? B3_SECTOR/2 : B3_SECTOR;
