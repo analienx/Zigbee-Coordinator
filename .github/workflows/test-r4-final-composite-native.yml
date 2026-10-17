@@ -71,6 +71,9 @@ jobs:
           python -m unittest -v tests.test_r4_preserve_resident_boot_nvs
           python -m unittest -v tests.test_r4_package_resident_app
           python -m unittest -v tests.test_r4_prepare_direct_rom_boot
+          python -m unittest -v tests.test_r4_make_direct_app_only
+          python -m unittest -v tests.test_r4_make_rom_handoff_sector
+          python -m unittest -v tests.test_r4_direct_ccfg_offline_plan
       - name: P7U fitted MCUboot signature verification and adversarial denial (synthetic only)
         run: |
           python -m pip install cryptography==44.0.2
@@ -553,6 +556,22 @@ jobs:
           assert r['flash_authorized'] is False
           print('DIRECT ROM 0x0 LINKED / INTERNAL NVS BELOW 0xA4000; FLASH NOT AUTHORIZED')
           PY
+          # Produce an address-safe, app-only R4 HEX that contains no CCFG,
+          # protected NV or signed-MCUboot replacement; leave release NOT FLASH.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_make_direct_app_only.py" \
+            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-direct-app-only
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('/tmp/b0out/r4-direct-app-only')
+          r=json.loads((root/'r4-direct-app-only-receipt.json').read_text())
+          assert r['physical_vector_address']=='0x00000000'
+          assert r['sectors_to_program']==23
+          assert r['native_ccfg_is_not_in_payload'] is True
+          assert r['erase_nv'] is False and r['erase_ccfg'] is False
+          assert r['erase_bootloader'] is False and r['flash_authorized'] is False
+          print('NATIVE APP-ONLY HEX ISOLATED: CCFG+NV excluded, no flash granted')
+          PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
@@ -617,6 +636,23 @@ jobs:
           python firmware/slzb-06p7u/r4/b1/tools/compare_native.py \
             --first /tmp/b1-replica-1/b0out --second /tmp/b1-replica-2/b0out \
             --expected-sha "$B1_SOURCE_SHA" --out /tmp/b1-native-reproducibility.json
+      - name: Require deterministic app-only HEX across native replicas
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          a,b=(Path('/tmp/b1-replica-%d/b0out/r4-direct-app-only'%i) for i in (1,2))
+          names=[]
+          for root in (a,b):
+              report=json.loads((root/'r4-direct-app-only-receipt.json').read_text())
+              assert report['flash_authorized'] is False
+              assert report['sectors_to_program']==23
+              file=root/report['output_hex']
+              assert hashlib.sha256(file.read_bytes()).hexdigest()==report['app_hex_sha256']
+              names.append(report['app_hex_sha256'])
+          assert names[0]==names[1],names
+          print('TWO REAL NATIVE REPLICAS HAVE BYTE-IDENTICAL APP-ONLY HEX',names[0])
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: r4-final-reproducibility-${{ env.B1_SOURCE_SHA }}
