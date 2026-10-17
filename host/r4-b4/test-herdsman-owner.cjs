@@ -354,3 +354,19 @@ test("REVIEW-P0: delayed unsolicited F0 after timed-out request cannot reopen di
     assert.equal((await znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 200)).payload.capabilities, 1);
     assert.deepEqual(sent, [240, 1]);
 });
+
+test("REVIEW-P1: ZNP mutex idle but unresolved Waitress still forbids F0", () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    assert.equal(znp.queue.count, 0);
+    assert.equal(znp.b4CanProbe(), true);
+    const waiter = znp.waitress.waitFor(
+        {type: Type.SRSP, subsystem: Subsystem.SYS, command: "ping"}, 10_000
+    );
+    assert.equal(znp.queue.count, 0); // misleading queue-only criterion
+    assert.equal(znp.waitress.b4IsIdle(), false);
+    assert.equal(znp.b4CanProbe(), false);
+    znp.waitress.remove(waiter.ID);
+    assert.equal(znp.waitress.b4IsIdle(), true);
+    assert.equal(znp.b4CanProbe(), true);
+});
