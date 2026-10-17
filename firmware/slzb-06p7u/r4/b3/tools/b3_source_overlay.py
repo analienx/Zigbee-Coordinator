@@ -299,7 +299,12 @@ def security_changes(source):
         "                               sizeof(APSME_ApsLinkKeyNVEntry_t),\n"
         "                               pKeyData) == SUCCESS)\n"
         "          {\n"
-        "              ApsLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+        "              APSME_ApsLinkKeyNVEntry_t persisted = {0};\n"
+"              if (osal_nv_read_ex(ZCD_NV_EX_APS_KEY_DATA_TABLE, i, 0,\n"
+"                                  sizeof(persisted), &persisted) == SUCCESS &&\n"
+"                  OsalPort_memcmp(&persisted, pKeyData, sizeof(persisted)))\n"
+"                  ApsLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+"              memset(&persisted, 0, sizeof(persisted));\n"
         "          }")
     source = one(source,
         "          // Write the TC link key back to the NV\n"
@@ -313,7 +318,12 @@ def security_changes(source):
         "                               sizeof(APSME_TCLinkKeyNVEntry_t),\n"
         "                               pKeyData) == SUCCESS)\n"
         "          {\n"
-        "              TCLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+        "              APSME_TCLinkKeyNVEntry_t persisted = {0};\n"
+"              if (osal_nv_read_ex(ZCD_NV_EX_TCLK_TABLE, i, 0,\n"
+"                                  sizeof(persisted), &persisted) == SUCCESS &&\n"
+"                  OsalPort_memcmp(&persisted, pKeyData, sizeof(persisted)))\n"
+"                  TCLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
+"              memset(&persisted, 0, sizeof(persisted));\n"
         "          }")
     # Pinned source P0: TI TRNG failure branch did NOTHING and still
     # published uninitialized entropy bytes. Change API to a checked status;
