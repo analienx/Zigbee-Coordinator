@@ -172,7 +172,9 @@ def plan(root):
     # in-flight lock. An empty queue is NOT sufficient to prove ZNP idle.
     changes[MUTEX] = replace_once(
         originals[MUTEX],
-        "    get count() {\\n        return this.#queue.length;\\n    }".replace("\\\\n", "\\n"),
+        """    get count() {
+        return this.#queue.length;
+    }""",
         """    get count() {
         return this.#queue.length;
     }
