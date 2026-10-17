@@ -482,6 +482,20 @@ jobs:
               firmware/slzb-06p7u/r4/b0 \
               --artifacts "/tmp/b2-compare/$profile/b0out"
           done
+          # Do not trust B2_BASELINE_ELF_SYMBOLS.json even if all raw file
+          # digests are valid. Re-run the independent actual ARM ELF parser
+          # against each downloaded binary and compare its exact result.
+          for profile in p0 p1a p1b; do
+            python tools/b2_collect_native_evidence.py \
+              --artifacts "/tmp/b2-compare/$profile/b0out" \
+              --out "/tmp/b2-rederived/$profile" \
+              --source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+              --run-id "$GITHUB_RUN_ID"
+            python tools/b2_verify_reextracted_elf.py \
+              --claimed "/tmp/b2-compare/$profile/b0out/b2-linked-baseline/B2_BASELINE_ELF_SYMBOLS.json" \
+              --fresh "/tmp/b2-rederived/$profile/B2_BASELINE_ELF_SYMBOLS.json" \
+              --out "/tmp/b2-rederived/$profile/B2_REEXTRACTED_ELF_PROOF.json"
+          done
           python tools/b2_compare_native.py \
             --p0 /tmp/b2-compare/p0 \
             --p1a /tmp/b2-compare/p1a \
