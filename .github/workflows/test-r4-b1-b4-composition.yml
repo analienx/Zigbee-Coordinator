@@ -1,0 +1,68 @@
+name: R4 B1 + B4 real TI source conflict preflight (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/b1/tools/r4_b4_source_merge.py'
+      - 'tests/test_r4_b1_b4_source_merge.py'
+      - '.github/workflows/test-r4-b1-b4-composition.yml'
+permissions:
+  contents: read
+jobs:
+  pinned-ti-owner-merge:
+    runs-on: ubuntu-22.04
+    env:
+      B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact review HEAD
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Pure strict three-way merge negatives
+        run: python -m unittest -v tests.test_r4_b1_b4_source_merge
+      - name: Fetch pinned TI SDK original into /tmp only
+        run: |
+          set -euo pipefail
+          git init -q /tmp/r4-b1-b4-sdk
+          git -C /tmp/r4-b1-b4-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4-b1-b4-sdk fetch -q --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4-b1-b4-sdk checkout -q FETCH_HEAD
+          test "$(git -C /tmp/r4-b1-b4-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          mkdir -p /tmp/r4-b1-b4-sdk/.b1-prerequisites
+          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts \
+            -o /tmp/r4-b1-b4-sdk/.b1-prerequisites/herdsman-definition.ts
+      - name: Apply reviewed B1 and separately reviewed B4 source to own exact TI worktrees
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r4-b1-b4-out
+          python firmware/slzb-06p7u/r4/b1/tools/apply_b1.py \
+            --sdk /tmp/r4-b1-b4-sdk --receipt /tmp/r4-b1-b4-out/b1.json
+          B4_CANONICAL_SHA=b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a
+          git fetch -q --depth 1 origin "$B4_CANONICAL_SHA"
+          mkdir -p /tmp/r4-b1-b4-tools
+          for item in b4_native_patch.py b4_v4_native_patch.py; do
+            git show "$B4_CANONICAL_SHA:firmware/slzb-06p7u/r4/b4/$item" > "/tmp/r4-b1-b4-tools/$item"
+          done
+          git -C /tmp/r4-b1-b4-sdk worktree add -q --detach /tmp/r4-b1-b4-b4 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          python /tmp/r4-b1-b4-tools/b4_native_patch.py \
+            --sdk /tmp/r4-b1-b4-b4 --receipt /tmp/r4-b1-b4-out/b4-v3.json
+          python /tmp/r4-b1-b4-tools/b4_v4_native_patch.py \
+            --sdk /tmp/r4-b1-b4-b4 --receipt /tmp/r4-b1-b4-out/b4-v4.json
+          python firmware/slzb-06p7u/r4/b1/tools/r4_b4_source_merge.py \
+            --b1-sdk /tmp/r4-b1-b4-sdk --b4-sdk /tmp/r4-b1-b4-b4 \
+            --receipt /tmp/r4-b1-b4-out/composition.json
+          python - <<'PY'
+          import json
+          x=json.load(open("/tmp/r4-b1-b4-out/composition.json"))
+          assert x["source_ready"] is False and x["flash_authorized"] is False
+          assert len(x["files"])==3
+          print("R4_STRICT_SOURCE_MERGE_COMPOSITION_NOT_NATIVE_NOT_FLASH")
+          PY
+      - name: Upload bounded sanitized source ownership receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r4-b1-b4-source-only-${{ github.event.pull_request.head.sha }}
+          path: /tmp/r4-b1-b4-out/composition.json
+          if-no-files-found: warn
