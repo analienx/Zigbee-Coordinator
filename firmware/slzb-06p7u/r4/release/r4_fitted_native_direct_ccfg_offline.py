@@ -64,7 +64,7 @@ def crc(b):
 
 def plan(factory1:bytes,factory2:bytes,native:dict[int,int],
          app_hex1:bytes,app_hex2:bytes,*,factory_pin:str=FACTORY_SHA,
-         app_pin:str=APP_SHA)->tuple[bytes,bytes,dict]:
+         app_pin:str=APP_SHA, stock_top_crc:str="3c032e08")->tuple[bytes,bytes,dict]:
     if len(factory1)!=FULL or factory1!=factory2 or sha(factory1)!=factory_pin:
         deny("TWO_ORIGINAL_FACTORY_FLASH_PASSES_OR_SHA")
     if len(app_hex1)==0 or app_hex1!=app_hex2 or sha(app_hex1)!=app_pin:
@@ -92,7 +92,7 @@ def plan(factory1:bytes,factory2:bytes,native:dict[int,int],
     if err or not data or data!={a:v for a,v in native.items() if a<APP_END}:
         deny("NATIVE_APP_HEX_NOT_SAME_COMPILED_IMAGE")
     original=factory1[TOP:FULL]
-    if crc(original)!="3c032e08":
+    if crc(original)!=stock_top_crc:
         deny("STOCK_TOP_SECTOR_CRC_NOT_PINNED")
     if struct.unpack_from("<I",factory1,BOOT_WORD)[0]!=STOCK_VECTOR:
         deny("OLD_FITTED_BOOT_ADDRESS_CHANGED")
