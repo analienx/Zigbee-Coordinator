@@ -121,4 +121,15 @@ jobs:
               all_checks.append(checks)
           difference = [k for k in ('elf','xml','hex','bin') if all_checks[0][k]!=all_checks[1][k]]
           print('NATIVE_OUTPUT_MISMATCH_FIELDS', difference)
+          if 'xml' in difference:
+              from difflib import unified_diff
+              import itertools
+              left = list(dirs[0].rglob('*linkInfo.xml'))
+              right = list(dirs[1].rglob('*linkInfo.xml'))
+              if len(left) != 1 or len(right) != 1:
+                  raise SystemExit('missing actual native linker XML')
+              a = left[0].read_text(errors='replace').splitlines()
+              b = right[0].read_text(errors='replace').splitlines()
+              for line in itertools.islice(unified_diff(a, b, fromfile='link-1', tofile='link-2'), 50):
+                  print('B4_XML_DIFF', line[:220])
           PY
