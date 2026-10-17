@@ -141,3 +141,30 @@ jobs:
               for line in itertools.islice(unified_diff(a, b, fromfile='link-1', tofile='link-2'), 50):
                   print('B4_XML_DIFF', line[:220])
           PY
+
+  b4-temp-native-memory-delta:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: 39000883419
+          github-token: ${{ github.token }}
+          name: r4-b0-native-bee3ea96348260fe7abd70a640febec8b3fd40ab
+          path: /tmp/b4-memory-b0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: 39000883442
+          github-token: ${{ github.token }}
+          name: r4-b4-native-1-bee3ea96348260fe7abd70a640febec8b3fd40ab
+          path: /tmp/b4-memory-b4
+      - name: Measure genuine native B0 vs B4 linked FLASH/RAM allocation
+        run: |
+          python firmware/slzb-06p7u/r4/b4/b4_elf_budget.py --b0 /tmp/b4-memory-b0 --b4 /tmp/b4-memory-b4
