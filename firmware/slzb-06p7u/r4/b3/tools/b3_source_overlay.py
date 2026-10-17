@@ -188,6 +188,21 @@ def nvocmp_changes(source):
         "{\n"
         "    if (NVOCMP_failF != NVINTF_SUCCESS) return(NVINTF_FAILURE);\n"
         "    uint8_t err = NVINTF_SUCCESS;")
+    # An NVS erase refusal must permanently prevent programming its
+    # still-containing NOR page. The original function returns failure but
+    # its callers may continue compaction and attempt 0->1 writes into it.
+    source = one(source,
+        "    NVOCMP_ALERT(NVINTF_LOWPOWER != err, \"Voltage check failed.\")\\n"
+        "    NVOCMP_ALERT(NVINTF_FAILURE != err, \"NVS erase failure.\")\\n\\n"
+        "    return(err);",
+        "    NVOCMP_ALERT(NVINTF_LOWPOWER != err, \"Voltage check failed.\")\\n"
+        "    NVOCMP_ALERT(NVINTF_FAILURE != err, \"NVS erase failure.\")\\n"
+        "    if (err != NVINTF_SUCCESS)\\n"
+        "    {\\n"
+        "        NVOCMP_failF = NVINTF_FAILURE;\\n"
+        "        NVOCMP_failW = NVINTF_FAILURE;\\n"
+        "    }\\n\\n"
+        "    return(err);")
     source = one(source,
         "    // Read Item\n"
         "    if (!err)\n"
