@@ -81,7 +81,7 @@ class FlashBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = setup(td)
             old_hex = (root / "znp.hex").read_bytes().decode("ascii")
-            extra = intel_hex(8, 0x4000, 0, b"\\0" * 8)
+            extra = intel_hex(8, 0x4000, 0, bytes(8))
             new_hex = old_hex.replace(intel_hex(0, 0, 1),
                                       extra + intel_hex(0, 0, 1))
             (root / "znp.hex").write_text(new_hex, encoding="ascii")
