@@ -370,3 +370,47 @@ test("REVIEW-P1: ZNP mutex idle but unresolved Waitress still forbids F0", () =>
     assert.equal(znp.waitress.b4IsIdle(), true);
     assert.equal(znp.b4CanProbe(), true);
 });
+
+test("REVIEW-P0: F0 queued before first timeout cannot escape the mutex after quarantine", async () => {
+    const znp = new Znp("/dev/no-serial", 115200, false);
+    znp.initialized = true;
+    const writes = [];
+    znp.unpiWriter.writeFrame = (request) => {
+        writes.push(request.commandID);
+        if (request.commandID === 1) queueMicrotask(() => znp.onUnpiParsed(
+            new Frame(Type.SRSP, Subsystem.SYS, 1, Buffer.from([1, 0]))));
+    };
+    const first = assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 12)
+    );
+    // This call arrives before the timeout and passes the early guard.
+    // The decisive check must be run again *inside* AsyncMutex after first
+    // timeout, or this F0 would be wrongly transmitted later.
+    const second = assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 100),
+        /poisoned inside ZNP mutex/
+    );
+    await Promise.all([first, second]);
+    assert.deepEqual(writes, [240]);
+    assert.equal(znp.waitress.waiters.size, 0);
+    assert.equal(znp.b4CanProbe(), false);
+    const normal = await znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 100);
+    assert.equal(normal.payload.capabilities, 1);
+    assert.deepEqual(writes, [240, 1]);
+});
+
+test("REVIEW-P1: direct queued F0 cannot bypass normal outstanding Waitress", async () => {
+    const znp = new Znp("/dev/no-serial", 115200, false);
+    znp.initialized = true;
+    const recorded = [];
+    znp.unpiWriter.writeFrame = (request) => { recorded.push(request.commandID); };
+    const prior = znp.waitress.waitFor(
+        {type: Type.SRSP, subsystem: Subsystem.ZDO, command: "permitJoin"}, 2000
+    );
+    await assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 25),
+        /owner unavailable or poisoned inside ZNP mutex/
+    );
+    assert.deepEqual(recorded, []);
+    znp.waitress.remove(prior.ID);
+});
