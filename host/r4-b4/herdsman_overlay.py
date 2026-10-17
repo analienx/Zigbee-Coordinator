@@ -334,6 +334,9 @@ def plan(root):
     # queued in AsyncMutex before a preceding F0 times out. Recheck *inside*
     # the owner mutex just before any UNPI writer; never permit a queued
     # second F0 to escape after the first quarantines diagnostics.
+    # Connection state can change WHILE queued behind an ordinary SRSP.
+    # Recheck initialized inside the mutex; the initial Znp.request check
+    # cannot guarantee a serial owner still exists at actual write time.
     changes[ZNP] = replace_once(
         changes[ZNP],
         """        return this.queue.run<ZpiObject | undefined>(async () => {
@@ -341,7 +344,7 @@ def plan(root):
         """        return this.queue.run<ZpiObject | undefined>(async () => {
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
                 object.command.name === "r4DiagReadOnly" &&
-                (this.b4DiagPoisoned || !this.waitress.b4IsIdle())) {
+                (!this.initialized || this.b4DiagPoisoned || !this.waitress.b4IsIdle())) {
                 throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");
             }
             logger.debug(() => `--> ${object}`, NS);""",
