@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from patch_zdapp import patch as patch_zdapp
 from b1_b3_nwk_checkpoint import patch as patch_b1_b3_nwk
+from b1_b3_entropy import compose as compose_b1_b3_entropy
 from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
@@ -23,10 +24,14 @@ SDK_SECURITY = "source/ti/zstack/stack/zdo/zd_sec_mgr.c"
 SDK_ZGLOBALS = "source/ti/zstack/stack/sys/zglobals.c"
 SDK_STARTUP = "source/ti/zstack/startup/zstackstartup.c"
 SDK_OSAL_NV = "source/ti/zstack/osal/osal_nv.c"
+SDK_SECURITY_HEADER = "source/ti/zstack/stack/zdo/zd_sec_mgr.h"
+SDK_ZSTACKTASK = "source/ti/zstack/stack/api/zstacktask.c"
 SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
 SHA_ZGLOBALS = "0a1d7d2a61a88d1a6bb6e4bc5e359e71e1719024"
 SHA_STARTUP = "72073f7a90d3de183533e84c3396e239343731e5"
 SHA_OSAL_NV = "65c7667475627989cbe2e3f5fdd46335b50eb660"
+SHA_SECURITY_HEADER = "b1ab5fcf490f77f95cd111a13581cb15d198d79c"
+SHA_ZSTACKTASK = "d85758d2274097d2efe7c395e97e394f70fd352e"
 HERDSMAN_FILE = ".b1-prerequisites/herdsman-definition.ts"
 SHA_NV = "01b2b0827d278c10c012b33e5791e53bc5662f10"
 SHA_MAIN = "608adc97370be3910a96f5dcc356d0feffb79d70"
@@ -54,6 +59,10 @@ def overlay(sdk, b1_dir):
     src_zglobals = sdk / SDK_ZGLOBALS
     src_startup = sdk / SDK_STARTUP
     src_osal_nv = sdk / SDK_OSAL_NV
+    src_security_header = sdk / SDK_SECURITY_HEADER
+    src_zstacktask = sdk / SDK_ZSTACKTASK
+    security_header = src_security_header.read_text(encoding="utf-8")
+    zstacktask = src_zstacktask.read_text(encoding="utf-8")
     security = src_security.read_text(encoding="utf-8")
     zglobals = src_zglobals.read_text(encoding="utf-8")
     startup = src_startup.read_text(encoding="utf-8")
@@ -68,7 +77,9 @@ def overlay(sdk, b1_dir):
             or git_blob_sha(security) != SHA_SECURITY
             or git_blob_sha(zglobals) != SHA_ZGLOBALS
             or git_blob_sha(startup) != SHA_STARTUP
-            or git_blob_sha(osal_nv) != SHA_OSAL_NV):
+            or git_blob_sha(osal_nv) != SHA_OSAL_NV
+            or git_blob_sha(security_header) != SHA_SECURITY_HEADER
+            or git_blob_sha(zstacktask) != SHA_ZSTACKTASK):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
         raise RuntimeError("BLOCKED: missing B1 linked admission C/H files")
@@ -345,6 +356,9 @@ def overlay(sdk, b1_dir):
     zdapp = patch_b1_b3_nwk(zdapp)
     security = patch_security(security)
     zglobals = patch_zglobals(zglobals)
+    # Compose B3 TRNG failure handling with B1's *sticky* security HOLD.
+    security, security_header, zdapp, zglobals, zstacktask = compose_b1_b3_entropy(
+        security, security_header, zdapp, zglobals, zstacktask)
     startup = patch_startup(startup)
     osal_nv = patch_osal_nv(osal_nv)
 
@@ -404,6 +418,8 @@ def overlay(sdk, b1_dir):
     src_zdapp.write_text(zdapp, encoding="utf-8")
     src_security.write_text(security, encoding="utf-8")
     src_zglobals.write_text(zglobals, encoding="utf-8")
+    src_security_header.write_text(security_header, encoding="utf-8")
+    src_zstacktask.write_text(zstacktask, encoding="utf-8")
     src_startup.write_text(startup, encoding="utf-8")
     src_osal_nv.write_text(osal_nv, encoding="utf-8")
     return {
@@ -429,6 +445,8 @@ def overlay(sdk, b1_dir):
             "modified_zglobals_sha256": SDK_ZGLOBALS,
             "modified_startup_sha256": SDK_STARTUP,
             "modified_osal_nv_sha256": SDK_OSAL_NV,
+            "modified_security_header_sha256": SDK_SECURITY_HEADER,
+            "modified_zstacktask_sha256": SDK_ZSTACKTASK,
         },
         "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
             "b1_management_mt_filter", "b1_security_runtime_hold_latch",
@@ -440,6 +458,9 @@ def overlay(sdk, b1_dir):
         "modified_nv_sha256": hashlib.sha256(source.encode()).hexdigest(),
         "modified_main_sha256": hashlib.sha256(main.encode()).hexdigest(),
         "b1_b3_nwk_save_readback": "SOURCE_COMPOSED_B1_HOLD_PENDING_CI",
+        "b1_b3_entropy_status_and_publishers": "SOURCE_COMPOSED_B1_HOLD_PENDING_CI",
+        "modified_security_header_sha256": hashlib.sha256(security_header.encode()).hexdigest(),
+        "modified_zstacktask_sha256": hashlib.sha256(zstacktask.encode()).hexdigest(),
         "b1_b3_rest_of_nv_security": "NOT_COMPOSED",
         "mode": "B1_SOURCE_ONLY_NOT_PHYSICALLY_TESTED",
         "preflight": "read only (0x4000), no NVS_write/NVS_erase",
