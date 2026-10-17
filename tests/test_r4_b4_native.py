@@ -14,7 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firmware" / "slzb-06p7u" / "r4" / "b4"))
 from b4_native_patch import (
-    TI_SHA, MT_SYS, NPI_TASK, NPI_CLIENT, B4_FUNCTION,
+    TI_SHA, MT_SYS, NPI_TASK, NPI_CLIENT, NPI_FRAME, NPI_OPTS, B4_FUNCTION,
     apply as patch_native, build_patches,
 )
 from b4_native_link_audit import verify as verify_link
@@ -66,11 +66,20 @@ OsalPort_leaveCS(key);
 }
 """
 CLIENT = "void MT_BuildAndSendZToolResponse() { OsalPort_msgAllocate(1); }"
+FRAME = """#include "npi_frame.h"
+#if defined(NPI_SREQRSP)
+message_type_sync();
+#endif
+#if defined(NPI_SREQRSP)
+message_type_sync_again();
+#endif
+"""
+OPTS = "-DMT_SYS_FUNC\n-DMT_AF_FUNC\n"
 MTC = "#if !defined(NPI)\nvoid MT_BuildAndSendZToolResponse() {}\n#endif\n"
 
 class NativeOverlayProofs(unittest.TestCase):
     def fixture(self, root):
-        items = {MT_SYS: SYS, NPI_TASK: TASK, NPI_CLIENT: CLIENT}
+        items = {MT_SYS: SYS, NPI_TASK: TASK, NPI_CLIENT: CLIENT, NPI_FRAME: FRAME, NPI_OPTS: OPTS}
         for name, source in items.items():
             p = root / name
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +104,9 @@ class NativeOverlayProofs(unittest.TestCase):
                 self.assertEqual(out["stage"], "PATCHED_DISPOSABLE_SDK_NOT_LINKED")
                 self.assertEqual(out["valid_counter_indices"], [0, 1, 2, 3, 4])
                 self.assertEqual(out["radio_boot_identity"], "UNKNOWN")
-                self.assertEqual(len(out["written"]), 2)
+                self.assertEqual(len(out["written"]), 4)
+                self.assertTrue(out["sync_npi_compiled_required"])
+                self.assertTrue(out["sync_transport_changed_from_stock"])
                 self.assertIn("case 0xF0", (root / MT_SYS).read_text())
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspEnqueued;"), 2)
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspDepth;"), 2)
@@ -103,6 +114,9 @@ class NativeOverlayProofs(unittest.TestCase):
                 self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiSrspDepth;"), 1)
                 self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiAsyncDepth;"), 1)
                 self.assertEqual((root / NPI_CLIENT).read_text(), CLIENT)
+                self.assertEqual((root / NPI_OPTS).read_text().count("-DNPI_SREQRSP"), 1)
+                for name in (MT_SYS, NPI_TASK, NPI_FRAME):
+                    self.assertIn("#error B4_SYNC_NPI_BUILD_UNQUALIFIED_NO_SRSP_PRODUCERS", (root / name).read_text())
                 # A repeat patch cannot silently duplicate the new handler.
                 with self.assertRaisesRegex(ValueError, "modified before"):
                     patch_native(root)
@@ -113,6 +127,8 @@ class NativeOverlayProofs(unittest.TestCase):
             (MT_SYS, SYS.replace("    case MT_SYS_VERSION:", "    case 0xF0:\n    case MT_SYS_VERSION:")),
             (NPI_TASK, TASK.replace("Queue_enqueue", "Queue_push")),
             (NPI_CLIENT, CLIENT.replace("OsalPort_msgAllocate", "malloc")),
+            (NPI_OPTS, OPTS.replace("-DMT_SYS_FUNC", "-DMT_FAKE_FUNC")),
+            (NPI_FRAME, FRAME.replace("#if defined(NPI_SREQRSP)", "#if defined(NEVER)", 1)),
         ]
         for name, mutation in mutations:
             with self.subTest(path=name), tempfile.TemporaryDirectory(dir="/tmp") as d:
@@ -157,7 +173,8 @@ class BinaryAuditOracleMutants(unittest.TestCase):
         patchreceipt.write_text(json.dumps({
             "stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "payload_bytes": 132,
             "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
-            "written": {"mt.c": {}, "npi.c": {}},
+            "sync_npi_compiled_required": True, "sync_transport_changed_from_stock": True,
+            "written": {name: {} for name in (MT_SYS, NPI_TASK, NPI_FRAME, NPI_OPTS)},
         }))
         nm = root / "tiarmnm"
         nm.touch()
