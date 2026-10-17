@@ -18,8 +18,8 @@ REPLACEMENTS = (
      "#define FLASH_BASE              0x00000000"),
     ("#define FLASH_SIZE              0x9FF80",
      "#define FLASH_SIZE              0xA0000"),
-    ("    .resetVecs: load > 0x80",
-     "    .resetVecs: load > 0"),
+    ("    .resetVecs: load > 0x80\n",
+     "    .resetVecs: load > 0\n"),
 )
 
 
