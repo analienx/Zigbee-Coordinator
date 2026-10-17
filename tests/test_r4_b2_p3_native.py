@@ -34,6 +34,12 @@ class P3NativeLogOracle(unittest.TestCase):
     def test_compiler_error_not_enough(self):
         with self.assertRaisesRegex(P3ValidationError,"linker never executed"):
             validate("tiarmclang: error: no such file or directory",1,INJECTION)
+    def test_flash_overflow_is_not_a_sram_negative(self):
+        with self.assertRaisesRegex(P3ValidationError,"SRAM placement"):
+            validate(GOOD.replace("SRAM size:", "FLASH size:"),1,INJECTION)
+    def test_wrong_linked_sram_geometry_rejected(self):
+        with self.assertRaisesRegex(P3ValidationError,"SRAM placement"):
+            validate(GOOD.replace("SRAM size: 0x24000", "SRAM size: 0x08000"),1,INJECTION)
     def test_wrong_error_10099_text_rejected(self):
         with self.assertRaisesRegex(P3ValidationError,"missing genuine TI memory"):
             validate(GOOD.replace("10099-D","10234-D"),1,INJECTION)
