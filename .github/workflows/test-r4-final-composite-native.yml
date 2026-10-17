@@ -492,6 +492,23 @@ jobs:
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+          # Independently prove the REAL linked HEX intersects boot CCFG's
+          # whole 8KiB erase sector, even if its sparse records omit NV.
+          # This is a DENIAL, never a flash/erase/restore authorization.
+          HEX_NAME="$(python -c "import json;print(json.load(open('/tmp/b0out/manifest.json'))['files']['hex']['file'])")"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sector_erase_denial.py" \
+            --hex "/tmp/b0out/$HEX_NAME" --receipt /tmp/b0out/b0-sector-DENY.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('/tmp/b0out/b0-sector-DENY.json').read_text())
+          m=json.loads(Path('/tmp/b0out/manifest.json').read_text())
+          assert d['status']=='BLOCKED_PROTECTED_SECTOR_ERASE'
+          assert d['flash_authorized'] is False and d['production_flash_authorized'] is False
+          assert d['source_hex_sha256']==m['files']['hex']['sha256']
+          assert any(x['reason']=='BOOT_CCFG_TOP_SECTOR' for x in d['protected_sector_collisions'])
+          print('REAL EXACT-HEAD COMPOSITE HEX: CCFG erase-sector collision proven; FLASH DENIED')
+          PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
