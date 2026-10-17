@@ -32,7 +32,8 @@ uint8_t MT_SysCommandProcessing(uint8_t *pBuf)
   return 0;
 }
 """
-TASK = """void NPITask_sendToHost(uint8_t *pMsg)
+TASK = """#include "mt_rpc.h"
+void NPITask_sendToHost(uint8_t *pMsg)
 {
 key = OsalPort_enterCS();
 #if defined(NPI_SREQRSP)
@@ -97,10 +98,12 @@ class NativeOverlayProofs(unittest.TestCase):
                 self.assertEqual(out["radio_boot_identity"], "UNKNOWN")
                 self.assertEqual(len(out["written"]), 2)
                 self.assertIn("case 0xF0", (root / MT_SYS).read_text())
-                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspEnqueued;"), 2)
-                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspDepth;"), 2)
+                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspEnqueued;"), 4)
+                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspDepth;"), 4)
                 self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiAsyncDepth;"), 2)
-                self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiSrspDepth;"), 1)
+                self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiSrspDepth;"), 2)
+                self.assertIn("MT_RPC_CMD_TYPE_MASK", (root / NPI_TASK).read_text())
+                self.assertIn("#if !defined(NPI_SREQRSP)", (root / NPI_TASK).read_text())
                 self.assertEqual((root / NPI_TASK).read_text().count("--B4_NpiAsyncDepth;"), 1)
                 self.assertEqual((root / NPI_CLIENT).read_text(), CLIENT)
                 # A repeat patch cannot silently duplicate the new handler.
