@@ -75,6 +75,40 @@ class FlashBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "HEX_WRITES_PROTECTED_NV"):
                 gate.inspect(root)
 
+    def test_historical_nv5_candidate_hex_range_is_protected(self):
+        # Source-history NV5 candidate starts at 0xA4000, while donor
+        # NV2 starts at 0xAA000. Neither is proof of actual stock NV.
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            old_hex = (root / "znp.hex").read_bytes().decode("ascii")
+            extra = intel_hex(8, 0x4000, 0, b"\\0" * 8)
+            new_hex = old_hex.replace(intel_hex(0, 0, 1),
+                                      extra + intel_hex(0, 0, 1))
+            (root / "znp.hex").write_text(new_hex, encoding="ascii")
+            manifest = json.loads((root / "manifest.json").read_text())
+            manifest["files"]["hex"]["sha256"] = hashlib.sha256(
+                new_hex.encode("ascii")).hexdigest()
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "HISTORICAL_NV5_CANDIDATE"):
+                gate.inspect(root)
+
+    def test_old_nv5_candidate_raw_bin_padding_must_be_uniform(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            state = gate.inspect(root)
+            nv = state["protected_nv"]
+            self.assertEqual(nv["conservative_protected_begin"], "0xA4000")
+            self.assertEqual(nv["conservative_protected_bytes"], 0xA000)
+            self.assertFalse(nv["historical_nv5_layout_verified_on_current_stock"])
+            blob = bytearray((root / "znp.bin").read_bytes())
+            blob[0xA4000 + 0x100] = 0xA5  # outside donor NV2, inside candidate NV5
+            (root / "znp.bin").write_bytes(blob)
+            manifest = json.loads((root / "manifest.json").read_text())
+            manifest["files"]["bin"]["sha256"] = hashlib.sha256(blob).hexdigest()
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "NV_PADDING_NOT_UNIFORM"):
+                gate.inspect(root)
+
     def test_bin_nv_padding_uniformity_and_digest_both_required(self):
         with tempfile.TemporaryDirectory() as td:
             root = setup(td)
