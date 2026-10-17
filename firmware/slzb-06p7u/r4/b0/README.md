@@ -156,7 +156,7 @@ git submodule update --init cc13xx_cc26xx_sdk
 # 2. Headless CCS import + build (TI documented CLI)
 eclipse -noSplash -data /tmp/b0ws \
   -application com.ti.ccstudio.apps.projectImport \
-  -ccs.location <examples>/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
+  -ccs.location <repo-root>/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
 eclipse -noSplash -data /tmp/b0ws \
   -application com.ti.ccstudio.apps.projectBuild \
   -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang
@@ -181,7 +181,7 @@ Reference: TI CCS command-line projects
   independent ELF cross-check (ARM magic, entry agreement) plus
   HEX/BIN cross-binding (genuine Intel HEX records, data inside
   XML regions and outside FLASH_NV, `.resetVecs`/`.ccfg`/entry
-  coverage, BIN equal to the HEX payload); exit 2
+  coverage, native 704KiB BIN address-preserving with uniform\n  padding through protected NV (NEVER flash raw BIN)); exit 2
   `B0-AUDIT-BLOCKED` when no artifacts exist (never a pass). The
   legacy REGION/CSTACK/VECTORS text format is rejected as
   synthetic.
