@@ -104,6 +104,9 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          mkdir -p /tmp/r4-synthetic-stubs
+          git -C /tmp/r4fusion-b3 show b481e0beabf1966900644f69d7f5d024708ebf73:tests/b3_host/b3_nwk_stub.h > /tmp/r4-synthetic-stubs/b3_nwk_stub.h
+          test -s /tmp/r4-synthetic-stubs/b3_nwk_stub.h
           python tools/r4_extract_nwk_save_hold.py \
             --source /tmp/r4fusion-sdk/source/ti/zstack/stack/zdo/zd_app.c \
             --out /tmp/r4-fused-nwk-save.c \
@@ -111,7 +114,7 @@ jobs:
           clang -std=c11 -g -O1 -Wall -Wextra -Werror \
             -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
             -fno-omit-frame-pointer -fsanitize=address,undefined \
-            -I tests/b3_host -I firmware/slzb-06p7u/r4/b1 \
+            -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
             /tmp/r4-fused-nwk-save.c \
             tests/r4_host/r4_nwk_hold_test.c \
             firmware/slzb-06p7u/r4/b1/b1_management.c \
@@ -139,7 +142,7 @@ jobs:
           clang -std=c11 -g -O1 -Wall -Wextra -Werror \
             -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
             -fno-omit-frame-pointer -fsanitize=address,undefined \
-            -I tests/b3_host -I firmware/slzb-06p7u/r4/b1 \
+            -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
             /tmp/r4-fused-nwk-mutant.c \
             tests/r4_host/r4_nwk_hold_test.c \
             firmware/slzb-06p7u/r4/b1/b1_management.c \
