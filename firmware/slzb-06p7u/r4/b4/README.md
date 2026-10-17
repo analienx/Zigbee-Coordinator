@@ -5,11 +5,12 @@ Source branch `feat/p7u-r4-b4-issue98` branches from **exact B0 `1baefbee8e4de2c
 ## Actual code and the trust boundary
 
 - `b4_protocol.py`: finite offline UNPI SYS F0 framing/strict P10 v2 and proposed R4 v3 decoders. No serial access.
-- `b4_native_patch.py`: **experimental** hash-guarded source patch to disposable exact-TI-SHA `/tmp` checkout. Links one O(1) static-RAM `srsp_enqueued` counter to the real NPI sync queue. Exposes 132-byte v3 with only validity bit 4, boot cap 0 and boot ID 0; never claims missing metrics.
+- `b4_native_patch.py`: **experimental** hash-guarded source patch to disposable exact-TI-SHA `/tmp` checkout. Instruments both verified TI SRSP enqueue producers in existing NPI critical sections for one static-RAM `srsp_enqueued` counter. Exposes 132-byte v3 with only validity bit 4, boot cap 0 and boot ID 0; never claims missing metrics.
 - `b4_native_link_audit.py`: native manifest+real ELF+TI nm symbol check. Hosted linker + full B0 CCFG/NV/board tests required before native evidence.
 - `b4_verify_source.py`: checks exact TI/herdsman pins, F0 collision, stock SYS Ping/Version, NPI-specific `npi_client_mt.c` and owner/Waitress.
-- `host/r4-b4/herdsman_overlay.py`: separate opt-in experimental patch for pinned herdsman. The default is **no polling**, no serial sidecar. Calls the existing `ZStackAdapter.znp.requestWithReply` through Znp mutex, skip while busy/OTA, 30s cooldown.
+- `host/r4-b4/herdsman_overlay.py`: separate opt-in experimental patch for pinned herdsman. The default is **no polling**, no serial sidecar. Calls the existing `ZStackAdapter.znp.requestWithReply` through Znp mutex, skip while genuinely ZNP-mutex-busy/OTA, 30s cooldown; opt-in bounded metadata-only AF/ZDO/SYS timeout capture, no synchronous disk writes.
 - `../tools/r4_passive_recorder.py`: reused #87 offline forensic model; no production hook or host install.
+- `b4_hosted_c_probe.py`: real B4 function text compiled with hosted GCC ASan/UBSan and an invalidity mutant that must fail; this is not TI native linkage.
 - `b4_replay.py`: four time-labeled synthetic incident replays with observed counts where available. Unknown remains unknown.
 
 ## Verification gates

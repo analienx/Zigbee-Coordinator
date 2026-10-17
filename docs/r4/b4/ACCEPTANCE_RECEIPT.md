@@ -1,13 +1,13 @@
 # R4 B4 acceptance receipt — PR #100, issue #98
 
-**Status as of 2026-10-16:** **B4_SOURCE_READY = BLOCKED**; HOST_SOURCE_READY = BLOCKED; NATIVE_LINKED = **NOT VERIFIED**; HOST_INSTALLED = **FALSE**; COMBINED_INTEGRATION = **PENDING**; PHYSICAL_VERIFIED = **FALSE**; independent reviewer PASS = **NOT AVAILABLE**.
+**Status as of 2026-10-17:** **B4_SOURCE_READY = BLOCKED**; HOST_SOURCE_READY = BLOCKED; NATIVE_LINKED = **NOT VERIFIED**; HOST_INSTALLED = **FALSE**; COMBINED_INTEGRATION = **PENDING**; PHYSICAL_VERIFIED = **FALSE**; independent reviewer PASS = **NOT AVAILABLE**.
 
-This is an *implementation/coverage ledger*, **not a green CI report**. GitHub Actions were queued when last checked; no success conclusion must be inferred. Tests marked "staged" exist in the branch but have no verified hosted PASS. CI IDs/review signatures must be filled from actual completed runs. No hardware actions took place.
+This is an *implementation/coverage ledger*, **not a green CI report**. GitHub-hosted pinned herdsman staging run **39001497672 PASSED**; staging source/adversarial run **39001497710 PASSED**; main B4 native dual-link run **39000883442** was still running at this receipt and is NOT a pass. Tests below are scoped to exact evidence and are not hardware/deployment claims. CI IDs/review signatures must be filled from actual completed runs. No hardware actions took place.
 
 | Annex | State of evidence / blocker |
 |---|---|
-| D01 | SOURCE_ONLY: stock SYS entry-path anchored, no behavioral baseline yet |
-| D02 | UNIT_SOURCE_MUTANTS_PRESENT; GHA unverified |
+| D01 | HOSTED_NODE: actual Znp.request/Waitress ping SRSP + F0 owner path passed; real radio baseline unverified |
+| D02 | HOSTED_PYTHON: source opcode collision mutants verified at exact source pin |
 | D03 | PYTHON_ORACLE_PRESENT; native v2 reference only |
 | D04 | PYTHON_ORACLE_PRESENT; experimental native partial |
 | D05 | UNIT_PRESENT; native unknown minor not representable |
@@ -21,21 +21,21 @@ This is an *implementation/coverage ledger*, **not a green CI report**. GitHub A
 | D13 | BLOCKED verified UART distinction absent |
 | D14 | BLOCKED AF_CONFIRM vs SRSP lifecycle host hook missing |
 | D15 | BLOCKED B2 route metric not integrated |
-| D16 | PARTIAL offline independent timeout categories only |
-| D17 | PARTIAL bounded parser/recorder; native load fairness unverified |
-| D18 | SOURCE_NODE_TEST staged skip/coalesce; no actual OTA backpressure proof |
+| D16 | HOSTED_NODE: opt-in actual pinned Znp SYS timeout event captured; AF/ZDO in-memory source hooks, real incidents not captured |
+| D17 | HOSTED_NODE: real AsyncMutex active lock with zero pending count rejects diagnostic, native load fairness still unverified |
+| D18 | HOSTED_NODE: disabled, busy and explicit OTA suppression controls passed, real OTA pacing not tested |
 | D19 | PARTIAL SIGTERM host category, not live process |
 | D20 | PARTIAL USB detach replay; no actual USB source |
 | D21 | PARTIAL last-good preserved; no installed host hook |
-| D22 | NODE_TEST staged timeout/cooldown; no actual waiter leak proof |
+| D22 | HOSTED_NODE: genuine pinned diagnostic Waitress timeout removes its waiter; control SREQ policy unchanged, real load unverified |
 | D23 | NODE_SOURCE existing owner only; second-client hostile test missing |
 | D24 | SOURCE_PROVEN ZStackAdapter.znp private; unsupported extension |
-| D25 | PYTHON_UNIT recovery interruption proof staged |
-| D26 | PYTHON_UNIT IO/fsync failure proof staged |
-| D27 | PYTHON_UNIT bounded events proof staged |
-| D28 | PYTHON_UNIT out-of-order rejection staged |
-| D29 | PYTHON_UNIT duplicate waiter rejection staged |
-| D30 | PYTHON_UNIT allowlist denial staged |
+| D25 | HOSTED_PYTHON: prior valid snapshot survives pre-rename failure; post-rename fsync remains qualified failure |
+| D26 | HOSTED_PYTHON: I/O/fsync failure rejects; no production async worker |
+| D27 | HOSTED_PYTHON + NODE: 256 event ring cap and dropped accounting |
+| D28 | HOSTED_PYTHON: monotonic reversal rejected |
+| D29 | HOSTED_PYTHON: duplicate waiter rejection, NODE diagnostic Waitress cleanup |
+| D30 | HOSTED_PYTHON and NODE: strict raw-field rejection, metadata-only timeout ring and bounded retention; no deployment |
 | D31 | OFFLINE_REPLAY staged with actual historical counts |
 | D32 | OFFLINE_REPLAY staged synthetic starvation |
 | D33 | OFFLINE_REPLAY staged unknown prior radio epoch |
