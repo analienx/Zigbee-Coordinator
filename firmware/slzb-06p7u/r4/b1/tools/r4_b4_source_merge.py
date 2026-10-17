@@ -61,7 +61,8 @@ def merge_lines(original, b1, b4):
         if not matched:
             raise ValueError(
                 f"R4_B1_B4_ACTUAL_SOURCE_OVERLAP_OR_AMBIGUITY "
-                f"{mode} at TI lines {i1+1}..{i2}")
+                f"{mode} at TI lines {i1+1}..{i2}; "
+                f"B4 source fragment={replacement[:130]!r}")
     if not receipts or text==b1:
         raise ValueError("R4_B1_B4_NO_INSTRUMENTATION_INTEGRATED")
     return text, list(reversed(receipts))
