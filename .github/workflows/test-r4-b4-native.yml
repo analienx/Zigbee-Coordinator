@@ -102,6 +102,9 @@ jobs:
           # Patch only pristine TI SDK source in disposable CI workspace.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b4/b4_native_patch.py" \
             --sdk "$sdk" --receipt /tmp/b0out/b4-native-overlay.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py" \
+            --sdk "$sdk" --v3-receipt /tmp/b0out/b4-native-overlay.json \
+            --receipt /tmp/b0out/b4-v4-native-overlay.json
           test -f "$sdk/imports.mak"
           : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
           : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
@@ -145,6 +148,11 @@ jobs:
             --manifest /tmp/b0out/manifest.json \
             --patch-receipt /tmp/b0out/b4-native-overlay.json \
             --output /tmp/b0out/b4-native-linked.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b4/b4_v4_native_link_audit.py" \
+            --elf "/tmp/b0out/$elf_name" --nm "$TICLANG_ARMCOMPILER/bin/tiarmnm" \
+            --manifest /tmp/b0out/manifest.json \
+            --receipt /tmp/b0out/b4-v4-native-overlay.json \
+            --output /tmp/b0out/b4-v4-native-linked.json
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
