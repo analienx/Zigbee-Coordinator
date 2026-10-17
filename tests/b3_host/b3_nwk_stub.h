@@ -21,6 +21,7 @@ extern uint32_t nwkFrameCounterChanges;
 extern uint8_t FrameCounterUpdated;
 void SSP_ReadNwkActiveKey(nwkActiveKeyItems *key);
 uint8_t osal_nv_write(uint16_t id, uint16_t len, void *buf);
+uint8_t osal_nv_read(uint16_t id, uint16_t offset, uint16_t len, void *buf);
 uint8_t osal_nv_read_ex(uint16_t sysid, uint16_t subid, uint16_t off, uint16_t len, void *buf);
 uint8_t osal_nv_write_ex(uint16_t sysid, uint16_t subid, uint16_t len, void *buf);
 static inline uint8_t OsalPort_memcmp(const void *a, const void *b, uint16_t len) {
