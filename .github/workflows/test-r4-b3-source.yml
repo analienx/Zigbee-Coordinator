@@ -1,0 +1,232 @@
+name: R4-B3 offline source and actual OSAL C (NOT FLASH)
+
+on:
+  pull_request:
+    paths:
+      - "docs/r4/b3/**"
+      - "firmware/slzb-06p7u/r4/b3/**"
+      - "tests/test_r4_b3_*.py"
+      - "tests/b3_host/**"
+      - ".github/workflows/test-r4-b3-*.yml"
+
+concurrency:
+  group: r4-b3-source-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  b3-synthetic-policy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Enforce no restore / no flash via hostile synthetic archives
+        run: python -m unittest -v tests.test_r4_b3_migration
+      - name: Python syntax
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/b3/tools/b3_migration_sim.py
+          python -m py_compile firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py
+
+  b3-actual-osal-c:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Fetch pinned TI SDK exact Git commit (no cached untrusted source)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b3sdk && cd /tmp/b3sdk
+          git init -q
+          git remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -c protocol.version=2 fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          test "$(git rev-parse FETCH_HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
+          git -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git hash-object source/ti/zstack/osal/osal_nv.c)" = "65c7667475627989cbe2e3f5fdd46335b50eb660"
+          test "$(git hash-object source/ti/common/nv/nvocmp.c)" = "01b2b0827d278c10c012b33e5791e53bc5662f10"
+      - name: Apply guarded B3 overlays on disposable source only
+        run: |
+          python firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py \
+            --sdk /tmp/b3sdk --receipt /tmp/b3-source-receipt.json
+          test -s /tmp/b3-source-receipt.json
+      - name: Compile actual patched TI OSAL C and invoke real exported functions
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b3host
+          cp /tmp/b3sdk/source/ti/zstack/osal/osal_nv.c /tmp/b3host/osal_nv.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-parameter -DZSTACK_GPD \
+            -I tests/b3_host /tmp/b3host/osal_nv.c \
+            tests/b3_host/osal_driver_test.c -o /tmp/b3host/b3_osal_test
+          /tmp/b3host/b3_osal_test
+      - name: Negative control — reverting missing-backend fix must fail real C assertion
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          f = Path('/tmp/b3host/osal_nv.c')
+          s = f.read_text()
+          old = '  uint8_t rtrn = NV_OPER_FAILED;\n  uint8_t status;'
+          assert s.count(old) == 1
+          f.write_text(s.replace(old, '  uint8_t rtrn = SUCCESS;\n  uint8_t status;'))
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Werror -Wno-unused-parameter -DZSTACK_GPD \
+            -I tests/b3_host /tmp/b3host/osal_nv.c \
+            tests/b3_host/osal_driver_test.c -o /tmp/b3host/b3_mutant
+          ulimit -c 0
+          if /tmp/b3host/b3_mutant > /tmp/b3-mutant.log 2>&1; then
+            echo "B3 mutation SURVIVED: missing-backend assertion not executed"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-mutant.log
+          echo "Mutation rejected at actual OSAL write function"
+
+      - name: Compile exact TI APS/TCLK security checkpoint bodies and exercise failures
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_security_extract.py \
+            --source /tmp/b3sdk/source/ti/zstack/stack/zdo/zd_sec_mgr.c \
+            --out /tmp/b3host/ti_security_bodies.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_security_bodies.c \
+            tests/b3_host/b3_security_test.c -o /tmp/b3host/ti_security
+          /tmp/b3host/ti_security
+      - name: Security mutant must fail the pending-write assertion, not a superficial checksum
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          f=Path('/tmp/b3host/ti_security_bodies.c')
+          s=f.read_text()
+          import re
+          # Match only the two *write* result guards, not preceding read guards.
+          pattern=r'(if \(osal_nv_write_ex\([\s\S]*?pKeyData\)) == SUCCESS\)'
+          mutant,n=re.subn(pattern,r'\1 >= 0)',s)
+          assert n==2, f"expected two write guards, got {n}"
+          f.write_text(mutant)
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Wno-type-limits \
+            -I tests/b3_host /tmp/b3host/ti_security_bodies.c \
+            tests/b3_host/b3_security_test.c -o /tmp/b3host/ti_security_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_security_mutant > /tmp/b3-security-mutant.log 2>&1; then
+            echo "Mutant SURVIVED security pending-write assertion"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-security-mutant.log
+          echo "Negative security mutant rejected by actual function-body assertion"
+
+      - name: Derive serialized APS/TCLK row size from real pinned TI C typedefs
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_capacity_types.py \
+            --sdk-stack /tmp/b3sdk/source/ti/zstack/stack \
+            --out /tmp/b3host/ti_security_types.c
+          gcc -std=c11 -Wall -Wextra -Werror \
+            /tmp/b3host/ti_security_types.c -o /tmp/b3host/ti_security_types
+          /tmp/b3host/ti_security_types | tee /tmp/b3-types.out
+          grep -Fx "B3_TI_833_REAL_TYPES APS=24 TCLK=20 item_hdr=7" /tmp/b3-types.out
+
+
+      - name: Compile real TI NWK save and restore bodies with rejection and overflow cases
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_nwk_extract.py \
+            --source /tmp/b3sdk/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/b3host/ti_nwk.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_nwk.c \
+            tests/b3_host/b3_nwk_test.c -o /tmp/b3host/ti_nwk
+          /tmp/b3host/ti_nwk
+      - name: NWK negative control must catch rejected-save acknowledgment
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/b3host/ti_nwk.c')
+          s=p.read_text()
+          old='(void *)&keyItems) == SUCCESS)'
+          assert s.count(old)==1
+          s=s.replace(old,'(void *)&keyItems) >= SUCCESS)')
+          p.write_text(s)
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Wno-error \
+            -I tests/b3_host /tmp/b3host/ti_nwk.c \
+            tests/b3_host/b3_nwk_test.c -o /tmp/b3host/ti_nwk_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_nwk_mutant >/tmp/b3-nwk-mutant.log 2>&1; then
+            echo "Mutant survived failed NWK key write acknowledgment"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-nwk-mutant.log
+
+      - name: Test real TI generated-key entropy failure and four publishing caller guards
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_entropy_extract.py \
+            --sdk-stack /tmp/b3sdk/source/ti/zstack/stack \
+            --out /tmp/b3host/ti_entropy.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_entropy.c \
+            tests/b3_host/b3_entropy_test.c -o /tmp/b3host/ti_entropy
+          /tmp/b3host/ti_entropy
+
+      - name: Compile actual TI TC seed-derived and NWK key transport denial paths
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_transport_extract.py \
+            --sdk-stack /tmp/b3sdk/source/ti/zstack/stack \
+            --out /tmp/b3host/ti_transports.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_transports.c \
+            tests/b3_host/b3_transport_test.c -o /tmp/b3host/ti_transports
+          /tmp/b3host/ti_transports
+      - name: Negative control — ignored TC seed NV read must fail transport assertion
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/b3host/ti_transports.c')
+          s=p.read_text()
+          needle='osal_nv_read(ZCD_NV_TCLK_SEED, 0, SEC_KEY_LEN, tempKey) != SUCCESS'
+          assert s.count(needle)==1
+          p.write_text(s.replace(needle, 'osal_nv_read(ZCD_NV_TCLK_SEED, 0, SEC_KEY_LEN, tempKey) == 255'))
+          PY
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_transports.c \
+            tests/b3_host/b3_transport_test.c -o /tmp/b3host/ti_transport_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_transport_mutant > /tmp/b3-tc-mutant.log 2>&1; then
+            echo "TC seed read error mutant survived"; exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-tc-mutant.log
+
+      - name: Deliberately ignoring failed TRNG must fail actual C negative assertion
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/b3host/ti_entropy.c")
+          s=p.read_text()
+          a="if (result != TRNG_STATUS_SUCCESS)"
+          assert s.count(a)==1
+          p.write_text(s.replace(a, "if (0)"))
+          PY
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-but-set-variable \
+            -I tests/b3_host /tmp/b3host/ti_entropy.c \
+            tests/b3_host/b3_entropy_test.c -o /tmp/b3host/ti_entropy_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_entropy_mutant >/tmp/b3-mutant-entropy.log 2>&1; then
+            echo "B3 TRNG failure mutant unexpectedly survived"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-mutant-entropy.log
+          echo "B3_REAL_TI_TRNG_ERROR_BYPASS_MUTANT_KILLED"

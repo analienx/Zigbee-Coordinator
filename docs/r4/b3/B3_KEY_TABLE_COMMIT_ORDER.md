@@ -1,0 +1,9 @@
+# B3-02 — key/counter commit protocol proposal (NOT implemented)
+
+The threat is sending a secured frame with an active key after a restart using an outgoing counter equal to or below a previously transmitted value. Simply reading the last stored counter is insufficient if frames were sent after its checkpoint.
+
+**Required future reserve-before-send protocol:** verified authenticated active key ID and network identity -> read authenticated persisted high-water -> reserve a strictly higher bounded counter interval -> durably write and read back reservation with generation/commit marker -> permit TX only within confirmed reservation -> on restart skip any unused portion -> HOLD_SECURITY on reservation failure, exhaustion or unverified identity. No modulo wrap for `0xFFFFFFFF`. Separate per-destination APS/TCLK TX floors by authenticated link-key identity; do not treat RX and TX counters as interchangeable. A changed key creates a distinct counter domain and an explicit manual approval requirement.
+
+**Cross-item consistency:** ZDO NIB, NWK key sequence, TC link-key table and associated metadata may live in separate NVOCMP items. TI NVOCMP's individual per-item CRC does not prove an all-or-nothing multi-item transaction. A proposed committed-generation/transaction-intent design must keep last valid generation and report HOLD rather than expose a partly new key table. Implement only after actual SDK call graph, available durable item IDs, spare flash budget and B1 hold integration are established; do not silently add schema fields to persistent stock data.
+
+**Unproven:** exact TI 8.33 transmit counter owner, checkpoint batching, ROM secured MAC paths, NIB serialization sizes, network formation fallback, NV key rows, and power-cut timing. All are mandatory blockers for SOURCE_READY. An offline high-water report is never a high-water authorization for a live coordinator.

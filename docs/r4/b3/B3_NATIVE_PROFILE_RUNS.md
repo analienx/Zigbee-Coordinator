@@ -1,0 +1,5 @@
+
+# B3 native page-count profile acceptance
+**Status: EXPERIMENTAL / NOT FLASH READY.** Separate GitHub Actions CI builds for NV3/NV5 are implemented, not permission to change real NV.
+Source-gated `b3_native_candidate.py` patches only three pinned TI upstream inputs in disposable CI checkouts: linker FLASH and FLASH_NV, projectspec NVOCMP page count, and SysConfig P7 NVS region. NV3 uses app 0..0xA7FFF / NV 0xA8000..0xADFFF. NV5 uses app 0..0xA3FFF / NV 0xA4000..0xADFFF. Both leave 0xAE000..0xAFFFF CCFG allocation untouched.
+`b3_native_profile_audit.py` checks exact original B0 auditor blob and derives only declared geometry differences before running all B0 native artifact gates (true CCS linker XML, ELF/HEX/BIN binding, no NV code bytes). The original generated-board UART DIO12/DIO13 and vendor CCFG SHA checker is reused unchanged. Candidate CI results and reproducibility receipts must be evaluated at the exact final SHA. Original 20260310/20260311 stock NV format remains UNKNOWN; all restore/flash/network mutation authority false.
