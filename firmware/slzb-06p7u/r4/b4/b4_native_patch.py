@@ -100,11 +100,27 @@ def build_patches(root):
     task = task.replace(task_anchor,
         "/* " + MARKER + ": RAM-only counter; updates inside preexisting CS. */\n"
         "volatile uint32_t B4_NpiSrspEnqueued = 0;\n" + task_anchor, 1)
+    # Both real source producers enqueue the same synchronous response
+    # queue: NPITask_sendToHost() and NPITask_processStackMsg(). Each
+    # already owns an OsalPort critical section. Never count one and silently
+    # omit the other (source-shape invariant prevents partial instrumentation).
     enqueue = "Queue_enqueue(npiSyncTxQueue, &recPtr->_elem);"
-    if task.count(enqueue) != 1:
-        raise ValueError("NPI SRSP queue hook drift")
+    if task.count(enqueue) != 2:
+        raise ValueError("NPI SRSP queue producer count drift (expected exactly two)")
+    for function_name in ("void NPITask_sendToHost(uint8_t *pMsg)",
+                          "static void NPITask_processStackMsg(uint8_t *pMsg)"):
+        start = task.find(function_name)
+        end = task.find(enqueue, start)
+        if start < 0 or end < 0 or end - start > 5500:
+            raise ValueError("unqualified SRSP producer: " + function_name)
+        scope = task[start:end]
+        if ("OsalPort_enterCS()" not in scope or
+                "#if defined(NPI_SREQRSP)" not in scope):
+            raise ValueError("missing preexisting critical section for " + function_name)
     task = task.replace(enqueue,
-        enqueue + "\n                ++B4_NpiSrspEnqueued; /* existing OsalPort CS */", 1)
+        enqueue + "\n                ++B4_NpiSrspEnqueued; /* existing OsalPort CS */")
+    if task.count("++B4_NpiSrspEnqueued;") != 2:
+        raise ValueError("cannot prove both synchronous response producer increments")
     return {MT_SYS: (initial[MT_SYS], sys), NPI_TASK: (initial[NPI_TASK], task)}
 
 def apply(root):
