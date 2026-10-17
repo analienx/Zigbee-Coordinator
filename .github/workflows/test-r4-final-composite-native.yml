@@ -532,7 +532,7 @@ jobs:
           # Check exact native app sectors below historical NV5/NV2 union.
           # Does not generate a flashable image, read private NV, or authorize flash.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_flash_preflight.py" \
-            --artifacts /tmp/b0out --receipt /tmp/b0out/r4-app-sector-preflight.json
+            --artifacts /tmp/b0out --resident-vectors --receipt /tmp/b0out/r4-app-sector-preflight.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
