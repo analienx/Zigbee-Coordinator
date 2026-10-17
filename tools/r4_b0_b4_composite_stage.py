@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 TI_SHA="3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
@@ -25,6 +26,7 @@ UART="source/ti/zstack/npi/npi_tl_uart.c"
 
 def load(name,path):
     if path.is_symlink() or not path.is_file(): raise ValueError("UNTRUSTED_PINNED_SCRIPT "+name)
+    if str(path.parent) not in sys.path:sys.path.insert(0,str(path.parent))
     spec=importlib.util.spec_from_file_location(name,path)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module
