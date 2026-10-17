@@ -29,6 +29,7 @@ hardware reviewer sign-off.
 | --- | --- | --- | --- |
 | P1 — integration | PR #91 recorded as merged to `main` despite base being the PR #89 review branch. | Corrected issue #90 title/top-status, explicitly documented #86 → #89 → #91 stack and no premature deployment. | **Corrected record; main integration still OPEN** |
 | P1 — NV safety | ELF-derived `tiarmobjcopy -O binary` spans `0x00000..0xAFFFF` including synthetic fill in 16KiB reserved `FLASH_NV 0xAA000..0xADFFF`. A contiguous raw-BIN writer can erase NV, network identity and security counters. HEX contains no programmed NV data, but that is insufficient to qualify a programmer. | PR #102 `b0_flash_boundary.py` refuses HEX NV writes, verifies full BIN and matching HEX payload, and emits a SHA-bound **DO_NOT_FLASH** receipt with all approval flags false. Regression tests cover multiple hostile mutations and missing/invalid manifest fields. | **Source mitigation in draft PR #102; not production-qualified** |
+| P1 — CI artifact publication | Original workflow uploaded **full BIN/ELF/HEX even when native audit failed** (`if: always()`), making unvalidated firmware downloadable from a red run. | PR #102 now uploads full firmware files on **success only**, after the linked image and NV boundary both pass. Failure jobs upload only allowlisted logs/receipts under `FAILED_DIAGNOSTICS_NO_FIRMWARE`. Static CI tests enforce order and allowlist. | **Source fix in PR #102; hosted CI pending** |
 | P2 — evidence | Native build source checks are not physical qualifications; an offline receipt cannot prove toolchain provenance or boot. | Receipt explicitly says `NV_SPAN_CHECK_ONLY_NOT_SOURCE_OR_HARDWARE_ATTESTATION`; independent native provenance remains in separate CI logs/ELF audit. Failed re-runs overwrite stale receipts with a new `FAILED_CLOSED` denial. | **Addressed in PR #102** |
 | P2 — docs | B0 README had stale “native build still pending” language and omitted `examples/rtos/` in a CCS path. | Restored exact upstream projectspec location and reconciled native result; documented raw-BIN hazard prominently. | **Addressed in PR #102** |
 
@@ -40,7 +41,7 @@ tampered BIN, (3) HEX addresses outside the 704 KiB flash, (4) truncated
 BIN with re-hashed manifest, (5) uniformity of NV filler, (6) digest
 tampering, (7) manifest path traversal, (8) a prior successful receipt
 remaining after a failed check and (9) false source/physical attestation.
-The **exact-HEAD hosted results of PR #102 must be checked separately**
+The **exact-HEAD hosted results of PR #102 (including failure-artifact publication guards) must be checked separately**
 before any review decision; do not recycle previous run #38923787459
 as proof of the post-merge script.
 
