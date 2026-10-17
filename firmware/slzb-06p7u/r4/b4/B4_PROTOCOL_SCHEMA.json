@@ -137,13 +137,13 @@
         3,
         4
       ],
-      "validity": "0x0000001F when NPI_SREQRSP built; 0x0000000C otherwise (async depth and HWM only)",
+      "validity": "0x0000001F: SRSP (dedicated when NPI_SREQRSP compiled, or CMD0-tagged in stock general TX queue), async general queue, and enqueue count",
       "capabilities": 0,
       "radio_boot_id": 0,
       "uptime_ms": 0,
       "sample_seq": "static RAM only",
       "host_enabled_by_default": false,
-      "queue_depth_semantics": "Current NPI TX queue record count, captured under TI preexisting OsalPort CS, without measuring UART completion",
+      "queue_depth_semantics": "In pinned stock P7U NPI_SREQRSP off, SRSP gauge tracks CMD0=0x60 tagged frames pending within general TX queue; async_depth is total general TX queue frames, including those SRSP. When NPI_SREQRSP on, dedicated sync and async queues apply; no NPI mode change performed by B4.",
       "high_water_semantics": "Maximum observed NPI TX depth since cold RAM initialization; no radio epoch proof"
     }
   },
