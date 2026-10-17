@@ -29,6 +29,16 @@ class ArtifactPublicationTests(unittest.TestCase):
         self.assertIn("/tmp/b0out/DO_NOT_FLASH_NV_BOUNDARY.json\n", failed)
         self.assertIn("if-no-files-found: warn", failed)
 
+    def test_artifact_name_identifies_actual_checked_out_pr_head(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        # GitHub's github.sha on pull_request is a synthetic merge-ref
+        # commit; this build checks out pull_request.head.sha instead.
+        # Evidence artifact labels must identify that actual source.
+        expected = "${{ github.event.pull_request.head.sha || github.sha }}"
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", workflow)
+        self.assertIn("name: r4-b0-NOT_FLASH_QUALIFIED-" + expected, workflow)
+        self.assertIn("name: r4-b0-FAILED_DIAGNOSTICS_NO_FIRMWARE-" + expected, workflow)
+
     def test_nv_boundary_must_run_before_success_publication(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         native = source.split("  r4-b0-native-build:", 1)[1]
