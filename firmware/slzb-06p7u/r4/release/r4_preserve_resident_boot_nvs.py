@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 
+APP_HEADER_BYTES = 0x80
 APP_END = 0xA0000
 NVS_BEGIN = 0xA0000
 NVS_END = 0xA4000
@@ -18,8 +19,10 @@ FLASH_END = 0xB0000
 NVS_OLD = "    NVS1.internalFlash.regionBase = 0xAA000;\n    NVS1.internalFlash.regionSize = 0x4000;"
 NVS_NEW = "    NVS1.internalFlash.regionBase = 0xA0000;\n    NVS1.internalFlash.regionSize = 0x4000;"
 LINKER_REPLACEMENTS = (
-    ("#define FLASH_SIZE              0xAA000", "#define FLASH_SIZE              0xA0000"),
+    ("#define FLASH_BASE              0x00000000", "#define FLASH_BASE              0x00000080"),
+    ("#define FLASH_SIZE              0xAA000", "#define FLASH_SIZE              0x9FF80"),
     ("#define FLASH_NV_BASE           0xAA000", "#define FLASH_NV_BASE           0xA0000"),
+    ("    .resetVecs: load > 0", "    .resetVecs: load > 0x80"),
 )
 
 def sha(raw):
@@ -48,7 +51,7 @@ def transform(syscfg, linker):
         raise ValueError("R4_BOOT_PRESERVE_NV_SIZE_DRIFT")
     if "#define FLASH_LAST_BASE         0xAE000" not in ld:
         raise ValueError("R4_BOOT_PRESERVE_CCFG_SECTOR_DRIFT")
-    if "#define FLASH_BASE              0x00000000" not in ld:
+    if "#define FLASH_BASE              0x00000080" not in ld:
         raise ValueError("R4_BOOT_PRESERVE_APP_VECTOR_DRIFT")
     return sc, ld
 
@@ -67,7 +70,10 @@ def apply(syscfg_path, linker_path, receipt_path):
         "project_syscfg_after_sha256": sha(new_sc.encode()),
         "sdk_linker_before_sha256": sha(before_ld),
         "sdk_linker_after_sha256": sha(new_ld.encode()),
-        "app_range": ["0x00000", "0xA0000"],
+        "app_range": ["0x00080", "0xA0000"],
+        "app_header_range": ["0x00000", "0x00080"],
+        "linker_vectors_expected": "0x00080",
+        "header_schema": "fitted-20260311-first-stage-v1",
         "relocated_nvs_range": ["0xA0000", "0xA4000"],
         "reserved_existing_region": ["0xA4000", "0xB0000"],
         "resident_boot_stage": "0xAC000_PRESERVED_NOT_QUALIFIED",
