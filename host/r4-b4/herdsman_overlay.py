@@ -88,6 +88,16 @@ ADAPTER_METHOD = r"""
         }
     }
 
+    /** B4 source-only opt-in; no disk I/O, ZNP request, MQTT, or serial open. */
+    public b4SetPassiveHostForensics(enabled: boolean): void {
+        this.znp.b4EnablePassiveForensics(enabled);
+    }
+
+    /** Read only sanitized numeric monotonic host events; no waiter IDs. */
+    public b4GetPassiveHostForensics(): ReturnType<Znp["b4ReadPassiveForensics"]> {
+        return this.znp.b4ReadPassiveForensics();
+    }
+
 """
 
 def _git(root, *args):
@@ -239,7 +249,7 @@ def plan(root):
         }
         const at_ms = Math.floor(performance.now());
         if (!Number.isSafeInteger(at_ms) || at_ms < 0) {
-            this.b4HostDropped++;
+            this.b4HostDropped = Math.min(Number.MAX_SAFE_INTEGER, this.b4HostDropped + 1);
             return;
         }
         if (this.b4HostTimeouts.length >= 256) {
