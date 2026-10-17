@@ -1,0 +1,49 @@
+name: R4 B0 conservative protected sector erase DENY (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/b0/tools/b0_sector_erase_denial.py'
+      - 'tests/test_r4_b0_sector_erase_denial.py'
+      - '.github/workflows/test-r4-b0-sector-erase-denial.yml'
+  push:
+    branches: [fix/r4-b0-sector-erase-denial-20261017]
+permissions:
+  contents: read
+jobs:
+  sector-denial-host:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Exercise synthetic source-only sector refusal; no target device
+        run: |
+          set -Eeuo pipefail
+          python -m unittest -v tests.test_r4_b0_sector_erase_denial
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/b0-sector-ccfg.hex")
+          def hexline(address, record_type, data=b""):
+              raw=bytes((len(data),(address>>8)&255,address&255,record_type))+data
+              return ":"+(raw+bytes((-sum(raw)&255,))).hex().upper()
+          p.write_text("\n".join([hexline(0,4,bytes((0,10))),hexline(0xFFA8,0,b"\x00"),hexline(0,1),""]))
+          PY
+          python firmware/slzb-06p7u/r4/b0/tools/b0_sector_erase_denial.py \
+            --hex /tmp/b0-sector-ccfg.hex --receipt /tmp/b0-sector-receipt.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("/tmp/b0-sector-receipt.json").read_text())
+          assert x["status"]=="BLOCKED_PROTECTED_SECTOR_ERASE"
+          assert x["flash_authorized"] is False
+          assert any(i["reason"]=="BOOT_CCFG_TOP_SECTOR" for i in x["protected_sector_collisions"])
+          print("EXPLICIT CCFG ERASE DENIAL VERIFIED / NO FLASH")
+          PY
+      - name: Upload only refusal receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r4-b0-sector-NO-FLASH-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/b0-sector-receipt.json
+          if-no-files-found: error
