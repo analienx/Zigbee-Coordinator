@@ -113,7 +113,7 @@ class V4Native(unittest.TestCase):
         with TemporaryDirectory(dir="/tmp") as temp:
             root = Path(temp)
             elf = root / "znp.out"
-            elf.write_bytes(b"\\x7fELF" + bytes(40))
+            elf.write_bytes(b"\x7fELF" + bytes(40))
             manifest = root / "manifest.json"
             manifest.write_text(json.dumps({
                 "schema": "r4-b0-artifact-manifest-v1",
@@ -130,12 +130,12 @@ class V4Native(unittest.TestCase):
                 "flash_authorized": False, "physical_verified": False,
                 "files": {MT_SYS: {}, NPI_TASK: {}}
             }
-            symbols = "\\n".join((
+            symbols = "\n".join((
                 "00000080 B B4_V4BootId",
                 "00000088 B B4_V4BootValid",
                 "00000090 D B4_V4ResetReason",
                 "00001000 t B4_SysReadOnlyDiagnosticsV4",
-            )) + "\\n"
+            )) + "\n"
             from types import SimpleNamespace
             with patch("b4_v4_native_link_audit.subprocess.run",
                        return_value=SimpleNamespace(stdout=symbols)):
