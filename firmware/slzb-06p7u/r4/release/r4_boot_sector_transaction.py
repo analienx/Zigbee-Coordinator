@@ -56,7 +56,8 @@ async def guard_boot_protection(rom: ROM) -> None:
 
 
 async def boot_sector_admission(rom: ROM, before: bytes, after: bytes,
-                                expected_app_crcs: dict[int, int]) -> dict:
+                                expected_app_crcs: dict[int, int],
+                                *, recover_partially_written_boot: bool = False) -> dict:
     """Read-only approval; verifies real 23 application CRCs before any write."""
     if (not isinstance(before,bytes) or len(before)!=SECTOR
             or not isinstance(after,bytes) or len(after)!=SECTOR):
@@ -64,17 +65,29 @@ async def boot_sector_admission(rom: ROM, before: bytes, after: bytes,
     if not isinstance(expected_app_crcs,dict) or set(expected_app_crcs)!=set(range(0,0x2E000,SECTOR)):
         reject("EXPECTED_APP_SECTOR_PLAN_MISSING")
     await guard_boot_protection(rom)
-    if await rom.crc32(BOOT,SECTOR) != crc(before):
+    observed_boot_crc = await rom.crc32(BOOT,SECTOR)
+    if recover_partially_written_boot:
+        # Only exact pinned stock boot-sector bytes can recover an
+        # interrupted handoff erase/write. NEVER relax the install path.
+        if (hashlib.sha256(after).hexdigest() != STOCK_BOOT_SHA
+                or crc(after) != STOCK_BOOT_CRC):
+            reject("PARTIAL_RECOVERY_REQUIRES_EXACT_FACTORY_BOOT")
+    elif observed_boot_crc != crc(before):
         reject("BOOT_SECTOR_NOT_EXPECTED_BEFORE")
     for addr, wanted in sorted(expected_app_crcs.items()):
         if (type(wanted) is not int or not 0<=wanted<2**32
                 or await rom.crc32(addr,SECTOR)!=wanted):
             reject("APP_CRC_NOT_AT_APPROVED_STAGE_" + hex(addr))
-    digest = hashlib.sha256(before + after + b"".join(
-        struct.pack("<II",s,v) for s,v in sorted(expected_app_crcs.items()))).hexdigest()
+    digest = hashlib.sha256(
+        before + after + struct.pack("<I",observed_boot_crc) +
+        bytes([int(recover_partially_written_boot)]) +
+        b"".join(struct.pack("<II",s,v) for s,v in sorted(expected_app_crcs.items()))
+    ).hexdigest()
     return {"schema":"r4-p7u-boot-sector-admission-v1",
             "target_sector":BOOT,
             "before_crc32":crc(before),
+            "observed_live_boot_crc32":observed_boot_crc,
+            "partial_stock_recovery_only":recover_partially_written_boot,
             "after_crc32":crc(after),
             "app_sectors":23,
             "binding_sha256":digest,
@@ -85,13 +98,16 @@ async def boot_sector_admission(rom: ROM, before: bytes, after: bytes,
 
 async def write_single_boot_sector(rom: ROM, before: bytes, after: bytes,
                                    expected_app_crcs: dict[int,int],
-                                   admission: dict, binding_token: str) -> dict:
+                                   admission: dict, binding_token: str,
+                                   *, recover_partially_written_boot: bool = False) -> dict:
     """One tightly bound flash sector; no bank/chip/CCFG/NV erase API.
 
     Only invoke from a separately authorized, board-identified live operator.
     Unlike generic CLI flash, this function cannot touch other sector values.
     """
-    current=await boot_sector_admission(rom,before,after,expected_app_crcs)
+    current=await boot_sector_admission(
+        rom,before,after,expected_app_crcs,
+        recover_partially_written_boot=recover_partially_written_boot)
     if (admission != current or current["binding_sha256"] != binding_token
             or admission.get("target_sector") != BOOT
             or admission.get("flash_authorized") is not False):
