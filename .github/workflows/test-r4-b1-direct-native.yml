@@ -391,6 +391,25 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/apply_b1.py" \
             --sdk "$sdk" --receipt /tmp/b0out/b1-overlay.json
           test -s /tmp/b0out/b1-overlay.json
+          # B4 v3 F0 + v4 F2 are generated on a separate pinned TI worktree
+          # and then strictly three-way merged with B1's real NPI/UART C.
+          # A conflict aborts before linking any image; NO naive cherry-pick.
+          B4_CANONICAL_SHA=b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a
+          git -C "$GITHUB_WORKSPACE" fetch -q --no-tags --depth 1 origin "$B4_CANONICAL_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse "$B4_CANONICAL_SHA")" = "$B4_CANONICAL_SHA"
+          mkdir -p /tmp/r4-b4-native-tools
+          for item in b4_native_patch.py b4_v4_native_patch.py; do
+            git -C "$GITHUB_WORKSPACE" show "$B4_CANONICAL_SHA:firmware/slzb-06p7u/r4/b4/$item" > "/tmp/r4-b4-native-tools/$item"
+            test -s "/tmp/r4-b4-native-tools/$item"
+          done
+          git -C "$sdk" worktree add -q --detach /tmp/r4-b4-scratch 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          python /tmp/r4-b4-native-tools/b4_native_patch.py --sdk /tmp/r4-b4-scratch \
+            --receipt /tmp/b0out/b4-v3-scratch.json
+          python /tmp/r4-b4-native-tools/b4_v4_native_patch.py --sdk /tmp/r4-b4-scratch \
+            --receipt /tmp/b0out/b4-f2-scratch.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/r4_b4_source_merge.py" \
+            --b1-sdk "$sdk" --b4-sdk /tmp/r4-b4-scratch \
+            --receipt /tmp/b0out/b1-b4-strict-source-merge.json
           echo "Discover pinned TI compiler and SDK product in CCS" | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
