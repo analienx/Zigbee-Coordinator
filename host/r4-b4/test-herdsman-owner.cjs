@@ -196,3 +196,35 @@ test("D22: genuine timed-out F0 waiter is removed and does not leak or retry", a
     assert.equal(znp.waitress.waiters.size, 0);
     assert.equal(znp.b4CanProbe(), true);
 });
+
+test("D14/D16/D19/D30: exact Waitress timeout only, bounded privacy-safe host forensic ring", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true; // simulated; no OS serial access
+    znp.unpiWriter.writeFrame = () => {}; // force genuine Waitress timeout
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 15));
+    assert.equal(znp.b4ReadPassiveForensics().recent_events.length, 0); // opt-in default off
+    znp.b4EnablePassiveForensics(true);
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 15));
+    let receipt = znp.b4ReadPassiveForensics();
+    assert.equal(receipt.recent_events.length, 1);
+    assert.deepEqual(Object.keys(receipt.recent_events[0]).sort(), ["at_ms","kind"]);
+    assert.equal(receipt.recent_events[0].kind, "SYS_SREQ_TIMEOUT");
+    assert.equal(receipt.radio_epoch, "UNKNOWN");
+    // A different Error, e.g. UART writer failure, never becomes an SRSP timeout.
+    znp.b4RecordHostSreqTimeout(Subsystem.SYS, "ping", 15, new Error("UART detached"));
+    assert.equal(znp.b4ReadPassiveForensics().recent_events.length, 1);
+    // No unbounded accumulation, no raw packets or device identifiers in output.
+    for (let i = 0; i < 300; i++) {
+        znp.b4RecordHostSreqTimeout(Subsystem.AF, "dataRequest", 15,
+                                  new Error("SRSP - AF - dataRequest after 15ms"));
+    }
+    receipt = znp.b4ReadPassiveForensics();
+    assert.equal(receipt.recent_events.length, 256);
+    assert.ok(receipt.dropped >= 45);
+    assert.equal(JSON.stringify(receipt).includes("network_key"), false);
+    assert.equal(JSON.stringify(receipt).includes("waiter_id"), false);
+    assert.equal(JSON.stringify(receipt).includes("/dev/"), false);
+    znp.b4EnablePassiveForensics(false);
+    assert.equal(znp.b4ReadPassiveForensics().recent_events.length, 0);
+    assert.equal(znp.b4ReadPassiveForensics().dropped, 0);
+});
