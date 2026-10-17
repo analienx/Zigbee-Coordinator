@@ -1,0 +1,66 @@
+name: R4 B2 MTO NV fail-closed TI source candidate (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'tools/b2_mto_fail_closed_overlay.py'
+      - '.github/workflows/test-r4-b2-mto-nv-failclosed.yml'
+      - 'docs/r4/b2/MTO_NV_FAILURE_REMEDIATION.md'
+  push:
+    branches: [fix/r4-b2-mto-nv-failclosed-20261017]
+permissions:
+  contents: read
+jobs:
+  source-nv-failclosed:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout immutable PR HEAD
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch TI 8.33 exact donor
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init -q /tmp/r4-b2-ti
+          git -C /tmp/r4-b2-ti remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4-b2-ti fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4-b2-ti checkout --quiet FETCH_HEAD
+          test "$(git -C /tmp/r4-b2-ti rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      - name: Compile actual source replacement and pass healthy/failure oracle under sanitizers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_mto_fail_closed_overlay.py --sdk /tmp/r4-b2-ti --out /tmp/r4-b2-checked
+          clang -std=c11 -g -O1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=address,undefined \
+            /tmp/r4-b2-checked/ti_mto_fail_closed.c -o /tmp/r4-b2-checked/test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/r4-b2-checked/test
+          echo 'Verified fail-closed MTO NV read candidate C source using donor-extracted function and ASan/UBSan; no radio.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Mutation must kill ignored discovery-read status under exact behavior oracle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python tools/b2_mto_fail_closed_overlay.py --sdk /tmp/r4-b2-ti \
+            --out /tmp/r4-b2-mutant --mutation ignore-second-read
+          clang -std=c11 -g -O1 -Wall -Wextra -Wno-unused-variable -fno-omit-frame-pointer \
+            -fsanitize=address,undefined /tmp/r4-b2-mutant/ti_mto_fail_closed.c -o /tmp/r4-b2-mutant/test
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+            /tmp/r4-b2-mutant/test) > /tmp/r4-b2-mutant/failure.log 2>&1
+          exitcode=$?
+          set -e
+          test "$exitcode" -ne 0
+          grep -E 'Assertion.*start_count|assertion.*start_count' /tmp/r4-b2-mutant/failure.log
+          echo 'Killed deliberately broken TI callback: ignored discovery NV error restarted MTO.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload exact donor/candidate receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r4-b2-mto-read-fault-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/r4-b2-checked/receipt.json
+            /tmp/r4-b2-checked/zd_app_mto_callback_replacement.c
+            /tmp/r4-b2-mutant/receipt.json
+            /tmp/r4-b2-mutant/failure.log
+          if-no-files-found: warn
+          retention-days: 14
