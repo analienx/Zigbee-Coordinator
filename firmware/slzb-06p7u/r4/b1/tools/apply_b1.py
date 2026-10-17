@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 from patch_zdapp import patch as patch_zdapp
+from b1_b3_nwk_checkpoint import patch as patch_b1_b3_nwk
 from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
@@ -340,6 +341,8 @@ def overlay(sdk, b1_dir):
 
     # Runtime NWK counter continuity: persist, read back, then publish.
     zdapp = patch_zdapp(zdapp)
+    # Narrow B3 integration: checked NWK save under B1 HOLD authority.
+    zdapp = patch_b1_b3_nwk(zdapp)
     security = patch_security(security)
     zglobals = patch_zglobals(zglobals)
     startup = patch_startup(startup)
@@ -436,6 +439,8 @@ def overlay(sdk, b1_dir):
         "modified_zmac_sha256": hashlib.sha256(zmac.encode()).hexdigest(),
         "modified_nv_sha256": hashlib.sha256(source.encode()).hexdigest(),
         "modified_main_sha256": hashlib.sha256(main.encode()).hexdigest(),
+        "b1_b3_nwk_save_readback": "SOURCE_COMPOSED_B1_HOLD_PENDING_CI",
+        "b1_b3_rest_of_nv_security": "NOT_COMPOSED",
         "mode": "B1_SOURCE_ONLY_NOT_PHYSICALLY_TESTED",
         "preflight": "read only (0x4000), no NVS_write/NVS_erase",
         "factory_boot": "unauthorized by default",
