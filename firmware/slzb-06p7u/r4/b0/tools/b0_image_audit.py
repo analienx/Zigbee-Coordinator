@@ -315,7 +315,7 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False):
     # region starts. Reject duplicate/malformed region declarations above
     # before accepting any flash image as layout-compatible.
     expected_geometry = {
-        "FLASH": (0x00000000, 0xA0000 if preserve_resident_boot else 0xAA000),
+        "FLASH": (0x00000080, 0x9FF80) if preserve_resident_boot else (0x00000000, 0xAA000),
         "FLASH_NV": (0xA0000 if preserve_resident_boot else 0xAA000, 0x4000),
         "FLASH_LAST": (0xAE000, 0x2000),
         "SRAM": (0x20000000, 0x24000),
@@ -634,7 +634,7 @@ def _check_hex_bin_binding(payload, bin_path, evidence, elf_entry,
     return None
 
 
-def _validate_reset_vectors(payload, evidence, elf_segments):
+def _validate_reset_vectors(payload, evidence, elf_segments, *, vector_address=0):
     """Require plausible Cortex-M reset vector words in actual linked bytes.
 
     TI's real P7U vector table starts at zero and contains an 8-byte
@@ -643,11 +643,11 @@ def _validate_reset_vectors(payload, evidence, elf_segments):
     assumed equal to the ELF entry symbol.
     """
     reset = evidence["sections"].get(".resetVecs")
-    if reset is None or reset[0] != 0 or reset[1] is None or reset[1] < 8:
+    if reset is None or reset[0] != vector_address or reset[1] is None or reset[1] < 8:
         return "audit invalid reset vector placement or extent"
-    if any(i not in payload or i not in elf_segments for i in range(8)):
+    if any(i not in payload or i not in elf_segments for i in range(vector_address, vector_address + 8)):
         return "audit invalid reset vector bytes missing from native image"
-    words = bytes(payload[i] for i in range(8))
+    words = bytes(payload[i] for i in range(vector_address, vector_address + 8))
     sp = int.from_bytes(words[:4], "little")
     handler = int.from_bytes(words[4:8], "little")
     sram_start, sram_size = evidence["areas"]["SRAM"]
@@ -797,8 +797,9 @@ def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False
         # moved away from the final 88 bytes of the 704 KiB flash.
         if evidence["sections"].get(".ccfg") != (0xAFFA8, 0x58):
             return 1, "audit native CCFG must occupy 0xAFFA8..0xAFFFF"
-        if targets["bin"].stat().st_size != 0xB0000:
-            return 1, "audit native BIN must preserve complete 704KiB flash address space"
+        required_bin = 0xAFF80 if preserve_resident_boot else 0xB0000
+        if targets["bin"].stat().st_size != required_bin:
+            return 1, "audit native BIN must preserve exact declared load address span"
     payload, err = _parse_intel_hex(targets["hex"])
     if err:
         return 1, err
@@ -820,7 +821,8 @@ def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False
                 or len(payload) > 1024):
             return 1, "audit fixture oracle requires synthetic monotonic vector test data"
         return 0, "R4-B0 synthetic fixture audit OK (NOT NATIVE PROOF)"
-    err = _validate_reset_vectors(payload, evidence, elf_segments)
+    err = _validate_reset_vectors(payload, evidence, elf_segments,
+                                  vector_address=0x80 if preserve_resident_boot else 0)
     if err:
         return 1, err
     return 0, "R4-B0 image audit OK"
