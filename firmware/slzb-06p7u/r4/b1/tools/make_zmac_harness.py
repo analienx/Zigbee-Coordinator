@@ -6,10 +6,20 @@ Fails if source has unexpected function declarations or duplicate bodies.
 import argparse
 import pathlib
 
-SYMBOLS = (
+# The host executable links two representative real TI bodies. ALL public
+# ZMac submission paths must ALSO be source-inspected for the same NV/security
+# HOLD admission guard: a missed control path can cause unauthorized RF.
+RF_GATED_SIGNATURES = (
+    "uint8_t ZMacAssociateReq( ZMacAssociateReq_t *pData )",
+    "uint8_t ZMacDisassociateReq( ZMacDisassociateReq_t *pData )",
+    "uint8_t ZMacScanReq( ZMacScanReq_t *pData )",
+    "uint8_t ZMacStartReq( ZMacStartReq_t *pData )",
+    "uint8_t ZMacSyncReq( ZMacSyncReq_t *pData )",
+    "uint8_t ZMacPollReq( ZMacPollReq_t *pData )",
     "uint8_t ZMacDataReqSec( ZMacDataReq_t *pData, applySecCB_t secCB )",
     "void ZMacSendNoData( uint16_t DstAddr, uint16_t DstPANId )",
 )
+SYMBOLS = RF_GATED_SIGNATURES[-2:]
 
 PREAMBLE = r"""
 #include <stdint.h>
@@ -135,6 +145,10 @@ def main():
     p.add_argument("--output", type=pathlib.Path, required=True)
     a = p.parse_args()
     contents = a.source.read_text(encoding="utf-8")
+    # Lexically validate the *actual patched TI C* for every exposed RF
+    # submission, not only the two executable mock-boundary exemplars.
+    for signature in RF_GATED_SIGNATURES:
+        actual_function_body(contents, signature)
     functions = [actual_function_body(contents, signature) for signature in SYMBOLS]
     a.output.write_text(PREAMBLE + "\n\n".join(functions) + MAIN, encoding="utf-8")
     print("B1_SOURCE_BOUND_ZMAC_FUNCTIONS_EXTRACTED", *(x.split("(")[0] for x in SYMBOLS))
