@@ -23,8 +23,10 @@ jobs:
       - name: Fetch pinned TI SDK original into /tmp only
         run: |
           set -euo pipefail
-          git clone --quiet --no-checkout https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git /tmp/r4-b1-b4-sdk
-          git -C /tmp/r4-b1-b4-sdk checkout -q 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git init -q /tmp/r4-b1-b4-sdk
+          git -C /tmp/r4-b1-b4-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4-b1-b4-sdk fetch -q --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4-b1-b4-sdk checkout -q FETCH_HEAD
           test "$(git -C /tmp/r4-b1-b4-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
           mkdir -p /tmp/r4-b1-b4-sdk/.b1-prerequisites
           curl -fL --proto '=https' --tlsv1.2 --retry 3 \
