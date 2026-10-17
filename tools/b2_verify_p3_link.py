@@ -34,10 +34,10 @@ def validate(log, exit_code, injection):
     # undefined symbols, and C semantic errors; do not mistake a wrapper
     # around a genuine linker error for a separate failure.
     for line in log.splitlines():
-        if re.search(r"tiarmclang:\\s*error:",line,re.I):
-            if not re.search(r"tiarmclang:\\s*error:\\s*tiarmlnk command failed with exit code 1",line,re.I):
+        if re.search(r"tiarmclang:\s*error:",line,re.I):
+            if not re.search(r"tiarmclang:\s*error:\s*tiarmlnk command failed with exit code 1",line,re.I):
                 raise P3ValidationError("non-memory compiler/link error contaminates negative control")
-    if re.search(r"no such file or directory|undefined symbol|unresolved symbols|error:\\s*expected expression",log,re.I):
+    if re.search(r"no such file or directory|undefined symbol|unresolved symbols|error:\s*expected expression",log,re.I):
         raise P3ValidationError("non-memory compiler/link error contaminates negative control")
     return {
         "status":"HOSTED_NATIVE_LINKER_OVERBUDGET_REJECTED",
