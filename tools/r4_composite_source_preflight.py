@@ -14,15 +14,15 @@ import subprocess
 REPO = "analienx/Zigbee-Coordinator"
 PINS = {
     "b0": "dc74b44019853f8b6cadf75c4e6e940fc715c906",
-    "b1": "a514c194ea0d94b5d38b28c7b07ca5caba9aeffd",
-    "b2": "0b06ef8b2fd4fc3008c228208e7a16e1c86d8492",
-    "b3_failed_native": "9b72e4fee2cb8adca89c4afed72dfa7db90d5163",
-    "b4_f2_standalone": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a",
+    "b1": "140c38f19dbd90225ba86e0511f24469e0d243f0",
+    "b2": "d13a48f5226d42e247a17d9198d84c94a4415030",
+    "b3_repaired_monotonic": "b481e0beabf1966900644f69d7f5d024708ebf73",
+    "b4_f2_standalone": "3231abb1f13210eb88afe13ff7b7f9f29709cd6b",
 }
 PATHS = {
     "b1": "firmware/slzb-06p7u/r4/b1/tools/apply_b1.py",
     "b2": "tools/b2_compose.py",
-    "b3_failed_native": "firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py",
+    "b3_repaired_monotonic": "firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py",
     "b4_f2_standalone": "firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py",
 }
 def git(root, *args):
@@ -60,7 +60,7 @@ def run(repo):
     b1 = {v for k, v in out["b1"]["constants"].items()
           if k.startswith("SDK_") and isinstance(v, str)
           and v.endswith(".c")}
-    b3 = set(out["b3_failed_native"]["constants"].get("PINNED_BLOBS", {}))
+    b3 = set(out["b3_repaired_monotonic"]["constants"].get("PINNED_BLOBS", {}))
     b4 = {v for k, v in out["b4_f2_standalone"]["constants"].items()
           if k in ("MT_SYS", "NPI_TASK") and isinstance(v, str)}
     if not b1 or not b3 or len(b4) != 2:
@@ -81,13 +81,13 @@ def run(repo):
         "b4_native_source_paths": sorted(b4),
         "b2_compiler_opt_profile": "P1_REQUIRES_LINKED_INTEGRATED_RAM_AND_MTO_TEST",
         "native_composite_built": False, "integrated_sha": None,
-        "b3_native_at_pinned_sha": "FAILED",
+        "b3_native_at_pinned_sha": "NV2_PASSED_NV3_NV5_PENDING_FRESH_CI",
         "b1_security_hold_and_b3_counter_combined": False,
         "b1_f1_b4_f2_combined": False,
         "source_ready": False, "flash_authorized": False,
         "status": "BLOCKED_OVERLAPPING_SOURCE_OWNERSHIP_NOT_AN_INTEGRATION_BUILD",
         "required_next": [
-            "Replace B3 failed native pin with a green reviewed repaired commit",
+            "Verify exact-head B3 NV3/NV5 native CI and independent fusion review",
             "Explicitly fuse B1/B3 NVOCMP, zd_sec_mgr, zd_app and other overlapping functions",
             "Integrate B1 HOLD and B3 save/readback/reserve-before-secure-TX; test all paths",
             "Compose B2 linker-capacity profile and retained runtime MTO uncertainty",
