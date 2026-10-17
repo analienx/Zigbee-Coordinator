@@ -24,3 +24,9 @@ The issue #97 annex is the acceptance source. Only cases which actually exercise
 | M36 | PARTIAL | Synthetic consistency always returns three false mutation authorities. No restoration capability whatsoever. |
 
 **No M01–M36 full result is asserted yet**; success in partial tests must not be converted to test PASS without actual source-compiled injection, flashed data digest, functional NVS op receipts and independent review. Native NV3/NV5, 1k/10k/100k wear, cold-power recovery and physical RF remain OPEN. Test run IDs and exact current SHA belong in #97 progress comment only after verified CI conclusion.
+
+## 17 October actual source-C supplemental coverage (not full Annex acceptance)
+M01/M03/M04: original TI 8.33 NVOCMP C host runs healthy NV2/NV3/NV5 seed/update/compaction, with persistent mock flash re-open across process restarts; native NV3/NV5 linker workflow newly proposed and not yet accepted.
+M08/M09: real TI NVOCMP source write/read status injections (bounded) now exercised; first red CI reproduced data-write rejection followed by invalid item header; narrow TI patch repaired it, as shown by NV2/3/5 passing [write run 39001593062](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001593062) and [read run 39001618236](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39001618236).
+M12: actual compaction healthy, but not all mutation-boundary cuts and repair states; still PARTIAL. M17: actual pinned TI APS/TCLK native types 24/20 bytes plus NVOCMP item header 7; no whole table native capacity guarantee. M18: source-extracted actual TI APS/TCLK saving routines retain pending after rejected writes; no B1 RF block or reserve-before-send. M25: no cross-item transactional generation. M01–M36 full case matrix and independent reviewer proof **remain OPEN**.
+Real NVS hardware, preserved pre/post every step SHA, physical cold-brownout behavior, flash lifetime and radio security never claimed.

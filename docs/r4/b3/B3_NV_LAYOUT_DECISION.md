@@ -27,3 +27,6 @@ Source-derived one-reserve-page upper bound: NV2 8,176 bytes, NV3 16,352, NV5 32
 **Fails closed:** unknown old layout, unknown current counter floor, divergent keys or insufficient room => NOT_RESTORE_READY / HOLD. No automatic formatting or sector erase.
 
 Sign-off: **PENDING B1/B2/native/reviewer gates**; B3_SOURCE_READY=false, B3_INTEGRATED_READY=false, RESTORE_READY=false, FLASH_READY=false.
+
+## 17 October APS/TCLK row-byte sensitivity
+The pinned original TI `aps_mede.h` persisted row definitions are APS 24 bytes and TCLK 20 bytes. Per NVOCMP record the 7-byte compressed metadata brings these to 31 and 27 bytes respectively. A **conditional** fully populated APS+TCLK pair per device consumes 6,148 / 7,424 / 9,280 / 11,136 bytes at 106 / 128 / 160 / 192 devices, excluding all other live NV state and compaction. NV2 with 8,176 nominal active bytes is impossible for 160/192 both-full tables, but actual B2 TC/APS occupancy is not yet established. The correct profile remains **NO_PROFILE_LOCKED**; NV3/NV5 native links are experimental and do not authorize migration.
