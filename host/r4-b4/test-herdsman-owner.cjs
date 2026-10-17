@@ -196,7 +196,9 @@ test("D22: genuine timed-out F0 waiter is removed and does not leak or retry", a
     await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 15));
     assert.equal(writes, 1);
     assert.equal(znp.waitress.waiters.size, 0);
-    assert.equal(znp.b4CanProbe(), true);
+    // Timeout cannot authorize a subsequent transaction-ID-less probe.
+    assert.equal(znp.b4CanProbe(), false);
+    assert.equal(znp.b4DiagPoisoned, true);
 });
 
 test("D14/D16/D19/D30: exact Waitress timeout only, bounded privacy-safe host forensic ring", async () => {
