@@ -14,6 +14,8 @@ migration. It performs only bounded filesystem reads, no device access.
 import argparse
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from b0_image_audit import _parse_intel_hex, _safe_artifact, loads_strict
@@ -126,12 +128,13 @@ def main():
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
-    # A failed rerun must overwrite any stale success receipt. Both
-    # SUCCESS (safe to INSPECT, not flash) and FAILURE deny flash.
-    if args.receipt.is_symlink():
-        print("B0_FLASH_BOUNDARY_REFUSED_SYMLINK_RECEIPT")
-        return 1
+    # Never follow a stale output symlink. A previous on-disk receipt
+    # (including one claiming authorization) must be replaced with a
+    # fresh denial on every failed invocation, not left behind.
+    symlink_receipt = args.receipt.is_symlink()
     try:
+        if symlink_receipt:
+            raise ValueError("B0_FLASH_BOUNDARY_REFUSED_SYMLINK_RECEIPT")
         result = inspect(args.artifacts)
         status = 0
     except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
@@ -145,8 +148,33 @@ def main():
             "network_migration_authorized": False,
         }
         status = 1
-    args.receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n",
-                            encoding="utf-8")
+    # mkstemp uses mode 0600 and a unique, exclusive path. os.replace
+    # replaces a symlink DIRECTORY ENTRY, never writes through its
+    # target, and avoids half-written JSON or stale success receipts.
+    # The receipt parent is created by CI; reject symlinked parents.
+    if args.receipt.parent.is_symlink():
+        print("B0_FLASH_BOUNDARY_REFUSED_SYMLINK_RECEIPT_PARENT")
+        return 1
+    temp_path = None
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            prefix="." + args.receipt.name + ".", suffix=".tmp",
+            dir=str(args.receipt.parent))
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(result, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, args.receipt)
+    except OSError as exc:
+        print("B0_FLASH_BOUNDARY_RECEIPT_WRITE_BLOCKED: " + str(exc)[:200])
+        return 1
+    finally:
+        if temp_path is not None:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
     print("R4-B0 FLASH BOUNDARY: " +
           ("NOT_FLASHABLE / NO_NV_OVERWRITE_AUTHORITY" if status == 0
            else "BLOCKED / NO_FLASH_AUTHORITY"))
