@@ -30,7 +30,7 @@ ADAPTER_METHOD = r"""
         enabled: boolean;
         hostIdle: boolean;
         otaActive: boolean;
-    }): Promise<{abi: 3; validityMask: number; srspEnqueued: number | null; sequence: number; radioEpoch: "UNKNOWN"} | undefined> {
+    }): Promise<{abi: 3; validityMask: number; srspDepth: number | null; srspHighWater: number | null; asyncDepth: number; asyncHighWater: number; srspEnqueued: number | null; sequence: number; radioEpoch: "UNKNOWN"} | undefined> {
         if (
             input?.enabled !== true ||
             input?.hostIdle !== true ||
@@ -74,9 +74,12 @@ ADAPTER_METHOD = r"""
             const validityMask = data.readUInt32LE(12);
             // An invalid counter must have zero bytes. Never let reserved
             // garbage silently masquerade as a legitimate empty metric.
-            if ((validityMask & ~0x10) !== 0 ||
+            if ((validityMask !== 0x1F && validityMask !== 0x0C) ||
                 Array.from({length: 25}, (_, i) => i)
-                    .some((i) => i !== 4 && data.readUInt32LE(32 + 4 * i) !== 0)) {
+                    .some((i) => (((validityMask >>> i) & 1) === 0) &&
+                        data.readUInt32LE(32 + 4 * i) !== 0) ||
+                (validityMask === 0x1F && data.readUInt32LE(32) > data.readUInt32LE(36)) ||
+                data.readUInt32LE(40) > data.readUInt32LE(44)) {
                 this.znp.b4PoisonDiagSession();
                 return undefined;
             }
@@ -93,6 +96,10 @@ ADAPTER_METHOD = r"""
             return {
                 abi: 3,
                 validityMask,
+                srspDepth: validityMask & 0x01 ? data.readUInt32LE(32) : null,
+                srspHighWater: validityMask & 0x02 ? data.readUInt32LE(36) : null,
+                asyncDepth: data.readUInt32LE(40),
+                asyncHighWater: data.readUInt32LE(44),
                 srspEnqueued: validityMask & 0x10 ? data.readUInt32LE(48) : null,
                 sequence,
                 radioEpoch: "UNKNOWN",
