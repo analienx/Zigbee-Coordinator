@@ -170,7 +170,7 @@ class BinaryAuditOracleMutants(unittest.TestCase):
         patchreceipt = root / "overlay.json"
         patchreceipt.write_text(json.dumps({
             "stage": "PATCHED_DISPOSABLE_SDK_NOT_LINKED", "payload_bytes": 132,
-            "valid_counter_indices": [0, 1, 2, 3, 4], "radio_boot_identity": "UNKNOWN",
+            "valid_counter_indices": [0, 1, 2, 3, 4, 5], "radio_boot_identity": "UNKNOWN",
             "written": {"mt.c": {}, "npi.c": {}, "uart.c": {}},
         }))
         nm = root / "tiarmnm"
