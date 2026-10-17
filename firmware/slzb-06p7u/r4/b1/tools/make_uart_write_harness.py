@@ -65,6 +65,16 @@ int main(int argc,char **argv)
         assert(callback_count==0u);
         puts("B1_ACTUAL_UART_TX_FAILED_CALLBACK_NO_FALSE_RECEIPT_PASS");
     }
+    else if(strcmp(s,"short_success")==0)
+    {
+        assert(NPITLUART_writeTransport(4u)==4u);
+        NPITLUART_writeCallBack(uartHandle,txbuf,2u,NULL,UART2_STATUS_SUCCESS);
+        assert(callback_count==0u && write_calls==1u);
+        assert(b1_management_transport_unavailable());
+        assert(!b1_management_nv_security_hold_active());
+        assert(NPITLUART_writeTransport(4u)==0u && write_calls==1u);
+        puts("B1_ACTUAL_UART_TX_SHORT_COMPLETION_NO_FALSE_RECEIPT_PASS");
+    }
     else if(strcmp(s,"failed_submit")==0)
     {
         fail_write=1u;
