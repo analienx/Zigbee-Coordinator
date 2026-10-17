@@ -1,6 +1,8 @@
 name: R4 B4 experimental real TI native dual-link (source only)
 
 on:
+  push:
+    branches: [feat/p7u-r4-b4-sync-npi-compile-guard]
   pull_request:
     paths:
       - ".github/workflows/test-r4-b4-native.yml"
