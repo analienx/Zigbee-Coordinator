@@ -102,6 +102,57 @@ class V4Native(unittest.TestCase):
                         plan(root)
                 self.assertEqual(existing, {name: (root / name).read_bytes() for name in initial})
 
+    def test_v4_native_receipt_must_pin_actual_sys_f2_not_b1_f1(self):
+        # The native image receipt is verification metadata, not executable
+        # firmware. A stale F1 alias would undermine B1 HOLD safety audit.
+        from b4_v4_native_link_audit import verify
+        import hashlib
+        import json
+        from unittest.mock import patch
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory(dir="/tmp") as temp:
+            root = Path(temp)
+            elf = root / "znp.out"
+            elf.write_bytes(b"\\x7fELF" + bytes(40))
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "schema": "r4-b0-artifact-manifest-v1",
+                "files": {"elf": {"file": elf.name,
+                                  "sha256": hashlib.sha256(elf.read_bytes()).hexdigest()}}
+            }))
+            receipt = root / "b4-v4-overlay.json"
+            base = {
+                "schema": "r4-b4-v4-native-overlay-v1",
+                "sdk_sha": TI_SHA, "command": "SYS_F2",
+                "stage": "PATCHED_DISPOSABLE_TI_NOT_NATIVE_PROOF",
+                "payload_bytes": 160, "request_bytes": 8,
+                "boot_cap_on_failure": 0, "full_image_build_digest": "NOT_CLAIMED",
+                "flash_authorized": False, "physical_verified": False,
+                "files": {MT_SYS: {}, NPI_TASK: {}}
+            }
+            symbols = "\\n".join((
+                "00000080 B B4_V4BootId",
+                "00000088 B B4_V4BootValid",
+                "00000090 D B4_V4ResetReason",
+                "00001000 t B4_SysReadOnlyDiagnosticsV4",
+            )) + "\\n"
+            from types import SimpleNamespace
+            with patch("b4_v4_native_link_audit.subprocess.run",
+                       return_value=SimpleNamespace(stdout=symbols)):
+                receipt.write_text(json.dumps(base))
+                result = verify(elf, "/tmp/fake-nm", manifest, receipt)
+                self.assertTrue(result["v4_sys_f2_linked"])
+                self.assertNotIn("v4_sys_f1_linked", result)
+                self.assertFalse(result["radio_epoch_hardware_verified"])
+                for field, wrong in (("command", "SYS_F1"),
+                                     ("sdk_sha", "wrong"),
+                                     ("flash_authorized", True),
+                                     ("full_image_build_digest", "SELF_ATTESTED")):
+                    changed = {**base, field: wrong}
+                    receipt.write_text(json.dumps(changed))
+                    with self.subTest(field=field), self.assertRaises(ValueError):
+                        verify(elf, "/tmp/fake-nm", manifest, receipt)
+
     def test_false_boot_nonce_claims_are_not_emitted(self):
         self.assertIn("payload[8] = 0x01u;", V4_HANDLER)
         self.assertIn("if (boot_ok == 1u)", V4_HANDLER)

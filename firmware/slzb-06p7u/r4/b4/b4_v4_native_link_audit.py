@@ -6,6 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
+TI_SHA = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 NAMES = {
     "B4_V4BootId": ("b", "d"),
     "B4_V4BootValid": ("b", "d"),
@@ -18,9 +19,14 @@ def verify(elf, nm, manifest, v4receipt):
     m = json.loads(Path(manifest).read_text())
     p = json.loads(Path(v4receipt).read_text())
     if (m.get("schema") != "r4-b0-artifact-manifest-v1" or
+            p.get("schema") != "r4-b4-v4-native-overlay-v1" or
+            p.get("sdk_sha") != TI_SHA or p.get("command") != "SYS_F2" or
             p.get("stage") != "PATCHED_DISPOSABLE_TI_NOT_NATIVE_PROOF" or
             p.get("payload_bytes") != 160 or p.get("request_bytes") != 8 or
             p.get("boot_cap_on_failure") != 0 or
+            p.get("full_image_build_digest") != "NOT_CLAIMED" or
+            p.get("flash_authorized") is not False or
+            p.get("physical_verified") is not False or
             set(p.get("files", {})) != {
                 "source/ti/zstack/mt/mt_sys.c",
                 "source/ti/zstack/npi/npi_task.c"}):
@@ -47,7 +53,7 @@ def verify(elf, nm, manifest, v4receipt):
             raise ValueError("v4 symbol placed in wrong ELF section: " + name)
     return {"schema": "r4-b4-v4-native-symbol-link-proof-v1",
             "elf_sha256": m["files"]["elf"]["sha256"],
-            "v4_sys_f1_linked": True, "trng_runtime_verified": False,
+            "v4_sys_f2_linked": True, "trng_runtime_verified": False,
             "radio_epoch_hardware_verified": False, "flashed": False,
             "symbols": {k: {"address": hex(symbols[k][0]),
                             "section_type": symbols[k][1]} for k in NAMES}}
