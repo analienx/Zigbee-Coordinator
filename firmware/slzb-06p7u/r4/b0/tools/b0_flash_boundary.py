@@ -29,7 +29,10 @@ def _digest(data):
 
 
 def _artifact(directory, manifest, logical):
-    entry = manifest.get("files", {}).get(logical)
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        raise ValueError("B0_FLASH_BOUNDARY_INVALID_FILES_MANIFEST")
+    entry = files.get(logical)
     if not isinstance(entry, dict):
         raise ValueError("B0_FLASH_BOUNDARY_MISSING_%s" % logical)
     file, err = _safe_artifact(directory, entry.get("file"))
@@ -75,7 +78,8 @@ def inspect(directory):
         raise ValueError("B0_FLASH_BOUNDARY_CCFG_HEX_MISSING")
     return {
         "schema": "r4-b0-nonflashable-boundary-v1",
-        "qualification": "SOURCE_BUILD_ONLY_NOT_PHYSICALLY_QUALIFIED",
+        "qualification": "NV_SPAN_CHECK_ONLY_NOT_SOURCE_OR_HARDWARE_ATTESTATION",
+        "source_abi_verified_by_this_receipt": False,
         "flash_authorized": False,
         "production_release_authorized": False,
         "network_migration_authorized": False,
@@ -102,11 +106,31 @@ def main():
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
-    result = inspect(args.artifacts)
+    # A failed rerun must overwrite any stale success receipt. Both
+    # SUCCESS (safe to INSPECT, not flash) and FAILURE deny flash.
+    if args.receipt.is_symlink():
+        print("B0_FLASH_BOUNDARY_REFUSED_SYMLINK_RECEIPT")
+        return 1
+    try:
+        result = inspect(args.artifacts)
+        status = 0
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        result = {
+            "schema": "r4-b0-nonflashable-boundary-v1",
+            "qualification": "BLOCKED_NO_RELEASE_ATTESTATION",
+            "status": "FAILED_CLOSED",
+            "error": str(exc)[:512],
+            "flash_authorized": False,
+            "production_release_authorized": False,
+            "network_migration_authorized": False,
+        }
+        status = 1
     args.receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n",
                             encoding="utf-8")
-    print("R4-B0 FLASH BOUNDARY: NOT_FLASHABLE / NO_NV_OVERWRITE_AUTHORITY")
-    return 0
+    print("R4-B0 FLASH BOUNDARY: " +
+          ("NOT_FLASHABLE / NO_NV_OVERWRITE_AUTHORITY" if status == 0
+           else "BLOCKED / NO_FLASH_AUTHORITY"))
+    return status
 
 
 if __name__ == "__main__":
