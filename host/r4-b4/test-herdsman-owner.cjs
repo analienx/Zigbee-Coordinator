@@ -334,3 +334,23 @@ test("REVIEW-P0: fail closed on unqualified reserved counters and nonadvancing s
     const zero = fakeOwner(nonpositive);
     assert.equal(await zero.owner.b4ReadOnlyDiagnostics(allow), undefined);
 });
+
+test("REVIEW-P0: delayed unsolicited F0 after timed-out request cannot reopen diagnostics", async () => {
+    const znp = new Znp("/dev/no-serial", 115200, false);
+    znp.initialized = true;
+    const sent = [];
+    znp.unpiWriter.writeFrame = (f) => {
+        sent.push(f.commandID);
+        if (f.commandID === 1) queueMicrotask(() => znp.onUnpiParsed(
+            new Frame(Type.SRSP, Subsystem.SYS, 1, Buffer.from([1, 0]))));
+    };
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 15));
+    // Legitimate delayed response from the *previous* transaction. There is
+    // no F0 correlation ID, so it cannot authorize a new diagnostic request.
+    znp.onUnpiParsed(new Frame(Type.SRSP, Subsystem.SYS, 240, frame()));
+    assert.equal(znp.waitress.waiters.size, 0);
+    assert.equal(znp.b4CanProbe(), false);
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 200), /poisoned/);
+    assert.equal((await znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 200)).payload.capabilities, 1);
+    assert.deepEqual(sent, [240, 1]);
+});
