@@ -164,7 +164,11 @@ jobs:
           python /tmp/b5-b1/firmware/slzb-06p7u/r4/b1/tools/seal_native.py \
             --artifacts /tmp/b0out --sdk "$sdk" \
             --expected-sha a514c194ea0d94b5d38b28c7b07ca5caba9aeffd
-          echo "B5 combined native: SOURCE-ONLY, physical and composite digest not verified"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b5/b5_native_attestation.py" \
+            --sdk "$sdk" --artifacts /tmp/b0out --b1 /tmp/b5-b1 \
+            --source-head "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \
+            --output /tmp/b0out/b5-native-offline-provenance.json
+          echo "B5 combined native source/binary bound OFFLINE ONLY; no on-radio identity or flash authorization."
       - name: Upload native artifacts and receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

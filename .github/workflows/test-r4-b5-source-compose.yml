@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify script compiles
-        run: python -m py_compile firmware/slzb-06p7u/r4/b5/b5_b1_b4_compose.py
+        run: python -m py_compile firmware/slzb-06p7u/r4/b5/b5_b1_b4_compose.py firmware/slzb-06p7u/r4/b5/b5_native_attestation.py
       - name: Fetch immutable TI and B1 sources (offline from radio)
         shell: bash
         run: |

@@ -13,3 +13,7 @@ After exact B1 management preflight and authentic B4 overlays, the runner now in
 ## Separate native experiment
 
 The B5-native workflow stages full B1 NV/security source after canonical B4 F0/F2 and executes genuine pinned TI CCS dual-link ELF/HEX/BIN, both B4 native audits and the B1 native seal. This is *not* a release image or physical verification. The B1 public digest still identifies B1 only, **not the combined B5 image**; independent merged-image provenance, B2/B3 integration, complete NV/security backup and rollback, and hardware stack/RF/USB/OTA validation are blockers. No flash or live changes.
+
+## Offline composite build identity (not radio authentication)
+
+Native CI additionally verifies exact B1, B4-v3 and B4-v4 receipts as a cryptographic SHA-256 preimage chain across the *actual final combined* MT, NPI, UART, NV/security sources; it binds the native ELF/HEX/BIN/XML file digests and exact TI SDK/B1/B5 commit SHAs into `b5-native-offline-provenance.json`. The SHA is an **off-device reproducibility identifier**, not an embedded image digest, authentication signature, or proof a coordinator booted/accepted the image. B1 F1's existing four-byte source prefix remains B1-only, not B5. All B2/B3/physical gates remain blocked.
