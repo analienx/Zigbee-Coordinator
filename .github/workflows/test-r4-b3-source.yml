@@ -119,3 +119,14 @@ jobs:
           fi
           grep -E 'Assertion|Aborted' /tmp/b3-security-mutant.log
           echo "Negative security mutant rejected by actual function-body assertion"
+
+      - name: Derive serialized APS/TCLK row size from real pinned TI C typedefs
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_capacity_types.py \
+            --sdk-stack /tmp/b3sdk/source/ti/zstack/stack \
+            --out /tmp/b3host/ti_security_types.c
+          gcc -std=c11 -Wall -Wextra -Werror \
+            /tmp/b3host/ti_security_types.c -o /tmp/b3host/ti_security_types
+          /tmp/b3host/ti_security_types | tee /tmp/b3-types.out
+          grep -Fx "B3_TI_833_REAL_TYPES APS=24 TCLK=20 item_hdr=7" /tmp/b3-types.out

@@ -41,12 +41,12 @@
   "ccfg_end_exclusive": 720896,
   "uncertainties": [
     "serialized NWK/NIB sizes",
-    "TC/APS/TCLK per-row payload sizes",
     "BDB/address/group/binding serialized bytes",
     "NVOCMP compaction peak copy demand",
     "hot counter reservation payload size",
     "native compiled header struct sizes and effective link budget",
-    "B2 selected TC limit"
+    "B2 selected TC limit",
+    "B2 effective independent APS/TCLK table limits and simultaneous occupancy"
   ],
   "workloads": {
     "devices": [
@@ -55,8 +55,76 @@
       160,
       192
     ],
-    "status": "NOT_CAPACITY_PROVEN",
+    "status": "APS_TCLK_SERIALIZED_BYTES_PROVEN_CONDITIONAL_ONLY",
     "required_item_lengths": "actual SDK implementation and linked profile, not synthetic invented constants"
   },
-  "recommendation": "NO_PROFILE_LOCKED"
+  "recommendation": "NO_PROFILE_LOCKED",
+  "measured_item_classes": [
+    {
+      "name": "APS link key",
+      "native_type": "APSME_ApsLinkKeyNVEntry_t",
+      "native_bytes": 24,
+      "nvocmp_compressed_header_bytes": 7,
+      "per_persisted_row_bytes": 31,
+      "source": "source/ti/zstack/stack/nwk/aps_mede.h, SDK pin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
+    },
+    {
+      "name": "Trust Center link key",
+      "native_type": "APSME_TCLinkKeyNVEntry_t",
+      "native_bytes": 20,
+      "nvocmp_compressed_header_bytes": 7,
+      "per_persisted_row_bytes": 27,
+      "source": "source/ti/zstack/stack/nwk/aps_mede.h, SDK pin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
+    }
+  ],
+  "conditional_worst_case_both_tables": [
+    {
+      "devices": 106,
+      "aps_rows": 106,
+      "tc_rows": 106,
+      "aps_bytes": 3286,
+      "tc_bytes": 2862,
+      "combined_record_bytes": 6148,
+      "nominal_NV2_headroom_before_all_other_items": 2028,
+      "nominal_NV3_headroom_before_all_other_items": 10204,
+      "nominal_NV5_headroom_before_all_other_items": 26556,
+      "meaning": "CONDITIONAL: both independent tables fully populated to this count, excludes NWK/BDB/address/binding/counter-rewrite/compaction. NOT proof tables are actually allocated to this count."
+    },
+    {
+      "devices": 128,
+      "aps_rows": 128,
+      "tc_rows": 128,
+      "aps_bytes": 3968,
+      "tc_bytes": 3456,
+      "combined_record_bytes": 7424,
+      "nominal_NV2_headroom_before_all_other_items": 752,
+      "nominal_NV3_headroom_before_all_other_items": 8928,
+      "nominal_NV5_headroom_before_all_other_items": 25280,
+      "meaning": "CONDITIONAL: both independent tables fully populated to this count, excludes NWK/BDB/address/binding/counter-rewrite/compaction. NOT proof tables are actually allocated to this count."
+    },
+    {
+      "devices": 160,
+      "aps_rows": 160,
+      "tc_rows": 160,
+      "aps_bytes": 4960,
+      "tc_bytes": 4320,
+      "combined_record_bytes": 9280,
+      "nominal_NV2_headroom_before_all_other_items": -1104,
+      "nominal_NV3_headroom_before_all_other_items": 7072,
+      "nominal_NV5_headroom_before_all_other_items": 23424,
+      "meaning": "CONDITIONAL: both independent tables fully populated to this count, excludes NWK/BDB/address/binding/counter-rewrite/compaction. NOT proof tables are actually allocated to this count."
+    },
+    {
+      "devices": 192,
+      "aps_rows": 192,
+      "tc_rows": 192,
+      "aps_bytes": 5952,
+      "tc_bytes": 5184,
+      "combined_record_bytes": 11136,
+      "nominal_NV2_headroom_before_all_other_items": -2960,
+      "nominal_NV3_headroom_before_all_other_items": 5216,
+      "nominal_NV5_headroom_before_all_other_items": 21568,
+      "meaning": "CONDITIONAL: both independent tables fully populated to this count, excludes NWK/BDB/address/binding/counter-rewrite/compaction. NOT proof tables are actually allocated to this count."
+    }
+  ]
 }
