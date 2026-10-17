@@ -46,12 +46,12 @@ class TwoNativeBuildComparatorTests(unittest.TestCase):
         a=self.valid()
         a[1][0]["tables"]["source_routes"]=copy.deepcopy(a[0][0]["tables"]["source_routes"])
         with self.assertRaisesRegex(CompareError,"linked table delta not proven"):
-            compute(*a)
+            checked(a)
     def test_source_shas_mismatch(self):
         a=self.valid()
         a[2][0]["b2_repository_sha"]="f"*40
         with self.assertRaisesRegex(CompareError,"source SHA differs"):
-            compute(*a)
+            checked(a)
     def test_stale_source_sha_common_to_all_rejected(self):
         a=self.valid()
         for p in a:p[0]["b2_repository_sha"]="f"*40
@@ -86,17 +86,17 @@ class TwoNativeBuildComparatorTests(unittest.TestCase):
         a=self.valid()
         a[1][0]["memory_regions"]["SRAM"]["size"]=8192
         with self.assertRaisesRegex(CompareError,"SRAM geometry"):
-            compute(*a)
+            checked(a)
     def test_bad_partition(self):
         a=self.valid()
         a[1][0]["sram_linker_address_partition"]["heap_linker_address_span_bytes"]=1000
         with self.assertRaisesRegex(CompareError,"invalid linked SRAM"):
-            compute(*a)
+            checked(a)
     def test_missing_table_proof(self):
         a=self.valid()
         a[1][0]["tables"]["neighbors"]["status"]="UNKNOWN_LINKED_CAPACITY"
         with self.assertRaisesRegex(CompareError,"missing ELF linked"):
-            compute(*a)
+            checked(a)
 
 if __name__=="__main__":
     unittest.main()
