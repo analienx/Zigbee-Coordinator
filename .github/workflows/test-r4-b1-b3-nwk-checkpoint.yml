@@ -1,0 +1,126 @@
+name: R4 B1+B3 actual TI security-save composite (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/b1/tools/b1_b3_nwk_checkpoint.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py'
+      - 'tests/b1_b3_nwk/**'
+      - '.github/workflows/test-r4-b1-b3-nwk-checkpoint.yml'
+permissions:
+  contents: read
+jobs:
+  real-ti-nwk-save-hold-compiled:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact current PR HEAD
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Fetch exact TI donor (source-only)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r4-b1b3-sdk
+          git -C /tmp/r4-b1b3-sdk init -q
+          git -C /tmp/r4-b1b3-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4-b1b3-sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4-b1b3-sdk checkout -q FETCH_HEAD
+          test "$(git -C /tmp/r4-b1b3-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          test "$(git -C /tmp/r4-b1b3-sdk hash-object source/ti/zstack/stack/zdo/zd_app.c)" = d67a7798a3e6a8681faddebf5e4b87b4b4c60421
+      - name: Derive B1-then-B3 actual TI security-save source and compile in C
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r4-b1b3-test
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0,"firmware/slzb-06p7u/r4/b1/tools")
+          from patch_zdapp import patch as b1
+          from b1_b3_nwk_checkpoint import patch as b3
+          p=Path("/tmp/r4-b1b3-sdk/source/ti/zstack/stack/zdo/zd_app.c")
+          orig=p.read_text()
+          s=b1(orig)
+          assert "b1_security_runtime_hold_latch" in s
+          s=b3(s)
+          p.write_text(s)
+          try: b3(s)
+          except RuntimeError as e: assert "SOURCE_DRIFT" in str(e) or "DUPLICATE" in str(e)
+          else: raise AssertionError("B1_B3 overlay must be one-shot")
+          print("B1_B3_VERIFIED_REAL_TI_SINGLE_FUNCTION_COMPOSITION")
+          PY
+          python tests/b1_b3_nwk/nwk_extract.py \
+            --source /tmp/r4-b1b3-sdk/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/r4-b1b3-test/nwk_save.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b1_b3_nwk /tmp/r4-b1b3-test/nwk_save.c \
+            tests/b1_b3_nwk/nwk_test.c -o /tmp/r4-b1b3-test/real_save
+          /tmp/r4-b1b3-test/real_save
+      - name: Negative mutation — removing sticky B1 HOLD must fail actual C test
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/r4-b1b3-test/nwk_save.c")
+          s=p.read_text()
+          orig="b1_security_runtime_hold_latch();"
+          assert s.count(orig)==2, "unexpected fail-closed branch count"
+          p.write_text(s.replace(orig,"; /* maliciously removed HOLD */"))
+          PY
+          gcc -std=c11 -O0 -g -Wall -Wextra -Wno-error \
+            -I tests/b1_b3_nwk /tmp/r4-b1b3-test/nwk_save.c \
+            tests/b1_b3_nwk/nwk_test.c -o /tmp/r4-b1b3-test/unheld
+          ulimit -c 0
+          if /tmp/r4-b1b3-test/unheld > /tmp/r4-b1b3-test/mutant.log 2>&1; then
+            echo B1_B3_REMOVED_HOLD_MUTANT_SURVIVED; exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/r4-b1b3-test/mutant.log
+          echo B1_B3_REMOVED_HOLD_MUTANT_KILLED
+      - name: Compose B1 security plus four B3 checked TRNG publishing callers
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0,"firmware/slzb-06p7u/r4/b1/tools")
+          from patch_security import patch as sec, patch_zglobals as glob
+          from b1_b3_entropy import compose
+          stack=Path("/tmp/r4-b1b3-sdk/source/ti/zstack/stack")
+          p_sec=stack/"zdo/zd_sec_mgr.c"
+          p_head=stack/"zdo/zd_sec_mgr.h"
+          p_app=stack/"zdo/zd_app.c"
+          p_glob=stack/"sys/zglobals.c"
+          p_task=stack/"api/zstacktask.c"
+          changed=compose(sec(p_sec.read_text()), p_head.read_text(),
+                          p_app.read_text(), glob(p_glob.read_text()),
+                          p_task.read_text())
+          for path,new in zip((p_sec,p_head,p_app,p_glob,p_task), changed):
+              path.write_text(new)
+          print("B1_B3_TRNG_COMPOSED_WITH_B1_STICKY_HOLD")
+          PY
+          python tests/b1_b3_nwk/entropy_extract.py \
+            --stack /tmp/r4-b1b3-sdk/source/ti/zstack/stack \
+            --out /tmp/r4-b1b3-test/entropy.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b1_b3_nwk /tmp/r4-b1b3-test/entropy.c \
+            tests/b1_b3_nwk/entropy_test.c -o /tmp/r4-b1b3-test/real_entropy
+          /tmp/r4-b1b3-test/real_entropy
+      - name: Negative TRNG mutant cannot publish partially initialized key
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/r4-b1b3-test/entropy.c")
+          s=p.read_text()
+          guard="if (result != TRNG_STATUS_SUCCESS)"
+          assert s.count(guard)==1
+          p.write_text(s.replace(guard,"if (0)"))
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Wno-error \
+            -I tests/b1_b3_nwk /tmp/r4-b1b3-test/entropy.c \
+            tests/b1_b3_nwk/entropy_test.c -o /tmp/r4-b1b3-test/entropy_mutant
+          ulimit -c 0
+          if /tmp/r4-b1b3-test/entropy_mutant > /tmp/r4-b1b3-test/entropy-mutant.log 2>&1; then
+            echo B1_B3_ENTROPY_ERROR_MUTANT_SURVIVED; exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/r4-b1b3-test/entropy-mutant.log
+          echo B1_B3_ENTROPY_ERROR_MUTANT_KILLED
