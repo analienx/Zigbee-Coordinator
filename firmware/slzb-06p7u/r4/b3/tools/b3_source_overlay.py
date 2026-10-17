@@ -256,22 +256,8 @@ def security_changes(source):
     # each original caller must suppress key publication on failure.
     source = one(source, "void ZDSecMgrGenerateRndKey(uint8_t* pKey)\n{\n  extern TRNG_Handle TRNG_handle;\n\n  int_fast16_t result;\n\n  CryptoKey entropyKey;\n  uint8_t entropyBuffer[SEC_KEY_LEN];\n\n  CryptoKeyPlaintext_initBlankKey(&entropyKey, entropyBuffer, SEC_KEY_LEN);\n\n  result = TRNG_generateEntropy(TRNG_handle, &entropyKey);\n\n  if (result != TRNG_STATUS_SUCCESS) {\n      // Handle error\n  }\n\n  OsalPort_memcpy(pKey, &entropyKey.u.plaintext.keyMaterial[0], SEC_KEY_LEN);\n}", "uint8_t ZDSecMgrGenerateRndKey(uint8_t* pKey)\n{\n  extern TRNG_Handle TRNG_handle;\n  CryptoKey entropyKey;\n  uint8_t entropyBuffer[SEC_KEY_LEN] = {0};\n  int_fast16_t result;\n\n  // Missing destination, absent driver or TRNG failure must not publish a key.\n  if (pKey == NULL) return ZFailure;\n  memset(pKey, 0, SEC_KEY_LEN);\n  if (TRNG_handle == NULL) return ZFailure;\n\n  CryptoKeyPlaintext_initBlankKey(&entropyKey, entropyBuffer, SEC_KEY_LEN);\n  result = TRNG_generateEntropy(TRNG_handle, &entropyKey);\n  if (result != TRNG_STATUS_SUCCESS)\n  {\n      memset(entropyBuffer, 0, sizeof(entropyBuffer));\n      return ZFailure;\n  }\n  OsalPort_memcpy(pKey, &entropyKey.u.plaintext.keyMaterial[0], SEC_KEY_LEN);\n  memset(entropyBuffer, 0, sizeof(entropyBuffer));\n  return ZSuccess;\n}")
     source = one(source,
-        "  ZDSecMgrGenerateRndKey(SeedKey);
-
-"
-        "  if((SUCCESS == osal_nv_item_init",
-        "  if (ZDSecMgrGenerateRndKey(SeedKey) != ZSuccess)
-"
-        "  {
-"
-        "    memset(SeedKey, 0, SEC_KEY_LEN);
-"
-        "    return; // never create or overwrite TC seed with failed entropy
-"
-        "  }
-
-"
-        "  if((SUCCESS == osal_nv_item_init")
+        "  ZDSecMgrGenerateRndKey(SeedKey);\n\n  if((SUCCESS == osal_nv_item_init",
+        "  if (ZDSecMgrGenerateRndKey(SeedKey) != ZSuccess)\n  {\n    memset(SeedKey, 0, SEC_KEY_LEN);\n    return; // never create or overwrite TC seed with failed entropy\n  }\n\n  if((SUCCESS == osal_nv_item_init")
     return source
 
 
