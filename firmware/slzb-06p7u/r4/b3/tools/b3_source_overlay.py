@@ -13,6 +13,10 @@ PINNED_BLOBS = {
     "source/ti/zstack/osal/osal_nv.c": "65c7667475627989cbe2e3f5fdd46335b50eb660",
     "source/ti/common/nv/nvocmp.c": "01b2b0827d278c10c012b33e5791e53bc5662f10",
     "source/ti/zstack/stack/zdo/zd_sec_mgr.c": "65d7857cc9c62b75419807a8c0d03a62ec1a5574",
+    "source/ti/zstack/stack/zdo/zd_sec_mgr.h": "b1ab5fcf490f77f95cd111a13581cb15d198d79c",
+    "source/ti/zstack/stack/zdo/zd_app.c": "d67a7798a3e6a8681faddebf5e4b87b4b4c60421",
+    "source/ti/zstack/stack/sys/zglobals.c": "0a1d7d2a61a88d1a6bb6e4bc5e359e71e1719024",
+    "source/ti/zstack/stack/api/zstacktask.c": "d85758d2274097d2efe7c395e97e394f70fd352e",
 }
 
 
@@ -247,7 +251,66 @@ def security_changes(source):
         "          {\n"
         "              TCLinkKeyRAMEntry[i].pendingFlag = FALSE;\n"
         "          }")
+    # Pinned source P0: TI TRNG failure branch did NOTHING and still
+    # published uninitialized entropy bytes. Change API to a checked status;
+    # each original caller must suppress key publication on failure.
+    source = one(source, "void ZDSecMgrGenerateRndKey(uint8_t* pKey)\n{\n  extern TRNG_Handle TRNG_handle;\n\n  int_fast16_t result;\n\n  CryptoKey entropyKey;\n  uint8_t entropyBuffer[SEC_KEY_LEN];\n\n  CryptoKeyPlaintext_initBlankKey(&entropyKey, entropyBuffer, SEC_KEY_LEN);\n\n  result = TRNG_generateEntropy(TRNG_handle, &entropyKey);\n\n  if (result != TRNG_STATUS_SUCCESS) {\n      // Handle error\n  }\n\n  OsalPort_memcpy(pKey, &entropyKey.u.plaintext.keyMaterial[0], SEC_KEY_LEN);\n}", "uint8_t ZDSecMgrGenerateRndKey(uint8_t* pKey)\n{\n  extern TRNG_Handle TRNG_handle;\n  CryptoKey entropyKey;\n  uint8_t entropyBuffer[SEC_KEY_LEN] = {0};\n  int_fast16_t result;\n\n  // Missing destination, absent driver or TRNG failure must not publish a key.\n  if (pKey == NULL) return ZFailure;\n  memset(pKey, 0, SEC_KEY_LEN);\n  if (TRNG_handle == NULL) return ZFailure;\n\n  CryptoKeyPlaintext_initBlankKey(&entropyKey, entropyBuffer, SEC_KEY_LEN);\n  result = TRNG_generateEntropy(TRNG_handle, &entropyKey);\n  if (result != TRNG_STATUS_SUCCESS)\n  {\n      memset(entropyBuffer, 0, sizeof(entropyBuffer));\n      return ZFailure;\n  }\n  OsalPort_memcpy(pKey, &entropyKey.u.plaintext.keyMaterial[0], SEC_KEY_LEN);\n  memset(entropyBuffer, 0, sizeof(entropyBuffer));\n  return ZSuccess;\n}")
+    source = one(source,
+        "  ZDSecMgrGenerateRndKey(SeedKey);
+
+"
+        "  if((SUCCESS == osal_nv_item_init",
+        "  if (ZDSecMgrGenerateRndKey(SeedKey) != ZSuccess)
+"
+        "  {
+"
+        "    memset(SeedKey, 0, SEC_KEY_LEN);
+"
+        "    return; // never create or overwrite TC seed with failed entropy
+"
+        "  }
+
+"
+        "  if((SUCCESS == osal_nv_item_init")
     return source
+
+
+def entropy_header_changes(source):
+    return one(source,
+        'extern void ZDSecMgrGenerateRndKey(uint8_t* pKey);',
+        'extern uint8_t ZDSecMgrGenerateRndKey(uint8_t* pKey);')
+
+
+def entropy_zdapp_changes(source):
+    return one(source,
+        '        ZDSecMgrGenerateRndKey(tmpKey);\n\n        //Set the nwk key as the default',
+        '        if (ZDSecMgrGenerateRndKey(tmpKey) != ZSuccess)\n'
+        '        {\n'
+        '          memset(tmpKey, 0, SEC_KEY_LEN);\n'
+        '          bdb_nwkFormationAttempt(FALSE);\n'
+        '          return; // no key publication or network-start event\n'
+        '        }\n\n        //Set the nwk key as the default')
+
+
+def entropy_zglobals_changes(source):
+    return one(source,
+        '      ZDSecMgrGenerateRndKey(zgPreConfigKey);',
+        '      if (ZDSecMgrGenerateRndKey(zgPreConfigKey) != ZSuccess)\n'
+        '      {\n'
+        '        memset(zgPreConfigKey, 0, SEC_KEY_LEN);\n'
+        '        return NV_OPER_FAILED; // refuse writing a fabricated key\n'
+        '      }')
+
+
+def entropy_zstacktask_changes(source):
+    return one(source,
+        '      ZDSecMgrGenerateRndKey(&nwkKey.key[0]);',
+        '      if (ZDSecMgrGenerateRndKey(&nwkKey.key[0]) != ZSuccess)\n'
+        '      {\n'
+        '        memset(&nwkKey, 0, sizeof(nwkKey));\n'
+        '        pPtr->hdr.status = (zstack_ZStatusValues)ZFailure;\n'
+        '        return (TRUE); // no OSAL NV write on failed entropy\n'
+        '      }')
 
 
 def apply(sdk, receipt):
@@ -262,9 +325,16 @@ def apply(sdk, receipt):
         if blob_id(raw) != expected:
             raise ValueError("B3 donor git blob mismatch: " + path)
         orig = raw.decode("utf-8")
-        changed = (osal_changes(orig) if path.endswith("osal_nv.c") else
-                   security_changes(orig) if path.endswith("zd_sec_mgr.c") else
-                   nvocmp_changes(orig))
+        changes = {
+            "osal_nv.c": osal_changes,
+            "nvocmp.c": nvocmp_changes,
+            "zd_sec_mgr.c": security_changes,
+            "zd_sec_mgr.h": entropy_header_changes,
+            "zd_app.c": entropy_zdapp_changes,
+            "zglobals.c": entropy_zglobals_changes,
+            "zstacktask.c": entropy_zstacktask_changes,
+        }
+        changed = changes[target.name](orig)
         prepared.append((target, changed.encode("utf-8"), path, expected))
     for target, changed, _, _ in prepared:
         target.write_bytes(changed)
@@ -274,7 +344,8 @@ def apply(sdk, receipt):
                   "NVOCMP read/compaction full negative matrix and actual device power-loss still pending",
                   "osal_nv_init void ABI drops initialization failure",
                   "B1 HOLD_SECURITY integration unimplemented",
-                  "per-key reserve-before-send and native B1 hold wiring not proven"],
+                  "per-key reserve-before-send and native B1 hold wiring not proven",
+                  "TRNG status checked at all public TI callers, RF blocking on hold still unintegrated"],
               "files": [{"path": path, "original_blob_sha1": old,
                          "modified_sha256": hashlib.sha256(raw).hexdigest()}
                         for _, raw, path, old in prepared]}
