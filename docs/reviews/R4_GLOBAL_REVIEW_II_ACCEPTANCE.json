@@ -1,0 +1,311 @@
+{
+  "schema": "r4-global-independent-review-ii-v1",
+  "as_of": "2026-10-17",
+  "reviewer": "ChatGPT GPT-6; no Muse verdict represented",
+  "scope": "GITHUB_ONLY_SOURCE_AND_HOSTED_CI",
+  "issue_url": "https://github.com/analienx/Zigbee-Coordinator/issues/85",
+  "report": "docs/reviews/R4_GLOBAL_REVIEW_II_2026-10-17.md",
+  "global_verdict": "FAIL",
+  "r4_source_ready": false,
+  "hardware_ready": false,
+  "production_ready": false,
+  "live_hardware_accessed": false,
+  "code_modified": false,
+  "phase_matrix": [
+    {
+      "id": "R4-00",
+      "pr": 86,
+      "sha": "38dbd279cd7112579726a38862ec3048b44ab5b3",
+      "verdict": "PARTIAL",
+      "ci": "PASS_SOURCE",
+      "blockers": [
+        "EXTERNAL_TRUST_ROOT",
+        "STOCK_20260310_ANCESTRY_UNKNOWN",
+        "TOOLCHAIN_DOWNLOAD_DIGESTS_UNKNOWN"
+      ],
+      "findings": [
+        "R4-II-11"
+      ]
+    },
+    {
+      "id": "R4-01a-B0",
+      "pr": 89,
+      "sha": "dc74b44019853f8b6cadf75c4e6e940fc715c906",
+      "verdict": "PARTIAL",
+      "ci": "PASS_HOSTED_NATIVE",
+      "run_ids": [
+        39011888813
+      ],
+      "blockers": [
+        "BOARD_RF_CLOCK_RUNTIME",
+        "STOCK_NV_PARITY",
+        "PHYSICAL_SYS_PING",
+        "SAFE_SECTOR_WRITER"
+      ],
+      "findings": [
+        "R4-II-03",
+        "R4-II-05"
+      ]
+    },
+    {
+      "id": "B1",
+      "pr": 94,
+      "sha": "a514c194ea0d94b5d38b28c7b07ca5caba9aeffd",
+      "verdict": "PARTIAL",
+      "ci": "PASS_HOSTED_NATIVE_STANDALONE",
+      "run_ids": [
+        39006604255
+      ],
+      "blockers": [
+        "B1_B3_INTEGRATION",
+        "QUEUED_ROM_RF_HOLD",
+        "HERDSMAN_HOLD_RECOVERY"
+      ],
+      "findings": [
+        "R4-II-02",
+        "R4-II-05",
+        "R4-II-07",
+        "R4-II-10"
+      ]
+    },
+    {
+      "id": "B2",
+      "pr": 96,
+      "sha": "0b06ef8b2fd4fc3008c228208e7a16e1c86d8492",
+      "verdict": "FAIL_FULL_SCOPE_PARTIAL_CAPACITY",
+      "ci": "PASS_CAPACITY_NATIVE",
+      "run_ids": [
+        39010370810
+      ],
+      "blockers": [
+        "OPAQUE_TI_RTG",
+        "MTO_NV_EFFECTIVE_UNKNOWN",
+        "CHILD_TC_CAPACITY_MISSING",
+        "PEAK_RAM_MEASUREMENT",
+        "T05_T28"
+      ],
+      "findings": [
+        "R4-II-06"
+      ]
+    },
+    {
+      "id": "B3",
+      "pr": 99,
+      "sha": "9b72e4fee2cb8adca89c4afed72dfa7db90d5163",
+      "verdict": "FAIL",
+      "ci": "FAILED_HOSTED_NATIVE",
+      "run_ids": [
+        39011537997,
+        39011538069
+      ],
+      "blockers": [
+        "C_SIGNATURE_CONFLICT",
+        "DURABLE_COUNTER_READBACK",
+        "RESERVE_BEFORE_SECURE_TX",
+        "B1_HOLD_WIRING",
+        "NV_FORMAT_AUTHORITY"
+      ],
+      "findings": [
+        "R4-II-01",
+        "R4-II-02",
+        "R4-II-07"
+      ]
+    },
+    {
+      "id": "B4_V3",
+      "pr": 100,
+      "sha": "981ce098658a40aa3145916a2f08a155aaa0367e",
+      "verdict": "PARTIAL",
+      "ci": "PASS_HOSTED_NATIVE_STANDALONE",
+      "run_ids": [
+        39017548625
+      ],
+      "blockers": [
+        "HARDWARE_UART_TX_FINISHED",
+        "INSTALLED_Z2M_OTA",
+        "COMPOSITE_ABI"
+      ],
+      "findings": [
+        "R4-II-05"
+      ]
+    },
+    {
+      "id": "B4_V4_ALT_F1",
+      "pr": 104,
+      "sha": "b0559920af1321edf0f3f661abfdd7f8ac14504f",
+      "verdict": "FAIL_REJECT",
+      "ci": "FAILED_HOSTED_NATIVE",
+      "run_ids": [
+        39020665837
+      ],
+      "blockers": [
+        "B1_SYS_F1_COLLISION",
+        "MISSING_NATIVE_ELF_SYMBOL"
+      ],
+      "findings": [
+        "R4-II-04"
+      ]
+    },
+    {
+      "id": "B4_V4_F2",
+      "pr": 105,
+      "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a",
+      "verdict": "PARTIAL",
+      "ci": "PASS_HOSTED_NATIVE_STANDALONE_EXACT_HEAD",
+      "run_ids": [
+        39024103773,
+        39024103860
+      ],
+      "blockers": [
+        "TRNG_RUNTIME_LINK_STACK",
+        "B1_HOLD_F2_UNAVAILABLE",
+        "PHYSICAL_EPOCH"
+      ],
+      "findings": [
+        "R4-II-05",
+        "R4-II-08",
+        "R4-II-09",
+        "R4-II-10",
+        "R4-II-12"
+      ]
+    },
+    {
+      "id": "B5_OPTIONAL",
+      "verdict": "DEFER",
+      "ci": "NO_REQUIRED_CANDIDATE",
+      "blockers": [
+        "NO_MEASURED_SCHEDULER_DEFICIT"
+      ],
+      "findings": []
+    },
+    {
+      "id": "R4_COMPOSITE",
+      "verdict": "FAIL_ABSENT",
+      "ci": "NO_COMBINED_BUILD",
+      "blockers": [
+        "COMPOSED_SHA_ABSENT",
+        "CROSS_PHASE_NATIVE_ABSENT",
+        "INTEGRATED_NEGATIVE_TESTS_ABSENT"
+      ],
+      "findings": [
+        "R4-II-05"
+      ]
+    },
+    {
+      "id": "R4_07_PHYSICAL",
+      "verdict": "NOT_QUALIFIED",
+      "ci": "NO_PHYSICAL_TESTS_AUTHORIZED",
+      "blockers": [
+        "DISPOSABLE_BOARD",
+        "BACKUP_READBACK",
+        "SECTOR_ERASE_POLICY",
+        "STOCK_PARITY",
+        "COUNTER_MONOTONICITY",
+        "MESH_SOAK"
+      ],
+      "findings": [
+        "R4-II-03"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "R4-II-01",
+      "severity": "P0",
+      "title": "B3 native compile fails",
+      "owner": "B3"
+    },
+    {
+      "id": "R4-II-02",
+      "severity": "P0",
+      "title": "B3 security floor not proven durable/read-back",
+      "owner": "B3"
+    },
+    {
+      "id": "R4-II-03",
+      "severity": "P0",
+      "title": "Unsafe flat-BIN flash would span NV",
+      "owner": "B0"
+    },
+    {
+      "id": "R4-II-04",
+      "severity": "P0",
+      "title": "B4 F1 opcode conflict + native failure",
+      "owner": "B4_V4_ALT_F1"
+    },
+    {
+      "id": "R4-II-05",
+      "severity": "P1",
+      "title": "Missing composite and cross-phase proof",
+      "owner": "COMPOSITE"
+    },
+    {
+      "id": "R4-II-06",
+      "severity": "P1",
+      "title": "Routing only capacities, MTO inactive by default",
+      "owner": "B2"
+    },
+    {
+      "id": "R4-II-07",
+      "severity": "P1",
+      "title": "HOLD vs in-flight/ROM RF and B3 wiring unresolved",
+      "owner": "B1_B3"
+    },
+    {
+      "id": "R4-II-08",
+      "severity": "P2",
+      "title": "Exact-head native now green; do not rely on stale old-head receipts",
+      "owner": "B4_V4_F2"
+    },
+    {
+      "id": "R4-II-09",
+      "severity": "P2",
+      "title": "TRNG/stack/boot ID runtime unmeasured",
+      "owner": "B4_V4_F2"
+    },
+    {
+      "id": "R4-II-10",
+      "severity": "P2",
+      "title": "F2 blocked while B1 HOLD",
+      "owner": "B1_B4"
+    },
+    {
+      "id": "R4-II-11",
+      "severity": "P2",
+      "title": "Provenance metadata/trust-root gaps",
+      "owner": "R4-00"
+    },
+    {
+      "id": "R4-II-12",
+      "severity": "P2",
+      "title": "UNPI diagnostic debug/redaction visibility tradeoff",
+      "owner": "B4_V4_F2"
+    }
+  ],
+  "review_lenses": [
+    "PROVENANCE_NATIVE_CI_FLASH",
+    "STARTUP_NV_SECURITY",
+    "ROUTING_RAM",
+    "NPI_HOST_DIAGNOSTICS",
+    "CROSS_PHASE_BLIND_SPOT"
+  ],
+  "required_gates": [
+    "G0_PIN_AND_TRUST",
+    "G1_B3_NATIVE_SECURITY",
+    "G2_B4_F2_EXACT_SHA",
+    "G3_B2_SCOPE",
+    "G4_COMPOSITE_NATIVE",
+    "G5_AUTHORIZED_PHYSICAL"
+  ],
+  "latest_native_recheck": {
+    "pr": 105,
+    "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a",
+    "run_ids": [
+      39024103773,
+      39024103860
+    ],
+    "status": "COMPLETED_SUCCESS",
+    "seven_workflows": "SUCCESS",
+    "scope": "STANDALONE_ONLY_NOT_COMPOSITE_OR_HARDWARE"
+  }
+}
