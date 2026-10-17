@@ -9,6 +9,7 @@ from collections import deque
 import json
 import math
 import os
+import tempfile
 from pathlib import Path
 
 from r4_diag_reference import classify_host_observation
@@ -198,13 +199,14 @@ class PassiveR4Recorder:
             frame = json.dumps(snapshot, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8")
         if len(frame) > max_bytes:
             raise ValueError("snapshot size cap exceeded")
-        tmp = target.with_name(target.name + ".pending")
-        if tmp.is_symlink():
-            raise ValueError("temporary symlink refused")
+        # mkstemp uses exclusive random-name creation, avoiding a predictable
+        # .pending symlink/hardlink race. Never open a user-controlled temp
+        # filename with O_TRUNC in a recorder worker.
+        fd, temp_name = tempfile.mkstemp(prefix=target.name + ".pending-",
+                                         dir=target.parent)
+        tmp = Path(temp_name)
         try:
-            with open(tmp, "wb") as out:
-                if os.name == "posix":
-                    os.fchmod(out.fileno(), 0o600)
+            with os.fdopen(fd, "wb") as out:
                 out.write(frame)
                 out.flush()
                 os.fsync(out.fileno())
@@ -231,7 +233,11 @@ class PassiveR4Recorder:
         if target.is_symlink() or target.parent.is_symlink():
             raise ValueError("symlink snapshot refused")
         # Never read an unbounded or malicious persisted JSON blob.
-        with target.open("rb") as src:
+        # O_NOFOLLOW closes the TOCTOU gap after the initial symlink check
+        # for the last path component. Keep all recovered input bounded.
+        flags = os.O_RDONLY | (getattr(os, "O_NOFOLLOW", 0) if os.name == "posix" else 0)
+        fd = os.open(target, flags)
+        with os.fdopen(fd, "rb") as src:
             raw = src.read(1_048_577)
         if len(raw) > 1_048_576:
             raise ValueError("snapshot file exceeds maximum supported size")
