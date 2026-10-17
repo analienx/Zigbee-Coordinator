@@ -71,7 +71,7 @@ def b3_save_from_ast(source):
                         return child.value.value
     raise ValueError("B3_MONOTONIC_SAVE_AST_MISSING")
 
-def run(sdk,b3script,b3_git_sha):
+def run(sdk,b3script,b3_git_sha,b1_receipt):
     sdk=sdk.resolve()
     if not str(sdk).startswith("/tmp/") or not (sdk/".git").exists():
         raise ValueError("ONLY_DISPOSABLE_TMP_SDK_CHECKOUT")
@@ -168,8 +168,33 @@ def run(sdk,b3script,b3_git_sha):
                            "after_sha256":hashlib.sha256(body.encode()).hexdigest()}
     if set(changed)!={ZD,SEC,HDR,GLO,TASK}:
         raise ValueError("FUSION_EXPECTED_FIVE_MODIFIED_FILES "+str(sorted(changed)))
+    # Do not disguise a changed B1 body as its old source SHA: bind the
+    # final SDK hashes to B1's existing native manifest ONLY after comparing
+    # each BEFORE hash to the exact B1 receipt. Separate fusion receipt still
+    # discloses which phase owns each function and what remains unmerged.
+    original_b1=json.loads(b1_receipt.read_text(encoding="utf-8"))
+    binding_keys={
+        ZD:"modified_zdapp_sha256",
+        SEC:"modified_security_sha256",
+        GLO:"modified_zglobals_sha256",
+    }
+    if original_b1.get("schema")!="r4-b1-admission-overlay-v2":
+        raise ValueError("B1_RECEIPT_SCHEMA_DRIFT")
+    for name,key in binding_keys.items():
+        if original_b1.get(key)!=changed[name]["before_sha256"]:
+            raise ValueError("B1_RECEIPT_PREIMAGE_MISMATCH "+name)
     for name in changed:
         (sdk/name).write_text(raw[name],encoding="utf-8",newline="")
+    for name,key in binding_keys.items():
+        original_b1[key]=changed[name]["after_sha256"]
+    original_b1["post_b1_security_fusion"]="B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS"
+    original_b1["b3_source_commit"]=B3_SHA
+    original_b1["unmerged_security_paths"]=[
+        "B3 NVOCMP compaction reconciliation",
+        "B3 checked seed-derived key status ABI",
+        "B2/B4 cross-phase composition",
+    ]
+    b1_receipt.write_text(json.dumps(original_b1,indent=2,sort_keys=True)+"\\n")
     return {
         "schema":"r4-b1-b3-partial-security-fusion-v1",
         "ti_sdk_sha":TI_SHA,"b3_input_sha":B3_SHA,
@@ -190,9 +215,10 @@ def main():
     p.add_argument("--sdk",type=Path,required=True)
     p.add_argument("--b3-script",type=Path,required=True)
     p.add_argument("--b3-git-sha",required=True)
+    p.add_argument("--b1-overlay-receipt",type=Path,required=True)
     p.add_argument("--receipt",type=Path,required=True)
     a=p.parse_args()
-    receipt=run(a.sdk,a.b3_script,a.b3_git_sha)
+    receipt=run(a.sdk,a.b3_script,a.b3_git_sha,a.b1_overlay_receipt)
     a.receipt.parent.mkdir(parents=True,exist_ok=True)
     a.receipt.write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n")
     print(json.dumps(receipt,sort_keys=True))
