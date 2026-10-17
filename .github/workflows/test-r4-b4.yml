@@ -1,6 +1,8 @@
 name: R4 B4 bounded diagnostics source guards
 
 on:
+  push:
+    branches: [feat/p7u-r4-b4-srsp-general-queue-safe-counter]
   pull_request:
     paths:
       - ".github/workflows/test-r4-b4.yml"
