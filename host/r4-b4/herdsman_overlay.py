@@ -65,6 +65,9 @@ ADAPTER_METHOD = r"""
                 data.readUInt32LE(24) !== 0 ||
                 data.readUInt32LE(28) === 0
             ) {
+                // Malformed or ambiguous F0: never re-probe until a newly
+                // constructed owner exists. A late frame cannot be paired.
+                this.znp.b4PoisonDiagSession();
                 return undefined;
             }
             const validityMask = data.readUInt32LE(12);
