@@ -266,7 +266,7 @@ def _int_maybe(text):
         return None
 
 
-def _parse_link_xml(text, elf_name, elf_entry):
+def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False):
     """Validate the genuine TI --xml_link_info document.
 
     Returns (evidence, error): evidence carries the parsed memory
@@ -315,8 +315,8 @@ def _parse_link_xml(text, elf_name, elf_entry):
     # region starts. Reject duplicate/malformed region declarations above
     # before accepting any flash image as layout-compatible.
     expected_geometry = {
-        "FLASH": (0x00000000, 0xAA000),
-        "FLASH_NV": (0xAA000, 0x4000),
+        "FLASH": (0x00000000, 0xA0000 if preserve_resident_boot else 0xAA000),
+        "FLASH_NV": (0xA0000 if preserve_resident_boot else 0xAA000, 0x4000),
         "FLASH_LAST": (0xAE000, 0x2000),
         "SRAM": (0x20000000, 0x24000),
     }
@@ -325,9 +325,12 @@ def _parse_link_xml(text, elf_name, elf_entry):
             return None, ("audit donor memory geometry mismatch for %s "
                           "(got %r; want %r)" % (region, areas[region], expected))
     nvs_base, nvs_size = areas["FLASH_NV"]
-    if nvs_base != DONOR_NVS_BASE or nvs_size != DONOR_NVS_SIZE:
-        return None, ("audit NVS geometry differs from donor "
-                      "(want base 0xAA000 size 0x4000)")
+    expected_base = 0xA0000 if preserve_resident_boot else DONOR_NVS_BASE
+    if nvs_base != expected_base or nvs_size != DONOR_NVS_SIZE:
+        return None, ("audit NVS geometry differs from explicit profile "
+                      "(want base 0x%05X size 0x4000)" % expected_base)
+    if preserve_resident_boot and nvs_base + nvs_size > 0xA4000:
+        return None, "audit relocated NV intersects reserved resident stage"
     fl_base, fl_len = areas["FLASH_LAST"]
     if fl_base != DONOR_FLASH_LAST_BASE:
         return None, "audit FLASH_LAST base differs from donor (want 0xAE000)"
@@ -660,7 +663,7 @@ def _validate_reset_vectors(payload, evidence, elf_segments):
     return None
 
 
-def audit(base, artifacts, *, fixture_oracle=False):
+def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False):
     """Returns (exit_code, message). Never raises.
 
     Log markers are a tripwire only -- real proof is the ELF/XML
@@ -783,7 +786,8 @@ def audit(base, artifacts, *, fixture_oracle=False):
     elf_entry, err = _parse_elf(targets["elf"])
     if err:
         return 1, err
-    evidence, err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry)
+    evidence, err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry,
+                                    preserve_resident_boot=preserve_resident_boot)
     if err:
         return 1, err
     if not fixture_oracle:
@@ -826,15 +830,18 @@ def main(argv):
     # argv follows the repo test convention: argv[0] is the command
     # (callers pass sys.argv[1:]); `if __name__` strips the prog name.
     try:
-        fixture_oracle = len(argv) == 5 and argv[-1] == "--synthetic-fixture-oracle"
+        profile = argv[-1] if len(argv) == 5 else None
+        fixture_oracle = profile == "--synthetic-fixture-oracle"
+        preserve_boot = profile == "--preserve-resident-boot"
         if (len(argv) not in (4, 5) or argv[0] != "audit"
                 or argv[2] != "--artifacts"
-                or (len(argv) == 5 and not fixture_oracle)):
+                or (len(argv) == 5 and not (fixture_oracle or preserve_boot))):
             print("usage: b0_image_audit.py audit <b0-base-dir> "
-                  "--artifacts <dir> [--synthetic-fixture-oracle]")
+                  "--artifacts <dir> [--synthetic-fixture-oracle|--preserve-resident-boot]")
             return 2
         code, message = audit(Path(argv[1]), Path(argv[3]),
-                              fixture_oracle=fixture_oracle)
+                              fixture_oracle=fixture_oracle,
+                              preserve_resident_boot=preserve_boot)
     except Exception as exc:  # noqa: BLE001 -- fail closed, never traceback
         print("b0 audit error (%s)" % exc)
         return 1
