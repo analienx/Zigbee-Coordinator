@@ -22,7 +22,11 @@ function frame() {
     data.write("R4D3", 0, "ascii");
     data.writeUInt8(3, 4);
     data.writeUInt16LE(132, 6);
-    data.writeUInt32LE(0x10, 12);
+    data.writeUInt32LE(0x1F, 12);
+    data.writeUInt32LE(2, 32);
+    data.writeUInt32LE(4, 36);
+    data.writeUInt32LE(3, 40);
+    data.writeUInt32LE(5, 44);
     data.writeUInt32LE(8, 28);
     data.writeUInt32LE(0xffffffff, 48);
     return data;
@@ -88,7 +92,8 @@ test("D04/D08/D11: strict validity, no radio epoch, max u32 not unknown", async 
     const {owner, calls} = fakeOwner();
     const sample = await owner.b4ReadOnlyDiagnostics(allow);
     assert.deepEqual(sample, {
-        abi: 3, validityMask: 0x10, srspEnqueued: 0xffffffff,
+        abi: 3, validityMask: 0x1F, srspDepth: 2, srspHighWater: 4,
+        asyncDepth: 3, asyncHighWater: 5, srspEnqueued: 0xffffffff,
         sequence: 8, radioEpoch: "UNKNOWN",
     });
     assert.equal(calls(), 1);
@@ -443,4 +448,34 @@ test("REVIEW-P0: a queued F0 never writes after the existing owner is disconnect
     assert.deepEqual(transmitted, [1]); // no diagnostic write to a closed port
     assert.equal(znp.waitress.waiters.size, 0);
     assert.equal(znp.b4CanProbe(), false);
+});
+
+test("B4 native queue provenance: exact v3 bitmap 0x0c without NPI_SREQRSP keeps sync fields unknown", async () => {
+    const buffer = frame();
+    buffer.writeUInt32LE(0x0C, 12);
+    buffer.writeUInt32LE(0, 32);
+    buffer.writeUInt32LE(0, 36);
+    buffer.writeUInt32LE(0, 48);
+    const {owner} = fakeOwner(buffer);
+    assert.deepEqual(await owner.b4ReadOnlyDiagnostics(allow), {
+        abi: 3, validityMask: 0x0C,
+        srspDepth: null, srspHighWater: null,
+        asyncDepth: 3, asyncHighWater: 5,
+        srspEnqueued: null, sequence: 8, radioEpoch: "UNKNOWN"
+    });
+});
+
+test("B4 native queue source: reject invalid HWM, partial bitmap, and unqualified nonzero fields", async () => {
+    const mutants = [
+        (b) => b.writeUInt32LE(5, 32),  // depth > high water (4)
+        (b) => b.writeUInt32LE(6, 40),  // async depth > high water (5)
+        (b) => b.writeUInt32LE(0x1B, 12), // missing one native queue validity bit
+        (b) => {b.writeUInt32LE(0x0C, 12); b.writeUInt32LE(1, 32);},
+    ];
+    for (const mutate of mutants) {
+        const buffer = frame(); mutate(buffer);
+        const {owner} = fakeOwner(buffer);
+        assert.equal(await owner.b4ReadOnlyDiagnostics(allow), undefined);
+        assert.equal(owner.znp.poisoned, true);
+    }
 });
