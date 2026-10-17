@@ -22,13 +22,14 @@ function frame() {
     data.write("R4D3", 0, "ascii");
     data.writeUInt8(3, 4);
     data.writeUInt16LE(132, 6);
-    data.writeUInt32LE(0x1F, 12);
+    data.writeUInt32LE(0x3F, 12);
     data.writeUInt32LE(2, 32);
     data.writeUInt32LE(4, 36);
     data.writeUInt32LE(3, 40);
     data.writeUInt32LE(5, 44);
     data.writeUInt32LE(8, 28);
     data.writeUInt32LE(0xffffffff, 48);
+    data.writeUInt32LE(7, 52); // real UART2_EVENT_TX_FINISHED notifications
     return data;
 }
 function fakeOwner(data = frame()) {
@@ -92,8 +93,9 @@ test("D04/D08/D11: strict validity, no radio epoch, max u32 not unknown", async 
     const {owner, calls} = fakeOwner();
     const sample = await owner.b4ReadOnlyDiagnostics(allow);
     assert.deepEqual(sample, {
-        abi: 3, validityMask: 0x1F, srspDepth: 2, srspHighWater: 4,
+        abi: 3, validityMask: 0x3F, srspDepth: 2, srspHighWater: 4,
         asyncDepth: 3, asyncHighWater: 5, srspEnqueued: 0xffffffff,
+        uartTxFinishedEvents: 7,
         sequence: 8, radioEpoch: "UNKNOWN",
     });
     assert.equal(calls(), 1);
@@ -450,18 +452,19 @@ test("REVIEW-P0: a queued F0 never writes after the existing owner is disconnect
     assert.equal(znp.b4CanProbe(), false);
 });
 
-test("B4 native queue provenance: exact v3 bitmap 0x0c without NPI_SREQRSP keeps sync fields unknown", async () => {
+test("B4 native queue provenance: exact v3 bitmap 0x2c without NPI_SREQRSP keeps sync fields unknown", async () => {
     const buffer = frame();
-    buffer.writeUInt32LE(0x0C, 12);
+    buffer.writeUInt32LE(0x2C, 12);
     buffer.writeUInt32LE(0, 32);
     buffer.writeUInt32LE(0, 36);
     buffer.writeUInt32LE(0, 48);
     const {owner} = fakeOwner(buffer);
     assert.deepEqual(await owner.b4ReadOnlyDiagnostics(allow), {
-        abi: 3, validityMask: 0x0C,
+        abi: 3, validityMask: 0x2C,
         srspDepth: null, srspHighWater: null,
         asyncDepth: 3, asyncHighWater: 5,
-        srspEnqueued: null, sequence: 8, radioEpoch: "UNKNOWN"
+        srspEnqueued: null, uartTxFinishedEvents: 7,
+        sequence: 8, radioEpoch: "UNKNOWN"
     });
 });
 
@@ -469,8 +472,10 @@ test("B4 native queue source: reject invalid HWM, partial bitmap, and unqualifie
     const mutants = [
         (b) => b.writeUInt32LE(5, 32),  // depth > high water (4)
         (b) => b.writeUInt32LE(6, 40),  // async depth > high water (5)
-        (b) => b.writeUInt32LE(0x1B, 12), // missing one native queue validity bit
-        (b) => {b.writeUInt32LE(0x0C, 12); b.writeUInt32LE(1, 32);},
+        (b) => b.writeUInt32LE(0x3B, 12), // missing one native queue validity bit
+        (b) => {b.writeUInt32LE(0x2C, 12); b.writeUInt32LE(1, 32);},
+        (b) => b.writeUInt32LE(0x1F, 12), // old mask omits real TX event validity bit
+        (b) => {b.writeUInt32LE(0x2C, 12); b.writeUInt32LE(0, 52); b.writeUInt32LE(1, 48);},
     ];
     for (const mutate of mutants) {
         const buffer = frame(); mutate(buffer);
