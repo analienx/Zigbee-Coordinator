@@ -186,7 +186,7 @@ def main():
 
     backend_scenarios = ("healthy", "write_ok", "erase_ok", "crc_corrupt", "header_corrupt",
         "init_read_fail", "init_repair", "init_scan_corrupt", "init_page_signature",
-        "init_page_version", "init_page_state", "read_fail", "read_bounds",
+        "init_page_version", "init_page_state", "read_fail", "read_bounds", "read_oversized",
         "write_fail", "write_positive_error", "write_bounds", "low_write", "erase_fail",
         "erase_positive_error", "erase_bounds", "low_erase", "scan_corrupt", "scan_length", "runtime_crc")
     for variant in ("slow", "fast"):
@@ -199,6 +199,16 @@ def main():
         binary = compile_c(source, name)
         for scenario in backend_scenarios:
             positive(binary, (scenario,))
+
+    # P0 negative mutation: without bounded poisoning, a corrupt NV item
+    # read length can smash the caller's stack despite fail-closed NVS I/O.
+    mutation(generated["nv_backend_slow"],
+             "if (pBuf != NULL && pg < NVOCMP_NVPAGES &&\\n"
+             "            off <= FLASH_PAGE_SIZE && len <= FLASH_PAGE_SIZE - off)\\n"
+             "            memset(pBuf, 0, len);",
+             "if (pBuf != NULL) memset(pBuf, 0, len);",
+             "mutant_nv_corrupt_length_stack_overwrite",
+             "stack-buffer-overflow", ("read_oversized",))
 
     # N24 partial power cuts through actual TI writeItem()/erase() with
     # 1->0 NOR semantics and read-only persisted admission on simulated reboot.
