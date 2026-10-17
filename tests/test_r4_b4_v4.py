@@ -34,7 +34,12 @@ void NPITask_inititializeTask(void)
 }
 """
 TRNG_HEADER = """TRNG_getRandomBytes( TRNG_Handle handle );
+TRNG_cancelOperation(TRNG_Handle handle);
 TRNG_RETURN_BEHAVIOR_BLOCKING
+"""
+TRNG_DRIVER = """SemaphoreP_pend(&object->operationSemaphore, object->semaphoreTimeout);
+SemaphoreP_destruct(&object->operationSemaphore);
+TRNG_cancelOperation(TRNG_Handle handle)
 """
 RESET_HEADER = "SysCtrlResetSourceGet( void );"
 MT_HEADER = "#define MT_SYS_PING 0x01\n#define MT_SYS_VERSION 0x02\n"
@@ -57,6 +62,8 @@ class V4Native(unittest.TestCase):
                     return TRNG_HEADER.encode()
                 if path.endswith("mt.h"):
                     return MT_HEADER.encode()
+                if path.endswith("TRNGCC26XX.c"):
+                    return TRNG_DRIVER.encode()
             raise ValueError("unexpected git query")
         return originals, git
 
@@ -75,6 +82,10 @@ class V4Native(unittest.TestCase):
                 self.assertIn("pBuf[MT_RPC_POS_LEN] != 8u", sys)
                 self.assertIn("payload[132u + i] = pBuf[MT_RPC_POS_DAT0 + i]", sys)
                 self.assertIn("TRNG_getRandomBytes(handle, sample, sizeof(sample))", task)
+                self.assertIn("TRNG_cancelOperation(handle);", task)
+                self.assertIn("trngResult != TRNG_STATUS_SUCCESS", task)
+                self.assertLess(task.index("(void)TRNG_cancelOperation(handle);"),
+                                task.index("TRNG_close(handle);"))
                 self.assertIn("params.timeout = 25u;", task)
                 self.assertIn("B4_V4BootValid = 0u;", task)
                 self.assertIn("B4_V4BootId[i] = 0u;", task)
@@ -160,6 +171,7 @@ class V4Native(unittest.TestCase):
         self.assertIn("payload[157] = 1u;", V4_HANDLER)
         self.assertIn("TRNG_STATUS_SUCCESS", BOOT_SOURCE)
         self.assertIn("TRNG_close(handle)", BOOT_SOURCE)
+        self.assertIn("TRNG_cancelOperation(handle)", BOOT_SOURCE)
         self.assertNotIn("TRNG_getRandomBytes", V4_HANDLER)
         self.assertNotIn("ZCD_NV", BOOT_SOURCE)
         self.assertNotIn("AF_DataRequest", V4_HANDLER)

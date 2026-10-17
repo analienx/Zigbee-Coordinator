@@ -36,6 +36,7 @@ static void B4_V4BootInitialize(void)
     uint32_t resetSource;
     uint32_t i;
     uint8_t nonzero = 0u;
+    int_fast16_t trngResult;
     /* Re-entry after any partial task restart must NOT reuse previous
      * entropy. No UART is open yet; all writes precede host observations.
      */
@@ -56,16 +57,27 @@ static void B4_V4BootInitialize(void)
     handle = TRNG_open(0, &params); /* existing SysConfig TRNG instance */
     if (handle == NULL)
         return;
-    if (TRNG_getRandomBytes(handle, sample, sizeof(sample)) == TRNG_STATUS_SUCCESS)
+    trngResult = TRNG_getRandomBytes(handle, sample, sizeof(sample));
+    if (trngResult != TRNG_STATUS_SUCCESS)
+    {
+        /* Pinned TRNGCC26XX_waitForResult may time out while the
+         * request is STILL queued: it ignores SemaphoreP_pend's return
+         * and reads the driver's error returnStatus. TRNG_close merely
+         * destructs the semaphore. Cancel the job first, so its ISR
+         * cannot later post a destroyed semaphore or write our stack.
+         * TRNG_cancelOperation safely removes the job under HwiP CS.
+         */
+        (void)TRNG_cancelOperation(handle);
+        TRNG_close(handle);
+        return; /* capability already zero; UART startup proceeds */
+    }
+    for (i = 0u; i < sizeof(sample); ++i)
+        nonzero |= sample[i];
+    if (nonzero != 0u)
     {
         for (i = 0u; i < sizeof(sample); ++i)
-            nonzero |= sample[i];
-        if (nonzero != 0u)
-        {
-            for (i = 0u; i < sizeof(sample); ++i)
-                B4_V4BootId[i] = sample[i];
-            B4_V4BootValid = 1u; /* never modified again until boot */
-        }
+            B4_V4BootId[i] = sample[i];
+        B4_V4BootValid = 1u; /* never modified again until boot */
     }
     TRNG_close(handle);
     /* No key/NV operations and no second entropy attempt on failure. */
@@ -162,10 +174,16 @@ def plan(root):
     header = git(root, "show", TI_SHA +
                  ":source/ti/devices/cc13x2x7_cc26x2x7/driverlib/sys_ctrl.h").decode()
     trng = git(root, "show", TI_SHA + ":source/ti/drivers/TRNG.h").decode()
+    trng_driver = git(root, "show", TI_SHA +
+                      ":source/ti/drivers/trng/TRNGCC26XX.c").decode()
     if ("SysCtrlResetSourceGet(" not in header or
             "TRNG_getRandomBytes(" not in trng or
-            "TRNG_RETURN_BEHAVIOR_BLOCKING" not in trng):
-        raise ValueError("pinned TI boot entropy or reset API unsupported")
+            "TRNG_cancelOperation(" not in trng or
+            "TRNG_RETURN_BEHAVIOR_BLOCKING" not in trng or
+            "SemaphoreP_pend(&object->operationSemaphore, object->semaphoreTimeout);" not in trng_driver or
+            "SemaphoreP_destruct(&object->operationSemaphore);" not in trng_driver or
+            "TRNG_cancelOperation(TRNG_Handle handle)" not in trng_driver):
+        raise ValueError("pinned TI boot entropy timeout cancellation source unsupported")
     # Exact F2 must be unassigned in pinned SYS definitions; do not silently
     # reuse a reserved command in MT header or existing dispatcher.
     mt_h = git(root, "show", TI_SHA + ":source/ti/zstack/mt/mt.h").decode()
@@ -218,7 +236,9 @@ def apply(root):
         "stage": "PATCHED_DISPOSABLE_TI_NOT_NATIVE_PROOF",
         "sdk_sha": TI_SHA, "command": "SYS_F2", "request_bytes": 8,
         "payload_bytes": V4_BYTES, "boot_entropy": "TRNG_GET_RANDOM_BYTES_ONCE_IN_NPI_TASK",
-        "boot_cap_on_failure": 0, "full_image_build_digest": "NOT_CLAIMED",
+        "boot_cap_on_failure": 0,
+        "trng_timeout_cancellation": "CANCEL_QUEUED_JOB_BEFORE_SEMAPHORE_DESTRUCT",
+        "full_image_build_digest": "NOT_CLAIMED",
         "flash_authorized": False, "physical_verified": False,
         "files": {},
     }
