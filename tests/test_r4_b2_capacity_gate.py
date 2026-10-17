@@ -28,7 +28,11 @@ def fixture():
 
 class CapacityGateTests(unittest.TestCase):
     def test_synthetic_fixture_only_tests_arithmetic_not_real_native_provenance(self):
-        self.assertEqual(validate(fixture())["sram_headroom_bytes"],21808)
+        result=validate(fixture())
+        self.assertEqual(result["sram_headroom_bytes"],21808)
+        self.assertEqual(result["result"],"SYNTHETIC_BUDGET_ARITHMETIC_ONLY")
+        self.assertFalse(result["native_artifact_independently_verified"])
+        self.assertFalse(result["runtime_heap_high_water_measured"])
     def test_impossible_p3_fails_for_budget(self):
         e=fixture();e["sram_bytes"]=40000
         with self.assertRaisesRegex(EvidenceError,"SRAM_BUDGET_EXCEEDED"):validate(e)
