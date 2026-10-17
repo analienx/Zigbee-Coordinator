@@ -180,6 +180,33 @@ def nvocmp_changes(source):
         "{\n"
         "    if (NVOCMP_failF != NVINTF_SUCCESS) return(NVINTF_FAILURE);\n"
         "    uint8_t err = NVINTF_SUCCESS;")
+    # A failed page-state/header write is just as fatal as an item write.
+    # Without this, an interrupted NV2 compaction can continue after failed
+    # page metadata publication and later lose valid records (fault op 627).
+    source = one(source,
+        '    NVOCMP_ALERT(NVINTF_LOWPOWER != err, "Voltage check failed.")\n'
+        '    if (NVINTF_FAILURE == err)\n'
+        '    {\n'
+        '        NVOCMP_ALERT(NVINTF_FAILURE != err, "NVS write failure.")\n'
+        '    }\n\n'
+        '    return(err);\n'
+        '}\n\n'
+        '/******************************************************************************\n'
+        ' * @fn      NVOCMP_erase',
+        '    NVOCMP_ALERT(NVINTF_LOWPOWER != err, "Voltage check failed.")\n'
+        '    if (NVINTF_FAILURE == err)\n'
+        '    {\n'
+        '        NVOCMP_ALERT(NVINTF_FAILURE != err, "NVS write failure.")\n'
+        '    }\n'
+        '    if (err != NVINTF_SUCCESS)\n'
+        '    {\n'
+        '        NVOCMP_failF = NVINTF_FAILURE;\n'
+        '        NVOCMP_failW = NVINTF_FAILURE;\n'
+        '    }\n\n'
+        '    return(err);\n'
+        '}\n\n'
+        '/******************************************************************************\n'
+        ' * @fn      NVOCMP_erase')
     source = one(source,
         "static uint8_t NVOCMP_erase(NVOCMP_nvHandle_t *pNvHandle, uint8_t dstPg)\n"
         "{\n"
