@@ -55,6 +55,26 @@ jobs:
           pnpm run build
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: node --test host/r4-b4/test-herdsman-owner.cjs
+      - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
+        run: |
+          set -euo pipefail
+          git init -q /tmp/b4-z2m-host
+          git -C /tmp/b4-z2m-host remote add origin https://github.com/Koenkk/zigbee2mqtt.git
+          git -C /tmp/b4-z2m-host fetch --depth 1 origin 62b02e2aa1997c574223b80c196677b63a25f4a7
+          git -C /tmp/b4-z2m-host checkout --detach FETCH_HEAD
+          python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
+          python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
+      - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@10.18.3
+          cd /tmp/b4-z2m-host
+          pnpm install --frozen-lockfile
+          test -d "$B4_HERDSMAN_ROOT/dist"
+          # Z2M sees the ACTUAL compiled pinned herdsman overlay, not a stub.
+          rm node_modules/zigbee-herdsman
+          ln -s "$B4_HERDSMAN_ROOT" node_modules/zigbee-herdsman
+          pnpm exec tsc --noEmit
       - name: Deny any production installation inference
         run: |
           echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
