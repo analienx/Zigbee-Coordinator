@@ -32,11 +32,23 @@ uint8_t MT_SysCommandProcessing(uint8_t *pBuf)
   return 0;
 }
 """
-TASK = """void NPITask_sendToHost(uint8_t *pMsg) {
+TASK = """void NPITask_sendToHost(uint8_t *pMsg)
+{
 key = OsalPort_enterCS();
+#if defined(NPI_SREQRSP)
 Queue_enqueue(npiSyncTxQueue, &recPtr->_elem);
+#endif
 OsalPort_leaveCS(key);
-}"""
+}
+static void NPITask_processStackMsg(uint8_t *pMsg)
+{
+key = OsalPort_enterCS();
+#if defined(NPI_SREQRSP)
+Queue_enqueue(npiSyncTxQueue, &recPtr->_elem);
+#endif
+OsalPort_leaveCS(key);
+}
+"""
 CLIENT = "void MT_BuildAndSendZToolResponse() { OsalPort_msgAllocate(1); }"
 MTC = "#if !defined(NPI)\nvoid MT_BuildAndSendZToolResponse() {}\n#endif\n"
 
@@ -69,7 +81,7 @@ class NativeOverlayProofs(unittest.TestCase):
                 self.assertEqual(out["radio_boot_identity"], "UNKNOWN")
                 self.assertEqual(len(out["written"]), 2)
                 self.assertIn("case 0xF0", (root / MT_SYS).read_text())
-                self.assertIn("++B4_NpiSrspEnqueued;", (root / NPI_TASK).read_text())
+                self.assertEqual((root / NPI_TASK).read_text().count("++B4_NpiSrspEnqueued;"), 2)
                 self.assertEqual((root / NPI_CLIENT).read_text(), CLIENT)
                 # A repeat patch cannot silently duplicate the new handler.
                 with self.assertRaisesRegex(ValueError, "modified before"):
