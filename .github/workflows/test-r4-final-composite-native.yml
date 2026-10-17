@@ -512,6 +512,7 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
             --out-dir "$project/default/syscfg" \
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+            --resident-vectors \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --preserve-resident-boot
           # Independently prove the REAL linked HEX intersects boot CCFG's
