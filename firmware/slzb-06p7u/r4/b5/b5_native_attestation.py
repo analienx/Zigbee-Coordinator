@@ -190,7 +190,10 @@ def verify(sdk: Path, artifacts: Path, b1: Path, source_head: str):
         "schema": "r4-b5-composite-material-v1",
         "b5_source_sha": source_head, "b1_source_sha": B1_SHA,
         "ti_sdk_sha": TI_SHA, "source_sha256": dict(sorted(sources.items())),
-        "native_sha256": output_hashes,
+        # XML contains CCS volatile link_time; the independently strict B4
+        # parity auditor verifies XML only after normalizing THAT field.
+        # Raw XML SHA is kept as evidence but must NOT enter stable identity.
+        "native_sha256": {k: output_hashes[k] for k in ("elf","bin","hex")},
     }
     canonical = json.dumps(material, sort_keys=True, separators=(",",":"),
                            ensure_ascii=True).encode()
@@ -199,6 +202,8 @@ def verify(sdk: Path, artifacts: Path, b1: Path, source_head: str):
         "classification": "HOSTED_NATIVE_LINKED_SOURCE_BOUND",
         "composite_sha256": digest(canonical),
         "material": material,
+        "raw_linker_xml_sha256": output_hashes["xml"],
+        "raw_linker_xml_excluded_from_composite_id": True,
         "b1_public_status_digest_is_not_composite": True,
         "b1_native_symbol_seal": True, "b4_f0_native_symbol_seal": True,
         "b4_f2_native_symbol_seal": True,

@@ -199,3 +199,4 @@ jobs:
       - name: Assert ELF HEX BIN exact byte identity, separately qualify CCS XML-only link_time
         run: |
           python firmware/slzb-06p7u/r4/b4/b4_artifact_parity.py --artifacts /tmp/b4-compare
+          python firmware/slzb-06p7u/r4/b5/b5_attestation_parity.py --artifacts /tmp/b4-compare --receipt /tmp/b5-composite-parity.json
