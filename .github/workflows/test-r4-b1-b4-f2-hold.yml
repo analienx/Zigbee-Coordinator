@@ -1,0 +1,43 @@
+name: R4 B1 B4 F2 optional HOLD admission source matrix (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/b1/b1_management.c'
+      - 'firmware/slzb-06p7u/r4/b1/tests/test_f2_hold_admission.c'
+      - '.github/workflows/test-r4-b1-b4-f2-hold.yml'
+  push:
+    branches: [fix/r4-b1-b4-f2-hold-admission-20261017]
+permissions:
+  contents: read
+jobs:
+  b1-f2-hold-admission:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact review head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Compile and test REAL B1 command filter without the new opt-in (F2 must be denied)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          p=firmware/slzb-06p7u/r4/b1
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -DB1_MANAGEMENT_HOST \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -I"$p" \
+            "$p/b1_management.c" "$p/tests/test_f2_hold_admission.c" \
+            -o /tmp/b1-f2-hold-default
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/b1-f2-hold-default
+          echo "B1 unintegrated default correctly DENIES F2 under HOLD" >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile reviewed opt-in C with all F2, malformed, unrelated SYS, F1 and sticky security negatives
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          p=firmware/slzb-06p7u/r4/b1
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -DB1_MANAGEMENT_HOST \
+            -DB1_B4_F2_HOLD_DIAGNOSTIC_REVIEWED \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -I"$p" \
+            "$p/b1_management.c" "$p/tests/test_f2_hold_admission.c" \
+            -o /tmp/b1-f2-hold-optin
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/b1-f2-hold-optin
+          echo "B1 source policy under explicit opt-in permits exact SYS F2/8 only; other commands denied" >> "$GITHUB_STEP_SUMMARY"
