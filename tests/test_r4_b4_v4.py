@@ -155,6 +155,7 @@ class V4Native(unittest.TestCase):
                 "00000088 B B4_V4BootValid",
                 "00000090 D B4_V4ResetReason",
                 "00001000 t B4_SysReadOnlyDiagnosticsV4",
+                "00001100 t B4_V4BootInitialize",
             )) + "\n"
             from types import SimpleNamespace
             with patch("b4_v4_native_link_audit.subprocess.run",
