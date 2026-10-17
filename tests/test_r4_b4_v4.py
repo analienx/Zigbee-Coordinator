@@ -71,7 +71,7 @@ class V4Native(unittest.TestCase):
                 self.assertFalse(result["flash_authorized"])
                 sys = (root / MT_SYS).read_text()
                 task = (root / NPI_TASK).read_text()
-                self.assertEqual(sys.count("case 0xF1:"), 1)
+                self.assertEqual(sys.count("case 0xF2:"), 1)
                 self.assertIn("pBuf[MT_RPC_POS_LEN] != 8u", sys)
                 self.assertIn("payload[132u + i] = pBuf[MT_RPC_POS_DAT0 + i]", sys)
                 self.assertIn("TRNG_getRandomBytes(handle, sample, sizeof(sample))", task)
@@ -85,7 +85,7 @@ class V4Native(unittest.TestCase):
 
     def test_drift_collision_and_bad_pin_leave_all_sources_identical(self):
         for target, modified in (
-            (MT_SYS, V3_SYS.replace("case 0xF0:", "case 0xF1:")),
+            (MT_SYS, V3_SYS.replace("case 0xF0:", "case 0xF2:")),
             (NPI_TASK, V3_TASK.replace("NPITL_initTL()", "NotTL_init()")
              .replace("NPIClient_saveNPITaskInfo(npiServiceTaskId);",
                       "NPIClient_start()")),

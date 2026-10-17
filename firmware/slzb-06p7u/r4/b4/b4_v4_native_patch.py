@@ -1,8 +1,8 @@
-"""R4 B4 optional v4 SYS F1 nonce + source-qualified one-shot radio boot ID.
+"""R4 B4 optional v4 SYS F2 nonce + source-qualified one-shot radio boot ID.
 
 Applies ONLY after the pinned B4 v3 overlay in disposable /tmp TI SDK.
 Never replaces v3, never opens another UART, never reads keys or NV,
-never retries entropy, never generates entropy in the F1 handler.
+never retries entropy, never generates entropy in the F2 handler.
 Independent v4 acceptance/hardware gate remains required.
 """
 import argparse
@@ -66,7 +66,7 @@ static void B4_V4BootInitialize(void)
 """
 
 V4_HANDLER = r"""
-/* B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: separate F1, 8-byte nonce echoed.
+/* B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: separate F2, 8-byte nonce echoed.
  * This is a correlation token, not authentication or a hardware MAC.
  */
 extern uint8_t B4_V4BootId[8];
@@ -118,7 +118,7 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV4(uint8_t *pBuf)
     if (reset_reason != 0xFFu)
         payload[158] = 0x01u; /* reset-source-valid, NOT boot-token proof */
     /* byte 159 remains reserved zero */
-    MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF1, sizeof(payload), payload);
+    MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF2, sizeof(payload), payload);
 }
 """
 
@@ -143,9 +143,9 @@ def plan(root):
             raise ValueError("pinned TI file missing")
         originals[path] = f.read_text()
     sys, task = originals[MT_SYS], originals[NPI_TASK]
-    if (MARKER in sys or MARKER in task or "case 0xF1:" in sys or
+    if (MARKER in sys or MARKER in task or "case 0xF2:" in sys or
             "B4_SysReadOnlyDiagnosticsV4" in sys):
-        raise ValueError("v4 already present or SYS F1 conflict")
+        raise ValueError("v4 already present or SYS F2 conflict")
     if ("B4_EXPERIMENTAL_DIAG_READ_ONLY" not in sys or
             "B4_NpiSrspEnqueued" not in task or
             "B4_NpiUartTxFinishedEvents" not in sys):
@@ -159,14 +159,16 @@ def plan(root):
             "TRNG_getRandomBytes(" not in trng or
             "TRNG_RETURN_BEHAVIOR_BLOCKING" not in trng):
         raise ValueError("pinned TI boot entropy or reset API unsupported")
-    # Exact F1 must be unassigned in pinned SYS definitions; do not silently
+    # Exact F2 must be unassigned in pinned SYS definitions; do not silently
     # reuse a reserved command in MT header or existing dispatcher.
     mt_h = git(root, "show", TI_SHA + ":source/ti/zstack/mt/mt.h").decode()
     import re
     numbers = [int(n, 0) for n in re.findall(
         r"^\s*#define\s+MT_SYS_[A-Za-z_0-9]+\s+(0[xX][0-9a-fA-F]+|\d+)\b", mt_h, re.M)]
-    if 241 in numbers:
-        raise ValueError("SYS F1 already reserved by pinned TI")
+    # B1 already owns SYS F1 for its HOLD/status ABI. Reserve both B1 F1
+    # and existing diagnostic F0; this new versioned query uses SYS F2.
+    if 242 in numbers:
+        raise ValueError("SYS F2 already reserved by pinned TI")
     sys = once(sys,
         "uint8_t MT_SysCommandProcessing(uint8_t *pBuf)",
         V4_HANDLER + "\nuint8_t MT_SysCommandProcessing(uint8_t *pBuf)")
@@ -183,7 +185,7 @@ def plan(root):
       else
         B4_SysReadOnlyDiagnostics();
       break;
-    case 0xF1:
+    case 0xF2:
       if (pBuf[MT_RPC_POS_LEN] != 8u)
         status = MT_RPC_ERR_LENGTH;
       else
@@ -207,7 +209,7 @@ def apply(root):
     evidence = {
         "schema": "r4-b4-v4-native-overlay-v1",
         "stage": "PATCHED_DISPOSABLE_TI_NOT_NATIVE_PROOF",
-        "sdk_sha": TI_SHA, "command": "SYS_F1", "request_bytes": 8,
+        "sdk_sha": TI_SHA, "command": "SYS_F2", "request_bytes": 8,
         "payload_bytes": V4_BYTES, "boot_entropy": "TRNG_GET_RANDOM_BYTES_ONCE_IN_NPI_TASK",
         "boot_cap_on_failure": 0, "full_image_build_digest": "NOT_CLAIMED",
         "flash_authorized": False, "physical_verified": False,

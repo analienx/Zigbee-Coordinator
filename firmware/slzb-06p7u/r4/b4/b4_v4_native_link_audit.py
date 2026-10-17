@@ -1,4 +1,4 @@
-"""V4 F1 symbols from real TI native ELF; never source-string proof."""
+"""V4 F2 symbols from real TI native ELF; never source-string proof."""
 import argparse
 import hashlib
 import json

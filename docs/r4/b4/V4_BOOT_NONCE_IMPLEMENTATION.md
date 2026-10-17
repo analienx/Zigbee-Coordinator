@@ -1,10 +1,10 @@
 # B4 v4 candidate — nonce correlation and one-time radio boot token
 
-**State: DRAFT / SOURCE-ONLY / NO FLASH.** This candidate composes on top of the pinned and independently green B4 v3. Existing SYS F0 stays intact. New SYS F1 (request 0x21/F1, response 0x61/F1) is a distinct opcode and version; no fallthrough to F0.
+**State: DRAFT / SOURCE-ONLY / NO FLASH.** This candidate composes on top of the pinned and independently green B4 v3. Existing SYS F0 stays intact. New SYS F2 (request 0x21/F2, response 0x61/F2) is a distinct opcode and version; no fallthrough to F0.
 
 ## Wire ABI v4.1
 
-Exactly 8 bytes in F1 request (host-generated Node crypto randomBytes). Exactly 160 bytes in F1 response, excluding UNPI framing and FCS:
+Exactly 8 bytes in F2 request (host-generated Node crypto randomBytes). Exactly 160 bytes in F2 response, excluding UNPI framing and FCS:
 
 | Offset | Bytes | Meaning |
 |---|---:|---|
@@ -25,21 +25,21 @@ Exactly 8 bytes in F1 request (host-generated Node crypto randomBytes). Exactly 
 | 158 | 1 | reset cause valid bit0 only |
 | 159 | 1 | reserved zero |
 
-The nonce prevents a late SRSP for an older F1 request from being accepted as the response to a newer one; a mismatched nonce permanently quarantines only optional diagnostics on this ZNP owner, without affecting normal AF/ZDO/SYS traffic. The nonce is transaction correlation, not cryptographic authentication; it is not logged or persisted.
+The nonce prevents a late SRSP for an older F2 request from being accepted as the response to a newer one; a mismatched nonce permanently quarantines only optional diagnostics on this ZNP owner, without affecting normal AF/ZDO/SYS traffic. The nonce is transaction correlation, not cryptographic authentication; it is not logged or persisted.
 
 ## Pinned TI source, one-time startup, fail-closed TRNG
 
 TI 8.33 source SHA 3615ad5d3f4f271258d18a2f5ce1785064ff9a58 contains the native TRNG driver and CC13x2x7 reset API. The pinned ZNP donor SysConfig in simplelink-zstack-examples@87ff5b638b632050228a7504f35cf3b95581c278 declares TRNG.addInstance(). B4_v4_native_patch.py is a guarded overlay applied after B4 v3, in disposable /tmp only.
 
-The only entropy call occurs ONCE from existing NPITask_inititializeTask in task context, after NPI task registration and before opening its already-owned UART. TRNG_init, TRNG_open(0) with bounded 25 RTOS-tick timeout, TRNG_getRandomBytes for 8 bytes, and TRNG_close never execute in a diagnostic request, ISR, critical section, radio path, or key/NV path. Resource-unavailable/timeout/all-zero results set no boot capability and never retry until a new boot. A successfully generated 8-byte token is cached in RAM; F1 copies it under the original brief queue-snapshot critical section. Reset reason is independent metadata, NOT entropy.
+The only entropy call occurs ONCE from existing NPITask_inititializeTask in task context, after NPI task registration and before opening its already-owned UART. TRNG_init, TRNG_open(0) with bounded 25 RTOS-tick timeout, TRNG_getRandomBytes for 8 bytes, and TRNG_close never execute in a diagnostic request, ISR, critical section, radio path, or key/NV path. Resource-unavailable/timeout/all-zero results set no boot capability and never retry until a new boot. A successfully generated 8-byte token is cached in RAM; F2 copies it under the original brief queue-snapshot critical section. Reset reason is independent metadata, NOT entropy.
 
 A successful TRNG call is **not** hardware-verified randomness, perfect uniqueness or evidence the target booted. Host radioEpochHardwareVerified is always false, and no cross-boot counter deltas can be inferred. The actual TI native link and hardware runtime must prove TRNG instance linkage, boot startup timing and RAM/stack budget. Failure to produce TRNG data must not prevent NPI initialization.
 
 ## Hosted existing-owner integration
 
-The new v4_herdsman overlay applies to the pinned 10.9.1 source AFTER the original verified v3 existing-owner overlay. It adds the F1 command with exact fixed-size BUFFER8/BUFFER160 serialization, checks nonce/ABI/validity/boot representation, and extends both original AsyncMutex prewrite gates to F1. No second port, no custom scheduler, no automatic polling.
+The new v4_herdsman overlay applies to the pinned 10.9.1 source AFTER the original verified v3 existing-owner overlay. It adds the F2 command with exact fixed-size BUFFER8/BUFFER160 serialization, checks nonce/ABI/validity/boot representation, and extends both original AsyncMutex prewrite gates to F2. No second port, no custom scheduler, no automatic polling.
 
-The v4 Zigbee2MQTT 2.14.0 bridge adds a manual, default-OFF method on top of the real private OTAUpdate.#inProgress source gate; it rechecks the live OTA predicate inside the original ZNP mutex just before F1 transmit. Original F0 and normal AF/ZDO/SYS_PING are unchanged.
+The v4 Zigbee2MQTT 2.14.0 bridge adds a manual, default-OFF method on top of the real private OTAUpdate.#inProgress source gate; it rechecks the live OTA predicate inside the original ZNP mutex just before F2 transmit. Original F0 and normal AF/ZDO/SYS_PING are unchanged.
 
 ## Remaining real gates
 

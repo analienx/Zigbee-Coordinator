@@ -1,4 +1,4 @@
-/* B4 v4 actual compiled pinned herdsman Source-only F1 tests.
+/* B4 v4 actual compiled pinned herdsman Source-only F2 tests.
  * Executed in CI after B4 v3 and v4 overlays, no serial port ever opened.
  */
 "use strict";
@@ -58,12 +58,12 @@ const allowed = {
     enabled:true, hostIdle:true, otaActive:false, stillAllowed:()=>true,
 };
 
-test("V4 F1 native MT dictionary request serializes exact 8-byte host nonce", () => {
+test("V4 F2 native MT dictionary request serializes exact 8-byte host nonce", () => {
     const nonce = Buffer.from("0102030405060708","hex");
     const req = ZpiObject.createRequest(Subsystem.SYS,"r4DiagReadOnlyV4",{nonce});
-    assert.equal(req.unpiFrame.commandID,241);
+    assert.equal(req.unpiFrame.commandID,242);
     assert.deepEqual(req.unpiFrame.data,nonce);
-    const buf = new Frame(Type.SRSP,Subsystem.SYS,241,wire(nonce)).toBuffer();
+    const buf = new Frame(Type.SRSP,Subsystem.SYS,242,wire(nonce)).toBuffer();
     const decoded = ZpiObject.fromUnpiFrame(Frame.fromBuffer(160,buf.length-1,buf));
     assert.equal(decoded.payload.diagnostic.length,160);
     assert.deepEqual(decoded.payload.diagnostic.subarray(132,140),nonce);
@@ -71,7 +71,7 @@ test("V4 F1 native MT dictionary request serializes exact 8-byte host nonce", ()
     corrupt[corrupt.length - 1] ^= 1;
     assert.throws(()=>Frame.fromBuffer(160,corrupt.length-1,corrupt));
     assert.throws(()=>ZpiObject.fromUnpiFrame(
-        new Frame(Type.SRSP,Subsystem.SYS,241,Buffer.alloc(159))));
+        new Frame(Type.SRSP,Subsystem.SYS,242,Buffer.alloc(159))));
 });
 
 test("V4 response nonce matches random request and boot stays unqualified for hardware",async()=>{
@@ -90,7 +90,7 @@ test("V4 response nonce matches random request and boot stays unqualified for ha
     assert.equal(owner.znp.guard,undefined);
 });
 
-test("V4 stale F1 response with wrong nonce quarantines optional requests",async()=>{
+test("V4 stale F2 response with wrong nonce quarantines optional requests",async()=>{
     const stale = Buffer.from("0000000000000000","hex");
     const owner = ownerWithResponse(()=>wire(stale));
     const result = await owner.b4ReadOnlyDiagnosticsV4(allowed);
@@ -124,7 +124,7 @@ test("V4 disabled/busy/OTA/replaced predicate all send zero serial requests",asy
     assert.equal(owner.znp.requests,0);
 });
 
-test("V4 real compiled Znp mutex vetoes F1 after OTA begins while queued",async()=>{
+test("V4 real compiled Znp mutex vetoes F2 after OTA begins while queued",async()=>{
     const znp = new Znp("/dev/not-opened",115200,false);
     znp.initialized = true;
     const writes = [];

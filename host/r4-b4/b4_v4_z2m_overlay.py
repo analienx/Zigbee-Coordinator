@@ -1,4 +1,4 @@
-"""Optional Zigbee2MQTT 2.14.0 SYS F1 v4 manual existing-owner bridge.
+"""Optional Zigbee2MQTT 2.14.0 SYS F2 v4 manual existing-owner bridge.
 
 Runs after b4_z2m_ota_overlay.py against source-pinned disposable checkout;
 same OTAUpdate.#inProgress getter/Controller, no new serial owner/timer.

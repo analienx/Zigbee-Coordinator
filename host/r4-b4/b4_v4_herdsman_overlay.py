@@ -1,7 +1,7 @@
-"""Optional v4 SYS F1 existing-owner overlay ON TOP OF approved v3 source overlay.
+"""Optional v4 SYS F2 existing-owner overlay ON TOP OF approved v3 source overlay.
 
 No new serial owner, no timers, no auth claim: host crypto nonce echoes
-verbatim so a delayed F1 SRSP can never impersonate a different request.
+verbatim so a delayed F2 SRSP can never impersonate a different request.
 All source mutations confined to disposable pinned herdsman checkout.
 """
 import argparse
@@ -58,7 +58,7 @@ V4_ADAPTER_METHOD = r"""
             if (!Buffer.isBuffer(data) || data.length !== 160 ||
                 data.toString("ascii", 0, 4) !== "R4D4" ||
                 data[4] !== 4 || data[5] !== 0 || data.readUInt16LE(6) !== 160 ||
-                // v4 F1 echoes the REQUEST nonce. An old response is invalid.
+                // v4 F2 echoes the REQUEST nonce. An old response is invalid.
                 !nonce.equals(data.subarray(132, 140)) ||
                 data.readUInt32LE(8) & ~0x01 ||
                 data[157] !== 1 || data[158] & ~0x01 || data[159] !== 0 ||
@@ -151,14 +151,14 @@ def plan(root):
     definition = once(original[DEFINITION],
         '            name: "r4DiagReadOnly",',
         '''            name: "r4DiagReadOnly",''')
-    # Replace the v3 definition's unique comment with an additional F1
+    # Replace the v3 definition's unique comment with an additional F2
     # definition. F0 remains untouched, preserving rollback and v3 ABI.
     definition = once(definition,
         "        // B4_EXPERIMENTAL_EXISTING_OWNER: read-only SYS F0; default disabled.",
-        """        // B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: independent SYS F1.
+        """        // B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: independent SYS F2.
         {
             name: "r4DiagReadOnlyV4",
-            ID: 241,
+            ID: 242,
             type: CommandType.SREQ,
             request: [{name: "nonce", parameterType: ParameterType.BUFFER8}],
             response: [{name: "diagnostic", parameterType: ParameterType.BUFFER160}],
@@ -220,7 +220,7 @@ def plan(root):
 
     public isStopping(): boolean {""")
     znp = original[ZNP]
-    # Both transport checks must also apply to F1, but ONLY the optional
+    # Both transport checks must also apply to F2, but ONLY the optional
     # diagnostic opcodes. All ordinary command handling remains unmodified.
     # The pinned v3 overlay inserts exactly TWO pre-write optional-only
     # checks (disconnected/Waitress and late OTA veto). Extend both.
