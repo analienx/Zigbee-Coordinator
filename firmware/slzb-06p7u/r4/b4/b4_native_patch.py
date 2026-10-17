@@ -107,7 +107,7 @@ def build_patches(root):
             frame.count("#if defined(NPI_SREQRSP)") < 2 or
             task.count("#if defined(NPI_SREQRSP)") < 10):
         raise ValueError("cannot qualify pinned TI NPI synchronous option baseline")
-    opts = opts.rstrip("\\n") + "\\n-DNPI_SREQRSP\\n"
+    opts = opts.rstrip("\n") + "\n-DNPI_SREQRSP\n"
     frame = SYNC_COMPILE_GUARD + frame
     task = SYNC_COMPILE_GUARD + task
     if ("void MT_BuildAndSendZToolResponse(" not in client or
