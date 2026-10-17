@@ -30,7 +30,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def image_check(artifacts):
+def image_check(artifacts, *, resident_vectors=False):
     root = Path(artifacts).resolve()
     mp = root / "manifest.json"
     if mp.is_symlink() or not mp.is_file():
@@ -52,8 +52,11 @@ def image_check(artifacts):
         block("malformed HEX")
     if min(data) < 0 or max(data) >= FLASH:
         block("HEX address outside chip capacity")
-    if not set(range(0x3c)).issubset(data):
+    vector_start = 0x80 if resident_vectors else 0
+    if not set(range(vector_start, vector_start+0x3c)).issubset(data):
         block("incomplete reset vectors")
+    if resident_vectors and any(a < 0x80 for a in data):
+        block("native R4 relocated candidate must not secretly supply an unverified header")
     bad_nv = [a for a in data if SAFE_APP_END <= a < NV_END]
     if bad_nv:
         block("HEX contains data in protected NV2/NV5 union")
@@ -71,6 +74,8 @@ def image_check(artifacts):
     return {
         "schema": "r4-p7u-offline-preflight-v1",
         "status": "APP_ONLY_SECTORS_VALIDATED_NOT_FLASH_READY",
+        "expected_vector_offset": hex(vector_start),
+        "resident_loader_header_missing_in_native": resident_vectors,
         "native_hex_sha256": meta["sha256"],
         "last_application_byte_exclusive": hex(max(app) + 1),
         "application_data_bytes": len(app),
@@ -121,10 +126,12 @@ def main():
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--private-readback-1", type=Path)
     parser.add_argument("--private-readback-2", type=Path)
+    parser.add_argument("--resident-vectors", action="store_true",
+                        help="For linker-shifted native image only; still NOT FLASH READY")
     a = parser.parse_args()
     if bool(a.private_readback_1) != bool(a.private_readback_2):
         block("two separate private readbacks required")
-    report, ccfg = image_check(a.artifacts)
+    report, ccfg = image_check(a.artifacts, resident_vectors=a.resident_vectors)
     if a.private_readback_1:
         if os.environ.get("GITHUB_ACTIONS") == "true":
             block("actual private NV/keys must never be uploaded to public GitHub Actions")

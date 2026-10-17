@@ -129,11 +129,12 @@ def inspect_generated(directory):
     }
 
 
-def inspect_native_image(binary):
+def inspect_native_image(binary, *, resident_vectors=False):
     blob = binary.read_bytes()
-    if len(blob) != BINARY_SIZE:
-        raise ValueError("B0_R4_NATIVE_IMAGE_SIZE_NOT_P7_704K")
-    ccfg = blob[CCFG_BASE:CCFG_BASE + CCFG_LEN]
+    offset = 0x80 if resident_vectors else 0
+    if len(blob) != BINARY_SIZE - offset:
+        raise ValueError("B0_R4_NATIVE_IMAGE_SIZE_NOT_P7_EXPECTED_LINKED_SPAN")
+    ccfg = blob[CCFG_BASE-offset:CCFG_BASE-offset + CCFG_LEN]
     if len(ccfg) != CCFG_LEN:
         raise ValueError("B0_R4_NATIVE_CCFG_TRUNCATED")
     actual_mode = int.from_bytes(
@@ -158,13 +159,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--ccfg-bin", type=Path)
+    parser.add_argument("--resident-vectors", action="store_true")
     parser.add_argument("--receipt", required=True, type=Path)
     args = parser.parse_args()
     generated = inspect_generated(args.out_dir)
     result = {
         "schema": "r4-b0-native-generated-board-check-v1",
         "generated": generated,
-        "native_ccfg": inspect_native_image(args.ccfg_bin)
+        "native_ccfg": inspect_native_image(args.ccfg_bin,resident_vectors=args.resident_vectors)
             if args.ccfg_bin else "PREFLIGHT_ONLY",
         "status": "GENERATED_SOURCE_ACCEPTED_NATIVE_CCFG_UNVERIFIED"
             if not args.ccfg_bin else "LINKED_CCFG_VENDOR_20240710_EQUIVALENT",

@@ -66,6 +66,14 @@ jobs:
           python -m unittest -v tests.test_r4_b0_sector_erase_denial
       - name: Adversarial P7U app-sector and private duplicate-backup controls (synthetic only)
         run: python -m unittest -v tests.test_r4_flash_preflight
+      - name: Exact-anchor resident boot preservation and NVS relocation hostile controls
+        run: |
+          python -m unittest -v tests.test_r4_preserve_resident_boot_nvs
+          python -m unittest -v tests.test_r4_package_resident_app
+      - name: P7U fitted MCUboot signature verification and adversarial denial (synthetic only)
+        run: |
+          python -m pip install cryptography==44.0.2
+          python -m unittest -v tests.test_r4_verify_mcuboot_signed_image
       - name: Test strict native artifact collector (synthetic test only)
         run: python -m unittest -v tests.test_r4_b0_collect_native
       - name: Test SHA-gated TI toolchain acquisition (offline)
@@ -480,12 +488,26 @@ jobs:
             --receipt /tmp/b0out/b2-p1-composite-compiler-opts.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
             --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
+          # Preserve fitted ROM->0xAC000 resident stage and its CCFG unchanged.
+          # Only the disposable pinned CCS source and linker layout are altered.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_preserve_resident_boot_nvs.py" \
+            --syscfg "$project/znp.syscfg" \
+            --linker "$sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
+            --receipt /tmp/b0out/r4-preserve-boot-nvs.json
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
             --out-dir /tmp/b0out/preflight-syscfg \
             --receipt /tmp/b0out/p7u-generated-preflight.json
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/b0out/preflight-syscfg/ti_drivers_config.c').read_text()
+          assert 'flashBuf0[0x4000]' in p
+          assert 'location(0xa0000)' in p and '.regionSize = 0x4000' in p
+          assert 'location(0xaa000)' not in p
+          print('R4 GENERATED SOURCE: NVS 0xA0000..0xA3FFF; resident 0xAC000 untouched')
+          PY
           echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
           cp "$project/Stack/Config/znp_cnf.opts" /tmp/b0out/znp_cnf.opts
@@ -494,8 +516,9 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
             --out-dir "$project/default/syscfg" \
             --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+            --resident-vectors \
             --receipt /tmp/b0out/p7u-generated-native.json
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --preserve-resident-boot
           # Independently prove the REAL linked HEX intersects boot CCFG's
           # whole 8KiB erase sector, even if its sparse records omit NV.
           # This is a DENIAL, never a flash/erase/restore authorization.
@@ -516,7 +539,35 @@ jobs:
           # Check exact native app sectors below historical NV5/NV2 union.
           # Does not generate a flashable image, read private NV, or authorize flash.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_flash_preflight.py" \
-            --artifacts /tmp/b0out --receipt /tmp/b0out/r4-app-sector-preflight.json
+            --artifacts /tmp/b0out --resident-vectors --receipt /tmp/b0out/r4-app-sector-preflight.json
+          # Package the exact linked 0x80 vectors with the verified original
+          # resident-loader header. This is an offline APP-ONLY artifact,
+          # never a programmer invocation or flash authorization.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_package_resident_app.py" \
+            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-resident-app
+          # The preliminary R4 image has no matching ECDSA signature.
+          # This negative control must explicitly refuse to treat it as
+          # a flash-ready artifact, even after native CI succeeds.
+          python - <<'PY'
+          import importlib.util
+          import json
+          from pathlib import Path
+          root=Path('firmware/slzb-06p7u/r4/release')
+          spec=importlib.util.spec_from_file_location('signed_gate',root/'r4_verify_mcuboot_signed_image.py')
+          mod=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          output=Path('/tmp/b0out/r4-resident-app')
+          receipt=json.loads((output/'receipt.json').read_text())
+          assert receipt['flash_authorized'] is False
+          unsigned=output/receipt['output_hex']
+          try:
+              mod.read_app_only_hex(unsigned)
+          except mod.Rejected as exc:
+              assert 'R4_SIGNED_IMAGE_REQUIRED_TLV_MISSING' in str(exc), str(exc)
+              print('REAL NATIVE R4: UNSIGNED MCUboot image correctly DENIED for flash')
+          else:
+              raise AssertionError('Unsigned MCUboot app unexpectedly passed trust gate')
+          PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
