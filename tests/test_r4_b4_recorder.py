@@ -109,6 +109,23 @@ class RecorderHostiles(unittest.TestCase):
         self.assertEqual(s["dropped"], 2)
         self.assertEqual(s["root_cause"], "UNDETERMINED")
 
+    def test_d25_predictable_pending_symlink_cannot_redirect_atomic_snapshot(self):
+        if os.name != "posix":
+            self.skipTest("POSIX symlink safety")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            target = root / "last-good.json"
+            victim = root / "private-never-overwrite.txt"
+            victim.write_text("SECRET-PRESERVED")
+            (root / "last-good.json.pending").symlink_to(victim)
+            r = PassiveR4Recorder(process_generation=1)
+            r.offer(event("AF_SREQ_TIMEOUT", 1, 2))
+            r.drain()
+            r.persist(target)
+            self.assertEqual(victim.read_text(), "SECRET-PRESERVED")
+            self.assertEqual(PassiveR4Recorder.read_last_good(target)["last_at_ms"], 1)
+            self.assertEqual(list(root.glob("last-good.json.pending-*")), [])
+
     def test_d07_symlink_snapshots_refused(self):
         if os.name != "posix":
             self.skipTest("POSIX symlink check")
