@@ -254,14 +254,22 @@ def main():
          "--output", tx_source], check=True)
     generated["uart_tx"] = tx_source
     tx_binary = compile_c(tx_source, "uart_tx", admission=False, management=True)
-    for tx_mode in ("healthy", "failed_completion", "failed_submit", "preheld"):
+    for tx_mode in ("healthy", "failed_completion", "short_success", "failed_submit", "preheld"):
         positive(tx_binary, (tx_mode,))
     mutation(generated["uart_tx"],
-             "if (status != UART2_STATUS_SUCCESS || b1_management_transport_unavailable())",
+             "if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||\\n"
+             "        b1_management_transport_unavailable())",
              "if (b1_management_transport_unavailable())",
              "mutant_uart_tx_completion_failure_suppressed",
              "callback_count==0u && b1_management_transport_unavailable()",
              ("failed_completion",), admission=False, management=True)
+    mutation(generated["uart_tx"],
+             "if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||\\n"
+             "        b1_management_transport_unavailable())",
+             "if (status != UART2_STATUS_SUCCESS || b1_management_transport_unavailable())",
+             "mutant_uart_tx_short_completion_accepted",
+             "callback_count==0u && write_calls==1u",
+             ("short_success",), admission=False, management=True)
     # The real ZMac entrypoints share the native NV/security-only safety
     # predicate. A host UART overflow must NOT shut down healthy RF traffic.
     domain_source = work / "actual_zmac_hold_domains.c"
