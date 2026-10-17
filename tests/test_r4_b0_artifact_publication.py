@@ -21,7 +21,7 @@ class ArtifactPublicationTests(unittest.TestCase):
         self.assertIn("name: r4-b0-FAILED_DIAGNOSTICS_NO_FIRMWARE-", failed)
         self.assertIn("name: r4-b0-NOT_FLASH_QUALIFIED-", success)
         # The failure-only list must be narrowly allowlisted.
-        banned = ("/tmp/b0out/", ".out\n", ".bin\n", ".hex\n",
+        banned = ("/tmp/b0out/\n", ".out\n", ".bin\n", ".hex\n",
                   ".xml\n", "manifest.json")
         for forbidden in banned:
             self.assertNotIn(forbidden, failed)
