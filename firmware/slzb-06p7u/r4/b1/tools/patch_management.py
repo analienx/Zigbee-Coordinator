@@ -236,6 +236,13 @@ def patch_uart(text):
     text = once(text,
         "    key = OsalPort_enterCS();\n\n    if (size)",
         "    key = OsalPort_enterCS();\n"
+        "    if (status != UART2_STATUS_SUCCESS)\n"
+        "    {\n"
+        "        /* A UART driver error can invalidate delivered bytes. */\n"
+        "        b1_management_transport_failed(B1_ERROR_UART_READ);\n"
+        "        OsalPort_leaveCS(key);\n"
+        "        return; /* No copy, NPI callback, or UART read rearm. */\n"
+        "    }\n"
         "    if (b1_management_transport_unavailable())\n"
         "    {\n"
         "        OsalPort_leaveCS(key);\n"
