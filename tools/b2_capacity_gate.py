@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""B2 capacity evidence gate. Does not infer anything from source #defines.
+"""B2 synthetic arithmetic checker for a claimed memory ledger.
 
-Only native ELF/map-derived evidence may be accepted as linked proof.
-Missing symbols, unknown dynamic allocation or missing provenance fail closed.
+This reads *self-declared* JSON (no actual ELF) and cannot independently
+attest a native build. Genuine linked proof belongs to b2_collect_native_evidence
+and b2_compare_native, following the B0 native binary image audit.
 """
 import argparse
 import json
@@ -66,8 +67,12 @@ def validate(data):
     committed = static + stack + task_total + heap
     if committed > sram:
         raise EvidenceError(f"SRAM_BUDGET_EXCEEDED: committed={committed} available={sram}")
-    return {"result":"BUDGET_ACCEPTED","sram_headroom_bytes":sram-committed,
-            "linked_table_bytes":table_totals, "dynamic_peak_bytes":peak}
+    return {"result":"SYNTHETIC_BUDGET_ARITHMETIC_ONLY",
+            "native_artifact_independently_verified":False,
+            "runtime_heap_high_water_measured":False,
+            "physical_verified":False,
+            "sram_headroom_bytes":sram-committed,
+            "claimed_table_bytes":table_totals, "claimed_dynamic_peak_bytes":peak}
 
 def main():
     p = argparse.ArgumentParser()
