@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 TOOLS = Path(__file__).resolve().parents[1] / "firmware/slzb-06p7u/r4/b0/tools"
 sys.path.insert(0, str(TOOLS))
@@ -126,6 +127,28 @@ class FlashBoundaryTests(unittest.TestCase):
             (root / "manifest.json").write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "NOT_704K_FLAT_IMAGE"):
                 gate.inspect(root)
+
+    def test_failed_retry_never_leaves_stale_accepted_receipt(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            receipt = root / "DO_NOT_FLASH_NV_BOUNDARY.json"
+            receipt.write_text('{"flash_authorized":true,"status":"STALE"}')
+            (root / "manifest.json").write_text('{"schema":"bad","files":null}')
+            with patch.object(sys, "argv", ["b0_flash_boundary.py",
+                                           "--artifacts", str(root),
+                                           "--receipt", str(receipt)]):
+                self.assertEqual(gate.main(), 1)
+            state = json.loads(receipt.read_text())
+            self.assertFalse(state["flash_authorized"])
+            self.assertFalse(state["network_migration_authorized"])
+            self.assertEqual(state["status"], "FAILED_CLOSED")
+            self.assertNotIn("STALE", receipt.read_text())
+
+    def test_receipt_does_not_pretend_to_prove_native_provenance(self):
+        with tempfile.TemporaryDirectory() as td:
+            state = gate.inspect(setup(td))
+            self.assertFalse(state["source_abi_verified_by_this_receipt"])
+            self.assertIn("NOT_SOURCE_OR_HARDWARE", state["qualification"])
 
     def test_manifest_path_escape_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
