@@ -75,3 +75,52 @@ jobs:
           fi
           grep -E 'Assertion|Aborted' /tmp/r4-b1b3-test/mutant.log
           echo B1_B3_REMOVED_HOLD_MUTANT_KILLED
+      - name: Compose B1 security plus four B3 checked TRNG publishing callers
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0,"firmware/slzb-06p7u/r4/b1/tools")
+          from patch_security import patch as sec, patch_zglobals as glob
+          from b1_b3_entropy import compose
+          stack=Path("/tmp/r4-b1b3-sdk/source/ti/zstack/stack")
+          p_sec=stack/"zdo/zd_sec_mgr.c"
+          p_head=stack/"zdo/zd_sec_mgr.h"
+          p_app=stack/"zdo/zd_app.c"
+          p_glob=stack/"sys/zglobals.c"
+          p_task=stack/"api/zstacktask.c"
+          changed=compose(sec(p_sec.read_text()), p_head.read_text(),
+                          p_app.read_text(), glob(p_glob.read_text()),
+                          p_task.read_text())
+          for path,new in zip((p_sec,p_head,p_app,p_glob,p_task), changed):
+              path.write_text(new)
+          print("B1_B3_TRNG_COMPOSED_WITH_B1_STICKY_HOLD")
+          PY
+          python tests/b1_b3_nwk/entropy_extract.py \
+            --stack /tmp/r4-b1b3-sdk/source/ti/zstack/stack \
+            --out /tmp/r4-b1b3-test/entropy.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b1_b3_nwk /tmp/r4-b1b3-test/entropy.c \
+            tests/b1_b3_nwk/entropy_test.c -o /tmp/r4-b1b3-test/real_entropy
+          /tmp/r4-b1b3-test/real_entropy
+      - name: Negative TRNG mutant cannot publish partially initialized key
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/r4-b1b3-test/entropy.c")
+          s=p.read_text()
+          guard="if (result != TRNG_STATUS_SUCCESS)"
+          assert s.count(guard)==1
+          p.write_text(s.replace(guard,"if (0)"))
+          PY
+          gcc -std=c11 -O0 -Wall -Wextra -Wno-error \
+            -I tests/b1_b3_nwk /tmp/r4-b1b3-test/entropy.c \
+            tests/b1_b3_nwk/entropy_test.c -o /tmp/r4-b1b3-test/entropy_mutant
+          ulimit -c 0
+          if /tmp/r4-b1b3-test/entropy_mutant > /tmp/r4-b1b3-test/entropy-mutant.log 2>&1; then
+            echo B1_B3_ENTROPY_ERROR_MUTANT_SURVIVED; exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/r4-b1b3-test/entropy-mutant.log
+          echo B1_B3_ENTROPY_ERROR_MUTANT_KILLED
