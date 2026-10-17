@@ -208,6 +208,13 @@ def plan(root, v3_receipt):
     znp = replace(znp,
         'object.command.name === "r4DiagReadOnly")',
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4"))', 2)
+    # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
+    znp = replace(znp,
+        "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",
+        "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SRSP (diagnostic body redacted)\", NS);\n            } else {\n                logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);\n            }")
+    znp = replace(znp,
+        "            logger.debug(() => `--> ${object}`, NS);",
+        "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SREQ (diagnostic nonce redacted)\", NS);\n            } else {\n                logger.debug(() => `--> ${object}`, NS);\n            }")
     controller = replace(src[CONTROLLER],
         "    public isStopping(): boolean {",
         """    /** B4_V4_NONCE_AND_BOOT: guarded internal v4, never new serial. */
