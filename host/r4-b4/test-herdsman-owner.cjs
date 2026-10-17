@@ -36,6 +36,7 @@ function fakeOwner(data = frame()) {
     owner.b4DiagInFlight = false;
     owner.b4NextAllowedMs = 0;
     owner.znp = {
+        b4CanProbe() {return true;},
         async requestWithReply(system, command, payload, waiterID, timeout) {
             calls++;
             assert.equal(system, Subsystem.SYS);
@@ -143,4 +144,55 @@ test("D22: SRSP timeout never initiates retry or leaks a caller exception", asyn
     assert.equal(await owner.b4ReadOnlyDiagnostics(allow), undefined);
     assert.equal(await owner.b4ReadOnlyDiagnostics(allow), undefined);
     assert.equal(calls, 1);
+});
+
+test("D17: real ZNP mutex rejects diagnosis while active, even with zero pending waiters", async () => {
+    const znp = new Znp("/dev/never-opened-by-test", 115200, false);
+    assert.equal(znp.b4CanProbe(), false); // not initialized
+    znp.initialized = true; // test-only: simulate established existing owner
+    assert.equal(znp.b4CanProbe(), true);
+    let release;
+    const active = znp.queue.run(() => new Promise(r => {release = r;}));
+    assert.equal(znp.queue.count, 0); // no *queued* work, but LOCK IS HELD
+    assert.equal(znp.b4CanProbe(), false);
+    const {owner, calls} = fakeOwner();
+    owner.znp.b4CanProbe = () => znp.b4CanProbe();
+    assert.equal(await owner.b4ReadOnlyDiagnostics(allow), undefined);
+    assert.equal(calls(), 0);
+    release();
+    await active;
+    assert.equal(znp.b4CanProbe(), true);
+    assert.ok(await owner.b4ReadOnlyDiagnostics(allow));
+});
+
+test("D01/D03/D04: real Znp.request/Waitress routes ping and SYS F0 over the one writer", async () => {
+    const znp = new Znp("/dev/never-opened-by-test", 115200, false);
+    znp.initialized = true; // no SerialPort.asyncOpen: source-compiled in-memory test
+    const commands = [];
+    znp.unpiWriter.writeFrame = (request) => {
+        commands.push(request.commandID);
+        const body = request.commandID === 1 ? Buffer.from([0x01, 0x00]) : frame();
+        queueMicrotask(() => znp.onUnpiParsed(new Frame(Type.SRSP, Subsystem.SYS, request.commandID, body)));
+    };
+    const [ping, f0] = await Promise.all([
+        znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 300),
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 300),
+    ]);
+    assert.deepEqual(commands, [1, 240]);
+    assert.equal(ping.payload.capabilities, 1);
+    assert.equal(f0.payload.diagnostic.length, 132);
+    assert.equal(f0.payload.diagnostic.readUInt32LE(48), 0xffffffff);
+    assert.equal(znp.b4CanProbe(), true);
+    assert.equal(znp.waitress.waiters.size, 0);
+});
+
+test("D22: genuine timed-out F0 waiter is removed and does not leak or retry", async () => {
+    const znp = new Znp("/dev/never-opened-by-test", 115200, false);
+    znp.initialized = true;
+    let writes = 0;
+    znp.unpiWriter.writeFrame = () => {writes++;}; // deliberately unresponsive radio
+    await assert.rejects(znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 15));
+    assert.equal(writes, 1);
+    assert.equal(znp.waitress.waiters.size, 0);
+    assert.equal(znp.b4CanProbe(), true);
 });
