@@ -319,7 +319,18 @@ def plan(root):
                 this.unpiWriter.writeFrame(object.unpiFrame);
                 const result = await waiter.start().promise;""",
         """                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);
-                this.unpiWriter.writeFrame(object.unpiFrame);
+                // The pinned Znp installs the waiter before writing. A
+                // synchronous diagnostic writer failure must remove it or
+                // leave an orphan that survives without a timeout timer.
+                try {
+                    this.unpiWriter.writeFrame(object.unpiFrame);
+                } catch (error) {
+                    if (object.command.name === "r4DiagReadOnly") {
+                        this.b4PoisonDiagSession();
+                        this.waitress.remove(waiter.ID);
+                    }
+                    throw error;
+                }
                 // B4_EXPERIMENTAL_EXISTING_OWNER: prevent a timed-out
                 // diagnostic waiter lingering when the radio stays silent.
                 const result = await waiter.start().promise.catch((error: unknown) => {
