@@ -46,6 +46,8 @@ def write_pair(root):
         (d / "b4-native-overlay.json").write_text(json.dumps({
             "stage":"PATCHED_DISPOSABLE_SDK_NOT_LINKED",
             "valid_counter_indices":[0,1,2,3,4], "radio_boot_identity":"UNKNOWN",
+            "sync_npi_compiled_required":True,
+            "sync_transport_changed_from_stock":True,
         }))
 
 def change_with_new_digest(path, kind, raw):
