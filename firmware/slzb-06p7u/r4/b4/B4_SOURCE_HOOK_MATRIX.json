@@ -2,7 +2,7 @@
   "schema": "b4-hook-matrix-v1",
   "issue": 98,
   "source": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/",
-  "stage": "MINIMAL_COUNTER4_HOSTED_NATIVE_LINKED_OTHERS_NOT_MEASURED",
+  "stage": "FIVE_QUEUE_METRICS_SOURCE_PATCHED_WAIT_NATIVE_ELF_PROOF",
   "counters": [
     {
       "name": "mt_sys_sreq_dispatch",
@@ -60,6 +60,50 @@
       "qualification": "no source-derived resync callback yet"
     },
     {
+      "name": "npi_srsp_depth",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:679,:810 enqueue and :892 dequeue",
+      "producer_context": "task",
+      "unit": "queued TX frames",
+      "width_bits": 32,
+      "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
+      "validity": "V3_ONLY_IF_NPI_SREQRSP_COMPILED",
+      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
+      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+    },
+    {
+      "name": "npi_srsp_high_water",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:679,:810 enqueue + :892 dequeue",
+      "producer_context": "task",
+      "unit": "maximum queued TX frames since RAM initialization",
+      "width_bits": 32,
+      "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
+      "validity": "V3_ONLY_IF_NPI_SREQRSP_COMPILED",
+      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
+      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+    },
+    {
+      "name": "npi_async_depth",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:687,:818 enqueue and :860 dequeue",
+      "producer_context": "task",
+      "unit": "queued TX frames",
+      "width_bits": 32,
+      "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
+      "validity": "V3_ALWAYS",
+      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
+      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+    },
+    {
+      "name": "npi_async_high_water",
+      "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:687,:818 enqueue + :860 dequeue",
+      "producer_context": "task",
+      "unit": "maximum queued TX frames since RAM initialization",
+      "width_bits": 32,
+      "wrap_policy": "DEPTH_SATURATED_U32_HWM_MONOTONIC_SINCE_RAM_INIT; NOT_RADIO_EPOCH_PROOF",
+      "validity": "V3_ALWAYS",
+      "status": "SOURCE_PATCHED_NATIVE_LINK_PENDING",
+      "qualification": "Hooks all exact TI NPI TX queue producers and consumers in the preexisting OsalPort critical sections; no Queue_empty scheduler modification, no UART TX_DONE or USB proof"
+    },
+    {
       "name": "npi_srsp_enqueued",
       "source_anchor": "TexasInstruments/simplelink-lowpower-f2-sdk@3615ad5d3f4f271258d18a2f5ce1785064ff9a58/source/ti/zstack/npi/npi_task.c:656-700 NPITask_sendToHost AND :758-833 NPITask_processStackMsg",
       "producer_context": "task",
@@ -67,8 +111,8 @@
       "width_bits": 32,
       "wrap_policy": "UINT32_WRAP; NO_DELTAS_WITHOUT_SOURCE_QUALIFIED_RADIO_EPOCH",
       "validity": "V3_BIT4_ONLY_IF_NPI_SREQRSP_COMPILED",
-      "status": "HOSTED_NATIVE_LINKED",
-      "qualification": "Both real TI synchronous-response enqueue producers increment a single volatile uint32 counter in pre-existing critical sections; compiled ARM ELF/CCFG source-linked twice at SHA cf92fc07; no radio epoch and no UART TX_DONE proof"
+      "status": "PREVIOUS_NATIVE_LINK_VERIFIED_NEW_IMAGE_PENDING",
+      "qualification": "Both actual TI synchronous response enqueue producers, compiled previously in genuine CCS; updated five-counter native overlay awaiting independent twin link"
     },
     {
       "name": "npi_srsp_queue_hwm",
