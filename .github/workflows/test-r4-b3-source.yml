@@ -1,9 +1,6 @@
 name: R4-B3 offline source and actual OSAL C (NOT FLASH)
 
 on:
-  push:
-    branches:
-      - codex/r4-b3-nv-security-offline
   pull_request:
     paths:
       - "docs/r4/b3/**"
@@ -11,6 +8,10 @@ on:
       - "tests/test_r4_b3_*.py"
       - "tests/b3_host/**"
       - ".github/workflows/test-r4-b3-*.yml"
+
+concurrency:
+  group: r4-b3-source-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

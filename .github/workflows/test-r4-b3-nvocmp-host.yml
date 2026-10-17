@@ -1,13 +1,14 @@
 name: R4-B3 real TI NVOCMP host fault matrix (NOT FLASH)
 on:
-  push:
-    branches:
-      - codex/r4-b3-nv-security-offline
   pull_request:
     paths:
       - 'tests/b3_host/**'
       - 'firmware/slzb-06p7u/r4/b3/**'
       - '.github/workflows/test-r4-b3-nvocmp-host.yml'
+concurrency:
+  group: r4-b3-nvocmp-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:

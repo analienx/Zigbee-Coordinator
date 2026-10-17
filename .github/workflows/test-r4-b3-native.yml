@@ -1,9 +1,6 @@
 name: R4-B3 genuine TI CCS native NV2 candidate (NOT FLASH)
 
 on:
-  push:
-    branches:
-      - codex/r4-b3-nv-security-offline
   pull_request:
     paths:
       - 'firmware/slzb-06p7u/r4/b3/**'
