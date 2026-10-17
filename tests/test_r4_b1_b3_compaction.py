@@ -19,6 +19,10 @@ class Journal(unittest.TestCase):
         self.assertLess(actual.index("NVOCMP_writeByte(dstPg"),
                         actual.index("NVOCMP_erase(pNvHandle, srcPg)"))
         self.assertIn("NVOCMP_failW != NVINTF_SUCCESS",actual)
+        self.assertIn("NVOCMP_read(dstPg, NVOCMP_COMPMODEOFS, &b1_journal_readback, 1u)",actual)
+        self.assertIn("b1_journal_readback != NVOCMP_PGCDONE",actual)
+        self.assertLess(actual.index("b1_journal_readback != NVOCMP_PGCDONE"),
+                        actual.index("NVOCMP_erase(pNvHandle, srcPg)"))
         self.assertIn("b1_nv_runtime_hold_latch();",actual)
         with self.assertRaises(RuntimeError):patch(actual)
 
