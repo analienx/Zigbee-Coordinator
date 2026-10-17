@@ -385,13 +385,31 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_flash_boundary.py" \
             --artifacts /tmp/b0out --receipt /tmp/b0out/DO_NOT_FLASH_NV_BOUNDARY.json
-      - name: Upload native artifacts and receipts
-        if: always()
+      # Full binaries must NOT be published if the native compile,
+      # generated pin checks, image audit or DO_NOT_FLASH NV gate fails.
+      # In a failed job, publish *only* non-flashable diagnostics.
+      - name: Upload audited nonproduction firmware and safety receipts
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: r4-b0-native-${{ github.sha }}
+          name: r4-b0-NOT_FLASH_QUALIFIED-${{ github.sha }}
           path: |
             /tmp/b0-provision-receipt.json
             /tmp/b0-sysconfig-binding.json
             /tmp/b0out/
+          if-no-files-found: error
+      - name: Upload FAILED native diagnostic receipts (NO FIRMWARE)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b0-FAILED_DIAGNOSTICS_NO_FIRMWARE-${{ github.sha }}
+          path: |
+            /tmp/b0-provision-receipt.json
+            /tmp/b0-sysconfig-binding.json
+            /tmp/b0out/build.log
+            /tmp/b0out/sdk-scope-receipt.json
+            /tmp/b0out/p7u-board-overlay.json
+            /tmp/b0out/p7u-generated-preflight.json
+            /tmp/b0out/p7u-generated-native.json
+            /tmp/b0out/DO_NOT_FLASH_NV_BOUNDARY.json
           if-no-files-found: warn
