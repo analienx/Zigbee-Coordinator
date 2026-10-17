@@ -75,6 +75,18 @@ int main(int argc,char **argv)
         assert(copied==0 && notifications==0 && uart_reads==0 && !cs_depth);
         puts("B1_ACTUAL_UART_PREHELD_NO_READ_PASS");
     }
+    else if(strcmp(argv[1],"driver_error")==0 ||
+            strcmp(argv[1],"driver_error_zero")==0)
+    {
+        size_t n = strcmp(argv[1],"driver_error_zero")==0 ? 0u : 4u;
+        NPITLUART_readCallBack(uartHandle,isrRxBuf,n,NULL,-1);
+        assert(copied==0 && notifications==0 && uart_reads==0 && !cs_depth);
+        assert(b1_management_transport_unavailable());
+        assert(!b1_management_nv_security_hold_active());
+        NPITLUART_readCallBack(uartHandle,isrRxBuf,4,NULL,UART2_STATUS_SUCCESS);
+        assert(copied==0 && uart_reads==0 && !cs_depth);
+        puts("B1_ACTUAL_UART_DRIVER_ERROR_NO_COPY_NO_REARM_PASS");
+    }
     else return 2;
     return 0;
 }
