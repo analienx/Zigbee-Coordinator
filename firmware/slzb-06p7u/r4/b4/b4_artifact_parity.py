@@ -62,7 +62,7 @@ def _load(directory):
             or proof.get("hardware_verified") is not False
             or proof.get("host_installed") is not False
             or patch.get("stage") != "PATCHED_DISPOSABLE_SDK_NOT_LINKED"
-            or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4]
+            or patch.get("valid_counter_indices") != [0, 1, 2, 3, 4, 5]
             or patch.get("radio_boot_identity") != "UNKNOWN"):
         raise ValueError("native linker proof/patch receipt not qualified")
     files = {}
