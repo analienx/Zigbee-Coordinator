@@ -165,7 +165,7 @@ def main():
          ("healthy", "record_oom", "container_oom", "held_drop")),
         ("uart_rearm", "make_uart_rearm_harness.py", "--source",
          sdk / "source/ti/zstack/npi/npi_tl_uart.c",
-         ("healthy", "overflow", "preheld")),
+         ("healthy", "overflow", "preheld", "driver_error", "driver_error_zero")),
     ):
         source = work / f"actual_{name}.c"
         run([sys.executable, b1 / "tools" / generator,
@@ -237,6 +237,15 @@ def main():
     # Real TI startup/OSAL wrappers: genuine compiled bypass mutations.
     # A missing pre-MAC gate must reach the MAC boundary and violate the
     # healthy/fault ordering assertion, not merely fail a text regex.
+    # Negative control: ignore UART2 driver completion status and the
+    # callback must fail the original no-copy/no-rearm invariant under ASan.
+    mutation(generated["uart_rearm"],
+             "if (status != UART2_STATUS_SUCCESS)",
+             "if (0)",
+             "mutant_uart_read_completion_error_ignored",
+             "copied==0 && notifications==0 && uart_reads==0 && !cs_depth",
+             ("driver_error",), admission=False, management=True)
+
     # The real ZMac entrypoints share the native NV/security-only safety
     # predicate. A host UART overflow must NOT shut down healthy RF traffic.
     domain_source = work / "actual_zmac_hold_domains.c"
