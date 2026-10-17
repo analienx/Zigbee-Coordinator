@@ -233,6 +233,22 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
         return B1_MT_STATUS;
     }
     if (!held) return B1_MT_CONTINUE;
+#if defined(B1_B4_F2_HOLD_DIAGNOSTIC_REVIEWED)
+    /* Compile-time opt-in ONLY after the exact B4 SYS F2 8-byte read-only
+     * handler and single-owner dispatcher have been composition-reviewed.
+     * No broad SYS pass-through and no F2 request processing in this module.
+     * B4 itself validates/echoes the nonce; B1 grants only the narrow SREQ.
+     * MT admission cannot cancel already queued/in-flight RF operations. */
+    if (frame[1] == 0x21u && frame[2] == 0xF2u)
+    {
+        if (frame[0] != 8u)
+        {
+            *rpc_error = 4u;
+            return B1_MT_REJECT;
+        }
+        return B1_MT_CONTINUE;
+    }
+#endif
     if (frame[1] == 0x21u && (frame[2] == 1u || frame[2] == 2u))
     {
         if (frame[0] == 0u) return B1_MT_CONTINUE; /* exact donor PING/VERSION */
