@@ -44,3 +44,9 @@ The v4 Zigbee2MQTT 2.14.0 bridge adds a manual, default-OFF method on top of the
 ## Remaining real gates
 
 Hosted tests and genuine dual CCS ELF/HEX/BIN parity must succeed at the exact source SHA; source strings or simulated ELF do not qualify native completion. An independent TI/NPI/ISR/crypto/ABI review, loaded-traffic startup and stack profiling, an image digest/attestation design, actual installed HA source/version reconciliation, and a physical disposable-device pilot R4-07 all remain open. B1/B2/B3 draft branches are NOT source-ready and must be reviewed before a separate combined B5 build. No flash, restore, topology change, OTA or live HA service mutation is authorized.
+
+## Critical real B1 HOLD opcode integration finding — fixed in v4 source
+
+Independent B1 draft [PR #94](https://github.com/analienx/Zigbee-Coordinator/pull/94), exact head a514c194ea0d94b5d38b28c7b07ca5caba9aeffd, reserves **SYS 0xF1** for its distinct **B1Q1 / B1S1** 8-byte request / 24-byte reply HOLD status protocol. This was absent from the original B4-only F1 design. B4 v4 **must not** reuse F1. The v4 code and its actual-source guards were changed to **SYS 0xF2**, leaving B4 v3 SYS F0 and B1 status SYS F1 untouched. An executable pinned cross-phase gate now compares B1 management code and the B4 generated MT dispatch: F0/F1/F2 disjoint, and mutation of B1's F1 or a B4 F1 collision is rejected.
+
+The current B1 HOLD MT filter explicitly allows only SYS PING, VERSION and B1 F1 status. It will **reject F2 while HOLD is asserted**. Thus B4 v4 diagnostics are NOT available during B1 security/NV HOLD without a separately reviewed combined admission implementation; this candidate does not bypass RF/no-key HOLD. B1, B2 and B3 source-ready and hardware acceptance are independent. A green collision gate means safe allocation, NOT integrated boot or security readiness.
