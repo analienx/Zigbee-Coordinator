@@ -160,7 +160,7 @@ def plan(root, v3_receipt):
     # B1 management/HOLD reserves SYS F1; F2 must remain free in the
     # exact pinned TI upstream SYS symbol table before creating this addon.
     mt_header = _git(root, "show", TI_SHA + ":source/ti/zstack/mt/mt.h").decode()
-    if re.search(r"^#define\\s+MT_SYS_\\w+\\s+0xF2\\b", mt_header, re.M):
+    if re.search(r"^#define\s+MT_SYS_\w+\s+0xF2\b", mt_header, re.M):
         raise ValueError("SYS F2 opcode collision with pinned TI mt.h")
     rng = _git(root, "show", TI_SHA + ":" + TRNG_HEADER).decode()
     if not all(key in rng for key in ("TRNG_getRandomBytes(", "TRNG_open(",

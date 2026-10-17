@@ -159,7 +159,7 @@ def plan(root, v3_receipt):
         raise ValueError("v4 already present")
     # B1 already owns 0xF1. V4 F2 requires a free pinned SYS entry.
     sys_block = src[DEFINITION].split("[Subsystem.SYS]: [", 1)[1].split("[Subsystem.MAC]: [", 1)[0]
-    if re.search(r"\\bID:\\s*242\\b", sys_block):
+    if re.search(r"\bID:\s*242\b", sys_block):
         raise ValueError("SYS F2 command collision with pinned herdsman")
     definition = replace(src[DEFINITION],
         '            name: "r4DiagReadOnly",',
