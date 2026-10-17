@@ -516,7 +516,7 @@ jobs:
           from pathlib import Path
           composite=json.loads(Path('/tmp/b0out/r4-composite-source.json').read_text())
           v4=composite['b4_v4_patch_evidence']
-          Path('/tmp/b0out/b4-v4-native-receipt.json').write_text(json.dumps(v4,indent=2,sort_keys=True)+'\\n')
+          Path('/tmp/b0out/b4-v4-native-receipt.json').write_text(json.dumps(v4,indent=2,sort_keys=True)+'\n')
           PY
           ELF_NAME="$(python -c "import json;print(json.load(open('/tmp/b0out/manifest.json'))['files']['elf']['file'])")"
           test -x "$TICLANG_ARMCOMPILER/bin/tiarmnm"
