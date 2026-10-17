@@ -88,6 +88,34 @@ class FlashBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "NV_PADDING_NOT_UNIFORM"):
                 gate.inspect(root)
 
+    def test_programmed_flash_byte_change_rejected_even_if_hash_is_updated(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            binary = bytearray((root / "znp.bin").read_bytes())
+            binary[5] ^= 0x01  # outside protected NV; HEX still original
+            (root / "znp.bin").write_bytes(binary)
+            manifest = json.loads((root / "manifest.json").read_text())
+            manifest["files"]["bin"]["sha256"] = hashlib.sha256(binary).hexdigest()
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "HEX_BIN_PROGRAMMED_BYTES_DIFFER"):
+                gate.inspect(root)
+
+    def test_extra_hex_data_beyond_flash_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = setup(td)
+            data = build_hex().decode()
+            data = data.replace(intel_hex(0, 0, 1),
+                intel_hex(2, 0, 4, b"\\x00\\x0b") +
+                intel_hex(4, 0, 0, b"\\x12\\x34\\x56\\x78") +
+                intel_hex(0, 0, 1))
+            blob = data.encode()
+            (root / "znp.hex").write_bytes(blob)
+            manifest = json.loads((root / "manifest.json").read_text())
+            manifest["files"]["hex"]["sha256"] = hashlib.sha256(blob).hexdigest()
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "HEX_BIN_PROGRAMMED_BYTES_DIFFER"):
+                gate.inspect(root)
+
     def test_truncated_binary_fails_even_with_refreshed_hash(self):
         with tempfile.TemporaryDirectory() as td:
             root = setup(td)
