@@ -126,7 +126,7 @@ simulated writer pass is NOT proof of a physical erase/rewrite.
 
 ### Current gate status
 
-- [x] Two manufacturer-independent, pinned native source builds are
+- [x] Two independent pinned GitHub-hosted TI native source builds are
       reproducible.
 - [x] Genuine native application safely isolated from CCFG/NV/boot sectors.
 - [x] Both private original same-device fullflash backups compared.
@@ -137,9 +137,18 @@ simulated writer pass is NOT proof of a physical erase/rewrite.
 - [x] Final stock/application/handoff/rollback offline receipt generated.
 - [x] Read-only real stock ZNP \`SYS_PING\` confirmed.
 - [x] Single-sector generic writer tested against synthetic ROM failures.
-- [ ] Hardware-specific boot-sector adapter/rollback path integration and
-      separate live read-only final preflight.
-- [ ] Physical R4 flashing, boot test and stock rollback rehearsal
+- [x] Hardware-specific private SLZB-management ROM-BSL adapter built and
+      mock-tested: 23 app sectors plus only 0xAC000; explicit denial for
+      NV, CCFG and production radio endpoint.
+- [x] Separate live read-only final preflight: ROM BSL original 23/23
+      app sector CRCs PASS; both protected sectors 2/2 CRC PASS; stock
+      SYS_PING PASS following management radio restart.
+- [x] Partially interrupted boot-sector programming recovery is
+      fail-closed except restoring SHA-pinned original factory sector;
+      stale approval tokens and mismatched CCFG deny all erase.
+- [ ] Physical boot-sector erase/program and exact-stock rollback
+      sequence qualification on isolated spare (not executed in prep).
+- [ ] Physical R4 flashing, first boot test and full stock rollback
       (intentionally not executed during flash preparation).
 
 This is an isolated test candidate, **not** production firmware release.
