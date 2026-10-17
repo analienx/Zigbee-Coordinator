@@ -64,6 +64,8 @@ jobs:
         run: |
           python -m unittest -v tests.test_r4_b0_audit
           python -m unittest -v tests.test_r4_b0_sector_erase_denial
+      - name: Adversarial P7U app-sector and private duplicate-backup controls (synthetic only)
+        run: python -m unittest -v tests.test_r4_flash_preflight
       - name: Test strict native artifact collector (synthetic test only)
         run: python -m unittest -v tests.test_r4_b0_collect_native
       - name: Test SHA-gated TI toolchain acquisition (offline)
@@ -511,6 +513,10 @@ jobs:
           assert any(x['reason']=='BOOT_CCFG_TOP_SECTOR' for x in d['protected_sector_collisions'])
           print('REAL EXACT-HEAD COMPOSITE HEX: CCFG erase-sector collision proven; FLASH DENIED')
           PY
+          # Check exact native app sectors below historical NV5/NV2 union.
+          # Does not generate a flashable image, read private NV, or authorize flash.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_flash_preflight.py" \
+            --artifacts /tmp/b0out --receipt /tmp/b0out/r4-app-sector-preflight.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
             --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
