@@ -14,6 +14,7 @@ function mod(p) { return require(path.join(root, "dist", ...p.split("/"))); }
 const {ZpiObject} = mod("adapter/z-stack/znp/zpiObject.js");
 const {Znp} = mod("adapter/z-stack/znp/znp.js");
 const {ZStackAdapter} = mod("adapter/z-stack/adapter/zStackAdapter.js");
+const {Controller} = mod("controller/controller.js");
 const {Frame} = mod("adapter/z-stack/unpi/frame.js");
 const {Type, Subsystem} = mod("adapter/z-stack/unpi/constants.js");
 
@@ -44,6 +45,7 @@ function fakeOwner(data = frame()) {
         poisoned: false,
         b4CanProbe() {return !this.poisoned;},
         b4PoisonDiagSession() {this.poisoned = true;},
+        b4SetProbeGuard(guard) {this.probeGuard = guard;},
         async requestWithReply(system, command, payload, waiterID, timeout) {
             calls++;
             assert.equal(system, Subsystem.SYS);
@@ -483,4 +485,79 @@ test("B4 native queue source: reject invalid HWM, partial bitmap, and unqualifie
         assert.equal(await owner.b4ReadOnlyDiagnostics(allow), undefined);
         assert.equal(owner.znp.poisoned, true);
     }
+});
+
+test("B4 OTA admission: genuine source-compiled ZNP mutex veto wins after initially idle approval", async () => {
+    const znp = new Znp("/dev/not-opened-by-test", 115200, false);
+    znp.initialized = true;
+    let otaIdle = true;
+    const writes = [];
+    let finishPing;
+    znp.unpiWriter.writeFrame = (packet) => {
+        writes.push(packet.commandID);
+        if (packet.commandID === 1) {
+            finishPing = () => znp.onUnpiParsed(
+                new Frame(Type.SRSP, Subsystem.SYS, 1, Buffer.from([1, 0]))
+            );
+        }
+    };
+    const ping = znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 500);
+    assert.equal(typeof finishPing, "function");
+    znp.b4SetProbeGuard(() => otaIdle);
+    const offer = assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 500),
+        /B4 F0 runtime admission vetoed/
+    );
+    otaIdle = false;  // OTA starts after request accepted, before writer.
+    finishPing();
+    await ping;
+    await offer;
+    assert.deepEqual(writes, [1]);
+    assert.equal(znp.waitress.waiters.size, 0);
+    assert.equal(znp.b4DiagPoisoned, false);  // no radio failure
+    znp.b4SetProbeGuard(undefined);
+});
+
+test("B4 OTA admission: manual existing-owner Controller entry is guarded and Z-Stack only", async () => {
+    const actual = Object.create(ZStackAdapter.prototype);
+    const accesses = [];
+    actual.b4ReadOnlyDiagnostics = async (input) => {
+        accesses.push(input);
+        return {radioEpoch:"UNKNOWN"};
+    };
+    const owner = Object.create(Controller.prototype);
+    owner.stopping = false;
+    owner.adapterDisconnected = false;
+    owner.adapter = actual;
+    assert.equal(
+        await owner.b4ReadOnlyDiagnosticsFromExistingOwner({
+            enabled:true, hostIdle:true, otaActive:false,
+            stillAllowed: () => true
+        }).then((r) => r.radioEpoch), "UNKNOWN");
+    assert.equal(accesses.length, 1);
+    assert.equal(await owner.b4ReadOnlyDiagnosticsFromExistingOwner({
+        enabled:true, hostIdle:true, otaActive:false
+    }), undefined);
+    owner.adapterDisconnected = true;
+    assert.equal(await owner.b4ReadOnlyDiagnosticsFromExistingOwner({
+        enabled:true, hostIdle:true, otaActive:false,
+        stillAllowed: () => true
+    }), undefined);
+    assert.equal(accesses.length, 1);
+    owner.adapterDisconnected = false;
+    owner.adapter = {};
+    assert.equal(await owner.b4ReadOnlyDiagnosticsFromExistingOwner({
+        enabled:true, hostIdle:true, otaActive:false,
+        stillAllowed: () => true
+    }), undefined);
+    assert.equal(accesses.length, 1);
+});
+
+test("B4 OTA admission: explicit live false denies optional F0 without writer or poison", async () => {
+    const {owner, calls} = fakeOwner();
+    assert.equal(await owner.b4ReadOnlyDiagnostics({
+        ...allow, stillAllowed: () => false
+    }), undefined);
+    assert.equal(calls(), 0);
+    assert.equal(owner.znp.poisoned, false);
 });
