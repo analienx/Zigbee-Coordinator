@@ -5,6 +5,7 @@ on:
       - 'tools/r4_b1_b3_security_fuse.py'
       - '.github/workflows/test-r4-security-fault-integration.yml'
       - 'tools/r4_extract_nwk_save_hold.py'
+      - 'tools/r4_extract_zmac_for_checkpoint_hold.py'
       - 'tests/r4_host/**'
       - 'tools/r4_b0_b4_composite_stage.py'
 permissions:
@@ -111,11 +112,16 @@ jobs:
             --source /tmp/r4fusion-sdk/source/ti/zstack/stack/zdo/zd_app.c \
             --out /tmp/r4-fused-nwk-save.c \
             --receipt /tmp/r4-fused-nwk-save-receipt.json
+          python tools/r4_extract_zmac_for_checkpoint_hold.py \
+            --source /tmp/r4fusion-sdk/source/ti/zstack/zmac/f8w/zmac.c \
+            --out /tmp/r4-fused-zmac-admissions.c \
+            --receipt /tmp/r4-fused-zmac-admission-receipt.json
           clang -std=c11 -g -O1 -Wall -Wextra -Werror \
             -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
             -fno-omit-frame-pointer -fsanitize=address,undefined \
             -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
             /tmp/r4-fused-nwk-save.c \
+            /tmp/r4-fused-zmac-admissions.c \
             tests/r4_host/r4_nwk_hold_test.c \
             firmware/slzb-06p7u/r4/b1/b1_management.c \
             firmware/slzb-06p7u/r4/b1/b1_admission.c \
@@ -127,7 +133,7 @@ jobs:
             UBSAN_OPTIONS=halt_on_error=1 \
               /tmp/r4-nwk-checkpoint-host "$scenario"
           done
-          echo "ACTUAL FUSED TI SOURCE: 9 NWK checkpoint/sticky HOLD scenarios pass, no radio." >> "$GITHUB_STEP_SUMMARY"
+          echo "ACTUAL FUSED TI SOURCE: 9 NWK checkpoint/sticky HOLD scenarios AND 2 real ZMac TX paths per scenario; NO physical radio." >> "$GITHUB_STEP_SUMMARY"
       - name: Counter rollback guard removal MUST fail cross-phase actual-C security oracle
         shell: bash
         run: |
@@ -144,6 +150,7 @@ jobs:
             -fno-omit-frame-pointer -fsanitize=address,undefined \
             -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
             /tmp/r4-fused-nwk-mutant.c \
+            /tmp/r4-fused-zmac-admissions.c \
             tests/r4_host/r4_nwk_hold_test.c \
             firmware/slzb-06p7u/r4/b1/b1_management.c \
             firmware/slzb-06p7u/r4/b1/b1_admission.c \
@@ -169,5 +176,6 @@ jobs:
             /tmp/r4b3-nvocmp-composed.json
             /tmp/r4b3-seed-composed.json
             /tmp/r4-fused-nwk-save-receipt.json
+            /tmp/r4-fused-zmac-admission-receipt.json
             /tmp/r4-nwk-mutant.log
           if-no-files-found: warn
