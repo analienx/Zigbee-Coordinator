@@ -109,7 +109,8 @@ def build_patches(root):
         raise ValueError("NPI SRSP queue producer count drift (expected exactly two)")
     for function_name in ("void NPITask_sendToHost(uint8_t *pMsg)",
                           "static void NPITask_processStackMsg(uint8_t *pMsg)"):
-        start = task.find(function_name)
+        # Match a function *definition*, never its earlier prototype.
+        start = task.find(function_name + "\n{")
         end = task.find(enqueue, start)
         if start < 0 or end < 0 or end - start > 5500:
             raise ValueError("unqualified SRSP producer: " + function_name)
