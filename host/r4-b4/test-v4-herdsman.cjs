@@ -110,6 +110,21 @@ test("V4 source-invalid identity and no boot cap never invent epoch",async()=>{
     assert.equal(wrong.znp.disabled,true);
 });
 
+test("V4 competing branch SYS F2 layout must never parse as this F2 ABI", async()=>{
+    // #104's latest F2 candidate is not binary compatible with #105:
+    // capability bit1=nonce, 140..155 reset/fingerprint, minor zero.
+    // A matching 0xF2 opcode alone must NOT cause cross-decoding.
+    const owner = ownerWithResponse((nonce)=>{
+        const d=wire(nonce,{caps:3,boot:0x12345678n,reset:255,minor:0});
+        d.writeUInt32LE(2,140);
+        d.writeUInt32LE(0x12345678,144);
+        return d;
+    });
+    assert.equal(await owner.b4ReadOnlyDiagnosticsV4(allowed),undefined);
+    assert.equal(owner.znp.disabled,true);
+    assert.equal(owner.znp.requests,1);
+});
+
 test("V4 disabled/busy/OTA/replaced predicate all send zero serial requests",async()=>{
     const owner = ownerWithResponse((nonce)=>wire(nonce));
     for(const input of [
