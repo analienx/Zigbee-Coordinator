@@ -486,6 +486,8 @@ jobs:
             --p0 /tmp/b2-compare/p0 \
             --p1a /tmp/b2-compare/p1a \
             --p1b /tmp/b2-compare/p1b \
+            --expected-source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --expected-run-id "$GITHUB_RUN_ID" \
             --out /tmp/b2-comparison/B2_CAPACITY_BUDGET.json
           cat /tmp/b2-comparison/B2_CAPACITY_BUDGET.json >> "$GITHUB_STEP_SUMMARY"
       - name: Publish exact-SHA B2 capacity acceptance receipt (not RF proof)
