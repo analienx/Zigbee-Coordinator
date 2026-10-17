@@ -19,7 +19,7 @@ TABLES = {
     "route_requests": ("rtDiscTable", "gMAX_RREQ_ENTRIES"),
     "relay_path": ("rtgSrcRelayList", "gMAX_SOURCE_ROUTE"),
 }
-MEMORY_SYMBOLS = frozenset(("heapStart", "heapEnd", "__STACK_TOP", "__STACK_SIZE", "__stack"))
+MEMORY_SYMBOLS = frozenset(("heapStart", "heapEnd", "__STACK_TOP", "__STACK_SIZE", "__stack", "gMTO_RREQ_LIMIT_TIME", "zgConcentratorEnable", "zgConcentratorRC", "zgConcentratorDiscoveryTime"))
 MAX_ELF = 8 * 1024 * 1024
 MAX_XML = 2 * 1024 * 1024
 
@@ -154,6 +154,26 @@ def derive(root, source_sha, out, run_id):
     heap_start=one_symbol(symbols,"heapStart")
     heap_end=one_symbol(symbols,"heapEnd")
     stack_size_symbol=one_symbol(symbols,"__STACK_SIZE")
+    # The byte-coded MTO timer limit is a genuine constant when its
+    # symbol lives in ELF PROGBITS.  zgConcentrator* lives in .data NOBITS
+    # with a .cinit copy table, so DO NOT infer active runtime/NV state.
+    mto_limit_symbol=one_symbol(symbols,"gMTO_RREQ_LIMIT_TIME")
+    linked_mto_limit=initializer_value(blob,mto_limit_symbol)
+    if linked_mto_limit is not None and not 0<linked_mto_limit<=65535:
+        raise EvidenceError("invalid linked MTO RREQ limit")
+    concentrator_symbols={}
+    for name in ("zgConcentratorEnable","zgConcentratorRC","zgConcentratorDiscoveryTime"):
+        found=one_symbol(symbols,name)
+        direct=initializer_value(blob,found)
+        concentrator_symbols[name]={
+            "present_in_linked_elf":found is not None,
+            "elf_section":found["section"] if found else None,
+            "direct_elf_initializer_value":direct,
+            "runtime_effective_value":None,
+            "persisted_nv_override_value":None,
+            "status":"INITIAL_LINKER_VALUE_NOT_RUNTIME_OR_NV" if direct is not None else
+                     "UNKNOWN_RUNTIME_INITIALIZED_VIA_CINIT_OR_NV",
+        }
     linked_heap=None
     linked_stack=None
     if heap_start and heap_end:
@@ -225,6 +245,8 @@ def derive(root, source_sha, out, run_id):
         "memory_regions":areas,"sram_allocated_sections":memory_sections,
         "linked_heap_address_span":linked_heap,
         "linked_c_irq_stack_size":linked_stack,
+        "linked_mto_rreq_limit_ms":linked_mto_limit,
+        "concentrator_config_symbols":concentrator_symbols,
         "sram_linker_address_partition":memory_partition,
         "tables":table_result,
         "heap_high_water":None,"concurrent_dynamic_route_buffer_peak":None,
@@ -247,6 +269,9 @@ def derive(root, source_sha, out, run_id):
     lines+=["", "RAM memory sections (raw ELF SHF_ALLOC; may contain overlap/aliases):"]
     lines.extend(f"- \`{n}\`: {v} bytes" for n,v in sorted(memory_sections.items()))
     lines+=["", "SRAM linked address-space partition (NOT runtime free memory): "+str(memory_partition)]
+    lines+=["", "Linked MTO RREQ limit (proven constant, **not** observed rate): "
+            +str(linked_mto_limit)+" ms",
+            "Concentrator runtime/NV settings (unmeasured): "+str(concentrator_symbols)]
     lines+=["", "Linked heap region (NOT free heap/high-water): \\`"+str(linked_heap)+"\\`",
             "C/IRQ stack linked symbol: \\`"+str(linked_stack)+"\\`",
             "", "A section sum is not a proven free-RAM bound. Tasks, C/IRQ stack,"
