@@ -51,7 +51,12 @@ def _artifact(directory, manifest, logical):
 
 
 def inspect(directory):
-    manifest = loads_strict((directory / "manifest.json").read_text(encoding="utf-8"))
+    manifest_file = directory / "manifest.json"
+    if manifest_file.stat().st_size > 131072:
+        raise ValueError("B0_FLASH_BOUNDARY_MANIFEST_EXCEEDS_SIZE_CAP")
+    manifest = loads_strict(manifest_file.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("B0_FLASH_BOUNDARY_MANIFEST_NOT_OBJECT")
     if manifest.get("schema") != "r4-b0-artifact-manifest-v1":
         raise ValueError("B0_FLASH_BOUNDARY_MANIFEST_NOT_NATIVE")
     bin_file = _artifact(directory, manifest, "bin")
@@ -129,7 +134,7 @@ def main():
     try:
         result = inspect(args.artifacts)
         status = 0
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
         result = {
             "schema": "r4-b0-nonflashable-boundary-v1",
             "qualification": "BLOCKED_NO_RELEASE_ATTESTATION",
