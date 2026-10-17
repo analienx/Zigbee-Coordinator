@@ -29,9 +29,30 @@ hardware reviewer sign-off.
 | --- | --- | --- | --- |
 | P1 — integration | PR #91 recorded as merged to `main` despite base being the PR #89 review branch. | Corrected issue #90 title/top-status, explicitly documented #86 → #89 → #91 stack and no premature deployment. | **Corrected record; main integration still OPEN** |
 | P1 — NV safety | ELF-derived `tiarmobjcopy -O binary` spans `0x00000..0xAFFFF` including synthetic fill in 16KiB reserved `FLASH_NV 0xAA000..0xADFFF`. A contiguous raw-BIN writer can erase NV, network identity and security counters. HEX contains no programmed NV data, but that is insufficient to qualify a programmer. | PR #102 `b0_flash_boundary.py` refuses HEX NV writes, verifies full BIN and matching HEX payload, and emits a SHA-bound **DO_NOT_FLASH** receipt with all approval flags false. Regression tests cover multiple hostile mutations and missing/invalid manifest fields. | **Source mitigation in draft PR #102; not production-qualified** |
-| P1 — CI artifact publication | Original workflow uploaded **full BIN/ELF/HEX even when native audit failed** (`if: always()`), making unvalidated firmware downloadable from a red run. | PR #102 now uploads full firmware files on **success only**, after the linked image and NV boundary both pass. Failure jobs upload only allowlisted logs/receipts under `FAILED_DIAGNOSTICS_NO_FIRMWARE`. Static CI tests enforce order and allowlist. | **Source fix in PR #102; hosted CI pending** |
+| P1 — CI artifact publication | Original workflow uploaded **full BIN/ELF/HEX even when native audit failed** (`if: always()`), making unvalidated firmware downloadable from a red run. | PR #102 now uploads full firmware files on **success only**, after the linked image and NV boundary both pass. Failure jobs upload only allowlisted logs/receipts under `FAILED_DIAGNOSTICS_NO_FIRMWARE`. Static CI tests enforce order and allowlist. | **Source fix in PR #102; latest exact-head CI must be checked** |
 | P2 — evidence | Native build source checks are not physical qualifications; an offline receipt cannot prove toolchain provenance or boot. | Receipt explicitly says `NV_SPAN_CHECK_ONLY_NOT_SOURCE_OR_HARDWARE_ATTESTATION`; independent native provenance remains in separate CI logs/ELF audit. Failed re-runs overwrite stale receipts with a new `FAILED_CLOSED` denial. | **Addressed in PR #102** |
 | P2 — docs | B0 README had stale “native build still pending” language and omitted `examples/rtos/` in a CCS path. | Restored exact upstream projectspec location and reconciled native result; documented raw-BIN hazard prominently. | **Addressed in PR #102** |
+
+### Additional independent pass — conservative historical NV5 boundary
+
+The first PR #102 safety guard correctly denied erasing the TI donor's
+`FLASH_NV = 0xAA000..0xADFFF` 16 KiB NV2 extent. However, the
+separately documented older R2 source used a **candidate** NV5 area
+`0xA4000..0xADFFF` (40 KiB). A valid manifest+HEX with data in
+`0xA4000..0xA9FFF` could previously receive the same non-flashable
+receipt even though the historical partition would be overwritten by an
+address-aware programmer. This is a **source-safety review gap**, not
+evidence that current vendor stock actually uses NV5.
+
+The fail-closed boundary now conservatively rejects HEX programming
+anywhere in `0xA4000..0xADFFF` and requires consistent erased filler
+in the whole 40 KiB flat-BIN span. Its receipt distinguishes the
+16 KiB TI donor `FLASH_NV` from the **unverified** historical NV5
+candidate and continues to set all flash/release/migration approvals
+to `false`. Added negative tests modify HEX and BIN in the previously
+unguarded `0xA4000..0xA9FFF` band with independently refreshed SHA
+digests. This does not replace proof of the actual installed-stock
+storage map; it is a conservative denial gate.
 
 ## Verification matrix
 
