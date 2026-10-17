@@ -31,13 +31,22 @@ def read(root,profile):
     manifest=read_json(out/"manifest.json")
     if manifest.get("schema")!="r4-b0-artifact-manifest-v1":
         raise CompareError("missing native B0 artifact manifest")
-    bin_meta=manifest.get("files",{}).get("bin",{})
-    name=bin_meta.get("file")
-    if not isinstance(name,str) or Path(name).name!=name:
-        raise CompareError("unsafe/missing BIN file")
-    path=out/name
-    if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=bin_meta.get("sha256"):
-        raise CompareError("binary image hash mismatch")
+    # Rehash each raw native artifact, not just the BIN. Upstream B0 audit
+    # already enforces ELF/HEX/CCFG geometry; this independent verifier
+    # prevents substituted ELF/XML/HEX payloads with self-consistent JSON.
+    for kind in ("elf","xml","hex","bin"):
+        meta=manifest.get("files",{}).get(kind,{})
+        name=meta.get("file")
+        digest=meta.get("sha256")
+        if not isinstance(name,str) or Path(name).name!=name or not name or "\\\\" in name:
+            raise CompareError("unsafe/missing "+kind+" filename")
+        if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
+            raise CompareError("missing/invalid "+kind+" native hash")
+        path=out/name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size>16*1024*1024:
+            raise CompareError("missing/symlinked/oversized native "+kind+" file")
+        if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+            raise CompareError("raw native "+kind+" hash mismatch")
     if receipt.get("result")!="NATIVE_STATIC_PROFILE_CONFIRMED" or receipt.get("profile")!=profile:
         raise CompareError("profile linked gate not passed")
     if native.get("status")!="HOSTED_NATIVE_LINKED_TABLES" or native.get("sdk_source_sha")!=SDK_SHA:
@@ -89,6 +98,9 @@ def compute(p0,p1a,p1b,expected_source_sha,expected_run_id):
     p1bins=[m["files"]["bin"]["sha256"] for m in (m1,m2)]
     if p1bins[0]!=p1bins[1]:
         raise CompareError("P1 native BIN not reproducible across independent hosted builds")
+    p1elfs=[m["files"]["elf"]["sha256"] for m in (m1,m2)]
+    if p1elfs[0]!=p1elfs[1]:
+        raise CompareError("P1 native ELF not reproducible across independent hosted builds")
     if m0["files"]["bin"]["sha256"]==p1bins[0]:
         raise CompareError("P1 BIN identical to P0 (suspect no-op changes)")
     partitions=[]
@@ -117,7 +129,9 @@ def compute(p0,p1a,p1b,expected_source_sha,expected_run_id):
         "table_delta_bytes":delta,"table_inventory":linked_tables,
         "linked_sram_partitions":{"P0":partitions[0],"P1a":partitions[1],"P1b":partitions[2]},
         "unattributed_below_heap_delta_bytes":unattributed,
-        "binary_reproducible":True,"binary_sha256":{"P0":m0["files"]["bin"]["sha256"],"P1":p1bins[0]},
+        "binary_reproducible":True,"elf_reproducible":True,
+        "binary_sha256":{"P0":m0["files"]["bin"]["sha256"],"P1":p1bins[0]},
+        "elf_sha256":{"P0":m0["files"]["elf"]["sha256"],"P1":p1elfs[0]},
         "runtime_heap_high_water_bytes":None,"task_stack_peak_bytes":None,
         "physical_verified":False,"B2_SOURCE_READY":False,
         "closed_ti_routing_body_tests":"BLOCKED_SOURCE_UNAVAILABLE",
