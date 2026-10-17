@@ -15,7 +15,7 @@ from b4_v4_native_patch import (
 
 V3_SYS = """void B4_SysReadOnlyDiagnostics(void);
 volatile uint32_t B4_NpiUartTxFinishedEvents;
-void MT_SysCommandProcessing(uint8_t *pBuf) {
+uint8_t MT_SysCommandProcessing(uint8_t *pBuf) {
     case 0xF0:
       if (pBuf[MT_RPC_POS_LEN] != 0)
         status = MT_RPC_ERR_LENGTH;
