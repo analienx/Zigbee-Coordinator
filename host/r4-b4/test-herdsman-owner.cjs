@@ -414,3 +414,33 @@ test("REVIEW-P1: direct queued F0 cannot bypass normal outstanding Waitress", as
     assert.deepEqual(recorded, []);
     znp.waitress.remove(prior.ID);
 });
+
+test("REVIEW-P0: a queued F0 never writes after the existing owner is disconnected", async () => {
+    const znp = new Znp("/dev/no-device-opened", 115200, false);
+    znp.initialized = true;
+    const transmitted = [];
+    let releasePing;
+    znp.unpiWriter.writeFrame = (frame) => {
+        transmitted.push(frame.commandID);
+        if (frame.commandID === 1) {
+            releasePing = () => znp.onUnpiParsed(
+                new Frame(Type.SRSP, Subsystem.SYS, 1, Buffer.from([1, 0]))
+            );
+        }
+    };
+    const normal = znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 500);
+    assert.equal(typeof releasePing, "function"); // mutex occupied by normal ping
+    const diagnostic = assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 500),
+        /owner unavailable or poisoned inside ZNP mutex/
+    );
+    // Simulates the real pinned onPortClose setting initialized=false while
+    // the diagnostic request is already in the mutex's pending queue.
+    znp.initialized = false;
+    releasePing(); // finish preexisting ping; mutex advances to queued F0
+    await normal;
+    await diagnostic;
+    assert.deepEqual(transmitted, [1]); // no diagnostic write to a closed port
+    assert.equal(znp.waitress.waiters.size, 0);
+    assert.equal(znp.b4CanProbe(), false);
+});
