@@ -62,26 +62,43 @@ ADAPTER_METHOD = r"""
                 data.readUInt16LE(6) !== 132 ||
                 data.readUInt32LE(8) !== 0 ||
                 data.readBigUInt64LE(16) !== 0n ||
-                data.readUInt32LE(24) !== 0
+                data.readUInt32LE(24) !== 0 ||
+                data.readUInt32LE(28) === 0
             ) {
                 return undefined;
             }
             const validityMask = data.readUInt32LE(12);
-            // Native experimental image only supports SRSP enqueue count.
-            // Other counters are UNKNOWN rather than fabricated zeros.
-            if ((validityMask & ~0x10) !== 0) {
+            // An invalid counter must have zero bytes. Never let reserved
+            // garbage silently masquerade as a legitimate empty metric.
+            if ((validityMask & ~0x10) !== 0 ||
+                Array.from({length: 25}, (_, i) => i)
+                    .some((i) => i !== 4 && data.readUInt32LE(32 + 4 * i) !== 0)) {
+                this.znp.b4PoisonDiagSession();
                 return undefined;
             }
+            const sequence = data.readUInt32LE(28);
+            // No trusted boot epoch or transaction ID. Within a single
+            // unbroken process, non-progress / reversal is ambiguous:
+            // disable future F0 rather than inventing a radio identity.
+            if (this.b4LastDiagSequence !== undefined &&
+                sequence <= this.b4LastDiagSequence) {
+                this.znp.b4PoisonDiagSession();
+                return undefined;
+            }
+            this.b4LastDiagSequence = sequence;
             return {
                 abi: 3,
                 validityMask,
                 srspEnqueued: validityMask & 0x10 ? data.readUInt32LE(48) : null,
-                sequence: data.readUInt32LE(28),
+                sequence,
                 radioEpoch: "UNKNOWN",
             };
         } catch {
-            // Unsupported stock firmware, NPI hang, malformed frame or SRSP
-            // timeout: silently back off. No independent raw port and no log.
+            // A late F0 SRSP has NO transaction ID and could otherwise be
+            // mistaken for another F0. Poison this diagnostic session for
+            // its lifetime after any ambiguous failure. Normal commands
+            // remain operational; no reset/retry is initiated.
+            this.znp.b4PoisonDiagSession();
             return undefined;
         } finally {
             this.b4DiagInFlight = false;
@@ -173,7 +190,8 @@ def plan(root):
        "    private interpanLock: boolean;",
        """    private interpanLock: boolean;
     private b4DiagInFlight = false;
-    private b4NextAllowedMs = 0;""")
+    private b4NextAllowedMs = 0;
+    private b4LastDiagSequence: number | undefined;""")
     adapter = replace_once(adapter,
        "    public async stop(): Promise<void> {",
        ADAPTER_METHOD + "    public async stop(): Promise<void> {")
@@ -202,7 +220,8 @@ def plan(root):
         """    private waitress: Waitress<ZpiObject, WaitressMatcher>;
     private b4HostForensicsEnabled = false;
     private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}> = [];
-    private b4HostDropped = 0;""",
+    private b4HostDropped = 0;
+    private b4DiagPoisoned = false;""",
     )
     changes[ZNP] = replace_once(
         changes[ZNP],
@@ -267,8 +286,12 @@ def plan(root):
         """    /** B4_EXPERIMENTAL_EXISTING_OWNER: query in-process mutex state.
      *  Neither a queue-length=0 nor serial present proves radio health.
      */
+    public b4PoisonDiagSession(): void {
+        this.b4DiagPoisoned = true;
+    }
+
     public b4CanProbe(): boolean {
-        return this.initialized && this.queue.isIdle();
+        return this.initialized && !this.b4DiagPoisoned && this.queue.isIdle();
     }
 
     public isInitialized(): boolean {""",
@@ -276,6 +299,20 @@ def plan(root):
     # Only the opt-in diagnostic waiter needs explicit cleanup on timeout:
     # pinned Waitress marks timedout=true but keeps it in its map until a
     # subsequent response. Do not change AF/ZDO/stock SYS waiter policy.
+    changes[ZNP] = replace_once(
+        changes[ZNP],
+        """        if (!this.initialized) {
+            throw new Error("Cannot request when znp has not been initialized yet");
+        }""",
+        """        if (!this.initialized) {
+            throw new Error("Cannot request when znp has not been initialized yet");
+        }
+        // F0 has no transaction ID. After an ambiguous failure, a late
+        // SRSP can match the next F0. Ordinary ZNP traffic is unaffected.
+        if (subsystem === Subsystem.SYS && command === "r4DiagReadOnly" && this.b4DiagPoisoned) {
+            throw new Error("B4 F0 session poisoned; no automatic diagnostic retry");
+        }""",
+    )
     changes[ZNP] = replace_once(
         changes[ZNP],
         """                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);
@@ -290,6 +327,7 @@ def plan(root):
                     // The pinned Waitress keeps a timed-out waiter until its
                     // next response; only B4 F0 alters stock cleanup policy.
                     if (object.command.name === "r4DiagReadOnly") {
+                        this.b4PoisonDiagSession();
                         this.waitress.remove(waiter.ID);
                     }
                     throw error;
