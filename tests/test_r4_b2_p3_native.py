@@ -23,6 +23,14 @@ class P3NativeLogOracle(unittest.TestCase):
         r=validate(GOOD,1,INJECTION)
         self.assertEqual(r["status"],"HOSTED_NATIVE_LINKER_OVERBUDGET_REJECTED")
         self.assertFalse(r["usable_firmware_produced"])
+    def test_true_ti_linker_wraparound_error_allowed(self):
+        actual=GOOD+'\n'+'tiarmclang: error: tiarmlnk command failed with exit code 1 (use -v to see invocation)'
+        self.assertEqual(validate(actual,1,INJECTION)["status"],
+                         "HOSTED_NATIVE_LINKER_OVERBUDGET_REJECTED")
+    def test_wrapper_does_not_cover_unrelated_compile_error(self):
+        actual=GOOD+'\n'+'tiarmclang: error: tiarmlnk command failed with exit code 1'+'\n'+'tiarmclang: error: no such file or directory: broken.c'
+        with self.assertRaisesRegex(P3ValidationError,"non-memory"):
+            validate(actual,1,INJECTION)
     def test_compiler_error_not_enough(self):
         with self.assertRaisesRegex(P3ValidationError,"linker never executed"):
             validate("tiarmclang: error: no such file or directory",1,INJECTION)
