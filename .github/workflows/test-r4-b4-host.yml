@@ -45,6 +45,11 @@ jobs:
           python host/r4-b4/herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-overlay.json
           python host/r4-b4/b4_v4_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v4-overlay.json
           test "$(python -c 'import json; print(json.load(open("/tmp/b4-herdsman-overlay.json"))["serial_owner"])')" = EXISTING_ZNP_ONLY
+      - name: Verify exact pinned diagnostic DEBUG payload redaction
+        run: |
+          python host/r4-b4/b4_v4_log_audit.py \
+            --checkout "$B4_HERDSMAN_ROOT" \
+            --receipt /tmp/b4-herdsman-v4-overlay.json
       - name: Install exact herdsman package-manager version
         run: |
           npm install --global pnpm@10.33.0
