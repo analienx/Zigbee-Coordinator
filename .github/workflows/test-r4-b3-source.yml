@@ -133,3 +133,35 @@ jobs:
             /tmp/b3host/ti_security_types.c -o /tmp/b3host/ti_security_types
           /tmp/b3host/ti_security_types | tee /tmp/b3-types.out
           grep -Fx "B3_TI_833_REAL_TYPES APS=24 TCLK=20 item_hdr=7" /tmp/b3-types.out
+
+      - name: Test real TI generated-key entropy failure and four publishing caller guards
+        run: |
+          set -euo pipefail
+          python tests/b3_host/b3_entropy_extract.py \
+            --sdk-stack /tmp/b3sdk/source/ti/zstack/stack \
+            --out /tmp/b3host/ti_entropy.c
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
+            -I tests/b3_host /tmp/b3host/ti_entropy.c \
+            tests/b3_host/b3_entropy_test.c -o /tmp/b3host/ti_entropy
+          /tmp/b3host/ti_entropy
+      - name: Deliberately ignoring failed TRNG must fail actual C negative assertion
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/b3host/ti_entropy.c")
+          s=p.read_text()
+          a="if (result != TRNG_STATUS_SUCCESS)"
+          assert s.count(a)==1
+          p.write_text(s.replace(a, "if (0)"))
+          PY
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-variable \
+            -I tests/b3_host /tmp/b3host/ti_entropy.c \
+            tests/b3_host/b3_entropy_test.c -o /tmp/b3host/ti_entropy_mutant
+          ulimit -c 0
+          if /tmp/b3host/ti_entropy_mutant >/tmp/b3-mutant-entropy.log 2>&1; then
+            echo "B3 TRNG failure mutant unexpectedly survived"
+            exit 1
+          fi
+          grep -E 'Assertion|Aborted' /tmp/b3-mutant-entropy.log
+          echo "B3_REAL_TI_TRNG_ERROR_BYPASS_MUTANT_KILLED"
