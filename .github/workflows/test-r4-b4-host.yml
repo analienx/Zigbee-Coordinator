@@ -43,6 +43,7 @@ jobs:
       - name: Stage audited existing-owner F0 source overlay only
         run: |
           python host/r4-b4/herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-overlay.json
+          python host/r4-b4/b4_v4_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --v3-receipt /tmp/b4-herdsman-overlay.json --receipt /tmp/b4-herdsman-v4-overlay.json
           test "$(python -c 'import json; print(json.load(open("/tmp/b4-herdsman-overlay.json"))["serial_owner"])')" = EXISTING_ZNP_ONLY
       - name: Install exact herdsman package-manager version
         run: |
@@ -54,7 +55,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
-        run: node --test host/r4-b4/test-herdsman-owner.cjs
+        run: node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-herdsman-v4.cjs
       - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
         run: |
           set -euo pipefail
@@ -64,6 +65,7 @@ jobs:
           git -C /tmp/b4-z2m-host checkout --detach FETCH_HEAD
           python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
           python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
+          python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --v3-receipt /tmp/b4-z2m-ota-receipt.json --receipt /tmp/b4-z2m-v4-receipt.json
       - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
         run: |
           set -euo pipefail
