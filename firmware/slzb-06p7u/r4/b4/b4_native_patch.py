@@ -3,6 +3,7 @@
 Does not touch production coordinators or flashing. Source-qualified metrics:
 SRSP and AREQ NPI queue depth/high-water and sync enqueue count, each at the
 actual pinned producer/consumer with preexisting TI critical sections.
+Stock NPI_SREQRSP stays DISABLED; SRSP is tagged in the general TX queue.
 No UART completion, radio boot identity or unqualified RF/NV telemetry.
 """
 import argparse
@@ -55,13 +56,10 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnostics(void)
     payload[3] = '3';
     payload[4] = 3;     /* exact version 3; no minor version implied */
     payload[6] = 132;   /* full u16 LE length 132 */
-    payload[12] = 0x0C; /* async queue: validity bits 2,3 always compiled */
-#if defined(NPI_SREQRSP)
-    payload[12] = 0x1F; /* sync depth/HWM + async depth/HWM + sync enqueue */
+    payload[12] = 0x1F; /* both paths: sync dedicated or tagged-in-general TX */
     B4_DiagPutU32(payload + 32, srsp_depth);
     B4_DiagPutU32(payload + 36, srsp_high_water);
     B4_DiagPutU32(payload + 48, srsp_enqueued);
-#endif
     /* capabilities=0, radio_boot_id=0 and uptime_ms=0: epoch UNKNOWN */
     B4_DiagPutU32(payload + 28, seq);
     B4_DiagPutU32(payload + 40, async_depth);
@@ -152,11 +150,32 @@ def build_patches(root):
     async_enqueue = "Queue_enqueue(npiTxQueue, &recPtr->_elem);"
     if task.count(async_enqueue) != 2:
         raise ValueError("NPI ASYNC TX queue producer count drift")
+    # Stock P7U does NOT define NPI_SREQRSP. Its NPIFrame_frameMsg
+    # therefore marks ALL framed TX records ASYNC, even MT CMD0=SRSP. This
+    # source-backed read-only counter classifies existing framed SRSP records
+    # within the existing GENERAL NPI TX queue, without switching on TI's
+    # different synchronous scheduling, priority or watchdog mode.
+    # NPIFrame prepends SOF: framed CMD0 is at 1 + MT_RPC_POS_CMD0.
+    # The min-length and actual TI MT_RPC enum are pinned and guarded.
+    frame_srsp = (
+        "pNPIMsg->pBufSize >= (MT_RPC_FRAME_HDR_SZ + 2u) && "
+        "((pNPIMsg->pBuf[1u + MT_RPC_POS_CMD0] & MT_RPC_CMD_TYPE_MASK) "
+        "== MT_RPC_CMD_SRSP)"
+    )
     task = task.replace(async_enqueue,
         async_enqueue +
         "\n                if (B4_NpiAsyncDepth != 0xFFFFFFFFu) ++B4_NpiAsyncDepth;"
         "\n                if (B4_NpiAsyncDepth > B4_NpiAsyncHighWater)"
-        "\n                    B4_NpiAsyncHighWater = B4_NpiAsyncDepth;")
+        "\n                    B4_NpiAsyncHighWater = B4_NpiAsyncDepth;"
+        "\n#if !defined(NPI_SREQRSP)"
+        "\n                if (" + frame_srsp + ") {"
+        "\n                    ++B4_NpiSrspEnqueued;"
+        "\n                    if (B4_NpiSrspDepth != 0xFFFFFFFFu) ++B4_NpiSrspDepth;"
+        "\n                    if (B4_NpiSrspDepth > B4_NpiSrspHighWater)"
+        "\n                        B4_NpiSrspHighWater = B4_NpiSrspDepth;"
+        "\n                }"
+        "\n#endif"
+    )
     # Single existing consumer for each TX queue. Preserve TI scheduling;
     # never invoke Queue_dequeue independently or change empty handling.
     for queue, name, function in (
@@ -177,12 +196,33 @@ def build_patches(root):
         after = task[stop + len(anchor):stop + len(anchor) + 160]
         if "if (recPtr != NULL)" not in after:
             raise ValueError("unexpected existing TI dequeue branch")
+        extra = ""
+        if queue == "npiTxQueue":
+            # When stock NPI_SREQRSP is disabled, count actual framed SRSP
+            # records leaving the general queue. Never dequeue twice.
+            extra = (
+                "\n#if !defined(NPI_SREQRSP)"
+                "\n    if (recPtr != NULL && recPtr->npiMsg->pBufSize >= "
+                "(MT_RPC_FRAME_HDR_SZ + 2u) && "
+                "((recPtr->npiMsg->pBuf[1u + MT_RPC_POS_CMD0] "
+                "& MT_RPC_CMD_TYPE_MASK) == MT_RPC_CMD_SRSP) "
+                "&& B4_NpiSrspDepth != 0u) --B4_NpiSrspDepth;"
+                "\n#endif")
         task = task.replace(anchor,
             anchor + "\n    if (recPtr != NULL && " + name +
-            " != 0u) --" + name + "; /* preexisting CS */", 1)
+            " != 0u) --" + name + "; /* preexisting CS */" + extra, 1)
     for name in ("B4_NpiSrspDepth", "B4_NpiAsyncDepth"):
-        if task.count("++" + name) != 2 or task.count("--" + name) != 1:
+        expected_inc = 4 if name == "B4_NpiSrspDepth" else 2
+        expected_dec = 2 if name == "B4_NpiSrspDepth" else 1
+        if (task.count("++" + name) != expected_inc or
+                task.count("--" + name) != expected_dec):
             raise ValueError("incomplete NPI TX queue depth instrumentation: " + name)
+    if task.count("++B4_NpiSrspEnqueued;") != 4:
+        raise ValueError("incomplete stock general-queue SRSP classifier")
+    if not all(tok in task for tok in
+               ('#include "mt_rpc.h"', "MT_RPC_CMD_TYPE_MASK",
+                "MT_RPC_CMD_SRSP", "MT_RPC_POS_CMD0", "MT_RPC_FRAME_HDR_SZ")):
+        raise ValueError("cannot qualify source-backed framed SRSP classification")
     return {MT_SYS: (initial[MT_SYS], sys), NPI_TASK: (initial[NPI_TASK], task)}
 
 def apply(root):
