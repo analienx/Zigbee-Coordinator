@@ -1,0 +1,100 @@
+"""The NV4 bridge must keep B1's existing-network HOLD and never flash."""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+QUAL = ROOT / 'firmware/slzb-06p7u/r4/qualification'
+sys.path.insert(0, str(QUAL))
+spec = importlib.util.spec_from_file_location('r4_b1_nv4_bridge',
+                                             QUAL / 'nv4_b1_bridge.py')
+bridge = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bridge)
+
+
+def post_b1_fixture() -> str:
+    return '\n'.join((
+        '/* pinned TI source plus exact B1 source overlay */',
+        bridge.INCLUDE_FROM,
+        '/* B1 N03: no divide by zero/CCFG */',
+        'b1_nv_initializing = 1u;',
+        'b1_nv_runtime_hold_latch();',
+        bridge.READ_CALLBACK,
+        bridge.PRE_DIVISION_NV2,
+        bridge.POST_DIVISION_NV2,
+        bridge.OLD_ADMISSION,
+        bridge.MULTIPAGE_SCAN,
+    ))
+
+
+class Nv4B1BridgeTests(unittest.TestCase):
+    def test_existing_network_integration_preserves_hold(self):
+        source = bridge.transform(post_b1_fixture())
+        self.assertIn('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)', source)
+        self.assertIn('b1_nv_existing_pair = 1u;', source)
+        self.assertIn('b1_nv_existing_pair = 0u;', source)
+        self.assertIn('b1_management_note_nv_candidate()', source)
+        self.assertIn('b1_management_hold_nv(reason)', source)
+        self.assertIn('b1_nv_runtime_hold_active()', source)
+        self.assertIn('B1_NV_HOLD_ITEM_CRC', source)
+        self.assertIn('NVOCMP_failF != NVINTF_SUCCESS', source)
+        self.assertIn('NVOCMP_NVPAGES != R4_NV4_PAGES', source)
+        self.assertIn('NVOCMP_nvsAttrs.regionSize != R4_NV4_REGION_SIZE', source)
+        self.assertIn('0xA6000u', source)
+        self.assertNotIn('NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT', source)
+        self.assertNotIn('#ifdef B1_FACTORY_BOOT_AUTHORIZED', source)
+
+    def test_missing_or_duplicate_anchors_hold(self):
+        source = post_b1_fixture()
+        with self.assertRaisesRegex(ValueError, 'REQUIRES_PINNED_B1'):
+            bridge.transform(source.replace(bridge.INCLUDE_FROM, 'MISSING'))
+        with self.assertRaisesRegex(ValueError, 'PREIMAGE_PRE_DIVISION'):
+            bridge.transform(source + '\n' + bridge.PRE_DIVISION_NV2)
+        with self.assertRaisesRegex(ValueError, 'PREIMAGE_ADMISSION'):
+            bridge.transform(source.replace('B1_FACTORY_BOOT_AUTHORIZED', 'OTHER'))
+        with self.assertRaisesRegex(ValueError, 'REQUIRES_PINNED_B1'):
+            bridge.transform('unmodified upstream')
+        with self.assertRaisesRegex(ValueError, 'REQUIRES_PINNED_B1'):
+            bridge.transform(bridge.transform(source))
+
+    def test_disposable_prevalidation_no_partial_changes(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            nv = root / 'source/ti/common/nv/nvocmp.c'
+            nv.parent.mkdir(parents=True)
+            nv.write_text('not B1')
+            receipt = root / 'result.json'
+            original = nv.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'REQUIRES_PINNED_B1'):
+                bridge.apply(root, QUAL / 'nv4_readonly_admission.c',
+                             QUAL / 'nv4_readonly_admission.h', receipt)
+            self.assertEqual(nv.read_bytes(), original)
+            self.assertFalse(receipt.exists())
+            self.assertFalse((nv.parent / 'nv4_readonly_admission.c').exists())
+
+    def test_successful_source_only_application(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            nv = root / 'source/ti/common/nv/nvocmp.c'
+            nv.parent.mkdir(parents=True)
+            nv.write_text(post_b1_fixture())
+            report = bridge.apply(root, QUAL / 'nv4_readonly_admission.c',
+                                  QUAL / 'nv4_readonly_admission.h',
+                                  root / 'bridge.json')
+            self.assertEqual(report['nv_pages'], 4)
+            self.assertFalse(report['flash_authorized'])
+            self.assertFalse(report['factory_boot_authorized'])
+            self.assertFalse(report['native_linked'])
+            self.assertIn('r4_nv4_admit', nv.read_text())
+            with self.assertRaisesRegex(ValueError, 'DESTINATION_NOT_DISPOSABLE'):
+                bridge.apply(root, QUAL / 'nv4_readonly_admission.c',
+                             QUAL / 'nv4_readonly_admission.h', root / 'bridge.json')
+
+
+if __name__ == '__main__':
+    unittest.main()
