@@ -9,7 +9,9 @@ import r4_app_sector_transaction as tx
 class FakeROM:
     def __init__(self, package):
         self.memory = bytearray(package.snapshot)
-        self.identity = package.profile["board_identity_sha256"]
+        # Capture operator hashes the live management identity; the private
+        # profile's board-identity digest is deliberately a DIFFERENT domain.
+        self.identity = "c" * 64
         self.erases, self.downloads, self.packets = [], [], []
         self.position = None
         self.packet_failure = False
@@ -69,8 +71,20 @@ class FakeROM:
 class AppSectorTransactionTests(unittest.TestCase):
     def setUp(self):
         self.package = synthetic_package()
+        self.capture_receipt = {
+            "schema": "r4-p7u-capture-pair-v1", "status": "DUPLICATE_READBACK_MATCH",
+            "board_identity_sha256": "c" * 64, "flash_bytes": tx.FLASH,
+            "pass1_sha256": self.package.profile["capture_sha256"],
+            "pass2_sha256": self.package.profile["capture_sha256"],
+            "capture_origin": "SUPPLIED_ROM_ADAPTER_REQUIRES_OPERATOR_PROVENANCE",
+            "nv_compatibility_verified": False, "reset_issued": False,
+            "flash_performed": False, "return_to_stock_verified": False,
+        }
         self.pins = {"expected_profile_sha256": self.package.profile["profile_sha256"],
-                     "expected_package_sha256": self.package.manifest["package_sha256"]}
+                     "expected_package_sha256": self.package.manifest["package_sha256"],
+                     "capture_receipt": self.capture_receipt,
+                     "expected_capture_receipt_sha256": tx.sha(tx.canonical(self.capture_receipt)),
+                     "expected_live_identity_sha256": "c" * 64}
 
     async def execute(self, rom, admission=None):
         admission = admission or await tx.admit(rom, self.package, **self.pins)
@@ -105,6 +119,34 @@ class AppSectorTransactionTests(unittest.TestCase):
                 with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "R4_APP_TRANSACTION_BLOCKED"):
                     await self.execute(rom, admission)
                 self.assertEqual(rom.erases, [])
+        asyncio.run(scenario())
+
+    def test_live_management_identity_and_original_capture_receipt_are_both_mandatory(self):
+        async def scenario():
+            rom = FakeROM(self.package)
+            self.assertNotEqual(self.package.profile["board_identity_sha256"], rom.identity)
+            admission = await tx.admit(rom, self.package, **self.pins)
+            self.assertEqual(admission["live_management_identity_sha256"], rom.identity)
+            self.assertEqual(admission["board_identity_sha256"],
+                             self.package.profile["board_identity_sha256"])
+            for modification in ("receipt_sha", "live_pin", "capture", "origin", "flags", "extra_claim"):
+                changed = dict(self.pins)
+                if modification == "receipt_sha":
+                    changed["expected_capture_receipt_sha256"] = "0" * 64
+                elif modification == "live_pin":
+                    changed["expected_live_identity_sha256"] = self.package.profile["board_identity_sha256"]
+                else:
+                    receipt = dict(self.capture_receipt)
+                    if modification == "capture": receipt["pass2_sha256"] = "0" * 64
+                    if modification == "origin": receipt["capture_origin"] = "UNVERIFIED"
+                    if modification == "flags": receipt["flash_performed"] = True
+                    if modification == "extra_claim": receipt["stock_boot_qualified"] = True
+                    changed["capture_receipt"] = receipt
+                    changed["expected_capture_receipt_sha256"] = tx.sha(tx.canonical(receipt))
+                with self.subTest(modification=modification), self.assertRaisesRegex(
+                        ValueError, "R4_APP_TRANSACTION_BLOCKED"):
+                    await tx.admit(rom, self.package, **changed)
+            self.assertEqual(rom.erases, [])
         asyncio.run(scenario())
 
     def test_failed_packet_stops_immediately_and_explicit_current_app_rollback(self):

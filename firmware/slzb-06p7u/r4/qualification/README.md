@@ -21,7 +21,7 @@ Current-board captures, IEEE/security material and restore images stay private.
 | NV sector inventory | `nv_sector_inventory.py` | Sanitized page-header hints across reserved sectors; never selects active stock NV or authorizes startup |
 | Native proof | `build_native.py`, `native_profile_audit.py`, `compare_replicas.py` | Genuine pinned TI compiler artifacts and independent firmware-byte comparison |
 | Application packaging | `../release/r4_current_app_package.py` | Dynamic ELF/HEX sectors bound to a current direct-boot capture; no NV/CCFG payload |
-| Transaction | `../release/r4_app_sector_transaction.py`, injected adapter only | Current application rollback, sector allowlist, vector sector last, status/CRC/readback gates |
+| Transaction | `../release/r4_app_sector_transaction.py`, injected adapter only | Original capture-receipt and live management identity pins, current application rollback, sector allowlist, vector sector last, status/CRC/readback gates |
 
 Public vendor and historical power references exercise the compiler. They are
 **not** evidence of current-board settings. Earlier app-only experiments preserved
@@ -77,6 +77,13 @@ compatibility follows from these structural hints. No flash programming or
 erasure occurred during the capture. Raw captures, identifiers, secrets and
 restoration bytes stay private on Zephyrus.
 
+The ROM capture receipt's **live management identity SHA-256** and the
+current profile's **canonical private board identity SHA-256** are distinct
+digest domains. A later admission/erase must validate an externally pinned
+original capture receipt, bind both matching readbacks to the current profile,
+and re-read the live management identity against the receipt's pin. It must
+never substitute the profile digest as a fabricated live identity response.
+
 ## Previous owner-approved capture procedure (completed)
 
 The approved capture window used this bounded procedure:
@@ -105,7 +112,8 @@ The selected boot configuration determined the next gate:
 The observed outcome is `DIRECT_NATIVE_CCFG_UNCHANGED`. The next hardware
 step would be a separately approved transport-only diagnostic trial with a
 board-bound application-sector recovery package, independent native-artifact
-parity and a bounded recovery window. The earlier capture approval does **not**
+parity, explicit dual-domain identity binding and a bounded recovery window.
+The earlier capture approval does **not**
 authorize that flash or another restart.
 
 CCFG restoration must account for the entire final 8 KiB sector, including any

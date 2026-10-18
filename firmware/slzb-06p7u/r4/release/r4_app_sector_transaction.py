@@ -14,6 +14,7 @@ import asyncio
 import binascii
 import hashlib
 import math
+import re
 import time
 from typing import Protocol
 
@@ -44,6 +45,42 @@ def sha(raw: bytes) -> str:
 
 def crc(raw: bytes) -> int:
     return binascii.crc32(raw) & 0xFFFFFFFF
+
+
+def _capture_live_identity(package: AppPackage, receipt: dict, *,
+                           expected_capture_receipt_sha256: str,
+                           expected_live_identity_sha256: str) -> str:
+    """Bind the operator's live management identity to this exact capture.
+
+    Capture identity and the profile's private canonical board identity are
+    DIFFERENT digests. Silently treating one as the other would reject the real
+    adapter, or invite a caller to return an unverified constant instead of
+    re-reading management identity before a physical erase.
+    """
+    for pin in (expected_capture_receipt_sha256, expected_live_identity_sha256):
+        if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{64}", pin) is None:
+            deny("EXTERNAL_CAPTURE_IDENTITY_PINS_REQUIRED")
+    expected_fields = {"schema", "status", "board_identity_sha256", "flash_bytes",
+                       "pass1_sha256", "pass2_sha256", "capture_origin",
+                       "nv_compatibility_verified", "reset_issued",
+                       "flash_performed", "return_to_stock_verified"}
+    if (not isinstance(receipt, dict) or set(receipt) != expected_fields or
+            sha(canonical(receipt)) != expected_capture_receipt_sha256):
+        deny("CAPTURE_RECEIPT_HASH_MISMATCH")
+    if expected_live_identity_sha256 == package.profile["board_identity_sha256"]:
+        deny("LIVE_AND_PROFILE_IDENTITY_DIGEST_DOMAINS_COLLAPSED")
+    if (receipt.get("schema") != "r4-p7u-capture-pair-v1" or
+            receipt.get("status") != "DUPLICATE_READBACK_MATCH" or
+            receipt.get("capture_origin") != "SUPPLIED_ROM_ADAPTER_REQUIRES_OPERATOR_PROVENANCE" or
+            receipt.get("flash_bytes") != FLASH or
+            receipt.get("pass1_sha256") != package.profile["capture_sha256"] or
+            receipt.get("pass2_sha256") != package.profile["capture_sha256"] or
+            receipt.get("board_identity_sha256") != expected_live_identity_sha256 or
+            any(receipt.get(field) is not False for field in
+                ("nv_compatibility_verified", "reset_issued", "flash_performed",
+                 "return_to_stock_verified"))):
+        deny("LIVE_CAPTURE_PROVENANCE_NOT_BOUND")
+    return expected_live_identity_sha256
 
 
 class _BoundedROM:
@@ -93,8 +130,8 @@ async def _sector(rom: ROM, address: int) -> bytes:
     return raw
 
 
-async def _observe(rom: ROM, package: AppPackage) -> dict[int, str]:
-    if await rom.identity_sha256() != package.profile["board_identity_sha256"]:
+async def _observe(rom: ROM, package: AppPackage, live_identity_sha256: str) -> dict[int, str]:
+    if await rom.identity_sha256() != live_identity_sha256:
         deny("CURRENT_BOARD_IDENTITY_CHANGED")
     # Read/CRC in exact sectors. No mass read/erase command is assumed.
     return {address: sha(await _sector(rom, address)) for address in range(0, FLASH, SECTOR)}
@@ -105,19 +142,26 @@ def _baseline(package: AppPackage) -> dict[int, str]:
 
 
 async def admit(rom: ROM, package: AppPackage, *, expected_profile_sha256: str,
-                expected_package_sha256: str, operation_timeout: float = OPERATION_TIMEOUT,
+                expected_package_sha256: str, capture_receipt: dict,
+                expected_capture_receipt_sha256: str, expected_live_identity_sha256: str,
+                operation_timeout: float = OPERATION_TIMEOUT,
                 session_timeout: float = SESSION_TIMEOUT) -> dict:
     """Read-only full current-state check; receipt is not hardware permission."""
     rom = _bounded(rom, operation_timeout, session_timeout)
     validate_package(package, expected_profile_sha256=expected_profile_sha256,
                      expected_package_sha256=expected_package_sha256)
-    observed = await _observe(rom, package)
+    live_identity = _capture_live_identity(package, capture_receipt,
+        expected_capture_receipt_sha256=expected_capture_receipt_sha256,
+        expected_live_identity_sha256=expected_live_identity_sha256)
+    observed = await _observe(rom, package, live_identity)
     if observed != _baseline(package):
         deny("LIVE_CAPTURE_CHANGED")
     result = {"schema": "r4-p7u-current-app-admission-v1",
               "package_sha256": expected_package_sha256,
               "profile_sha256": expected_profile_sha256,
               "board_identity_sha256": package.profile["board_identity_sha256"],
+              "live_management_identity_sha256": live_identity,
+              "capture_receipt_sha256": expected_capture_receipt_sha256,
               "observed_sector_sha256": observed,
               "flash_authorized": False, "flash_performed": False}
     result["admission_sha256"] = sha(canonical(result))
@@ -132,8 +176,8 @@ async def _accepted(rom: ROM, operation_result, reason: str):
 
 
 async def _guard_before_erase(rom: ROM, package: AppPackage, address: int,
-                              expected_live: dict[int, str]):
-    if await rom.identity_sha256() != package.profile["board_identity_sha256"]:
+                              expected_live: dict[int, str], live_identity_sha256: str):
+    if await rom.identity_sha256() != live_identity_sha256:
         deny("CURRENT_BOARD_IDENTITY_CHANGED")
     protected = {sector for first, end in package.profile["geometry"]["protected_ranges"]
                  for sector in range(first // SECTOR * SECTOR, end, SECTOR)}
@@ -145,13 +189,14 @@ async def _guard_before_erase(rom: ROM, package: AppPackage, address: int,
             deny("LIVE_STATE_CHANGED_BEFORE_ERASE_" + hex(address))
 
 
-async def _write(rom: ROM, package: AppPackage, targets: dict[int, bytes], expected_live: dict[int, str]) -> dict:
+async def _write(rom: ROM, package: AppPackage, targets: dict[int, bytes],
+                 expected_live: dict[int, str], live_identity_sha256: str) -> dict:
     # The ONLY target set is the exact externally bound package allowlist.
     if set(targets) != set(package.sectors):
         deny("WRITE_ALLOWLIST_CHANGED")
     completed = []
     for address in package.manifest["program_order"]:
-        await _guard_before_erase(rom, package, address, expected_live)
+        await _guard_before_erase(rom, package, address, expected_live, live_identity_sha256)
         after = targets[address]
         if sha(after) == expected_live[address]:
             continue
@@ -167,7 +212,7 @@ async def _write(rom: ROM, package: AppPackage, targets: dict[int, bytes], expec
             deny("FINAL_SECTOR_READBACK_FAILED_" + hex(address))
         expected_live[address] = sha(after)
         completed.append(address)
-    if await _observe(rom, package) != expected_live:
+    if await _observe(rom, package, live_identity_sha256) != expected_live:
         deny("FINAL_FULL_STATE_CHANGED")
     return {"written_sectors": completed, "ccfg_touched": False, "nv_touched": False,
             "reset_issued": False, "automatic_rollback": False, "network_rollback_qualified": False}
@@ -175,21 +220,29 @@ async def _write(rom: ROM, package: AppPackage, targets: dict[int, bytes], expec
 
 async def execute(rom: ROM, package: AppPackage, admission: dict, *, expected_profile_sha256: str,
                   expected_package_sha256: str, expected_admission_sha256: str,
+                  capture_receipt: dict, expected_capture_receipt_sha256: str,
+                  expected_live_identity_sha256: str,
                   operation_timeout: float = OPERATION_TIMEOUT,
                   session_timeout: float = SESSION_TIMEOUT) -> dict:
     """Invoke ONLY from a separately approved operator session; never retries."""
     rom = _bounded(rom, operation_timeout, session_timeout)
     current = await admit(rom, package, expected_profile_sha256=expected_profile_sha256,
-                          expected_package_sha256=expected_package_sha256)
+                          expected_package_sha256=expected_package_sha256,
+                          capture_receipt=capture_receipt,
+                          expected_capture_receipt_sha256=expected_capture_receipt_sha256,
+                          expected_live_identity_sha256=expected_live_identity_sha256)
     if current != admission or current["admission_sha256"] != expected_admission_sha256:
         deny("ADMISSION_CHANGED")
-    result = await _write(rom, package, package.sectors, _baseline(package))
+    result = await _write(rom, package, package.sectors, _baseline(package),
+                          expected_live_identity_sha256)
     result["status"] = "APP_SECTORS_READBACK_VERIFIED_STILL_IN_BSL"
     return result
 
 
 async def rollback_current_app(rom: ROM, package: AppPackage, *, expected_profile_sha256: str,
                                expected_package_sha256: str, expected_live_sector_sha256: dict[int, str],
+                               capture_receipt: dict, expected_capture_receipt_sha256: str,
+                               expected_live_identity_sha256: str,
                                operation_timeout: float = OPERATION_TIMEOUT,
                                session_timeout: float = SESSION_TIMEOUT) -> dict:
     """Explicit caller action only: restore exact CURRENT app sectors, never NV.
@@ -201,14 +254,17 @@ async def rollback_current_app(rom: ROM, package: AppPackage, *, expected_profil
     rom = _bounded(rom, operation_timeout, session_timeout)
     validate_package(package, expected_profile_sha256=expected_profile_sha256,
                      expected_package_sha256=expected_package_sha256)
+    live_identity = _capture_live_identity(package, capture_receipt,
+        expected_capture_receipt_sha256=expected_capture_receipt_sha256,
+        expected_live_identity_sha256=expected_live_identity_sha256)
     if set(expected_live_sector_sha256) != set(package.sectors):
         deny("ROLLBACK_LIVE_SECTOR_PINS_MISSING")
     baseline = _baseline(package)
     expected = dict(baseline)
     expected.update(expected_live_sector_sha256)
-    if await _observe(rom, package) != expected:
+    if await _observe(rom, package, live_identity) != expected:
         deny("ROLLBACK_LIVE_OR_PROTECTED_STATE_CHANGED")
     targets = {address: package.snapshot[address:address + SECTOR] for address in package.sectors}
-    result = await _write(rom, package, targets, expected)
+    result = await _write(rom, package, targets, expected, live_identity)
     result["status"] = "EXACT_CURRENT_APP_RESTORED_STILL_IN_BSL"
     return result
