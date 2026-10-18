@@ -183,6 +183,28 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
             tool("qualification/native_profile_audit.py", "--artifacts", output, "--sdk", sdk,
                  "--profile-receipt", output / "transport-profile-source.json",
                  "--expected-sha", source_sha, "--receipt", output / "transport-profile-native.json")
+            # Reuse the physical UART2 failure's mandatory M4F ABI gate for
+            # the genuine TI NPI task, not just the synthetic UART task.
+            import rtos_context_audit
+            import native_profile_audit
+            report_path = output / "transport-profile-native.json"
+            report = json.loads(report_path.read_text())
+            image = report["image_binding"]["files"]
+            report["rtos_context"] = rtos_context_audit.audit(
+                output / image["elf"]["file"],
+                output / image["xml"]["file"], sdk, compiler)
+            payload, error = native_profile_audit.b0_image_audit._parse_intel_hex(
+                output / image["hex"]["file"])
+            if error:
+                raise ValueError("TRANSPORT_HEX_INVALID " + error)
+            unexpected = sorted(address for address in payload if
+                                address >= 0x6000 and not 0xAFF00 <= address < 0xB0000)
+            if unexpected:
+                raise ValueError("TRANSPORT_OUTSIDE_THREE_APP_SECTORS " + hex(unexpected[0]))
+            if not any(address < 0x2000 for address in payload):
+                raise ValueError("TRANSPORT_VECTOR_SECTOR_MISSING")
+            report["three_app_sectors_max"] = True
+            report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         elif profile == "uart-smoke":
             tool("qualification/uart_smoke_native_audit.py", "--artifacts", output, "--sdk", sdk,
                  "--clang", compiler,
