@@ -40,7 +40,9 @@ def unique(pattern, text, field):
     return values[0]
 
 
-def inspect_generated(directory):
+def inspect_generated(directory, *, dcdc_enabled=False, force_vddr=None):
+    if type(dcdc_enabled) is not bool or (force_vddr is not None and type(force_vddr) is not bool):
+        raise ValueError("B0_R4_GENERATED_INVALID_POWER_PROFILE")
     header = (directory / "ti_drivers_config.h").read_text(encoding="utf-8")
     drivers = (directory / "ti_drivers_config.c").read_text(encoding="utf-8")
     devices = (directory / "ti_devices_config.c").read_text(encoding="utf-8")
@@ -114,12 +116,19 @@ def inspect_generated(directory):
         value = int(unique(
             r"^#define\s+SET_CCFG_MODE_CONF_%s\s+0x([0-9a-fA-F]+)\s*$" % field,
             devices, "DCDC_" + field), 16)
-        if value != 1:
-            raise ValueError("B0_R4_GENERATED_%s_NOT_DISABLED" % field)
+        if value != (0 if dcdc_enabled else 1):
+            raise ValueError("B0_R4_GENERATED_%s_%s" %
+                             (field, "POWER_PROFILE_MISMATCH" if dcdc_enabled else "NOT_DISABLED"))
+    if force_vddr is not None:
+        value = int(unique(
+            r"^#define\s+CCFG_FORCE_VDDR_HH\s+0x([0-9a-fA-F]+)\s*$",
+            devices, "FORCE_VDDR"), 16)
+        if value != int(force_vddr):
+            raise ValueError("B0_R4_GENERATED_FORCE_VDDR_PROFILE_MISMATCH")
     return {
         "uart": {"peripheral": "UART0", "rx_dio": bound["RX"],
                  "tx_dio": bound["TX"], "hardware_flow_control": False},
-        "dcdc": {"active_disabled": True, "recharge_disabled": True},
+        "dcdc": {"active_disabled": not dcdc_enabled, "recharge_disabled": not dcdc_enabled},
         "source": "TI 8.33 SysConfig emitted .c/.h, not original .syscfg claims",
         "generated_sha256": {
             name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
