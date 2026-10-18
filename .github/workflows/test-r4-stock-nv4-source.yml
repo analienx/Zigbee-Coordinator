@@ -7,14 +7,17 @@ on:
       - 'tests/test_r4_nv4_source_overlay.py'
       - 'tests/test_r4_nv4_ti_host_clone.py'
       - 'tests/test_r4_nv4_readonly_admission.py'
+      - 'tests/test_r4_nv_five_page_forensics.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_host_clone.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_ti_host_clone.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.h'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_cli.c'
+      - 'firmware/slzb-06p7u/r4/qualification/nv_five_page_forensics.py'
       - 'tests/test_r4_nv4_b1_bridge.py'
       - 'tests/test_r4_nv4_b1_ti_host_clone.py'
+      - 'tests/test_r4_workflow_gate_deps.py'
       - 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py'
       - '.github/workflows/test-r4-stock-nv4-source.yml'
   workflow_dispatch:
@@ -27,9 +30,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout immutable PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert checked-out commit is exact requested source
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          echo "NV4_SOURCE_COMMIT=$EXPECTED_SOURCE_SHA"
       - name: Unit-test four matching native geometry anchors and independent C reader
-        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone
+        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone tests.test_r4_nv_five_page_forensics tests.test_r4_workflow_gate_deps
       - name: Fetch exact public TI 8.33 source inputs without any SDK installer
         run: |
           python - <<'PY'

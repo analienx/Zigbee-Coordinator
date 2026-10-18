@@ -271,6 +271,7 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
+    needs: [r4-b0-overlay, r4-b0-upstream-inventory]
     concurrency:
       group: r4-b0-native-${{ github.event.pull_request.head.ref || github.ref_name }}
       cancel-in-progress: true

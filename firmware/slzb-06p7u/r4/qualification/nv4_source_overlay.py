@@ -15,7 +15,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
+import tempfile
 
 STOCK_BASE = 0xA6000
 STOCK_SIZE = 0x8000
@@ -92,6 +95,8 @@ def transform(syscfg: str, linker: str, projectspec: str) -> tuple[str, str, str
 
 
 def apply(syscfg: Path, linker: Path, projectspec: Path, receipt: Path) -> dict:
+    if any(p.is_symlink() for p in (syscfg, linker, projectspec, receipt)):
+        raise ValueError("P7U_NV4_SOURCE_SYMLINK_REFUSED")
     paths = [syscfg.resolve(), linker.resolve(), projectspec.resolve(), receipt.resolve()]
     if len(set(paths)) != len(paths):
         raise ValueError("P7U_NV4_INPUT_OR_RECEIPT_ALIAS")
@@ -118,11 +123,53 @@ def apply(syscfg: Path, linker: Path, projectspec: Path, receipt: Path) -> dict:
         "hardware_contact": False,
         "flash_authorized": False,
     }
-    # Validate every input before changing any. The caller must supply
-    # disposable workspace files, never originals from an installed SDK.
-    for path, content in zip((syscfg, linker, projectspec), new):
-        path.write_text(content, encoding="utf-8", newline="\n")
-    receipt.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Stage *all* outputs on their destination filesystems before replacing
+    # any pinned inputs. If a replacement raises, restore the original bytes
+    # from pre-staged copies. A killed process still requires reconstructing
+    # the disposable SDK from the pinned donor (multi-file rename is not an
+    # atomic crash transaction).
+    originals = (syscfg, linker, projectspec)
+    payloads = [value.encode("utf-8") for value in new]
+    receipt_bytes = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+    staged: list[Path] = []
+    backups: list[Path] = []
+    replaced: list[int] = []
+    rollback_complete = True
+
+    def stage(path: Path, contents: bytes, *, mode: int) -> Path:
+        with tempfile.NamedTemporaryFile(prefix=".r4-nv4-stage-", dir=path.parent,
+                                         delete=False) as stream:
+            temporary = Path(stream.name)
+            staged.append(temporary)
+            os.fchmod(stream.fileno(), mode)
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return temporary
+
+    try:
+        outputs = [stage(path, data, mode=stat.S_IMODE(path.stat().st_mode))
+                   for path, data in zip(originals, payloads)]
+        receipt_stage = stage(receipt, receipt_bytes, mode=0o600)
+        for path, raw in zip(originals, old):
+            backups.append(stage(path, raw, mode=stat.S_IMODE(path.stat().st_mode)))
+        for index, (path, temporary) in enumerate(zip(originals, outputs)):
+            os.replace(temporary, path)
+            replaced.append(index)
+        os.replace(receipt_stage, receipt)
+    except Exception:
+        for index in reversed(replaced):
+            try:
+                os.replace(backups[index], originals[index])
+            except OSError as exc:
+                rollback_complete = False
+                raise RuntimeError("P7U_NV4_OVERLAY_ROLLBACK_FAILED") from exc
+        raise
+    finally:
+        # Keep donor copies for manual recovery if the rollback itself fails.
+        if rollback_complete:
+            for temporary in staged:
+                temporary.unlink(missing_ok=True)
     return report
 
 

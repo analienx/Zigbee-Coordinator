@@ -17,12 +17,22 @@ class ScopeTests(unittest.TestCase):
             root = Path(tmp)
             file = root / scope.RELATIVE
             file.parent.mkdir(parents=True)
-            file.write_text("intro\n" + scope.BEFORE + "\nrest\n")
+            file.write_text("intro\n" + scope.BEFORE + "\n" +
+                            scope.SOURCE_LIST + "\nrest\n")
+            asm_dir = root / "kernel/tirtos7/packages/ti/sysbios/family/arm/m3"
+            asm_dir.mkdir(parents=True)
+            for name in scope.M4F_ASM:
+                (asm_dir / name).write_bytes(b"#if defined(__ARM_FP)\nasm\n#endif\n")
             receipt = scope.scope(root)
             result = file.read_text()
             self.assertIn(scope.AFTER, result)
             self.assertNotIn(scope.BEFORE, result)
+            self.assertIn(scope.PREPROCESS_M4F, result)
             self.assertEqual(receipt["target_preserved"], "m4f")
+            self.assertEqual(len(receipt["m4f_preprocessed_asm_source_sha256"]), 3)
+            for name in scope.M4F_ASM:
+                self.assertEqual((asm_dir / name).read_bytes(),
+                                 (asm_dir / name).with_suffix(".S").read_bytes())
             with self.assertRaisesRegex(ValueError, "refuse patch"):
                 scope.scope(root)
 
@@ -32,6 +42,26 @@ class ScopeTests(unittest.TestCase):
             file = root / scope.RELATIVE
             file.parent.mkdir(parents=True)
             file.write_text("set(TIRTOS_SUPPORTED_ARCHITECTURES m0p m4 m33f)")
+            with self.assertRaisesRegex(ValueError, "refuse patch"):
+                scope.scope(root)
+
+    def test_missing_cmake_transform_or_asm_refused_without_partial_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            file = root / scope.RELATIVE
+            file.parent.mkdir(parents=True)
+            file.write_text(scope.BEFORE + "\n" + scope.SOURCE_LIST)
+            asm_dir = root / "kernel/tirtos7/packages/ti/sysbios/family/arm/m3"
+            asm_dir.mkdir(parents=True)
+            for name in scope.M4F_ASM[:-1]:
+                (asm_dir / name).write_bytes(b"synthetic ASM source")
+            original = file.read_bytes()
+            with self.assertRaisesRegex(ValueError, "Missing pinned M4F ASM"):
+                scope.scope(root)
+            self.assertEqual(file.read_bytes(), original)
+            self.assertFalse(list(asm_dir.glob("*.S")))
+            (asm_dir / scope.M4F_ASM[-1]).write_bytes(b"synthetic ASM source")
+            file.write_text(scope.BEFORE + "\nwrong transform")
             with self.assertRaisesRegex(ValueError, "refuse patch"):
                 scope.scope(root)
 

@@ -99,6 +99,23 @@ class Nv4AdmissionTests(unittest.TestCase):
     def test_protected_geometry_is_exact_four_pages(self):
         self.assertEqual(self.probe(stock_like()[:-1]).code, 2)
 
+    def test_record_ceiling_is_scan_limit_not_bad_item(self):
+        media = bytearray(stock_like())
+        for page, count in ((0, 1000), (1, 1000), (2, 1)):
+            base = page * PAGE_SIZE
+            offset = 16
+            for _ in range(count):
+                payload = b'X'
+                trailer = bytearray((4, 0x1a, 0, 0, 4))
+                crc = forensics.crc8(payload + trailer)
+                trailer[4] |= crc >> 6
+                trailer.extend((((crc & 63) << 2) | 2, 0x96))
+                media[base + offset:base + offset + 8] = payload + trailer
+                offset += 8
+        result = self.probe(bytes(media))
+        self.assertEqual(result.records, 2000)
+        self.assertEqual(result.code, 7)  # R4_NV4_SCAN_LIMIT
+
 
 if __name__ == '__main__':
     unittest.main()
