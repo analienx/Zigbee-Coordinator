@@ -14,6 +14,9 @@ import uart_smoke_native_audit as native
 class UARTSmokeSource(unittest.TestCase):
     def test_unique_marker_has_correct_mt_checksum(self):
         self.assertEqual(smoke.MARKER, bytes.fromhex("fe0141f7a81f"))
+        self.assertEqual(smoke.PRE_MARKER, bytes.fromhex("fe0141f7a91e"))
+        self.assertEqual(smoke.TASK_MARKER, bytes.fromhex("fe0141f7aa1d"))
+        self.assertEqual(smoke.CONSTRUCT_MARKER, bytes.fromhex("fe0141f7ab1c"))
         self.assertEqual(len(smoke.MARKER), 6)
         self.assertEqual(smoke.MARKER[0], 0xFE)
         self.assertEqual(smoke.MARKER[1], len(smoke.MARKER) - 5)
@@ -29,6 +32,10 @@ class UARTSmokeSource(unittest.TestCase):
         self.assertIn("UART2_open(CONFIG_DISPLAY_UART", code)
         self.assertIn("UART2_write(uart, r4q_uart_smoke_frame", code)
         self.assertIn("Board_initGeneral();", code)
+        self.assertIn("r4q_uart_smoke_emit(r4q_uart_smoke_pre_frame, 16u);", code)
+        self.assertIn("r4q_uart_smoke_emit(r4q_uart_smoke_task_frame, 16u);", code)
+        self.assertIn("r4q_uart_smoke_emit(r4q_uart_smoke_construct_frame, 12u);", code)
+        self.assertIn("Power_releaseDependency(PowerCC26XX_PERIPH_UART0)", code)
         self.assertIn("BIOS_start();", code)
         self.assertIn("Task_sleep(", code)
         self.assertEqual(code.count("UART2_open("), 1)
@@ -46,7 +53,7 @@ class UARTSmokeSource(unittest.TestCase):
             changed = smoke.transform(candidate, "a" * 40)
         self.assertIn('r4q_uart_smoke_identity', changed)
         self.assertIn('r4q_uart_smoke_start(void)', changed)
-        self.assertNotIn("return 1;", changed)
+        self.assertNotIn("int main()\n{ return 1; }", changed)
 
     def test_preexisting_receipt_cannot_be_overwritten(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -64,8 +71,12 @@ class UARTSmokeNative(unittest.TestCase):
         values["r4q_uart_smoke_identity"] = {"address": 0x1234,
                                               "size": len(smoke.identity("a" * 40)),
                                               "bytes": smoke.identity("a" * 40), "function": False}
-        values["r4q_uart_smoke_frame"] = {"address": 0x1240, "size": len(smoke.MARKER),
-                                           "bytes": smoke.MARKER, "function": False}
+        for name, marker in (("r4q_uart_smoke_frame", smoke.MARKER),
+                             ("r4q_uart_smoke_pre_frame", smoke.PRE_MARKER),
+                             ("r4q_uart_smoke_task_frame", smoke.TASK_MARKER),
+                             ("r4q_uart_smoke_construct_frame", smoke.CONSTRUCT_MARKER)):
+            values[name] = {"address": 0x1240, "size": len(marker),
+                            "bytes": marker, "function": False}
         return values
 
     def test_only_minimal_linked_function_graph(self):

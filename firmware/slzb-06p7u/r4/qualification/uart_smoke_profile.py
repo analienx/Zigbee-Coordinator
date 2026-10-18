@@ -1,4 +1,4 @@
-"""Minimal pinned TI UART2 startup image; source-only and NEVER flash-authorized.
+"""Pinned UART0 pre-BIOS / task-entry beacons and UART2 handoff; source-only.
 
 This deliberately bypasses NPI, Zigbee, NV and RF. One SYS/BIOS Task writes a
 repeated 115200-baud diagnostic AREQ with the existing P7U UART0/DIO12/DIO13
@@ -18,14 +18,23 @@ MAIN = transport_profile.MAIN
 SDK_SHA = transport_profile.SDK_SHA
 DONOR_BLOB = "608adc97370be3910a96f5dcc356d0feffb79d70"
 PROFILE = "uart-smoke"
-PROFILE_ID = "r4-p7u-uart2-startup-smoke-v1"
+PROFILE_ID = "r4-p7u-uart2-staged-handoff-v2"
 
 # Frame: FE LEN=01 CMD0=41 (SYS AREQ) CMD1=F7 DATA=A8 FCS=1F.
 # The payload differs from the earlier post-NPI beacon (A7).
 MARKER = bytes.fromhex("fe0141f7a81f")
+PRE_MARKER = bytes.fromhex("fe0141f7a91e")
+TASK_MARKER = bytes.fromhex("fe0141f7aa1d")
+CONSTRUCT_MARKER = bytes.fromhex("fe0141f7ab1c")
 
 ENTRY = r'''#include <ti/drivers/UART2.h>
 #include <ti/sysbios/knl/Clock.h>
+#include <ti/drivers/Power.h>
+#include <ti/drivers/power/PowerCC26XX.h>
+#include <ti/devices/DeviceFamily.h>
+#include DeviceFamily_constructPath(driverlib/uart.h)
+#include DeviceFamily_constructPath(driverlib/ioc.h)
+#include DeviceFamily_constructPath(inc/hw_memmap.h)
 
 /* An optional debugger can inspect these stages without modifying flash/NV. */
 volatile uint32_t r4q_uart_smoke_stage;
@@ -33,9 +42,37 @@ static Task_Struct r4q_uart_smoke_task_object;
 static Char r4q_uart_smoke_stack[2048];
 static const uint8_t r4q_uart_smoke_frame[] __attribute__((used, retain)) =
     {0xFEu, 0x01u, 0x41u, 0xF7u, 0xA8u, 0x1Fu};
+static const uint8_t r4q_uart_smoke_pre_frame[] __attribute__((used, retain)) =
+    {0xFEu, 0x01u, 0x41u, 0xF7u, 0xA9u, 0x1Eu};
+static const uint8_t r4q_uart_smoke_task_frame[] __attribute__((used, retain)) =
+    {0xFEu, 0x01u, 0x41u, 0xF7u, 0xAAu, 0x1Du};
+static const uint8_t r4q_uart_smoke_construct_frame[] __attribute__((used, retain)) =
+    {0xFEu, 0x01u, 0x41u, 0xF7u, 0xABu, 0x1Cu};
+
+__attribute__((noinline)) static void r4q_uart_smoke_emit(
+    const uint8_t *frame, uint32_t repetitions)
+{
+    for (uint32_t repeat = 0u; repeat < repetitions; ++repeat)
+    {
+        for (uint32_t i = 0u; i < 6u; ++i)
+        {
+            UARTCharPut(UART0_BASE, frame[i]);
+        }
+        while (UARTBusy(UART0_BASE)) {}
+        for (volatile uint32_t spin = 0u; spin < 2000000u; ++spin)
+        {
+            __asm volatile("nop");
+        }
+    }
+}
 
 __attribute__((noinline)) Void r4q_uart_smoke_task(UArg a0, UArg a1)
 {
+    /* If this appears, Task_construct + BIOS_start successfully ran. */
+    r4q_uart_smoke_stage = 3u;
+    r4q_uart_smoke_emit(r4q_uart_smoke_task_frame, 16u);
+    UARTDisable(UART0_BASE);
+    Power_releaseDependency(PowerCC26XX_PERIPH_UART0);
     UART2_Params params;
     UART2_Params_init(&params);
     params.baudRate = 115200u;
@@ -43,14 +80,14 @@ __attribute__((noinline)) Void r4q_uart_smoke_task(UArg a0, UArg a1)
     params.stopBits = UART2_StopBits_1;
     params.readMode = UART2_Mode_BLOCKING;
     params.writeMode = UART2_Mode_BLOCKING;
-    r4q_uart_smoke_stage = 3u;
+    r4q_uart_smoke_stage = 4u;
     UART2_Handle uart = UART2_open(CONFIG_DISPLAY_UART, &params);
     if (uart == NULL)
     {
         r4q_uart_smoke_stage = 0xE1u;
         return;
     }
-    r4q_uart_smoke_stage = 4u;
+    r4q_uart_smoke_stage = 5u;
     for (;;)
     {
         size_t written = 0u;
@@ -58,7 +95,7 @@ __attribute__((noinline)) Void r4q_uart_smoke_task(UArg a0, UArg a1)
                                           sizeof(r4q_uart_smoke_frame), &written);
         r4q_uart_smoke_stage =
             (status == UART2_STATUS_SUCCESS && written == sizeof(r4q_uart_smoke_frame))
-            ? 5u : 0xE2u;
+            ? 6u : 0xE2u;
         /* One fresh marker per second, including after a late bridge attach. */
         Task_sleep((1000000u + Clock_tickPeriod - 1u) / Clock_tickPeriod);
     }
@@ -76,6 +113,21 @@ __attribute__((noinline)) int r4q_uart_smoke_start(void)
     Board_initGeneral();
     r4q_uart_smoke_stage = 2u;
 
+    if (Power_setDependency(PowerCC26XX_PERIPH_UART0) != Power_SOK)
+    {
+        r4q_uart_smoke_stage = 0xE0u;
+        return 1;
+    }
+    IOCPortConfigureSet(13u, IOC_PORT_MCU_UART0_TX, IOC_STD_OUTPUT);
+    UARTDisable(UART0_BASE);
+    UARTConfigSetExpClk(UART0_BASE, 48000000u, 115200u,
+                       UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
+                       UART_CONFIG_PAR_NONE);
+    UARTHwFlowControlDisable(UART0_BASE);
+    UARTEnable(UART0_BASE);
+    /* Same proven low-level path as the physically observed poll build. */
+    r4q_uart_smoke_emit(r4q_uart_smoke_pre_frame, 16u);
+
     Task_Params taskParams;
     Task_Params_init(&taskParams);
     taskParams.stack = r4q_uart_smoke_stack;
@@ -83,6 +135,8 @@ __attribute__((noinline)) int r4q_uart_smoke_start(void)
     taskParams.priority = 2;
     Task_construct(&r4q_uart_smoke_task_object, r4q_uart_smoke_task,
                    &taskParams, NULL);
+    /* Reached only if Task_construct completed; next handoff is BIOS. */
+    r4q_uart_smoke_emit(r4q_uart_smoke_construct_frame, 12u);
     BIOS_start();
     return 0;
 }

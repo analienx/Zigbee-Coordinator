@@ -31,9 +31,13 @@ def linked_symbols(symbols: dict, source_sha: str) -> dict:
     identity = symbols.get("r4q_uart_smoke_identity")
     if not identity or identity["function"] or identity["bytes"] != profile.identity(source_sha):
         raise ValueError("UART_SMOKE_LINKED_IDENTITY_MISMATCH")
-    marker = symbols.get("r4q_uart_smoke_frame")
-    if not marker or marker["function"] or marker["bytes"] != profile.MARKER:
-        raise ValueError("UART_SMOKE_LINKED_MARKER_MISMATCH")
+    for name, expected in (("r4q_uart_smoke_frame", profile.MARKER),
+                           ("r4q_uart_smoke_pre_frame", profile.PRE_MARKER),
+                           ("r4q_uart_smoke_task_frame", profile.TASK_MARKER),
+                           ("r4q_uart_smoke_construct_frame", profile.CONSTRUCT_MARKER)):
+        marker = symbols.get(name)
+        if not marker or marker["function"] or marker["bytes"] != expected:
+            raise ValueError("UART_SMOKE_LINKED_MARKER_MISMATCH " + name)
     return {name: {key: symbols[name][key] for key in ("address", "size")}
             for name in sorted(REQUIRED)}
 
