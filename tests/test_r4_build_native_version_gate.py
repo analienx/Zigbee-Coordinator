@@ -17,7 +17,11 @@ GOOD_CLANG = ('TI Arm Clang Compiler 3.2.2.LTS\nTarget: arm-ti-none-eabi\n'
 
 class NativeVersionGateTests(unittest.TestCase):
     def test_valid_pinned_tool_versions_pass(self):
-        verify_ti_versions('1.21.1+3772\n', GOOD_CLANG)
+        receipt = verify_ti_versions('1.21.1+3772\n', GOOD_CLANG)
+        self.assertEqual(receipt, {
+            'sysconfig_version': '1.21.1+3772',
+            'tiarmclang_version': 'TI Arm Clang Compiler 3.2.2.LTS',
+        })
 
     def test_wrong_sysconfig_suffix_rejected(self):
         with self.assertRaisesRegex(ValueError, 'SYSCONFIG_PIN_MISMATCH'):
