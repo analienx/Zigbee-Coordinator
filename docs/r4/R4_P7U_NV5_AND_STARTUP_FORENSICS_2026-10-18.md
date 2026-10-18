@@ -133,6 +133,18 @@ For all future pilots, use `qualification/npi_startup_poll.py`: bounded
 retry of both authenticated MT response shapes, ideally a 40-second ceiling,
 instead of an arbitrary 22-second sleep or a one-shot immediate probe.
 FCS verification rejects garbage/bridge noise and unexpected MT frames.
+Operator invocation after a *separately managed* reset (replace the host):
+
+```sh
+python firmware/slzb-06p7u/r4/qualification/npi_startup_poll.py \
+  --host P7U_BRIDGE_ADDRESS --port 6638 --max-seconds 40
+```
+
+The command sends **no reset, flash, NV, or network command**. It prints a
+bounded JSON readiness receipt with retry counts and exits 0 only on
+verified `SYS_PING` plus `SYS_VERSION`; exit 1 means the deadline expired.
+Its timer starts at invocation, so a separately measured reset-to-ready
+duration must also account for any delay before launching it.
 
 ## Disposition
 
