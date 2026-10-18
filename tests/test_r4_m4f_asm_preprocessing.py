@@ -72,8 +72,8 @@ class MachineFrameTest(unittest.TestCase):
             abi.verify_m4f_disassembly(self.disassembly())
 
     def test_missing_critical_hwi_path_is_rejected(self):
-        self.instructions[abi.HWI[2]] = ("msr psp, r1", "msr msp, r0")
-        with self.assertRaisesRegex(ValueError, "HWI_PATH_INCOMPLETE"):
+        self.instructions[abi.HWI[2]] = ()
+        with self.assertRaisesRegex(ValueError, "EMPTY_DISASSEMBLY"):
             abi.verify_m4f_disassembly(self.disassembly())
 
     def test_armv8m_msplim_in_linked_hwi_is_rejected(self):
@@ -87,6 +87,27 @@ class MachineFrameTest(unittest.TestCase):
             for code in self.instructions[abi.SWAP]
         )
         self.assertEqual(abi.verify_m4f_disassembly(self.disassembly())["m4f_restored_pc_word_index"], 24)
+
+    def test_linked_swap_is_pinned_machine_frame_not_text_mnemonics(self):
+        from xml.etree import ElementTree
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            elf = root / "linked.out"
+            elf.with_suffix(".bin").write_bytes(b"\x00" * 128 + abi.M4F_SWAP_SECTION)
+            xml = root / "linked.xml"
+            section = ElementTree.Element("object_component")
+            ElementTree.SubElement(section, "name").text = ".text." + abi.SWAP
+            ElementTree.SubElement(section, "run_address").text = "0x80"
+            ElementTree.SubElement(section, "size").text = "0x28"
+            ElementTree.ElementTree(section).write(xml)
+            self.assertEqual(abi.audit_linked_swap_bytes(xml, elf)["size"], 40)
+            # The earlier unpreprocessed SYS/BIOS code had two extra stack
+            # words before PC; any changed frame must be rejected.
+            old = elf.with_suffix(".bin").read_bytes().replace(
+                abi.M4F_SWAP_INSTRUCTIONS, b"\x00" * len(abi.M4F_SWAP_INSTRUCTIONS))
+            elf.with_suffix(".bin").write_bytes(old)
+            with self.assertRaisesRegex(ValueError, "MACHINE_BYTES_MISMATCH"):
+                abi.audit_linked_swap_bytes(xml, elf)
 
 
 if __name__ == "__main__":

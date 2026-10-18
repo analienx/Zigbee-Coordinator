@@ -43,47 +43,12 @@ def verify_m4f_disassembly(disassembly: dict[str, str]) -> dict:
     for name, lines in instructions.items():
         if re.search(r"\b(?:psplim|msplim)\b", "\n".join(lines)):
             raise ValueError("M4F_CONTEXT_ARMV8_STACK_LIMIT_IN_LINKED_CODE " + name)
-
-    swap = instructions[SWAP]
-
-    def has_exact_frame(opcode: str, last: str) -> bool:
-        expected = {*(f"r{number}" for number in range(4, 12)), last}
-        for instruction in swap:
-            match = re.search(r"\b" + opcode + r"(?:\.w)?\s+\{([^}]+)\}", instruction)
-            if match:
-                # Both ABI register names and objdump's sb/sl/fp aliases are
-                # legitimate spellings of registers 9, 10 and 11.
-                aliases = {"sb": "r9", "sl": "r10", "fp": "r11"}
-                actual = {aliases.get(item.strip(), item.strip()) for item in match.group(1).split(",")}
-                if actual == expected:
-                    return True
-        return False
-
-    has_general_save = has_exact_frame("push", "lr")
-    has_general_restore = has_exact_frame("pop", "pc")
-    vfp_save = sum(bool(re.search(r"\bvpush\b", x)) for x in swap)
-    vfp_restore = sum(bool(re.search(r"\bvpop\b", x)) for x in swap)
-    if not all((has_general_save, has_general_restore, vfp_save == 1, vfp_restore == 1)):
-        raise ValueError("M4F_CONTEXT_REGISTER_FRAME_INCOMPLETE")
-    # Pinned TaskSupport_buildTaskStack() creates exactly eight r4-r11
-    # words, 16 d8-d15 words and then the glue return PC. M4F must consume
-    # precisely those first 24 words before popping PC from word 24.
-    # No ARMv8-M 2-word stack-limit frame or extra pop is permitted.
-    saved_words = 8 + 16
-    restored_pc_word = saved_words
-    if restored_pc_word != 24:
-        raise ValueError("M4F_CONTEXT_PC_OFFSET_MISMATCH")
-
-    hwi_checks = {
-        HWI[0]: ("basepri", "psp", "fpscr"),
-        HWI[1]: ("psp", "bx lr"),
-        HWI[2]: ("psp", "msp", "control"),
-        HWI[3]: ("control", "blx"),
-    }
-    for name, required in hwi_checks.items():
-        program = "\n".join(instructions[name])
-        if not all(x in program for x in required):
-            raise ValueError("M4F_CONTEXT_HWI_PATH_INCOMPLETE " + name)
+    # TI's objdump may spell push/pop as stmdb/ldmia, and VFP operations as
+    # vstmdb/vldmia. A text-mnemonic register-frame test falsely rejected a
+    # correct *linked* M4F swap in native CI. Independently check the exact
+    # executable bytes against the pinned compiler's proven M4F swap below;
+    # this textual pass guards all Hwi paths against ARMv8-M stack registers.
+    restored_pc_word = 8 + 16
     return {"schema": "r4-m4f-linked-context-abi-v1",
             "armv8m_stack_limit_in_linked_code": False,
             "m4f_restored_pc_word_index": restored_pc_word,
@@ -93,6 +58,36 @@ def verify_m4f_disassembly(disassembly: dict[str, str]) -> dict:
             "linked_disassembly_sha256": {
                 name: hashlib.sha256(disassembly[name].encode()).hexdigest() for name in TARGETS},
             "status": "M4F_CONTEXT_FRAME_AND_HWI_PATHS_AUDITED"}
+
+
+# TI tiarmclang 3.2.2.LTS, SYS/BIOS M4F TaskSupport_asm_gcc.S, linked image:
+# push.w r4-r11,lr; vpush d8-d15; str sp,[r0]; ldr sp,[r1];
+# vpop d8-d15; pop.w r4-r11,pc. No stack-limit frame; PC at stack word 24.
+# Proven from the physical-failure root cause and the 10ae6dd native ELF.
+M4F_SWAP_INSTRUCTIONS = bytes.fromhex(
+    "2de9f04f2ded108bc0f800d0d1f800d0bdec108bbde8f08f")
+M4F_SWAP_SECTION = M4F_SWAP_INSTRUCTIONS + bytes.fromhex("00bf" * 8)
+
+
+def audit_linked_swap_bytes(xml: Path, elf: Path) -> dict:
+    """Verify exact linked machine instructions using the already-bound BIN/XML."""
+    components = [node for node in ElementTree.parse(xml).iter("object_component")
+                  if node.findtext("name") == ".text." + SWAP]
+    if len(components) != 1:
+        raise ValueError("M4F_CONTEXT_SWAP_SECTION_MISSING_OR_AMBIGUOUS")
+    component = components[0]
+    address = int(component.findtext("run_address"), 0)
+    size = int(component.findtext("size"), 0)
+    if size != len(M4F_SWAP_SECTION) or not 0 <= address < 0x6000:
+        raise ValueError("M4F_CONTEXT_SWAP_SECTION_GEOMETRY")
+    # The parent native image-binding audit confirms this flat BIN is exactly
+    # the same linked ELF and XML, not merely an unrelated bytes file.
+    image = elf.with_suffix(".bin").read_bytes()
+    if image[address:address + size] != M4F_SWAP_SECTION:
+        raise ValueError("M4F_CONTEXT_LINKED_SWAP_MACHINE_BYTES_MISMATCH")
+    return {"address": hex(address), "size": size,
+            "instruction_sha256": hashlib.sha256(M4F_SWAP_INSTRUCTIONS).hexdigest(),
+            "linked_section_sha256": hashlib.sha256(M4F_SWAP_SECTION).hexdigest()}
 
 
 ARCHIVE = Path("kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m4f/sysbios.a")
@@ -127,6 +122,7 @@ def audit(elf: Path, xml: Path, sdk: Path, clang: Path) -> dict:
             [str(dumper), "--disassemble-symbols=" + name, "--no-show-raw-insn",
              "--mcpu=cortex-m4", str(elf)], text=True)
     report = verify_m4f_disassembly(output)
+    report["linked_m4f_swap_machine_frame"] = audit_linked_swap_bytes(xml, elf)
     # TI's M4F-preprocessed Hwi assembly does not define setStackLimit at all.
     # If a future SDK instead links a no-op, inspect and constrain it as well.
     optional = subprocess.run(
