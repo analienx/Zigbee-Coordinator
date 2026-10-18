@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import redirect_stdout
 import importlib.util
+import io
 from pathlib import Path
 import unittest
 from unittest import mock
+import json
+import sys
 
 
 SOURCE = (Path(__file__).resolve().parents[1] /
@@ -62,6 +66,20 @@ class StartupPollTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await npi.request(reader, writer, command=2, timeout=.1),
                          bytes.fromhex("02000207010000000000"))
         self.assertEqual(writer.sent, [npi.VERSION_REQUEST])
+
+
+class StartupPollCommandTests(unittest.TestCase):
+    def test_cli_readiness_exit_codes_and_safe_json(self):
+        for ready, expected in ((True, 0), (False, 1)):
+            receipt = {"ready": ready, "attempts": 3, "retry_reasons": {}}
+            output = io.StringIO()
+            with (mock.patch.object(sys, "argv", ["poll", "--host", "127.0.0.1"]),
+                  mock.patch.object(npi, "poll", new_callable=mock.AsyncMock,
+                                    return_value=receipt) as probe,
+                  redirect_stdout(output)):
+                self.assertEqual(npi.main(), expected)
+            self.assertEqual(json.loads(output.getvalue()), receipt)
+            self.assertEqual(probe.await_args.args, ("127.0.0.1", 6638))
 
 
 if __name__ == "__main__":
