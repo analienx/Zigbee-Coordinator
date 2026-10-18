@@ -30,7 +30,7 @@ ENTRY = r'''#include <ti/devices/DeviceFamily.h>
 #include DeviceFamily_constructPath(driverlib/ioc.h)
 #include DeviceFamily_constructPath(driverlib/hw_memmap.h)
 
-/* Early polled UART: no BIOS, Task, driverlib UART0, NPI, Zigbee, RF or NV startup. */
+/* Early polled UART: no BIOS, Task, UART2 driver, NPI, Zigbee, RF or NV startup. */
 volatile uint32_t r4q_uart_poll_stage;
 static const uint8_t r4q_uart_poll_frame[] __attribute__((used, retain)) =
     {0xFEu, 0x01u, 0x41u, 0xF7u, 0xA9u, 0x1Eu};
