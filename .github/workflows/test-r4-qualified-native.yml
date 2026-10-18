@@ -38,7 +38,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_r4_*profile*.py' -v
           python -m unittest -v tests.test_r4_vendor_stock
-          python -m unittest -v tests.test_r4_capture_pair tests.test_r4_nv_compatibility tests.test_r4_current_board_profile tests.test_r4_current_app_package tests.test_r4_app_sector_transaction tests.test_r4_b0_verify_generated_board tests.test_r4_make_direct_app_only tests.test_r4_boot_sector_transaction
+          python -m unittest -v tests.test_r4_capture_pair tests.test_r4_nv_compatibility tests.test_r4_nv_sector_inventory tests.test_r4_current_board_profile tests.test_r4_current_app_package tests.test_r4_app_sector_transaction tests.test_r4_b0_verify_generated_board tests.test_r4_make_direct_app_only tests.test_r4_boot_sector_transaction
 
   native:
     needs: offline-tests

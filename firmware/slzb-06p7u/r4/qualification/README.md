@@ -1,10 +1,10 @@
 # P7U staged qualification
 
 This is the replacement qualification path for the SLZB-06P7U r1.73 /
-CC2652P7. The current owner-reported installation is stock 20240716, with
-read-only SYS_PING confirmed in the 17 October handover. Older documents
-describing a spare board running silent R4 are superseded. This is the only
-available coordinator.
+CC2652P7. The physical board is now running stock 20240716, verified after
+the approved duplicate ROM capture on 18 October. Older documents describing
+a spare board running silent R4 are superseded. This is the only available
+coordinator.
 
 No module here grants hardware authorization. There is no live-radio CLI.
 Current-board captures, IEEE/security material and restore images stay private.
@@ -18,6 +18,7 @@ Current-board captures, IEEE/security material and restore images stay private.
 | Transport diagnostic | `transport_profile.py`, existing TI NPI/MT owner | Only zero-length SYS_PING / SYS_VERSION; no NV initialization or Zigbee/RF stack startup |
 | Board generation | `board_profile.py` | Source-level SysConfig power/UART selection and generated GPIO/CCFG audit |
 | NV clone probe | `nv_compatibility.py` | Actual pinned TI init/item/CRC readers, with all writes/erases/compactions refused; structural evidence only |
+| NV sector inventory | `nv_sector_inventory.py` | Sanitized page-header hints across reserved sectors; never selects active stock NV or authorizes startup |
 | Native proof | `build_native.py`, `native_profile_audit.py`, `compare_replicas.py` | Genuine pinned TI compiler artifacts and independent firmware-byte comparison |
 | Application packaging | `../release/r4_current_app_package.py` | Dynamic ELF/HEX sectors bound to a current direct-boot capture; no NV/CCFG payload |
 | Transaction | `../release/r4_app_sector_transaction.py`, injected adapter only | Current application rollback, sector allowlist, vector sector last, status/CRC/readback gates |
@@ -56,9 +57,27 @@ resident-loader segment. The sanitized receipt is
 **if fresh physical capture confirms those installed settings**; updater write
 policy must not be inferred from the download alone.
 
-## Next owner-approved hardware operation
+## Completed physical read-only evidence (18 October 2026)
 
-Prepare one bounded capture window on the identified P7U Ethernet endpoint:
+Two private full 704-KiB ROM captures matched byte-for-byte. The approved
+return to stock produced valid `SYS_PING` and `SYS_VERSION=20240716` after the
+initial delayed response; no second restart was needed. Installed CCFG matches
+official stock `20240716` and selects vector address zero, with DIO15-low
+ROM-BSL backdoor configuration retained. Thus the current **boot layout**
+permits a native application without changing CCFG. It does **not** prove
+that a custom binary actually boots.
+
+A read-only reserved-sector inventory identifies two adjacent page-header
+pairs with differing format markers: 12 at `0xA6000/0xA8000` and 15 at
+`0xAA000/0xAC000`. The sectors `0xA0000..0xA5FFF` appear erased. Neither
+pair is verified as the active stock NV store; no key, counter, or downgrade
+compatibility follows from these structural hints. No flash programming or
+erasure occurred during the capture. Raw captures, identifiers, secrets and
+restoration bytes stay private on Zephyrus.
+
+## Previous owner-approved capture procedure (completed)
+
+The approved capture window used this bounded procedure:
 
 1. Confirm the private management identity and arrange exclusive ownership of
    TCP 6638. Do not change Zigbee2MQTT/HA settings during boot diagnosis.
@@ -72,7 +91,7 @@ Prepare one bounded capture window on the identified P7U Ethernet endpoint:
 4. Pin the private capture/identity hashes and run the current-profile analyzer.
    Never substitute the October 16 captures for the new installed stock state.
 
-The selected boot configuration determines the next gate:
+The selected boot configuration determined the next gate:
 
 - `DIRECT_NATIVE_CCFG_UNCHANGED`: direct-native application packaging may be
   prepared, subject to board/profile/sector checks and another specific trial
@@ -80,6 +99,12 @@ The selected boot configuration determines the next gate:
 - `AC000_RECOVERY_REQUIRED`: native deployment remains blocked. Do not repeat
   the old trampoline or use the only board for a first risky top-sector erase.
 - `UNKNOWN_BOOT_BLOCKED`: reconcile the selected vector/backdoor/layout first.
+
+The observed outcome is `DIRECT_NATIVE_CCFG_UNCHANGED`. The next hardware
+step would be a separately approved transport-only diagnostic trial with a
+board-bound application-sector recovery package, independent native-artifact
+parity and a bounded recovery window. The earlier capture approval does **not**
+authorize that flash or another restart.
 
 CCFG restoration must account for the entire final 8 KiB sector, including any
 resident-loader tail. TI top-sector erase restores TI defaults after erasure;

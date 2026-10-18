@@ -200,9 +200,21 @@ def export_private(package: AppPackage, output: Path, *, expected_profile_sha256
     """Write only app payload/restore sectors and hashes to a NEW private directory."""
     validate_package(package, expected_profile_sha256=expected_profile_sha256,
                      expected_package_sha256=expected_package_sha256)
-    if output.exists() or output.is_symlink():
+    # Restore sectors contain the owner's existing flash bytes. Never allow an
+    # accidentally checked-in export, including through symlinked parent dirs.
+    if output.is_symlink():
+        deny("PRIVATE_OUTPUT_SYMLINK")
+    real_output = output.resolve()
+    repo = HERE.parents[3]
+    if real_output == repo or repo in real_output.parents:
+        deny("PRIVATE_OUTPUT_INSIDE_SOURCE_REPO")
+    for parent in (real_output, *real_output.parents):
+        marker = parent / ".git"
+        if marker.is_file() or (marker.is_dir() and (marker / "HEAD").is_file()):
+            deny("PRIVATE_OUTPUT_INSIDE_GIT_WORKTREE")
+    if output.exists():
         deny("OUTPUT_ALREADY_EXISTS")
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, mode=0o700)
     for address, block in sorted(package.sectors.items()):
         (output / f"app-{address:05x}.bin").write_bytes(block)
         (output / f"restore-current-app-{address:05x}.bin").write_bytes(package.snapshot[address:address + SECTOR])

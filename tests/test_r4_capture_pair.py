@@ -1,6 +1,8 @@
 import binascii
 import importlib.util
+import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 
@@ -40,6 +42,8 @@ class CapturePairTests(unittest.IsolatedAsyncioTestCase):
             output = Path(temp) / "new-private"
             adapter = ReadAdapter()
             report = await capture.capture_pair(adapter, output, expected_identity_sha256=PIN)
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o700)
             self.assertEqual((output / "current-pass1.bin").read_bytes(), adapter.raw)
             self.assertEqual((output / "current-pass2.bin").read_bytes(), adapter.raw)
             self.assertEqual(report["pass1_sha256"], report["pass2_sha256"])
@@ -68,3 +72,26 @@ class CapturePairTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await capture.capture_pair(ReadAdapter(), output, expected_identity_sha256=PIN,
                                            total_timeout_seconds=timeout)
+
+    async def test_real_git_worktrees_denied_empty_placeholder_not_treated_as_repo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".git").mkdir()
+            self.assertFalse(capture._inside_git_repository(root / "safe"))
+            (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+            self.assertTrue(capture._inside_git_repository(root / "nested" / "capture"))
+            with self.assertRaisesRegex(ValueError, "PRIVATE_DIRECTORY_REQUIRED"):
+                await capture.capture_pair(ReadAdapter(), root / "new-private", expected_identity_sha256=PIN)
+
+    async def test_git_worktree_file_and_symlink_output_denied(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            worktree = root / "worktree"
+            worktree.mkdir()
+            (worktree / ".git").write_text("gitdir: /private/gitdir\n")
+            self.assertTrue(capture._inside_git_repository(worktree / "nested" / "capture"))
+            target = root / "missing-private"
+            link = root / "link-private"
+            link.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "PRIVATE_DIRECTORY_REQUIRED"):
+                await capture.capture_pair(ReadAdapter(), link, expected_identity_sha256=PIN)

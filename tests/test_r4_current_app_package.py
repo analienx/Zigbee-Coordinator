@@ -1,6 +1,8 @@
 """Synthetic current-board geometry; no native-build or hardware qualification."""
 import copy
+import os
 from pathlib import Path
+import stat
 import struct
 import sys
 import tempfile
@@ -62,6 +64,8 @@ class CurrentAppPackageTests(unittest.TestCase):
             out = Path(directory) / "private"
             m.export_private(package, out, expected_profile_sha256=package.profile["profile_sha256"],
                              expected_package_sha256=package.manifest["package_sha256"])
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o700)
             self.assertEqual((out / "restore-current-app-04000.bin").read_bytes(), package.snapshot[0x4000:0x6000])
             self.assertFalse(any("ccfg" in path.name or "nv" in path.name for path in out.iterdir()))
             parsed, error = m._parse_intel_hex(out / "CURRENT-APP-ONLY-NOT-FLASH-AUTHORIZED.hex")
@@ -137,6 +141,29 @@ class CurrentAppPackageTests(unittest.TestCase):
                 m.from_artifacts(artifacts, profile, snapshot,
                     expected_profile_sha256=profile["profile_sha256"],
                     expected_manifest_sha256=m.sha(b"{}"))
+
+    def test_private_app_export_rejects_git_worktrees_and_symlink_escape(self):
+        package = synthetic_package()
+        kwargs = {"expected_profile_sha256": package.profile["profile_sha256"],
+                  "expected_package_sha256": package.manifest["package_sha256"]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git_tree = root / "nested"
+            git_tree.mkdir()
+            (git_tree / ".git").write_text("gitdir: /private/external\n")
+            with self.assertRaisesRegex(ValueError, "INSIDE_GIT_WORKTREE"):
+                m.export_private(package, git_tree / "capture", **kwargs)
+            self.assertFalse((git_tree / "capture").exists())
+            symlink = root / "export-link"
+            symlink.symlink_to(root / "nonexistent-export", target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "PRIVATE_OUTPUT_SYMLINK"):
+                m.export_private(package, symlink, **kwargs)
+            self.assertFalse((root / "nonexistent-export").exists())
+            placeholder = root / ".git"
+            placeholder.mkdir()
+            safe = root / "private-export"
+            m.export_private(package, safe, **kwargs)
+            self.assertTrue((safe / "manifest.json").is_file())
 
 
 if __name__ == "__main__":

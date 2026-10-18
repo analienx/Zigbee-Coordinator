@@ -19,6 +19,15 @@ BLOCK_BYTES = 240
 REPO = Path(__file__).resolve().parents[4]
 
 
+def _inside_git_repository(path: Path) -> bool:
+    """Reject real worktrees, not unrelated empty .git placeholder directories."""
+    for directory in (path, *path.parents):
+        marker = directory / ".git"
+        if marker.is_file() or (marker.is_dir() and (marker / "HEAD").is_file()):
+            return True
+    return False
+
+
 class ReadOnlyROM(Protocol):
     async def identity_sha256(self) -> str: ...
     async def flash_size(self) -> int: ...
@@ -35,9 +44,11 @@ async def capture_pair(rom: ReadOnlyROM, output: Path, *, expected_identity_sha2
             not 0 < request_timeout_seconds <= 10 or
             not request_timeout_seconds <= total_timeout_seconds <= 1800):
         raise ValueError("CAPTURE_FINITE_BOUNDED_TIMEOUTS_REQUIRED")
+    if output.is_symlink():
+        raise ValueError("CAPTURE_NEW_PRIVATE_DIRECTORY_REQUIRED")
     output = output.resolve()
     if (output == REPO or REPO in output.parents or output.exists() or
-            any((parent / ".git").exists() for parent in output.parents)):
+            _inside_git_repository(output)):
         raise ValueError("CAPTURE_NEW_PRIVATE_DIRECTORY_REQUIRED")
 
     async def call(method, *args):
@@ -50,7 +61,7 @@ async def capture_pair(rom: ReadOnlyROM, output: Path, *, expected_identity_sha2
         if type(size) is not int or size != FLASH_BYTES:
             raise ValueError("CAPTURE_LIVE_FLASH_GEOMETRY_MISMATCH")
         # Only create output after live identity/geometry are established.
-        output.mkdir(parents=True, exist_ok=False)
+        output.mkdir(parents=True, exist_ok=False, mode=0o700)
         hashes = []
         for pass_number in (1, 2):
             digest = hashlib.sha256()
