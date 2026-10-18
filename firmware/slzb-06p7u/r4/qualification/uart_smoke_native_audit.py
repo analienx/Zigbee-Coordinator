@@ -9,6 +9,7 @@ import re
 import subprocess
 
 import native_profile_audit as shared
+import rtos_context_audit
 import uart_smoke_profile as profile
 
 REQUIRED = {"main", "r4q_uart_smoke_start", "r4q_uart_smoke_task",
@@ -42,7 +43,7 @@ def linked_symbols(symbols: dict, source_sha: str) -> dict:
             for name in sorted(REQUIRED)}
 
 
-def audit(artifacts: Path, sdk: Path, receipt_path: Path, source_sha: str) -> dict:
+def audit(artifacts: Path, sdk: Path, receipt_path: Path, source_sha: str, clang: Path) -> dict:
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     expected = {
         "schema": "r4-p7u-uart-smoke-source-v1", "profile": profile.PROFILE,
@@ -71,6 +72,12 @@ def audit(artifacts: Path, sdk: Path, receipt_path: Path, source_sha: str) -> di
     binding = shared.audit_image_binding(artifacts)
     symbols = shared.elf_symbols(artifacts / binding["files"]["elf"]["file"])
     linked = linked_symbols(symbols, source_sha)
+    # The previous real physical smoke observed pre-BIOS markers but no task
+    # marker. Its linked kernel contained ARMv8-M PSPLIM instructions on M4F.
+    # Reject such binaries before any future app package can be admitted.
+    rtos_context = rtos_context_audit.audit(
+        artifacts / binding["files"]["elf"]["file"],
+        artifacts / binding["files"]["xml"]["file"], sdk, clang)
     # Diagnostic consumes at most three 8 KiB APP sectors. CCFG resides far
     # above those sectors and is generated/audited separately, never packaged.
     manifest = json.loads((artifacts / "manifest.json").read_text())
@@ -88,6 +95,7 @@ def audit(artifacts: Path, sdk: Path, receipt_path: Path, source_sha: str) -> di
         "schema": "r4-p7u-uart-smoke-native-v1", "profile": profile.PROFILE,
         "source_sha": source_sha, "linked_functions": linked,
         "image_binding": binding, "marker_hex": profile.MARKER.hex(),
+        "rtos_context": rtos_context,
         "three_app_sectors_max": True, "native_compilation_verified": True,
         "physical_uart_verified": False, "flash_authorized": False,
     }
@@ -97,13 +105,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", required=True, type=Path)
     parser.add_argument("--sdk", required=True, type=Path)
+    parser.add_argument("--clang", required=True, type=Path)
     parser.add_argument("--profile-receipt", required=True, type=Path)
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--receipt", required=True, type=Path)
     args = parser.parse_args()
     if args.receipt.exists() or args.receipt.is_symlink():
         raise ValueError("UART_SMOKE_NATIVE_RECEIPT_EXISTS")
-    report = audit(args.artifacts, args.sdk, args.profile_receipt, args.expected_sha)
+    report = audit(args.artifacts, args.sdk, args.profile_receipt, args.expected_sha, args.clang)
     args.receipt.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({key: report[key] for key in
                       ("profile", "source_sha", "native_compilation_verified", "flash_authorized")}))

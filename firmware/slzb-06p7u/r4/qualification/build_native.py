@@ -14,12 +14,14 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+import shlex
 from make_transport_harness import SCENARIOS
 from board_profile import REFERENCES
 
 EXAMPLES = "87ff5b638b632050228a7504f35cf3b95581c278"
 SDK = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 PROJECT = "znp_LP_CC1352P7_4_tirtos7_ticlang"
+CMAKE_VERSION = "3.31.6"
 REPO = Path(__file__).resolve().parents[4]
 R4 = REPO / "firmware/slzb-06p7u/r4"
 
@@ -90,13 +92,40 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
         version = subprocess.check_output([str(compiler / "bin/tiarmclang"), "--version"], text=True)
         if "3.2.2" not in version:
             raise ValueError("QUALIFICATION_COMPILER_PIN_MISMATCH")
+        cmake_version = subprocess.check_output(["cmake", "--version"], text=True).splitlines()[0]
+        if cmake_version != "cmake version " + CMAKE_VERSION:
+            raise ValueError("QUALIFICATION_CMAKE_PIN_MISMATCH: " + cmake_version)
         with (sdk / "imports.mak").open("a", encoding="utf-8") as stream:
             stream.write(f"\nSYSCONFIG_TOOL := {syscfg}\nTICLANG_ARMCOMPILER := {compiler}\n"
                          f"CMAKE := {shutil.which('cmake')}\nPYTHON := {sys.executable}\n"
                          "GCC_ARMCOMPILER :=\nIAR_ARMCOMPILER :=\n")
         tool("b0/tools/b0_sdk_build_scope.py", "--sdk", sdk,
              "--receipt", output / "sdk-scope-receipt.json")
+        os.environ["CMAKE_EXPORT_COMPILE_COMMANDS"] = "ON"
         run("make", "-j2", cwd=sdk)
+        commands_file = sdk / "build/ticlang/compile_commands.json"
+        if not commands_file.is_file():
+            raise ValueError("QUALIFICATION_NATIVE_ASM_COMMANDS_NOT_RECORDED")
+        commands = json.loads(commands_file.read_text())
+        expected_asm = {"TaskSupport_asm_gcc.S", "Hwi_asm_gcc.S", "Hwi_asm_switch_gcc.S"}
+        m4f_asm = {}
+        for entry in commands:
+            file_path = Path(entry["file"])
+            if (file_path.name in expected_asm and
+                    file_path.as_posix().endswith("/family/arm/m3/" + file_path.name)):
+                command = entry.get("command", "")
+                args = shlex.split(command) if command else entry.get("arguments", [])
+                if (not any("tiarmclang" in Path(arg).name for arg in args[:1]) or
+                        any(args[i + 1] != "assembler-with-cpp" for i, arg in enumerate(args[:-1]) if arg == "-x")):
+                    raise ValueError("QUALIFICATION_ASM_PREPROCESSOR_OVERRIDDEN " + file_path.name)
+                if file_path.name in m4f_asm:
+                    raise ValueError("QUALIFICATION_AMBIGUOUS_ASM_COMPILE_COMMAND")
+                m4f_asm[file_path.name] = entry
+        if set(m4f_asm) != expected_asm:
+            raise ValueError("QUALIFICATION_M4F_ASM_NOT_COMPILED_WITH_CPP " + repr(sorted(m4f_asm)))
+        (output / "native-asm-compile-commands.json").write_text(json.dumps({
+            "cmake_version": cmake_version, "tiarmclang_version": version.splitlines()[0],
+            "m4f_asm_compile_commands": m4f_asm}, indent=2) + "\n")
         if profile == "transport-only":
             os.environ["R4_NVOCMP_SOURCE"] = str(sdk / "source/ti/common/nv/nvocmp.c")
             os.environ["R4_CRC_SOURCE"] = str(sdk / "source/ti/common/nv/crc.c")
@@ -156,6 +185,7 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
                  "--expected-sha", source_sha, "--receipt", output / "transport-profile-native.json")
         elif profile == "uart-smoke":
             tool("qualification/uart_smoke_native_audit.py", "--artifacts", output, "--sdk", sdk,
+                 "--clang", compiler,
                  "--profile-receipt", output / "uart-smoke-source.json",
                  "--expected-sha", source_sha, "--receipt", output / "uart-smoke-native.json")
         else:
