@@ -21,6 +21,9 @@ NV_END = 0xAE000
 CCFG_START = 0xAFFA8
 CHIP_END = 0xB0000
 ERASE_SIZE = 0x2000
+STOCK_20240716_CCFG_SHA256 = (
+    'fa750d46003f4cc059140ac75a83282ec61543b0d898c50cd2add61988c08b47'
+)
 
 
 def reject(reason: str) -> None:
@@ -97,6 +100,12 @@ def evaluate(artifacts: Path) -> dict:
     if error:
         reject(error)
     report = verify_payload(data)
+    ccfg = bytes(data[i] for i in range(CCFG_START, CHIP_END))
+    ccfg_sha = hashlib.sha256(ccfg).hexdigest()
+    if ccfg_sha != STOCK_20240716_CCFG_SHA256:
+        reject('linked 88-byte CCFG differs from installed stock 20240716')
+    report['linked_ccfg_sha256'] = ccfg_sha
+    report['linked_ccfg_exact_stock_20240716'] = True
     report['schema'] = 'r4-stock-p7u-nv4-real-linked-hex-gate-v1'
     report['manifest_digests'] = {k: manifest['files'][k]['sha256'] for k in paths}
     report['real_native_linked'] = True
