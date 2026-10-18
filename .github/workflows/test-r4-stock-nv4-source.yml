@@ -8,9 +8,14 @@ on:
       - 'tests/test_r4_nv4_ti_host_clone.py'
       - 'tests/test_r4_nv4_readonly_admission.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_ti_host_clone.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.h'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_cli.c'
+      - 'tests/test_r4_nv4_b1_bridge.py'
+      - 'tests/test_r4_nv4_b1_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py'
       - '.github/workflows/test-r4-stock-nv4-source.yml'
   workflow_dispatch:
 
@@ -24,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Unit-test four matching native geometry anchors and independent C reader
-        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone
+        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone
       - name: Fetch exact public TI 8.33 source inputs without any SDK installer
         run: |
           python - <<'PY'
@@ -97,3 +102,32 @@ jobs:
           R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
           R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
         run: python -m unittest -v tests.test_r4_nv4_ti_host_clone
+      - name: Fetch real pinned B1/Z-Stack source dependencies into disposable SDK
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'firmware/slzb-06p7u/r4/b1/tools')
+          from run_hosted_tests import fetch_sources
+          fetch_sources(Path('/tmp/r4-stock-nv4-pinned/b1-sdk'))
+          PY
+      - name: Apply pinned B1 safety overlay then adapt its NV2 gate for existing P7U NV4
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'firmware/slzb-06p7u/r4/b1/tools')
+          from apply_b1 import overlay
+          overlay(Path('/tmp/r4-stock-nv4-pinned/b1-sdk'),
+                  Path('firmware/slzb-06p7u/r4/b1'))
+          PY
+          python firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py \
+            --sdk /tmp/r4-stock-nv4-pinned/b1-sdk \
+            --receipt /tmp/r4-stock-nv4-pinned/b1-nv4-bridge.json
+      - name: Compile genuine B1-patched TI multipage startup and reject corrupt NV4
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+          R4_B1_NV4_SOURCE: /tmp/r4-stock-nv4-pinned/b1-sdk/source/ti/common/nv/nvocmp.c
+          R4_B1_NV4_RECEIPT: /tmp/r4-stock-nv4-pinned/b1-nv4-bridge.json
+        run: python -m unittest -v tests.test_r4_nv4_b1_ti_host_clone
