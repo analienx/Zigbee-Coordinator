@@ -1,0 +1,133 @@
+name: P7U existing-network NV4 full ZNP native (NO FLASH)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/test-r4-stock-nv4-native.yml'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4*'
+      - 'tests/test_r4_nv4_native_gate.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-nv4-znp-native:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Test independently audited image gate
+        run: python -m unittest -v tests.test_r4_nv4_native_gate
+      - name: Restore checksum-pinned TI installers
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/b0ti/downloads
+          key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
+      - name: Install TI Clang runtime dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libtinfo5
+      - name: Authenticate pinned TI compiler CCS and SysConfig
+        env:
+          TI_CCS_SHA256: ${{ secrets.TI_CCS_SHA256 }}
+          TI_SYSCONFIG_SHA256: ${{ secrets.TI_SYSCONFIG_SHA256 }}
+          TI_CLANG_SHA256: ${{ secrets.TI_CLANG_SHA256 }}
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py \
+            --root /tmp/b0ti --github-env "$GITHUB_ENV" --github-path "$GITHUB_PATH"
+      - name: Refuse unavailable/mismatched toolchain
+        run: |
+          export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
+          python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision \
+            --out /tmp/nv4-toolchain-receipt.json
+          python firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py \
+            --ccs-eclipse "$CCS_ECLIPSE" --standalone-cli "$SYSCONFIG_CLI" \
+            --receipt /tmp/nv4-sysconfig-binding.json
+      - name: Build genuine TI ZNP with B1 protection and stock four-page layout
+        shell: bash
+        env:
+          B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nv4src /tmp/nv4out
+          git init -q /tmp/nv4src/examples
+          git -C /tmp/nv4src/examples remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git
+          git -C /tmp/nv4src/examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C /tmp/nv4src/examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C /tmp/nv4src/examples submodule update --init cc13xx_cc26xx_sdk
+          sdk=/tmp/nv4src/examples/cc13xx_cc26xx_sdk
+          test "$(git -C "$sdk" rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          "$SYSCONFIG_CLI" --version | grep -F '1.21.1+3772'
+          tiarmclang --version | grep -F '3.2.2'
+          printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\nCMAKE := %s\nPYTHON := python3\nGCC_ARMCOMPILER :=\nIAR_ARMCOMPILER :=\n' \
+            "$SYSCONFIG_CLI" "$TICLANG_ARMCOMPILER" "$(command -v cmake)" >> "$sdk/imports.mak"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py" \
+            --sdk "$sdk" --receipt /tmp/nv4out/sdk-scope.json
+          (cd "$sdk" && make -j2) 2>&1 | tee /tmp/nv4out/build.log
+          find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) | grep -q .
+
+          donor=/tmp/nv4src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py" \
+            --syscfg "$donor/znp.syscfg" \
+            --linker "$sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
+            --projectspec "$donor/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec" \
+            --receipt /tmp/nv4out/nv4-geometry.json
+          mkdir -p "$sdk/.b1-prerequisites"
+          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts \
+            -o "$sdk/.b1-prerequisites/herdsman-definition.ts"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/apply_b1.py" \
+            --sdk "$sdk" --receipt /tmp/nv4out/b1-overlay.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py" \
+            --sdk "$sdk" --receipt /tmp/nv4out/b1-nv4-bridge.json
+
+          "$CCS_ECLIPSE" -noSplash -data /tmp/nv4ws -application com.ti.common.core.initialize \
+            -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/nv4out/build.log
+          "$CCS_ECLIPSE" -noSplash -data /tmp/nv4ws -application com.ti.common.core.initialize \
+            -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/nv4out/build.log
+          eclipse -noSplash -data /tmp/nv4ws -application com.ti.ccstudio.apps.projectImport \
+            -ccs.location "$donor/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec" \
+            2>&1 | tee -a /tmp/nv4out/build.log
+          project=/tmp/nv4ws/znp_LP_CC1352P7_4_tirtos7_ticlang
+          test -f "$project/znp.syscfg"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
+            --syscfg "$project/znp.syscfg" --receipt /tmp/nv4out/p7u-board.json
+          "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/nv4out/preflight-syscfg \
+            -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/nv4out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir /tmp/nv4out/preflight-syscfg --receipt /tmp/nv4out/p7u-pins.json
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/nv4out/preflight-syscfg/ti_drivers_config.c').read_text()
+          assert 'flashBuf0[0x8000]' in p, 'NV4 buffer not emitted'
+          assert 'location(0xa6000)' in p, 'stock NV4 address not emitted'
+          assert '.regionSize = 0x8000' in p, 'stock NV4 size not emitted'
+          print('REAL GENERATED FOUR-PAGE NVS AT 0xA6000..0xADFFF')
+          PY
+          eclipse -noSplash -data /tmp/nv4ws -application com.ti.ccstudio.apps.projectBuild \
+            -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/nv4out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" \
+            --workspace /tmp/nv4ws --out /tmp/nv4out \
+            --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/nv4out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_native_gate.py" \
+            --artifacts /tmp/nv4out --receipt /tmp/nv4out/nv4-native-gate.json
+      - name: Preserve public receipts without a device-flash artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-nv4-native-public-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/nv4-toolchain-receipt.json
+            /tmp/nv4-sysconfig-binding.json
+            /tmp/nv4out/sdk-scope.json
+            /tmp/nv4out/nv4-geometry.json
+            /tmp/nv4out/b1-overlay.json
+            /tmp/nv4out/b1-nv4-bridge.json
+            /tmp/nv4out/p7u-board.json
+            /tmp/nv4out/p7u-pins.json
+            /tmp/nv4out/nv4-native-gate.json
+          if-no-files-found: warn
