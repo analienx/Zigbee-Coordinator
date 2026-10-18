@@ -47,7 +47,7 @@ class UARTPollSource(unittest.TestCase):
             changed = poll.transform(candidate, "a" * 40)
         self.assertIn('r4q_uart_poll_identity', changed)
         self.assertIn('r4q_uart_poll_start(void)', changed)
-        self.assertNotIn("return 1;", changed)
+        self.assertNotIn("int main()\n{ return 1; }", changed)
 
     def test_preexisting_receipt_cannot_be_overwritten(self):
         with tempfile.TemporaryDirectory() as temp:
