@@ -17,12 +17,16 @@ class FakeROM:
         self.crc_disagreement = False
         self.corrupt_protected_on_packet = False
         self.corrupt_final_app = False
+        self.corrupt_vector_on_packet = False
+        self.corrupt_unrelated_on_packet = False
+        self.events = []
 
     async def identity_sha256(self):
         return self.identity
 
     async def read(self, address, length):
         assert length == tx.SECTOR and address % tx.SECTOR == 0
+        self.events.append(("read", address))
         return bytes(self.memory[address:address + length])
 
     async def crc32(self, address, length):
@@ -32,6 +36,7 @@ class FakeROM:
     async def erase_sector(self, address):
         assert address in (0, 0x4000), "unexpected non-application erase"
         self.erases.append(address)
+        self.events.append(("erase", address))
         self.memory[address:address + tx.SECTOR] = b"\xff" * tx.SECTOR
         return True
 
@@ -51,6 +56,10 @@ class FakeROM:
             self.memory[0xA0000] = 0
         if self.corrupt_final_app and self.position == 0x6000:
             self.memory[0x4004] ^= 1
+        if self.corrupt_vector_on_packet:
+            self.memory[4] = 0xFF
+        if self.corrupt_unrelated_on_packet:
+            self.memory[0x2000] = 0
         return True
 
     async def status(self):
@@ -159,6 +168,117 @@ class AppSectorTransactionTests(unittest.TestCase):
                     await tx.rollback_current_app(rom, self.package, **self.pins,
                                                    expected_live_sector_sha256=pins)
             self.assertEqual(rom.erases, [])
+        asyncio.run(scenario())
+
+    def test_per_erase_reads_only_target_and_all_protected_sectors(self):
+        async def scenario():
+            rom = FakeROM(self.package)
+            admission = await tx.admit(rom, self.package, **self.pins)
+            rom.events.clear()
+            await self.execute(rom, admission)
+            full = tx.FLASH // tx.SECTOR
+            protected = set(range(0xA0000, tx.FLASH, tx.SECTOR))
+            first_erase = rom.events.index(("erase", 0x4000))
+            second_erase = rom.events.index(("erase", 0))
+            initial_reads = [address for kind, address in rom.events[:first_erase] if kind == "read"]
+            middle_reads = [address for kind, address in rom.events[first_erase + 1:second_erase] if kind == "read"]
+            self.assertEqual(initial_reads[:full], list(range(0, tx.FLASH, tx.SECTOR)))
+            self.assertEqual(set(initial_reads[full:]), protected | {0x4000})
+            # One readback of the first programmed sector, then second-target guard.
+            self.assertEqual(middle_reads[0], 0x4000)
+            self.assertEqual(set(middle_reads[1:]), protected | {0})
+            final_reads = [address for kind, address in rom.events[second_erase + 1:] if kind == "read"]
+            self.assertEqual(final_reads[-full:], list(range(0, tx.FLASH, tx.SECTOR)))
+            reads = sum(kind == "read" for kind, _ in rom.events)
+            self.assertEqual(reads, 2 * full + len(self.package.sectors) * (len(protected) + 2))
+        asyncio.run(scenario())
+
+    def test_vector_drift_stops_before_vector_erase_unrelated_drift_fails_final_check(self):
+        async def scenario():
+            for mutation in ("vector", "unrelated"):
+                rom = FakeROM(self.package)
+                rom.corrupt_vector_on_packet = mutation == "vector"
+                rom.corrupt_unrelated_on_packet = mutation == "unrelated"
+                error = "LIVE_STATE_CHANGED_BEFORE_ERASE" if mutation == "vector" else "FINAL_FULL_STATE_CHANGED"
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, error):
+                    await self.execute(rom)
+                self.assertEqual(rom.erases, [0x4000] if mutation == "vector" else [0x4000, 0])
+        asyncio.run(scenario())
+
+    def test_hanging_read_operation_times_out_without_writes_or_retry(self):
+        class HangingReadROM(FakeROM):
+            attempts = 0
+            cancelled = False
+
+            async def read(self, address, length):
+                self.attempts += 1
+                try:
+                    await asyncio.Future()
+                finally:
+                    self.cancelled = True
+
+        async def scenario():
+            rom = HangingReadROM(self.package)
+            with self.assertRaisesRegex(ValueError, "ADAPTER_OPERATION_TIMEOUT_read"):
+                await asyncio.wait_for(tx.admit(rom, self.package, **self.pins,
+                    operation_timeout=0.01, session_timeout=1.0), timeout=1.0)
+            self.assertEqual(rom.attempts, 1)
+            self.assertTrue(rom.cancelled)
+            self.assertEqual(rom.erases, [])
+        asyncio.run(scenario())
+
+    def test_single_session_deadline_is_shared_across_individually_successful_calls(self):
+        class SlowROM(FakeROM):
+            attempts = 0
+
+            async def read(self, address, length):
+                self.attempts += 1
+                await asyncio.sleep(0.01)
+                return await super().read(address, length)
+
+        async def scenario():
+            rom = SlowROM(self.package)
+            with self.assertRaisesRegex(ValueError, "SESSION_DEADLINE_EXCEEDED"):
+                await asyncio.wait_for(tx.admit(rom, self.package, **self.pins,
+                    operation_timeout=1.0, session_timeout=0.03), timeout=1.0)
+            self.assertGreater(rom.attempts, 0)
+            self.assertLess(rom.attempts, tx.FLASH // tx.SECTOR)
+            self.assertEqual(rom.erases, [])
+        asyncio.run(scenario())
+
+    def test_hanging_packet_stops_after_one_attempt_without_automatic_rollback(self):
+        class HangingPacketROM(FakeROM):
+            cancelled = False
+
+            async def send_data(self, payload):
+                self.packets.append(payload)
+                try:
+                    await asyncio.Future()
+                finally:
+                    self.cancelled = True
+
+        async def scenario():
+            rom = HangingPacketROM(self.package)
+            admission = await tx.admit(rom, self.package, **self.pins)
+            with self.assertRaisesRegex(ValueError, "ADAPTER_OPERATION_TIMEOUT_send_data"):
+                await asyncio.wait_for(tx.execute(rom, self.package, admission, **self.pins,
+                    expected_admission_sha256=admission["admission_sha256"],
+                    operation_timeout=0.01, session_timeout=1.0), timeout=1.0)
+            self.assertEqual(rom.erases, [0x4000])
+            self.assertEqual(len(rom.packets), 1)
+            self.assertTrue(rom.cancelled)
+        asyncio.run(scenario())
+
+    def test_invalid_deadline_limits_rejected_before_adapter_calls(self):
+        async def scenario():
+            for limits in ({"operation_timeout": 0}, {"operation_timeout": True},
+                           {"session_timeout": -1}, {"session_timeout": float("inf")},
+                           {"session_timeout": float("nan")}):
+                rom = FakeROM(self.package)
+                with self.subTest(limits=limits), self.assertRaisesRegex(ValueError, "INVALID_TIMEOUT_LIMIT"):
+                    await tx.admit(rom, self.package, **self.pins, **limits)
+                self.assertEqual(rom.events, [])
+                self.assertEqual(rom.erases, [])
         asyncio.run(scenario())
 
 

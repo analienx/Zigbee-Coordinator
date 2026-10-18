@@ -4,6 +4,9 @@
 No adapter is constructed here. No reset, CCFG/NV operation, bank erase,
 DOWNLOAD_CRC, retry, or automatic rollback exists. A failed operation raises
 immediately and leaves the caller's ROM/BSL session in its existing state.
+Adapters must use cooperative async I/O and honor cancellation. A timed-out
+erase/program has unknown completion; independently re-read it before any
+explicit rollback. The core cannot preempt an adapter blocking the event loop.
 """
 from __future__ import annotations
 
@@ -64,11 +67,12 @@ class _BoundedROM:
             remaining = self._deadline - time.monotonic()
             if remaining <= 0:
                 deny("SESSION_DEADLINE_EXCEEDED")
+            session_limited = remaining <= self._operation_timeout
             try:
                 return await asyncio.wait_for(getattr(self._adapter, name)(*args),
                     timeout=min(self._operation_timeout, remaining))
             except TimeoutError as error:
-                reason = ("SESSION_DEADLINE_EXCEEDED" if time.monotonic() >= self._deadline
+                reason = ("SESSION_DEADLINE_EXCEEDED" if session_limited
                           else "ADAPTER_OPERATION_TIMEOUT_" + name)
                 raise ValueError("R4_APP_TRANSACTION_BLOCKED_" + reason) from error
 

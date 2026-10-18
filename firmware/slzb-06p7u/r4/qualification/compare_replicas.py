@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import board_profile
+import vendor_stock
 
 
 def compare(first, second, *, source_sha, reference):
@@ -13,6 +14,12 @@ def compare(first, second, *, source_sha, reference):
         build = json.loads((root / "qualification-build.json").read_text())
         native = json.loads((root / "transport-profile-native.json").read_text())
         board = json.loads((root / "board-native.json").read_text())
+        if reference == "vendor-20240716":
+            stock = json.loads((root / "vendor-stock-reference.json").read_text())
+            if (stock.get("sha256") != vendor_stock.SHA256 or
+                    stock.get("schema") != "r4-p7u-public-stock-reference-v1" or
+                    stock.get("current_physical_ccfg_verified") is not False):
+                raise ValueError("QUALIFICATION_VENDOR_REFERENCE_MISMATCH")
         if (build.get("schema") != "r4-p7u-qualification-build-v1" or
                 build.get("source_sha") != source_sha or
                 build.get("profile") != "transport-only" or build.get("reference_power") != reference or

@@ -15,6 +15,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from make_transport_harness import SCENARIOS
+from board_profile import REFERENCES
 
 EXAMPLES = "87ff5b638b632050228a7504f35cf3b95581c278"
 SDK = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
@@ -63,6 +64,9 @@ def build(output: Path, reference: str, source_sha: str):
 
     def tool(relative, *argv):
         run(sys.executable, R4 / relative, *argv)
+
+    if reference == "vendor-20240716":
+        tool("qualification/vendor_stock.py", "--download", "--receipt", output / "vendor-stock-reference.json")
 
     with native_workspace() as temp:
         examples = temp / "examples"
@@ -156,7 +160,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--reference-power", required=True,
-                        choices=("historical-20240710", "historical-fitted-20260311"))
+                        choices=REFERENCES)
     args = parser.parse_args()
     build(args.output.resolve(), args.reference_power, args.source_sha)
 

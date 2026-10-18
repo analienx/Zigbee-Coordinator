@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SYSCFG_LF_SHA256 = "ca5e6cb93e8fb5689641743782b5f050fb7ce459cea1df804be385db9de4321f"
 REFERENCES = {
+    "vendor-20240716": (True, True, 0xF1B9C1FF, 0xFFC00010),
     "historical-20240710": (False, False, 0xFFB9C1FF, 0xFF800010),
     "historical-fitted-20260311": (True, True, 0xF1B9C1FF, 0xFFC00010),
 }
@@ -107,6 +108,23 @@ def inspect_generated(directory, power, *, transport_only, binary=None):
     if transport_only:
         if "Board_shutDownExtFlash" in drivers:
             raise ValueError("P7U_TRANSPORT_EXTERNAL_FLASH_INITIALIZATION")
+        code = re.sub(r"/\*.*?\*/|//[^\n]*", "", drivers, flags=re.S)
+        def body(name):
+            pattern = (r"^\s*void\s+(?:__attribute__\(\(weak\)\)\s+)?" + name +
+                       r"\(void\)\s*\{([^{}]*)\}")
+            matches = re.findall(pattern, code, re.M)
+            if len(matches) != 1:
+                raise ValueError("P7U_TRANSPORT_BOARD_INITIALIZER_AMBIGUOUS_" + name)
+            return re.sub(r"\s+", "", matches[0])
+        if body("Board_initHook"):
+            raise ValueError("P7U_TRANSPORT_NONEMPTY_BOARD_HOOK")
+        if body("Board_init") != "Power_init();GPIO_init();Board_initHook();":
+            raise ValueError("P7U_TRANSPORT_UNVERIFIED_BOARD_INITIALIZATION")
+        gpio_config = re.findall(r"const\s+GPIO_Config\s+GPIO_config\s*=\s*\{([^{}]*)\}", code)
+        if (len(gpio_config) != 1 or len(re.findall(
+                r"\.configs\s*=\s*\(GPIO_PinConfig\s*\*\)\s*gpioPinConfigs\s*,",
+                gpio_config[0])) != 1):
+            raise ValueError("P7U_TRANSPORT_ACTIVE_GPIO_CONFIG_NOT_BOUND")
         match = re.search(r"GPIO_PinConfig\s+gpioPinConfigs\[31\]\s*=\s*\{(.*?)\};", drivers, re.S)
         if not match:
             raise ValueError("P7U_TRANSPORT_GPIO_ARRAY_MISSING")

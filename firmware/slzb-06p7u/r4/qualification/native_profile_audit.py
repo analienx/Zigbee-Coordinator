@@ -33,7 +33,11 @@ FORBIDDEN_EXACT = {
     "RF_runDirectCmd", "NVS_init", "NVS_open", "NVS_getAttrs", "NVS_write", "NVS_erase",
     "FlashProgram", "FlashSectorErase",
     "NOROM_FlashProgram", "NOROM_FlashSectorErase",
+    "GPIO_toggle", "Board_sendExtFlashByte", "Board_wakeUpExtFlash", "Board_shutDownExtFlash",
 }
+# GPIO_write must remain allowed: pinned GPIO_setConfigAndMux references it
+# internally, and the original UART driver needs that pin configuration helper.
+# The generated board gate separately constrains initialization and DIO12/13.
 FORBIDDEN_PREFIXES = ("NVOCMP_", "osal_nv_", "stackTask", "ZMac", "MAC_", "macTask",
                       "ApiMac_", "RFCC26XX_", "NVSCC26XX_")
 

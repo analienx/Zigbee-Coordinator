@@ -22,15 +22,16 @@ Current-board captures, IEEE/security material and restore images stay private.
 | Application packaging | `../release/r4_current_app_package.py` | Dynamic ELF/HEX sectors bound to a current direct-boot capture; no NV/CCFG payload |
 | Transaction | `../release/r4_app_sector_transaction.py`, injected adapter only | Current application rollback, sector allowlist, vector sector last, status/CRC/readback gates |
 
-Public historical power references exercise the compiler. They are **not**
-evidence of current-board settings. Earlier app-only experiments preserved
+Public vendor and historical power references exercise the compiler. They are
+**not** evidence of current-board settings. Earlier app-only experiments preserved
 physical CCFG, so their unused compiled power words do not prove the cause
 of ZNP silence.
 
 ## Native build
 
-The `P7U qualification transport dual native (NO FLASH)` workflow builds each
-historical power reference twice on separate Ubuntu runners. It uses the
+The `P7U qualification transport dual native (NO FLASH)` workflow builds the
+verified public 20240716 power reference twice on separate Ubuntu runners.
+Historical references remain available for offline comparison. The workflow uses the
 existing checksum-pinned CCS 12.8 / TI ARM Clang 3.2.2.LTS / standalone
 SysConfig 1.21.1.3772 bootstrap and TI SDK/examples 8.33 pins.
 
@@ -45,6 +46,15 @@ repeatability, not physical boot or a healthy network.
 The diagnostic still starts TI SYS/BIOS, OsalPort support and the original NPI
 task. It is purpose-built qualification firmware, not an unmodified ZNP image.
 Normal B0 and cumulative B1-B4 are not released by this diagnostic workflow.
+
+The official 20240716 P7U catalog artifact is now verified offline by
+`vendor_stock.py` (SHA256, bounded SLZB segment layout and both segment CRCs).
+Its application has vectors at zero and its 88-byte CCFG sets IMAGE_VALID to
+zero, MODE_CONF_1 to `0xFFC00010` and MODE_CONF to `0xF1B9C1FF`. It contains no
+resident-loader segment. The sanitized receipt is
+`vendor-stock-20240716.json`. This supports the unchanged-CCFG direct boot path
+**if fresh physical capture confirms those installed settings**; updater write
+policy must not be inferred from the download alone.
 
 ## Next owner-approved hardware operation
 

@@ -98,6 +98,13 @@ class NativeGates(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "MUTATION_GRAPH_PRESENT"):
                 native.check_transport_symbols(values, "a" * 40)
 
+    def test_uart_pin_configuration_dependency_may_link_gpio_write(self):
+        # Exact TI GPIO_setConfigAndMux uses GPIO_write for output configurations;
+        # UART2Support_pinMux needs that generic helper for the validated UART pins.
+        values = symbol_set()
+        values["GPIO_write"] = {"address": 0x2000, "size": 4, "function": True, "bytes": b"x" * 4}
+        self.assertEqual(set(native.check_transport_symbols(values, "a" * 40)), native.REQUIRED_FUNCTIONS)
+
     def test_each_required_function_and_bound_marker_is_required(self):
         for name in native.REQUIRED_FUNCTIONS:
             values = symbol_set(); del values[name]

@@ -22,6 +22,9 @@ def seed_generated(directory, power, *, unsafe_gpio=None, external_init=False):
         entries[unsafe_gpio] = "GPIO_CFG_OUTPUT | GPIO_CFG_OUT_LOW"
     drivers = SRC.replace("GPIO_PinConfig gpioPinConfigs[31] = {};",
                           "GPIO_PinConfig gpioPinConfigs[31] = {" + ",".join(entries) + "};")
+    drivers += ('\nconst GPIO_Config GPIO_config = { .configs = (GPIO_PinConfig *)gpioPinConfigs, };\n'
+                'void __attribute__((weak)) Board_initHook(void) {}\n'
+                'void Board_init(void) { Power_init(); GPIO_init(); Board_initHook(); }\n')
     if external_init:
         drivers += "\nvoid Board_shutDownExtFlash(void) { /* rejected even if empty */ }\n"
     device = (DEV if not power["dcdc_enabled"] else DEV.replace("0x1", "0x0"))
@@ -43,7 +46,9 @@ class QualificationBoardProfileTests(unittest.TestCase):
                 self.assertFalse(report["flash_authorized"])
                 self.assertFalse(report["current_board_qualified"])
                 self.assertEqual(report["dcdc"]["active_disabled"], not power["dcdc_enabled"])
-                other = board.settings(reference=next(name for name in board.REFERENCES if name != reference))
+                other = board.settings(reference=next(
+                    name for name, values in board.REFERENCES.items()
+                    if values[:2] != board.REFERENCES[reference][:2]))
                 with self.assertRaisesRegex(ValueError, "POWER_PROFILE_MISMATCH|NOT_DISABLED|FORCE_VDDR"):
                     board.inspect_generated(root, other, transport_only=True)
 
@@ -72,6 +77,21 @@ class QualificationBoardProfileTests(unittest.TestCase):
         forged["profile_sha256"] = profiles.profile_digest(forged)
         with self.assertRaisesRegex(ValueError, "SOURCE_INCONSISTENT"):
             board.settings(current_profile=forged, expected_profile_sha256=forged["profile_sha256"])
+
+    def test_board_hook_init_and_active_gpio_array_are_audited(self):
+        power = board.settings(reference="historical-fitted-20260311")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for before, after, error in (
+                ("Board_initHook(void) {}", "Board_initHook(void) { GPIO_write(6, 1); }", "NONEMPTY_BOARD_HOOK"),
+                ("Power_init();", "Power_init(); GPIO_write(7, 0);", "UNVERIFIED_BOARD_INITIALIZATION"),
+                ("(GPIO_PinConfig *)gpioPinConfigs", "(GPIO_PinConfig *)otherArray", "ACTIVE_GPIO_CONFIG_NOT_BOUND"),
+            ):
+                seed_generated(root, power)
+                path = root / "ti_drivers_config.c"
+                path.write_text(path.read_text().replace(before, after))
+                with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                    board.inspect_generated(root, power, transport_only=True)
 
     def test_native_power_and_vector_words_are_independently_checked(self):
         power = board.settings(reference="historical-fitted-20260311")
