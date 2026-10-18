@@ -13,7 +13,8 @@ import rtos_context_audit
 import uart_smoke_profile as profile
 
 REQUIRED = {"main", "r4q_uart_smoke_start", "r4q_uart_smoke_task",
-            "UART2_open", "UART2_write"}
+            "r4q_uart_smoke_accept_byte", "UART2_open", "UART2_write",
+            "UART2_readTimeout"}
 FORBIDDEN_PREFIX = ("NPITask", "NPITL", "NPIFrame", "MT_", "NVOCMP_",
                     "osal_nv_", "stackTask", "ZMac", "ApiMac_", "RFCC26XX_",
                     "NVSCC26XX_")
@@ -35,7 +36,9 @@ def linked_symbols(symbols: dict, source_sha: str) -> dict:
     for name, expected in (("r4q_uart_smoke_frame", profile.MARKER),
                            ("r4q_uart_smoke_pre_frame", profile.PRE_MARKER),
                            ("r4q_uart_smoke_task_frame", profile.TASK_MARKER),
-                           ("r4q_uart_smoke_construct_frame", profile.CONSTRUCT_MARKER)):
+                           ("r4q_uart_smoke_construct_frame", profile.CONSTRUCT_MARKER),
+                           ("r4q_uart_sys_ping_response", profile.SYS_PING_RESPONSE),
+                           ("r4q_uart_sys_version_response", profile.SYS_VERSION_RESPONSE)):
         marker = symbols.get(name)
         if not marker or marker["function"] or marker["bytes"] != expected:
             raise ValueError("UART_SMOKE_LINKED_MARKER_MISMATCH " + name)

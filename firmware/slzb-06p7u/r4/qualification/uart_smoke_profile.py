@@ -1,8 +1,9 @@
-"""Pinned UART0 pre-BIOS / task-entry beacons and UART2 handoff; source-only.
+"""Pinned UART2 handoff and minimal bidirectional SYS request diagnostic.
 
-This deliberately bypasses NPI, Zigbee, NV and RF. One SYS/BIOS Task writes a
-repeated 115200-baud diagnostic AREQ with the existing P7U UART0/DIO12/DIO13
-SysConfig, so observation does not depend on NPI initialization succeeding.
+This deliberately bypasses the full NPI, Zigbee, NV and RF stacks. One
+SYS/BIOS Task transitions from proven UART0 markers to UART2, then parses
+bounded MT framing to answer only SYS_PING and SYS_VERSION. It is not a
+production coordinator or a real stack-version response.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ MAIN = transport_profile.MAIN
 SDK_SHA = transport_profile.SDK_SHA
 DONOR_BLOB = "608adc97370be3910a96f5dcc356d0feffb79d70"
 PROFILE = "uart-smoke"
-PROFILE_ID = "r4-p7u-uart2-staged-handoff-v2"
+PROFILE_ID = "r4-p7u-uart2-bidirectional-sys-diagnostic-v3"
 
 # Frame: FE LEN=01 CMD0=41 (SYS AREQ) CMD1=F7 DATA=A8 FCS=1F.
 # The payload differs from the earlier post-NPI beacon (A7).
@@ -26,6 +27,9 @@ MARKER = bytes.fromhex("fe0141f7a81f")
 PRE_MARKER = bytes.fromhex("fe0141f7a91e")
 TASK_MARKER = bytes.fromhex("fe0141f7aa1d")
 CONSTRUCT_MARKER = bytes.fromhex("fe0141f7ab1c")
+SYS_PING_RESPONSE = bytes.fromhex("fe026101010063")
+# Diagnostic code revision = ASCII "DIA1" (0x31414944), not TI stock version.
+SYS_VERSION_RESPONSE = bytes.fromhex("fe09610202000000004449413115")
 
 ENTRY = r'''#include <ti/drivers/UART2.h>
 #include <ti/sysbios/knl/Clock.h>
@@ -48,6 +52,82 @@ static const uint8_t r4q_uart_smoke_task_frame[] __attribute__((used, retain)) =
     {0xFEu, 0x01u, 0x41u, 0xF7u, 0xAAu, 0x1Du};
 static const uint8_t r4q_uart_smoke_construct_frame[] __attribute__((used, retain)) =
     {0xFEu, 0x01u, 0x41u, 0xF7u, 0xABu, 0x1Cu};
+static const uint8_t r4q_uart_sys_ping_response[] __attribute__((used, retain)) =
+    {0xFEu, 0x02u, 0x61u, 0x01u, 0x01u, 0x00u, 0x63u};
+static const uint8_t r4q_uart_sys_version_response[] __attribute__((used, retain)) =
+    {0xFEu, 0x09u, 0x61u, 0x02u, 0x02u, 0x00u, 0x00u, 0x00u,
+     0x00u, 0x44u, 0x49u, 0x41u, 0x31u, 0x15u};
+
+typedef struct {
+    uint8_t state;
+    uint8_t length;
+    uint8_t remaining;
+    uint8_t cmd0;
+    uint8_t cmd1;
+    uint8_t fcs;
+} r4q_uart_frame_parser;
+
+__attribute__((noinline)) static void r4q_uart_smoke_accept_byte(
+    UART2_Handle uart, r4q_uart_frame_parser *parser, uint8_t value)
+{
+    switch (parser->state)
+    {
+    case 0u: /* SOF */
+        if (value == 0xFEu) { parser->state = 1u; }
+        break;
+    case 1u: /* LEN */
+        parser->length = value;
+        parser->remaining = value;
+        parser->fcs = value;
+        parser->state = 2u;
+        break;
+    case 2u: /* CMD0 */
+        parser->cmd0 = value;
+        parser->fcs ^= value;
+        parser->state = 3u;
+        break;
+    case 3u: /* CMD1 */
+        parser->cmd1 = value;
+        parser->fcs ^= value;
+        parser->state = parser->remaining == 0u ? 5u : 4u;
+        break;
+    case 4u: /* Payload is discarded; only zero-length SYS queries supported. */
+        parser->fcs ^= value;
+        if (--parser->remaining == 0u) { parser->state = 5u; }
+        break;
+    case 5u: /* FCS */
+        if (value == parser->fcs && parser->length == 0u &&
+            parser->cmd0 == 0x21u)
+        {
+            const uint8_t *response = NULL;
+            size_t response_size = 0u;
+            if (parser->cmd1 == 0x01u)
+            {
+                response = r4q_uart_sys_ping_response;
+                response_size = sizeof(r4q_uart_sys_ping_response);
+            }
+            else if (parser->cmd1 == 0x02u)
+            {
+                response = r4q_uart_sys_version_response;
+                response_size = sizeof(r4q_uart_sys_version_response);
+            }
+            if (response != NULL)
+            {
+                r4q_uart_smoke_stage = 7u;
+                size_t written = 0u;
+                int_fast16_t status = UART2_write(uart, response, response_size, &written);
+                r4q_uart_smoke_stage =
+                    (status == UART2_STATUS_SUCCESS && written == response_size)
+                    ? 8u : 0xE3u;
+            }
+        }
+        parser->state = 0u;
+        break;
+    default:
+        parser->state = 0u;
+        break;
+    }
+}
 
 __attribute__((noinline)) static void r4q_uart_smoke_emit(
     const uint8_t *frame, uint32_t repetitions)
@@ -88,16 +168,24 @@ __attribute__((noinline)) Void r4q_uart_smoke_task(UArg a0, UArg a1)
         return;
     }
     r4q_uart_smoke_stage = 5u;
+    size_t written = 0u;
+    int_fast16_t status = UART2_write(uart, r4q_uart_smoke_frame,
+                                      sizeof(r4q_uart_smoke_frame), &written);
+    r4q_uart_smoke_stage =
+        (status == UART2_STATUS_SUCCESS && written == sizeof(r4q_uart_smoke_frame))
+        ? 6u : 0xE2u;
+    r4q_uart_frame_parser parser = {0};
     for (;;)
     {
-        size_t written = 0u;
-        int_fast16_t status = UART2_write(uart, r4q_uart_smoke_frame,
-                                          sizeof(r4q_uart_smoke_frame), &written);
-        r4q_uart_smoke_stage =
-            (status == UART2_STATUS_SUCCESS && written == sizeof(r4q_uart_smoke_frame))
-            ? 6u : 0xE2u;
-        /* One fresh marker per second, including after a late bridge attach. */
-        Task_sleep((1000000u + Clock_tickPeriod - 1u) / Clock_tickPeriod);
+        uint8_t input = 0u;
+        size_t received = 0u;
+        /* One byte per bounded Task read. Never block the scheduler forever. */
+        (void)UART2_readTimeout(uart, &input, 1u, &received,
+            (250000u + Clock_tickPeriod - 1u) / Clock_tickPeriod);
+        if (received == 1u)
+        {
+            r4q_uart_smoke_accept_byte(uart, &parser, input);
+        }
     }
 }
 
