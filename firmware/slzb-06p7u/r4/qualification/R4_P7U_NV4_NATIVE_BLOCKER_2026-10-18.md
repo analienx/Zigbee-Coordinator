@@ -14,6 +14,17 @@ reads, and the pinned TI CRC implementation were compiled for a four-page
 in-memory NVS backend. Its write, erase, and compaction functions always fail
 closed; no radio or debug probe is opened.
 
+**B1 integration (same day):** After applying the exact-pinned B1 source
+overlay, `nv4_b1_bridge.py` replaces its two-page-only admission with the
+four-page bounded CRC reader and preserves the B1 existing-network security
+signal, sticky HOLD and init-time write denial. A second native-host simulator
+compiled the *actual post-B1 and post-bridge TI `nvocmp.c`*, including its
+`NVOCMP_initNvApi`, against both private captures. Both returned success and
+normal resume with **366 active items**, and **zero attempted writes, erases,
+or compactions**; earlier/later scan totals were 667/714 records and
+3936/4124 NVS reads. Synthetic bad-CRC and unsettled-compaction inputs HOLD.
+All device bytes stayed private. Public CI for this post-B1 test has passed.
+
 ### Private captures, aggregate-only results
 
 | Test | Earlier fitted P7U capture | Later fitted P7U capture |
@@ -62,6 +73,15 @@ The following repository files and CI workflow provide safe, public tests:
 - `.github/workflows/test-r4-stock-nv4-source.yml`: fetches the required
   public TI sources at immutable revisions, validates pins, and exercises
   the above tests. It **never** flashes or accesses private NV.
+- `nv4_b1_bridge.py`, `nv4_b1_ti_host_clone.py` and their two tests:
+  post-B1 four-page exact-source integration, real TI init bodies, HALT
+  controls and the two private-capture aggregate-only host results.
+- `nv4_native_gate.py`, its negative tests and
+  `.github/workflows/test-r4-stock-nv4-native.yml`: newly submitted real CCS
+  full-stack ZNP build with stock `NVOCMP_NVPAGES=4`, current stock 20240716
+  power/CCFG, B1 NV4 admission, generated SysConfig verification, and strict
+  real linked HEX address audit. **Until that job succeeds its native proof is
+  pending; this workflow never flashes.**
 
 Public TI guidance backs up the required matching configuration in
 compiler defines, linker preprocessing, SysConfig NVS region, and linker
@@ -73,12 +93,11 @@ allocation:
 
 ## Remaining full-stack gate (not NV4 parser corruption)
 
-1. **B1 overlay is still hard-pinned to NV2.** `b1_admission.c/h`,
-   `apply_b1.py`, its pre-division NVS guards and existing-network security
-   signal expect **two** pages at `0xAA000`. They must be adapted and
-   independently tested for a *four-page existing-network* candidate. It is
-   unsafe to change only SysConfig/linker defines and leave B1's NV2 logic.
-2. **Native executable/link audit.** Build actual pinned TI 8.33 ZNP for the
+1. **B1 admission adaptation — PASS in real TI host clone, not yet linked ARM.**
+   Pre-init page geometry and the existing-network signal are now tested with
+   both captures. Physical RF, security semantics and whole-image boot are
+   NOT implied by a host result.
+2. **Native executable/link audit — running in public CI.** Build pinned TI 8.33 ZNP for the
    fitted board with four-page NVS, confirm the entire linked application
    stops below `0xA6000`, compiled and generated NVS attributes exactly match
    `0xA6000/0x8000`, and direct-boot CCFG + sector protection match the live
@@ -96,4 +115,11 @@ No restore action is scheduled: the intended flash transaction will leave
 `0xA6000..0xADFFF` untouched. The working transport-only diagnostic remains
 the last physically proven device state until the above gates close.
 
-**Verdict: `NV4_TI_READONLY_INIT_PASS`; `FULL_STACK_FLASH_HOLD`.**
+The current physical 18-Oct return-to-stock readbacks (as opposed to older
+17-Oct R4/handoff incident documents) confirm `IMAGE_VALID_CONF=0` and the
+official `20240716` power profile. The native candidate therefore retains
+current stock direct-boot and power settings rather than applying the obsolete
+20240710 or resident-handoff source overlay.
+
+**Verdict: `NV4_B1_TI_READONLY_INIT_PASS`; `NV4_FULL_ZNP_NATIVE_CI_RUNNING`;
+`FULL_STACK_FLASH_HOLD`.**
