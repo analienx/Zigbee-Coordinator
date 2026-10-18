@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from safe_checkout_files import validate_sources, write_source_text
+
 SHA = "0968f979d558874b17396c96b66382d4236bbdcd"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
@@ -150,8 +152,7 @@ def replace_once(source, original, replacement):
     return source.replace(original, replacement, 1)
 
 def plan(root):
-    if not root.is_dir() or not str(root.resolve()).startswith("/tmp/"):
-        raise ValueError("herdsman overlay only allowed in disposable /tmp checkout")
+    validate_sources(root, (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS, CONTROLLER))
     if _git(root, "rev-parse", "HEAD").decode().strip() != SHA:
         raise ValueError("herdsman source HEAD not exact version 10.9.1 pin")
     originals = {}
@@ -471,7 +472,7 @@ def apply(root):
         "files": {},
     }
     for name, (original, new) in plans.items():
-        (root / name).write_text(new, encoding="utf-8", newline="")
+        write_source_text(root, name, new)
         receipt["files"][name] = {
             "before_sha256": hashlib.sha256(original.encode()).hexdigest(),
             "after_sha256": hashlib.sha256(new.encode()).hexdigest(),

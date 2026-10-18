@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from safe_checkout_files import validate_sources, write_source_text
+
 PIN = "62b02e2aa1997c574223b80c196677b63a25f4a7"
 OTA = "lib/extension/otaUpdate.ts"
 CONTROLLER = "lib/controller.ts"
@@ -28,9 +30,7 @@ def once(data, anchor, replacement):
 
 def plan(root):
     root = Path(root)
-    if (not root.is_dir() or root.is_symlink() or
-            not str(root.resolve()).startswith("/tmp/")):
-        raise ValueError("only disposable /tmp Z2M source checkouts")
+    validate_sources(root, (OTA, CONTROLLER, PACKAGE))
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("wrong pinned Z2M source")
     originals = {}
@@ -121,7 +121,7 @@ def apply(root):
         "files": {},
     }
     for path, (old, new) in changes.items():
-        (Path(root) / path).write_text(new, encoding="utf-8", newline="")
+        write_source_text(root, path, new)
         result["files"][path] = {
             "before_sha256": hashlib.sha256(old.encode()).hexdigest(),
             "after_sha256": hashlib.sha256(new.encode()).hexdigest(),
