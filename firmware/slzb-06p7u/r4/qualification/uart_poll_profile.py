@@ -19,7 +19,7 @@ DONOR_BLOB = "608adc97370be3910a96f5dcc356d0feffb79d70"
 PROFILE = "uart-poll"
 PROFILE_ID = "r4-p7u-driverlib-early-poll-v1"
 
-# Frame: FE LEN=01 CMD0=41 (SYS AREQ) CMD1=F7 DATA=A8 FCS=1F.
+# Frame: FE LEN=01 CMD0=41 (SYS AREQ) CMD1=F7 DATA=A9 FCS=1E.
 # The payload differs from the earlier post-NPI beacon (A7).
 MARKER = bytes.fromhex("fe0141f7a91e")
 
