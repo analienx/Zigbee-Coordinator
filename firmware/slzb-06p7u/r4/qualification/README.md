@@ -67,10 +67,12 @@ ROM-BSL backdoor configuration retained. Thus the current **boot layout**
 permits a native application without changing CCFG. It does **not** prove
 that a custom binary actually boots.
 
-A read-only reserved-sector inventory identifies two adjacent page-header
-pairs with differing format markers: 12 at `0xA6000/0xA8000` and 15 at
-`0xAA000/0xAC000`. The sectors `0xA0000..0xA5FFF` appear erased. Neither
-pair is verified as the active stock NV store; no key, counter, or downgrade
+A read-only reserved-sector inventory identifies four possible NVOCMP v3
+page headers at `0xA6000`, `0xA8000`, `0xAA000` and `0xAC000`. The third
+header byte differs (`0x0C` vs `0x0F`) only in the low two `allActive` bits;
+both encode version 3 according to TI's pinned NVOCMP bitfield definition.
+The sectors `0xA0000..0xA5FFF` appear erased. No active stock NV page pair
+has been identified; no key, counter, or downgrade
 compatibility follows from these structural hints. No flash programming or
 erasure occurred during the capture. Raw captures, identifiers, secrets and
 restoration bytes stay private on Zephyrus.

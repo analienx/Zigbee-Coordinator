@@ -28,25 +28,23 @@ def inspect(profile: dict, capture: bytes, *, expected_profile_sha256: str) -> d
     sectors = []
     for address in range(START, END, SECTOR):
         page = capture[address:address + SECTOR]
-        signature = page[3] == 0x96 and page[2] in (0x0C, 0x0F)
+        # TI 8.33 NVOCMP_pageHdr_t: state:8, cycle:8, allActive:2,
+        # version:6, signature:8. 0x0C and 0x0F are BOTH version 3;
+        # low two bits encode the independently mutable allActive field.
+        signature = page[3] == 0x96 and page[2] >> 2 == 3
         sectors.append({
             "start": f"0x{address:05x}",
             "non_erased_byte_count": sum(value != 0xFF for value in page),
-            "possible_ti_nv_header": signature,
-            "candidate_format_marker": page[2] if signature else None,
+            "possible_ti_nvocmp_v3_header": signature,
+            "candidate_nvocmp_version": page[2] >> 2 if signature else None,
+            "candidate_all_active_bits": page[2] & 3 if signature else None,
             "candidate_page_state_marker": page[0] if signature else None,
             "candidate_page_cycle_marker": page[1] if signature else None,
         })
-    pairs = []
-    for first, second in zip(sectors, sectors[1:]):
-        if (first["possible_ti_nv_header"] and second["possible_ti_nv_header"]
-                and first["candidate_format_marker"] == second["candidate_format_marker"]):
-            pairs.append({"first": first["start"], "second": second["start"],
-                          "format_marker": first["candidate_format_marker"]})
     return {
         "schema": SCHEMA, "profile_sha256": expected_profile_sha256,
         "capture_sha256": sha256(capture), "sectors": sectors,
-        "adjacent_same_format_header_hints": pairs,
+        "candidate_nv_region_pairs": "NOT_INFERRED_FROM_PAGE_HEADERS",
         "current_store_identified": False, "stock_format_compatibility_proven": False,
         "security_counter_continuity_verified": False,
         "normal_znp_startup_authorized": False, "flash_authorized": False,
@@ -71,7 +69,8 @@ def main() -> None:
         json.dump(report, output, indent=2, sort_keys=True)
         output.write("\n")
     print(json.dumps({"schema": SCHEMA, "sector_count": len(report["sectors"]),
-                      "candidate_header_pairs": len(report["adjacent_same_format_header_hints"]),
+                      "possible_v3_page_headers": sum(s["possible_ti_nvocmp_v3_header"]
+                                                      for s in report["sectors"]),
                       "current_store_identified": False, "flash_authorized": False}))
 
 

@@ -30,14 +30,16 @@ def fixture():
 
 
 class InventoryTests(unittest.TestCase):
-    def test_multiple_header_pair_hints_do_not_claim_active_nv(self):
+    def test_multiple_v3_headers_are_not_separate_formats_or_active_nv_proof(self):
         data, profile = fixture()
         report = inventory.inspect(profile, data, expected_profile_sha256=profile["profile_sha256"])
         self.assertEqual(len(report["sectors"]), 7)
-        self.assertEqual(report["adjacent_same_format_header_hints"], [
-            {"first": "0xa6000", "second": "0xa8000", "format_marker": 12},
-            {"first": "0xaa000", "second": "0xac000", "format_marker": 15},
-        ])
+        candidates = [s for s in report["sectors"] if s["possible_ti_nvocmp_v3_header"]]
+        self.assertEqual([s["start"] for s in candidates],
+                         ["0xa6000", "0xa8000", "0xaa000", "0xac000"])
+        self.assertEqual([s["candidate_nvocmp_version"] for s in candidates], [3] * 4)
+        self.assertEqual([s["candidate_all_active_bits"] for s in candidates], [0, 0, 3, 3])
+        self.assertEqual(report["candidate_nv_region_pairs"], "NOT_INFERRED_FROM_PAGE_HEADERS")
         self.assertFalse(report["current_store_identified"])
         self.assertFalse(report["normal_znp_startup_authorized"])
         self.assertFalse(report["raw_nv_or_key_bytes_exported"])
