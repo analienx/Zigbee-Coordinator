@@ -28,19 +28,32 @@ READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
 PAGE_SIZE = 8192
 
 
-def stock_like() -> bytes:
+def encoded_record(subid: int) -> bytes:
+    """Real NVOCMP_HDRLE=0 compressed ID/status and CRC, public fake data."""
+    data = b'not-a-real-key'
+    header = bytearray((4, 0x1a, subid >> 2,
+                        ((subid & 3) << 6) | (len(data) >> 6),
+                        (len(data) & 63) << 2))
+    crc = forensics.crc8(data + header)
+    header[4] |= crc >> 6
+    header += bytes((((crc & 63) << 2) | 2, 0x96))
+    return data + header
+
+
+def stock_like(records: int = 1, duplicate: bool = False) -> bytes:
     media = bytearray(b'\xff' * (4 * PAGE_SIZE))
     for page, state in enumerate((0x7c, 0x78, 0x78, 0xfe)):
         base = page * PAGE_SIZE
         media[base:base+4] = bytes((state, page + 1, 0x0f, 0x96))
         for marker in (7, 11, 15):
             media[base + marker] = 0x96
-    data = b'not-a-real-key'
-    header = bytearray((4, 0x1a, 0, len(data) >> 6, (len(data) & 63) << 2))
-    crc = forensics.crc8(data + header)
-    header[4] |= crc >> 6
-    header += bytes((((crc & 63) << 2) | 2, 0x96))
-    media[16:16 + len(data) + len(header)] = data + header
+    cursor = 16
+    for i in range(records):
+        part = encoded_record(0 if duplicate else i)
+        media[cursor:cursor + len(part)] = part
+        cursor += len(part)
+    if cursor > PAGE_SIZE:
+        raise AssertionError('fixture records overrun NV page')
     return bytes(media)
 
 
@@ -80,6 +93,46 @@ class Nv4AdmissionTests(unittest.TestCase):
         self.assertEqual((result.records, result.active_records), (1, 1))
         self.assertLess(result.reads, 30000)
         self.assertEqual(before, stock_like())
+
+    def test_366_item_synthetic_population_is_not_blank(self):
+        result = self.probe(stock_like(records=366))
+        self.assertEqual(result.code, 8)
+        self.assertEqual((result.records, result.active_records), (366, 366))
+        self.assertLess(result.reads, 30000)
+
+    def test_this_logical_end_skips_retired_physical_suffix(self):
+        before = bytearray(stock_like())
+        logical_end = 16 + len(encoded_record(0))
+        before[4:6] = logical_end.to_bytes(2, 'little')
+        # A retired suffix remains programmed after TI cleanPage commits THIS.
+        before[logical_end:logical_end + 11] = b'RETIRED-OLD'
+        self.assertEqual(self.probe(bytes(before)).code, 8)
+        before[4:6] = b'\xff\xff'  # physical last-non-FF fallback
+        self.assertNotEqual(self.probe(bytes(before)).code, 8)
+
+    def test_invalid_crc_valid_item_status_holds_despite_other_live_item(self):
+        before = bytearray(stock_like(records=2))
+        before[16 + len(b'not-a-real-key') + 5] |= 1
+        # NVOCMP item CRC deliberately excludes the one-way validity marks.
+        self.assertEqual(self.probe(bytes(before)).code, 10)
+
+    def test_scoped_duplicate_active_compressed_ids_hold(self):
+        self.assertEqual(self.probe(stock_like(records=2, duplicate=True)).code, 9)
+        self.assertEqual(self.probe(stock_like(records=2)).code, 8)
+
+    def test_f8_compaction_is_not_silent_settled_admission(self):
+        before = bytearray(stock_like())
+        before[6] = 0xf8
+        self.assertEqual(self.probe(bytes(before)).code, 4)
+
+    def test_fc_completed_mode_checks_compaction_header_range(self):
+        before = bytearray(stock_like())
+        before[6] = 0xfc
+        before[8:11] = bytes((16, 0, 1))
+        before[12:15] = bytes((16, 0, 2))
+        self.assertEqual(self.probe(bytes(before)).code, 8)
+        before[8:10] = b'\xff\xff'
+        self.assertEqual(self.probe(bytes(before)).code, 4)
 
     def test_crc_failure_holds(self):
         corrupted = bytearray(stock_like())

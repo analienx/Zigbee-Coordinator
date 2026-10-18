@@ -10,6 +10,16 @@
 #define R4_TRAILER 7u
 #define R4_MAX_READS 30000u
 #define R4_MAX_RECORDS 2000u
+#define R4_MAX_ACTIVE_IDENTITIES 512u
+
+/* Pinned TI 3615ad5: NVOCMP_HDRLE=0, NVOCMP_FASTITEM=0. */
+static uint32_t compressed_id(const uint8_t header[R4_TRAILER])
+{
+    uint32_t sysid = (header[0] >> 2u) & 0x3fu;
+    uint32_t itemid = ((uint32_t)(header[0] & 3u) << 8u) | header[1];
+    uint32_t subid = ((uint32_t)header[2] << 2u) | (header[3] >> 6u);
+    return (sysid << 20u) | (itemid << 10u) | subid;
+}
 
 static int bounded_read(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
                         uint32_t offset, uint8_t *to, uint32_t length)
@@ -45,7 +55,8 @@ static uint8_t crc8(uint8_t crc, const uint8_t *data, uint32_t length)
 }
 
 static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
-                         uint32_t page_base, uint32_t end)
+                         uint32_t page_base, uint32_t end,
+                         uint32_t *live_ids, uint32_t *live_count)
 {
     uint8_t header[R4_TRAILER], block[64];
     while (end > R4_DATA_START) {
@@ -85,7 +96,30 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
             return 0;
         }
         ++r->records;
-        if ((header[5] & 3u) == 2u) ++r->active_records;
+        /* NVOCMP_VALIDIDBIT=1 marks corruption. Refuse before TI's
+         * parser can attempt write-backed recovery of this record. */
+        if (header[5] & 1u) {
+            r->code = R4_NV4_INVALID_STATUS;
+            r->fault_offset = page_base + header_offset + 5u;
+            return 0;
+        }
+        if ((header[5] & 3u) == 2u) {
+            uint32_t identity = compressed_id(header), i;
+            if (*live_count >= R4_MAX_ACTIVE_IDENTITIES) {
+                r->code = R4_NV4_SCAN_LIMIT;
+                r->fault_offset = page_base + header_offset;
+                return 0;
+            }
+            for (i = 0u; i < *live_count; ++i) {
+                if (live_ids[i] == identity) {
+                    r->code = R4_NV4_DUPLICATE_ACTIVE_ID;
+                    r->fault_offset = page_base + header_offset;
+                    return 0;
+                }
+            }
+            live_ids[(*live_count)++] = identity;
+            ++r->active_records;
+        }
         end = header_offset - length;
     }
     return 1;
@@ -95,11 +129,17 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u};
     uint32_t page, active = 0u, full = 0u, destination = 0u;
+    uint32_t live_count = 0u;
+    /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
+     * Admission is a single-threaded boot preflight, not a runtime service. */
+    static uint32_t live_ids[R4_MAX_ACTIVE_IDENTITIES];
     if (reader == NULL) return r;
     for (page = 0u; page < R4_NV4_PAGES; ++page) {
         uint8_t header[16], block[64];
         uint32_t base = page * R4_NV4_PAGE_SIZE, end = R4_DATA_START;
         uint32_t off;
+        uint16_t logical;
+        uint8_t mode;
         if (!bounded_read(reader, ctx, &r, base, header, sizeof(header))) return r;
         if (header[3] != 0x96u || header[7] != 0x96u ||
             header[11] != 0x96u || header[15] != 0x96u ||
@@ -107,6 +147,28 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
             header[1] == 0u || header[1] == 0xffu) {
             r.code = R4_NV4_BAD_PAGE_HEADER;
             r.fault_offset = base;
+            return r;
+        }
+        /* NVOCMP_scanPage uses THIS.pageOffset if cleanPage committed it.
+         * Retired bytes beyond that end do not belong to the logical store. */
+        logical = (uint16_t)((uint16_t)header[4] |
+                             ((uint16_t)header[5] << 8u));
+        mode = header[6];
+        if ((logical != 0xffffu &&
+             (logical < R4_DATA_START || logical > R4_NV4_PAGE_SIZE)) ||
+            (mode != 0xffu && mode != 0xfcu) ||
+            (mode == 0xffu &&
+             (header[8] != 0xffu || header[9] != 0xffu ||
+              header[10] != 0xffu || header[12] != 0xffu ||
+              header[13] != 0xffu || header[14] != 0xffu)) ||
+            (mode == 0xfcu &&
+             ((uint16_t)(header[8] | ((uint16_t)header[9] << 8u)) < R4_DATA_START ||
+              (uint16_t)(header[8] | ((uint16_t)header[9] << 8u)) > R4_NV4_PAGE_SIZE ||
+              ((uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) < R4_DATA_START) ||
+              ((uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) > R4_NV4_PAGE_SIZE) ||
+              header[10] >= R4_NV4_PAGES || header[14] >= R4_NV4_PAGES))) {
+            r.code = R4_NV4_UNSAFE_PAGE_STATES;
+            r.fault_offset = base + 4u;
             return r;
         }
         switch (header[0]) {
@@ -127,13 +189,18 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                 if (block[i] != 0xffu) end = off + i + 1u;
             }
         }
+        if (header[0] != 0xfeu && logical != 0xffffu) {
+            end = logical;
+        }
         if (header[0] == 0xfeu) {
-            if (end != R4_DATA_START) {
+            if (end != R4_DATA_START || logical != 0xffffu ||
+                mode != 0xffu) {
                 r.code = R4_NV4_UNSAFE_PAGE_STATES;
                 r.fault_offset = base + end;
                 return r;
             }
-        } else if (!inspect_items(reader, ctx, &r, base, end)) return r;
+        } else if (!inspect_items(reader, ctx, &r, base, end,
+                                  live_ids, &live_count)) return r;
     }
     if (active != 1u || full != 2u || destination != 1u || r.active_records == 0u) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;

@@ -19,6 +19,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
+      - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
+        run: |
+          python -m unittest -v tests.test_r4_nv4_readonly_admission
+          python -m unittest -v tests.test_r4_nv4_b1_bridge
       - name: Upload exact-source synthetic receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
