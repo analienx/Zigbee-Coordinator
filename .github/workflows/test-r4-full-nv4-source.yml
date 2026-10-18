@@ -10,6 +10,11 @@ on:
       - 'firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_native_gate.py'
       - 'tests/test_r4_full_nv4_profile.py'
+      - 'tests/test_r4_full_nv4_app_only.py'
+      - 'tests/test_r4_full_nv4_link_audit.py'
+      - 'firmware/slzb-06p7u/r4/qualification/full_nv4_app_only.py'
+      - 'firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py'
+      - '.github/workflows/test-r4-final-composite-native.yml'
       - 'tests/test_r4_nv4_current_app_package.py'
       - 'tests/test_r4_nv4_source_overlay.py'
   workflow_dispatch:
@@ -33,14 +38,20 @@ jobs:
         run: |
           python -m py_compile \
             firmware/slzb-06p7u/r4/qualification/full_nv4_profile.py \
+            firmware/slzb-06p7u/r4/qualification/full_nv4_app_only.py \
+            firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py \
             firmware/slzb-06p7u/r4/qualification/nv4_current_app_package.py \
             firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py \
             tests/test_r4_full_nv4_profile.py \
+            tests/test_r4_full_nv4_app_only.py \
+            tests/test_r4_full_nv4_link_audit.py \
             tests/test_r4_nv4_current_app_package.py
       - name: Run P7U exact NV4 source and frozen-bundle attack tests
         run: |
           python -m unittest -v \
             tests.test_r4_full_nv4_profile \
+            tests.test_r4_full_nv4_app_only \
+            tests.test_r4_full_nv4_link_audit \
             tests.test_r4_nv4_current_app_package \
             tests.test_r4_nv4_source_overlay \
             tests.test_r4_nv4_native_gate \

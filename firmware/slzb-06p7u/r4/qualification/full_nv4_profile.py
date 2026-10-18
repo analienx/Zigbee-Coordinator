@@ -89,13 +89,19 @@ def transform_pinned(syscfg: str, linker: str, projectspec: str):
     if ld.count(before) != 1 or after in ld:
         block("CONSERVATIVE_LINKER_APP_CEILING_DRIFT")
     ld = ld.replace(before, after, 1)
+    # The pinned TI P7 linker explicitly requests a 1024-byte C stack.
+    # Qualify 4096 only if the real link XML confirms exactly 4096.
+    if ld.count("--stack_size=1024") != 1 or "--stack_size=4096" in ld:
+        block("CIRQ_LINKER_STACK_SOURCE_DRIFT")
+    ld = ld.replace("--stack_size=1024", "--stack_size=4096", 1)
     if not all(part in ld for part in (
             "#define FLASH_NV_BASE           0xA6000",
             "#define FLASH_NV_SIZE           0x8000",
             "#define FLASH_LAST_BASE         0xAE000",
             "#define FLASH_LAST_SIZE         0x2000",
             "#define FLASH_BASE              0x00000000",
-            "#define FLASH_SIZE              0xA0000")):
+            "#define FLASH_SIZE              0xA0000",
+            "--stack_size=4096")):
         block("LINKER_NV4_APP_OR_CCFG_DRIFT")
     if (sc.count("NVS1.internalFlash.regionBase = 0xA6000;") != 1 or
             sc.count("NVS1.internalFlash.regionSize = 0x8000;") != 1 or

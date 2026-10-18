@@ -17,7 +17,8 @@ import nv4_source_overlay as nv4
 def pinned_fixture():
     sc = ('NVS1.$name                    = "CONFIG_NVSINTERNAL";\n'
           + nv4.P7_SYSCFG_OLD + '\n')
-    ld = ('#define FLASH_BASE              0x00000000\n'
+    ld = ('--stack_size=1024\n'
+          + '#define FLASH_BASE              0x00000000\n'
           + '\n'.join(before for before, _ in nv4.LINKER_EDITS) + '\n'
           + '#define FLASH_LAST_BASE         0xAE000\n'
           + '#define FLASH_LAST_SIZE         0x2000\n')
@@ -57,6 +58,8 @@ class FullNv4ProfileTests(unittest.TestCase):
         self.assertIn('#define FLASH_NV_BASE           0xA6000', ld)
         self.assertIn('#define FLASH_NV_SIZE           0x8000', ld)
         self.assertIn('#define FLASH_LAST_BASE         0xAE000', ld)
+        self.assertIn('--stack_size=4096', ld)
+        self.assertNotIn('--stack_size=1024', ld)
         self.assertIn('-DNVOCMP_NVPAGES=4', project)
         self.assertIn('--define=NVOCMP_NVPAGES=4', project)
         self.assertLess(full.APP_END, full.NV_START)

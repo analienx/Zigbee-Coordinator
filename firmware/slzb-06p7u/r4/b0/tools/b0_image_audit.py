@@ -84,6 +84,7 @@ DONOR_NVS_BASE = 0xAA000
 DONOR_NVS_SIZE = 0x4000
 DONOR_FLASH_LAST_BASE = 0xAE000
 DONOR_CSTACK = 1024
+FULL_NV4_CIRQ_STACK = 4096  # release selection, proven only by actual XML/ELF
 
 XML_SIZE_CAP = 2 * 1024 * 1024
 
@@ -266,7 +267,7 @@ def _int_maybe(text):
         return None
 
 
-def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, direct_rom_boot=False):
+def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, direct_rom_boot=False, full_nv4=False):
     """Validate the genuine TI --xml_link_info document.
 
     Returns (evidence, error): evidence carries the parsed memory
@@ -314,13 +315,15 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, 
     # Match the complete pinned TI linker layout, not just NV and LAST
     # region starts. Reject duplicate/malformed region declarations above
     # before accepting any flash image as layout-compatible.
-    if preserve_resident_boot and direct_rom_boot:
+    if sum((preserve_resident_boot, direct_rom_boot, full_nv4)) > 1:
         return None, "audit boot profiles mutually exclusive"
     expected_geometry = {
         "FLASH": ((0x00000080, 0x9FF80) if preserve_resident_boot else
-                  (0x00000000, 0xA0000) if direct_rom_boot else
+                  (0x00000000, 0xA0000) if direct_rom_boot or full_nv4 else
                   (0x00000000, 0xAA000)),
-        "FLASH_NV": (0xA0000 if preserve_resident_boot or direct_rom_boot else 0xAA000, 0x4000),
+        "FLASH_NV": ((0xA6000, 0x8000) if full_nv4 else
+                     (0xA0000, 0x4000) if preserve_resident_boot or direct_rom_boot else
+                     (0xAA000, 0x4000)),
         "FLASH_LAST": (0xAE000, 0x2000),
         "SRAM": (0x20000000, 0x24000),
     }
@@ -329,10 +332,14 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, 
             return None, ("audit donor memory geometry mismatch for %s "
                           "(got %r; want %r)" % (region, areas[region], expected))
     nvs_base, nvs_size = areas["FLASH_NV"]
-    expected_base = 0xA0000 if preserve_resident_boot or direct_rom_boot else DONOR_NVS_BASE
-    if nvs_base != expected_base or nvs_size != DONOR_NVS_SIZE:
+    expected_base, expected_size = (
+        (0xA6000, 0x8000) if full_nv4 else
+        (0xA0000, 0x4000) if preserve_resident_boot or direct_rom_boot else
+        (DONOR_NVS_BASE, DONOR_NVS_SIZE)
+    )
+    if nvs_base != expected_base or nvs_size != expected_size:
         return None, ("audit NVS geometry differs from explicit profile "
-                      "(want base 0x%05X size 0x4000)" % expected_base)
+                      "(want base 0x%05X size 0x%X)" % (expected_base, expected_size))
     if (preserve_resident_boot or direct_rom_boot) and nvs_base + nvs_size > 0xA4000:
         return None, "audit relocated NV intersects reserved resident stage"
     fl_base, fl_len = areas["FLASH_LAST"]
@@ -399,9 +406,10 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, 
                 break
     if stack_size is None:
         return None, "audit missing C/IRQ stack size"
-    if stack_size != DONOR_CSTACK:
+    expected_cirq = FULL_NV4_CIRQ_STACK if full_nv4 else DONOR_CSTACK
+    if stack_size != expected_cirq:
         return None, ("audit wrong C/IRQ stack expectation "
-                      "(want donor 1024; 4096 needs native map proof)")
+                      "(want %d linked bytes; observed %d)" % (expected_cirq, stack_size))
     return {"areas": areas, "sections": sections, "entry": entry}, None
 
 
@@ -667,7 +675,7 @@ def _validate_reset_vectors(payload, evidence, elf_segments, *, vector_address=0
     return None
 
 
-def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False, direct_rom_boot=False):
+def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False, direct_rom_boot=False, full_nv4=False):
     """Returns (exit_code, message). Never raises.
 
     Log markers are a tripwire only -- real proof is the ELF/XML
@@ -792,7 +800,7 @@ def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False
         return 1, err
     evidence, err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry,
                                     preserve_resident_boot=preserve_resident_boot,
-                                    direct_rom_boot=direct_rom_boot)
+                                    direct_rom_boot=direct_rom_boot, full_nv4=full_nv4)
     if err:
         return 1, err
     if not fixture_oracle:
@@ -841,16 +849,17 @@ def main(argv):
         fixture_oracle = profile == "--synthetic-fixture-oracle"
         preserve_boot = profile == "--preserve-resident-boot"
         direct_boot = profile == "--direct-rom-boot"
+        full_nv4 = profile == "--full-nv4"
         if (len(argv) not in (4, 5) or argv[0] != "audit"
                 or argv[2] != "--artifacts"
-                or (len(argv) == 5 and not (fixture_oracle or preserve_boot or direct_boot))):
+                or (len(argv) == 5 and not (fixture_oracle or preserve_boot or direct_boot or full_nv4))):
             print("usage: b0_image_audit.py audit <b0-base-dir> "
-                  "--artifacts <dir> [--synthetic-fixture-oracle|--preserve-resident-boot|--direct-rom-boot]")
+                  "--artifacts <dir> [--synthetic-fixture-oracle|--preserve-resident-boot|--direct-rom-boot|--full-nv4]")
             return 2
         code, message = audit(Path(argv[1]), Path(argv[3]),
                               fixture_oracle=fixture_oracle,
                               preserve_resident_boot=preserve_boot,
-                              direct_rom_boot=direct_boot)
+                              direct_rom_boot=direct_boot, full_nv4=full_nv4)
     except Exception as exc:  # noqa: BLE001 -- fail closed, never traceback
         print("b0 audit error (%s)" % exc)
         return 1
