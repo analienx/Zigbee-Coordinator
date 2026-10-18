@@ -7,12 +7,14 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import struct
 
 import native_profile_audit as shared
 import uart_poll_profile as profile
 
-REQUIRED = {"main", "r4q_uart_poll_start", "Power_setDependency",
-            "UARTConfigSetExpClk", "UARTCharPut"}
+# TI driverlib UART calls use the linked ROM function table; no standalone
+# UARTCharPut or UARTConfigSetExpClk function symbols are emitted by the linker.
+REQUIRED = {"main", "r4q_uart_poll_start", "Power_setDependency"}
 FORBIDDEN_PREFIX = ("NPITask", "NPITL", "NPIFrame", "MT_", "NVOCMP_",
                     "osal_nv_", "stackTask", "ZMac", "ApiMac_", "RFCC26XX_",
                     "NVSCC26XX_")
@@ -68,24 +70,28 @@ def audit(artifacts: Path, sdk: Path, receipt_path: Path, source_sha: str) -> di
     binding = shared.audit_image_binding(artifacts)
     symbols = shared.elf_symbols(artifacts / binding["files"]["elf"]["file"])
     linked = linked_symbols(symbols, source_sha)
-    # Diagnostic consumes at most three 8 KiB APP sectors. CCFG resides far
-    # above those sectors and is generated/audited separately, never packaged.
+    # Confirm that the early polling routine actually references UART0,
+    # without requiring symbols for driverlib's indirect ROM dispatch.
+    if struct.pack("<I", 0x40001000) not in symbols["r4q_uart_poll_start"]["bytes"]:
+        raise ValueError("UART_POLL_UART0_BASE_NOT_LINKED")
+    # Diagnostic consumes at most two 8 KiB APP sectors. CCFG remains
+    # outside the application region and is never included in this package.
     manifest = json.loads((artifacts / "manifest.json").read_text())
     payload, error = shared.b0_image_audit._parse_intel_hex(
         artifacts / manifest["files"]["hex"]["file"])
     if error:
         raise ValueError("UART_POLL_HEX_INVALID " + error)
     unexpected = sorted(address for address in payload if
-                        address >= 0x6000 and not 0xAFF00 <= address < 0xB0000)
+                        address >= 0x4000 and not 0xAFF00 <= address < 0xB0000)
     if unexpected:
-        raise ValueError("UART_POLL_OUTSIDE_THREE_APP_SECTORS " + hex(unexpected[0]))
+        raise ValueError("UART_POLL_OUTSIDE_TWO_APP_SECTORS " + hex(unexpected[0]))
     if not any(address < 0x2000 for address in payload):
         raise ValueError("UART_POLL_VECTOR_SECTOR_MISSING")
     return {
         "schema": "r4-p7u-uart-poll-native-v1", "profile": profile.PROFILE,
         "source_sha": source_sha, "linked_functions": linked,
         "image_binding": binding, "marker_hex": profile.MARKER.hex(),
-        "three_app_sectors_max": True, "native_compilation_verified": True,
+        "two_app_sectors_max": True, "native_compilation_verified": True,
         "physical_uart_verified": False, "flash_authorized": False,
     }
 
