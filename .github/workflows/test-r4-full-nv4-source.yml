@@ -11,6 +11,7 @@ on:
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.h'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/seal_native.py'
       - 'tests/test_r4_nv4_readonly_admission.py'
       - 'tests/test_r4_nv4_b1_bridge.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_native_gate.py'
@@ -47,6 +48,10 @@ jobs:
             firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py \
             firmware/slzb-06p7u/r4/qualification/nv4_current_app_package.py \
             firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py \
+            firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py \
+            firmware/slzb-06p7u/r4/b1/tools/seal_native.py \
+            tests/test_r4_nv4_readonly_admission.py \
+            tests/test_r4_nv4_b1_bridge.py \
             tests/test_r4_full_nv4_profile.py \
             tests/test_r4_full_nv4_app_only.py \
             tests/test_r4_full_nv4_link_audit.py \
