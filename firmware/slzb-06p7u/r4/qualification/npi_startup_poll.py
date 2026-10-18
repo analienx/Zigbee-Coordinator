@@ -7,8 +7,10 @@ frames are accepted. Retry both framed SYS_PING and ten-byte SYS_VERSION.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 from collections import Counter
+import json
 import time
 
 PING_REQUEST = bytes.fromhex("fe00210120")
@@ -89,3 +91,24 @@ async def poll(host: str, port: int, *, reset_monotonic: float | None = None,
             await asyncio.sleep(min(retry_seconds, remaining))
     return {"ready": False, "seconds_since_reset": round(time.monotonic() - started, 3),
             "attempts": count, "retry_reasons": dict(failures)}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", required=True, help="P7U TCP bridge IP/DNS name")
+    parser.add_argument("--port", type=int, default=6638)
+    parser.add_argument("--max-seconds", type=float, default=40.0)
+    parser.add_argument("--retry-seconds", type=float, default=.35)
+    parser.add_argument("--probe-timeout", type=float, default=1.2)
+    args = parser.parse_args()
+    if not 0 < args.port < 65536:
+        parser.error("port must be 1..65535")
+    result = asyncio.run(poll(args.host, args.port, max_seconds=args.max_seconds,
+                              retry_seconds=args.retry_seconds,
+                              probe_timeout=args.probe_timeout))
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["ready"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
