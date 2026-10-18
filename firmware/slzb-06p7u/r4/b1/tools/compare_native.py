@@ -19,6 +19,26 @@ def load(root):
     return seal
 
 
+LINKED_NV2 = "HOSTED_NATIVE_LINKED"
+LINKED_NV4 = "HOSTED_NATIVE_LINKED_NV4_BRIDGE_UNSEALED"
+
+
+def validate_linked_mode(item: dict) -> str:
+    mode = item.get("classification")
+    functions = item.get("linked_functions")
+    if mode not in (LINKED_NV2, LINKED_NV4) or not isinstance(functions, dict):
+        raise ValueError("Native comparison requires linked native evidence")
+    if item.get("full_b0_b4_sealed") is not False:
+        raise ValueError("Native comparison cannot promote an unproved full role seal")
+    if mode == LINKED_NV4:
+        if (item.get("nv4_bridge_compiled") is not True or
+                "r4_nv4_admit" not in functions or "b1_nv_probe" in functions):
+            raise ValueError("NV4 native comparison requires actual linked observer and no NV2 probe")
+    elif item.get("nv4_bridge_compiled") is not False or "b1_nv_probe" not in functions:
+        raise ValueError("NV2 native comparison requires original linked B1 probe")
+    return mode
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--first", type=Path, required=True)
@@ -30,8 +50,9 @@ def main():
     for item in (a, b):
         if item["source_sha"] != args.expected_sha:
             raise ValueError("Native replicas differ from expected source")
-        if item["classification"] != "HOSTED_NATIVE_LINKED":
-            raise ValueError("Native comparison requires linked native evidence")
+        validate_linked_mode(item)
+    if a["classification"] != b["classification"]:
+        raise ValueError("Native replicas mix incompatible NV2 and NV4 image classes")
     if a["replica"] == b["replica"] or {a["replica"], b["replica"]} != {"1", "2"}:
         raise ValueError("Native comparison requires two separate clean replicas")
     for key in ("source_files", "overlay_sha256", "linked_functions"):
@@ -51,7 +72,10 @@ def main():
     if xmls[0] != xmls[1]:
         raise ValueError("Native linker XML differs beyond documented link_time")
     report = {"schema": "r4-b1-native-reproducibility-v1",
-              "source_sha": args.expected_sha, "classification": "HOSTED_NATIVE_LINKED",
+              "source_sha": args.expected_sha,
+              "classification": a["classification"],
+              "nv4_bridge_compiled": a["classification"] == LINKED_NV4,
+              "full_b0_b4_sealed": False,
               "result": "TWO_CLEAN_NATIVE_BUILDS_BYTE_IDENTICAL",
               "artifacts": a["artifacts"], "normalized_xml_fields": ["link_time"],
               "b1_source_ready": False, "physical_rf": "NOT_MEASURED"}
