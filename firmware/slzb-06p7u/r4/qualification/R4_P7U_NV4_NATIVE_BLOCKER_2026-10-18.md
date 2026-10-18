@@ -25,6 +25,19 @@ or compactions**; earlier/later scan totals were 667/714 records and
 3936/4124 NVS reads. Synthetic bad-CRC and unsettled-compaction inputs HOLD.
 All device bytes stayed private. Public CI for this post-B1 test has passed.
 
+**Factory-new security state found with an independent read-only inventory:**
+Both same-board captures have `bdbNodeIsOnANetwork=0` and coordinator logical
+type 0. The live NIB is absent. This is *not* a formed network requiring
+restoration. Network-key/active-key, Trust Center seed/address, and the
+coordinator-role and formed-state markers are structurally present, with
+300 preallocated TCLK rows, three APS key-data rows and five NWK material
+rows. These counts are aggregate only: no key contents, identities, full
+item IDs or payload bytes left the private device. The pinned B1 security
+precheck expressly accepts absent NIB when the on-network flag is zero, but
+its actual post-boot formation and ZDO-ready diagnostic still require a
+full-stack runtime test. Never treat the populated NV4 header as proof that
+the Zigbee network was formed.
+
 ### Private captures, aggregate-only results
 
 | Test | Earlier fitted P7U capture | Later fitted P7U capture |
@@ -97,15 +110,19 @@ allocation:
    Pre-init page geometry and the existing-network signal are now tested with
    both captures. Physical RF, security semantics and whole-image boot are
    NOT implied by a host result.
-2. **Native executable/link audit — running in public CI.** Build pinned TI 8.33 ZNP for the
+2. **Native executable/link audit — first run hit a shell harness error.**
+   Pinned TI SDK libraries compiled, but `find | grep -q` was misinterpreted
+   as failure by `pipefail` due to SIGPIPE. The existence check is corrected
+   and the genuine build is being rerun. Build pinned TI 8.33 ZNP for the
    fitted board with four-page NVS, confirm the entire linked application
    stops below `0xA6000`, compiled and generated NVS attributes exactly match
    `0xA6000/0x8000`, and direct-boot CCFG + sector protection match the live
    board. A host clone cannot prove those build outputs.
-3. **Network/security state.** Before live RF, prove the old on-network state,
-   Trust Center keys and monotonic frame-counter behavior survive Zigbee
-   stack initialization, and that the fail-closed B1 gate prevents unwanted
-   joining/factory resets/transmission when that proof fails. CRC-valid
+3. **Network/security state.** Current live stock is factory-new (`onNetwork=0`),
+   not an existing formed network. Verify B1's genuine factory-new ZDO and
+   Zigbee commissioning path without undesired record deletion, state HOLD,
+   unrequested joining or premature RF. When a network is formed, Trust Center
+   key and frame-counter persistence must then remain monotonic. CRC-valid
    storage does not itself prove semantic compatibility.
 4. **Transport readiness.** Poll genuine post-reset readiness; the immediate
    first probe has timed out before later queries succeeded. This is separate
