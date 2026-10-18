@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -22,6 +23,11 @@ def valid_payload():
 
 
 class NativeGateTests(unittest.TestCase):
+    def test_exact_current_stock_ccfg_pin(self):
+        metadata = json.loads((QUAL/'vendor-stock-20240716.json').read_text())
+        self.assertEqual(gate.STOCK_20240716_CCFG_SHA256,
+                         metadata['ccfg_sha256'])
+
     def test_valid_stock_nv4_space_and_no_flash_authorization(self):
         d = valid_payload()
         report = gate.verify_payload(d)
