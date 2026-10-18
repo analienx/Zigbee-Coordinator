@@ -141,6 +141,20 @@ jobs:
             --receipt /tmp/nv4out/p7u-board-linked.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_native_gate.py" \
             --artifacts /tmp/nv4out --receipt /tmp/nv4out/nv4-native-gate.json
+      - name: Preserve the exact audited ZNP native build (AUDIT ONLY - NOT FLASHABLE)
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-nv4-native-AUDIT-ONLY-NOT-FLASHABLE-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/nv4out/znp_LP_CC1352P7_4_tirtos7_ticlang.out
+            /tmp/nv4out/znp_LP_CC1352P7_4_tirtos7_ticlang.hex
+            /tmp/nv4out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin
+            /tmp/nv4out/znp_LP_CC1352P7_4_tirtos7_ticlang_linkInfo.xml
+            /tmp/nv4out/manifest.json
+            /tmp/nv4out/build.log
+          if-no-files-found: error
+          retention-days: 3
       - name: Preserve public receipts without a device-flash artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
