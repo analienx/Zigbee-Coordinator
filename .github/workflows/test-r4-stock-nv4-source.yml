@@ -56,7 +56,9 @@ jobs:
               url = f'https://raw.githubusercontent.com/{repo}/{sha}/{relative}'
               with urlopen(url, timeout=40) as response:
                   raw = response.read(200000)
-              if not 1000 < len(raw) < 150000:
+              # Pinned nvocmp.c is 163,530 bytes; retain a bounded download
+              # yet allow the complete vendor source, not a truncated prefix.
+              if not 1000 < len(raw) < 190000:
                   raise RuntimeError(f'TI source incomplete: {name}')
               (root / name).write_bytes(raw)
           PY
