@@ -28,7 +28,7 @@ ENTRY = r'''#include <ti/devices/DeviceFamily.h>
 #include <ti/drivers/power/PowerCC26XX.h>
 #include DeviceFamily_constructPath(driverlib/uart.h)
 #include DeviceFamily_constructPath(driverlib/ioc.h)
-#include DeviceFamily_constructPath(driverlib/hw_memmap.h)
+#include DeviceFamily_constructPath(inc/hw_memmap.h)
 
 /* Early polled UART: no BIOS, Task, UART2 driver, NPI, Zigbee, RF or NV startup. */
 volatile uint32_t r4q_uart_poll_stage;
