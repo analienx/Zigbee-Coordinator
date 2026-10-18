@@ -45,11 +45,10 @@ class MachineFrameTest(unittest.TestCase):
                        "str sp, [r0]", "ldr sp, [r1]",
                        "vpop {d8, d9, d10, d11, d12, d13, d14, d15}",
                        "pop.w {r4, r5, r6, r7, r8, r9, r10, r11, pc}"),
-            abi.SET_LIMIT: ("bx lr",),
-            abi.HWI[0]: ("mrs r1, basepri", "msr control, r2"),
+            abi.HWI[0]: ("mrs r1, basepri", "mrs r2, psp", "vmrs r3, fpscr"),
             abi.HWI[1]: ("mrsne r1, psp", "bx lr"),
             abi.HWI[2]: ("msr psp, r1", "msr msp, r0", "msr control, r0"),
-            abi.HWI[3]: ("mrs r4, control", "bx lr"),
+            abi.HWI[3]: ("mrs r4, control", "blx r0"),
         }
         self.instructions = m
 
@@ -73,9 +72,21 @@ class MachineFrameTest(unittest.TestCase):
             abi.verify_m4f_disassembly(self.disassembly())
 
     def test_missing_critical_hwi_path_is_rejected(self):
-        self.instructions[abi.SET_LIMIT] = ("msr msplim, r0", "bx lr")
+        self.instructions[abi.HWI[2]] = ("msr psp, r1", "msr msp, r0")
+        with self.assertRaisesRegex(ValueError, "HWI_PATH_INCOMPLETE"):
+            abi.verify_m4f_disassembly(self.disassembly())
+
+    def test_armv8m_msplim_in_linked_hwi_is_rejected(self):
+        self.instructions[abi.HWI[2]] += ("msr msplim, r0",)
         with self.assertRaisesRegex(ValueError, "ARMV8_STACK_LIMIT"):
             abi.verify_m4f_disassembly(self.disassembly())
+
+    def test_objdump_sb_sl_fp_register_aliases(self):
+        self.instructions[abi.SWAP] = tuple(
+            code.replace("r9", "sb").replace("r10", "sl").replace("r11", "fp")
+            for code in self.instructions[abi.SWAP]
+        )
+        self.assertEqual(abi.verify_m4f_disassembly(self.disassembly())["m4f_restored_pc_word_index"], 24)
 
 
 if __name__ == "__main__":
