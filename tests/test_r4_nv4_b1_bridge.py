@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -76,6 +78,59 @@ class Nv4B1BridgeTests(unittest.TestCase):
             self.assertEqual(nv.read_bytes(), original)
             self.assertFalse(receipt.exists())
             self.assertFalse((nv.parent / 'nv4_readonly_admission.c').exists())
+
+    def test_full_composite_b1_binding_is_exact_and_single_use(self):
+        def digest(data):
+            return hashlib.sha256(data).hexdigest()
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            nv = root / 'source/ti/common/nv/nvocmp.c'
+            nv.parent.mkdir(parents=True)
+            nv.write_text(post_b1_fixture())
+            raw = nv.read_bytes()
+            original = {
+                'schema': 'r4-b1-admission-overlay-v2',
+                'post_b1_b3_b2_b4_source_composition':
+                'EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING',
+                'nvocmp_compaction_fusion_source': 'B1_HOLD_PLUS_B3_THREE_DONOR_GUARDS',
+                'modified_nv_sha256': digest(raw),
+                'additional_source_bindings': {},
+            }
+            prior = root/'b1.json'
+            prior.write_text(json.dumps(original))
+            out = root/'bridge.json'
+            result = bridge.apply(root, QUAL/'nv4_readonly_admission.c',
+                                  QUAL/'nv4_readonly_admission.h', out,
+                                  b1_receipt=prior)
+            bound = json.loads(prior.read_text())
+            self.assertTrue(result['b1_overlay_receipt_bound'])
+            self.assertEqual(result['source_before_sha256'], digest(raw))
+            self.assertEqual(result['source_after_sha256'], digest(nv.read_bytes()))
+            self.assertEqual(bound['modified_nv_sha256'], result['source_after_sha256'])
+            for kind in ('c', 'h'):
+                self.assertEqual(bound[f'nv4_admission_{kind}_sha256'],
+                                 result[f'nv4_admission_{kind}_sha256'])
+            self.assertEqual(bound['nv4_readonly_bridge_source'],
+                             'EXACT_PINNED_FOUR_PAGE_B1_ADMISSION')
+            self.assertFalse(result['flash_authorized'])
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            nv = root/'source/ti/common/nv/nvocmp.c'
+            nv.parent.mkdir(parents=True)
+            nv.write_text(post_b1_fixture())
+            prior = root/'b1.json'
+            original['modified_nv_sha256'] = '0'*64
+            prior.write_text(json.dumps(original))
+            saved = nv.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'SOURCE_RECEIPT_PREIMAGE_DRIFT'):
+                bridge.apply(root, QUAL/'nv4_readonly_admission.c',
+                             QUAL/'nv4_readonly_admission.h',
+                             root/'bridge.json', b1_receipt=prior)
+            self.assertEqual(nv.read_bytes(), saved)
+            self.assertFalse((root/'bridge.json').exists())
+            self.assertFalse((nv.parent/'nv4_readonly_admission.c').exists())
 
     def test_successful_source_only_application(self):
         with tempfile.TemporaryDirectory() as t:

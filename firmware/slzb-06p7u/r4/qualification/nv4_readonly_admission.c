@@ -125,6 +125,8 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
     return 1;
 }
 
+/* Preserve a distinct live ELF function for the exact-source NV4 role seal. */
+__attribute__((noinline))
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u};

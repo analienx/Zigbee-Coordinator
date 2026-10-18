@@ -496,6 +496,21 @@ jobs:
           assert x["flash_authorized"] is False
           assert x["b1_f1_and_b4_f0_f2_dispatch"] is True
           PY
+          echo "Link strict B1 existing-network admission to the real four-page NV4 observer"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py" \
+            --sdk "$sdk" --b1-overlay-receipt /tmp/b0out/b1-overlay.json \
+            --receipt /tmp/b0out/r4-nv4-b1-source.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          source=json.loads(Path('/tmp/b0out/r4-nv4-b1-source.json').read_text())
+          binding=json.loads(Path('/tmp/b0out/b1-overlay.json').read_text())
+          assert source['b1_overlay_receipt_bound'] is True
+          assert source['nv_pages']==4 and source['region_base']=='0xA6000'
+          assert source['source_after_sha256']==binding['modified_nv_sha256']
+          assert binding['nv4_readonly_bridge_source']=='EXACT_PINNED_FOUR_PAGE_B1_ADMISSION'
+          assert source['flash_authorized'] is False
+          PY
           echo "Discover pinned TI compiler and SDK product in CCS" | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
@@ -587,7 +602,7 @@ jobs:
           print('FULL NV4 APP-ONLY FF-PADDED HEX UNSEALED; NO FLASH')
           PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
-            --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
+            --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA" --nv4-bridge
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
           python /tmp/r4-composite-sources/b2_collect_native_evidence.py \
             --artifacts /tmp/b0out --out /tmp/b0out/b2-linked \

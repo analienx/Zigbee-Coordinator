@@ -160,7 +160,8 @@ def transform(source: str) -> str:
     return source
 
 
-def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path) -> dict:
+def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
+          b1_receipt: Path | None = None) -> dict:
     """Prevalidate all sources, then modify disposable SDK and add NV4 C/H."""
     sdk = sdk.resolve()
     nv = sdk / 'source/ti/common/nv/nvocmp.c'
@@ -174,6 +175,29 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path) -> dict:
     replacement = transform(originals[0].decode('utf-8'))
     if b'R4_NV4_REGION_SIZE' not in originals[2] or b'r4_nv4_admit' not in originals[1]:
         raise ValueError('R4_NV4_B1_ADMISSION_SOURCES_MISSING')
+    prior = None
+    if b1_receipt is not None:
+        if (b1_receipt.is_symlink() or not b1_receipt.is_file() or
+                b1_receipt.resolve() in {p.resolve() for p in dst}):
+            raise ValueError('R4_NV4_B1_SOURCE_RECEIPT_ALIAS_OR_MISSING')
+        try:
+            prior = json.loads(b1_receipt.read_bytes())
+        except (ValueError, UnicodeDecodeError):
+            raise ValueError('R4_NV4_B1_SOURCE_RECEIPT_INVALID')
+        bindings = prior.get('additional_source_bindings')
+        if (prior.get('schema') != 'r4-b1-admission-overlay-v2' or
+                prior.get('post_b1_b3_b2_b4_source_composition') !=
+                'EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING' or
+                prior.get('nvocmp_compaction_fusion_source') !=
+                'B1_HOLD_PLUS_B3_THREE_DONOR_GUARDS' or
+                prior.get('modified_nv_sha256') != hashlib.sha256(originals[0]).hexdigest() or
+                not isinstance(bindings, dict) or
+                'nv4_admission_c_sha256' in bindings or
+                'nv4_admission_h_sha256' in bindings):
+            raise ValueError('R4_NV4_B1_SOURCE_RECEIPT_PREIMAGE_DRIFT')
+        if not all(isinstance(x, str) and isinstance(y, str)
+                   for x, y in bindings.items()):
+            raise ValueError('R4_NV4_B1_SOURCE_RECEIPT_BINDINGS_INVALID')
     result = {
         'schema': 'p7u-nv4-b1-source-only-v1',
         'source_before_sha256': hashlib.sha256(originals[0]).hexdigest(),
@@ -188,6 +212,19 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path) -> dict:
     nv.write_text(replacement, encoding='utf-8', newline='\n')
     dst[1].write_bytes(originals[1])
     dst[2].write_bytes(originals[2])
+    if prior is not None:
+        prior['modified_nv_sha256'] = result['source_after_sha256']
+        prior['nv4_admission_c_sha256'] = result['nv4_admission_c_sha256']
+        prior['nv4_admission_h_sha256'] = result['nv4_admission_h_sha256']
+        prior['additional_source_bindings']['nv4_admission_c_sha256'] = (
+            'source/ti/common/nv/nv4_readonly_admission.c')
+        prior['additional_source_bindings']['nv4_admission_h_sha256'] = (
+            'source/ti/common/nv/nv4_readonly_admission.h')
+        prior['nv4_readonly_bridge_source'] = 'EXACT_PINNED_FOUR_PAGE_B1_ADMISSION'
+        b1_receipt.write_text(json.dumps(prior, indent=2, sort_keys=True) + '\n')
+        result['b1_overlay_receipt_bound'] = True
+    else:
+        result['b1_overlay_receipt_bound'] = False
     receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
     return result
 
@@ -200,9 +237,10 @@ def main() -> None:
     parser.add_argument('--admission-h', type=Path,
                         default=Path(__file__).with_name('nv4_readonly_admission.h'))
     parser.add_argument('--receipt', type=Path, required=True)
+    parser.add_argument('--b1-overlay-receipt', type=Path)
     args = parser.parse_args()
     print(json.dumps(apply(args.sdk, args.admission_c, args.admission_h,
-                           args.receipt), sort_keys=True))
+                           args.receipt, args.b1_overlay_receipt), sort_keys=True))
 
 
 if __name__ == '__main__':
