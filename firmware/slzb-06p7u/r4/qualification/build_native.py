@@ -37,7 +37,9 @@ def native_workspace():
         shutil.rmtree(root)
 
 
-def build(output: Path, reference: str, source_sha: str):
+def build(output: Path, reference: str, source_sha: str, profile: str = "transport-only"):
+    if profile not in ("transport-only", "uart-smoke"):
+        raise ValueError("QUALIFICATION_UNKNOWN_PROFILE")
     if output.exists():
         raise ValueError("QUALIFICATION_OUTPUT_MUST_BE_NEW")
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
@@ -95,20 +97,24 @@ def build(output: Path, reference: str, source_sha: str):
         tool("b0/tools/b0_sdk_build_scope.py", "--sdk", sdk,
              "--receipt", output / "sdk-scope-receipt.json")
         run("make", "-j2", cwd=sdk)
-        os.environ["R4_NVOCMP_SOURCE"] = str(sdk / "source/ti/common/nv/nvocmp.c")
-        os.environ["R4_CRC_SOURCE"] = str(sdk / "source/ti/common/nv/crc.c")
-        run(sys.executable, "-m", "unittest", "-v", "tests.test_r4_nv_compatibility", cwd=REPO)
-        tool("qualification/transport_profile.py", "--sdk", sdk, "--source-sha", source_sha,
-             "--receipt", output / "transport-profile-source.json")
-        tool("qualification/make_transport_harness.py", "--sdk", sdk,
-             "--profile-receipt", output / "transport-profile-source.json",
-             "--output", output / "transport-profile-host.c")
-        run("cc", "-std=c11", "-O1", "-g", "-fsanitize=address,undefined",
-            "-fno-sanitize-recover=all", "-fno-omit-frame-pointer",
-            "-DR4_TRANSPORT_HOST", "-Wno-incompatible-pointer-types", "-I", R4 / "qualification",
-            output / "transport-profile-host.c", "-o", temp / "transport-host")
-        for scenario in SCENARIOS:
-            run(temp / "transport-host", scenario)
+        if profile == "transport-only":
+            os.environ["R4_NVOCMP_SOURCE"] = str(sdk / "source/ti/common/nv/nvocmp.c")
+            os.environ["R4_CRC_SOURCE"] = str(sdk / "source/ti/common/nv/crc.c")
+            run(sys.executable, "-m", "unittest", "-v", "tests.test_r4_nv_compatibility", cwd=REPO)
+            tool("qualification/transport_profile.py", "--sdk", sdk, "--source-sha", source_sha,
+                 "--receipt", output / "transport-profile-source.json")
+            tool("qualification/make_transport_harness.py", "--sdk", sdk,
+                 "--profile-receipt", output / "transport-profile-source.json",
+                 "--output", output / "transport-profile-host.c")
+            run("cc", "-std=c11", "-O1", "-g", "-fsanitize=address,undefined",
+                "-fno-sanitize-recover=all", "-fno-omit-frame-pointer",
+                "-DR4_TRANSPORT_HOST", "-Wno-incompatible-pointer-types", "-I", R4 / "qualification",
+                output / "transport-profile-host.c", "-o", temp / "transport-host")
+            for scenario in SCENARIOS:
+                run(temp / "transport-host", scenario)
+        else:
+            tool("qualification/uart_smoke_profile.py", "--sdk", sdk, "--source-sha", source_sha,
+                 "--receipt", output / "uart-smoke-source.json")
         run(eclipse, "-noSplash", "-data", workspace,
             "-application", "com.ti.common.core.initialize",
             "-ccs.toolDiscoveryPath", compiler)
@@ -141,10 +147,15 @@ def build(output: Path, reference: str, source_sha: str):
         tool("qualification/board_profile.py", "--generated", output / "compiled-syscfg",
              "--binary", output / (PROJECT + ".bin"), *board_args,
              "--receipt", output / "board-native.json")
-        tool("qualification/native_profile_audit.py", "--artifacts", output, "--sdk", sdk,
-             "--profile-receipt", output / "transport-profile-source.json",
-             "--expected-sha", source_sha, "--receipt", output / "transport-profile-native.json")
-        receipt = {"schema": "r4-p7u-qualification-build-v1", "profile": "transport-only",
+        if profile == "transport-only":
+            tool("qualification/native_profile_audit.py", "--artifacts", output, "--sdk", sdk,
+                 "--profile-receipt", output / "transport-profile-source.json",
+                 "--expected-sha", source_sha, "--receipt", output / "transport-profile-native.json")
+        else:
+            tool("qualification/uart_smoke_native_audit.py", "--artifacts", output, "--sdk", sdk,
+                 "--profile-receipt", output / "uart-smoke-source.json",
+                 "--expected-sha", source_sha, "--receipt", output / "uart-smoke-native.json")
+        receipt = {"schema": "r4-p7u-qualification-build-v1", "profile": profile,
                    "source_sha": source_sha, "sdk_sha": SDK, "examples_sha": EXAMPLES,
                    "reference_power": reference, "current_board_qualified": False,
                    "replica": os.environ.get("R4Q_REPLICA"),
@@ -161,8 +172,10 @@ def main():
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--reference-power", required=True,
                         choices=REFERENCES)
+    parser.add_argument("--profile", choices=("transport-only", "uart-smoke"),
+                        default="transport-only")
     args = parser.parse_args()
-    build(args.output.resolve(), args.reference_power, args.source_sha)
+    build(args.output.resolve(), args.reference_power, args.source_sha, args.profile)
 
 
 if __name__ == "__main__":

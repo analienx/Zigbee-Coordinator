@@ -15,7 +15,8 @@ Current-board captures, IEEE/security material and restore images stay private.
 |---|---|---|
 | Current capture | `capture_pair.py`, injected read adapter only | Two complete bounded reads, ROM CRC and identity checks; no entry/reset/write API |
 | Current profile | `../release/r4_current_board_profile.py` | Externally hash-bound boot/power/protection observations; NV semantics remain unknown |
-| Transport diagnostic | `transport_profile.py`, existing TI NPI/MT owner | Only zero-length SYS_PING / SYS_VERSION; no NV initialization or Zigbee/RF stack startup |
+| Transport diagnostic | `transport_profile.py`, existing TI NPI/MT owner | Only zero-length SYS_PING / SYS_VERSION; no NV initialization or Zigbee/RF stack startup; physically silent twice |
+| UART startup smoke | `uart_smoke_profile.py`, `uart_smoke_native_audit.py` | Independent SYS/BIOS task writes a repeatable UART2 marker, without NPI/MT, NV, Zigbee or RF; offline only |
 | Board generation | `board_profile.py` | Source-level SysConfig power/UART selection and generated GPIO/CCFG audit |
 | NV clone probe | `nv_compatibility.py` | Actual pinned TI init/item/CRC readers, with all writes/erases/compactions refused; structural evidence only |
 | NV sector inventory | `nv_sector_inventory.py` | Sanitized page-header hints across reserved sectors; never selects active stock NV or authorizes startup |
@@ -109,10 +110,35 @@ The native loadable application ends below `0x6000`, within the three written
 sectors. These observations exclude three immediate failure hypotheses but do
 not locate a runtime startup failure. Raw stock bytes remain private.
 
-The next candidate's single NPI-startup beacon is an **offline build change**;
-it has not been flashed. A follow-up operator must listen for the beacon and
-record separate PING/VERSION stages before restoring stock on failure. No NV,
-network, RF, additional reboot or flash operation is authorized by this text.
+The second isolated, approved trial used the NPI-startup beacon but again
+received **zero UART bytes** (no beacon and no SYS_PING); SYS_VERSION was not
+reached. The same three original sectors were restored and CRC-verified; stock
+SYS_PING and SYS_VERSION=20240716 passed after the rollback. This repeats the
+transport failure without proving that modified `main()` or the NPI task ran.
+The new UART2 smoke profile is the next **offline** diagnostic image; it has
+not been flashed. No further reset, flash, NV, network or RF operation is
+authorized by this text. See issue #103 and draft PR #135.
+
+## UART2 startup smoke (independent of NPI)
+
+`build_native.py --profile uart-smoke` changes only the exact pinned TI
+`source/ti/zstack/startup/main.c` in a disposable 8.33 SDK tree. It preserves
+genuine TI C runtime, SysConfig, board Power/GPIO initialization and the
+direct-ROM linker, but skips stack, NV, RF and NPI services. One newly
+constructed SYS/BIOS task opens the generated `CONFIG_DISPLAY_UART` at 115200
+8N1 and writes `FE 01 41 F7 A8 1F` once per second. The `A8` byte is different
+from the previous post-NPI `A7` beacon. An optional debugger-only volatile
+stage variable marks early main/Board/Task/UART/write steps. It does not
+cause any flash or GPIO activity beyond TI board/UART setup.
+
+The separate one-run native workflow checks source pins, linker symbol graph,
+the real ELF/HEX/BIN binding, unchanged stock power/CCFG words, and that all
+non-CCFG linked bytes remain in the first three 8 KiB APP sectors. It does
+**not** grant a flash; it cannot establish physical boot or Ethernet bridge
+delivery. A future trial requires a separately authorized, capture-bound
+three-sector private package and rollback. If the repeated marker appears,
+return to NPI initialization for the fault. If not, investigate early boot,
+Task/UART2 initialization and bridge startup **without assuming a result**.
 
 ## Previous owner-approved capture procedure (completed)
 
