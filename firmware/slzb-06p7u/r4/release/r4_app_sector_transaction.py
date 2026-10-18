@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import binascii
+import copy
 import hashlib
+import json
 import math
 import re
 import time
 from typing import Protocol
 
-from r4_current_app_package import AppPackage, FLASH, SECTOR, canonical, validate_package
+from r4_current_app_package import AppPackage, FLASH, SECTOR, _allowed, canonical, validate_package
 
 PACKET = 252
 OPERATION_TIMEOUT = 10.0
@@ -45,6 +47,29 @@ def sha(raw: bytes) -> str:
 
 def crc(raw: bytes) -> int:
     return binascii.crc32(raw) & 0xFFFFFFFF
+
+
+def _freeze_package(package: AppPackage) -> AppPackage:
+    """Take a private, independent input snapshot before any adapter await.
+
+    AppPackage is a NamedTuple, but its manifest/profile/sector dictionaries
+    are caller-owned and mutable. In particular the program order and writable
+    sector set must never be obtained from them after live preflight begins.
+    JSON metadata roundtrips also detach deeply nested geometry and lists.
+    """
+    if not isinstance(package, AppPackage):
+        deny("PACKAGE_TYPE")
+    return AppPackage(json.loads(canonical(package.manifest)),
+                      json.loads(canonical(package.profile)),
+                      package.snapshot,
+                      dict(package.sectors))
+
+
+def _freeze_json(value):
+    """Copy an admission/capture/pin mapping before adapter callbacks run."""
+    # Admission embeds int-indexed sector hash maps, so JSON roundtripping
+    # would silently convert their keys to strings and invalidate admission.
+    return copy.deepcopy(value)
 
 
 def _capture_live_identity(package: AppPackage, receipt: dict, *,
@@ -148,6 +173,8 @@ async def admit(rom: ROM, package: AppPackage, *, expected_profile_sha256: str,
                 session_timeout: float = SESSION_TIMEOUT) -> dict:
     """Read-only full current-state check; receipt is not hardware permission."""
     rom = _bounded(rom, operation_timeout, session_timeout)
+    package = _freeze_package(package)
+    capture_receipt = _freeze_json(capture_receipt)
     validate_package(package, expected_profile_sha256=expected_profile_sha256,
                      expected_package_sha256=expected_package_sha256)
     live_identity = _capture_live_identity(package, capture_receipt,
@@ -200,6 +227,12 @@ async def _write(rom: ROM, package: AppPackage, targets: dict[int, bytes],
         after = targets[address]
         if sha(after) == expected_live[address]:
             continue
+        # Last synchronous check before irreversible hardware access. Neither
+        # an injected adapter nor an async caller can expand the frozen APP
+        # allowlist to a reserved/NV/CCFG address.
+        if type(address) is not int or address not in package.sectors:
+            deny("ERASE_TARGET_NOT_IN_FROZEN_PACKAGE")
+        _allowed(package.profile, package.profile["geometry"], address)
         await _accepted(rom, await rom.erase_sector(address), "SECTOR_ERASE_REJECTED_" + hex(address))
         await _accepted(rom, await rom.begin_download(address, SECTOR), "PLAIN_DOWNLOAD_REJECTED_" + hex(address))
         for offset in range(0, SECTOR, PACKET):
@@ -226,6 +259,9 @@ async def execute(rom: ROM, package: AppPackage, admission: dict, *, expected_pr
                   session_timeout: float = SESSION_TIMEOUT) -> dict:
     """Invoke ONLY from a separately approved operator session; never retries."""
     rom = _bounded(rom, operation_timeout, session_timeout)
+    package = _freeze_package(package)
+    admission = _freeze_json(admission)
+    capture_receipt = _freeze_json(capture_receipt)
     current = await admit(rom, package, expected_profile_sha256=expected_profile_sha256,
                           expected_package_sha256=expected_package_sha256,
                           capture_receipt=capture_receipt,
@@ -252,6 +288,9 @@ async def rollback_current_app(rom: ROM, package: AppPackage, *, expected_profil
     current capture. This proves byte restoration, not network downgrade safety.
     """
     rom = _bounded(rom, operation_timeout, session_timeout)
+    package = _freeze_package(package)
+    capture_receipt = _freeze_json(capture_receipt)
+    expected_live_sector_sha256 = dict(expected_live_sector_sha256)
     validate_package(package, expected_profile_sha256=expected_profile_sha256,
                      expected_package_sha256=expected_package_sha256)
     live_identity = _capture_live_identity(package, capture_receipt,

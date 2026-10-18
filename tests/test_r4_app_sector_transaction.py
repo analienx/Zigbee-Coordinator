@@ -106,6 +106,47 @@ class AppSectorTransactionTests(unittest.TestCase):
             self.assertFalse(result["network_rollback_qualified"])
         asyncio.run(scenario())
 
+    def test_async_package_mutation_cannot_expand_live_erase_allowlist(self):
+        """Use a deliberately permissive ROM, not a fake-level NV denylist."""
+        class MutatingROM(FakeROM):
+            mutate = False
+
+            async def identity_sha256(self):
+                if self.mutate:
+                    self.mutate = False
+                    self.caller_package.sectors[0xA0000] = b"\x00" * tx.SECTOR
+                    self.caller_package.manifest["program_order"].insert(0, 0xA0000)
+                    self.caller_package.profile["geometry"]["application_limit_exclusive"] = tx.FLASH
+                    self.caller_package.profile["protection"]["writable_application_sector_indices"].append(0x50)
+                await asyncio.sleep(0)
+                return self.identity
+
+            async def erase_sector(self, address):
+                # Unconditionally accept every address so protection MUST be
+                # enforced inside the production transaction itself.
+                self.erases.append(address)
+                self.memory[address:address + tx.SECTOR] = b"\xff" * tx.SECTOR
+                return True
+
+            async def begin_download(self, address, length):
+                self.downloads.append((address, length))
+                self.position = address
+                return True
+
+        async def scenario():
+            rom = MutatingROM(self.package)
+            rom.caller_package = self.package
+            admission = await tx.admit(rom, self.package, **self.pins)
+            rom.mutate = True
+            result = await tx.execute(rom, self.package, admission, **self.pins,
+                                      expected_admission_sha256=admission["admission_sha256"])
+            self.assertEqual(rom.erases, [0x4000, 0])
+            self.assertEqual(result["written_sectors"], [0x4000, 0])
+            self.assertNotIn(0xA0000, rom.erases)
+            self.assertEqual(bytes(rom.memory[0xA0000:]), self.package.snapshot[0xA0000:])
+
+        asyncio.run(scenario())
+
     def test_changed_live_board_capture_or_protected_bytes_never_erases(self):
         async def scenario():
             for mutation in ("identity", "app", "protected", "crc", "receipt"):
