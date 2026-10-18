@@ -1,4 +1,10 @@
-# P7U live NV5 compaction and NPI startup forensics — 18 October 2026
+# P7U stock NV4 compaction and NPI startup forensics — 18 October 2026
+
+**Correction to the first NV5 hypothesis:** the five-page *conservative
+inspection envelope* includes one erased sector outside the current stock
+NVS. The stock firmware's binary NVSCC26XX base/size attributes support
+**NV4 at `0xA6000/0x8000`**, not NV5 at `0xA4000/0xA000`. An independent
+native/symbolic cross-check is still useful before enabling a Zigbee stack.
 
 This is a **private-capture-derived, sanitized** conclusion for one
 SLZB-06P7U, CC2652P7, HW 1.73. Raw snapshots and network secrets remain
@@ -16,8 +22,9 @@ Validated read-only captures (each has an independent identical second pass):
 | After UART diagnostic | `78e04c50459682439963c39ed00d089ae052daf2326948fbeced19aba4409fc4` |
 | After later diagnostic | `7e2a98beccee74e3e3f32a4e4bbd74b7ce194b412dc52157e0fe8905176772ae` |
 
-The candidate **five-page NVOCMP v3** region is `0xA4000..0xADFFF`, five
-8KiB pages. We compared its exact TI-style compressed item headers and
+The conservative inspection envelope is `0xA4000..0xADFFF`, five 8KiB
+sectors. The **four occupied/rotating pages** are `0xA6000..0xADFFF`.
+We compared its exact TI-style compressed item headers and
 CRC8 (poly 0x97) with `qualification/nv_five_page_forensics.py` on the
 private machine. It exports **aggregate counts only**.
 
@@ -36,6 +43,9 @@ private machine. It exports **aggregate counts only**.
 - **0 missing, 0 new, 0 changed** active payloads.
 - **0 active duplicate IDs**; **0 CRC failures** across all **667** earlier
   and **714** later scanned records (including inactive history).
+- Every active record's `systemID` is **1** in both captures (366/366).
+  TI defines `NVINTF_SYSID_ZSTACK=1`, providing direct Z-Stack identity
+  evidence without publishing individual NV identifiers.
 - The next capture's high reserved pages match the prior capture byte-for-byte;
   CCFG was unchanged too. The later true TI NPI flash wrote only low APP
   sectors and did not run the Zigbee/NV stack; no newer full readback is claimed.
@@ -47,6 +57,18 @@ parity constitute strong evidence of **normal lossless NVOCMP compaction**.
 The specific command/boot that triggered the two cycle advances was not
 observed, so causation is not assigned to a particular firmware action.
 
+### Independent stock binary configuration cross-check
+
+The earlier stock capture contains exactly one candidate for the TI
+`NVSCC26XX_HWAttrs` adjacent `regionBase`/`regionSize` words ending before
+CCFG/NV boundary: at APP offset **`0x2A0F4`** the 32-bit words are
+**`0x000A6000`** and **`0x00008000`**. Their values map to **four** 8KiB
+pages covering exactly the four occupied sectors. Neither `0xA4000` nor
+`0xAA000` appears as an aligned NVS base value in the stock application.
+TI's [NVSCC26XX hardware attributes](https://dev.ti.com/tirex/content/simplelink_cc13xx_cc26xx_sdk_8_32_00_07/docs/drivers/doxygen/html/struct_n_v_s_c_c26_x_x___h_w_attrs.html)
+define precisely this adjacent base/size structure. The match is strong
+binary evidence, though a symbol-linked call-site proof has not been made.
+
 ## 2. Crucial difference: native R4 ZNP's *configured* NV2 is incompatible
 
 **Do not equate lossless existing NV pages with a safe new Zigbee stack.**
@@ -54,17 +76,18 @@ observed, so causation is not assigned to a particular firmware action.
 Our current TI donor B0/B1 configuration is based on `NVOCMP_NVPAGES=2`,
 NVS `0xAA000` size `0x4000` (see `b0/README.md`, `b0/B0_BOARD_CONTRACT.json`
 and `b1/tools/apply_b1.py`). It is not a correct physical NV mapping for
-the observed **five-page** current network store at `0xA4000..0xADFFF`.
-The prior `qualification/nv_compatibility.py` intentionally rejects five-
-page geometry and cannot qualify these real snapshots by a two-page probe.
+the observed **four-page** current network store at `0xA6000..0xADFFF`.
+The prior `qualification/nv_compatibility.py` intentionally supports only
+donor NV2 and cannot qualify these real snapshots by a two-page probe.
 
 **Required work before any full Zigbee/NV-enabled firmware runs:**
 
-1. Produce an image-specific **five-page** board profile: linker APP ends
-   before `0xA4000`, NVS `regionBase=0xA4000`, `regionSize=0xA000`, sector
-   size `0x2000`, and `NVOCMP_NVPAGES=5`. Update native assertions, B1
+1. Produce an image-specific **four-page** board profile: linker APP ends
+   before `0xA6000` (conservatively `0xA4000` is fine), NVS
+   `regionBase=0xA6000`, `regionSize=0x8000`, sector size `0x2000`, and
+   `NVOCMP_NVPAGES=4`. Update native assertions, B1
    storage admission and CI provenance together; no overlapping linker map.
-2. Build a **pinned genuine TI NV5 clone parser** with all writes, erases and
+2. Build a **pinned genuine TI NV4 clone parser** with all writes, erases and
    recovery/compaction requests failing closed; compare its active items
    with the 366 record reference before relying on a normal NV init. This
    Python observer establishes record integrity but not all TI runtime
@@ -116,9 +139,9 @@ FCS verification rejects garbage/bridge noise and unexpected MT frames.
 - Reserved-sector **data-loss/corruption suspicion**: not supported by the
   complete per-record, CRC-checked comparison; record-preserving compaction
   is the strongly evidenced explanation. **Root trigger still unknown.**
-- **NV5-to-current-R4-NV2 format/configuration mismatch: HIGH / blocking**
+- **NV4-to-current-R4-NV2 geometry/configuration mismatch: HIGH / blocking**
   full Zigbee NV initialization until source, native linker and a private
-  read-only clone match five-page and semantic requirements.
+  read-only clone match four-page and semantic requirements.
 - **Startup: operational workaround verified 3/3**; readiness-based retry
   implemented and unit tested. Cold-power robustness remains unmeasured.
 - Installed diagnostic is left in place. No restoration performed.
