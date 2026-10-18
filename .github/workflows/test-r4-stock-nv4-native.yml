@@ -68,7 +68,9 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py" \
             --sdk "$sdk" --receipt /tmp/nv4out/sdk-scope.json
           (cd "$sdk" && make -j2) 2>&1 | tee /tmp/nv4out/build.log
-          find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) | grep -q .
+          # -quit keeps pipefail from mistaking grep -q's early close for
+          # a failed SDK library build (SIGPIPE exit 141 from find).
+          test -n "$(find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print -quit)"
 
           donor=/tmp/nv4src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py" \
