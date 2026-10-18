@@ -23,6 +23,7 @@ jobs:
         run: |
           python -m unittest -v tests.test_r4_nv4_readonly_admission
           python -m unittest -v tests.test_r4_nv4_b1_bridge
+          python -m unittest -v tests.test_r4_nv4_native_seal
       - name: Upload exact-source synthetic receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
