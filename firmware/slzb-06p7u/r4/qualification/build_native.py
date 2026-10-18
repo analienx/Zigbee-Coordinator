@@ -179,7 +179,7 @@ def main():
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--reference-power", required=True,
                         choices=REFERENCES)
-    parser.add_argument("--profile", choices=("transport-only", "uart-smoke"),
+    parser.add_argument("--profile", choices=("transport-only", "uart-smoke", "uart-poll"),
                         default="transport-only")
     args = parser.parse_args()
     build(args.output.resolve(), args.reference_power, args.source_sha, args.profile)
