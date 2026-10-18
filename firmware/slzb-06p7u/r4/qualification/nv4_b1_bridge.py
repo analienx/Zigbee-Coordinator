@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Strict source-only conversion of a PINNED, already-applied B1 NV2 overlay.
+
+The existing P7U NVOCMP v3 four-page network is never factory-formatted here.
+Before TI init, run a read-only bounded CRC/layout scan; on success preserve
+B1's existing-network signal and prohibit all init-time NV writes. Rejection
+retains the B1 sticky HOLD and its existing NPI-without-Zigbee path.
+
+Inputs MUST be disposable *post-B1* SDK files created by the exact-pinned B1
+overlay. This code does not operate on hardware, and never authorizes flash.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+from nv4_source_overlay import STOCK_BASE, STOCK_SIZE, STOCK_PAGES
+
+
+INCLUDE_FROM = '#include "b1_admission.c" /* B1 source-linked native admission */'
+INCLUDE_TO = (INCLUDE_FROM + '\n'
+              '#include "nv4_readonly_admission.c" /* stock P7U read-only NV4 */')
+
+PRE_DIVISION_NV2 = (
+    'NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT ||\n'
+    '            NVOCMP_nvsAttrs.sectorSize != B1_NV2_PAGE_SIZE ||\n'
+    '            NVOCMP_nvsAttrs.regionSize != B1_NV2_REGION_SIZE ||\n'
+    '            (uintptr_t)NVOCMP_nvsAttrs.regionBase != (uintptr_t)0xAA000u'
+)
+PRE_DIVISION_NV4 = (
+    'NVOCMP_NVPAGES != R4_NV4_PAGES ||\n'
+    '            NVOCMP_nvsAttrs.sectorSize != R4_NV4_PAGE_SIZE ||\n'
+    '            NVOCMP_nvsAttrs.regionSize != R4_NV4_REGION_SIZE ||\n'
+    '            (uintptr_t)NVOCMP_nvsAttrs.regionBase != (uintptr_t)0xA6000u'
+)
+POST_DIVISION_NV2 = (
+    'NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT ||\n'
+    '            NVOCMP_nvsAttrs.sectorSize != B1_NV2_PAGE_SIZE ||\n'
+    '            NVOCMP_nvsAttrs.regionSize != B1_NV2_REGION_SIZE)'
+)
+POST_DIVISION_NV4 = (
+    'NVOCMP_NVPAGES != R4_NV4_PAGES ||\n'
+    '            NVOCMP_nvsAttrs.sectorSize != R4_NV4_PAGE_SIZE ||\n'
+    '            NVOCMP_nvsAttrs.regionSize != R4_NV4_REGION_SIZE)'
+)
+
+OLD_ADMISSION = '''        {
+            b1_nv_probe_result admission = b1_nv_probe(
+                b1_nv_nvs_read, NVOCMP_nvsHandle,
+#ifdef B1_FACTORY_BOOT_AUTHORIZED
+                true);
+#else
+                false);
+#endif
+            b1_management_note_nv_probe((uint8_t)admission.code);
+            if (admission.code != B1_NV2_HEADER_CANDIDATE &&
+                admission.code != B1_NV_FACTORY_AUTHORIZED)
+            {
+                NVOCMP_failF = NVINTF_FAILURE;
+                NVOCMP_failW = NVINTF_FAILURE;
+                b1_management_hold_nv((uint8_t)admission.code);
+                return NVOCMP_failF;
+            }
+            if (admission.code == B1_NV2_HEADER_CANDIDATE)
+                b1_management_note_nv_candidate();
+        }'''
+
+NEW_ADMISSION = '''        {
+            /* Existing fitted network only. Factory authorization is NOT
+             * inherited from B1's two-page provisioning mode. */
+            r4_nv4_result admission;
+            uint8_t reason = B1_NV_HOLD_UNKNOWN_LAYOUT;
+            b1_nv_existing_pair = 0u;
+            admission = r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle);
+            switch (admission.code)
+            {
+            case R4_NV4_BAD_READER: reason = B1_NV_HOLD_NO_READER; break;
+            case R4_NV4_READ_FAILURE: reason = B1_NV_HOLD_READ_FAILED; break;
+            case R4_NV4_BAD_PAGE_HEADER: reason = B1_NV_HOLD_UNKNOWN_LAYOUT; break;
+            case R4_NV4_UNSAFE_PAGE_STATES: reason = B1_NV_HOLD_MIXED_LAYOUT; break;
+            case R4_NV4_BAD_ITEM: reason = B1_NV_HOLD_ITEM_HEADER; break;
+            case R4_NV4_BAD_CRC: reason = B1_NV_HOLD_ITEM_CRC; break;
+            case R4_NV4_SCAN_LIMIT: reason = B1_NV_HOLD_SCAN_LIMIT; break;
+            case R4_NV4_READONLY_STRUCTURE_ACCEPTED:
+                /* Reuse existing-network diagnostic category (7), not factory. */
+                reason = B1_NV2_HEADER_CANDIDATE;
+                break;
+            default: break;
+            }
+            b1_management_note_nv_probe(reason);
+            if (admission.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED)
+            {
+                NVOCMP_failF = NVINTF_FAILURE;
+                NVOCMP_failW = NVINTF_FAILURE;
+                b1_management_hold_nv(reason);
+                return NVOCMP_failF;
+            }
+            b1_nv_existing_pair = 1u; /* B1 restored-network security path */
+            b1_management_note_nv_candidate();
+        }'''
+
+READ_CALLBACK = '''static int_fast16_t b1_nv_nvs_read(void *opaque, uint32_t off,
+                                   uint8_t *data, uint32_t len)
+{
+    return NVS_read((NVS_Handle)opaque, off, data, len);
+}'''
+READ_CALLBACK_NV4 = '''static int r4_nv4_nvs_read(void *opaque, uint32_t off,
+                           uint8_t *data, uint32_t len)
+{
+    return NVS_read((NVS_Handle)opaque, off, data, len) ==
+           NVS_STATUS_SUCCESS ? 0 : -1;
+}'''
+
+MULTIPAGE_SCAN = '''    status = NVOCMP_scanPage(pNvHandle, pg, pPageInfo);
+    if(status != NVINTF_SUCCESS)
+    {
+      return;
+    }'''
+MULTIPAGE_SCAN_CHECKED = '''    status = NVOCMP_scanPage(pNvHandle, pg, pPageInfo);
+    if(status != NVINTF_SUCCESS || NVOCMP_failF != NVINTF_SUCCESS ||
+       b1_nv_runtime_hold_active())
+    {
+      NVOCMP_failF = NVINTF_FAILURE;
+      NVOCMP_failW = NVINTF_FAILURE;
+      b1_nv_runtime_hold_latch();
+      return; /* never choose a repair/erase action after scan error */
+    }'''
+
+
+def one(source: str, before: str, after: str, label: str) -> str:
+    if source.count(before) != 1 or after in source:
+        raise ValueError('R4_NV4_B1_POST_B1_PREIMAGE_' + label)
+    return source.replace(before, after, 1)
+
+
+def transform(source: str) -> str:
+    if not isinstance(source, str) or not source:
+        raise ValueError('R4_NV4_B1_SOURCE_REQUIRED')
+    if not (STOCK_BASE == 0xA6000 and STOCK_SIZE == 0x8000 and STOCK_PAGES == 4):
+        raise ValueError('R4_NV4_STOCK_GEOMETRY_DRIFT')
+    source = source.replace('\r\n', '\n')
+    if ('/* B1 source-linked native admission */' not in source or
+            '/* B1 N03: no divide by zero/CCFG */' not in source or
+            'b1_nv_initializing = 1u;' not in source or
+            'b1_nv_runtime_hold_latch();' not in source or
+            'b1_nv_existing_pair' in source):
+        raise ValueError('R4_NV4_B1_REQUIRES_PINNED_B1_APPLIED_SOURCE')
+    source = one(source, INCLUDE_FROM, INCLUDE_TO, 'INCLUDE')
+    source = one(source, READ_CALLBACK, READ_CALLBACK_NV4, 'READ_CALLBACK')
+    source = one(source, PRE_DIVISION_NV2, PRE_DIVISION_NV4, 'PRE_DIVISION')
+    source = one(source, POST_DIVISION_NV2, POST_DIVISION_NV4, 'POST_DIVISION')
+    source = one(source, OLD_ADMISSION, NEW_ADMISSION, 'ADMISSION')
+    source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
+    if source.count('NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT') != 0:
+        raise ValueError('R4_NV4_B1_LEFTOVER_NATIVE_NV2_GUARD')
+    return source
+
+
+def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path) -> dict:
+    """Prevalidate all sources, then modify disposable SDK and add NV4 C/H."""
+    sdk = sdk.resolve()
+    nv = sdk / 'source/ti/common/nv/nvocmp.c'
+    dst = [nv, nv.parent/'nv4_readonly_admission.c',
+           nv.parent/'nv4_readonly_admission.h', receipt.resolve()]
+    if (len({x.resolve() for x in dst}) != 4 or
+            receipt.exists() or receipt.is_symlink() or
+            any(p.exists() or p.is_symlink() for p in dst[1:3])):
+        raise ValueError('R4_NV4_B1_DESTINATION_NOT_DISPOSABLE')
+    originals = [nv.read_bytes(), c_source.read_bytes(), h_source.read_bytes()]
+    replacement = transform(originals[0].decode('utf-8'))
+    if b'R4_NV4_REGION_SIZE' not in originals[2] or b'r4_nv4_admit' not in originals[1]:
+        raise ValueError('R4_NV4_B1_ADMISSION_SOURCES_MISSING')
+    result = {
+        'schema': 'p7u-nv4-b1-source-only-v1',
+        'source_before_sha256': hashlib.sha256(originals[0]).hexdigest(),
+        'source_after_sha256': hashlib.sha256(replacement.encode()).hexdigest(),
+        'nv4_admission_c_sha256': hashlib.sha256(originals[1]).hexdigest(),
+        'nv4_admission_h_sha256': hashlib.sha256(originals[2]).hexdigest(),
+        'region_base': '0xA6000', 'region_size': '0x8000', 'nv_pages': 4,
+        'factory_boot_authorized': False, 'hardware_contact': False,
+        'native_linked': False, 'security_counter_continuity_verified': False,
+        'flash_authorized': False,
+    }
+    nv.write_text(replacement, encoding='utf-8', newline='\n')
+    dst[1].write_bytes(originals[1])
+    dst[2].write_bytes(originals[2])
+    receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sdk', type=Path, required=True)
+    parser.add_argument('--admission-c', type=Path,
+                        default=Path(__file__).with_name('nv4_readonly_admission.c'))
+    parser.add_argument('--admission-h', type=Path,
+                        default=Path(__file__).with_name('nv4_readonly_admission.h'))
+    parser.add_argument('--receipt', type=Path, required=True)
+    args = parser.parse_args()
+    print(json.dumps(apply(args.sdk, args.admission_c, args.admission_h,
+                           args.receipt), sort_keys=True))
+
+
+if __name__ == '__main__':
+    main()
