@@ -38,7 +38,7 @@ def native_workspace():
 
 
 def build(output: Path, reference: str, source_sha: str, profile: str = "transport-only"):
-    if profile not in ("transport-only", "uart-smoke"):
+    if profile not in ("transport-only", "uart-smoke", "uart-poll"):
         raise ValueError("QUALIFICATION_UNKNOWN_PROFILE")
     if output.exists():
         raise ValueError("QUALIFICATION_OUTPUT_MUST_BE_NEW")
@@ -112,9 +112,12 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
                 output / "transport-profile-host.c", "-o", temp / "transport-host")
             for scenario in SCENARIOS:
                 run(temp / "transport-host", scenario)
-        else:
+        elif profile == "uart-smoke":
             tool("qualification/uart_smoke_profile.py", "--sdk", sdk, "--source-sha", source_sha,
                  "--receipt", output / "uart-smoke-source.json")
+        else:
+            tool("qualification/uart_poll_profile.py", "--sdk", sdk, "--source-sha", source_sha,
+                 "--receipt", output / "uart-poll-source.json")
         run(eclipse, "-noSplash", "-data", workspace,
             "-application", "com.ti.common.core.initialize",
             "-ccs.toolDiscoveryPath", compiler)
@@ -151,10 +154,14 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
             tool("qualification/native_profile_audit.py", "--artifacts", output, "--sdk", sdk,
                  "--profile-receipt", output / "transport-profile-source.json",
                  "--expected-sha", source_sha, "--receipt", output / "transport-profile-native.json")
-        else:
+        elif profile == "uart-smoke":
             tool("qualification/uart_smoke_native_audit.py", "--artifacts", output, "--sdk", sdk,
                  "--profile-receipt", output / "uart-smoke-source.json",
                  "--expected-sha", source_sha, "--receipt", output / "uart-smoke-native.json")
+        else:
+            tool("qualification/uart_poll_native_audit.py", "--artifacts", output, "--sdk", sdk,
+                 "--profile-receipt", output / "uart-poll-source.json",
+                 "--expected-sha", source_sha, "--receipt", output / "uart-poll-native.json")
         receipt = {"schema": "r4-p7u-qualification-build-v1", "profile": profile,
                    "source_sha": source_sha, "sdk_sha": SDK, "examples_sha": EXAMPLES,
                    "reference_power": reference, "current_board_qualified": False,
