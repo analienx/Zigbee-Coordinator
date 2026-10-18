@@ -81,6 +81,17 @@ class SourceGates(unittest.TestCase):
                 profile.apply(Path(temp) / "absent-sdk", "a" * 40, path)
             self.assertEqual(path.read_text(), "sentinel")
 
+    def test_next_trial_boot_beacon_is_diagnostic_only(self):
+        body = profile.NPI_TASK_BODY
+        self.assertEqual(body.count("NPITask_inititializeTask();"), 1)
+        self.assertEqual(body.count("NPITask_process();"), 1)
+        self.assertEqual(body.count("Task_sleep("), 1)
+        self.assertEqual(body.count("MT_BuildAndSendZToolResponse("), 1)
+        self.assertIn("0x41u, 0xF7u, 1u, &phase", body)
+        self.assertIn("if (!r4q_npi_initialized()) return;", body)
+        for forbidden in ("UART2_open(", "stackTask_init(", "NVOCMP_", "RF_"):
+            self.assertNotIn(forbidden, body)
+
 
 class NativeGates(unittest.TestCase):
     def test_symbols_alone_are_only_an_internal_check(self):
@@ -166,6 +177,9 @@ class RealPinnedDonor(unittest.TestCase):
         self.assertEqual(boot.count("NPITask_createTask();"), 1)
         self.assertNotIn("MTTask_getServiceTaskId", profile.extract_function(
             changed[profile.NPI], "Void NPITask_Fxn(UArg a0, UArg a1)"))
+        npi_task = profile.extract_function(changed[profile.NPI], "void NPITask_task(void)")
+        self.assertEqual(npi_task.count("MT_BuildAndSendZToolResponse("), 1)
+        self.assertIn("Clock_tickPeriod", npi_task)
         dispatch = profile.extract_function(changed[profile.SYS], "uint8_t MT_SysCommandProcessing(uint8_t *pBuf)")
         self.assertNotIn("MT_SYS_OSAL", dispatch)
         self.assertEqual(dispatch.count("case MT_SYS_"), 2)

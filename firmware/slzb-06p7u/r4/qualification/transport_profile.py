@@ -20,7 +20,7 @@ import patch_management
 from patch_zdapp import extract_function
 
 PROFILE = "transport-only"
-PROFILE_ID = "r4-p7u-transport-only-v1"
+PROFILE_ID = "r4-p7u-transport-boot-beacon-v2"
 SDK_SHA = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 MAIN = "source/ti/zstack/startup/main.c"
 MT = "source/ti/zstack/mt/mt.c"
@@ -109,6 +109,25 @@ NPI_ENTRY = '''Void NPITask_Fxn(UArg a0, UArg a1)
     NPITask_task();
 }'''
 
+# One delayed, unsolicited diagnostic frame from the existing NPI/MT TX owner.
+# It distinguishes UART/NPI startup from the receive/dispatch path if observed.
+# A short delay lets the Ethernet-to-UART bridge accept the monitoring socket.
+# This is deliberately not a normal coordinator/production frame.
+NPI_TASK_BODY = '''void NPITask_task(void)
+{
+    NPITask_inititializeTask();
+    if (!r4q_npi_initialized()) return;
+    Semaphore_post(npiInitializationMutexHandle);
+
+    /* Clock_tickPeriod is microseconds per SYS/BIOS tick. */
+    Task_sleep((2000000u + Clock_tickPeriod - 1u) / Clock_tickPeriod);
+    {
+        uint8_t phase = 0xA7u;
+        MT_BuildAndSendZToolResponse(0x41u, 0xF7u, 1u, &phase);
+    }
+    NPITask_process();
+}'''
+
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -163,6 +182,10 @@ def transform(texts: dict[str, str], source_sha: str) -> dict[str, str]:
     npi = patch_management.patch_npi(texts[NPI])
     npi = replace_function(npi, "Void NPITask_Fxn(UArg a0, UArg a1)", NPI_ENTRY)
     npi = replace_function(npi, "static uint8_t NPITask_sendBufToStack( NPIMSG_msg_t *pMsg )", SEND_BODY)
+    npi = replace_function(npi, "void NPITask_task(void)", NPI_TASK_BODY)
+    npi = once(npi, '#include <ti/drivers/dpl/ClockP.h>',
+               '#include <ti/drivers/dpl/ClockP.h>\n#include <ti/sysbios/knl/Clock.h>',
+               "NPI_DIAGNOSTIC_DELAY_CLOCK")
     uart = patch_management.patch_uart(texts[UART])
     names = {
         '"b1_management.h"': '"r4_transport_only_support.h"',

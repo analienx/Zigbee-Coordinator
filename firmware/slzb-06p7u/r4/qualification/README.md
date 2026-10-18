@@ -45,7 +45,12 @@ or external-flash initialization. Matching HEX/BIN across replicas establishes
 repeatability, not physical boot or a healthy network.
 
 The diagnostic still starts TI SYS/BIOS, OsalPort support and the original NPI
-task. It is purpose-built qualification firmware, not an unmodified ZNP image.
+task. The post-trial v2 profile adds one delayed diagnostic-only `0x41/0xF7`
+AREQ frame (`0xA7` payload) using the **existing** NPI MT TX owner after
+successful UART/NPI initialization. Seeing the beacon proves this initialization
+path executed and the TX path is observable; not seeing it is inconclusive.
+The ordinary solicited `SYS_PING` and `SYS_VERSION` remain unchanged. It is
+purpose-built qualification firmware, not an unmodified ZNP image.
 Normal B0 and cumulative B1-B4 are not released by this diagnostic workflow.
 
 The official 20240716 P7U catalog artifact is now verified offline by
@@ -84,6 +89,31 @@ original capture receipt, bind both matching readbacks to the current profile,
 and re-read the live management identity against the receipt's pin. It must
 never substitute the profile digest as a fabricated live identity response.
 
+## First owner-approved flash trial and focused isolation (18 October 2026)
+
+On the isolated P7U R1.73, the exactly three application sectors at
+`0x02000`, `0x04000`, `0x00000` were programmed vector-last and independently
+ROM CRC-verified. The first candidate did **not** respond to bounded
+post-reset UART SYS probes. The operator immediately restored those exact
+three stock sectors, reverified their CRCs and unchanged CCFG, and passed
+stock SYS_PING and SYS_VERSION=20240716. The device is on original stock.
+This is **not** successful R4 boot qualification, and no retry is authorized.
+
+After this trial, the *actual captured stock* UART2 hardware attributes were
+compared against the exact-head native ELF: 20 of 22 32-bit fields match; only
+application-dependent SRAM buffer pointers differ. This independently confirms
+UART0 (`0x40001000`), RX DIO12, TX DIO13 and DMA/IRQ fields on the P7U. The
+entire native 88-byte CCFG matches installed stock byte-for-byte (SHA-256
+`fa750d46003f4cc059140ac75a83282ec61543b0d898c50cd2add61988c08b47`).
+The native loadable application ends below `0x6000`, within the three written
+sectors. These observations exclude three immediate failure hypotheses but do
+not locate a runtime startup failure. Raw stock bytes remain private.
+
+The next candidate's single NPI-startup beacon is an **offline build change**;
+it has not been flashed. A follow-up operator must listen for the beacon and
+record separate PING/VERSION stages before restoring stock on failure. No NV,
+network, RF, additional reboot or flash operation is authorized by this text.
+
 ## Previous owner-approved capture procedure (completed)
 
 The approved capture window used this bounded procedure:
@@ -109,12 +139,10 @@ The selected boot configuration determined the next gate:
   the old trampoline or use the only board for a first risky top-sector erase.
 - `UNKNOWN_BOOT_BLOCKED`: reconcile the selected vector/backdoor/layout first.
 
-The observed outcome is `DIRECT_NATIVE_CCFG_UNCHANGED`. The next hardware
-step would be a separately approved transport-only diagnostic trial with a
-board-bound application-sector recovery package, independent native-artifact
-parity, explicit dual-domain identity binding and a bounded recovery window.
-The earlier capture approval does **not**
-authorize that flash or another restart.
+The observed boot configuration is `DIRECT_NATIVE_CCFG_UNCHANGED`. The first
+transport trial has already failed and been restored, as detailed above.
+Any revised-image trial requires a **new**, explicitly identified image,
+capture-bound restoration package and separate owner authorization.
 
 CCFG restoration must account for the entire final 8 KiB sector, including any
 resident-loader tail. TI top-sector erase restores TI defaults after erasure;
@@ -135,9 +163,10 @@ network qualification. Retain the existing B2 P1 capacities (source routes 192,
 neighbors 64, routes 128) and existing B4 ABI; audit generated RF/PA settings
 against actual board evidence before RF startup.
 
-The later progression is transport diagnostic, B0, B1, B2, B3, B4. Require
-100 diagnostic ping/version exchanges and three authorized restarts for the
-transport stage, then relevant physical and persistence checks at every stage.
+The later progression is transport diagnostic, B0, B1, B2, B3, B4. For the
+current shortest-path diagnostic, require just one trustworthy beacon/probe
+observation and immediately restore stock if it fails; this does **not** waive
+the eventual network/persistence gates needed for a production coordinator.
 Full R4 requires an integrated 24-hour network soak, stable transport and
 representative established router/end-device communication. Firmware rollback
 after encrypted traffic must preserve current keys/epochs and monotonic

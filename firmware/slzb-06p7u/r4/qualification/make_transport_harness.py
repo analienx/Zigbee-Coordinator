@@ -28,7 +28,9 @@ BOOT_BOUNDARY = r'''
 #define VIMS_MODE_DISABLED 0u
 #define ti_sysbios_knl_Semaphore_Mode_COUNTING 1
 static int npiInitializationMutex;
-static unsigned board_calls, npi_task_creates, bios_calls;
+static unsigned board_calls, npi_task_creates, bios_calls, diagnostic_delays;
+static const uint32_t Clock_tickPeriod = 1000u;
+void Task_sleep(uint32_t ticks) { assert(ticks == 2000u); ++diagnostic_delays; }
 void VIMSConfigure(unsigned a,unsigned b,unsigned c) { (void)a;(void)b;(void)c; }
 void VIMSModeSet(unsigned a,unsigned b) { (void)a;(void)b; }
 void Board_initGeneral(void) { ++board_calls; }
@@ -50,6 +52,10 @@ static void start_transport(void) {
     assert(mt_id_reads==0 && process_started==1 && sem_posts==1);
     assert(npiTaskID==0 && uart_opens==1 && uart_reads==1);
     assert(r4q_npi_initialized());
+    assert(diagnostic_delays==1 && sent==1);
+    assert(last_reply[0]==1u && last_reply[1]==0x41u &&
+           last_reply[2]==0xF7u && last_reply[3]==0xA7u);
+    sent=0; /* Beacon is independent from requested SYS_PING/VERSION. */
 }
 int main(int argc,char **argv) {
     assert(argc==2); const char *scenario=argv[1];
@@ -68,6 +74,7 @@ int main(int argc,char **argv) {
         NPITask_Fxn(0,0);
         assert(r4q_transport_unavailable() && !r4q_npi_initialized());
         assert(process_started==0 && sem_posts==0 && mt_id_reads==0 && sent==0);
+        assert(diagnostic_delays==0);
         if(fail_queue) assert(queue_deleted==1 && uart_opens==0);
         if(fail_uart) assert(uart_reads==0);
     } else {
