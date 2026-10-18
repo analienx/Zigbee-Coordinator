@@ -90,11 +90,23 @@ The following repository files and CI workflow provide safe, public tests:
   post-B1 four-page exact-source integration, real TI init bodies, HALT
   controls and the two private-capture aggregate-only host results.
 - `nv4_native_gate.py`, its negative tests and
-  `.github/workflows/test-r4-stock-nv4-native.yml`: newly submitted real CCS
+  `.github/workflows/test-r4-stock-nv4-native.yml`: successful real CCS
   full-stack ZNP build with stock `NVOCMP_NVPAGES=4`, current stock 20240716
   power/CCFG, B1 NV4 admission, generated SysConfig verification, and strict
-  real linked HEX address audit. **Until that job succeeds its native proof is
-  pending; this workflow never flashes.**
+  real linked HEX address audit. [Native CI run 39155330607](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39155330607)
+  **passed** at exact head `6128dc25e94f1e5ba058e8f9cfda046d8a22803e`.
+  The genuine ZNP APP ends before `0x2CA34`, with reset vector `0x25D3C`,
+  stack `0x20023C00`, and matching complete stock CCFG SHA-256
+  `fa750d46003f4cc059140ac75a83282ec61543b0d898c50cd2add61988c08b47`.
+  It occupies 23 erasable 8KiB APP sectors below the conservative
+  physical-image ceiling `0xA0000`. **No physical flash was performed.**
+- `nv4_current_app_package.py` and its negative tests: offline-only bridge
+  from exact digest-pinned native artifacts to private, current-board,
+  APP-sector-only payloads; requires a separately SHA-pinned current full
+  physical capture/profile, rejects any erase sector at or above `0xA0000`,
+  and cannot initiate a flash. The native workflow now retains a short-lived
+  **AUDIT ONLY — NOT FLASHABLE** build artifact for that private bridge;
+  the full linked HEX and BIN must never be programmed directly.
 
 Public TI guidance backs up the required matching configuration in
 compiler defines, linker preprocessing, SysConfig NVS region, and linker
@@ -106,18 +118,16 @@ allocation:
 
 ## Remaining full-stack gate (not NV4 parser corruption)
 
-1. **B1 admission adaptation — PASS in real TI host clone, not yet linked ARM.**
+1. **B1 admission adaptation — PASS in real TI host clone and linked ARM.**
    Pre-init page geometry and the existing-network signal are now tested with
    both captures. Physical RF, security semantics and whole-image boot are
    NOT implied by a host result.
-2. **Native executable/link audit — first run hit a shell harness error.**
-   Pinned TI SDK libraries compiled, but `find | grep -q` was misinterpreted
-   as failure by `pipefail` due to SIGPIPE. The existence check is corrected
-   and the genuine build is being rerun. Build pinned TI 8.33 ZNP for the
-   fitted board with four-page NVS, confirm the entire linked application
-   stops below `0xA6000`, compiled and generated NVS attributes exactly match
-   `0xA6000/0x8000`, and direct-boot CCFG + sector protection match the live
-   board. A host clone cannot prove those build outputs.
+2. **Native executable/link audit — PASS; physical image transfer pending.**
+   The first run's unrelated `find | grep -q` / `pipefail` SIGPIPE check was
+   fixed. The pinned full ZNP genuine TI compiler and linker produced the
+   expected NV4, stock CCFG and 23 low APP sectors. A successful native link
+   does not prove board-side startup; current SHA-pinned private capture and
+   protected APP-only ROM programming must be validated separately.
 3. **Network/security state.** Current live stock is factory-new (`onNetwork=0`),
    not an existing formed network. Verify B1's genuine factory-new ZDO and
    Zigbee commissioning path without undesired record deletion, state HOLD,
@@ -138,5 +148,5 @@ official `20240716` power profile. The native candidate therefore retains
 current stock direct-boot and power settings rather than applying the obsolete
 20240710 or resident-handoff source overlay.
 
-**Verdict: `NV4_B1_TI_READONLY_INIT_PASS`; `NV4_FULL_ZNP_NATIVE_CI_RUNNING`;
-`FULL_STACK_FLASH_HOLD`.**
+**Verdict: `NV4_B1_TI_READONLY_INIT_PASS`; `NV4_FULL_ZNP_NATIVE_CI_PASS`;
+`FULL_STACK_PHYSICAL_STARTUP_UNTESTED`.**
