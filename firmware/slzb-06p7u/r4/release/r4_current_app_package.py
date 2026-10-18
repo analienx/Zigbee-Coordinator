@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import tempfile
 from typing import NamedTuple
 
 HERE = Path(__file__).resolve().parent
@@ -21,6 +22,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[0] / "b0" / "tools"))
 from b0_image_audit import _parse_intel_hex, audit
 from r4_make_direct_app_only import record
+from r4_native_bundle import BundleError, capture_native
 from r4_current_board_profile import validate_profile
 
 SCHEMA = "r4-p7u-current-app-package-v1"
@@ -171,29 +173,27 @@ def validate_package(package: AppPackage, *, expected_profile_sha256: str, expec
 
 def from_artifacts(artifacts: Path, profile: dict, snapshot: bytes, *,
                    expected_profile_sha256: str, expected_manifest_sha256: str) -> AppPackage:
-    """Audit genuine ELF/XML/HEX/BIN first, then dynamically isolate APP sectors."""
+    """Audit one frozen ELF/XML/HEX/BIN bundle, then isolate APP sectors."""
     root = Path(artifacts).resolve()
-    manifest_path = root / "manifest.json"
-    if manifest_path.is_symlink() or sha(manifest_path.read_bytes()) != expected_manifest_sha256:
-        deny("NATIVE_MANIFEST_HASH_MISMATCH")
-    code, message = audit(HERE.parent / "b0", root, direct_rom_boot=True)
-    if code:
-        deny("NATIVE_AUDIT_FAILED_" + re.sub(r"[^A-Z0-9]", "_", message.upper())[:80])
-    manifest_bytes = manifest_path.read_bytes()
-    if sha(manifest_bytes) != expected_manifest_sha256:
-        deny("NATIVE_MANIFEST_CHANGED_DURING_AUDIT")
-    manifest = json.loads(manifest_bytes)
-    name = manifest["files"]["hex"]["file"]
-    if sha((root / name).read_bytes()) != manifest["files"]["hex"]["sha256"]:
-        deny("NATIVE_HEX_CHANGED_AFTER_AUDIT")
-    native, error = _parse_intel_hex(root / name)
-    if error or not native:
-        deny("INVALID_NATIVE_HEX")
-    if sha((root / name).read_bytes()) != manifest["files"]["hex"]["sha256"]:
-        deny("NATIVE_HEX_CHANGED_DURING_EXTRACTION")
-    evidence = {"manifest_sha256": expected_manifest_sha256}
-    evidence.update({f"{kind}_sha256": manifest["files"][kind]["sha256"] for kind in ("elf", "hex", "xml", "bin")})
-    return _bind_payload(native, profile, snapshot, evidence, expected_profile_sha256=expected_profile_sha256)
+    with tempfile.TemporaryDirectory(prefix="r4-current-native-frozen-") as directory:
+        frozen = Path(directory)
+        try:
+            manifest = capture_native(root, frozen, expected_manifest_sha256)
+        except BundleError as exc:
+            if str(exc) in ("NATIVE_MANIFEST_UNBOUND", "NATIVE_MANIFEST_NOT_REGULAR"):
+                deny("NATIVE_MANIFEST_HASH_MISMATCH")
+            deny("NATIVE_BUNDLE_" + str(exc))
+        code, message = audit(HERE.parent / "b0", frozen, direct_rom_boot=True)
+        if code:
+            deny("NATIVE_AUDIT_FAILED_" + re.sub(r"[^A-Z0-9]", "_", message.upper())[:80])
+        native, error = _parse_intel_hex(frozen / manifest["files"]["hex"]["file"])
+        if error or not native:
+            deny("INVALID_NATIVE_HEX")
+        evidence = {"manifest_sha256": expected_manifest_sha256}
+        evidence.update({f"{kind}_sha256": manifest["files"][kind]["sha256"]
+                         for kind in ("elf", "hex", "xml", "bin")})
+        return _bind_payload(native, profile, snapshot, evidence,
+                             expected_profile_sha256=expected_profile_sha256)
 
 
 def export_private(package: AppPackage, output: Path, *, expected_profile_sha256: str, expected_package_sha256: str):
