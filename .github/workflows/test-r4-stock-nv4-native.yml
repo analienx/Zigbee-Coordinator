@@ -94,12 +94,31 @@ jobs:
             2>&1 | tee -a /tmp/nv4out/build.log
           project=/tmp/nv4ws/znp_LP_CC1352P7_4_tirtos7_ticlang
           test -f "$project/znp.syscfg"
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
-            --syscfg "$project/znp.syscfg" --receipt /tmp/nv4out/p7u-board.json
+          # CURRENT fitted stock after 18-Oct stock return is 20240716,
+          # direct-ROM CCFG at vector 0, NOT the superseded 20240710 DCDC
+          # setting or the old 0xAC000 resident-loader state.
+          python - "$project/znp.syscfg" <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'firmware/slzb-06p7u/r4/qualification')
+          from board_profile import settings, transform
+          source=Path(sys.argv[1])
+          power=settings(reference='vendor-20240716')
+          before=source.read_text()
+          after=transform(before, power, transport_only=False)
+          assert 'NVS1.internalFlash.regionBase = 0xA6000;' in after
+          assert 'NVS1.internalFlash.regionSize = 0x8000;' in after
+          assert 'device.enableDCDC = true;' in after
+          assert 'device.forceVddr = true;' in after
+          source.write_text(after)
+          print('PINNED STOCK NV4 + VENDOR-20240716 POWER COMPOSED; NO FLASH')
+          PY
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/nv4out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/nv4out/build.log
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
-            --out-dir /tmp/nv4out/preflight-syscfg --receipt /tmp/nv4out/p7u-pins.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/board_profile.py" \
+            --generated /tmp/nv4out/preflight-syscfg \
+            --reference-power vendor-20240716 \
+            --receipt /tmp/nv4out/p7u-board-preflight.json
           python - <<'PY'
           from pathlib import Path
           p=Path('/tmp/nv4out/preflight-syscfg/ti_drivers_config.c').read_text()
@@ -113,6 +132,11 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" \
             --workspace /tmp/nv4ws --out /tmp/nv4out \
             --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/nv4out/build.log
+          BIN_NAME="$(python -c 'import json;print(json.load(open("/tmp/nv4out/manifest.json"))["files"]["bin"]["file"])')"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/board_profile.py" \
+            --generated "$project/default/syscfg" --binary "/tmp/nv4out/$BIN_NAME" \
+            --reference-power vendor-20240716 \
+            --receipt /tmp/nv4out/p7u-board-linked.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_native_gate.py" \
             --artifacts /tmp/nv4out --receipt /tmp/nv4out/nv4-native-gate.json
       - name: Preserve public receipts without a device-flash artifact
@@ -127,7 +151,7 @@ jobs:
             /tmp/nv4out/nv4-geometry.json
             /tmp/nv4out/b1-overlay.json
             /tmp/nv4out/b1-nv4-bridge.json
-            /tmp/nv4out/p7u-board.json
-            /tmp/nv4out/p7u-pins.json
+            /tmp/nv4out/p7u-board-preflight.json
+            /tmp/nv4out/p7u-board-linked.json
             /tmp/nv4out/nv4-native-gate.json
           if-no-files-found: warn
