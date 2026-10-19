@@ -22,8 +22,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Guard NV4/TC300 against all TI legacy format migrations
         run: python -m unittest -v tests.test_r4_t6_migration_guard
-      - name: Focused final capacity, context and frozen-APP regressions
-        run: python -m unittest -v tests.test_r4_t6_full_capacity tests.test_r4_m4f_asm_preprocessing tests.test_r4_full_nv4_app_only
+      - name: Focused final capacity, context, source-snapshot and frozen-APP regressions
+        run: python -m unittest -v tests.test_r4_t6_full_capacity tests.test_r4_m4f_asm_preprocessing tests.test_r4_final_source_snapshot tests.test_r4_full_nv4_app_only
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
       - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
@@ -530,6 +530,10 @@ jobs:
             --sdk "$sdk" --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
             --b1-overlay-receipt /tmp/b0out/b1-overlay.json \
             --receipt /tmp/b0out/t6-legacy-migration-prohibition.json
+          # The final source is a reviewable patchset, not just a collection
+          # of successful overlay receipts. Include all new B1/NV4 C/H files.
+          python "$GITHUB_WORKSPACE/tools/r4_final_source_snapshot.py" \
+            --sdk "$sdk" --out-dir /tmp/b0out --source-sha "$B1_SOURCE_SHA"
           echo "Discover pinned TI compiler and SDK product in CCS" | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
@@ -572,6 +576,10 @@ jobs:
           cp "$project/Stack/Config/znp_cnf.opts" /tmp/b0out/znp_cnf.opts
           echo "Collecting real linker artifacts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
+          # Deny changes to any captured TI source between review and link.
+          python "$GITHUB_WORKSPACE/tools/r4_final_source_snapshot.py" \
+            --sdk "$sdk" --out-dir /tmp/b0out --source-sha "$B1_SOURCE_SHA" \
+            --verify-manifest /tmp/b0out/r4-final-ti-source-manifest.json
           echo "R4-R05: reject native TC/APS/child/routing/stack ABI or SRAM linker drift"
           python "$GITHUB_WORKSPACE/tools/r4_t6_full_capacity.py" audit-native \
             --opts "$project/Stack/Config/znp_cnf.opts" \
@@ -720,6 +728,26 @@ jobs:
           assert digests[0]==digests[1],digests
           print('TWO REAL FULL-NV4 NATIVE REPLICAS HAVE IDENTICAL FF-PADDED APP HEX',digests[0])
           PY
+      - name: Require identical final reviewed TI source patchsets from both replicas
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          receipts=[]
+          for index in (1,2):
+              root=Path(f'/tmp/b1-replica-{index}/b0out')
+              source=root/'r4-final-ti-source-manifest.json'
+              patch=root/'r4-final-ti-source.patch'
+              report=json.loads(source.read_bytes())
+              assert report['schema']=='r4-p7u-final-ti-source-snapshot-v1'
+              assert report['firmware_source_sha']==os.environ['B1_SOURCE_SHA']
+              assert report['source_changed_files_count']>=10
+              assert report['flash_authorized'] is False
+              assert hashlib.sha256(patch.read_bytes()).hexdigest()==report['patch_sha256']
+              receipts.append((source.read_bytes(),patch.read_bytes()))
+          assert receipts[0]==receipts[1], 'Native replicas used different final TI source'
+          print('FINAL PATCHSET AND MANIFEST BYTE-IDENTICAL ACROSS NATIVE REPLICAS')
+          PY
       - name: Download the tested existing-owner host bundle from this run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -770,11 +798,17 @@ jobs:
               assert extracted['vector_last_program_order'][-1]=='0x00000'
               assert all(int(s,16)<0xA0000 for s in extracted['application_sectors'])
               assert sha(app/extracted['output_hex'])==extracted['padded_hex_sha256']
+              ti_source=load(root/'r4-final-ti-source-manifest.json')
+              assert ti_source['firmware_source_sha']==source
+              assert ti_source['ti_sdk_sha']=='3615ad5d3f4f271258d18a2f5ce1785064ff9a58'
+              assert sha(root/'r4-final-ti-source.patch')==ti_source['patch_sha256']
               replicas.append({'replica':index,'manifest_sha256':sha(root/'manifest.json'),
                   'artifacts':image_hashes,'app_only_sha256':extracted['padded_hex_sha256'],
                   'capacity_receipt_sha256':sha(root/'r05-full-capacity-native-linked.json'),
-                  'context_receipt_sha256':sha(root/'rtos-context-native.json')})
+                  'context_receipt_sha256':sha(root/'rtos-context-native.json'),
+                  'final_ti_patch_sha256':ti_source['patch_sha256']})
           assert replicas[0]['app_only_sha256']==replicas[1]['app_only_sha256']
+          assert replicas[0]['final_ti_patch_sha256']==replicas[1]['final_ti_patch_sha256']
           repro=Path('/tmp/b1-native-reproducibility.json')
           reproducibility=load(repro)
           assert reproducibility['source_sha']==source
@@ -809,6 +843,8 @@ jobs:
                   shutil.copyfile(host_root/name,out/name)
           for name in ('r05-full-capacity-native-linked.json','rtos-context-native.json','b1-native-seal.json'):
               shutil.copyfile(first/name,out/name)
+          for name in ('r4-final-ti-source.patch','r4-final-ti-source-manifest.json'):
+              shutil.copyfile(first/name,out/name)
           shutil.copyfile(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json',out/'app-only-receipt.json')
           shutil.copyfile('firmware/slzb-06p7u/r4/release/R4_P7U_CANDIDATE_FINALIZATION.md',out/'START_HERE.md')
           receipt={'schema':'r4-p7u-engineering-candidate-v1',
@@ -816,6 +852,7 @@ jobs:
               'source_sha':source,'github_run_id':os.environ['GITHUB_RUN_ID'],
               'board':'SLZB-06P7U-r1.73-CC2652P7','profile_sha256':profile_sha,
               'replicas':replicas,'host_receipt_sha256':sha(out/'host-integration-receipt.json'),
+              'final_ti_patch_sha256':replicas[0]['final_ti_patch_sha256'],
               'native_and_host_gates':'PASS','physical_qualification':'REQUIRED',
               'nv4_live_300_device_fit':'NOT_ESTABLISHED','network_key_rotation':'DISABLED',
               'full_b0_b4_sealed':False,'flash_authorized':False,

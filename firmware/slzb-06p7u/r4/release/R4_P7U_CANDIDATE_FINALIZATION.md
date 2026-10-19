@@ -2,7 +2,26 @@
 
 Target is the existing **SLZB-06P7U R1.73 / CC2652P7** profile, as confirmed by the owner. This package does not target SLZB-07P7.
 
+**Owner decision, 19 October 2026:** SLZB-06P7U is the correct physical
+hardware. The coordinator's unqualified network-key Update/Switch operation is
+intentionally disabled with the owner's agreement; do not reintroduce it merely
+to clear a review checkbox. This does not disable ordinary existing-network
+key use or declare the remaining security durability/opaque RF paths proven.
+
 The `p7u-r1-r5-qualification-candidate-<source SHA>` download is created only after the full native build's source prerequisites, two independent native replicas, reproducibility and the pinned B4 existing-owner host build/runtime checks pass at that exact source. Read `candidate.json` for the actual source, run and every bound file hash. A failed or skipped prerequisite cannot produce this download.
+
+**Final combined-source review:** The candidate also carries
+`r4-final-ti-source.patch` and `r4-final-ti-source-manifest.json`, produced
+after all B1/B3/B2/B4/NV4/T6 overlays from the exact TI SDK commit. The patch
+includes newly generated C/H translation units, not just tracked TI edits.
+The post-link source guard checks that the patched source has not changed, and
+the candidate gate requires both native replicas to have byte-identical final
+TI source patches and manifests. Review this final patch, not isolated older
+PR overlays, when assessing the code that produced the current image.
+
+This is a **reviewable consolidated diff**, not a replacement for the pinned
+source composer or proof of physical operation. It adds no feature, changes no
+security or routing policy and does not grant flash authorization.
 
 The full image has TC300, APS3, 96 direct children plus the parent slot, routing192/64/128, C/IRQ4096, stock20240716 board/CCFG and four-page NVS at A6000..ADFFF. The linked M4F task/Hwi context and archive are checked on this full image. B5 and automatic network formation remain off. Unjournaled coordinator NWK key update/switch remains disabled.
 
