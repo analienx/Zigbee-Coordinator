@@ -5,6 +5,7 @@ on:
       - 'tools/r4_t6_migration_guard.py'
       - 'tests/test_r4_t6_migration_guard.py'
       - 'firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json'
+      - '.github/workflows/test-r4-final-composite-native.yml'
       - '.github/workflows/test-r4-t6-migration-source.yml'
 permissions:
   contents: read

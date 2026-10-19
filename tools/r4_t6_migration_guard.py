@@ -36,6 +36,9 @@ def validate_profile(profile: dict) -> None:
             profile.get("capacities", {}).get("trust_center_devices") != 300 or
             profile.get("flash", {}).get("nvocmp_pages") != 4 or
             profile.get("policies", {}).get("auto_nv_format") is not False or
+            profile.get("policies", {}).get("auto_flash") is not False or
+            profile.get("policies", {}).get("physical_flash_authorized") is not False or
+            profile.get("policies", {}).get("network_forming_by_default") is not False or
             profile.get("policies", {}).get("full_b0_b4_sealed") is not False):
         raise ValueError("T6 full NV4 source/profile drift or unsafe authorization")
 
