@@ -17,6 +17,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Guard TC300 against destructive TI 5.30 legacy migration
+        run: python -m unittest -v tests.test_r4_t6_migration_guard
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
       - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
@@ -406,6 +408,11 @@ jobs:
           # Scoped workaround for upstream generic M4 ASM/FPU mismatch.
           # Keep the target CC2652P7 M4F library compiled in this SDK.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py" --sdk "$sdk" --receipt /tmp/b0out/sdk-scope-receipt.json
+          # TC300 and TI's optional pre-5.30 legacy NV migration are unsafe
+          # together (uint8 loop and delete-before-durable-write). Fail build.
+          python "$GITHUB_WORKSPACE/tools/r4_t6_migration_guard.py" \
+            --sdk "$sdk" --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
+            --receipt /tmp/b0out/t6-legacy-migration-prohibition.json
           (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
           find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
           test -s /tmp/b0out/sdk-libraries.txt
