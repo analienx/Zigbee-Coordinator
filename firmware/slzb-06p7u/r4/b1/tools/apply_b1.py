@@ -11,6 +11,7 @@ from pathlib import Path
 from patch_zdapp import patch as patch_zdapp
 from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
 from patch_host_api import patch as patch_host_api
+from patch_nwk_rotation import patch_security as patch_nwk_rotation_security, patch_host_api as patch_nwk_rotation_host
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
 import subprocess
@@ -347,7 +348,9 @@ def overlay(sdk, b1_dir):
     # Runtime NWK counter continuity: persist, read back, then publish.
     zdapp = patch_zdapp(zdapp)
     security = patch_security(security)
+    security = patch_nwk_rotation_security(security)
     host_api = patch_host_api(host_api)
+    host_api = patch_nwk_rotation_host(host_api)
     zglobals = patch_zglobals(zglobals)
     startup = patch_startup(startup)
     osal_nv = patch_osal_nv(osal_nv)

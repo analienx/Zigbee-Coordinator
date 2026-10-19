@@ -157,6 +157,15 @@ def main():
         for scenario in scenarios:
             positive(binary, scenario)
 
+    # Narrow pinned-C boundary check for key-rotation refusal and nonvirgin
+    # coordinator NV counter-reset protection; no device or radio involved.
+    rotation_source = work / "actual_nwk_rotation_guard.c"
+    run([sys.executable, b1 / "tools/make_nwk_rotation_harness.py",
+         "--security", sdk / SOURCE_PATHS[4],
+         "--host", sdk / SOURCE_PATHS[9],
+         "--output", rotation_source], check=True)
+    positive(compile_c(rotation_source, "nwk_rotation_guard", admission=False))
+
     # Recreating TI's original first-empty early exit must reset a later
     # matching PAN's replay floor and fail the genuine C oracle.
     mutation(generated["zdapp"],
