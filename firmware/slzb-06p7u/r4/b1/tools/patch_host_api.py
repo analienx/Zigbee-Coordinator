@@ -15,13 +15,14 @@ GET = r'''static bool processSecApsLinkKeyGetReq( uint8_t srcServiceTaskId, void
   uint16_t i;
   if (pPtr == NULL) return TRUE;
   pPtr->hdr.status = zstack_ZStatusValues_ZFailure;
+  /* Clear any available response even if the request pointer is malformed. */
+  if (pPtr->pRsp != NULL)
+    memset(pPtr->pRsp, 0, sizeof(*pPtr->pRsp));
   if (pPtr->pReq == NULL || pPtr->pRsp == NULL)
   {
     pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
     return TRUE;
   }
-  /* A failed/held GET must never expose a previous caller's key or peer. */
-  memset(pPtr->pRsp, 0, sizeof(*pPtr->pRsp));
   if (b1_nv_runtime_hold_active()) return TRUE;
   pPtr->pRsp->tcLinkKey = pPtr->pReq->tcLinkKey;
   OsalPort_memcpy(pPtr->pRsp->ieeeAddr, pPtr->pReq->ieeeAddr, Z_EXTADDR_LEN);

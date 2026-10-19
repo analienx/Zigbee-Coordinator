@@ -15,7 +15,7 @@ SCENARIOS = (
     'tc_get', 'tc_get_missing', 'tc_set_monotonic', 'tc_set_pending',
     'tc_set_missing', 'tc_set_fault', 'hold',
     'tc_remove_denied', 'aps_remove', 'aps_remove_pending', 'aps_remove_hold',
-    'aps_get_cleared',
+    'aps_get_cleared', 'aps_get_null_req',
 )
 
 PREAMBLE = r'''
@@ -114,6 +114,7 @@ int main(int argc,char **argv)
   if(!strcmp(s,"aps_remove_pending")) ApsLinkKeyRAMEntry[0].pendingFlag=TRUE;
   if(!strcmp(s,"aps_remove_hold")) held=TRUE;
   if(!strcmp(s,"aps_get_cleared")) {held=TRUE; memset(&reply,0xA5,sizeof(reply));}
+  if(!strcmp(s,"aps_get_null_req")) {getmsg.pReq=NULL; memset(&reply,0xA5,sizeof(reply));}
   set.key[0]=0x33u;
   if(!strncmp(s,"aps_get",7) || !strncmp(s,"tc_get",6) || !strcmp(s,"hold")) {
     if(!strncmp(s,"tc_get",6)) get.tcLinkKey=TRUE;
@@ -121,7 +122,7 @@ int main(int argc,char **argv)
     if(!strcmp(s,"aps_get")) assert(getmsg.hdr.status==0u && reply.key[0]==0x33u && reads==1u);
     else if(!strcmp(s,"tc_get")) assert(getmsg.hdr.status==0u && reply.txFrmCntr==200u && reads==1u);
     else if(!strcmp(s,"aps_get_fault")) assert(held && getmsg.hdr.status!=0u);
-    else if(!strcmp(s,"aps_get_cleared")) {
+    else if(!strcmp(s,"aps_get_cleared") || !strcmp(s,"aps_get_null_req")) {
       host_get_rsp zero={0};
       assert(getmsg.hdr.status!=0u && !memcmp(&reply,&zero,sizeof(reply)));
     }
