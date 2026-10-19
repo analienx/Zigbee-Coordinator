@@ -44,6 +44,54 @@ static uint8_t b1_sec_validate_nib(uint8_t onNetwork)
          !b1_nv_runtime_hold_active();
 }
 
+/* Exactly one live TC slot may own a peer's security counter/key epoch.
+ * Duplicate IEEE identities in different NV rows can select different
+ * persisted counter floors for the same peer after reboot. Keep only row
+ * indices in bounded preflight BSS (1024 bytes), not keys or IEEE values;
+ * compare the actual eight-byte identities on every hash collision. */
+#define B1_TCLK_PEER_BUCKETS 512u
+static uint16_t b1_tclk_peer_slots[B1_TCLK_PEER_BUCKETS];
+
+static uint16_t b1_tclk_peer_bucket(const uint8_t *addr)
+{
+  uint32_t hash = 2166136261u;
+  uint8_t j;
+  for (j = 0u; j < Z_EXTADDR_LEN; ++j)
+    hash = (hash ^ addr[j]) * 16777619u;
+  return (uint16_t)(hash & (B1_TCLK_PEER_BUCKETS - 1u));
+}
+
+static uint8_t b1_tclk_unique_peer(uint16_t index, const uint8_t *addr)
+{
+  uint16_t bucket = b1_tclk_peer_bucket(addr);
+  uint16_t probes;
+  for (probes = 0u; probes < B1_TCLK_PEER_BUCKETS; ++probes)
+  {
+    uint16_t previous = b1_tclk_peer_slots[bucket];
+    if (previous == 0u)
+    {
+      b1_tclk_peer_slots[bucket] = (uint16_t)(index + 1u);
+      return TRUE;
+    }
+    else
+    {
+      APSME_TCLinkKeyNVEntry_t prior = {0};
+      uint8_t same;
+      if (osal_nv_read_ex(ZCD_NV_EX_TCLK_TABLE, (uint16_t)(previous - 1u), 0,
+                          sizeof(prior), &prior) != SUCCESS)
+      {
+        memset(&prior, 0, sizeof(prior));
+        return FALSE;
+      }
+      same = OsalPort_memcmp(prior.extAddr, addr, Z_EXTADDR_LEN);
+      memset(&prior, 0, sizeof(prior));
+      if (same) return FALSE;
+    }
+    bucket = (uint16_t)((bucket + 1u) & (B1_TCLK_PEER_BUCKETS - 1u));
+  }
+  return FALSE; /* unexpected saturation: never accept ambiguous identity */
+}
+
 /* B1: read-only security checks precede zgInit's default item creation. */
 int b1_sec_validate_restored(void)
 {
@@ -142,6 +190,14 @@ int b1_sec_validate_restored(void)
    * storage is not equivalent to a verified empty slot on a restored net. */
   if (okay)
   {
+    uint8_t allFF[Z_EXTADDR_LEN];
+    memset(allFF, 0xFF, sizeof(allFF));
+    if (gZDSECMGR_TC_DEVICE_MAX >= B1_TCLK_PEER_BUCKETS)
+    {
+      b1_security_runtime_hold_latch();
+      return FALSE; /* no silently truncated TC peer-identity index */
+    }
+    memset(b1_tclk_peer_slots, 0, sizeof(b1_tclk_peer_slots));
     for (i = 0; i < gZDSECMGR_TC_DEVICE_MAX; ++i)
     {
       APSME_TCLinkKeyNVEntry_t row = {0};
@@ -149,7 +205,9 @@ int b1_sec_validate_restored(void)
       if (osal_nv_read_ex(ZCD_NV_EX_TCLK_TABLE, i, 0, sizeof(row), &row) != SUCCESS ||
           row.SeedShift >= SEC_KEY_LEN ||
           (!OsalPort_memcmp(row.extAddr, empty, Z_EXTADDR_LEN) &&
-           row.txFrmCntr > UINT32_MAX - ((uint32_t)MAX_TCLK_FRAMECOUNTER_CHANGES + 1u)))
+           (OsalPort_memcmp(row.extAddr, allFF, Z_EXTADDR_LEN) ||
+            row.txFrmCntr > UINT32_MAX - ((uint32_t)MAX_TCLK_FRAMECOUNTER_CHANGES + 1u) ||
+            !b1_tclk_unique_peer(i, row.extAddr))))
       {
         okay = FALSE;
       }

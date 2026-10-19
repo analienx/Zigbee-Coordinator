@@ -369,6 +369,20 @@ int main(int argc,char **argv)
     assert(preflight_observation_count==1u && b1_sec_restored_network_validated());
     assert(writes==0 && creates==0 && !held);
     puts("B1_RESTORED_SECURITY_ATTESTATION_NOT_PUBLISHED_EARLY_PASS");
+  } else if(!strcmp(s,"tclk_hash_collision_unique")) {
+    /* Hash collisions must trigger an exact EUI comparison, not rejection
+     * or an accidental alias of two independent persisted counter floors. */
+    uint16_t bucket = b1_tclk_peer_bucket(tc[0].extAddr);
+    uint8_t found = FALSE;
+    for(unsigned a=1u; a<256u && !found; ++a)
+      for(unsigned b=0u; b<256u && !found; ++b) {
+        memset(tc[1].extAddr, 0, Z_EXTADDR_LEN);
+        tc[1].extAddr[0]=(uint8_t)a;
+        tc[1].extAddr[1]=(uint8_t)b;
+        if(b1_tclk_peer_bucket(tc[1].extAddr)==bucket) found=TRUE;
+      }
+    assert(found && !OsalPort_memcmp(tc[0].extAddr,tc[1].extAddr,Z_EXTADDR_LEN));
+    assert(b1_sec_validate_restored() && !held && writes==0 && creates==0);
   } else if(!strcmp(s,"positive")) {
     assert(b1_sec_validate_restored()); assert(writes==0 && creates==0);
     APSME_TCLinkKeyInit(FALSE); ZDSecMgrRestoreFromNV();
@@ -406,7 +420,8 @@ int main(int argc,char **argv)
             !strcmp(s,"missing_nib") || !strcmp(s,"nib_length") || !strcmp(s,"nib_bdb_mismatch") ||
             !strcmp(s,"nib_pan") || !strcmp(s,"nib_channel") || !strcmp(s,"nib_extpan") ||
             !strcmp(s,"nib_coordinator") || !strcmp(s,"nib_key_loaded") || !strcmp(s,"logical_type") ||
-            !strcmp(s,"duplicate_aps_key") || !strcmp(s,"duplicate_aps_ami")) {
+            !strcmp(s,"duplicate_aps_key") || !strcmp(s,"duplicate_aps_ami") ||
+            !strcmp(s,"duplicate_tclk_peer") || !strcmp(s,"tclk_broadcast_peer")) {
     if(!strcmp(s,"missing_nwk")) missing_singleton=ZCD_NV_NWKKEY;
     if(!strcmp(s,"missing_seed")) missing_singleton=ZCD_NV_TCLK_SEED;
     if(!strcmp(s,"missing_bdb")) missing_singleton=ZCD_NV_BDBNODEISONANETWORK;
@@ -429,6 +444,8 @@ int main(int argc,char **argv)
     if(!strcmp(s,"nib_coordinator")) nib.nwkDevAddress=0x1234;
     if(!strcmp(s,"nib_key_loaded")) nib.nwkKeyLoaded=FALSE;
     if(!strcmp(s,"logical_type")) logical_type=1;
+    if(!strcmp(s,"duplicate_tclk_peer")) tc[1].extAddr[0]=tc[0].extAddr[0];
+    if(!strcmp(s,"tclk_broadcast_peer")) memset(tc[0].extAddr,0xff,Z_EXTADDR_LEN);
     if(!strncmp(s,"duplicate_aps_",14)) {
       hdr.numRecs=2; entries[1]=entries[0];
       if(!strcmp(s,"duplicate_aps_key")) entries[1].ami=2;
@@ -641,6 +658,8 @@ int main(int argc,char **argv)
 SIGNATURES = (
     'static uint8_t b1_sec_write_checked(uint16_t table, uint16_t index,\n                                    uint16_t len, void *value)',
     'static uint8_t b1_sec_validate_nib(uint8_t onNetwork)',
+    'static uint16_t b1_tclk_peer_bucket(const uint8_t *addr)',
+    'static uint8_t b1_tclk_unique_peer(uint16_t index, const uint8_t *addr)',
     'int b1_sec_validate_restored(void)',
     'int b1_sec_restored_network_validated(void)',
     'static void ZDSecMgrRestoreFromNV( void )',
@@ -660,10 +679,10 @@ SIGNATURES = (
 )
 
 SCENARIOS = (
-    'positive', 'preflight_publication', 'entry_allocation_fail', 'entry_allocation_ok', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
+    'positive', 'preflight_publication', 'tclk_hash_collision_unique', 'entry_allocation_fail', 'entry_allocation_ok', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
     'missing_nwk', 'missing_seed', 'missing_bdb', 'missing_tc', 'zero_tc', 'wrong_generation',
     'missing_aps', 'missing_tclk', 'bad_aps_index', 'aps_overflow',
-    'tclk_overflow', 'bad_header_count', 'bad_seed_shift',
+    'tclk_overflow', 'duplicate_tclk_peer', 'tclk_broadcast_peer', 'bad_header_count', 'bad_seed_shift',
     'missing_nib', 'nib_length', 'nib_bdb_mismatch', 'nib_pan', 'nib_channel',
     'nib_extpan', 'nib_coordinator', 'nib_key_loaded', 'logical_type', 'duplicate_aps_key', 'duplicate_aps_ami',
     'aps_write_fail', 'aps_readback', 'tclk_write_fail', 'tclk_readback',
@@ -681,6 +700,9 @@ SCENARIOS = (
 )
 
 MUTANTS = {
+    'duplicate_tclk_peer_bypass': ('duplicate_tclk_peer',
+        '!b1_tclk_unique_peer(i, row.extAddr)',
+        'FALSE /* MUTANT: duplicate TC peer accepted */'),
     'aps_same_key_counter_reset': ('key_same',
         '  if (identical)\n  {',
         '  if (!identical)\n  {'),
@@ -720,6 +742,15 @@ MUTANTS = {
         '      OsalPort_memcmp(value, verify, len)) okay = TRUE;',
         '      TRUE) okay = TRUE;'),
 }
+
+
+def peer_storage(source: str) -> str:
+    """Keep the actual pinned preflight hash table definition in extracted C."""
+    declaration = ('#define B1_TCLK_PEER_BUCKETS 512u\n'
+                   'static uint16_t b1_tclk_peer_slots[B1_TCLK_PEER_BUCKETS];\n')
+    if source.count(declaration) != 1:
+        raise RuntimeError('SECURITY_TC_PEER_STORAGE_SOURCE_DRIFT')
+    return declaration
 
 
 def main():
@@ -762,7 +793,8 @@ def main():
     if a.tc300:
         preamble = preamble.replace('#define gZDSECMGR_TC_DEVICE_MAX 4u',
                                     '#define gZDSECMGR_TC_DEVICE_MAX 300u')
-    a.output.write_text(preamble + contents + (TC300_MAIN if a.tc300 else MAIN), encoding='utf-8')
+    a.output.write_text(preamble + peer_storage(source) + contents +
+                        (TC300_MAIN if a.tc300 else MAIN), encoding='utf-8')
     print(' '.join(TC300_SCENARIOS if a.tc300 else SCENARIOS) if a.list_scenarios
           else 'B1_LINKED_APS_TCLK_FUNCTIONS_EXTRACTED')
 

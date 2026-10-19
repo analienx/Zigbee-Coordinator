@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from make_security_harness import PREAMBLE, SIGNATURES
+from make_security_harness import PREAMBLE, SIGNATURES, peer_storage
 from patch_zdapp import extract_function
 
 
@@ -190,7 +190,7 @@ def transform(source: str, mutant: str | None = None) -> str:
                 '  return SUCCESS;')
     code = once(code, 'static uint8_t held, existing = TRUE, b1_sec_existing_network;',
                 BOUNDARY + '\nstatic uint8_t held, existing = TRUE, b1_sec_existing_network;')
-    return code + functions + MAIN
+    return code + peer_storage(source) + functions + MAIN
 
 
 def main() -> None:
