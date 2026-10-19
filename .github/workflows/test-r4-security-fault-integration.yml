@@ -67,11 +67,12 @@ jobs:
           mkdir -p /tmp/r4composite-siblings
           git init -q /tmp/r4composite-repo
           git -C /tmp/r4composite-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
-          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
+          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
             git -C /tmp/r4composite-repo fetch --depth 1 origin "$sha"
             test "$(git -C /tmp/r4composite-repo rev-parse FETCH_HEAD)" = "$sha"
           done
           git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py
+          git -C /tmp/r4composite-repo show 530a52631fbde274a2ae356c490bad71b47168a6:firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py > /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py
           git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compile_actual_mto_nv_timer.py > /tmp/r4composite-siblings/b2_compile_actual_mto_nv_timer.py
           git -C /tmp/r4composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_native_patch.py > /tmp/r4composite-siblings/b4_native_patch.py
           git -C /tmp/r4composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py > /tmp/r4composite-siblings/b4_v4_native_patch.py
@@ -79,9 +80,11 @@ jobs:
             --sdk /tmp/r4fusion-sdk --baseline /tmp/r4composite-siblings \
             --b1-receipt /tmp/r4fusion-b1.json --fusion-receipt /tmp/r4fusion-receipt.json \
             --b2-script /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py \
+            --b2-failure-script /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py \
             --b4-v3-script /tmp/r4composite-siblings/b4_native_patch.py \
             --b4-v4-script /tmp/r4composite-siblings/b4_v4_native_patch.py \
             --b2-sha d13a48f5226d42e247a17d9198d84c94a4415030 \
+            --b2-failure-sha 530a52631fbde274a2ae356c490bad71b47168a6 \
             --b4-sha 3231abb1f13210eb88afe13ff7b7f9f29709cd6b \
             --receipt /tmp/r4composite-source.json
           python - <<'PY'
