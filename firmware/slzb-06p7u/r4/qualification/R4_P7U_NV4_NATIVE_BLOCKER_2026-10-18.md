@@ -189,6 +189,8 @@ stored payloads through an existing bounded 64-byte transient buffer; only
 the one-byte BDB and role values are separately retained in *semantic marker*
 scratch. The NIB is checked for *presence only*: its contents, address, keys
 and counters are not decoded into markers or emitted in diagnostics/logs.
+Marker bytes are taken from the same read validated by CRC, not re-read
+afterwards; an adversarial callback test enforces this TOCTOU boundary.
 
 | Candidate | Role marker | BDB marker | Live NIB |
 |---|---|---|---|

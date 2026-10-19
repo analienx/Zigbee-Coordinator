@@ -80,7 +80,7 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
     uint8_t header[R4_TRAILER], block[64];
     while (end > R4_DATA_START) {
         uint32_t header_offset, length, offset;
-        uint8_t crc = 0u, saved_crc, last;
+        uint8_t crc = 0u, saved_crc, last, first_payload_byte = 0xffu;
         if (end < R4_DATA_START + R4_TRAILER ||
             r->records >= R4_MAX_RECORDS) {
             r->code = R4_NV4_BAD_ITEM;
@@ -103,6 +103,11 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
             if (count > sizeof(block)) count = sizeof(block);
             if (!bounded_read(reader, ctx, r, page_base + offset,
                               block, count)) return 0;
+            /* Capture only the first byte of this item in the *same* read
+             * whose bytes are authenticated by the CRC. A second read of a
+             * security-state marker after CRC would create a TOCTOU gap. */
+            if (offset == header_offset - length)
+                first_payload_byte = block[0];
             crc = crc8(crc, block, count);
             offset += count;
         }
@@ -150,21 +155,17 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
                                      (header[3] >> 6u);
                     if (subid == R4_OSAL_BDB_ON_NETWORK ||
                         subid == R4_OSAL_LOGICAL_TYPE) {
-                        /* CRC already verified; check the original value
-                         * through the same bounded read-only callback. */
-                        uint8_t value = 0xffu;
+                        /* Use the verified payload byte, not an unverified
+                         * second flash read after CRC validation. */
                         if (length != 1u) {
                             markers->malformed = 1u;
                         } else {
-                            if (!bounded_read(reader, ctx, r,
-                                page_base + header_offset - length,
-                                &value, 1u)) return 0;
                             if (subid == R4_OSAL_BDB_ON_NETWORK) {
                                 markers->bdb_seen = 1u;
-                                markers->bdb_on_network = value;
+                                markers->bdb_on_network = first_payload_byte;
                             } else {
                                 markers->role_seen = 1u;
-                                markers->logical_type = value;
+                                markers->logical_type = first_payload_byte;
                             }
                         }
                     } else if (subid == R4_OSAL_NIB) {

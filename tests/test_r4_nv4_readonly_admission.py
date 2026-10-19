@@ -193,6 +193,28 @@ class Nv4AdmissionTests(unittest.TestCase):
         self.assertEqual((formed.code, formed.semantic_state), (8, 2))
         self.assertEqual((formed.records, formed.active_records), (4, 4))
 
+    def test_marker_byte_comes_from_crc_checked_read_without_reread(self):
+        raw = stock_like_semantic()
+        bdb_offset = 16 + len(encoded_record(0))
+        role_offset = bdb_offset + len(legacy_osal_record(0x55, b'\x00'))
+        marker_reads = {bdb_offset: 0, role_offset: 0}
+
+        def traced(_ctx, off, to, count):
+            if off + count > len(raw):
+                return -1
+            if count == 1 and off in marker_reads:
+                marker_reads[off] += 1
+                # A second post-CRC read could observe a different flash
+                # value; the classifier must use the authenticated byte.
+                if marker_reads[off] > 1:
+                    return -1
+            ctypes.memmove(to, raw[off:off + count], count)
+            return 0
+
+        result = self.lib.r4_nv4_admit(READ(traced), None)
+        self.assertEqual((result.code, result.semantic_state), (8, 1))
+        self.assertEqual(marker_reads, {bdb_offset: 1, role_offset: 1})
+
     def test_missing_incoherent_or_malformed_semantic_markers_hold(self):
         variants = (
             dict(bdb=None), dict(logical=None), dict(bdb=2),
