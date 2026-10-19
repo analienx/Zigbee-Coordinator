@@ -440,6 +440,65 @@ def patch(source: str) -> str:
         '      b1_security_runtime_hold_latch();\n'
         '      return;\n'
         '    }', 'seed read failure before key derive')
+    # Receive-side replay tracking must never wrap its high-water counter.
+    # This path is implemented in TI C (unlike the opaque APS/NWK SSP library),
+    # and was not protected by the prior transmit-only TCLK load guard.
+    sync_sig = 'ZStatus_t APSME_TCLinkKeySync( uint16_t srcAddr, SSP_Info_t* si )'
+    sync = extract_function(source, sync_sig)
+    sync = replace_once(sync, '{\n  APSME_TCLinkKeyNVEntry_t  TCLKDevEntry;',
+        '{\n  if (b1_nv_runtime_hold_active()) return ZSecNoKey;\n'
+        '  APSME_TCLinkKeyNVEntry_t  TCLKDevEntry = {0};',
+        'TCLK receive rejects security HOLD before lookup')
+    sync = replace_once(sync,
+        '  if(entryFound && (entryIndex != 0xFFFF))\n  {',
+        '  if (entryIndex != 0xFFFF && entryIndex >= gZDSECMGR_TC_DEVICE_MAX)\n'
+        '  {\n'
+        '    b1_security_runtime_hold_latch();\n'
+        '    return ZSecNoKey;\n'
+        '  }\n'
+        '  if(entryFound && (entryIndex != 0xFFFF))\n  {',
+        'TCLK receive bounds before RAM index')
+    sync = replace_once(sync,
+        '        if ( si->frmCntr >= *tclkRxFrmCntr )',
+        '        /* UINT32_MAX + 1 would reset the replay high-water mark.\n'
+        '         * Treat a peer at exhaustion as an old frame, not a local NV fault. */\n'
+        '        if ( si->frmCntr != UINT32_MAX && si->frmCntr >= *tclkRxFrmCntr )',
+        'TCLK receive counter must not wrap')
+    sync = replace_once(sync,
+        '      default:\n        //This should not happen\n      break;',
+        '      default:\n'
+        '        b1_security_runtime_hold_latch();\n'
+        '        return ZSecNoKey;',
+        'TCLK unknown receive attributes fail closed')
+    source = replace_once(source, extract_function(source, sync_sig), sync,
+                          'replace guarded TCLK receive sync')
+    # The APS SSP implementation is linked from TI's library, but its key
+    # retrieval boundary is in this source unit. Do not hand out an APS key
+    # while the corresponding counter reservation is awaiting durable NV.
+    # This covers callers of this function, not cached/ROM-only key paths.
+    read_sig = 'ZStatus_t ZDSecMgrReadKeyFromNv(uint16_t keyNvSection, uint16_t keyNvId, void *keyinfo)'
+    read = extract_function(source, read_sig)
+    read = replace_once(read,
+        '{\n  if (keyNvSection == ZCD_NV_EX_LEGACY)',
+        '{\n'
+        '  if (b1_nv_runtime_hold_active()) return NV_OPER_FAILED;\n'
+        '  if (keyNvSection == ZCD_NV_EX_APS_KEY_DATA_TABLE)\n'
+        '  {\n'
+        '    if (keyNvId >= gZDSECMGR_ENTRY_MAX)\n'
+        '    {\n'
+        '      b1_security_runtime_hold_latch();\n'
+        '      return NV_OPER_FAILED;\n'
+        '    }\n'
+        '    if (ApsLinkKeyRAMEntry[keyNvId].pendingFlag)\n'
+        '    {\n'
+        '      OsalPort_setEvent(ZDAppTaskID, ZDO_APS_FRAMECOUNTER_CHANGE);\n'
+        '      return NV_OPER_FAILED; /* retry after checked NV persistence */\n'
+        '    }\n'
+        '  }\n'
+        '  if (keyNvSection == ZCD_NV_EX_LEGACY)',
+        'APS key read bound to durable reservation')
+    source = replace_once(source, extract_function(source, read_sig), read,
+                          'replace guarded APS key read')
     return source + '\n' + SUPPORT
 
 

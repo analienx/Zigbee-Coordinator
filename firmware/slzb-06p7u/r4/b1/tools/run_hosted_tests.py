@@ -332,6 +332,8 @@ def main():
                     "aps_publish": "ApsLinkKeyRAMEntry[0].txFrmCntr==0",
                     "checkpoint_pending": "held && pending", "counter_wrap": "result==ZSecNoKey",
                     "unbounded_tclk_transmit": "APSME_TCLinkKeyLoad(1,&si)==ZSecNoKey",
+                    "replay_highwater_wrap": "result==ZSecOldFrmCount",
+                    "aps_key_checkpoint_bypass": "status==NV_OPER_FAILED",
                     "readback": "ApsLinkKeyRAMEntry[0].txFrmCntr==0"}[name]
         mutation(generated["security"], before, after, "mutant_security_" + name,
                  evidence, (scenario,), admission=False)

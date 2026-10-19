@@ -19,6 +19,7 @@ PREAMBLE = r'''
 #define SUCCESS 0
 #define ZSUCCESS 0
 #define NV_ITEM_UNINIT 9
+#define NV_OPER_FAILED 1u
 #define SEC_KEY_LEN 16
 #define Z_EXTADDR_LEN 8
 #define INVALID_NODE_ADDR 0xFFFFu
@@ -30,6 +31,8 @@ PREAMBLE = r'''
 #define ZCD_NV_BDBNODEISONANETWORK 1u
 #define ZCD_NV_NWKKEY 2u
 #define ZCD_NV_NWK_ACTIVE_KEY_INFO 3u
+#define ZCD_NV_NWK_ALTERN_KEY_INFO 22u
+#define ZCD_NV_PRECFGKEY 23u
 #define ZCD_NV_TCLK_SEED 4u
 #define ZCD_NV_APS_LINK_KEY_TABLE 5u
 #define ZCD_NV_TRUSTCENTER_ADDR 6u
@@ -51,16 +54,21 @@ PREAMBLE = r'''
 #define ZG_VERIFIED_KEY 4u
 #define ZG_GLOBAL_LINK_KEY 0u
 #define ZG_BUILD_JOINING_TYPE 0
+#define ZG_DEVICE_JOINING_TYPE 0
 #define ZG_BUILD_COORDINATOR_TYPE 1
 #define ZG_DEVICE_COORDINATOR_TYPE 1
+#define gZDSECMGR_TC_ATTEMPT_DEFAULT_KEY 0u
 #define APSME_IC_INDEX_MASK 0x0Fu
 #define SEC_KEYID_LINK 1u
 #define ADDRMGR_USER_DEFAULT 0u
 #define ZDO_TCLK_FRAMECOUNTER_CHANGE 1u
+#define ZDO_APS_FRAMECOUNTER_CHANGE 2u
 #define NV_RESTORE 1
 #define ZDAppTaskID 0u
 #define ZSuccess 0u
 #define ZSecNoKey 1u
+#define ZSecOldFrmCount 2u
+#define OsalPort_OFFSET_OF(type, field) offsetof(type, field)
 #define ZDO_INITDEV_RESTORED_NETWORK_STATE 1u
 #define ZDO_INITDEV_NEW_NETWORK_STATE 0u
 typedef uint8_t ZStatus_t;
@@ -73,7 +81,7 @@ typedef struct { uint8_t key[SEC_KEY_LEN]; uint32_t txFrmCntr, rxFrmCntr; } APSM
 typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t extAddr[8], keyAttributes, keyType, SeedShift, IcIndex; } APSME_TCLinkKeyNVEntry_t;
 typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t pendingFlag; } APSME_ApsLinkKeyRAMEntry_t;
 typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t pendingFlag, entryUsed; } APSME_TCLinkKeyRAMEntry_t;
-typedef struct { uint8_t extAddr[8], dstExtAddr[8], seedShift, keyID; uint16_t keyNvId, keyNvSection; uint32_t frmCntr; } SSP_Info_t;
+typedef struct { uint8_t extAddr[8], dstExtAddr[8], seedShift, keyID, distributedKeyTry, defaultKeyTry; uint16_t keyNvId, keyNvSection; uint32_t frmCntr; } SSP_Info_t;
 typedef struct { uint16_t user, nwkAddr; } AddrMgrEntry_t;
 static uint8_t held, existing = TRUE, b1_sec_existing_network;
 static uint8_t fail_alloc;
@@ -85,6 +93,7 @@ static uint16_t missing_singleton, missing_table, missing_index;
 static uint8_t write_fail, readback_corrupt, search_found = TRUE;
 static uint16_t search_index;
 static uint8_t on_network = TRUE, trustcenter[8] = {0x51}, seed[16] = {0x22};
+static uint8_t defaultTCLinkKey[SEC_KEY_LEN] = {0x5A};
 static nwkActiveKeyItems nwk;
 static nwkKeyDesc active;
 static nvDeviceListHdr_t hdr = {1};
@@ -143,7 +152,10 @@ static uint16_t osal_nv_item_len(uint16_t id)
 static void *row(uint16_t table, uint16_t i, uint16_t len)
 {
   assert(i<(table==ZCD_NV_EX_TCLK_TABLE ? gZDSECMGR_TC_DEVICE_MAX : gZDSECMGR_ENTRY_MAX));
-  if(table==ZCD_NV_EX_APS_KEY_DATA_TABLE) { assert(len==sizeof(aps[i])); return &aps[i]; }
+  if(table==ZCD_NV_EX_APS_KEY_DATA_TABLE) {
+    assert(len==sizeof(aps[i]) || len==SEC_KEY_LEN);
+    return &aps[i];
+  }
   assert(table==ZCD_NV_EX_TCLK_TABLE && len==sizeof(tc[i])); return &tc[i];
 }
 static uint8_t osal_nv_read_ex(uint16_t table,uint16_t i,uint16_t off,uint16_t len,void *dst)
@@ -187,6 +199,8 @@ static uint16_t APSME_SearchTCLinkKeyEntry(uint8_t *p,uint8_t *found,APSME_TCLin
   (void)p; *found=search_found; if(search_index<4) *dst=tc[search_index]; return search_index;
 }
 static uint16_t OsalPort_rand(void) { return 3; }
+static void APSME_LookupExtAddr(uint16_t addr,uint8_t *ext) { (void)addr; ext[0]=0x44; }
+static uint8_t bdb_doTrustCenterRequireKeyExchange(void) { return TRUE; }
 static void OsalPort_setEvent(uint8_t id,uint16_t ev) { (void)id; (void)ev; ++events; }
 static uint8_t AddrMgrEntryLookupNwk(AddrMgrEntry_t *p) { (void)p; return FALSE; }
 static void AddrMgrEntryRelease(AddrMgrEntry_t *p) { (void)p; }
@@ -440,6 +454,47 @@ int main(int argc,char **argv)
     assert(!held && tc[0].txFrmCntr==231u);
     SSP_Info_t after={0}; after.extAddr[0]=0x44;
     assert(APSME_TCLinkKeyLoad(1,&after)==ZSuccess && after.frmCntr>last_sent);
+  } else if(!strncmp(s,"sync_",5)) {
+    SSP_Info_t si={0}; si.extAddr[0]=0x44; si.keyNvId=777u; si.keyNvSection=888u;
+    tc[0].keyAttributes=ZG_VERIFIED_KEY;
+    TCLinkKeyRAMEntry[0].rxFrmCntr=12u;
+    si.frmCntr=12u;
+    if(!strcmp(s,"sync_max_replay")) si.frmCntr=UINT32_MAX;
+    if(!strcmp(s,"sync_bounds")) search_index=gZDSECMGR_TC_DEVICE_MAX;
+    if(!strcmp(s,"sync_hold")) held=TRUE;
+    if(!strcmp(s,"sync_bad_attributes")) tc[0].keyAttributes=0xFFu;
+    ZStatus_t result=APSME_TCLinkKeySync(1,&si);
+    if(!strcmp(s,"sync_valid")) {
+      assert(result==ZSuccess && !held && TCLinkKeyRAMEntry[0].rxFrmCntr==13u);
+      assert(si.keyNvId==ZCD_NV_TCLK_SEED && si.keyNvSection==ZCD_NV_EX_LEGACY);
+      si.keyNvId=777u; si.keyNvSection=888u;
+      assert(APSME_TCLinkKeySync(1,&si)==ZSecOldFrmCount);
+      assert(TCLinkKeyRAMEntry[0].rxFrmCntr==13u && si.keyNvId==777u && !held);
+    } else if(!strcmp(s,"sync_max_replay")) {
+      assert(result==ZSecOldFrmCount && !held && TCLinkKeyRAMEntry[0].rxFrmCntr==12u);
+      assert(si.keyNvId==777u && si.keyNvSection==888u);
+    } else {
+      assert(result==ZSecNoKey && held && TCLinkKeyRAMEntry[0].rxFrmCntr==12u);
+      assert(si.keyNvId==777u && si.keyNvSection==888u);
+    }
+  } else if(!strncmp(s,"aps_key_",8)) {
+    uint8_t key[SEC_KEY_LEN]; memset(key,0xA5,sizeof(key));
+    uint16_t index=0u;
+    ApsLinkKeyRAMEntry[0].pendingFlag=TRUE;
+    ApsLinkKeyRAMEntry[0].txFrmCntr=111u;
+    ApsLinkKeyRAMEntry[0].rxFrmCntr=50u;
+    if(!strcmp(s,"aps_key_bounds")) index=gZDSECMGR_ENTRY_MAX;
+    if(!strcmp(s,"aps_key_hold")) held=TRUE;
+    uint32_t before=reads;
+    ZStatus_t status=ZDSecMgrReadKeyFromNv(ZCD_NV_EX_APS_KEY_DATA_TABLE,index,key);
+    assert(status==NV_OPER_FAILED && reads==before && key[0]==0xA5u);
+    if(!strcmp(s,"aps_key_pending")) {
+      assert(!held && ApsLinkKeyRAMEntry[0].pendingFlag && events==1u);
+      ZDSecMgrSaveApsLinkKey();
+      assert(!held && !ApsLinkKeyRAMEntry[0].pendingFlag && aps[0].txFrmCntr==111u);
+      assert(ZDSecMgrReadKeyFromNv(ZCD_NV_EX_APS_KEY_DATA_TABLE,0u,key)==ZSuccess);
+      assert(key[0]==0x33u);
+    } else assert(held && ApsLinkKeyRAMEntry[0].pendingFlag && events==0u);
   } else if(!strncmp(s,"save_aps_",9) || !strncmp(s,"save_tclk_",10)) {
     uint8_t isaps=s[5]=='a';
     ApsLinkKeyRAMEntry[0].pendingFlag=TRUE; ApsLinkKeyRAMEntry[0].txFrmCntr=120; ApsLinkKeyRAMEntry[0].rxFrmCntr=50;
@@ -490,6 +545,8 @@ SIGNATURES = (
     'void ZDSecMgrSaveApsLinkKey(void)',
     'void ZDSecMgrSaveTCLinkKey(void)',
     'ZStatus_t APSME_TCLinkKeyLoad( uint16_t dstAddr, SSP_Info_t* si )',
+    'ZStatus_t APSME_TCLinkKeySync( uint16_t srcAddr, SSP_Info_t* si )',
+    'ZStatus_t ZDSecMgrReadKeyFromNv(uint16_t keyNvSection, uint16_t keyNvId, void *keyinfo)',
 )
 
 SCENARIOS = (
@@ -503,6 +560,8 @@ SCENARIOS = (
     'save_aps_positive', 'save_aps_fail', 'save_aps_readback', 'save_aps_rollback',
     'save_tclk_positive', 'save_tclk_fail', 'save_tclk_readback', 'save_tclk_rollback',
     'tclk_checkpoint_backpressure',
+    'sync_valid', 'sync_max_replay', 'sync_bounds', 'sync_hold', 'sync_bad_attributes',
+    'aps_key_pending', 'aps_key_bounds', 'aps_key_hold',
     'load_positive', 'load_new_positive', 'load_full_legacy', 'load_wrap', 'load_bounds', 'load_new_fail', 'load_hold', 'load_bad_attributes', 'sticky_hold',
 )
 
@@ -530,6 +589,12 @@ MUTANTS = {
     'unbounded_tclk_transmit': ('tclk_checkpoint_backpressure',
         '        if (TCLinkKeyRAMEntry[i].pendingFlag)',
         '      if (FALSE)'),
+    'replay_highwater_wrap': ('sync_max_replay',
+        'if ( si->frmCntr != UINT32_MAX && si->frmCntr >= *tclkRxFrmCntr )',
+        'if ( si->frmCntr >= *tclkRxFrmCntr )'),
+    'aps_key_checkpoint_bypass': ('aps_key_pending',
+        '    if (ApsLinkKeyRAMEntry[keyNvId].pendingFlag)',
+        '    if (FALSE)'),
     'readback': ('aps_readback',
         '      OsalPort_memcmp(value, verify, len)) okay = TRUE;',
         '      TRUE) okay = TRUE;'),
