@@ -290,6 +290,21 @@ class Nv4AdmissionTests(unittest.TestCase):
         before[8:10] = b'\xff\xff'
         self.assertEqual(self.probe(bytes(before)).code, 4)
 
+    def test_completed_compaction_cannot_claim_its_own_destination_as_source(self):
+        # TI's >2-page NVOCMP_compactPage chooses the tail as destination,
+        # then records *other* pages as XSRCSTART/XSRCEND. A committed FC
+        # journal pointing back to itself is not a settled page-ring state.
+        original = bytearray(stock_like())
+        original[6] = 0xfc
+        original[8:11] = bytes((16, 0, 1))
+        original[12:15] = bytes((16, 0, 2))
+        self.assertEqual(self.probe(bytes(original)).code, 8)
+        for position in (10, 14):
+            with self.subTest(source_page_byte=position):
+                bad = bytearray(original)
+                bad[position] = 0  # destination is page 0
+                self.assertEqual(self.probe(bytes(bad)).code, 4)
+
     def test_crc_failure_holds(self):
         corrupted = bytearray(stock_like())
         corrupted[16] ^= 1

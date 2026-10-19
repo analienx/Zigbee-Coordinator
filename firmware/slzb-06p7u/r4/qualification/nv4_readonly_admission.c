@@ -232,7 +232,13 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
               (uint16_t)(header[8] | ((uint16_t)header[9] << 8u)) > R4_NV4_PAGE_SIZE ||
               ((uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) < R4_DATA_START) ||
               ((uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) > R4_NV4_PAGE_SIZE) ||
-              header[10] >= R4_NV4_PAGES || header[14] >= R4_NV4_PAGES))) {
+              header[10] >= R4_NV4_PAGES || header[14] >= R4_NV4_PAGES ||
+              /* The pinned TI >2-page compactor always selects a distinct
+               * tail destination. Its committed source-start/end headers
+               * cannot refer back to their own destination page. Treat a
+               * self-referential FC journal as torn/foreign media, not an
+               * admission candidate for write-backed vendor init. */
+              header[10] == page || header[14] == page))) {
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base + 4u;
             return r;
