@@ -20,6 +20,8 @@ GET = r'''static bool processSecApsLinkKeyGetReq( uint8_t srcServiceTaskId, void
     pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
     return TRUE;
   }
+  /* A failed/held GET must never expose a previous caller's key or peer. */
+  memset(pPtr->pRsp, 0, sizeof(*pPtr->pRsp));
   if (b1_nv_runtime_hold_active()) return TRUE;
   pPtr->pRsp->tcLinkKey = pPtr->pReq->tcLinkKey;
   OsalPort_memcpy(pPtr->pRsp->ieeeAddr, pPtr->pReq->ieeeAddr, Z_EXTADDR_LEN);
@@ -151,6 +153,39 @@ SET = r'''static bool processSecApsLinkKeySetReq( uint8_t srcServiceTaskId, void
 }'''
 
 
+REMOVE = r'''static bool processSecApsLinkKeyRemoveReq( uint8_t srcServiceTaskId, void *pMsg )
+{
+  zstackmsg_secApsLinkKeyRemoveReq_t *pPtr =
+      (zstackmsg_secApsLinkKeyRemoveReq_t *)pMsg;
+  ZDSecMgrEntry_t *entry = NULL;
+  if (pPtr == NULL) return TRUE;
+  pPtr->hdr.status = zstack_ZStatusValues_ZFailure;
+  if (pPtr->pReq == NULL)
+  {
+    pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
+    return TRUE;
+  }
+  if (b1_nv_runtime_hold_active()) return TRUE;
+  if (pPtr->pReq->tcLinkKey)
+  {
+    /* A live host cannot erase a TCLK peer/counter binding. The upstream
+     * handler inverted the peer address match and zeroed the whole row,
+     * permitting wrong-peer deletion and later same-key nonce reuse.
+     * Safe deprovision requires an offline key/seed epoch transition. */
+    return TRUE;
+  }
+  if (ZDSecMgrEntryLookupExt(pPtr->pReq->ieeeAddr, &entry) != ZSuccess ||
+      entry == NULL || entry->keyNvId >= gZDSECMGR_ENTRY_MAX ||
+      ApsLinkKeyRAMEntry[entry->keyNvId].pendingFlag)
+    return TRUE;
+  pPtr->hdr.status = (zstack_ZStatusValues)
+      ZDSecMgrDeviceRemoveByExtAddr(pPtr->pReq->ieeeAddr);
+  if (b1_nv_runtime_hold_active())
+    pPtr->hdr.status = zstack_ZStatusValues_ZFailure;
+  return TRUE;
+}'''
+
+
 def patch(source: str) -> str:
     source = replace_once(source, '#include "zd_sec_mgr.h"',
                           '#include "zd_sec_mgr.h"\n#include <stdint.h>\n'
@@ -160,6 +195,7 @@ def patch(source: str) -> str:
     for signature, replacement in (
         ('static bool processSecApsLinkKeyGetReq( uint8_t srcServiceTaskId, void *pMsg )', GET),
         ('static bool processSecApsLinkKeySetReq( uint8_t srcServiceTaskId, void *pMsg )', SET),
+        ('static bool processSecApsLinkKeyRemoveReq( uint8_t srcServiceTaskId, void *pMsg )', REMOVE),
     ):
         source = replace_once(source, extract_function(source, signature),
                               replacement, 'host API ' + signature)

@@ -99,7 +99,7 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
     original_b1=json.loads(b1_receipt.read_text(encoding="utf-8"))
     if original_b1.get("schema")!="r4-b1-admission-overlay-v2":
         raise ValueError("B1_RECEIPT_SCHEMA_DRIFT")
-    # B1 now owns only the two ZNP APS key API request handlers. B3 still
+    # B1 owns the three ZNP APS key GET/SET/REMOVE request handlers. B3 still
     # owns the unrelated checked-entropy callers in the same source file.
     # Require the exact B1 host source digest, then apply B3 atop it.
     if (raw[HDR]!=vendor[HDR] or

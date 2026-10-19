@@ -1,4 +1,4 @@
-"""Compile the two genuine pinned ZNP key-command handlers with bounded NV stubs."""
+"""Compile the three genuine pinned ZNP key-command handlers with bounded NV stubs."""
 import argparse
 from pathlib import Path
 from patch_zdapp import extract_function
@@ -6,6 +6,7 @@ from patch_zdapp import extract_function
 SIGNATURES = (
     'static bool processSecApsLinkKeyGetReq( uint8_t srcServiceTaskId, void *pMsg )',
     'static bool processSecApsLinkKeySetReq( uint8_t srcServiceTaskId, void *pMsg )',
+    'static bool processSecApsLinkKeyRemoveReq( uint8_t srcServiceTaskId, void *pMsg )',
 )
 
 SCENARIOS = (
@@ -13,6 +14,8 @@ SCENARIOS = (
     'aps_set', 'aps_set_import_denied', 'aps_add',
     'tc_get', 'tc_get_missing', 'tc_set_monotonic', 'tc_set_pending',
     'tc_set_missing', 'tc_set_fault', 'hold',
+    'tc_remove_denied', 'aps_remove', 'aps_remove_pending', 'aps_remove_hold',
+    'aps_get_cleared',
 )
 
 PREAMBLE = r'''
@@ -46,11 +49,13 @@ typedef struct { uint32_t txFrmCntr,rxFrmCntr; uint8_t pendingFlag,entryUsed; } 
 typedef struct { uint8_t tcLinkKey,ieeeAddr[8]; } host_get_req;
 typedef struct { uint8_t tcLinkKey,ieeeAddr[8],key[16]; uint32_t txFrmCntr,rxFrmCntr; } host_get_rsp;
 typedef struct { uint8_t tcLinkKey,ieeeAddr[8],key[16]; uint16_t shortAddr; uint32_t txFrmCntr,rxFrmCntr; } host_set_req;
+typedef struct { uint8_t tcLinkKey,ieeeAddr[8]; } host_remove_req;
 typedef struct { zstack_ZStatusValues status; } host_hdr;
 typedef struct { host_hdr hdr; host_get_req *pReq; host_get_rsp *pRsp; } zstackmsg_secApsLinkKeyGetReq_t;
 typedef struct { host_hdr hdr; host_set_req *pReq; } zstackmsg_secApsLinkKeySetReq_t;
+typedef struct { host_hdr hdr; host_remove_req *pReq; } zstackmsg_secApsLinkKeyRemoveReq_t;
 static uint8_t held,missing,fail_nv,bad_readback;
-static unsigned reads,writes,legacy_writes,aps_sets,aps_adds;
+static unsigned reads,writes,legacy_writes,aps_sets,aps_adds,aps_removes;
 static APSME_TCLinkKeyNVEntry_t tc[4];
 static APSME_ApsLinkKeyNVEntry_t aps[4];
 static APSME_ApsLinkKeyRAMEntry_t ApsLinkKeyRAMEntry[4];
@@ -66,6 +71,8 @@ static ZStatus_t APSME_LinkKeySet(uint8_t *addr,uint8_t *key)
 { (void)addr; ++aps_sets; memcpy(aps[0].key,key,SEC_KEY_LEN); return ZSuccess; }
 static ZStatus_t ZDSecMgrAddLinkKey(uint16_t addr,uint8_t *ieee,uint8_t *key)
 { (void)addr; (void)ieee; (void)key; ++aps_adds; return ZSuccess; }
+static ZStatus_t ZDSecMgrDeviceRemoveByExtAddr(uint8_t *ieee)
+{ (void)ieee; ++aps_removes; if(fail_nv) {held=TRUE; return ZFailure;} return ZSuccess; }
 static uint8_t osal_nv_read_ex(uint16_t table,uint16_t index,uint16_t off,uint16_t len,void *dest)
 {
   ++reads; assert(off==0 && index<4u); if(fail_nv) return 1;
@@ -87,9 +94,10 @@ int main(int argc,char **argv)
 {
   assert(argc==2); const char *s=argv[1];
   host_get_req get={0}; host_get_rsp reply={0};
-  host_set_req set={0};
+  host_set_req set={0}; host_remove_req rem={0};
   zstackmsg_secApsLinkKeyGetReq_t getmsg={{0},&get,&reply};
   zstackmsg_secApsLinkKeySetReq_t setmsg={{0},&set};
+  zstackmsg_secApsLinkKeyRemoveReq_t remmsg={{0},&rem};
   get.ieeeAddr[0]=set.ieeeAddr[0]=tc[0].extAddr[0]=0x44u;
   tc[0].txFrmCntr=200u; tc[0].rxFrmCntr=60u;
   TCLinkKeyRAMEntry[0].txFrmCntr=215u;
@@ -103,6 +111,9 @@ int main(int argc,char **argv)
   if(!strcmp(s,"tc_set_fault")) bad_readback=TRUE;
   if(!strcmp(s,"aps_set_import_denied")) set.txFrmCntr=3u;
   if(!strcmp(s,"aps_add")) missing=TRUE;
+  if(!strcmp(s,"aps_remove_pending")) ApsLinkKeyRAMEntry[0].pendingFlag=TRUE;
+  if(!strcmp(s,"aps_remove_hold")) held=TRUE;
+  if(!strcmp(s,"aps_get_cleared")) {held=TRUE; memset(&reply,0xA5,sizeof(reply));}
   set.key[0]=0x33u;
   if(!strncmp(s,"aps_get",7) || !strncmp(s,"tc_get",6) || !strcmp(s,"hold")) {
     if(!strncmp(s,"tc_get",6)) get.tcLinkKey=TRUE;
@@ -110,7 +121,16 @@ int main(int argc,char **argv)
     if(!strcmp(s,"aps_get")) assert(getmsg.hdr.status==0u && reply.key[0]==0x33u && reads==1u);
     else if(!strcmp(s,"tc_get")) assert(getmsg.hdr.status==0u && reply.txFrmCntr==200u && reads==1u);
     else if(!strcmp(s,"aps_get_fault")) assert(held && getmsg.hdr.status!=0u);
+    else if(!strcmp(s,"aps_get_cleared")) {
+      host_get_rsp zero={0};
+      assert(getmsg.hdr.status!=0u && !memcmp(&reply,&zero,sizeof(reply)));
+    }
     else assert(getmsg.hdr.status!=0u && !writes);
+  } else if(!strncmp(s,"tc_remove",9) || !strncmp(s,"aps_remove",10)) {
+    rem.tcLinkKey=(!strncmp(s,"tc_remove",9));
+    assert(processSecApsLinkKeyRemoveReq(0,&remmsg));
+    if(!strcmp(s,"aps_remove")) assert(remmsg.hdr.status==0u && aps_removes==1u);
+    else assert(remmsg.hdr.status!=0u && aps_removes==0u && writes==0u);
   } else {
     if(!strncmp(s,"tc_set",6)) set.tcLinkKey=TRUE;
     assert(processSecApsLinkKeySetReq(0,&setmsg));
