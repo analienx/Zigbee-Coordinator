@@ -85,6 +85,7 @@ int main(void)
  volatile unsigned cut=0u,partial=0u;
  unsigned operations;
  volatile unsigned tests=0u,holds=0u,candidates=0u,native_holds=0u;
+ volatile unsigned preparation_candidates=0u,committed_candidates=0u;
  r4_nv4_result initial;
  if(fread(nv,1,sizeof(nv),stdin)!=sizeof(nv) || getchar()!=EOF) return 7;
  memcpy(before,nv,sizeof(nv));
@@ -132,6 +133,24 @@ int main(void)
      /* A candidate is never a fully admitted/formed security state. */
      assert(result.active_records==initial.active_records);
      assert(result.semantic_state==initial.semantic_state);
+     if(cut<=4u) {
+       /* The genuine TI compactPage marks PGACT/PGFULL mode PGCSRC=F8
+        * BEFORE it marks any source state or copies/erases records. A
+        * cut during these first four mode writes may be safely admitted
+        * only if ALL media bytes other than the four mode offsets are
+        * exactly unchanged from the verified baseline. */
+       uint32_t offset;
+       for(offset=0u;offset<sizeof(nv);++offset) {
+         if(offset%FLASH_PAGE_SIZE!=6u)
+           assert(nv[offset]==baseline_media[offset]);
+       }
+       ++preparation_candidates;
+     } else {
+       /* There must be no admitted torn relocation, cleanup or erase.
+        * The only later admissible cut is the fully committed final op. */
+       assert(cut==operations && partial==0u);
+       ++committed_candidates;
+     }
      ++candidates;
      /* Optional vendor reboot on the disposable snapshot, but with an
       * immutable NVS boundary. Recovery that wants to write is NOT proof
@@ -153,9 +172,10 @@ int main(void)
  }
  assert(tests==2u*operations && holds>0u);
   printf("R4_T4_PINNED_TI_FOUR_PAGE_COMPACTION_CUTS_PASS "
-        "operations=%u trials=%u held=%u candidates=%u native_holds=%u "
+        "operations=%u trials=%u held=%u candidates=%u prep=%u committed=%u native_holds=%u "
         "NOT_PROVEN=counter_monotonicity,seed_immutability,physical_flash\n",
-        operations,tests,holds,candidates,native_holds);
+        operations,tests,holds,candidates,preparation_candidates,
+        committed_candidates,native_holds);
  memset(nv,0,sizeof(nv));memset(before,0,sizeof(before));
  memset(baseline_media,0,sizeof(baseline_media));
  return 0;

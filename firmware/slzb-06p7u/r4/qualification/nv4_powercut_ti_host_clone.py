@@ -94,6 +94,7 @@ static void compact_synthetic_media(void)
 int main(void)
 {
   static volatile unsigned cuts=0u, holds=0u, candidates=0u;
+  static volatile unsigned preparation_candidates=0u,committed_candidates=0u;
   r4_nv4_result pre;
   unsigned total;
   volatile unsigned erased_operations=0u;
@@ -143,6 +144,19 @@ int main(void)
       if(pre.code==R4_NV4_READONLY_STRUCTURE_ACCEPTED &&
          pre.semantic_state==R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE) {
         unsigned prev_w=write_calls,prev_e=erase_calls;
+        if(at<=4u) {
+          /* The only admissible early cuts can change the four PGCSRC mode
+           * bytes; no record content, state or journal may change. */
+          uint32_t offset;
+          for(offset=0u;offset<sizeof(nv);++offset) {
+            if(offset%FLASH_PAGE_SIZE!=6u)
+              assert(nv[offset]==baseline_media[offset]);
+          }
+          ++preparation_candidates;
+        } else {
+          assert(at==total && committed==n);
+          ++committed_candidates;
+        }
         ++candidates;
         assert(pre.records==3u && pre.active_records==3u);
         memset(&NVOCMP_nvHandle,0,sizeof(NVOCMP_nvHandle));
@@ -162,8 +176,9 @@ int main(void)
   assert(cuts>3u*total && erased_operations>0u &&
          holds>0u && candidates>0u);
   printf("R4_T4_PINNED_TI_NV4_NOR_CUTS_PASS cuts=%u ops=%u holds=%u "
-         "candidates=%u flash_authorized=false\n",
-         cuts,total,holds,candidates);
+         "candidates=%u prep=%u committed=%u flash_authorized=false\n",
+         cuts,total,holds,candidates,preparation_candidates,
+         committed_candidates);
   memset(nv,0,sizeof(nv));memset(before,0,sizeof(before));
   return 0;
 }

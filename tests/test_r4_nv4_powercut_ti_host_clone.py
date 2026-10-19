@@ -66,7 +66,10 @@ class PinnedTiFourPagePowercutTests(unittest.TestCase):
                               capture_output=True, timeout=20, check=True)
         self.assertFalse(proc.stderr)
         self.assertIn(b'R4_T4_PINNED_TI_NV4_NOR_CUTS_PASS', proc.stdout)
-        self.assertIn(b'cuts=24703 ops=26 holds=24701 candidates=2', proc.stdout)
+        # Seven modes-only preparation cuts are safe; every torn record move,
+        # cleanup and erase still HOLDS until the fully committed final op.
+        self.assertIn(b'cuts=24703 ops=26 holds=24695 candidates=8 '
+                      b'prep=7 committed=1', proc.stdout)
         self.assertIn(b'flash_authorized=false', proc.stdout)
 
     def test_short_nv_snapshot_is_refused(self):

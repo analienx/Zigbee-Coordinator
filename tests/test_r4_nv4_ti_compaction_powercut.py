@@ -83,7 +83,11 @@ class T4PinnedSourceFourPageCuts(unittest.TestCase):
 
     def test_three_public_unformed_records_and_torn_erase(self):
         output = self.run_cuts(stock_like_semantic())
-        self.assertIn('operations=26 trials=52 held=50 candidates=2', output)
+        # TI sets seven harmless early F8 *mode* variants before entering
+        # PGXSRC. The C harness proves their media bytes are unchanged except
+        # for mode offsets; all interrupted relocation/erase states HOLD.
+        self.assertIn('operations=26 trials=52 held=44 candidates=8 '
+                      'prep=7 committed=1', output)
 
     def test_formed_like_synthetic_nib_bdb_and_role_markers(self):
         self.run_cuts(stock_like_semantic(bdb=1, nib=True))
