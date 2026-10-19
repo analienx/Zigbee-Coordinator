@@ -56,7 +56,8 @@ static uint8_t crc8(uint8_t crc, const uint8_t *data, uint32_t length)
 
 static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
                          uint32_t page_base, uint32_t end,
-                         uint32_t *live_ids, uint32_t *live_count)
+                         uint32_t *live_ids, uint32_t *live_count,
+                         uint32_t *zstack_live_count)
 {
     uint8_t header[R4_TRAILER], block[64];
     while (end > R4_DATA_START) {
@@ -119,6 +120,11 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
             }
             live_ids[(*live_count)++] = identity;
             ++r->active_records;
+            /* The fitted stock P7U's active records are Z-Stack sysid 1.
+             * A CRC-valid unrelated NV namespace alone must not be used
+             * to grant the B1 existing-network admission path. This still
+             * does NOT prove BDB/NIB, key or counter semantics. */
+            if ((header[0] >> 2u) == 1u) ++*zstack_live_count;
         }
         end = header_offset - length;
     }
@@ -131,7 +137,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u};
     uint32_t page, active = 0u, full = 0u, destination = 0u;
-    uint32_t live_count = 0u;
+    uint32_t live_count = 0u, zstack_live_count = 0u;
     /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
      * Admission is a single-threaded boot preflight, not a runtime service. */
     static uint32_t live_ids[R4_MAX_ACTIVE_IDENTITIES];
@@ -146,6 +152,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         if (header[3] != 0x96u || header[7] != 0x96u ||
             header[11] != 0x96u || header[15] != 0x96u ||
             (header[2] >> 2) != 3u ||
+            ((header[2] & 3u) != 0u && (header[2] & 3u) != 3u) ||
             header[1] == 0u || header[1] == 0xffu) {
             r.code = R4_NV4_BAD_PAGE_HEADER;
             r.fault_offset = base;
@@ -202,10 +209,15 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                 return r;
             }
         } else if (!inspect_items(reader, ctx, &r, base, end,
-                                  live_ids, &live_count)) return r;
+                                  live_ids, &live_count,
+                                  &zstack_live_count)) return r;
     }
     if (active != 1u || full != 2u || destination != 1u || r.active_records == 0u) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;
+        return r;
+    }
+    if (zstack_live_count == 0u) {
+        r.code = R4_NV4_NO_ZSTACK_RECORDS;
         return r;
     }
     r.code = R4_NV4_READONLY_STRUCTURE_ACCEPTED;

@@ -28,10 +28,10 @@ READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
 PAGE_SIZE = 8192
 
 
-def encoded_record(subid: int) -> bytes:
+def encoded_record(subid: int, *, sysid: int = 1) -> bytes:
     """Real NVOCMP_HDRLE=0 compressed ID/status and CRC, public fake data."""
     data = b'not-a-real-key'
-    header = bytearray((4, 0x1a, subid >> 2,
+    header = bytearray((sysid << 2, 0x1a, subid >> 2,
                         ((subid & 3) << 6) | (len(data) >> 6),
                         (len(data) & 63) << 2))
     crc = forensics.crc8(data + header)
@@ -40,7 +40,8 @@ def encoded_record(subid: int) -> bytes:
     return data + header
 
 
-def stock_like(records: int = 1, duplicate: bool = False) -> bytes:
+def stock_like(records: int = 1, duplicate: bool = False,
+               *, sysid: int = 1) -> bytes:
     media = bytearray(b'\xff' * (4 * PAGE_SIZE))
     for page, state in enumerate((0x7c, 0x78, 0x78, 0xfe)):
         base = page * PAGE_SIZE
@@ -49,7 +50,7 @@ def stock_like(records: int = 1, duplicate: bool = False) -> bytes:
             media[base + marker] = 0x96
     cursor = 16
     for i in range(records):
-        part = encoded_record(0 if duplicate else i)
+        part = encoded_record(0 if duplicate else i, sysid=sysid)
         media[cursor:cursor + len(part)] = part
         cursor += len(part)
     if cursor > PAGE_SIZE:
@@ -119,6 +120,36 @@ class Nv4AdmissionTests(unittest.TestCase):
     def test_scoped_duplicate_active_compressed_ids_hold(self):
         self.assertEqual(self.probe(stock_like(records=2, duplicate=True)).code, 9)
         self.assertEqual(self.probe(stock_like(records=2)).code, 8)
+
+    def test_reserved_page_all_active_bit_patterns_hold(self):
+        for bad in (1, 2):
+            with self.subTest(reserved_all_active=bad):
+                before = bytearray(stock_like())
+                before[2] = (before[2] & 0xfc) | bad
+                result = self.probe(bytes(before))
+                self.assertEqual(result.code, 3)
+                self.assertEqual(result.fault_offset, 0)
+        before = bytearray(stock_like())
+        before[2] &= 0xfc  # TI SOMEINACTIVE is also legal.
+        self.assertEqual(self.probe(bytes(before)).code, 8)
+
+    def test_crc_valid_foreign_namespace_cannot_grant_zstack_candidate(self):
+        self.assertEqual(self.probe(stock_like(sysid=2)).code, 11)
+        self.assertEqual(self.probe(stock_like(sysid=1)).code, 8)
+        # Mixed namespaces do not justify a blanket rejection once an
+        # independent live Z-Stack record is structurally present.
+        before = bytearray(stock_like())
+        other = encoded_record(1, sysid=2)
+        end = 16 + len(encoded_record(0))
+        before[end:end + len(other)] = other
+        self.assertEqual(self.probe(bytes(before)).code, 8)
+
+    def test_uncommissioned_blank_or_inactive_only_media_stays_hold(self):
+        self.assertEqual(self.probe(b'\xff' * (4 * PAGE_SIZE)).code, 3)
+        before = bytearray(stock_like())
+        # NVOCMP status bit 1 is excluded from the record CRC.
+        before[16 + len(b'not-a-real-key') + 5] &= ~2
+        self.assertEqual(self.probe(bytes(before)).code, 4)
 
     def test_f8_compaction_is_not_silent_settled_admission(self):
         before = bytearray(stock_like())

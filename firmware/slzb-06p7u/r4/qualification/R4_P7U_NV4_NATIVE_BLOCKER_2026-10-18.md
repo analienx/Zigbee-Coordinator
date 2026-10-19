@@ -150,3 +150,22 @@ current stock direct-boot and power settings rather than applying the obsolete
 
 **Verdict: `NV4_B1_TI_READONLY_INIT_PASS`; `NV4_FULL_ZNP_NATIVE_CI_PASS`;
 `FULL_STACK_PHYSICAL_STARTUP_UNTESTED`.**
+
+## 19 October source-only admission hardening (partial T3)
+
+The NV4 pre-init reader now rejects the two reserved values of TI's page
+`allActive` indicator (only `ALLACTIVE=3` and `SOMEINACTIVE=0` are legal in
+the pinned donor). It also refuses to classify a CRC-valid store containing
+only active records outside the fitted P7U's Z-Stack system-ID namespace (1)
+as an existing-network structural candidate. Such a store returns the new
+`R4_NV4_NO_ZSTACK_RECORDS` status, mapped to B1's sticky unknown-layout
+HOLD. The synthetic harness includes reserved-bit, blank, inactive-only,
+foreign-only and mixed-namespace controls.
+
+**This remains a structural preflight, not a formed-network classifier.**
+Presence of a Z-Stack record does not prove a BDB on-network flag, NIB,
+network identity, Trust Center contents, APS/NWK key material or counter
+monotonicity. In particular, factory-new P7U captures with 366 live NV
+records must not be reported as formed. The B1 later security precheck is a
+separate fail-closed gate, and full pinned-source T3/physical behavior remain
+open. These additions neither use private NV bytes nor authorize flash.

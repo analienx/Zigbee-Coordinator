@@ -85,6 +85,7 @@ NEW_ADMISSION = '''        {
             case R4_NV4_SCAN_LIMIT: reason = B1_NV_HOLD_SCAN_LIMIT; break;
             case R4_NV4_DUPLICATE_ACTIVE_ID: reason = B1_NV_HOLD_MIXED_LAYOUT; break;
             case R4_NV4_INVALID_STATUS: reason = B1_NV_HOLD_ITEM_HEADER; break;
+            case R4_NV4_NO_ZSTACK_RECORDS: reason = B1_NV_HOLD_UNKNOWN_LAYOUT; break;
             case R4_NV4_READONLY_STRUCTURE_ACCEPTED:
                 /* Reuse existing-network diagnostic category (7), not factory. */
                 reason = B1_NV2_HEADER_CANDIDATE;
