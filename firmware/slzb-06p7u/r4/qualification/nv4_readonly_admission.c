@@ -187,7 +187,8 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u,
                       R4_NV4_STATE_UNKNOWN_HOLD};
-    uint32_t page, active = 0u, full = 0u, destination = 0u;
+    uint32_t page, active = 0u, full = 0u, destination = 0u, inactive = 0u;
+    uint32_t active_page = R4_NV4_PAGES, destination_page = R4_NV4_PAGES;
     uint32_t live_count = 0u, zstack_live_count = 0u;
     r4_nv4_markers markers = {0u, 0u, 0u, 0u, 0u, 0u};
     /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
@@ -201,6 +202,9 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         uint16_t logical;
         uint8_t mode;
         if (!bounded_read(reader, ctx, &r, base, header, sizeof(header))) return r;
+        /* Real TI NVOCMP_cleanPage can recycle the source to PGNACT=0xFF:
+         * the *valid header* is reprogrammed, but data remain erased. It is
+         * NOT an all-0xFF factory blank page. */
         if (header[3] != 0x96u || header[7] != 0x96u ||
             header[11] != 0x96u || header[15] != 0x96u ||
             (header[2] >> 2) != 3u ||
@@ -233,9 +237,10 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
             return r;
         }
         switch (header[0]) {
-        case 0x7cu: ++active; break;
+        case 0x7cu: ++active; active_page = page; break;
         case 0x78u: ++full; break;
-        case 0xfeu: ++destination; break;
+        case 0xfeu: ++destination; destination_page = page; break;
+        case 0xffu: ++inactive; break;
         default:
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base;
@@ -253,7 +258,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         if (header[0] != 0xfeu && logical != 0xffffu) {
             end = logical;
         }
-        if (header[0] == 0xfeu) {
+        if (header[0] == 0xfeu || header[0] == 0xffu) {
             if (end != R4_DATA_START || logical != 0xffffu ||
                 mode != 0xffu) {
                 r.code = R4_NV4_UNSAFE_PAGE_STATES;
@@ -264,7 +269,10 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                                   live_ids, &live_count,
                                   &zstack_live_count, &markers)) return r;
     }
-    if (active != 1u || full != 2u || destination != 1u || r.active_records == 0u) {
+    if (active != 1u || destination != 1u || r.active_records == 0u ||
+        !((full == 2u && inactive == 0u) ||
+          (full == 0u && inactive == 2u)) ||
+        destination_page != (active_page + R4_NV4_PAGES - 1u) % R4_NV4_PAGES) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;
         return r;
     }

@@ -168,6 +168,33 @@ class Nv4AdmissionTests(unittest.TestCase):
         before[2] &= 0xfc  # TI SOMEINACTIVE is also legal.
         self.assertEqual(self.probe(bytes(before)).code, 8)
 
+    def test_ti_four_page_compaction_recycles_valid_empty_inactive_headers(self):
+        # The real >2-page NVOCMP_cleanPage leaves PGNACT=0xff with an
+        # independently valid page header, not a factory-blank 8 KiB page.
+        before = bytearray(stock_like_semantic())
+        for page in (1, 2):
+            before[page * PAGE_SIZE] = 0xff
+        candidate = self.probe(bytes(before))
+        self.assertEqual((candidate.code, candidate.semantic_state), (8, 1))
+        self.assertEqual(candidate.active_records, 3)
+
+        mutants = []
+        half_recycled = bytearray(before)
+        half_recycled[PAGE_SIZE] = 0x78  # mixed old/new ring states
+        mutants.append(half_recycled)
+        torn_body = bytearray(before)
+        torn_body[PAGE_SIZE + 23] = 0xf7  # non-erased inactive page
+        mutants.append(torn_body)
+        missing_header = bytearray(before)
+        missing_header[PAGE_SIZE:PAGE_SIZE + 16] = b'\xff' * 16
+        mutants.append(missing_header)
+        invalid_ring = bytearray(before)
+        invalid_ring[3 * PAGE_SIZE] = 0xff  # no destination remains
+        mutants.append(invalid_ring)
+        for i, mutant in enumerate(mutants):
+            with self.subTest(change=i):
+                self.assertNotEqual(self.probe(bytes(mutant)).code, 8)
+
     def test_crc_valid_foreign_namespace_cannot_grant_zstack_candidate(self):
         self.assertEqual(self.probe(stock_like(sysid=2)).code, 11)
         self.assertEqual(self.probe(stock_like(sysid=1)).code, 8)

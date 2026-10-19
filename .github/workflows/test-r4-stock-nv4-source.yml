@@ -15,6 +15,8 @@ on:
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_cli.c'
       - 'tests/test_r4_nv4_b1_bridge.py'
       - 'tests/test_r4_nv4_b1_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_compaction_powercut.py'
+      - 'tests/test_r4_nv4_ti_compaction_powercut.py'
       - 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py'
       - '.github/workflows/test-r4-stock-nv4-source.yml'
   workflow_dispatch:
@@ -29,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Unit-test four matching native geometry anchors and independent C reader
-        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone
+        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone tests.test_r4_nv4_ti_compaction_powercut
       - name: Fetch exact public TI 8.33 source inputs without any SDK installer
         run: |
           python - <<'PY'
@@ -102,6 +104,11 @@ jobs:
           R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
           R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
         run: python -m unittest -v tests.test_r4_nv4_ti_host_clone
+      - name: Execute real TI 8.33 four-page compaction and every NOR operation power cut in RAM
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+        run: python -m unittest -v tests.test_r4_nv4_ti_compaction_powercut
       - name: Fetch real pinned B1/Z-Stack source dependencies into disposable SDK
         run: |
           python - <<'PY'
