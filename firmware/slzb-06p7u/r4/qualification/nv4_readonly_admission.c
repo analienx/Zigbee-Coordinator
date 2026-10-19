@@ -239,6 +239,15 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                * self-referential FC journal as torn/foreign media, not an
                * admission candidate for write-backed vendor init. */
               header[10] == page || header[14] == page ||
+              /* The actual four-page TI compact() advances source pages
+               * via NVOCMP_INCPAGE and stops before its tail destination.
+               * Source endpoints on opposite sides of the destination in
+               * that forward ring imply an impossible wrap through the
+               * destination, even when both endpoints are individually
+               * in range and every item CRC verifies. */
+              (((uint32_t)header[14] + R4_NV4_PAGES - header[10]) %
+                 R4_NV4_PAGES >=
+               ((page + R4_NV4_PAGES - header[10]) % R4_NV4_PAGES)) ||
               /* Pinned TI NVOCMP_compact() walks source items backwards
                * (srcOff decreases) and records the final source offset in
                * XSRCENDHDR. If both source endpoints are on the same page,

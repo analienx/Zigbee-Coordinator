@@ -316,6 +316,18 @@ class Nv4AdmissionTests(unittest.TestCase):
         media[12] = 192  # CRCs remain valid; only journal ordering is wrong.
         self.assertEqual(self.probe(bytes(media)).code, 4)
 
+    def test_completed_compaction_sources_cannot_cross_destination_page(self):
+        # TI's four-page compact() advances source pages via INCPAGE, and
+        # its destination tail is never part of the copied source range.
+        media = bytearray(stock_like())
+        media[6] = 0xfc  # completed compaction journal on destination 0
+        media[8:11] = bytes((128, 0, 1))
+        media[12:15] = bytes((64, 0, 3))
+        self.assertEqual(self.probe(bytes(media)).code, 8)
+        media[8 + 2] = 3  # source 3 -> 0 -> 1 crosses destination 0
+        media[12 + 2] = 1
+        self.assertEqual(self.probe(bytes(media)).code, 4)
+
     def test_crc_failure_holds(self):
         corrupted = bytearray(stock_like())
         corrupted[16] ^= 1
