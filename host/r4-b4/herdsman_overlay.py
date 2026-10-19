@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from safe_checkout_files import validate_sources, write_source_text
+from safe_checkout_files import validate_sources, read_source_bytes, write_source_text
 
 SHA = "0968f979d558874b17396c96b66382d4236bbdcd"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
@@ -157,7 +157,7 @@ def plan(root):
         raise ValueError("herdsman source HEAD not exact version 10.9.1 pin")
     originals = {}
     for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS, CONTROLLER):
-        actual = (root / name).read_bytes()
+        actual = read_source_bytes(root, name)
         if actual != _git(root, "show", SHA + ":" + name):
             raise ValueError("dirty or wrong upstream source: " + name)
         originals[name] = actual.decode("utf-8")

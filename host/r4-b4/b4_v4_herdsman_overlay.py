@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from safe_checkout_files import validate_sources, write_source_text
+from safe_checkout_files import validate_sources, read_source_text, write_source_text
 
 PIN = "0968f979d558874b17396c96b66382d4236bbdcd"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
@@ -144,7 +144,7 @@ def plan(root):
     validate_sources(root, paths)
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("herdsman HEAD drift")
-    original = {p: (root / p).read_text() for p in paths}
+    original = {p: read_source_text(root, p) for p in paths}
     # Raw UNPI logging paths were untouched by v3. Verify pristine blobs
     # before redaction; no second logger/transport or broad source guessing.
     for path in (PARSER, WRITER):

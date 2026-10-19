@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from safe_checkout_files import validate_sources, write_source_text
+from safe_checkout_files import validate_sources, read_source_bytes, write_source_text
 
 PIN = "62b02e2aa1997c574223b80c196677b63a25f4a7"
 OTA = "lib/extension/otaUpdate.ts"
@@ -35,10 +35,7 @@ def plan(root):
         raise ValueError("wrong pinned Z2M source")
     originals = {}
     for path in (OTA, CONTROLLER, PACKAGE):
-        f = root / path
-        if not f.is_file() or f.is_symlink():
-            raise ValueError("Z2M source absent/symlinked: " + path)
-        raw = f.read_bytes()
+        raw = read_source_bytes(root, path)
         if raw != git(root, "show", PIN + ":" + path):
             raise ValueError("dirty Z2M upstream source: " + path)
         originals[path] = raw.decode("utf-8")

@@ -1,5 +1,6 @@
 """R4-P2-05: pinned B4 disposable host overlays must not escape via symlinks."""
 import importlib
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -8,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host" / "r4-b4"))
-from safe_checkout_files import validate_sources, write_source_text
+from safe_checkout_files import (read_source_bytes, read_source_text,
+                                 validate_sources, write_source_text)
 
 CASES = (
     ("herdsman_overlay", "DEFINITION"),
@@ -82,6 +84,8 @@ class B4SymlinkContainment(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/tmp") as d:
             root, target, _ = self.root_and_external(Path(d), "deep/tree/source.ts")
             validate_sources(root, ("deep/tree/source.ts",))
+            self.assertEqual(read_source_bytes(root, "deep/tree/source.ts"), b"original")
+            self.assertEqual(read_source_text(root, "deep/tree/source.ts"), "original")
             write_source_text(root, "deep/tree/source.ts", "new\n")
             self.assertEqual(target.read_bytes(), b"new\n")
 
@@ -93,7 +97,87 @@ class B4SymlinkContainment(unittest.TestCase):
             target.hardlink_to(outside)
             with self.assertRaisesRegex(ValueError, "unshared regular file"):
                 write_source_text(root, "deep/source.ts", "changed")
+            with self.assertRaisesRegex(ValueError, "unshared regular file"):
+                read_source_bytes(root, "deep/source.ts")
             self.assertEqual(outside.read_text(), "PRIVATE_SENTINEL_UNCHANGED")
+
+    def test_leaf_swap_after_validation_cannot_redirect_source_read(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            folder = Path(d)
+            root, target, outside = self.root_and_external(folder, "deep/source.ts")
+            validate_sources(root, ("deep/source.ts",))
+            target.unlink()
+            target.symlink_to(outside)
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                read_source_bytes(root, "deep/source.ts")
+            self.assertEqual(outside.read_text(), "PRIVATE_SENTINEL_UNCHANGED")
+
+    def test_special_file_read_cannot_stall_or_escape_source_gate(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            root = Path(d) / "checkout"
+            root.mkdir()
+            os.mkfifo(root / "source.ts")
+            with self.assertRaisesRegex(ValueError, "unshared regular file"):
+                read_source_bytes(root, "source.ts")
+            with self.assertRaisesRegex(ValueError, "unsafe source"):
+                write_source_text(root, "source.ts", "changed")
+
+    def test_ancestor_swap_during_descriptor_walk_rejects_read_and_write(self):
+        for mode in ("read", "write"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir="/tmp") as d:
+                folder = Path(d)
+                gate = folder / "gate"
+                checkout = gate / "checkout"
+                checkout.mkdir(parents=True)
+                source = checkout / "source.ts"
+                source.write_text("original")
+                external = folder / "outside"
+                (external / "checkout").mkdir(parents=True)
+                outside = external / "checkout" / "source.ts"
+                outside.write_text("PRIVATE_SENTINEL_UNCHANGED")
+                original_open = os.open
+                injected = False
+
+                def swap_during_open(path, flags, *args, **kwargs):
+                    nonlocal injected
+                    if path == Path("/tmp") and not injected:
+                        injected = True
+                        gate.rename(folder / "old_gate")
+                        gate.symlink_to(external, target_is_directory=True)
+                    return original_open(path, flags, *args, **kwargs)
+
+                validate_sources(checkout, ("source.ts",))
+                with patch("safe_checkout_files.os.open", side_effect=swap_during_open):
+                    with self.assertRaisesRegex(ValueError, "symlink"):
+                        if mode == "read":
+                            read_source_bytes(checkout, "source.ts")
+                        else:
+                            write_source_text(checkout, "source.ts", "changed")
+                self.assertTrue(injected)
+                self.assertEqual(outside.read_text(), "PRIVATE_SENTINEL_UNCHANGED")
+
+    def test_all_four_planners_recheck_source_read_after_validation(self):
+        for module_name, attribute in CASES:
+            with self.subTest(overlay=module_name), tempfile.TemporaryDirectory(dir="/tmp") as d:
+                module = importlib.import_module(module_name)
+                relative = getattr(module, attribute)
+                root, target, outside = self.root_and_external(Path(d), relative)
+                original_validate = module.validate_sources
+
+                def swap_after_validation(root_arg, paths):
+                    original_validate(root_arg, (relative,))
+                    target.unlink()
+                    target.symlink_to(outside)
+
+                # Admit the pinned HEAD, then demand a fresh FD-bound source
+                # read instead of trusting the earlier pathname validation.
+                git_accessor = "_git" if module_name == "herdsman_overlay" else "git"
+                head = getattr(module, "SHA", getattr(module, "PIN", ""))
+                with patch.object(module, "validate_sources", side_effect=swap_after_validation):
+                    with patch.object(module, git_accessor, return_value=(head + "\n").encode()):
+                        with self.assertRaisesRegex(ValueError, "symlink"):
+                            module.plan(root)
+                self.assertEqual(outside.read_text(), "PRIVATE_SENTINEL_UNCHANGED")
 
     def test_checkout_symlink_and_non_disposable_root_rejected(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as d:

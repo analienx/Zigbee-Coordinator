@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from safe_checkout_files import validate_sources, write_source_text
+from safe_checkout_files import validate_sources, read_source_text, write_source_text
 
 PIN = "62b02e2aa1997c574223b80c196677b63a25f4a7"
 CONTROLLER = "lib/controller.ts"
@@ -23,7 +23,7 @@ def plan(root):
     validate_sources(root, (CONTROLLER,))
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("wrong pinned Zigbee2MQTT 2.14.0")
-    src = (root / CONTROLLER).read_text()
+    src = read_source_text(root, CONTROLLER)
     if MARKER in src:
         raise ValueError("already applied")
     if src.count("    public async b4ProbeReadOnlyDiagnostics(enabled = false) {") != 1:

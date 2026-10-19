@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from safe_checkout_files import read_source_text, validate_sources
+
 Z2M_SHA = "62b02e2aa1997c574223b80c196677b63a25f4a7"
 Z2M_VERSION = "2.14.0"
 HERDSMAN_VERSION = "10.9.1"
@@ -29,12 +31,9 @@ def validate(root):
         raise ValueError("cannot source-verify Z2M tag") from None
     if sha != Z2M_SHA:
         raise ValueError("wrong upstream Z2M 2.14.0 commit SHA")
-    path = root / PACKAGE_PATH
-    extension = root / EXTENSION_PATH
-    if not path.is_file() or path.is_symlink() or not extension.is_file() or extension.is_symlink():
-        raise ValueError("Z2M manifest/extension source absent or symlinked")
-    metadata = json.loads(path.read_text(encoding="utf-8"))
-    source = extension.read_text(encoding="utf-8")
+    validate_sources(root, (PACKAGE_PATH, EXTENSION_PATH))
+    metadata = json.loads(read_source_text(root, PACKAGE_PATH))
+    source = read_source_text(root, EXTENSION_PATH)
     if metadata.get("version") != Z2M_VERSION:
         raise ValueError("Z2M package version drift")
     if metadata.get("dependencies", {}).get("zigbee-herdsman") != HERDSMAN_VERSION:
