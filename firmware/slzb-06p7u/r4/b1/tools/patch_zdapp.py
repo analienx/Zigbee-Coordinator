@@ -35,6 +35,8 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
   nwkSecMaterialDesc_t saved = {0};
   nwkSecMaterialDesc_t generic = {0};
   nwkSecMaterialDesc_t readback = {0};
+  uint8_t emptyPanID[Z_EXTADDR_LEN] = {0};
+  uint8_t genericPanID[Z_EXTADDR_LEN];
   uint8_t slot = 0;
   uint8_t found = FALSE;
   uint8_t genericFound = FALSE;
@@ -44,6 +46,17 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
 
   if (b1_nv_runtime_hold_active() || FrameCounterUpdated)
   {
+    return;
+  }
+
+  memset(genericPanID, 0xFF, sizeof(genericPanID));
+  if (gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES == 0 ||
+      OsalPort_memcmp(_NIB.extendedPANID, emptyPanID, Z_EXTADDR_LEN) ||
+      OsalPort_memcmp(_NIB.extendedPANID, genericPanID, Z_EXTADDR_LEN))
+  {
+    /* A formed network with an invalid identity must not restore the
+     * generic key's counter under a synthetic current PAN identity. */
+    if (b1_nv_existing_header_candidate()) b1_nv_runtime_hold_latch();
     return;
   }
 
@@ -66,7 +79,9 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
   }
 
   /* Missing optional entries are allowed. Any actual failed backend read
-   * is separately latched by NVOCMP and must end restoration immediately. */
+   * is separately latched by NVOCMP and must end restoration immediately.
+   * Always inspect ALL slots before publishing a counter. A later duplicate
+   * may have a higher persisted replay floor than the first match. */
   for (i = 0; i < gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES; i++)
   {
     nwkSecMaterialDesc_t row = {0};
@@ -78,24 +93,43 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
       continue;
     }
 
-    if (i == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1 &&
-        row.FrameCounter != 0)
+    if (OsalPort_memcmp(_NIB.extendedPANID, row.extendedPanID,
+                        Z_EXTADDR_LEN))
     {
-      uint8_t genericID[Z_EXTADDR_LEN];
-      memset(genericID, 0xFF, sizeof(genericID));
-      if (OsalPort_memcmp(row.extendedPanID, genericID, sizeof(genericID)))
+      if (found)
+      {
+        b1_nv_runtime_hold_latch();
+        return;
+      }
+      saved = row;
+      slot = i;
+      found = TRUE;
+      continue;
+    }
+    if (OsalPort_memcmp(row.extendedPanID, emptyPanID, Z_EXTADDR_LEN))
+    {
+      if (row.FrameCounter != 0u)
+      {
+        /* Counter without identity is a torn/ambiguous material row. */
+        b1_nv_runtime_hold_latch();
+        return;
+      }
+      continue;
+    }
+    if (OsalPort_memcmp(row.extendedPanID, genericPanID, Z_EXTADDR_LEN))
+    {
+      if (i != gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1 &&
+          row.FrameCounter != 0u)
+      {
+        b1_nv_runtime_hold_latch();
+        return;
+      }
+      if (i == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1 &&
+          row.FrameCounter != 0u)
       {
         generic = row;
         genericFound = TRUE;
       }
-    }
-    if (OsalPort_memcmp(_NIB.extendedPANID, row.extendedPanID,
-                        Z_EXTADDR_LEN))
-    {
-      saved = row;
-      slot = i;
-      found = TRUE;
-      break;
     }
   }
 

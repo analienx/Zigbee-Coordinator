@@ -211,6 +211,32 @@ int main(int argc, char **argv)
             assert(ZDApp_RestoreNwkKey(TRUE)==TRUE);
             assert(fake_rows[3].FrameCounter==625u);
             assert(nwkFrameCounter==625u && !b1_nv_runtime_hold_active());
+        } else if (strcmp(scenario,"duplicate_counter_floor")==0 ||
+                   strcmp(scenario,"duplicate_after_blank")==0) {
+            row_present[2]=TRUE;
+            memcpy(fake_rows[2].extendedPanID,_NIB.extendedPANID,8u);
+            fake_rows[2].FrameCounter=90000u;
+            if (strcmp(scenario,"duplicate_after_blank")==0) {
+                row_present[1]=TRUE;
+                memset(&fake_rows[1],0,sizeof(fake_rows[1]));
+            }
+            assert(ZDApp_RestoreNwkKey(TRUE)==FALSE);
+            assert(b1_nv_runtime_hold_active());
+            assert(rows_written==0 && !FrameCounterUpdated && nwkFrameCounter==0);
+            assert(fake_rows[0].FrameCounter==1000u);
+            assert(fake_rows[2].FrameCounter==90000u);
+        } else if (strcmp(scenario,"orphan_counter")==0) {
+            row_present[1]=TRUE;
+            memset(&fake_rows[1],0,sizeof(fake_rows[1]));
+            fake_rows[1].FrameCounter=50000u;
+            assert(ZDApp_RestoreNwkKey(TRUE)==FALSE);
+            assert(b1_nv_runtime_hold_active());
+            assert(rows_written==0 && !FrameCounterUpdated && nwkFrameCounter==0);
+        } else if (strcmp(scenario,"malformed_restored_pan")==0) {
+            memset(_NIB.extendedPANID,0xFF,8u);
+            assert(ZDApp_RestoreNwkKey(TRUE)==FALSE);
+            assert(b1_nv_runtime_hold_active());
+            assert(rows_written==0 && !FrameCounterUpdated && nwkFrameCounter==0);
         } else if (strcmp(scenario,"missing_key")==0) {
             key_present=FALSE;
             assert(ZDApp_RestoreNwkKey(TRUE)==FALSE);

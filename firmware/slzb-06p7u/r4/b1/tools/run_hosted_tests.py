@@ -124,7 +124,9 @@ def main():
         ("nvocmp_init", "make_nvocmp_init_harness.py", SOURCE_PATHS[0], ((),)),
         ("zmac", "make_zmac_harness.py", SOURCE_PATHS[2], ((),)),
         ("zdapp", "make_zdapp_harness.py", SOURCE_PATHS[3], tuple((name,) for name in (
-            "new_empty", "positive", "two_reboots", "generic", "missing_key", "zero_key",
+            "new_empty", "positive", "two_reboots", "generic", "duplicate_counter_floor",
+            "duplicate_after_blank", "orphan_counter", "malformed_restored_pan",
+            "missing_key", "zero_key",
             "missing_row", "overflow", "write_fail", "readback", "read_fail",
             "wrong_generic_identity", "store_new", "store_later_match",
             "store_duplicate", "store_full_foreign", "store_generic_floor",
@@ -159,6 +161,14 @@ def main():
              "if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES) { emptySlot = i; break; }",
              "mutant_zdapp_store_first_blank_wins", "rows_written==0u",
              ("store_later_match",))
+
+    # A restore that exits after its FIRST matching PAN would accept a stale
+    # replay floor and write it while a later same-PAN row has a higher floor.
+    mutation(generated["zdapp"],
+             "      found = TRUE;\n      continue;",
+             "      found = TRUE;\n      break;",
+             "mutant_zdapp_restore_first_match_wins", "b1_nv_runtime_hold_active()",
+             ("duplicate_counter_floor",))
 
     for variant in ("sem", "posix"):
         name = "nvocmp_init_" + variant
