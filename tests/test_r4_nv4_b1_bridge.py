@@ -111,7 +111,7 @@ class Nv4B1BridgeTests(unittest.TestCase):
             bridge.transform(source.replace('B1_FACTORY_BOOT_AUTHORIZED', 'OTHER'))
         with self.assertRaisesRegex(ValueError, 'REQUIRES_PINNED_B1'):
             bridge.transform('unmodified upstream')
-        with self.assertRaisesRegex(ValueError, 'REQUIRES_PINNED_B1'):
+        with self.assertRaisesRegex(ValueError, 'UNSAFE_COMPACTION_RECOVERY_DEFINE'):
             bridge.transform(bridge.transform(source))
 
     def test_disposable_prevalidation_no_partial_changes(self):
