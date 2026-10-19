@@ -20,6 +20,8 @@ on:
       - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_compaction_powercut.py'
       - 'tests/test_r4_nv4_ti_compaction_powercut.py'
       - 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/make_t5_security_harness.py'
+      - 'tests/test_r4_t5_security_reservations.py'
       - '.github/workflows/test-r4-stock-nv4-source.yml'
   workflow_dispatch:
 
@@ -138,6 +140,10 @@ jobs:
           python firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py \
             --sdk /tmp/r4-stock-nv4-pinned/b1-sdk \
             --receipt /tmp/r4-stock-nv4-pinned/b1-nv4-bridge.json
+      - name: Compile genuine TI B1 APS/TCLK reservation and TC300 index-edge fault matrix
+        env:
+          R4_T5_SECURITY_SOURCE: /tmp/r4-stock-nv4-pinned/b1-sdk/source/ti/zstack/stack/zdo/zd_sec_mgr.c
+        run: python -m unittest -v tests.test_r4_t5_security_reservations
       - name: Compile genuine B1-patched TI multipage startup and reject corrupt NV4
         env:
           R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c

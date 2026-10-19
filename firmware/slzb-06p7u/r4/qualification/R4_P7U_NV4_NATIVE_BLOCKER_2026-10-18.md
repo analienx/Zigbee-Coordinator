@@ -264,3 +264,32 @@ monotonicity** across successful commits and reset/rejoin, and does not
 establish an existing formed-network migration. R4-R03/T4 and T5 remain
 open pending wider invariants and counter-durability verification. The
 physical/RF/release gates remain unchanged.
+
+## 19 October T5 persisted-reservation ordering, still partial
+
+The stock read-only inventory found **300 preallocated Trust Center rows**,
+but that count is not a native linked TC300/RAM-capacity seal. The new
+`make_t5_security_harness.py` extracts **the actual B1-patched, pinned TI
+`zd_sec_mgr.c` functions** into a deliberately synthetic 300-entry OSAL
+backend. It executes four distinct active key identities at TCLK indices
+**0, 255, 256 and 299**, on both sides of the one-byte index boundary.
+
+Each scenario asserts that a failed row write or corrupted readback latches
+HOLD, no failed/future counter is published into runtime RAM, and already
+committed earlier rows are not rolled back. A hard simulated power cut
+**after complete row storage but before return/readback/RAM publication**
+is replayed with volatile state cleared: the next complete preflight and
+reservation advances beyond the persisted floor. The same check covers an
+APS post-commit/pre-publication crash. Original synthetic seed, NWK key,
+coordinator PAN identity and Trust Center address remain unchanged. Two
+compiled malicious mutations must fail: 8-bit TCLK loop index (wrap at 256),
+and RAM counter publication before checkpoint success. See
+`tests/test_r4_t5_security_reservations.py` and the pinned-source workflow.
+
+**This models OSAL item success/failure and complete-item post-commit cuts,
+not torn NOR bytes or vendor `NVOCMP_writeItem` atomicity.** It does not
+show that the actual native linked coordinator allocates all 300 rows,
+that per-key transmission sites enforce the checkpoint floor, or that any
+physical RF frame counter is monotonic. The T5/T6 and full R4-R04/R05 gates
+remain open. The four-page NOR compaction cuts above are complementary,
+not a substitute for the missing end-to-end integration.
