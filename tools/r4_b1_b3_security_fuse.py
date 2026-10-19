@@ -33,7 +33,7 @@ OWNERSHIP={
     SEC:"B1_HOLD_APS_TCLK_PLUS_B3_TRNG_ONLY",
     GLO:"B1_RESTORE_VALIDATION_PLUS_B3_TRNG",
     HDR:"B3_RNG_SIGNATURE_ONLY",
-    TASK:"B3_ENTROPY_ERROR_CHECK",
+    TASK:"B1_APS_HOST_COUNTER_NV_PLUS_B3_ENTROPY",
 }
 
 def git(root,*args):
@@ -96,8 +96,18 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
             raise ValueError("B3_DONOR_PIN_DRIFT "+name)
         vendor[name]=vendor_raw.decode("utf-8")
         raw[name]=path.read_text(encoding="utf-8")
-    if raw[HDR]!=vendor[HDR] or raw[TASK]!=vendor[TASK]:
-        raise ValueError("B1_MUST_NOT_HAVE_CHANGED_B3_ONLY_FILES")
+    original_b1=json.loads(b1_receipt.read_text(encoding="utf-8"))
+    if original_b1.get("schema")!="r4-b1-admission-overlay-v2":
+        raise ValueError("B1_RECEIPT_SCHEMA_DRIFT")
+    # B1 now owns only the two ZNP APS key API request handlers. B3 still
+    # owns the unrelated checked-entropy callers in the same source file.
+    # Require the exact B1 host source digest, then apply B3 atop it.
+    if (raw[HDR]!=vendor[HDR] or
+        original_b1.get("modified_host_api_sha256")!=
+            hashlib.sha256(raw[TASK].encode()).hexdigest() or
+        original_b1.get("additional_source_bindings",{}).get(
+            "modified_host_api_sha256")!=TASK):
+        raise ValueError("B1_HOST_API_PREIMAGE_NOT_BOUND")
 
     # Require the exact B1 ownership and RF denial sources. Merely having a
     # B1 marker in an unrelated comment can never substitute these bodies.
@@ -119,13 +129,8 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
                      "void ZDApp_SaveNwkKey( void )\n{\n"
                      "  if (b1_nv_runtime_hold_active()) return;",
                      "B3_SAVE_ON_HOLD")
-    # TI SAVE/RESTORE treat the last entry as a generic counter fallback,
-    # but STORE can populate that very slot with a specific network PAN.
-    # The baseline SAVE rewrites it when the active PAN does not match.
-    # A foreign PAN in that slot is NOT a generic checkpoint; retiring it
-    # would destroy that network's persisted replay floor.
-    # Admit only a real all-FF generic row or an unallocated all-zero row
-    # with zero counter; any other identity must enter sticky security HOLD.
+    # Preserve the concurrently repaired B3 NWK generic-slot ownership rule:
+    # an occupied foreign-PAN row must never be retired for this PAN.
     save=replace_one(save,
         "    // The generic slot also carries an independent persisted high-water.\n",
         "    /* A populated foreign PAN is not disposable counter storage. */\n"
@@ -212,14 +217,12 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
     # final SDK hashes to B1's existing native manifest ONLY after comparing
     # each BEFORE hash to the exact B1 receipt. Separate fusion receipt still
     # discloses which phase owns each function and what remains unmerged.
-    original_b1=json.loads(b1_receipt.read_text(encoding="utf-8"))
     binding_keys={
         ZD:"modified_zdapp_sha256",
         SEC:"modified_security_sha256",
         GLO:"modified_zglobals_sha256",
+        TASK:"modified_host_api_sha256",
     }
-    if original_b1.get("schema")!="r4-b1-admission-overlay-v2":
-        raise ValueError("B1_RECEIPT_SCHEMA_DRIFT")
     for name,key in binding_keys.items():
         if original_b1.get(key)!=changed[name]["before_sha256"]:
             raise ValueError("B1_RECEIPT_PREIMAGE_MISMATCH "+name)

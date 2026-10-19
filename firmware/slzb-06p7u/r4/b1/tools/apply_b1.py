@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from patch_zdapp import patch as patch_zdapp
 from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
+from patch_host_api import patch as patch_host_api
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
 import subprocess
@@ -19,10 +20,12 @@ SDK_MAIN = "source/ti/zstack/startup/main.c"
 SDK_ZMAC = "source/ti/zstack/zmac/f8w/zmac.c"
 SDK_ZDAPP = "source/ti/zstack/stack/zdo/zd_app.c"
 SDK_SECURITY = "source/ti/zstack/stack/zdo/zd_sec_mgr.c"
+SDK_HOST_API = "source/ti/zstack/stack/api/zstacktask.c"
 SDK_ZGLOBALS = "source/ti/zstack/stack/sys/zglobals.c"
 SDK_STARTUP = "source/ti/zstack/startup/zstackstartup.c"
 SDK_OSAL_NV = "source/ti/zstack/osal/osal_nv.c"
 SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
+SHA_HOST_API = "d85758d2274097d2efe7c395e97e394f70fd352e"
 SHA_ZGLOBALS = "0a1d7d2a61a88d1a6bb6e4bc5e359e71e1719024"
 SHA_STARTUP = "72073f7a90d3de183533e84c3396e239343731e5"
 SHA_OSAL_NV = "65c7667475627989cbe2e3f5fdd46335b50eb660"
@@ -50,10 +53,12 @@ def overlay(sdk, b1_dir):
     src_zmac = sdk / SDK_ZMAC
     src_zdapp = sdk / SDK_ZDAPP
     src_security = sdk / SDK_SECURITY
+    src_host_api = sdk / SDK_HOST_API
     src_zglobals = sdk / SDK_ZGLOBALS
     src_startup = sdk / SDK_STARTUP
     src_osal_nv = sdk / SDK_OSAL_NV
     security = src_security.read_text(encoding="utf-8")
+    host_api = src_host_api.read_text(encoding="utf-8")
     zglobals = src_zglobals.read_text(encoding="utf-8")
     startup = src_startup.read_text(encoding="utf-8")
     osal_nv = src_osal_nv.read_text(encoding="utf-8")
@@ -65,6 +70,7 @@ def overlay(sdk, b1_dir):
             or git_blob_sha(zmac) != SHA_ZMAC
             or git_blob_sha(zdapp) != SHA_ZDAPP
             or git_blob_sha(security) != SHA_SECURITY
+            or git_blob_sha(host_api) != SHA_HOST_API
             or git_blob_sha(zglobals) != SHA_ZGLOBALS
             or git_blob_sha(startup) != SHA_STARTUP
             or git_blob_sha(osal_nv) != SHA_OSAL_NV):
@@ -341,6 +347,7 @@ def overlay(sdk, b1_dir):
     # Runtime NWK counter continuity: persist, read back, then publish.
     zdapp = patch_zdapp(zdapp)
     security = patch_security(security)
+    host_api = patch_host_api(host_api)
     zglobals = patch_zglobals(zglobals)
     startup = patch_startup(startup)
     osal_nv = patch_osal_nv(osal_nv)
@@ -400,6 +407,7 @@ def overlay(sdk, b1_dir):
     src_zmac.write_text(zmac, encoding="utf-8")
     src_zdapp.write_text(zdapp, encoding="utf-8")
     src_security.write_text(security, encoding="utf-8")
+    src_host_api.write_text(host_api, encoding="utf-8")
     src_zglobals.write_text(zglobals, encoding="utf-8")
     src_startup.write_text(startup, encoding="utf-8")
     src_osal_nv.write_text(osal_nv, encoding="utf-8")
@@ -412,8 +420,10 @@ def overlay(sdk, b1_dir):
         "upstream_zmac_blob": SHA_ZMAC,
         "upstream_zdapp_blob": SHA_ZDAPP,
         "upstream_security_blob": SHA_SECURITY,
+        "upstream_host_api_blob": SHA_HOST_API,
         "upstream_zglobals_blob": SHA_ZGLOBALS,
         "modified_security_sha256": hashlib.sha256(security.encode()).hexdigest(),
+        "modified_host_api_sha256": hashlib.sha256(host_api.encode()).hexdigest(),
         "modified_zglobals_sha256": hashlib.sha256(zglobals.encode()).hexdigest(),
         "modified_startup_sha256": hashlib.sha256(startup.encode()).hexdigest(),
         "modified_osal_nv_sha256": hashlib.sha256(osal_nv.encode()).hexdigest(),
@@ -423,6 +433,7 @@ def overlay(sdk, b1_dir):
             **{"management_source_%d_sha256" % i: relative
                for i, relative in enumerate(management_sources)},
             "modified_security_sha256": SDK_SECURITY,
+            "modified_host_api_sha256": SDK_HOST_API,
             "modified_zglobals_sha256": SDK_ZGLOBALS,
             "modified_startup_sha256": SDK_STARTUP,
             "modified_osal_nv_sha256": SDK_OSAL_NV,

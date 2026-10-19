@@ -15,6 +15,7 @@ import urllib.request
 from apply_b1 import overlay, HERDSMAN_FILE
 from patch_management import PINS, EXTRA_PINS, HERDSMAN_PIN, HERDSMAN_PATH
 from make_security_harness import SCENARIOS as SECURITY_SCENARIOS, MUTANTS as SECURITY_MUTANTS
+from make_host_api_harness import SCENARIOS as HOST_API_SCENARIOS
 from make_management_harness import SCENARIOS as MANAGEMENT_SCENARIOS
 from make_boot_harness import SCENARIOS as BOOT_SCENARIOS
 
@@ -29,6 +30,7 @@ SOURCE_PATHS = (
     "source/ti/common/nv/crc.c",
     "source/ti/zstack/startup/zstackstartup.c",
     "source/ti/zstack/osal/osal_nv.c",
+    "source/ti/zstack/stack/api/zstacktask.c",
 )
 
 
@@ -127,6 +129,8 @@ def main():
             "wrong_generic_identity"))),
         ("security", "make_security_harness.py", SOURCE_PATHS[4],
          tuple((name,) for name in SECURITY_SCENARIOS)),
+        ("host_aps_api", "make_host_api_harness.py", SOURCE_PATHS[9],
+         tuple((name,) for name in HOST_API_SCENARIOS)),
         ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
         ("network_ready", "make_network_ready_harness.py", SOURCE_PATHS[3],
          tuple((name,) for name in ("healthy", "premature", "no_nv",
@@ -140,7 +144,7 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              "--source", sdk / relative, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name != "security" and name != "network_ready"),
+        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api")),
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)
