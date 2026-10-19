@@ -102,6 +102,16 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
         self.assertEqual((result['write_attempts'], result['erase_attempts'],
                           result['compaction_attempts']), (0, 0, 0))
 
+    def test_semantic_contradictions_hold_before_native_init(self):
+        for variant in (dict(bdb=1), dict(nib=True), dict(logical=1),
+                        dict(bdb=None), dict(bdb_payload=b'\x00\x00')):
+            with self.subTest(**variant):
+                result = self.probe(stock_like_semantic(**variant))
+                self.assertFalse(result['ti_init_readonly_accepted'])
+                self.assertEqual(result['init_code'], 2)
+                self.assertEqual((result['write_attempts'], result['erase_attempts'],
+                                  result['compaction_attempts']), (0, 0, 0))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -184,9 +184,11 @@ The classifier uses the immutable TI 8.33 source at SDK revision
 legacy data in Z-Stack system namespace 1, legacy extended item 0, sub-ID
 equal to the original OSAL NV ID. The pinned `zcomdef.h` defines coordinator
 `logicalType` as sub-ID `0x87`, `bdbNodeIsOnANetwork` as `0x55`, and NIB as
-`0x21`; `zglobals.h` defines coordinator role as 0. Only one-byte BDB and
-role values are read into scratch. The NIB is checked for *presence only*;
-its contents, address, keys and counters are not copied or logged.
+`0x21`; `zglobals.h` defines coordinator role as 0. CRC validation streams
+stored payloads through an existing bounded 64-byte transient buffer; only
+the one-byte BDB and role values are separately retained in *semantic marker*
+scratch. The NIB is checked for *presence only*: its contents, address, keys
+and counters are not decoded into markers or emitted in diagnostics/logs.
 
 | Candidate | Role marker | BDB marker | Live NIB |
 |---|---|---|---|
