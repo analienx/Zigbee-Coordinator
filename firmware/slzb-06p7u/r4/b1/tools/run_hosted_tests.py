@@ -167,7 +167,7 @@ def main():
     mutation(generated["zdapp"],
              "      found = TRUE;\n      continue;",
              "      found = TRUE;\n      break;",
-             "mutant_zdapp_restore_first_match_wins", "b1_nv_runtime_hold_active()",
+             "mutant_zdapp_restore_first_match_wins", "ZDApp_RestoreNwkKey(TRUE)==FALSE",
              ("duplicate_counter_floor",))
 
     for variant in ("sem", "posix"):
