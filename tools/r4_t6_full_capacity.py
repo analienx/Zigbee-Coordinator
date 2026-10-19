@@ -40,14 +40,26 @@ LINKED = {
     "nwk_routes": ("rtgTable", "gMAX_RTG_ENTRIES", 128),
 }
 
-# Sizes below come from the pinned TI 8.33 public aps_mede.h structs on
-# Cortex-M4F (two uint32 counters plus two uint8 flags, 4-byte alignment),
+# Sizes below come from pinned TI 8.33 aps_mede.h blob
+# d1905725c37e95b714319b7ff061392b0a17eb59 on Cortex-M4F (two uint32
+# counters plus one APS/two TC uint8 flags, 4-byte alignment),
 # and binding_table.h (14-byte fixed binding entry, 2-byte alignment).
 # They are deliberately NOT deduced from array_size / configured_count:
 # that division alone could silently accept an ABI/layout change.
 PINNED_ENTRY_BYTES = {
     "trust_center_devices": 12,
     "aps_table_entries": 12,
+}
+# TI nwk_globals.h blob 1eeb1cc88e259cb4f3fd125881f693a30d0836a0
+# selects uint8 indices for this profile's counts, all <= 255. Security
+# capacity constants are explicitly uint16_t in pinned zd_sec_mgr.c.
+PINNED_CAPACITY_SCALAR_BYTES = {
+    "trust_center_devices": 2,
+    "aps_table_entries": 2,
+    "associated_devices_slots": 1,
+    "source_routes": 1,
+    "neighbors": 1,
+    "nwk_routes": 1,
 }
 PINNED_BINDING_ENTRY_BYTES = 14
 
@@ -219,10 +231,18 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
         array = b2.one_symbol(symbols, array_name)
         scalar = b2.one_symbol(symbols, limit_name)
         linked_count = b2.initializer_value(blob, scalar)
-        scalar_width = 1 if domain == "associated_devices_slots" else 2
-        if (array is None or scalar is None or
-                scalar["size_bytes"] != scalar_width or
-                linked_count != expected or
+        # The APS constant can be removed by the native linker after all
+        # uses were folded. Only its complete absence is admissible; an
+        # ambiguous or present-but-invalid definition must still fail.
+        # Exact array extent plus the independently pinned 12-byte TI ABI
+        # proves APS3 without inventing a scalar initializer. Compiler
+        # options and the exact profile were already hash-bound above.
+        aps_extent_only = (domain == "aps_table_entries" and
+                           not symbols.get(limit_name))
+        scalar_valid = (scalar is not None and
+                        scalar["size_bytes"] == PINNED_CAPACITY_SCALAR_BYTES[domain] and
+                        linked_count == expected)
+        if (array is None or (not aps_extent_only and not scalar_valid) or
                 array["size_bytes"] < expected or
                 array["size_bytes"] % expected != 0 or
                 array["section_type"] not in (1, 8)):
@@ -230,11 +250,16 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
         pinned_entry = PINNED_ENTRY_BYTES.get(domain)
         if pinned_entry is not None and array["size_bytes"] != expected * pinned_entry:
             deny("LINKED_PINNED_TI_ENTRY_ABI_DRIFT_" + domain)
+        if aps_extent_only:
+            linked_count = expected
         results[domain] = {
             "linked_count": linked_count,
             "array_bytes": array["size_bytes"],
             "entry_bytes": array["size_bytes"] // linked_count,
-            "capacity_scalar_width_bytes": scalar["size_bytes"],
+            "capacity_scalar_present": scalar is not None,
+            "capacity_scalar_width_bytes": scalar["size_bytes"] if scalar else None,
+            "capacity_proof": ("ARRAY_EXTENT_AND_PINNED_TI_ABI" if aps_extent_only else
+                               "LINKED_SCALAR_AND_ARRAY_EXTENT"),
             "array_section": array["section"],
         }
     stack = b2.one_symbol(symbols, "__STACK_SIZE")

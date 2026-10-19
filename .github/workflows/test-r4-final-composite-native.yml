@@ -10,6 +10,9 @@ env:
   B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  r4-b4-host-integration:
+    uses: ./.github/workflows/test-r4-b4-host.yml
+
   r4-b1-admission-source:
     runs-on: ubuntu-22.04
     steps:
@@ -19,6 +22,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Guard NV4/TC300 against all TI legacy format migrations
         run: python -m unittest -v tests.test_r4_t6_migration_guard
+      - name: Focused final capacity, context and frozen-APP regressions
+        run: python -m unittest -v tests.test_r4_t6_full_capacity tests.test_r4_m4f_asm_preprocessing tests.test_r4_full_nv4_app_only
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
       - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
@@ -581,6 +586,9 @@ jobs:
             --reference-power vendor-20240716 \
             --receipt /tmp/b0out/p7u-generated-native.json
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --full-nv4
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/rtos_context_audit.py" \
+            --artifacts /tmp/b0out --sdk "$sdk" --clang "$TICLANG_ARMCOMPILER" \
+            --full-nv4 --receipt /tmp/b0out/rtos-context-native.json
           # Independently prove the REAL linked HEX intersects boot CCFG's
           # whole 8KiB erase sector, even if its sparse records omit NV.
           # This is a DENIAL, never a flash/erase/restore authorization.
@@ -615,7 +623,8 @@ jobs:
           PY
           # All APP sectors FF padded; receipt orders vector sector LAST.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/full_nv4_app_only.py" \
-            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-full-nv4-app-only
+            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-full-nv4-app-only \
+            --manifest-sha256 "$(sha256sum /tmp/b0out/manifest.json | cut -d' ' -f1)"
           python - <<'PY'
           import json
           from pathlib import Path
@@ -673,7 +682,7 @@ jobs:
           if-no-files-found: warn
 
   r4-b1-native-reproducibility:
-    needs: [r4-b0-native-build]
+    needs: [r4-b0-native-build, r4-b4-host-integration]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -711,6 +720,106 @@ jobs:
           assert digests[0]==digests[1],digests
           print('TWO REAL FULL-NV4 NATIVE REPLICAS HAVE IDENTICAL FF-PADDED APP HEX',digests[0])
           PY
+      - name: Download the tested existing-owner host bundle from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: r4-b4-host-integration-${{ env.B1_SOURCE_SHA }}
+          path: /tmp/r4-host-integration
+      - name: Finalize one P7U engineering candidate from the successful joined gates
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          def sha(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          def load(path):
+              return json.loads(path.read_bytes())
+          source=os.environ['B1_SOURCE_SHA']
+          profile=Path('firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json')
+          profile_sha=sha(profile)
+          expected={'trust_center_devices':300,'aps_table_entries':3,
+                    'associated_devices_slots':97,'source_routes':192,
+                    'neighbors':64,'nwk_routes':128}
+          replicas=[]
+          for index in (1,2):
+              root=Path('/tmp/b1-replica-%d/b0out'%index)
+              manifest=load(root/'manifest.json')
+              image_hashes={k:manifest['files'][k]['sha256'] for k in ('elf','hex','bin','xml')}
+              for kind,digest in image_hashes.items():
+                  name=manifest['files'][kind]['file']
+                  assert Path(name).name==name and sha(root/name)==digest
+              seal=load(root/'b1-native-seal.json')
+              assert seal['source_sha']==source and seal['replica']==str(index)
+              assert seal['classification']=='HOSTED_NATIVE_LINKED_NV4_BRIDGE_UNSEALED'
+              assert seal['artifacts']==manifest['files']
+              capacity=load(root/'r05-full-capacity-native-linked.json')
+              assert capacity['profile_sha256']==profile_sha
+              assert capacity['elf_sha256']==image_hashes['elf']
+              assert capacity['xml_sha256']==image_hashes['xml']
+              assert capacity['linked_c_irq_stack_bytes']==4096
+              assert {k:v['linked_count'] for k,v in capacity['linked_capacity_symbols'].items()}==expected
+              context=load(root/'rtos-context-native.json')
+              assert context['status']=='M4F_CONTEXT_FRAME_AND_HWI_PATHS_AUDITED'
+              assert context['full_nv4'] is True
+              assert context['native_artifact_sha256']==image_hashes
+              assert context['native_manifest_sha256']==sha(root/'manifest.json')
+              app=root/'r4-full-nv4-app-only'
+              extracted=load(app/'r4-full-nv4-app-only-receipt.json')
+              assert extracted['source_native_manifest_sha256']==sha(root/'manifest.json')
+              assert extracted['source_native_artifact_sha256']==image_hashes
+              assert extracted['vector_last_program_order'][-1]=='0x00000'
+              assert all(int(s,16)<0xA0000 for s in extracted['application_sectors'])
+              assert sha(app/extracted['output_hex'])==extracted['padded_hex_sha256']
+              replicas.append({'replica':index,'manifest_sha256':sha(root/'manifest.json'),
+                  'artifacts':image_hashes,'app_only_sha256':extracted['padded_hex_sha256'],
+                  'capacity_receipt_sha256':sha(root/'r05-full-capacity-native-linked.json'),
+                  'context_receipt_sha256':sha(root/'rtos-context-native.json')})
+          assert replicas[0]['app_only_sha256']==replicas[1]['app_only_sha256']
+          repro=Path('/tmp/b1-native-reproducibility.json')
+          reproducibility=load(repro)
+          assert reproducibility['source_sha']==source
+          assert reproducibility['result']=='TWO_CLEAN_NATIVE_BUILDS_BYTE_IDENTICAL'
+          host_root=Path('/tmp/r4-host-integration')
+          host=load(host_root/'host-integration-receipt.json')
+          assert host['schema']=='r4-b4-host-integration-v1' and host['source_sha']==source
+          assert host['host_upstream_sha']=='6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88'
+          assert host['herdsman_sha']=='0968f979d558874b17396c96b66382d4236bbdcd'
+          assert host['z2m_sha']=='62b02e2aa1997c574223b80c196677b63a25f4a7'
+          assert host['status']=='HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED'
+          assert host['existing_owner_only'] is True and host['default_enabled'] is False
+          assert host['flash_authorized'] is False
+          assert Path(host['bundle_file']).name==host['bundle_file']
+          assert sha(host_root/host['bundle_file'])==host['bundle_sha256']
+          out=Path('/tmp/p7u-r1-r5-candidate');out.mkdir()
+          first=Path('/tmp/b1-replica-1/b0out')
+          extracted=load(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json')
+          shutil.copyfile(first/'r4-full-nv4-app-only'/extracted['output_hex'],out/'P7U-R4-APP-ONLY.hex')
+          shutil.copyfile(profile,out/'profile.json')
+          shutil.copyfile(repro,out/'reproducibility.json')
+          shutil.copyfile(host_root/host['bundle_file'],out/'host-bundle.tar.gz')
+          shutil.copyfile(host_root/'host-integration-receipt.json',out/'host-integration-receipt.json')
+          for name in ('r05-full-capacity-native-linked.json','rtos-context-native.json','b1-native-seal.json'):
+              shutil.copyfile(first/name,out/name)
+          shutil.copyfile(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json',out/'app-only-receipt.json')
+          shutil.copyfile('firmware/slzb-06p7u/r4/release/R4_P7U_CANDIDATE_FINALIZATION.md',out/'START_HERE.md')
+          receipt={'schema':'r4-p7u-engineering-candidate-v1',
+              'candidate_class':'R4_R01_R05_ISOLATED_QUALIFICATION_CANDIDATE',
+              'source_sha':source,'github_run_id':os.environ['GITHUB_RUN_ID'],
+              'board':'SLZB-06P7U-r1.73-CC2652P7','profile_sha256':profile_sha,
+              'replicas':replicas,'host_receipt_sha256':sha(out/'host-integration-receipt.json'),
+              'native_and_host_gates':'PASS','physical_qualification':'REQUIRED',
+              'nv4_live_300_device_fit':'NOT_ESTABLISHED','network_key_rotation':'DISABLED',
+              'full_b0_b4_sealed':False,'flash_authorized':False,
+              'files':{p.name:sha(p) for p in sorted(out.iterdir())}}
+          (out/'candidate.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          print('P7U CANDIDATE FINALIZED FOR PRIVATE SAME-BOARD BINDING',source)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-r1-r5-qualification-candidate-${{ env.B1_SOURCE_SHA }}
+          path: /tmp/p7u-r1-r5-candidate/
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: r4-final-reproducibility-${{ env.B1_SOURCE_SHA }}

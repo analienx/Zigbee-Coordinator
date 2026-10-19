@@ -1,0 +1,111 @@
+{
+  "schema": "r4-b4-vendored-host-inputs-v1",
+  "upstream_repository": "https://github.com/analienx/Zigbee-Coordinator",
+  "upstream_pull_request": 138,
+  "host_source_commit": "6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88",
+  "firmware_source_commit": "3231abb1f13210eb88afe13ff7b7f9f29709cd6b",
+  "firmware_inputs_unchanged_from_host_commit": true,
+  "herdsman_commit": "0968f979d558874b17396c96b66382d4236bbdcd",
+  "zigbee2mqtt_commit": "62b02e2aa1997c574223b80c196677b63a25f4a7",
+  "upstream_host_workflow_success": "https://github.com/analienx/Zigbee-Coordinator/actions/runs/39267939281",
+  "qualification": "UPSTREAM_HOSTED_SOURCE_AND_RUNTIME_TESTS; current integrated head requires its own hosted run",
+  "default_enabled": false,
+  "installed_host_changed": false,
+  "files": [
+    {
+      "path": "host/r4-b4/b4_v4_herdsman_overlay.py",
+      "upstream_git_blob": "d1d96c3ce9324528f53d78a15dcb026a40d7dd9e",
+      "upstream_sha256": "97cfe202058a0f36e3bf9233fa8c83a89264027c25a84e78a66c172cd7803917",
+      "vendored_sha256": "97cfe202058a0f36e3bf9233fa8c83a89264027c25a84e78a66c172cd7803917",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/b4_v4_log_audit.py",
+      "upstream_git_blob": "13fd5817deee856ef739929b9ca697fc1a5b1208",
+      "upstream_sha256": "7b3d46ccc6f9a92e5330177213c2852eef5234495a39cade6f2b78f1cde6b1cc",
+      "vendored_sha256": "7b3d46ccc6f9a92e5330177213c2852eef5234495a39cade6f2b78f1cde6b1cc",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/b4_v4_z2m_overlay.py",
+      "upstream_git_blob": "32cb8cd746bf9da40a66250ae8f8c6765cf1548b",
+      "upstream_sha256": "04f167dc8837f0a45951eba24595c79632bdbf77800a63163d897208d4622b4f",
+      "vendored_sha256": "04f167dc8837f0a45951eba24595c79632bdbf77800a63163d897208d4622b4f",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/b4_verify_z2m_source.py",
+      "upstream_git_blob": "bfc5566091ee0e25105e920a6b7d710c76a21007",
+      "upstream_sha256": "5477324f1a6a0c2ea40decc340abd01c73f73baa44d13e3e65558c8ad14bb28f",
+      "vendored_sha256": "5477324f1a6a0c2ea40decc340abd01c73f73baa44d13e3e65558c8ad14bb28f",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/b4_z2m_ota_overlay.py",
+      "upstream_git_blob": "e99eb81dc04b92581cead1f88761adc79200beb7",
+      "upstream_sha256": "d40e2a1ef160ae889635d31bee90ead1e915a6e422a69d8a5cae3d2560ffcea6",
+      "vendored_sha256": "d40e2a1ef160ae889635d31bee90ead1e915a6e422a69d8a5cae3d2560ffcea6",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/herdsman_overlay.py",
+      "upstream_git_blob": "6a771d7c6cbeb1d298b0283eb8179e07caebc0df",
+      "upstream_sha256": "3e75c895842cc45a8afe2cd2321d6653a45215c6870790a62ebc198f75626812",
+      "vendored_sha256": "3e75c895842cc45a8afe2cd2321d6653a45215c6870790a62ebc198f75626812",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/safe_checkout_files.py",
+      "upstream_git_blob": "0012adbd440f9dab94b241b02b185527e5d779e1",
+      "upstream_sha256": "62eee519166757800c11fbd9952821acba2ea2037328ce3d2467fdfffbc28aef",
+      "vendored_sha256": "62eee519166757800c11fbd9952821acba2ea2037328ce3d2467fdfffbc28aef",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/test-herdsman-owner.cjs",
+      "upstream_git_blob": "97d790e64d948807dad9d4a7b00a7e2da2826fc1",
+      "upstream_sha256": "ba6fae0c87fb177ae01739c0054bcbbace07d60d1beb3fd240649dcca50dc9f9",
+      "vendored_sha256": "ba6fae0c87fb177ae01739c0054bcbbace07d60d1beb3fd240649dcca50dc9f9",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/test-owner-lifecycle.cjs",
+      "upstream_git_blob": "bb9c4275d3cc5ccc53934fdc8b0626ebb37a68e3",
+      "upstream_sha256": "4d8e1accb558847ccf25994e8d595674185b4026d893ecf7431facca9fbf208a",
+      "vendored_sha256": "4d8e1accb558847ccf25994e8d595674185b4026d893ecf7431facca9fbf208a",
+      "local_adaptations": []
+    },
+    {
+      "path": "host/r4-b4/test-v4-herdsman.cjs",
+      "upstream_git_blob": "cca110c97bfd3e969291360d8bb89be7ff1f783c",
+      "upstream_sha256": "8f5bb2b743f330e95655fa7e266e79a7603f4a302cff27bcbbf39f51d80d93fc",
+      "vendored_sha256": "8f5bb2b743f330e95655fa7e266e79a7603f4a302cff27bcbbf39f51d80d93fc",
+      "local_adaptations": []
+    },
+    {
+      "path": "tests/test_r4_b4_host_symlink_guard.py",
+      "upstream_git_blob": "f189894fd76806e3f8339a5a325a2bdb72c9f30f",
+      "upstream_sha256": "88fc175fb71ce561013cc2d6c4eac28d6b93a35b72781f8f3095d6c7a8a7b12e",
+      "vendored_sha256": "88fc175fb71ce561013cc2d6c4eac28d6b93a35b72781f8f3095d6c7a8a7b12e",
+      "local_adaptations": []
+    },
+    {
+      "path": ".github/workflows/test-r4-b4-host.yml",
+      "upstream_git_blob": "1d8efa337944ac4a157180ff42e062fcf3ca611f",
+      "upstream_sha256": "869b8ad9b671b65d187aedbeedaea7f097164c07dcb97faf7655686882db03b7",
+      "vendored_sha256": "5d825a18c197d61b7638008fe21320564887806b07b1587cc44fd36676bf8b07",
+      "local_adaptations": [
+        "Expose workflow_call and workflow_dispatch only; final-candidate workflow owns automatic triggering.",
+        "Prefix concurrency group to avoid caller/reusable-workflow cancellation collision.",
+        "Capture existing runtime TAP and publish tracked host source, upstream receipts and an exact-source hashed integration receipt after every existing check succeeds."
+      ]
+    },
+    {
+      "path": ".github/workflows/test-r4-b4-symlink-guard.yml",
+      "upstream_git_blob": "2592520a2ee5d510121e03d02c52683324976b6e",
+      "upstream_sha256": "f98694a6726e734266557d7133530652b8db617f2dcbd5283aa10c2769727a9d",
+      "vendored_sha256": "f98694a6726e734266557d7133530652b8db617f2dcbd5283aa10c2769727a9d",
+      "local_adaptations": []
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 import importlib.util
+import struct
 import sys
 from pathlib import Path
 
@@ -108,6 +109,49 @@ class MachineFrameTest(unittest.TestCase):
             elf.with_suffix(".bin").write_bytes(old)
             with self.assertRaisesRegex(ValueError, "MACHINE_BYTES_MISMATCH"):
                 abi.audit_linked_swap_bytes(xml, elf)
+
+    def full_frame_fixture(self, root, frame, *, flags=5):
+        from xml.etree import ElementTree
+        address = 0x239B4
+        elf = root / "full.out"
+        ident = b"\x7fELF\x01\x01\x01" + bytes(9)
+        header = ident + struct.pack("<HHIIIIIHHHHHH", 2, 40, 1, address | 1,
+                                     52, 0, 0, 52, 32, 1, 40, 0, 0)
+        program = struct.pack("<8I", 1, 0x100, address, address,
+                              len(frame), len(frame), flags, 4)
+        elf.write_bytes(header + program + bytes(0x100 - len(header) - len(program)) + frame)
+        elf.with_suffix(".bin").write_bytes(bytes(address) + frame)
+        xml = root / "full.xml"
+        section = ElementTree.Element("object_component")
+        ElementTree.SubElement(section, "name").text = ".text." + abi.SWAP
+        ElementTree.SubElement(section, "run_address").text = hex(address)
+        ElementTree.SubElement(section, "size").text = "0x28"
+        ElementTree.ElementTree(section).write(xml)
+        return xml, elf
+
+    def test_full_linked_m4f_frame_relocated_in_actual_executable_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            xml, elf = self.full_frame_fixture(root, abi.M4F_SWAP_SECTION)
+            result = abi.audit_linked_swap_bytes(xml, elf, full_nv4=True)
+            self.assertEqual(result["address"], "0x239b4")
+            self.assertEqual(result["size"], 40)
+            self.assertEqual(result["app_ceiling_exclusive"], "0xa0000")
+            self.assertEqual(result["executable_pt_load"]["flags"], 5)
+            with self.assertRaisesRegex(ValueError, "SECTION_GEOMETRY"):
+                abi.audit_linked_swap_bytes(xml, elf)  # diagnostic bound retained
+            xml, elf = self.full_frame_fixture(root, abi.M4F_SWAP_SECTION, flags=4)
+            with self.assertRaisesRegex(ValueError, "EXECUTABLE_FLASH_LOAD"):
+                abi.audit_linked_swap_bytes(xml, elf, full_nv4=True)
+
+    def test_full_relocated_prior_armv8m_machine_frame_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # MRS r2,PSPLIM plus the shifted frame must never be accepted even
+            # with consistent ELF/BIN bytes and a legal full-profile address.
+            old_frame = bytes.fromhex("eff30b82") + abi.M4F_SWAP_SECTION[:-4]
+            xml, elf = self.full_frame_fixture(Path(directory), old_frame)
+            with self.assertRaisesRegex(ValueError, "MACHINE_BYTES_MISMATCH"):
+                abi.audit_linked_swap_bytes(xml, elf, full_nv4=True)
 
 
 if __name__ == "__main__":

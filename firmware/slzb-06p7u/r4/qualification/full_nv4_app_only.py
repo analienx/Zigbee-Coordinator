@@ -20,8 +20,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "b0/tools"))
+sys.path.insert(0, str(ROOT / "release"))
 from b0_image_audit import _parse_intel_hex, audit
 from nv4_native_gate import STOCK_20240716_CCFG_SHA256
+from r4_native_bundle import BundleError, capture_native
 
 APP_CEILING = 0xA0000
 NV_START = 0xA6000
@@ -130,20 +132,31 @@ def isolate(native):
     }
 
 
-def prepare(artifacts: Path, out: Path):
+def prepare(artifacts: Path, out: Path, *, expected_manifest_sha256: str):
+    """Audit and extract one externally pinned snapshot, never reopened inputs."""
     if out.exists() or out.is_symlink() or artifacts.is_symlink():
         deny("INPUT_OR_OUTPUT_UNTRUSTED")
     root = artifacts.resolve()
     base = ROOT / "b0"
-    status, message = audit(base, root, full_nv4=True)
-    if status != 0:
-        deny("REAL_ELF_XML_HEX_BIN_AUDIT_" + re.sub(r"[^A-Z0-9]", "_", message.upper())[:80])
-    manifest = json.loads((root / "manifest.json").read_text())
-    raw_name = manifest["files"]["hex"]["file"]
-    native, error = _parse_intel_hex(root / raw_name)
-    if error:
-        deny("NATIVE_HEX_UNREADABLE")
-    payload, receipt = isolate(native)
+    with tempfile.TemporaryDirectory(prefix="r4-full-nv4-frozen-native-") as tmp:
+        frozen = Path(tmp)
+        try:
+            manifest = capture_native(root, frozen, expected_manifest_sha256)
+        except BundleError as exc:
+            deny(str(exc))
+        # Both the full geometry/content audit and HEX extraction read only
+        # this exclusively owned snapshot, after all original digests pass.
+        status, message = audit(base, frozen, full_nv4=True)
+        if status != 0:
+            deny("REAL_ELF_XML_HEX_BIN_AUDIT_" + re.sub(r"[^A-Z0-9]", "_", message.upper())[:80])
+        raw_name = manifest["files"]["hex"]["file"]
+        native, error = _parse_intel_hex(frozen / raw_name)
+        if error:
+            deny("NATIVE_HEX_UNREADABLE")
+        payload, receipt = isolate(native)
+    receipt["source_native_manifest_sha256"] = expected_manifest_sha256
+    receipt["source_native_artifact_sha256"] = {
+        kind: manifest["files"][kind]["sha256"] for kind in ("elf", "hex", "bin", "xml")}
     receipt["source_native_hex_sha256"] = manifest["files"]["hex"]["sha256"]
     receipt["native_elf_xml_hex_bin_audit"] = "PASS_FULL_NV4_GEOMETRY_AND_CIRQ4096_ONLY"
     receipt["output_hex"] = OUTPUT
@@ -157,8 +170,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--manifest-sha256", required=True,
+                        help="Externally pinned native manifest SHA-256; never inferred from the input")
     args = parser.parse_args()
-    receipt = prepare(args.artifacts, args.out_dir)
+    receipt = prepare(args.artifacts, args.out_dir,
+                      expected_manifest_sha256=args.manifest_sha256)
     print(json.dumps({"status": receipt["image_class"],
                       "sectors": receipt["sectors_to_program"],
                       "flash_authorized": False}))
