@@ -293,6 +293,94 @@ TCLK_INIT = r'''void APSME_TCLinkKeyInit(uint8_t setDefault)
   if (setDefault && !b1_nv_runtime_hold_active()) APSME_EraseICEntry(NULL);
 }'''
 
+# Device removal is a two-item transaction: make the APS table reference
+# disappear atomically first, then scrub its extended key row. On a crash
+# between commits the row is merely orphaned; the restored table never points
+# at an erased key. No legacy NV item number is derived from an extended row
+# index. Any failure latches HOLD before modifying the live RAM entry.
+APS_REMOVE_NV = r'''static uint8_t ZDSecMgrUpdateNV( uint16_t index )
+{
+  uint16_t len = (uint16_t)(sizeof(nvDeviceListHdr_t) +
+                             gZDSECMGR_ENTRY_MAX * sizeof(ZDSecMgrEntry_t));
+  uint8_t *table = NULL;
+  uint8_t *verify = NULL;
+  nvDeviceListHdr_t hdr = {0};
+  ZDSecMgrEntry_t current = {0};
+  ZDSecMgrEntry_t retired = {0};
+  uint16_t offset;
+  uint8_t okay = FALSE;
+  if (b1_nv_runtime_hold_active() || ZDSecMgrEntries == NULL ||
+      index >= gZDSECMGR_ENTRY_MAX)
+  {
+    b1_security_runtime_hold_latch();
+    return FALSE;
+  }
+  table = (uint8_t *)OsalPort_malloc(len);
+  verify = (uint8_t *)OsalPort_malloc(len);
+  if (table != NULL && verify != NULL &&
+      osal_nv_read(ZCD_NV_APS_LINK_KEY_TABLE, 0, len, table) == SUCCESS)
+  {
+    OsalPort_memcpy(&hdr, table, sizeof(hdr));
+    offset = (uint16_t)(sizeof(hdr) + index * sizeof(current));
+    OsalPort_memcpy(&current, table + offset, sizeof(current));
+    if (hdr.numRecs > 0 && hdr.numRecs <= gZDSECMGR_ENTRY_MAX &&
+        current.ami != INVALID_NODE_ADDR &&
+        current.ami == ZDSecMgrEntries[index].ami &&
+        current.keyNvId == ZDSecMgrEntries[index].keyNvId)
+    {
+      --hdr.numRecs;
+      retired = current;
+      retired.ami = INVALID_NODE_ADDR;
+      retired.keyNvId = SEC_NO_KEY_NV_ID;
+      retired.authenticateOption = ZDSecMgr_Not_Authenticated;
+      OsalPort_memcpy(table, &hdr, sizeof(hdr));
+      OsalPort_memcpy(table + offset, &retired, sizeof(retired));
+      if (osal_nv_write(ZCD_NV_APS_LINK_KEY_TABLE, len, table) == SUCCESS &&
+          osal_nv_read(ZCD_NV_APS_LINK_KEY_TABLE, 0, len, verify) == SUCCESS &&
+          OsalPort_memcmp(table, verify, len)) okay = TRUE;
+    }
+  }
+  if (table != NULL) { memset(table, 0, len); OsalPort_free(table); }
+  if (verify != NULL) { memset(verify, 0, len); OsalPort_free(verify); }
+  if (!okay) b1_security_runtime_hold_latch();
+  return okay;
+}'''
+
+APS_REMOVE_ENTRY = r'''void ZDSecMgrEntryFree( ZDSecMgrEntry_t* entry )
+{
+  uint16_t index;
+  uint16_t keyIndex;
+  APSME_ApsLinkKeyNVEntry_t empty = {0};
+  if (b1_nv_runtime_hold_active()) return;
+  if (entry == NULL || ZDSecMgrEntries == NULL ||
+      ZDSecMgrEntryLookupAMIGetIndex(entry->ami, &index) != ZSuccess ||
+      index >= gZDSECMGR_ENTRY_MAX || &ZDSecMgrEntries[index] != entry)
+  {
+    b1_security_runtime_hold_latch();
+    return;
+  }
+  keyIndex = entry->keyNvId;
+  if (keyIndex != SEC_NO_KEY_NV_ID && keyIndex >= gZDSECMGR_ENTRY_MAX)
+  {
+    b1_security_runtime_hold_latch();
+    return;
+  }
+#if defined ( NV_RESTORE )
+  /* One checked full-table commit includes BOTH the retired entry and the
+   * decremented count. Never expose a dangling reference to an erased row. */
+  if (!ZDSecMgrUpdateNV(index)) return;
+#endif
+  if (keyIndex != SEC_NO_KEY_NV_ID)
+  {
+    if (!b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, keyIndex,
+                              sizeof(empty), &empty)) return;
+    memset(&ApsLinkKeyRAMEntry[keyIndex], 0, sizeof(ApsLinkKeyRAMEntry[keyIndex]));
+  }
+  entry->keyNvId = SEC_NO_KEY_NV_ID;
+  entry->ami = INVALID_NODE_ADDR;
+  entry->authenticateOption = ZDSecMgr_Not_Authenticated;
+}'''
+
 
 def checkpoint(name, row_type, ram, table, count):
     return f'''void {name}(void)
@@ -336,6 +424,8 @@ def patch(source: str) -> str:
     replacements = [
         ('static void ZDSecMgrRestoreFromNV( void )', RESTORE_APS),
         ('void APSME_TCLinkKeyInit(uint8_t setDefault)', TCLK_INIT),
+        ('void ZDSecMgrEntryFree( ZDSecMgrEntry_t* entry )', APS_REMOVE_ENTRY),
+        ('static void ZDSecMgrUpdateNV( uint16_t index )', APS_REMOVE_NV),
         ('void ZDSecMgrSaveApsLinkKey(void)', checkpoint('ZDSecMgrSaveApsLinkKey',
          'APSME_ApsLinkKeyNVEntry_t', 'ApsLinkKeyRAMEntry', 'ZCD_NV_EX_APS_KEY_DATA_TABLE', 'gZDSECMGR_ENTRY_MAX')),
         ('void ZDSecMgrSaveTCLinkKey(void)', checkpoint('ZDSecMgrSaveTCLinkKey',
@@ -343,6 +433,15 @@ def patch(source: str) -> str:
     ]
     for signature, replacement in replacements:
         source = replace_once(source, extract_function(source, signature), replacement, signature)
+    source = replace_once(source,
+        'static void ZDSecMgrUpdateNV( uint16_t index );',
+        'static uint8_t ZDSecMgrUpdateNV( uint16_t index );',
+        'checked APS retirement declaration')
+    source = replace_once(source,
+        '    ZDSecMgrEntryFree( pEntry );',
+        '    ZDSecMgrEntryFree( pEntry );\n'
+        '    if (b1_nv_runtime_hold_active()) return ZFailure;',
+        'device removal must not report success on security HOLD')
     # TI's original ZDSecMgrEntryInit() silently returns on a failed
     # security-table allocation. The existing ZDSecMgrInit() HOLD check
     # cannot catch that failure unless the callee latches it first.

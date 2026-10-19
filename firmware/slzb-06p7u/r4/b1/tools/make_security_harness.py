@@ -68,6 +68,9 @@ PREAMBLE = r'''
 #define ZSuccess 0u
 #define ZSecNoKey 1u
 #define ZSecOldFrmCount 2u
+#define ZFailure 3u
+#define ZNwkUnknownDevice 4u
+#define ZDSecMgr_Not_Authenticated 0u
 #define OsalPort_OFFSET_OF(type, field) offsetof(type, field)
 #define ZDO_INITDEV_RESTORED_NETWORK_STATE 1u
 #define ZDO_INITDEV_NEW_NETWORK_STATE 0u
@@ -76,7 +79,7 @@ typedef struct { uint8_t keySeqNum; uint8_t key[SEC_KEY_LEN]; } nwkKeyDesc;
 typedef struct { nwkKeyDesc active; uint32_t frameCounter; } nwkActiveKeyItems;
 typedef struct { uint16_t numRecs; } nvDeviceListHdr_t;
 typedef struct { uint16_t nwkDevAddress, nwkCoordAddress, nwkPanId; uint8_t nwkState, nwkLogicalChannel, nwkKeyLoaded, extendedPANID[8]; } nwkIB_t;
-typedef struct { uint16_t ami, keyNvId; } ZDSecMgrEntry_t;
+typedef struct { uint16_t ami, keyNvId; uint8_t authenticateOption; } ZDSecMgrEntry_t;
 typedef struct { uint8_t key[SEC_KEY_LEN]; uint32_t txFrmCntr, rxFrmCntr; } APSME_ApsLinkKeyNVEntry_t;
 typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t extAddr[8], keyAttributes, keyType, SeedShift, IcIndex; } APSME_TCLinkKeyNVEntry_t;
 typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t pendingFlag; } APSME_ApsLinkKeyRAMEntry_t;
@@ -88,9 +91,9 @@ static uint8_t fail_alloc;
 static uint8_t probe_during_security_preflight;
 static unsigned preflight_observation_count;
 int b1_sec_restored_network_validated(void);
-static uint32_t reads, writes, creates, events, erases;
+static uint32_t reads, writes, legacy_writes, creates, events, erases;
 static uint16_t missing_singleton, missing_table, missing_index;
-static uint8_t write_fail, readback_corrupt, search_found = TRUE;
+static uint8_t write_fail, readback_corrupt, legacy_readback_corrupt, search_found = TRUE;
 static uint16_t search_index;
 static uint8_t on_network = TRUE, trustcenter[8] = {0x51}, seed[16] = {0x22};
 static uint8_t defaultTCLinkKey[SEC_KEY_LEN] = {0x5A};
@@ -116,6 +119,7 @@ static void b1_security_runtime_hold_latch(void) { held = TRUE; }
 static uint8_t OsalPort_memcmp(const void *a, const void *b, size_t n) { return memcmp(a,b,n)==0; }
 #define OsalPort_memcpy memcpy
 #define OsalPort_malloc b1_security_test_malloc
+#define OsalPort_free free
 static void *b1_security_test_malloc(size_t n) {return fail_alloc ? NULL : malloc(n);}
 static uint8_t osal_nv_read(uint16_t id, uint16_t off, uint16_t len, void *dst)
 {
@@ -131,6 +135,12 @@ static uint8_t osal_nv_read(uint16_t id, uint16_t off, uint16_t len, void *dst)
     case ZCD_NV_NIB: src=&nib; total=sizeof(nib); break;
     case ZCD_NV_LOGICAL_TYPE: src=&logical_type; total=sizeof(logical_type); break;
     case ZCD_NV_APS_LINK_KEY_TABLE:
+      if(off==0 && len==sizeof(hdr)+sizeof(entries)) {
+        memcpy(dst,&hdr,sizeof(hdr));
+        memcpy((uint8_t*)dst+sizeof(hdr),entries,sizeof(entries));
+        if(legacy_readback_corrupt && legacy_writes) ((uint8_t*)dst)[0]^=1u;
+        return SUCCESS;
+      }
       if (off==0) { src=&hdr; total=sizeof(hdr); }
       else {
         assert(off>=sizeof(hdr)); size_t i=(off-sizeof(hdr))/sizeof(entries[0]);
@@ -141,6 +151,17 @@ static uint8_t osal_nv_read(uint16_t id, uint16_t off, uint16_t len, void *dst)
     default: abort();
   }
   assert((size_t)off+len<=total); memcpy(dst,(const uint8_t*)src+off,len); return SUCCESS;
+}
+static uint8_t osal_nv_write(uint16_t id,uint16_t len,void *src)
+{
+  ++writes; ++legacy_writes;
+  /* An indexed APS key must NEVER be written as a legacy singleton ID. */
+  assert(id==ZCD_NV_APS_LINK_KEY_TABLE);
+  assert(len==sizeof(hdr)+sizeof(entries));
+  if(write_fail || (write_fail_at && writes==write_fail_at)) return 1;
+  memcpy(&hdr,src,sizeof(hdr));
+  memcpy(entries,(uint8_t*)src+sizeof(hdr),sizeof(entries));
+  return SUCCESS;
 }
 static uint16_t osal_nv_item_len(uint16_t id)
 {
@@ -204,6 +225,8 @@ static uint8_t bdb_doTrustCenterRequireKeyExchange(void) { return TRUE; }
 static void OsalPort_setEvent(uint8_t id,uint16_t ev) { (void)id; (void)ev; ++events; }
 static uint8_t AddrMgrEntryLookupNwk(AddrMgrEntry_t *p) { (void)p; return FALSE; }
 static void AddrMgrEntryRelease(AddrMgrEntry_t *p) { (void)p; }
+static ZStatus_t ZDSecMgrEntryLookupExt(uint8_t *addr,ZDSecMgrEntry_t **entry)
+{ (void)addr; *entry=&restored[0]; return ZSuccess; }
 static uint8_t b1_sec_write_checked(uint16_t, uint16_t, uint16_t, void *);
 static void setup(void)
 {
@@ -495,6 +518,41 @@ int main(int argc,char **argv)
       assert(ZDSecMgrReadKeyFromNv(ZCD_NV_EX_APS_KEY_DATA_TABLE,0u,key)==ZSuccess);
       assert(key[0]==0x33u);
     } else assert(held && ApsLinkKeyRAMEntry[0].pendingFlag && events==0u);
+  } else if(!strncmp(s,"remove_",7)) {
+    /* Genuine donor entry retirement, checked table update and key scrub.
+     * A crash/failure after metadata commit may leave an orphan key row,
+     * but never a *referenced* erased row or a changed live RAM entry. */
+    ApsLinkKeyRAMEntry[0].txFrmCntr=110u;
+    restored[0]=entries[0];
+    if(!strcmp(s,"remove_table_fail")) write_fail_at=1u;
+    if(!strcmp(s,"remove_api_error")) write_fail_at=1u;
+    if(!strcmp(s,"remove_table_readback")) legacy_readback_corrupt=TRUE;
+    if(!strcmp(s,"remove_key_fail")) write_fail_at=2u;
+    if(!strcmp(s,"remove_alloc_fail")) fail_alloc=TRUE;
+    if(!strcmp(s,"remove_invalid_key")) { entries[0].keyNvId=4u; restored[0].keyNvId=4u; }
+    if(!strcmp(s,"remove_bad_count")) hdr.numRecs=0u;
+    if(!strcmp(s,"remove_no_key")) { entries[0].keyNvId=SEC_NO_KEY_NV_ID; restored[0].keyNvId=SEC_NO_KEY_NV_ID; }
+    if(!strcmp(s,"remove_api_error")) {
+      uint8_t ext[8]={0};
+      assert(ZDSecMgrDeviceRemoveByExtAddr(ext)==ZFailure);
+    } else ZDSecMgrEntryFree(&restored[0]);
+    if(!strcmp(s,"remove_positive") || !strcmp(s,"remove_no_key")) {
+      assert(!held && hdr.numRecs==0 && entries[0].ami==INVALID_NODE_ADDR);
+      assert(restored[0].ami==INVALID_NODE_ADDR && restored[0].keyNvId==SEC_NO_KEY_NV_ID);
+      assert(legacy_writes==1u && writes==(!strcmp(s,"remove_no_key")?1u:2u));
+      if(!strcmp(s,"remove_no_key")) assert(aps[0].key[0]==0x33u);
+      else assert(aps[0].key[0]==0u && ApsLinkKeyRAMEntry[0].txFrmCntr==0);
+    } else {
+      assert(held && restored[0].ami==1u && ApsLinkKeyRAMEntry[0].txFrmCntr==110u);
+      if(!strcmp(s,"remove_key_fail")) {
+        assert(hdr.numRecs==0u && entries[0].ami==INVALID_NODE_ADDR);
+        assert(aps[0].key[0]==0x33u && writes==2u);
+      } else {
+        assert(aps[0].key[0]==0x33u);
+        if(!strcmp(s,"remove_table_readback")) assert(entries[0].ami==INVALID_NODE_ADDR);
+        else assert(entries[0].ami==1u);
+      }
+    }
   } else if(!strncmp(s,"save_aps_",9) || !strncmp(s,"save_tclk_",10)) {
     uint8_t isaps=s[5]=='a';
     ApsLinkKeyRAMEntry[0].pendingFlag=TRUE; ApsLinkKeyRAMEntry[0].txFrmCntr=120; ApsLinkKeyRAMEntry[0].rxFrmCntr=50;
@@ -541,6 +599,10 @@ SIGNATURES = (
     'int b1_sec_restored_network_validated(void)',
     'static void ZDSecMgrRestoreFromNV( void )',
     'void ZDSecMgrEntryInit(uint8_t state)',
+    'ZStatus_t ZDSecMgrEntryLookupAMIGetIndex( uint16_t ami, uint16_t* entryIndex )',
+    'static uint8_t ZDSecMgrUpdateNV( uint16_t index )',
+    'void ZDSecMgrEntryFree( ZDSecMgrEntry_t* entry )',
+    'ZStatus_t ZDSecMgrDeviceRemoveByExtAddr( uint8_t *pAddr )',
     'void APSME_TCLinkKeyInit(uint8_t setDefault)',
     'void ZDSecMgrSaveApsLinkKey(void)',
     'void ZDSecMgrSaveTCLinkKey(void)',
@@ -562,10 +624,16 @@ SCENARIOS = (
     'tclk_checkpoint_backpressure',
     'sync_valid', 'sync_max_replay', 'sync_bounds', 'sync_hold', 'sync_bad_attributes',
     'aps_key_pending', 'aps_key_bounds', 'aps_key_hold',
+    'remove_positive', 'remove_table_fail', 'remove_table_readback',
+    'remove_key_fail', 'remove_alloc_fail', 'remove_invalid_key',
+    'remove_bad_count', 'remove_no_key', 'remove_api_error',
     'load_positive', 'load_new_positive', 'load_full_legacy', 'load_wrap', 'load_bounds', 'load_new_fail', 'load_hold', 'load_bad_attributes', 'sticky_hold',
 )
 
 MUTANTS = {
+    'remove_legacy_alias': ('remove_positive',
+        '    if (!b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, keyIndex,',
+        '    if (!b1_sec_write_checked(keyIndex, keyIndex,'),
     'entry_allocation': ('entry_allocation_fail',
         '      b1_security_runtime_hold_latch(); /* no uninitialized security table */',
         '      /* MUTANT: silently return without latching security failure */'),
@@ -613,7 +681,9 @@ def main():
     a = p.parse_args()
     source = a.source.read_text(encoding='utf-8')
     functions = [extract_function(source, sig) for sig in SIGNATURES]
-    if any('b1_' not in f for f in functions if not f.startswith('void ZDSecMgrEntryInit')):
+    if any('b1_' not in f for f in functions
+           if not f.startswith(('void ZDSecMgrEntryInit',
+                                'ZStatus_t ZDSecMgrEntryLookupAMIGetIndex'))):
         raise RuntimeError('SECURITY_REAL_FUNCTION_HOLD_NOT_COMPILED')
     contents = '\n\n'.join(functions)
     if a.mutant:
