@@ -103,7 +103,7 @@ class T6LegacyMigrationGuard(unittest.TestCase):
                 guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
         self.source.write_bytes(OVERLAID + b"// mutated")
         with patch.object(guard.subprocess, "check_output", side_effect=self.git):
-            with self.assertRaisesRegex(ValueError, "modified"):
+            with self.assertRaisesRegex(ValueError, "receipt drift"):
                 guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
 
     def test_mutated_migration_body_or_stale_b1_receipt_fails_closed(self):
@@ -150,7 +150,7 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         srcdir.symlink_to(outside, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symlink"):
             guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
-        self.assertEqual((outside / "zglobals.c").read_bytes(), UPSTREAM)
+        self.assertEqual((outside / "zglobals.c").read_bytes(), OVERLAID)
 
     def test_full_native_workflow_guards_after_all_overlays_before_ccs_import(self):
         workflow = (ROOT / ".github/workflows/test-r4-final-composite-native.yml").read_text()
