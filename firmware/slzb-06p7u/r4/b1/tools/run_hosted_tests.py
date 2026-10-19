@@ -331,6 +331,7 @@ def main():
                     "early_security_attestation": "!b1_sec_restored_network_validated()",
                     "aps_publish": "ApsLinkKeyRAMEntry[0].txFrmCntr==0",
                     "checkpoint_pending": "held && pending", "counter_wrap": "result==ZSecNoKey",
+                    "unbounded_tclk_transmit": "APSME_TCLinkKeyLoad(1,&si)==ZSecNoKey",
                     "readback": "ApsLinkKeyRAMEntry[0].txFrmCntr==0"}[name]
         mutation(generated["security"], before, after, "mutant_security_" + name,
                  evidence, (scenario,), admission=False)
