@@ -180,11 +180,19 @@ __attribute__((noinline)) Void r4q_uart_smoke_task(UArg a0, UArg a1)
         uint8_t input = 0u;
         size_t received = 0u;
         /* One byte per bounded Task read. Never block the scheduler forever. */
-        (void)UART2_readTimeout(uart, &input, 1u, &received,
+        int_fast16_t read_status = UART2_readTimeout(uart, &input, 1u, &received,
             (250000u + Clock_tickPeriod - 1u) / Clock_tickPeriod);
-        if (received == 1u)
+        if ((read_status == UART2_STATUS_SUCCESS ||
+             read_status == UART2_STATUS_SREADTIMEOUT) && received == 1u)
         {
             r4q_uart_smoke_accept_byte(uart, &parser, input);
+        }
+        else if (read_status != UART2_STATUS_SREADTIMEOUT &&
+                 read_status != UART2_STATUS_ETIMEOUT)
+        {
+            /* Distinct terminal read failure; do not spin on a hard driver error. */
+            r4q_uart_smoke_stage = 0xE4u;
+            return;
         }
     }
 }

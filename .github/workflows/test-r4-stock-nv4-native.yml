@@ -5,7 +5,13 @@ on:
     paths:
       - '.github/workflows/test-r4-stock-nv4-native.yml'
       - 'firmware/slzb-06p7u/r4/qualification/nv4*'
+      - 'firmware/slzb-06p7u/r4/qualification/board_profile.py'
+      - 'firmware/slzb-06p7u/r4/qualification/vendor_stock.py'
+      - 'firmware/slzb-06p7u/r4/qualification/vendor-stock-20240716.json'
+      - 'firmware/slzb-06p7u/r4/b0/tools/**'
+      - 'firmware/slzb-06p7u/r4/b1/tools/**'
       - 'tests/test_r4_nv4_native_gate.py'
+      - 'tests/test_r4_workflow_gate_deps.py'
   workflow_dispatch:
 
 permissions:
@@ -21,7 +27,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Test independently audited image gate
-        run: python -m unittest -v tests.test_r4_nv4_native_gate
+        run: python -m unittest -v tests.test_r4_nv4_native_gate tests.test_r4_workflow_gate_deps
       - name: Restore checksum-pinned TI installers
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:

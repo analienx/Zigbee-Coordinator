@@ -48,6 +48,7 @@ class FivePageForensicsTests(unittest.TestCase):
         self.assertEqual(report["snapshots"][0]["active_system_id_counts"], {3: 1})
         self.assertFalse(report["safe_to_initialize_zigbee_nv"])
         self.assertFalse(report["active_stock_partition_proven"])
+        self.assertTrue(report["candidate_nv_v3_structure_observed"])
         self.assertNotIn("synthetic-credential", str(report))
         self.assertNotIn("payload_hash", str(report))
 
@@ -71,6 +72,14 @@ class FivePageForensicsTests(unittest.TestCase):
     def test_image_size_is_mandatory(self):
         with self.assertRaisesRegex(ValueError, "CAPTURE_SIZE"):
             nv.inspect_capture(b"\xff" * 8192)
+
+    def test_fully_erased_five_pages_are_not_mistaken_for_nv_v3(self):
+        blank = b"\xff" * nv.FLASH_SIZE
+        report = nv.compare(blank, blank)
+        self.assertFalse(report["candidate_nv_v3_structure_observed"])
+        self.assertEqual([page["state"] for page in report["snapshots"][0]["pages"]],
+                         ["erased"] * 5)
+        self.assertEqual(report["snapshots"][0]["records_active"], 0)
 
 
 if __name__ == "__main__":

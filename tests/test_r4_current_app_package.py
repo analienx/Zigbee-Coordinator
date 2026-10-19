@@ -7,6 +7,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 RELEASE = Path(__file__).resolve().parents[1] / "firmware/slzb-06p7u/r4/release"
 sys.path.insert(0, str(RELEASE))
@@ -137,10 +138,51 @@ class CurrentAppPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "NATIVE_MANIFEST_HASH_MISMATCH"):
                 m.from_artifacts(artifacts, profile, snapshot,
                     expected_profile_sha256=profile["profile_sha256"], expected_manifest_sha256="0" * 64)
-            with self.assertRaisesRegex(ValueError, "NATIVE_AUDIT_FAILED"):
+            with self.assertRaisesRegex(ValueError, "NATIVE_BUNDLE_NATIVE_MANIFEST_SCHEMA"):
                 m.from_artifacts(artifacts, profile, snapshot,
                     expected_profile_sha256=profile["profile_sha256"],
                     expected_manifest_sha256=m.sha(b"{}"))
+
+    def test_coherent_native_source_swap_cannot_change_full_audit_export(self):
+        """The B0 ELF/XML/HEX/BIN audit and extractor share frozen file bytes."""
+        native_before = {0: 0x11, 1: 0x22, 0x100: 0x33}
+        native_after = {0: 0x44, 1: 0x55, 0x100: 0x66}
+
+        def write_bundle(root, image):
+            data = {"elf": ("znp.out", b"\x7fELF\x01test"),
+                    "hex": ("znp.hex", m.serialize(image)),
+                    "bin": ("znp.bin", b"native-test"),
+                    "xml": ("znp_linkInfo.xml", b"<linkInfo/>")}
+            for name, content in data.values():
+                (root / name).write_bytes(content)
+            (root / "build.log").write_text("native build log\n")
+            manifest = {"schema": "r4-b0-artifact-manifest-v1", "build_log": "build.log",
+                        "files": {kind: {"file": name, "sha256": m.sha(content)}
+                                  for kind, (name, content) in data.items()}}
+            raw = m.canonical(manifest)
+            (root / "manifest.json").write_bytes(raw)
+            return raw
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            pinned = write_bundle(source, native_before)
+            def mutate_during_audit(base, frozen, *, direct_rom_boot):
+                self.assertTrue(direct_rom_boot)
+                self.assertNotEqual(source, frozen)
+                self.assertEqual((frozen / "manifest.json").read_bytes(), pinned)
+                updated = write_bundle(source, native_after)
+                self.assertNotEqual(m.sha(updated), m.sha(pinned))
+                return (0, "audited captured bundle")
+
+            with mock.patch.object(m, "audit", side_effect=mutate_during_audit), \
+                 mock.patch.object(m, "_bind_payload", return_value="captured") as bind:
+                self.assertEqual(m.from_artifacts(source, {}, b"",
+                    expected_profile_sha256="0" * 64,
+                    expected_manifest_sha256=m.sha(pinned)), "captured")
+            self.assertEqual(bind.call_args.args[0], native_before)
+            self.assertEqual(bind.call_args.args[3]["manifest_sha256"], m.sha(pinned))
+            self.assertEqual(bind.call_args.args[3]["hex_sha256"],
+                             m.sha(m.serialize(native_before)))
 
     def test_private_app_export_rejects_git_worktrees_and_symlink_escape(self):
         package = synthetic_package()

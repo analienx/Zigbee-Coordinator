@@ -179,7 +179,9 @@ def compare(before: bytes, after: bytes) -> dict:
         "missing_records": len(old_items.keys() - new_items.keys()),
         "new_records": len(new_items.keys() - old_items.keys()),
     }
-    report.update({"candidate_nv_v3_structure_observed": True,
+    report.update({"candidate_nv_v3_structure_observed": any(
+                       page["state"] != "erased"
+                       for obj in (old, new) for page in obj["pages"]),
                    "active_stock_partition_proven": False,
                    "network_security_counter_continuity_proven": False,
                    "safe_to_initialize_zigbee_nv": False,

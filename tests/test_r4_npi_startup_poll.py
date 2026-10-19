@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 import json
 import sys
+import time
 
 
 SOURCE = (Path(__file__).resolve().parents[1] /
@@ -48,6 +49,41 @@ class StartupPollTests(unittest.IsolatedAsyncioTestCase):
                                     max_seconds=.15, probe_timeout=.09, retry_seconds=.05)
             self.assertFalse(result["ready"])
             self.assertLess(result["seconds_since_reset"], 1)
+
+    async def test_stalled_probe_cannot_exceed_global_deadline(self):
+        async def stalled(*_args, **_kwargs):
+            await asyncio.sleep(.3)
+            return True
+
+        started = time.monotonic()
+        with mock.patch.object(npi, "probe", side_effect=stalled):
+            report = await npi.poll("127.0.0.1", 6638, max_seconds=.05,
+                                    probe_timeout=.2, retry_seconds=.05)
+        self.assertFalse(report["ready"])
+        self.assertLess(time.monotonic() - started, .15)
+
+    async def test_drain_and_response_share_one_command_budget(self):
+        class DelayedWriter:
+            def write(self, _data):
+                pass
+
+            async def drain(self):
+                await asyncio.sleep(.07)
+
+        reader = asyncio.StreamReader()
+
+        async def feed():
+            await asyncio.sleep(.14)
+            reader.feed_data(PING)
+
+        feeder = asyncio.create_task(feed())
+        try:
+            started = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                await npi.request(reader, DelayedWriter(), command=1, timeout=.1)
+            self.assertLess(time.monotonic() - started, .14)
+        finally:
+            await feeder
 
     async def test_streamed_frame_and_ten_byte_version(self):
         class FakeWriter:

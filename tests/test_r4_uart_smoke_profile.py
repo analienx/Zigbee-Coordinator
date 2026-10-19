@@ -111,6 +111,11 @@ int main(void)
         self.assertIn("UART2_open(CONFIG_DISPLAY_UART", code)
         self.assertIn("UART2_write(uart, r4q_uart_smoke_frame", code)
         self.assertIn("UART2_readTimeout(uart, &input, 1u, &received,", code)
+        self.assertIn("read_status == UART2_STATUS_SUCCESS ||", code)
+        self.assertIn("read_status == UART2_STATUS_SREADTIMEOUT) && received == 1u", code)
+        self.assertIn("read_status != UART2_STATUS_SREADTIMEOUT", code)
+        self.assertIn("read_status != UART2_STATUS_ETIMEOUT", code)
+        self.assertIn("r4q_uart_smoke_stage = 0xE4u;", code)
         self.assertIn("parser->cmd0 == 0x21u", code)
         self.assertIn("value == parser->fcs && parser->length == 0u", code)
         self.assertIn("Board_initGeneral();", code)
@@ -122,6 +127,60 @@ int main(void)
         self.assertEqual(code.count("UART2_open("), 1)
         self.assertEqual(code.count("UART2_write("), 2)
         self.assertEqual(code.count("UART2_readTimeout("), 1)
+
+    def test_hard_read_error_terminates_after_bounded_timeout(self):
+        """Compile the emitted task loop with a fake TI UART2 hard-error path."""
+        code = smoke.ENTRY
+        first = code.index('    r4q_uart_frame_parser parser = {0};')
+        last = code.index('\n}\n\n__attribute__((noinline)) int r4q_uart_smoke_start', first)
+        loop = code[first:last]
+        source = r'''
+#include <stdint.h>
+#include <stddef.h>
+#include <assert.h>
+typedef void *UART2_Handle;
+typedef struct { int state; } r4q_uart_frame_parser;
+#define UART2_STATUS_SUCCESS 0
+#define UART2_STATUS_SREADTIMEOUT 1
+#define UART2_STATUS_ETIMEOUT -13
+#define UART2_STATUS_EFAIL -11
+static uint32_t r4q_uart_smoke_stage;
+static uint32_t Clock_tickPeriod = 10u;
+static int calls = 0;
+static int_fast16_t UART2_readTimeout(UART2_Handle uart, uint8_t *input,
+                                     size_t length, size_t *received, uint32_t ticks)
+{
+    (void)uart; (void)input; (void)length; (void)ticks;
+    ++calls;
+    *received = 0u;
+    return calls == 1 ? UART2_STATUS_SREADTIMEOUT : UART2_STATUS_EFAIL;
+}
+static void r4q_uart_smoke_accept_byte(UART2_Handle uart,
+                                       r4q_uart_frame_parser *parser, uint8_t value)
+{
+    (void)uart; (void)parser; (void)value;
+    assert(0 && "no complete frame should be supplied");
+}
+static void run_read_loop(UART2_Handle uart)
+{
+''' + loop + r'''
+}
+int main(void)
+{
+    run_read_loop(NULL);
+    assert(calls == 2);
+    assert(r4q_uart_smoke_stage == 0xE4u);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            src, exe = path / 'read_loop.c', path / 'read_loop'
+            src.write_text(source)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                            str(src), '-o', str(exe)], check=True, capture_output=True)
+            result = subprocess.run([str(exe)], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
 
     def test_sha_and_exact_donor_preflight(self):
         for bad in ("", "F" * 40, "g" * 40, "a" * 39):

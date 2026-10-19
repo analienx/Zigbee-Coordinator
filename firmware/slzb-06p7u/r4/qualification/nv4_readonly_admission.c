@@ -81,8 +81,12 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
     while (end > R4_DATA_START) {
         uint32_t header_offset, length, offset;
         uint8_t crc = 0u, saved_crc, last, first_payload_byte = 0xffu;
-        if (end < R4_DATA_START + R4_TRAILER ||
-            r->records >= R4_MAX_RECORDS) {
+        if (r->records >= R4_MAX_RECORDS) {
+            r->code = R4_NV4_SCAN_LIMIT;
+            r->fault_offset = page_base + end;
+            return 0;
+        }
+        if (end < R4_DATA_START + R4_TRAILER) {
             r->code = R4_NV4_BAD_ITEM;
             r->fault_offset = page_base + end;
             return 0;

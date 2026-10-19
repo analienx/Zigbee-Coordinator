@@ -35,9 +35,10 @@ def verify_payload(data: dict[int, int]) -> dict:
         reject('direct-ROM reset vectors at 0x0 missing')
     sp = int.from_bytes(bytes(data[i] for i in range(4)), 'little')
     reset = int.from_bytes(bytes(data[i] for i in range(4, 8)), 'little')
-    if not 0x20000000 <= sp <= 0x20040000 or not (reset & 1):
+    if not 0x20000000 < sp <= 0x20024000 or sp % 8 or not (reset & 1):
         reject('initial SRAM stack or Thumb reset vector invalid')
-    if (reset & ~1) >= APP_END:
+    entry = reset & ~1
+    if entry < 0x3C or entry >= APP_END:
         reject('reset vector does not point into isolated application')
     if min(data) < 0 or max(data) >= CHIP_END:
         reject('bytes outside P7 flash')
@@ -50,6 +51,8 @@ def verify_payload(data: dict[int, int]) -> dict:
     app = {a for a in data if a < APP_END}
     if not app or max(app) >= APP_END:
         reject('application intersects stock NV4')
+    if entry not in app or entry + 1 not in app:
+        reject('reset handler target is not backed by linked application bytes')
     sectors = sorted({a // ERASE_SIZE * ERASE_SIZE for a in app})
     if any(x + ERASE_SIZE > APP_END for x in sectors):
         reject('application erase sector intersects stock NV4')

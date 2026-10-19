@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE.parent / 'b0' / 'tools'))
 import r4_current_app_package as current
 from b0_image_audit import _parse_intel_hex
 from nv4_native_gate import evaluate as audit_nv4
+from r4_native_bundle import BundleError, _read_regular
 
 KINDS = ('elf', 'hex', 'bin', 'xml')
 SAFE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
@@ -40,6 +41,15 @@ def sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def read_regular(path: Path, kind: str) -> bytes:
+    # Share the parent's no-follow file-descriptor read; retain this path's
+    # tighter per-artifact limits and diagnostic-only receipt checks.
+    try:
+        return _read_regular(path, kind)
+    except BundleError as exc:
+        deny(str(exc))
+
+
 def _freeze_native(artifacts: Path, destination: Path, expected_manifest_sha256: str):
     """Single-load a pinned manifest and all its bytes into a private staging dir.
 
@@ -55,7 +65,7 @@ def _freeze_native(artifacts: Path, destination: Path, expected_manifest_sha256:
         deny('NATIVE_MANIFEST_DIGEST_INVALID')
     if manifest_path.is_symlink() or not manifest_path.is_file():
         deny('NATIVE_MANIFEST_UNBOUND')
-    original_manifest = manifest_path.read_bytes()
+    original_manifest = read_regular(manifest_path, 'NATIVE_MANIFEST')
     if sha(original_manifest) != expected_manifest_sha256:
         deny('NATIVE_MANIFEST_UNBOUND')
     try:
@@ -85,7 +95,9 @@ def _freeze_native(artifacts: Path, destination: Path, expected_manifest_sha256:
             deny('NATIVE_ARTIFACT_UNSAFE_' + kind.upper())
         if source.stat().st_size > CAPS[kind]:
             deny('NATIVE_ARTIFACT_OVERSIZE_' + kind.upper())
-        raw = source.read_bytes()  # only read of this original source artifact
+        raw = read_regular(source, 'NATIVE_' + kind.upper())
+        if len(raw) > CAPS[kind]:
+            deny('NATIVE_ARTIFACT_OVERSIZE_' + kind.upper())
         if sha(raw) != digest:
             deny('NATIVE_ARTIFACT_CHANGED_' + kind.upper())
         contents[name] = raw
@@ -96,7 +108,9 @@ def _freeze_native(artifacts: Path, destination: Path, expected_manifest_sha256:
         deny('NATIVE_BUILD_LOG_MISSING')
     if log_path.stat().st_size > CAPS['build.log']:
         deny('NATIVE_BUILD_LOG_OVERSIZE')
-    log = log_path.read_bytes()
+    log = read_regular(log_path, 'NATIVE_BUILD_LOG')
+    if len(log) > CAPS['build.log']:
+        deny('NATIVE_BUILD_LOG_OVERSIZE')
     # Every later reader (auditor, HEX parser, private payload binder) uses
     # this staging directory; never reopen the originals after this point.
     (destination / 'manifest.json').write_bytes(original_manifest)

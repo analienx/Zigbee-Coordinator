@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 PATH = (Path(__file__).resolve().parents[1] /
@@ -69,6 +70,49 @@ class Nv4OverlayTests(unittest.TestCase):
                 overlay.apply(*paths, receipt)
             self.assertEqual(before, [p.read_bytes() for p in paths])
             self.assertFalse(receipt.exists())
+
+    def test_second_replace_failure_restores_all_disposable_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in
+                     ('znp.syscfg', 'p7.cmd', 'znp.projectspec')]
+            original = [content.encode() for content in fixture()]
+            for path, raw in zip(paths, original):
+                path.write_bytes(raw)
+            receipt = Path(directory) / 'receipt.json'
+            pin = tuple(overlay.git_blob(raw) for raw in original)
+            real_replace = overlay.os.replace
+            calls = 0
+
+            def fail_second(src, dst):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError('synthetic disk/rename failure')
+                return real_replace(src, dst)
+
+            with (mock.patch.object(overlay, 'UPSTREAM_GIT_BLOBS', pin),
+                  mock.patch.object(overlay.os, 'replace', side_effect=fail_second)):
+                with self.assertRaisesRegex(OSError, 'synthetic disk'):
+                    overlay.apply(*paths, receipt)
+            self.assertEqual([path.read_bytes() for path in paths], original)
+            self.assertFalse(receipt.exists())
+            self.assertFalse(list(Path(directory).glob('.r4-nv4-stage-*')))
+
+    def test_successful_staged_outputs_and_digest_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in
+                     ('znp.syscfg', 'p7.cmd', 'znp.projectspec')]
+            original = [content.encode() for content in fixture()]
+            for path, raw in zip(paths, original):
+                path.write_bytes(raw)
+            receipt = Path(directory) / 'receipt.json'
+            pin = tuple(overlay.git_blob(raw) for raw in original)
+            with mock.patch.object(overlay, 'UPSTREAM_GIT_BLOBS', pin):
+                result = overlay.apply(*paths, receipt)
+            self.assertTrue(receipt.is_file())
+            self.assertEqual([overlay.sha256(path.read_bytes()) for path in paths],
+                             result['source_after_sha256'])
+            self.assertFalse(result['flash_authorized'])
 
 
 if __name__ == '__main__':
