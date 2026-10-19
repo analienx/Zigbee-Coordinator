@@ -403,6 +403,41 @@ int main(int argc,char **argv)
     if(s[0]=='a') { ZDSecMgrRestoreFromNV(); assert(ApsLinkKeyRAMEntry[0].txFrmCntr==0 && restored[0].ami==INVALID_NODE_ADDR); }
     else { APSME_TCLinkKeyInit(FALSE); assert(TCLinkKeyRAMEntry[0].txFrmCntr==0 && !TCLinkKeyRAMEntry[0].entryUsed); }
     assert(held && writes==1);
+  } else if(!strcmp(s,"tclk_checkpoint_backpressure")) {
+    uint32_t last_sent=0;
+    assert(b1_sec_validate_restored());
+    APSME_TCLinkKeyInit(FALSE);
+    assert(tc[0].txFrmCntr==211u && TCLinkKeyRAMEntry[0].txFrmCntr==211u);
+    /* A busy task postpones ZDO_TCLK_FRAMECOUNTER_CHANGE indefinitely. */
+    for(unsigned i=0;i<9u;++i) {
+      SSP_Info_t si={0}; si.extAddr[0]=0x44;
+      assert(APSME_TCLinkKeyLoad(1,&si)==ZSuccess);
+      assert(si.frmCntr==211u+i);
+      last_sent=si.frmCntr;
+    }
+    assert(TCLinkKeyRAMEntry[0].txFrmCntr==220u);
+    assert(TCLinkKeyRAMEntry[0].pendingFlag && events==1u);
+    for(unsigned i=0;i<40u;++i) {
+      SSP_Info_t si={0}; si.extAddr[0]=0x44; si.frmCntr=999u;
+      assert(APSME_TCLinkKeyLoad(1,&si)==ZSecNoKey);
+      assert(si.frmCntr==999u && TCLinkKeyRAMEntry[0].txFrmCntr==220u && !held);
+    }
+    /* The delayed event commits; transmission continues in the next block. */
+    ZDSecMgrSaveTCLinkKey();
+    assert(!TCLinkKeyRAMEntry[0].pendingFlag && tc[0].txFrmCntr==220u && !held);
+    for(unsigned i=0;i<10u;++i) {
+      SSP_Info_t si={0}; si.extAddr[0]=0x44;
+      assert(APSME_TCLinkKeyLoad(1,&si)==ZSuccess);
+      assert(si.frmCntr==220u+i && si.frmCntr>last_sent);
+      last_sent=si.frmCntr;
+    }
+    assert(TCLinkKeyRAMEntry[0].pendingFlag && tc[0].txFrmCntr==220u);
+    /* Power loss before this second checkpoint: restart may never replay TX. */
+    memset(TCLinkKeyRAMEntry,0,sizeof(TCLinkKeyRAMEntry));
+    APSME_TCLinkKeyInit(FALSE);
+    assert(!held && tc[0].txFrmCntr==231u);
+    SSP_Info_t after={0}; after.extAddr[0]=0x44;
+    assert(APSME_TCLinkKeyLoad(1,&after)==ZSuccess && after.frmCntr>last_sent);
   } else if(!strncmp(s,"save_aps_",9) || !strncmp(s,"save_tclk_",10)) {
     uint8_t isaps=s[5]=='a';
     ApsLinkKeyRAMEntry[0].pendingFlag=TRUE; ApsLinkKeyRAMEntry[0].txFrmCntr=120; ApsLinkKeyRAMEntry[0].rxFrmCntr=50;
@@ -465,6 +500,7 @@ SCENARIOS = (
     'aps_write_fail', 'aps_readback', 'tclk_write_fail', 'tclk_readback',
     'save_aps_positive', 'save_aps_fail', 'save_aps_readback', 'save_aps_rollback',
     'save_tclk_positive', 'save_tclk_fail', 'save_tclk_readback', 'save_tclk_rollback',
+    'tclk_checkpoint_backpressure',
     'load_positive', 'load_new_positive', 'load_full_legacy', 'load_wrap', 'load_bounds', 'load_new_fail', 'load_hold', 'load_bad_attributes', 'sticky_hold',
 )
 
@@ -488,6 +524,9 @@ MUTANTS = {
         '    (void)b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, i, sizeof(row), &row);'),
     'counter_wrap': ('load_wrap',
         '      if (TCLinkKeyRAMEntry[i].txFrmCntr == UINT32_MAX)',
+        '      if (FALSE)'),
+    'unbounded_tclk_transmit': ('tclk_checkpoint_backpressure',
+        '      if (TCLinkKeyRAMEntry[i].pendingFlag)',
         '      if (FALSE)'),
     'readback': ('aps_readback',
         '      OsalPort_memcmp(value, verify, len)) okay = TRUE;',
