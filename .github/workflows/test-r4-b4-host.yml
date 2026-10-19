@@ -25,7 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Assert exact immutable PR head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -60,7 +65,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
-        run: node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs
+        run: node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-owner-lifecycle.cjs
       - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
         run: |
           set -euo pipefail

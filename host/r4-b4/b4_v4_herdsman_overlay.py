@@ -115,7 +115,7 @@ V4_ADAPTER_METHOD = r"""
                 radioEpochHardwareVerified: false,
             };
         } catch (error: unknown) {
-            if (error instanceof Error && error.message === "B4 F0 runtime admission vetoed") {
+            if (error instanceof Error && error.message === "B4 F2 runtime admission vetoed") {
                 return undefined;
             }
             // A failed v4 waiter can consume a late frame; disable further
@@ -237,6 +237,23 @@ def plan(root):
         raise ValueError("v3 diagnostic owner mutex guard count drift")
     znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
+    # The v3 overlay's writer/timer cleanup previously applied only to F0.
+    # F2 must use exactly the same tagged waiter's settlement and quarantine.
+    znp = once(
+        znp,
+        'const isB4Diag = object.command.name === "r4DiagReadOnly";',
+        'const isB4Diag = object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4";',
+    )
+    znp = once(
+        znp,
+        'subsystem === Subsystem.SYS && command === "r4DiagReadOnly" && this.b4DiagPoisoned',
+        'subsystem === Subsystem.SYS && (command === "r4DiagReadOnly" || command === "r4DiagReadOnlyV4") && this.b4DiagPoisoned',
+    )
+    znp = once(
+        znp,
+        'throw new Error("B4 F0 runtime admission vetoed");',
+        'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 F2 runtime admission vetoed" : "B4 F0 runtime admission vetoed");',
+    )
     # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
     znp = once(znp,
         "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",
