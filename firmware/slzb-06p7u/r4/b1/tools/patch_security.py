@@ -405,13 +405,6 @@ def patch(source: str) -> str:
         '          return ZSecNoKey;', 'new TCLK persist before publish')
     source = replace_once(source, '      // update link key related fields\n'
         '      si->keyID   = SEC_KEYID_LINK;',
-        '      /* An asynchronously queued checkpoint may be delayed. Never\n'
-        '       * consume past the TCLK reservation before it is durable. */\n'
-        '      if (TCLinkKeyRAMEntry[i].pendingFlag)\n'
-        '      {\n'
-        '        OsalPort_setEvent(ZDAppTaskID, ZDO_TCLK_FRAMECOUNTER_CHANGE);\n'
-        '        return ZSecNoKey; /* retry after the event commits NV */\n'
-        '      }\n'
         '      if (TCLinkKeyRAMEntry[i].txFrmCntr == UINT32_MAX)\n'
         '      {\n'
         '        b1_security_runtime_hold_latch();\n'
@@ -419,6 +412,19 @@ def patch(source: str) -> str:
         '      }\n'
         '      // update link key related fields\n'
         '      si->keyID   = SEC_KEYID_LINK;', 'TCLK no wrap before security publish')
+    # The ZDO NV event may be delayed; do not issue beyond the reboot counter
+    # reservation. Reject before publishing ANY partial SSP_Info security
+    # fields, leaving the event loop (not outgoing encryption) to write NV.
+    source = replace_once(source,
+        '      if(found)\n      {\n        switch(TCLKDevEntry.keyAttributes)',
+        '      if(found)\n      {\n'
+        '        if (TCLinkKeyRAMEntry[i].pendingFlag)\n'
+        '        {\n'
+        '          OsalPort_setEvent(ZDAppTaskID, ZDO_TCLK_FRAMECOUNTER_CHANGE);\n'
+        '          return ZSecNoKey; /* retry only after verified NV commit */\n'
+        '        }\n'
+        '        switch(TCLKDevEntry.keyAttributes)',
+        'TCLK checkpoint before SSP_Info publication')
     source = replace_once(source,
         '          default:\n            //This should not happen\n          break;',
         '          default:\n'

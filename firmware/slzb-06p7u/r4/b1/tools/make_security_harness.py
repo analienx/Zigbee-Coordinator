@@ -419,8 +419,10 @@ int main(int argc,char **argv)
     assert(TCLinkKeyRAMEntry[0].pendingFlag && events==1u);
     for(unsigned i=0;i<40u;++i) {
       SSP_Info_t si={0}; si.extAddr[0]=0x44; si.frmCntr=999u;
+      si.keyNvId=777u; si.keyNvSection=888u;
       assert(APSME_TCLinkKeyLoad(1,&si)==ZSecNoKey);
-      assert(si.frmCntr==999u && TCLinkKeyRAMEntry[0].txFrmCntr==220u && !held);
+      assert(si.frmCntr==999u && si.keyNvId==777u && si.keyNvSection==888u &&
+             TCLinkKeyRAMEntry[0].txFrmCntr==220u && !held);
     }
     /* The delayed event commits; transmission continues in the next block. */
     ZDSecMgrSaveTCLinkKey();
@@ -526,7 +528,7 @@ MUTANTS = {
         '      if (TCLinkKeyRAMEntry[i].txFrmCntr == UINT32_MAX)',
         '      if (FALSE)'),
     'unbounded_tclk_transmit': ('tclk_checkpoint_backpressure',
-        '      if (TCLinkKeyRAMEntry[i].pendingFlag)',
+        '        if (TCLinkKeyRAMEntry[i].pendingFlag)',
         '      if (FALSE)'),
     'readback': ('aps_readback',
         '      OsalPort_memcmp(value, verify, len)) okay = TRUE;',
