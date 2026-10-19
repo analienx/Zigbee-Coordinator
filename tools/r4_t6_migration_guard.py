@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """R4 T6 fail-closed guard for pinned TI legacy TC table migration.
 
-The full P7U NV4 TC300 profile cannot compile TI's optional 5.30 NV
-migration: its 8-bit index wraps above 255 and deletes security records
-before checking new write durability. This source-only guard prevents that
-unsafe path from entering a native build; it does NOT perform migration or
-prove TC300 live table capacity.
+The stock 20240716 P7U already uses four NVOCMP pages. Its full TC300
+profile must never compile TI's optional 5.30 migration (8-bit index wraps
+above 255; TCLK delete precedes durable rewrite), nor the NVOCTP-to-NVOCMP
+migration (only valid for a particular *old* on-flash format and stable
+table sizes), nor the umbrella NV-format upgrade entry point. Guard all
+three before the native TI build, without executing a migration or claiming
+TC300 live capacity. See TI's SDK 5.30 Z-Stack flash memory guide.
 """
 from __future__ import annotations
 
@@ -20,6 +22,12 @@ REL = "source/ti/zstack/stack/sys/zglobals.c"
 GUARD = (
     "#if defined(ZSTACK_5_30_NV_MIGRATION)\n"
     "#error R4_TC300_LEGACY_MIGRATION_FORBIDDEN_REQUIRE_OFFLINE_TRANSACTIONAL_QUALIFICATION\n"
+    "#endif\n"
+    "#if defined(ZSTACK_NVOCMP_MIGRATION)\n"
+    "#error R4_NV4_NVOCTP_MIGRATION_FORBIDDEN_ALREADY_NVOCMP_FOUR_PAGE_STOCK\n"
+    "#endif\n"
+    "#if defined(ZSTACK_NV_FORMAT_UPDATE)\n"
+    "#error R4_NV4_FORMAT_UPDATE_FORBIDDEN_NO_UNVERIFIED_NV_CONVERSION\n"
     "#endif\n"
 )
 UNSAFE_LOOP = "uint8_t i = 0;\n    for( i = 0; i < gZDSECMGR_TC_DEVICE_MAX; i++ )"
@@ -43,9 +51,9 @@ def validate_profile(profile: dict) -> None:
         raise ValueError("T6 full NV4 source/profile drift or unsafe authorization")
 
 
-def migration_body(text: str) -> str:
-    marker = "static void zgMigrateTo530SDK( void )\n{"
-    terminator = "\n#endif // ZSTACK_5_30_NV_MIGRATION"
+def migration_body(text: str, function: str, macro: str) -> str:
+    marker = f"static void {function}( void )\n{{"
+    terminator = f"\n#endif // {macro}"
     if text.count(marker) != 1:
         raise ValueError("T6 legacy migration definition drift")
     start = text.index(marker)
@@ -62,10 +70,21 @@ def guarded(raw: bytes, pinned: bytes) -> bytes:
     except UnicodeDecodeError as error:
         raise ValueError("T6 pinned source must be UTF-8") from error
     if (GUARD in source or source.count("static void zgMigrateTo530SDK( void )") != 2 or
-            source.count(UNSAFE_LOOP) != 1 or source.count(UNSAFE_ORDER) != 1 or
-            "#ifdef ZSTACK_5_30_NV_MIGRATION" not in source or
-            migration_body(source) != migration_body(upstream)):
+            source.count(UNSAFE_LOOP) != 1 or source.count(UNSAFE_ORDER) != 1):
         raise ValueError("T6 expected pinned TI unsafe migration source drift")
+    # Check the original migration bodies, not a friendly lookalike or a
+    # source overlay that silently changed the conversion algorithm.
+    for function, macro, count in (
+        ("zgMigrateTo530SDK", "ZSTACK_5_30_NV_MIGRATION", 2),
+        ("zgNVOCMPMigration", "ZSTACK_NVOCMP_MIGRATION", 1),
+    ):
+        if (source.count(f"static void {function}( void )") != count or
+                source.count(f"#ifdef {macro}") < 1 or
+                migration_body(source, function, macro) !=
+                migration_body(upstream, function, macro)):
+            raise ValueError("T6 expected pinned TI unsafe migration source drift")
+    if "#ifdef ZSTACK_NV_FORMAT_UPDATE" not in source:
+        raise ValueError("T6 expected pinned TI NV format entry point drift")
     return (GUARD + source).encode("utf-8")
 
 
@@ -108,7 +127,7 @@ def stage(sdk: Path, profile_file: Path, receipt: Path, b1_receipt: Path) -> dic
         raise ValueError("T6 post-overlay B1/B3 source receipt drift")
     changed = guarded(actual, pinned)
     result = {
-        "schema": "r4-t6-tc300-legacy-migration-prohibition-v2",
+        "schema": "r4-t6-tc300-legacy-migration-prohibition-v3",
         "source_pin": PIN,
         "profile_id": "P7U_R4_FULL_NV4",
         "source_rel": REL,
@@ -117,6 +136,8 @@ def stage(sdk: Path, profile_file: Path, receipt: Path, b1_receipt: Path) -> dic
         "b1_b3_receipt_before_sha256": digest(b1_receipt.read_bytes()),
         "tc_capacity_requested": 300,
         "legacy_migration_if_enabled": "COMPILE_TIME_ERROR",
+        "nvoctp_migration_if_enabled": "COMPILE_TIME_ERROR",
+        "nv_format_update_if_enabled": "COMPILE_TIME_ERROR",
         "actual_tc300_linked_capacity_proven": False,
         "installed_or_flash_authorized": False,
     }
@@ -126,6 +147,8 @@ def stage(sdk: Path, profile_file: Path, receipt: Path, b1_receipt: Path) -> dic
         "pre_guard_sha256": digest(actual),
         "post_guard_sha256": digest(changed),
         "legacy_migration_if_enabled": "COMPILE_TIME_ERROR",
+        "nvoctp_migration_if_enabled": "COMPILE_TIME_ERROR",
+        "nv_format_update_if_enabled": "COMPILE_TIME_ERROR",
         "full_role_sealed": False,
     }
     # Disposable-only writes after source hash and both receipts validated.

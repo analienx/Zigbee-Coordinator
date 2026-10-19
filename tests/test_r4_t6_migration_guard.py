@@ -1,4 +1,4 @@
-"""R4-T6 300-TC legacy migration must be compile-time denied, never run."""
+"""R4-T6 all NV legacy migration entry points must fail at compile time."""
 import copy
 import importlib.util
 import json
@@ -30,6 +30,20 @@ static void zgMigrateTo530SDK( void )
     }
 }
 #endif // ZSTACK_5_30_NV_MIGRATION
+#ifdef ZSTACK_NVOCMP_MIGRATION
+static void zgNVOCMPMigration( void )
+{
+    uint16_t i = 0;
+    for( i = 0; i < gZDSECMGR_TC_DEVICE_MAX; i++ )
+    {
+        osal_nv_write_ex(ZCD_NV_EX_TCLK_TABLE, i, 1);
+        osal_nv_delete(ZCD_NV_LEGACY_TCLK_TABLE_START + i, 1);
+    }
+}
+#endif // ZSTACK_NVOCMP_MIGRATION
+#ifdef ZSTACK_NV_FORMAT_UPDATE
+static void zgUpdateNVFormat( void ) { zgMigrateTo530SDK(); zgNVOCMPMigration(); }
+#endif
 """
 OVERLAID = b"/* B1+B3 checked source overlay */\n" + UPSTREAM
 
@@ -68,6 +82,9 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         with patch.object(guard.subprocess, "check_output", side_effect=self.git):
             proof = guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
         self.assertEqual(proof["legacy_migration_if_enabled"], "COMPILE_TIME_ERROR")
+        self.assertEqual(proof["nvoctp_migration_if_enabled"], "COMPILE_TIME_ERROR")
+        self.assertEqual(proof["nv_format_update_if_enabled"], "COMPILE_TIME_ERROR")
+        self.assertEqual(proof["schema"], "r4-t6-tc300-legacy-migration-prohibition-v3")
         self.assertFalse(proof["actual_tc300_linked_capacity_proven"])
         self.assertFalse(proof["installed_or_flash_authorized"])
         self.assertTrue(self.source.read_bytes().startswith(guard.GUARD.encode()))
@@ -75,6 +92,10 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         b1 = json.loads(self.b1_receipt.read_text())
         self.assertEqual(b1["modified_zglobals_sha256"], guard.digest(self.source.read_bytes()))
         self.assertEqual(b1["t6_legacy_migration_denial"]["full_role_sealed"], False)
+        self.assertEqual(b1["t6_legacy_migration_denial"]["nvoctp_migration_if_enabled"],
+                         "COMPILE_TIME_ERROR")
+        self.assertEqual(b1["t6_legacy_migration_denial"]["nv_format_update_if_enabled"],
+                         "COMPILE_TIME_ERROR")
         with patch.object(guard.subprocess, "check_output", side_effect=self.git), self.assertRaises(ValueError):
             guard.stage(self.sdk, self.profile, self.root / "second.json", self.b1_receipt)
 
@@ -133,6 +154,32 @@ class T6LegacyMigrationGuard(unittest.TestCase):
                 guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
         self.assertFalse(self.receipt.exists())
 
+    def test_new_and_old_migration_bodies_are_independently_source_pinned(self):
+        # Same-receipt source mutations cannot relax either conversion path.
+        for before, after in (
+            (b"uint8_t i = 0", b"uint16_t i = 0"),
+            (b"osal_nv_delete_ex", b"osal_nv_write_ex"),
+            (b"uint16_t i = 0", b"uint8_t i = 0"),
+            (b"osal_nv_delete(ZCD_NV_LEGACY_TCLK_TABLE_START + i, 1)",
+             b"osal_nv_delete(ZCD_NV_LEGACY_TCLK_TABLE_START + i, 2)"),
+        ):
+            mutant = UPSTREAM.replace(before, after)
+            with self.subTest(before=before, after=after):
+                with self.assertRaisesRegex(ValueError, "unsafe migration source drift"):
+                    guard.guarded(mutant, UPSTREAM)
+
+    def test_nvoctp_migration_mutation_with_matching_b1_receipt_fails(self):
+        changed = OVERLAID.replace(b"osal_nv_delete(ZCD_NV_LEGACY_TCLK_TABLE_START + i, 1)",
+                                   b"osal_nv_delete(ZCD_NV_LEGACY_TCLK_TABLE_START + i, 2)")
+        self.source.write_bytes(changed)
+        bound = json.loads(self.b1_receipt.read_text())
+        bound["modified_zglobals_sha256"] = guard.digest(changed)
+        self.b1_receipt.write_text(json.dumps(bound))
+        with patch.object(guard.subprocess, "check_output", side_effect=self.git):
+            with self.assertRaisesRegex(ValueError, "unsafe migration source drift"):
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+        self.assertFalse(self.receipt.exists())
+
     def test_wrong_index_and_destructive_order_not_patched_silently(self):
         for mutant in (UPSTREAM.replace(b"uint8_t i = 0", b"uint16_t i = 0"),
                        UPSTREAM.replace(b"osal_nv_delete_ex", b"osal_nv_write_ex")):
@@ -171,16 +218,25 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         self.assertIn("tests.test_r4_t6_migration_guard", workflow)
 
     @unittest.skipUnless(shutil.which("gcc"), "host C compiler required")
-    def test_preprocessor_explicitly_refuses_legacy_migration_macro(self):
+    def test_preprocessor_refuses_each_migration_and_combination(self):
         content = (guard.GUARD + "int main(void) {return 0;}\n").encode()
         positive = subprocess.run(["gcc", "-x", "c", "-fsyntax-only", "-"],
                                   input=content, capture_output=True)
-        negative = subprocess.run(["gcc", "-DZSTACK_5_30_NV_MIGRATION",
-                                   "-x", "c", "-fsyntax-only", "-"],
-                                  input=content, capture_output=True)
         self.assertEqual(positive.returncode, 0, positive.stderr)
-        self.assertNotEqual(negative.returncode, 0)
-        self.assertIn(b"R4_TC300_LEGACY_MIGRATION_FORBIDDEN", negative.stderr)
+        macros = {
+            "ZSTACK_5_30_NV_MIGRATION": b"R4_TC300_LEGACY_MIGRATION_FORBIDDEN",
+            "ZSTACK_NVOCMP_MIGRATION": b"R4_NV4_NVOCTP_MIGRATION_FORBIDDEN",
+            "ZSTACK_NV_FORMAT_UPDATE": b"R4_NV4_FORMAT_UPDATE_FORBIDDEN",
+        }
+        for enabled in ([macro] for macro in macros):
+            for combo in (enabled, list(macros)):
+                with self.subTest(defines=combo):
+                    negative = subprocess.run(["gcc", *("-D" + m for m in combo),
+                                               "-x", "c", "-fsyntax-only", "-"],
+                                              input=content, capture_output=True)
+                    self.assertNotEqual(negative.returncode, 0)
+                    for macro in combo:
+                        self.assertIn(macros[macro], negative.stderr)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Guard TC300 against destructive TI 5.30 legacy migration
+      - name: Guard NV4/TC300 against all TI legacy format migrations
         run: python -m unittest -v tests.test_r4_t6_migration_guard
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
