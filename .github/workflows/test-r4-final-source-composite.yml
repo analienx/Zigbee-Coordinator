@@ -98,7 +98,7 @@ jobs:
           b=json.loads(Path('/tmp/r4fusion-b1.json').read_text())
           assert d['source_ready'] is False and d['flash_authorized'] is False
           assert d['b3_nwk_save_monotonic_and_B1_HOLD'] is True
-          assert len(d['changed']) == 5
+          assert set(d['changed']) == {'source/ti/zstack/stack/sys/zglobals.c', 'source/ti/zstack/stack/zdo/zd_app.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.h'}
           c=json.loads(Path('/tmp/r4composite-source.json').read_text())
           assert c['source_ready'] is False
           assert c['b1_f1_and_b4_f0_f2_dispatch'] is True

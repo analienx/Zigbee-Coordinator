@@ -40,6 +40,66 @@ LINKED = {
     "nwk_routes": ("rtgTable", "gMAX_RTG_ENTRIES", 128),
 }
 
+# Sizes below come from the pinned TI 8.33 public aps_mede.h structs on
+# Cortex-M4F (two uint32 counters plus two uint8 flags, 4-byte alignment),
+# and binding_table.h (14-byte fixed binding entry, 2-byte alignment).
+# They are deliberately NOT deduced from array_size / configured_count:
+# that division alone could silently accept an ABI/layout change.
+PINNED_ENTRY_BYTES = {
+    "trust_center_devices": 12,
+    "aps_table_entries": 12,
+}
+PINNED_BINDING_ENTRY_BYTES = 14
+
+# Actual nvocmp.c uses 4-byte page header + 3 x 4-byte compaction headers,
+# 7-byte compressed headers per item. aps_mede.h's 20-byte TCLK NV struct
+# therefore occupies 27 bytes/row; TI's *published* estimate of 27 B/TC
+# already includes this overhead. Do not add 7 B/row a second time.
+NV_PAGE_BYTES = 8192
+NV_PAGE_META_BYTES = 4 + 3 * 4
+NV_STORAGE_PAGES = 3  # 4 stock P7U pages minus 1 mandatory compaction page
+NV_TCLK_PAYLOAD_BYTES = 20
+NV_ITEM_HDR_BYTES = 7
+NV_TCLK_ITEM_BYTES = NV_TCLK_PAYLOAD_BYTES + NV_ITEM_HDR_BYTES
+
+
+def nv4_capacity_envelope(binding_count: int) -> dict:
+    """Conservative *guide estimate*, never an NV admission certificate.
+
+    Unlike nominal 3*8192, the 16 page-metadata bytes on each active page
+    are unavailable. The guide's estimates include per-item storage cost;
+    fragmentation, simultaneous old/new versions and actual NV contents
+    are not established by a native link or by this arithmetic.
+    """
+    if not 1 <= binding_count <= 255:
+        deny("BINDING_COUNT_UNSUPPORTED")
+    address_slots = 97 + binding_count + 5 + 300
+    estimated = 96 * 23 + 300 * NV_TCLK_ITEM_BYTES + address_slots * 19 + 2300
+    usable = NV_STORAGE_PAGES * (NV_PAGE_BYTES - NV_PAGE_META_BYTES)
+    headroom = usable - estimated
+    if headroom <= NV_TCLK_ITEM_BYTES:
+        # Even the guide's approximate lower-confidence baseline does not
+        # leave room for one replacement of a 27-byte TC row. Do not build a
+        # supposedly-capacious image whose *estimate* is already too large.
+        deny("NV4_CAPACITY_ESTIMATE_EXHAUSTS_UPDATE_SLACK")
+    return {
+        "source": "TI Z-Stack flash guide and pinned TI nvocmp.c/aps_mede.h",
+        "linked_binding_entries": binding_count,
+        "calculated_address_slots": address_slots,
+        "preallocated_tclk_items": 300,
+        "preallocated_tclk_data_bytes": 300 * NV_TCLK_PAYLOAD_BYTES,
+        "preallocated_tclk_header_bytes": 300 * NV_ITEM_HDR_BYTES,
+        "preallocated_tclk_total_bytes": 300 * NV_TCLK_ITEM_BYTES,
+        "nvocmp_page_metadata_bytes": NV_PAGE_META_BYTES,
+        "nvocmp_compaction_pages_reserved": 1,
+        "estimated_logical_bytes": estimated,
+        "nominal_three_data_pages_bytes": NV_STORAGE_PAGES * NV_PAGE_BYTES,
+        "three_data_pages_after_page_metadata_bytes": usable,
+        "estimated_unproven_headroom_bytes": headroom,
+        "single_tclk_row_update_bytes": NV_TCLK_ITEM_BYTES,
+        "status": "GUIDE_ESTIMATE_ONLY_NOT_NVOCMP_FIT_OR_ROLLOVER_PROOF",
+    }
+
 
 def deny(reason: str):
     raise ValueError("R4_R05_CAPACITY_BLOCKED_" + reason)
@@ -167,6 +227,9 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
                 array["size_bytes"] % expected != 0 or
                 array["section_type"] not in (1, 8)):
             deny("LINKED_ARRAY_OR_ABI_MISMATCH_" + domain)
+        pinned_entry = PINNED_ENTRY_BYTES.get(domain)
+        if pinned_entry is not None and array["size_bytes"] != expected * pinned_entry:
+            deny("LINKED_PINNED_TI_ENTRY_ABI_DRIFT_" + domain)
         results[domain] = {
             "linked_count": linked_count,
             "array_bytes": array["size_bytes"],
@@ -182,15 +245,9 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
     binding_count = b2.initializer_value(blob, binding_limit)
     if (binding_array is None or binding_count is None or
             not 1 <= binding_count <= 255 or
-            binding_array["size_bytes"] % binding_count != 0):
+            binding_array["size_bytes"] != binding_count * PINNED_BINDING_ENTRY_BYTES):
         deny("BINDING_CAPACITY_FOR_NV_ESTIMATE_UNRESOLVED")
-    # TI's public Z-Stack guide gives 23 B/child, 27 B/TC device,
-    # 19 B/address slot and approximately 2.3 KB of fixed NV items.
-    # This is only a *lower-confidence sizing estimate*, NOT evidence that
-    # 300 serialized NVOCMP rows or compaction fit on four real flash pages.
-    address_slots = 97 + binding_count + (300 + 5)
-    ti_approx_bytes = (96 * 23 + 300 * 27 + address_slots * 19 + 2300)
-    nv_nominal_usable = 3 * 8192  # fourth 8KiB page reserved for compaction
+    nv_envelope = nv4_capacity_envelope(binding_count)
     xml_raw = files["xml"]["path"].read_bytes()
     if len(xml_raw) > b2.MAX_XML or b"<!DOCTYPE" in xml_raw or b"<!ENTITY" in xml_raw:
         deny("LINKER_XML_UNTRUSTED")
@@ -228,15 +285,7 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
             "reserved_above_heap_bytes": after_heap,
             "status": "LINKER_ADDRESS_SPACE_NOT_FREE_RUNTIME_HEAP",
         },
-        "nv4_estimate_not_admission": {
-            "source": "TI Z-Stack flash memory guide; approximate, excluding item headers/fragmentation",
-            "linked_binding_entries": binding_count,
-            "calculated_address_slots": address_slots,
-            "estimated_logical_bytes": ti_approx_bytes,
-            "nominal_three_data_pages_bytes": nv_nominal_usable,
-            "nominal_unproven_headroom_bytes": nv_nominal_usable - ti_approx_bytes,
-            "status": "NOT_A_GENUINE_NVOCMP_FIT_OR_COMPACTION_PROOF",
-        },
+        "nv4_estimate_not_admission": nv_envelope,
         "elf_capacity_and_index_widths": "HOSTED_NATIVE_LINKED",
         "nv4_300_live_items_fit_verified": False,
         "runtime_heap_high_water_verified": False,

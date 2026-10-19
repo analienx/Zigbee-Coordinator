@@ -54,7 +54,7 @@ jobs:
           b=json.loads(Path('/tmp/r4fusion-b1.json').read_text())
           assert d['source_ready'] is False and d['flash_authorized'] is False
           assert d['b3_nwk_save_monotonic_and_B1_HOLD'] is True
-          assert len(d['changed']) == 5
+          assert set(d['changed']) == {'source/ti/zstack/stack/sys/zglobals.c', 'source/ti/zstack/stack/zdo/zd_app.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.h'}
           assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
           print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
           PY
