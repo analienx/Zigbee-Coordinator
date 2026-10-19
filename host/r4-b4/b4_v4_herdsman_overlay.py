@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from safe_checkout_files import validate_sources, read_source_text, write_source_text
+
 PIN = "0968f979d558874b17396c96b66382d4236bbdcd"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
@@ -113,7 +115,7 @@ V4_ADAPTER_METHOD = r"""
                 radioEpochHardwareVerified: false,
             };
         } catch (error: unknown) {
-            if (error instanceof Error && error.message === "B4 F0 runtime admission vetoed") {
+            if (error instanceof Error && error.message === "B4 F2 runtime admission vetoed") {
                 return undefined;
             }
             // A failed v4 waiter can consume a late frame; disable further
@@ -138,12 +140,11 @@ def once(s, a, b):
 
 def plan(root):
     root = Path(root)
-    if not root.is_dir() or root.is_symlink() or not str(root.resolve()).startswith("/tmp/"):
-        raise ValueError("only disposable /tmp herdsman source")
+    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER, PARSER, WRITER)
+    validate_sources(root, paths)
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("herdsman HEAD drift")
-    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER, PARSER, WRITER)
-    original = {p: (root / p).read_text() for p in paths}
+    original = {p: read_source_text(root, p) for p in paths}
     # Raw UNPI logging paths were untouched by v3. Verify pristine blobs
     # before redaction; no second logger/transport or broad source guessing.
     for path in (PARSER, WRITER):
@@ -236,6 +237,23 @@ def plan(root):
         raise ValueError("v3 diagnostic owner mutex guard count drift")
     znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
+    # The v3 overlay's writer/timer cleanup previously applied only to F0.
+    # F2 must use exactly the same tagged waiter's settlement and quarantine.
+    znp = once(
+        znp,
+        'const isB4Diag = object.command.name === "r4DiagReadOnly";',
+        'const isB4Diag = object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4";',
+    )
+    znp = once(
+        znp,
+        'subsystem === Subsystem.SYS && command === "r4DiagReadOnly" && this.b4DiagPoisoned',
+        'subsystem === Subsystem.SYS && (command === "r4DiagReadOnly" || command === "r4DiagReadOnlyV4") && this.b4DiagPoisoned',
+    )
+    znp = once(
+        znp,
+        'throw new Error("B4 F0 runtime admission vetoed");',
+        'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 F2 runtime admission vetoed" : "B4 F0 runtime admission vetoed");',
+    )
     # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
     znp = once(znp,
         "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",
@@ -277,7 +295,7 @@ def apply(root):
                 "installed": False, "v3_preserved": True,
                 "unpi_raw_debug_payload_logging": False, "files": {}}
     for path, (before, after) in items.items():
-        (Path(root) / path).write_text(after, encoding="utf-8", newline="")
+        write_source_text(root, path, after)
         evidence["files"][path] = {"sha256_before": hashlib.sha256(before.encode()).hexdigest(),
                                    "sha256_after": hashlib.sha256(after.encode()).hexdigest()}
     return evidence

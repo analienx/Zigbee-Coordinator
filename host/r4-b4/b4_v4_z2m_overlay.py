@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from safe_checkout_files import validate_sources, read_source_text, write_source_text
+
 PIN = "62b02e2aa1997c574223b80c196677b63a25f4a7"
 CONTROLLER = "lib/controller.ts"
 MARKER = "B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE"
@@ -18,11 +20,10 @@ def git(root, *args):
 
 def plan(root):
     root = Path(root)
-    if not root.is_dir() or root.is_symlink() or not str(root.resolve()).startswith("/tmp/"):
-        raise ValueError("v4 Z2M requires disposable /tmp")
+    validate_sources(root, (CONTROLLER,))
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("wrong pinned Zigbee2MQTT 2.14.0")
-    src = (root / CONTROLLER).read_text()
+    src = read_source_text(root, CONTROLLER)
     if MARKER in src:
         raise ValueError("already applied")
     if src.count("    public async b4ProbeReadOnlyDiagnostics(enabled = false) {") != 1:
@@ -61,7 +62,7 @@ def plan(root):
 
 def apply(root):
     before, after = plan(root)
-    (Path(root) / CONTROLLER).write_text(after, encoding="utf-8", newline="")
+    write_source_text(root, CONTROLLER, after)
     return {
         "schema": "r4-b4-v4-z2m-source-overlay-v1",
         "stage": "DISPOSABLE_SOURCE_ONLY", "installed": False,

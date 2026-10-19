@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from safe_checkout_files import validate_sources, read_source_bytes, write_source_text
+
 SHA = "0968f979d558874b17396c96b66382d4236bbdcd"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
@@ -150,13 +152,12 @@ def replace_once(source, original, replacement):
     return source.replace(original, replacement, 1)
 
 def plan(root):
-    if not root.is_dir() or not str(root.resolve()).startswith("/tmp/"):
-        raise ValueError("herdsman overlay only allowed in disposable /tmp checkout")
+    validate_sources(root, (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS, CONTROLLER))
     if _git(root, "rev-parse", "HEAD").decode().strip() != SHA:
         raise ValueError("herdsman source HEAD not exact version 10.9.1 pin")
     originals = {}
     for name in (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, MUTEX, WAITRESS, CONTROLLER):
-        actual = (root / name).read_bytes()
+        actual = read_source_bytes(root, name)
         if actual != _git(root, "show", SHA + ":" + name):
             raise ValueError("dirty or wrong upstream source: " + name)
         originals[name] = actual.decode("utf-8")
@@ -251,8 +252,51 @@ def plan(root):
     changes[CONTROLLER] = controller
     # The pinned AsyncMutex.count counts *queued* requests, not the
     # in-flight lock. An empty queue is NOT sufficient to prove ZNP idle.
-    changes[MUTEX] = replace_once(
+    # The original mutex clears #locked BEFORE waking its next waiter:
+    # a new request can overtake that waiter, while isIdle() lies during
+    # the handoff. Keep lock ownership reserved for the selected waiter.
+    # Reset/close must reject queued promises instead of orphaning them.
+    mutex = replace_once(
         originals[MUTEX],
+        "readonly #queue: Array<() => void> = [];",
+        "readonly #queue: Array<{resume: () => void; fail: (error: Error) => void}> = [];",
+    )
+    mutex = replace_once(
+        mutex,
+        "await new Promise<void>((resolve) => this.#queue.push(resolve));",
+        "await new Promise<void>((resolve, reject) => this.#queue.push({resume: () => resolve(), fail: reject}));",
+    )
+    mutex = replace_once(
+        mutex,
+        """            this.#locked = false;
+            const next = this.#queue.shift();
+
+            if (next) {
+                next();
+            }""",
+        """            const next = this.#queue.shift();
+            if (next) {
+                // Reserved lock: a third caller MUST queue behind this handoff.
+                next.resume();
+            } else {
+                this.#locked = false;
+            }""",
+    )
+    mutex = replace_once(
+        mutex,
+        """    clear() {
+        this.#queue.length = 0;
+    }""",
+        """    clear() {
+        // Reset/disconnect shall settle every queued caller exactly once.
+        const abandoned = this.#queue.splice(0);
+        for (const waiter of abandoned) {
+            waiter.fail(new Error("AsyncMutex queue cleared"));
+        }
+    }""",
+    )
+    changes[MUTEX] = replace_once(
+        mutex,
         """    get count() {
         return this.#queue.length;
     }""",
@@ -260,7 +304,7 @@ def plan(root):
         return this.#queue.length;
     }
 
-    // B4_EXPERIMENTAL_EXISTING_OWNER: observation only; never alters locking.
+    // True only when no owner, including during a reserved handoff.
     isIdle(): boolean {
         return !this.#locked && this.#queue.length === 0;
     }""",
@@ -272,7 +316,31 @@ def plan(root):
     changes[WAITRESS] = replace_once(
         originals[WAITRESS],
         "    public clear(): void {",
-        """    /** B4_EXPERIMENTAL_EXISTING_OWNER: observation only. */
+        """    /** B4: cancel tagged diagnostic promise; stock waiters are untouched. */
+    public b4Cancel(id: number, reason: string): boolean {
+        const waiter = this.waiters.get(id);
+        if (!waiter) {
+            return false;
+        }
+        this.remove(id);
+        if (!waiter.resolved && !waiter.timedout) {
+            waiter.reject(new Error(reason));
+        }
+        return true;
+    }
+
+    /** Called on owner close: cancel only diagnostics, not ordinary SRSPs. */
+    public b4CancelMatching(matches: (matcher: TMatcher) => boolean, reason: string): number {
+        let cancelled = 0;
+        for (const waiter of [...this.waiters.values()]) {
+            if (matches(waiter.matcher) && this.b4Cancel(waiter.ID, reason)) {
+                cancelled++;
+            }
+        }
+        return cancelled;
+    }
+
+    /** B4_EXPERIMENTAL_EXISTING_OWNER: observation only. */
     public b4IsIdle(): boolean {
         return this.waiters.size === 0;
     }
@@ -368,6 +436,23 @@ def plan(root):
 
     public isInitialized(): boolean {""",
     )
+    # Owner close must cancel diagnostic waiters before closing the serial
+    # transport, including a silent F2. Never touch stock AF/ZDO waiter
+    # cancellation policy in this optional source overlay.
+    changes[ZNP] = replace_once(
+        changes[ZNP],
+        """        logger.info("closing", NS);
+        this.queue.clear();""",
+        """        logger.info("closing", NS);
+        this.b4PoisonDiagSession();
+        this.queue.clear();
+        this.waitress.b4CancelMatching(
+            (matcher) => matcher.type === Type.SRSP &&
+                matcher.subsystem === Subsystem.SYS &&
+                (matcher.command === "r4DiagReadOnly" || matcher.command === "r4DiagReadOnlyV4"),
+            "B4 diagnostic owner closed",
+        );""",
+    )
     # Only the opt-in diagnostic waiter needs explicit cleanup on timeout:
     # pinned Waitress marks timedout=true but keeps it in its map until a
     # subsequent response. Do not change AF/ZDO/stock SYS waiter policy.
@@ -416,27 +501,28 @@ def plan(root):
                 this.unpiWriter.writeFrame(object.unpiFrame);
                 const result = await waiter.start().promise;""",
         """                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);
-                // The pinned Znp installs the waiter before writing. A
-                // synchronous diagnostic writer failure must remove it or
-                // leave an orphan that survives without a timeout timer.
+                const isB4Diag = object.command.name === "r4DiagReadOnly";
+                if (isB4Diag) {
+                    // Attach rejection handling before a synchronous writer
+                    // failure cancels an unstarted diagnostic waiter.
+                    void waiter.start().promise.catch(() => undefined);
+                }
                 try {
                     this.unpiWriter.writeFrame(object.unpiFrame);
                 } catch (error) {
-                    if (object.command.name === "r4DiagReadOnly") {
+                    if (isB4Diag) {
                         this.b4PoisonDiagSession();
-                        this.waitress.remove(waiter.ID);
+                        this.waitress.b4Cancel(waiter.ID, "B4 diagnostic writer failed");
                     }
                     throw error;
                 }
-                // B4_EXPERIMENTAL_EXISTING_OWNER: prevent a timed-out
-                // diagnostic waiter lingering when the radio stays silent.
                 const result = await waiter.start().promise.catch((error: unknown) => {
                     this.b4RecordHostSreqTimeout(object.subsystem, object.command.name, timeout || t, error);
-                    // The pinned Waitress keeps a timed-out waiter until its
-                    // next response; only B4 F0 alters stock cleanup policy.
-                    if (object.command.name === "r4DiagReadOnly") {
+                    // A timed-out diagnostic must not retain a matcher that
+                    // could later consume a stale frame. Stock commands stay.
+                    if (isB4Diag) {
                         this.b4PoisonDiagSession();
-                        this.waitress.remove(waiter.ID);
+                        this.waitress.b4Cancel(waiter.ID, "B4 diagnostic failed");
                     }
                     throw error;
                 });""",
@@ -471,7 +557,7 @@ def apply(root):
         "files": {},
     }
     for name, (original, new) in plans.items():
-        (root / name).write_text(new, encoding="utf-8", newline="")
+        write_source_text(root, name, new)
         receipt["files"][name] = {
             "before_sha256": hashlib.sha256(original.encode()).hexdigest(),
             "after_sha256": hashlib.sha256(new.encode()).hexdigest(),

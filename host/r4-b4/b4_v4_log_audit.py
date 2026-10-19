@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from safe_checkout_files import read_source_bytes
+
 BASE = "src/adapter/z-stack"
 ZNP = BASE + "/znp/znp.ts"
 PARSER = BASE + "/unpi/parser.ts"
@@ -25,10 +27,7 @@ def verify(root, receipt):
         raise ValueError("source receipt lacks privacy or owner guarantees")
     source = {}
     for name in (ZNP, PARSER, WRITER):
-        file = root / name
-        if not file.is_file() or file.is_symlink():
-            raise ValueError("missing/symlinked source")
-        raw = file.read_bytes()
+        raw = read_source_bytes(root, name)
         expected = evidence.get("files", {}).get(name, {}).get("sha256_after")
         if hashlib.sha256(raw).hexdigest() != expected:
             raise ValueError("patched source SHA mismatch: " + name)
