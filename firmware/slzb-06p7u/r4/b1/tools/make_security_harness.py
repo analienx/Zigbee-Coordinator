@@ -94,9 +94,12 @@ static uint8_t logical_type;
 static ZDSecMgrEntry_t entries[4], restored[4];
 static ZDSecMgrEntry_t *ZDSecMgrEntries = restored;
 static APSME_ApsLinkKeyNVEntry_t aps[4];
-static APSME_TCLinkKeyNVEntry_t tc[4];
+static APSME_TCLinkKeyNVEntry_t tc[gZDSECMGR_TC_DEVICE_MAX];
 static APSME_ApsLinkKeyRAMEntry_t ApsLinkKeyRAMEntry[4];
-static APSME_TCLinkKeyRAMEntry_t TCLinkKeyRAMEntry[4];
+static APSME_TCLinkKeyRAMEntry_t TCLinkKeyRAMEntry[gZDSECMGR_TC_DEVICE_MAX];
+static uint8_t tc_present[gZDSECMGR_TC_DEVICE_MAX];
+static uint16_t create_fail_at = UINT16_MAX;
+static unsigned write_fail_at;
 static uint8_t zgApsTrustCenterAddr[8];
 static int b1_nv_runtime_hold_active(void) { return held; }
 static int b1_nv_existing_header_candidate(void) { return existing; }
@@ -139,18 +142,21 @@ static uint16_t osal_nv_item_len(uint16_t id)
 }
 static void *row(uint16_t table, uint16_t i, uint16_t len)
 {
-  assert(i<4);
+  assert(i<(table==ZCD_NV_EX_TCLK_TABLE ? gZDSECMGR_TC_DEVICE_MAX : gZDSECMGR_ENTRY_MAX));
   if(table==ZCD_NV_EX_APS_KEY_DATA_TABLE) { assert(len==sizeof(aps[i])); return &aps[i]; }
   assert(table==ZCD_NV_EX_TCLK_TABLE && len==sizeof(tc[i])); return &tc[i];
 }
 static uint8_t osal_nv_read_ex(uint16_t table,uint16_t i,uint16_t off,uint16_t len,void *dst)
 {
   ++reads; assert(off==0);
+  /* A uint8_t loop mutant must fail promptly at slot 256, not hang CI. */
+  assert(reads <= gZDSECMGR_TC_DEVICE_MAX * 5u + 150u);
   if(probe_during_security_preflight && table==ZCD_NV_EX_TCLK_TABLE && i==0u) {
     ++preflight_observation_count;
     assert(!b1_sec_restored_network_validated()); /* security not yet fully checked */
   }
   if(missing_table==table && missing_index==i) return 1;
+  if(table==ZCD_NV_EX_TCLK_TABLE && !tc_present[i]) return 1;
   memcpy(dst,row(table,i,len),len);
   if(readback_corrupt && writes) ((uint8_t*)dst)[0]^=1u;
   return SUCCESS;
@@ -158,12 +164,17 @@ static uint8_t osal_nv_read_ex(uint16_t table,uint16_t i,uint16_t off,uint16_t l
 static uint8_t osal_nv_write_ex(uint16_t table,uint16_t i,uint16_t len,void *src)
 {
   ++writes;
-  if(write_fail) return 1;
+  if(write_fail || (write_fail_at && writes==write_fail_at)) return 1;
   memcpy(row(table,i,len),src,len); return SUCCESS;
 }
 static uint8_t osal_nv_item_init_ex(uint16_t table,uint16_t i,uint16_t len,void *src)
 {
   ++creates;
+  if(table==ZCD_NV_EX_TCLK_TABLE && !tc_present[i]) {
+    if(i==create_fail_at) return 1;
+    memcpy(row(table,i,len),src,len); tc_present[i]=TRUE;
+    return NV_ITEM_UNINIT;
+  }
   if(missing_table==table && missing_index==i) {
     memcpy(row(table,i,len),src,len); missing_table=0; return NV_ITEM_UNINIT;
   }
@@ -182,6 +193,7 @@ static void AddrMgrEntryRelease(AddrMgrEntry_t *p) { (void)p; }
 static uint8_t b1_sec_write_checked(uint16_t, uint16_t, uint16_t, void *);
 static void setup(void)
 {
+  memset(tc_present, TRUE, sizeof(tc_present));
   nwk.active.keySeqNum=7; nwk.active.key[0]=0x55; nwk.frameCounter=100;
   active=nwk.active;
   nib.nwkState=NWK_ROUTER; nib.nwkLogicalChannel=15; nib.nwkKeyLoaded=TRUE;
@@ -192,6 +204,106 @@ static void setup(void)
   tc[0].extAddr[0]=0x44; tc[0].txFrmCntr=200; tc[0].rxFrmCntr=60;
 }
 '''
+
+TC300_MAIN = r'''
+/* Source-extracted real TI/B1 functions; public synthetic media only.
+ * 300 is the FULL P7U profile, never a claim about an actual NV image. */
+int main(int argc, char **argv)
+{
+  assert(argc==2);
+  const char *s=argv[1];
+  uint8_t original_seed[SEC_KEY_LEN];
+  setup();
+  memcpy(original_seed,seed,sizeof(seed));
+  assert(gZDSECMGR_TC_DEVICE_MAX==300u);
+  if(!strncmp(s,"formed_sparse_",14) || !strncmp(s,"unformed_sparse_",16)) {
+    uint8_t formed=s[0]=='f';
+    unsigned allocated=(unsigned)strtoul(s+(formed?14:16),NULL,10);
+    assert(allocated<=300u);
+    for(unsigned i=allocated;i<300u;++i) tc_present[i]=FALSE;
+    if(!formed) {
+      on_network=FALSE;
+      nib.nwkState=NWK_INIT; nib.nwkKeyLoaded=FALSE;
+      nib.nwkDevAddress=nib.nwkCoordAddress=nib.nwkPanId=0xFFFFu;
+      tc[0].extAddr[0]=0; /* genuinely empty synthetic new-network slots */
+    }
+    if(formed && allocated<300u) {
+      assert(!b1_sec_validate_restored() && held && writes==0 && creates==0);
+      assert(!b1_sec_restored_network_validated());
+    } else {
+      assert(b1_sec_validate_restored() && !held);
+      if(formed) {
+        assert(b1_sec_restored_network_validated() && writes==0);
+      } else {
+        APSME_TCLinkKeyInit(FALSE);
+        assert(!held && writes==0 && creates==300u);
+        for(unsigned i=0;i<300u;++i) assert(tc_present[i]);
+      }
+    }
+  } else if(!strcmp(s,"formed_high_index")) {
+    tc[299].extAddr[0]=0x44; tc[299].txFrmCntr=300;
+    tc[0].extAddr[0]=0;
+    assert(b1_sec_validate_restored());
+    APSME_TCLinkKeyInit(FALSE);
+    assert(!held && writes==1 && creates==0);
+    assert(tc[299].txFrmCntr==311 && TCLinkKeyRAMEntry[299].txFrmCntr==311);
+    assert(tc[0].txFrmCntr==200 && TCLinkKeyRAMEntry[0].txFrmCntr==0);
+  } else if(!strcmp(s,"formed_last_write_failure") ||
+            !strcmp(s,"formed_last_readback_failure")) {
+    tc[299].extAddr[0]=0x45; tc[299].txFrmCntr=300;
+    assert(b1_sec_validate_restored());
+    if(strstr(s,"write_failure")) write_fail_at=2;
+    else readback_corrupt=TRUE;
+    APSME_TCLinkKeyInit(FALSE);
+    assert(held && writes==(readback_corrupt?1u:2u) && creates==0);
+    assert(TCLinkKeyRAMEntry[299].txFrmCntr==0 && !TCLinkKeyRAMEntry[299].entryUsed);
+  } else if(!strcmp(s,"formed_last_counter_overflow")) {
+    tc[299].extAddr[0]=0x45; tc[299].txFrmCntr=UINT32_MAX-10u;
+    assert(!b1_sec_validate_restored() && held && writes==0 && creates==0);
+  } else if(!strcmp(s,"unformed_allocation_failure_256")) {
+    on_network=FALSE;
+    nib.nwkState=NWK_INIT; nib.nwkKeyLoaded=FALSE;
+    nib.nwkDevAddress=nib.nwkCoordAddress=nib.nwkPanId=0xFFFFu;
+    tc[0].extAddr[0]=0;
+    for(unsigned i=192;i<300u;++i) tc_present[i]=FALSE;
+    create_fail_at=256u;
+    assert(b1_sec_validate_restored());
+    APSME_TCLinkKeyInit(FALSE);
+    assert(held && creates==257u && writes==0);
+    for(unsigned i=192;i<256u;++i) assert(tc_present[i]);
+    for(unsigned i=256;i<300u;++i) assert(!tc_present[i]);
+  } else {
+    fprintf(stderr,"Unknown T5 TC300 scenario: %s\n",s); return 2;
+  }
+  assert(memcmp(seed,original_seed,sizeof(seed))==0);
+  assert(erases==0);
+  printf("T5_TC300_REAL_FUNCTIONS_PASS %s reads=%u writes=%u creates=%u HOLD=%u RF=NOT_MEASURED\n",
+         s,reads,writes,creates,held);
+  return 0;
+}
+'''
+
+TC300_SCENARIOS = (
+    *(f'formed_sparse_{n}' for n in (64,100,192,255,256,299,300)),
+    *(f'unformed_sparse_{n}' for n in (64,100,192,255,256,299,300)),
+    'formed_high_index', 'formed_last_write_failure',
+    'formed_last_readback_failure', 'formed_last_counter_overflow',
+    'unformed_allocation_failure_256',
+)
+
+TC300_MUTANTS = {
+    # The very real T6 index risk: 300 cannot fit in an 8-bit loop variable.
+    'truncated_slot_index': ('formed_high_index',
+        'void APSME_TCLinkKeyInit(uint8_t setDefault)\n{\n  uint16_t i;',
+        'void APSME_TCLinkKeyInit(uint8_t setDefault)\n{\n  uint8_t i;'),
+    'sparse_formed_table_accepted': ('formed_sparse_299',
+        'if (osal_nv_read_ex(ZCD_NV_EX_TCLK_TABLE, i, 0, sizeof(row), &row) != SUCCESS ||\n'
+        '          row.SeedShift >= SEC_KEY_LEN ||',
+        'if (FALSE ||\n          row.SeedShift >= SEC_KEY_LEN ||'),
+    'publish_after_failed_write': ('formed_last_write_failure',
+        '    if (!b1_sec_write_checked(ZCD_NV_EX_TCLK_TABLE, i, sizeof(row), &row)) return;',
+        '    (void)b1_sec_write_checked(ZCD_NV_EX_TCLK_TABLE, i, sizeof(row), &row);'),
+}
 
 MAIN = r'''
 int main(int argc,char **argv)
@@ -389,6 +501,9 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--list-scenarios', action='store_true')
     p.add_argument('--mutant', choices=tuple(MUTANTS))
+    p.add_argument('--tc300', action='store_true',
+                   help='compile actual extracted functions for TC300 sparse/allocation fault matrix')
+    p.add_argument('--tc300-mutant', choices=tuple(TC300_MUTANTS))
     a = p.parse_args()
     source = a.source.read_text(encoding='utf-8')
     functions = [extract_function(source, sig) for sig in SIGNATURES]
@@ -401,8 +516,21 @@ def main():
             raise RuntimeError('SECURITY_MUTATION_SOURCE_DRIFT ' + a.mutant)
         contents = contents.replace(before, after, 1)
         print('EXPECTED_FAIL_SCENARIO=' + scenario)
-    a.output.write_text(PREAMBLE + contents + MAIN, encoding='utf-8')
-    print(' '.join(SCENARIOS) if a.list_scenarios else 'B1_LINKED_APS_TCLK_FUNCTIONS_EXTRACTED')
+    if a.tc300_mutant:
+        if not a.tc300:
+            raise ValueError('TC300_MUTANTS_REQUIRE_TC300')
+        scenario, before, after = TC300_MUTANTS[a.tc300_mutant]
+        if contents.count(before) != 1:
+            raise RuntimeError('TC300_MUTATION_SOURCE_DRIFT ' + a.tc300_mutant)
+        contents = contents.replace(before, after, 1)
+        print('EXPECTED_FAIL_SCENARIO=' + scenario)
+    preamble = PREAMBLE
+    if a.tc300:
+        preamble = preamble.replace('#define gZDSECMGR_TC_DEVICE_MAX 4u',
+                                    '#define gZDSECMGR_TC_DEVICE_MAX 300u')
+    a.output.write_text(preamble + contents + (TC300_MAIN if a.tc300 else MAIN), encoding='utf-8')
+    print(' '.join(TC300_SCENARIOS if a.tc300 else SCENARIOS) if a.list_scenarios
+          else 'B1_LINKED_APS_TCLK_FUNCTIONS_EXTRACTED')
 
 
 if __name__ == '__main__':
