@@ -212,3 +212,55 @@ monotonicity, ABI compatibility, ZDO-ready boot, or actual RF operation.
 Both still traverse B1's separate native security gate. The main T3 finding
 and device-side validation therefore remain open; no NV write, compaction,
 flash, merge or commissioning is authorized by this classifier.
+
+## 19 October exact-TI four-page NOR power-cut matrix (partial T4)
+
+The earlier two-page N24 power-cut test did not cover the multipage TI
+`NVOCMP_compactPage()` implementation selected when `NVOCMP_NVPAGES=4`.
+`nv4_powercut_ti_host_clone.py` now extracts the **unchanged** four-page
+`NVOCMP_compactPage()`, `NVOCMP_compact()` and `NVOCMP_findSignature()` from
+the SHA-pinned TI 8.33.00.16 vendor source. Its host-only NVS simulator
+implements NOR one-way programming and sector erase in disposable RAM.
+It replays a public synthetic, uncommissioned coordinator layout and cuts
+power at **every committed-byte boundary of every NVS_write and NVS_erase**
+performed by genuine TI compaction (including zero/all bytes). No actual
+flash, device, RF, key material or private capture participates.
+
+The test first exposed a missed *settled* TI page geometry: following
+`NVOCMP_cleanPage()`, TI fully erases source sectors and then **reformats**
+them with a signed `PGNACT=0xff` page header and blank item region. A normal
+complete compaction can thus have `1 PGACT + 1 PGXDST + 2 PGNACT`, whereas
+the independent preflight previously recognized only `1 PGACT + 1 PGXDST +
+2 PGFULL`. The preflight now permits a formatted `PGNACT` only if all
+signatures and bounded header fields are sound, its compaction state is
+normal, its logical end is erased, and **every byte** of its data region
+is blank. A physically raw/unformatted page, partially damaged page header,
+stale payload or in-progress `PGXSRC`/`PGCDST` still HOLDS.
+
+Pinned-source local result for this **one synthetic compacting workload**:
+
+| Genuine TI NV4 compaction | Result |
+|---|---:|
+| Program/erase operations in uninterrupted pass | 26 |
+| Distinct interrupted-byte-boundary media images | 24,703 |
+| Independent preflight HOLD | 24,701 |
+| Settled semantic candidates | 2 |
+| Candidate cases verified by TI `NORMAL_RESUME` with no write/erase | 2 |
+| Device flash authorized | **No** |
+
+The independent scanner never invokes a write or erasure; its candidate
+cases reproduce TI native initialization in read-only mode with the same
+three CRC-authenticated live synthetic items. The test is reproducible by
+`tests/test_r4_nv4_powercut_ti_host_clone.py` and the pinned-source
+`.github/workflows/test-r4-stock-nv4-source.yml` workflow. The post-B1
+exact-source clone also exercises the newly admitted formatted-inactive
+geometry.
+
+**Limits:** byte-boundary enumeration over one source-backed synthetic
+workload is not a proof for all ring layouts, item populations, scheduler
+interleavings, controller reset physics or NV transaction histories.
+In particular it says **nothing about APS/NWK/Trust Center frame-counter
+monotonicity** across successful commits and reset/rejoin, and does not
+establish an existing formed-network migration. R4-R03/T4 and T5 remain
+open pending wider invariants and counter-durability verification. The
+physical/RF/release gates remain unchanged.

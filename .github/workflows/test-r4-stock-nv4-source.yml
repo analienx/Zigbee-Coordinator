@@ -6,8 +6,10 @@ on:
       - 'firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py'
       - 'tests/test_r4_nv4_source_overlay.py'
       - 'tests/test_r4_nv4_ti_host_clone.py'
+      - 'tests/test_r4_nv4_powercut_ti_host_clone.py'
       - 'tests/test_r4_nv4_readonly_admission.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_powercut_ti_host_clone.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_ti_host_clone.py'
       - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
@@ -31,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Unit-test four matching native geometry anchors and independent C reader
-        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone tests.test_r4_nv4_ti_compaction_powercut
+        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_powercut_ti_host_clone tests.test_r4_nv4_ti_compaction_powercut tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone
       - name: Fetch exact public TI 8.33 source inputs without any SDK installer
         run: |
           python - <<'PY'
@@ -109,6 +111,11 @@ jobs:
           R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
           R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
         run: python -m unittest -v tests.test_r4_nv4_ti_compaction_powercut
+      - name: Exhaust every byte boundary of genuine TI four-page NOR operations
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+        run: python -m unittest -v tests.test_r4_nv4_powercut_ti_host_clone
       - name: Fetch real pinned B1/Z-Stack source dependencies into disposable SDK
         run: |
           python - <<'PY'

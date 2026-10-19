@@ -76,6 +76,18 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
                           result['compaction_attempts']), (0, 0, 0))
         self.assertFalse(result['flash_authorized'])
 
+    def test_real_b1_boot_after_ti_cleanpage_formatted_inactive_pages(self):
+        media = bytearray(stock_like_semantic())
+        for page in (1, 2):
+            media[page * 8192] = 0xff  # PGNACT with intact TI-signed header
+        result = self.probe(bytes(media))
+        self.assertTrue(result['ti_init_readonly_accepted'])
+        self.assertEqual(result['ti_init_action'], 1)
+        self.assertEqual((result['all_items'], result['active_items']), (3, 3))
+        self.assertEqual((result['write_attempts'], result['erase_attempts'],
+                          result['compaction_attempts']), (0, 0, 0))
+        self.assertFalse(result['flash_authorized'])
+
     def test_bad_crc_holds_before_ti_initialization(self):
         image = bytearray(stock_like_semantic())
         image[16] ^= 1

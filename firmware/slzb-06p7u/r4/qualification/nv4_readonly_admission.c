@@ -204,7 +204,8 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         if (!bounded_read(reader, ctx, &r, base, header, sizeof(header))) return r;
         /* Real TI NVOCMP_cleanPage can recycle the source to PGNACT=0xFF:
          * the *valid header* is reprogrammed, but data remain erased. It is
-         * NOT an all-0xFF factory blank page. */
+         * NOT an all-0xFF factory blank page. Unformatted erase, stale data
+         * and torn page metadata still HOLD. */
         if (header[3] != 0x96u || header[7] != 0x96u ||
             header[11] != 0x96u || header[15] != 0x96u ||
             (header[2] >> 2) != 3u ||

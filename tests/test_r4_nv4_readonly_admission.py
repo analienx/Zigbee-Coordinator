@@ -213,6 +213,28 @@ class Nv4AdmissionTests(unittest.TestCase):
         before[16 + len(b'not-a-real-key') + 5] &= ~2
         self.assertEqual(self.probe(bytes(before)).code, 4)
 
+    def test_pinned_ti_formatted_inactive_page_after_cleanpage(self):
+        # Genuine TI NVOCMP_erase() erases then reformats the page header as
+        # PGNACT=0xff, retaining a valid cycle and four 0x96 signatures.
+        media = bytearray(stock_like_semantic())
+        for page in (1, 2):
+            media[page * PAGE_SIZE] = 0xff
+        settled = self.probe(bytes(media))
+        self.assertEqual((settled.code, settled.semantic_state), (8, 1))
+        self.assertEqual((settled.records, settled.active_records), (3, 3))
+
+        # A blank unformatted page, half-erased header or residual item bytes
+        # must never be treated as the formatted, empty PGNACT page.
+        invalid = bytearray(media)
+        invalid[PAGE_SIZE:2 * PAGE_SIZE] = b'\xff' * PAGE_SIZE
+        self.assertEqual(self.probe(bytes(invalid)).code, 3)
+        invalid = bytearray(media)
+        invalid[PAGE_SIZE + 7] = 0xff
+        self.assertEqual(self.probe(bytes(invalid)).code, 3)
+        invalid = bytearray(media)
+        invalid[PAGE_SIZE + 64] = 0x5a
+        self.assertEqual(self.probe(bytes(invalid)).code, 4)
+
     def test_pinned_legacy_osal_markers_yield_only_candidates(self):
         unformed = self.probe(stock_like_semantic())
         self.assertEqual((unformed.code, unformed.semantic_state), (8, 1))
