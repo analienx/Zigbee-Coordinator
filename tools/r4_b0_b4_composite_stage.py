@@ -17,6 +17,7 @@ from pathlib import Path
 
 TI_SHA="3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 B2_SHA="d13a48f5226d42e247a17d9198d84c94a4415030"
+B2_FAILURE_SHA="530a52631fbde274a2ae356c490bad71b47168a6"
 B4_SHA="3231abb1f13210eb88afe13ff7b7f9f29709cd6b"
 ZDO="source/ti/zstack/stack/zdo/zd_app.c"
 NVO="source/ti/common/nv/nvocmp.c"
@@ -46,13 +47,13 @@ def extract(text,signature):
             if depth==0:return text[start:idx+1]
     raise ValueError("UNBALANCED_C_SOURCE "+signature)
 
-def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sha,b4sha):
+def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script,b4v4script,b2sha,b2failuresha,b4sha):
     sdk=sdk.resolve()
     if not str(sdk).startswith("/tmp/") or not (sdk/".git").exists():
         raise ValueError("ONLY_HOSTED_DISPOSABLE_TI_SOURCE")
     if subprocess.check_output(["git","-C",str(sdk),"rev-parse","HEAD"],text=True).strip()!=TI_SHA:
         raise ValueError("SDK_SHA_DRIFT")
-    if b2sha!=B2_SHA or b4sha!=B4_SHA:
+    if b2sha!=B2_SHA or b2failuresha!=B2_FAILURE_SHA or b4sha!=B4_SHA:
         raise ValueError("SIBLING_COMMIT_PIN_DRIFT")
     prior=json.loads(fusionreceipt.read_text())
     b1=json.loads(b1receipt.read_text())
@@ -64,6 +65,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
     if (getattr(b2,"SDK_SHA",None)!=TI_SHA or
         "source_is_candidate_only" not in b2script.read_text()):
         raise ValueError("B2_MTO_ACTUAL_DONOR_SCRIPT_DRIFT")
+    b2failure=load("r4_immutable_b2_failure_guard",b2failurescript)
+    if (getattr(b2failure,"SDK_SHA",None)!=TI_SHA or
+        getattr(b2failure,"ZDAPP",None)!=ZDO or
+        getattr(b2failure,"ZDAPP_BLOB",None)!="d67a7798a3e6a8681faddebf5e4b87b4b4c60421" or
+        getattr(b2failure,"FAILURE_SIGNATURE",None)!="void ZDO_ManytoOneFailureIndicationCB()" or
+        "RTG_MTORouteReq();" not in b2failure.FAILURE_AFTER or
+        "zgConcentratorEnable != TRUE" not in b2failure.FAILURE_AFTER or
+        "devState != DEV_ZB_COORD && devState != DEV_ROUTER" not in b2failure.FAILURE_AFTER):
+        raise ValueError("B2_FAILURE_GUARD_PINNED_SOURCE_DRIFT")
     current=(sdk/ZDO).read_text()
     if hashlib.sha256(current.encode()).hexdigest()!=b1.get("modified_zdapp_sha256"):
         raise ValueError("B1_B3_ZDO_PREIMAGE_HASH_DRIFT")
@@ -78,6 +88,13 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         "OsalPortTimers_stopTimer" not in new):
         raise ValueError("B2_FAIL_CLOSED_MTO_GUARDS_MISSING")
     patched=replace_once(current,old,new,"B2_MTO_FUSED_APP")
+    # Keep TI's binary RTG engine and 1000ms limiter intact. Only reject
+    # stale MTO failure callbacks while MTO is inactive or the node unformed.
+    old_failure=extract(patched,b2failure.FAILURE_SIGNATURE)
+    if old_failure!=b2failure.FAILURE_BEFORE:
+        raise ValueError("B2_MTO_FAILURE_CALLBACK_PREIMAGE_DRIFT")
+    patched=replace_once(patched,b2failure.FAILURE_BEFORE,
+                         b2failure.FAILURE_AFTER,"B2_MTO_FAILURE_GUARD")
     (sdk/ZDO).write_text(patched,encoding="utf-8",newline="")
 
     # B4 v3's standalone script requires pristine TI NPI_TASK/UART.
@@ -148,6 +165,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         b1[key]=afterhash[name]
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
+    b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
     b1["b4_pinned_commit"]=B4_SHA
     b1receipt.write_text(json.dumps(b1,indent=2,sort_keys=True)+"\n")
     return {
@@ -155,7 +173,10 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         "b0_ti_sdk_sha":TI_SHA,
         "prior_fusion_b3_sha":prior["b3_input_sha"],
         "b2_source_sha":B2_SHA,"b4_source_sha":B4_SHA,
+        "b2_mto_failure_guard_source_sha":B2_FAILURE_SHA,
         "b2_mto_nv_reads_failclosed":True,
+        "b2_mto_failure_guard":"ONLY_ACTIVE_FORMED_CONCENTRATOR",
+        "b2_added_retry_throttle":False,
         "b2_p1_capacities":"REQUIRES_SEPARATE_CC_OPTS_STAGE",
         "b4_v3_patch_evidence":native_v3,
         "b4_v4_patch_evidence":native_v4,
@@ -173,14 +194,16 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
 
 def main():
     p=argparse.ArgumentParser()
-    for name in ("sdk","baseline","b1-receipt","fusion-receipt","b2-script","b4-v3-script","b4-v4-script","receipt"):
+    for name in ("sdk","baseline","b1-receipt","fusion-receipt","b2-script","b2-failure-script","b4-v3-script","b4-v4-script","receipt"):
         p.add_argument("--"+name,required=True,type=Path)
     p.add_argument("--b2-sha",required=True)
+    p.add_argument("--b2-failure-sha",required=True)
     p.add_argument("--b4-sha",required=True)
     a=p.parse_args()
     a.baseline.mkdir(parents=True,exist_ok=True)
     result=run(a.sdk,a.baseline,a.b1_receipt,a.fusion_receipt,a.b2_script,
-               a.b4_v3_script,a.b4_v4_script,a.b2_sha,a.b4_sha)
+               a.b2_failure_script,a.b4_v3_script,a.b4_v4_script,
+               a.b2_sha,a.b2_failure_sha,a.b4_sha)
     a.receipt.write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
     print(json.dumps({"status":"COMPOSED_SOURCE_NEEDS_NATIVE_AND_PHYSICAL_PROOF",
                       "source_ready":False,"flash_authorized":False},sort_keys=True))
