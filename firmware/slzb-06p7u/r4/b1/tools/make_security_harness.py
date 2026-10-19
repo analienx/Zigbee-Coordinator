@@ -702,7 +702,7 @@ SCENARIOS = (
 MUTANTS = {
     'duplicate_tclk_peer_bypass': ('duplicate_tclk_peer',
         '!b1_tclk_unique_peer(i, row.extAddr)',
-        'FALSE /* MUTANT: duplicate TC peer accepted */'),
+        '(!b1_tclk_unique_peer(i, row.extAddr) && FALSE) /* MUTANT: ignore duplicate TC peer */'),
     'aps_same_key_counter_reset': ('key_same',
         '  if (identical)\n  {',
         '  if (!identical)\n  {'),
