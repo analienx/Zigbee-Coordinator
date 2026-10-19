@@ -356,7 +356,10 @@ class Nv4AdmissionTests(unittest.TestCase):
                 trailer = bytearray((4, 0x1a, 0, 0, 4))
                 crc = forensics.crc8(payload + trailer)
                 trailer[4] |= crc >> 6
-                trailer.extend((((crc & 63) << 2) | 2, 0x96))
+                # Obsolete valid versions may repeat an identity. Active
+                # duplicates deliberately hit a different admission guard
+                # before the 2000-record scan ceiling can be exercised.
+                trailer.extend((((crc & 63) << 2), 0x96))
                 media[base + offset:base + offset + 8] = payload + trailer
                 offset += 8
         result = self.probe(bytes(media))

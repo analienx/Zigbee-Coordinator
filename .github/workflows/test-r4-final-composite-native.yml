@@ -785,9 +785,12 @@ jobs:
           assert host['host_upstream_sha']=='6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88'
           assert host['herdsman_sha']=='0968f979d558874b17396c96b66382d4236bbdcd'
           assert host['z2m_sha']=='62b02e2aa1997c574223b80c196677b63a25f4a7'
+          assert host['firmware_b4_sha']=='3231abb1f13210eb88afe13ff7b7f9f29709cd6b'
           assert host['status']=='HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED'
           assert host['existing_owner_only'] is True and host['default_enabled'] is False
           assert host['flash_authorized'] is False
+          assert all(host[k] is True for k in ('herdsman_typescript_compiled',
+              'z2m_typescript_compiled','host_runtime_tests_completed'))
           assert Path(host['bundle_file']).name==host['bundle_file']
           assert sha(host_root/host['bundle_file'])==host['bundle_sha256']
           out=Path('/tmp/p7u-r1-r5-candidate');out.mkdir()
@@ -798,6 +801,12 @@ jobs:
           shutil.copyfile(repro,out/'reproducibility.json')
           shutil.copyfile(host_root/host['bundle_file'],out/'host-bundle.tar.gz')
           shutil.copyfile(host_root/'host-integration-receipt.json',out/'host-integration-receipt.json')
+          for name, member in host['files'].items():
+              assert Path(name).name==name and sha(host_root/name)==member['sha256']
+              if (out/name).exists():
+                  assert sha(out/name)==member['sha256']
+              else:
+                  shutil.copyfile(host_root/name,out/name)
           for name in ('r05-full-capacity-native-linked.json','rtos-context-native.json','b1-native-seal.json'):
               shutil.copyfile(first/name,out/name)
           shutil.copyfile(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json',out/'app-only-receipt.json')
