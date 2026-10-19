@@ -1,4 +1,4 @@
-"""Pinned TI ZNP host APS key API correction (source-only B1 overlay).
+"""Pinned TI ZNP host APS/NWK key API correction (source-only B1 overlay).
 
 The original ZNP API wrote indexed APS keys as *legacy* OSAL NV item IDs,
 silently accepted counter rollback, and matched the wrong TCLK address.
@@ -6,6 +6,130 @@ Do not let a live host command bypass the durable security-manager setter.
 """
 
 from patch_zdapp import extract_function, replace_once
+
+
+NWK_SET = r'''static bool processSecNwkKeySetReq( uint8_t srcServiceTaskId, void *pMsg )
+{
+  zstackmsg_secNwkKeySetReq_t *pPtr = (zstackmsg_secNwkKeySetReq_t *)pMsg;
+  nwkKeyDesc active = {0};
+  nwkKeyDesc alternate = {0};
+  nwkKeyDesc proposed = {0};
+  nwkKeyDesc verify = {0};
+  nwkActiveKeyItems logical = {0};
+  uint8_t zeroKey[SEC_KEY_LEN] = {0};
+  uint16_t target;
+  nwkKeyDesc *old;
+  if (pPtr == NULL) return TRUE;
+  pPtr->hdr.status = zstack_ZStatusValues_ZFailure;
+  if (pPtr->pReq == NULL)
+  {
+    pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
+    return TRUE;
+  }
+  if (b1_nv_runtime_hold_active() || b1_sec_restored_network_validated() ||
+      b1_management_network_ready()) return TRUE;
+  /* B1-only TI builds still expose a void RNG API. Require the caller's
+   * explicit, already generated initial key until checked B3 entropy is
+   * available end-to-end; never accept an unchecked random-key fallback. */
+  if (!pPtr->pReq->has_key)
+  {
+    pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
+    return TRUE;
+  }
+
+  /* This legacy setter may only populate a wholly virgin security store.
+   * Existing formed-network keys must go through a durable staged epoch
+   * transition; direct active/alternate replacement can resurrect an old
+   * key with reset counters and repeat the same CCM nonce. */
+  if (osal_nv_item_len(ZCD_NV_NWK_ACTIVE_KEY_INFO) != sizeof(active) ||
+      osal_nv_item_len(ZCD_NV_NWK_ALTERN_KEY_INFO) != sizeof(alternate) ||
+      osal_nv_item_len(ZCD_NV_NWKKEY) != sizeof(logical) ||
+      osal_nv_read(ZCD_NV_NWK_ACTIVE_KEY_INFO, 0,
+                   sizeof(active), &active) != ZSUCCESS ||
+      osal_nv_read(ZCD_NV_NWK_ALTERN_KEY_INFO, 0,
+                   sizeof(alternate), &alternate) != ZSUCCESS ||
+      osal_nv_read(ZCD_NV_NWKKEY, 0,
+                   sizeof(logical), &logical) != ZSUCCESS)
+  {
+    b1_security_runtime_hold_latch();
+    goto done;
+  }
+  target = pPtr->pReq->activeKey ? ZCD_NV_NWK_ACTIVE_KEY_INFO :
+                                   ZCD_NV_NWK_ALTERN_KEY_INFO;
+  old = pPtr->pReq->activeKey ? &active : &alternate;
+  proposed.keySeqNum = pPtr->pReq->seqNum;
+  OsalPort_memcpy(proposed.key, pPtr->pReq->key, SEC_KEY_LEN);
+  if (OsalPort_memcmp(proposed.key, zeroKey, SEC_KEY_LEN) ||
+      OsalPort_isBufSet(proposed.key, 0xFF, SEC_KEY_LEN))
+  {
+    pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
+    goto done;
+  }
+  if (old->keySeqNum == proposed.keySeqNum &&
+      OsalPort_memcmp(old->key, proposed.key, SEC_KEY_LEN))
+  {
+    pPtr->hdr.status = zstack_ZStatusValues_ZSuccess; /* No NV mutation. */
+    goto done;
+  }
+  if (!OsalPort_memcmp(active.key, zeroKey, SEC_KEY_LEN) ||
+      !OsalPort_memcmp(alternate.key, zeroKey, SEC_KEY_LEN) ||
+      !OsalPort_memcmp(logical.active.key, zeroKey, SEC_KEY_LEN) ||
+      active.keySeqNum != 0u || alternate.keySeqNum != 0u ||
+      logical.active.keySeqNum != 0u || logical.frameCounter != 0u)
+    goto done; /* Already keyed: no direct host mutation, even across slots. */
+
+  if (osal_nv_write(target, sizeof(proposed), &proposed) != ZSUCCESS ||
+      osal_nv_read(target, 0, sizeof(verify), &verify) != ZSUCCESS ||
+      !OsalPort_memcmp(&proposed, &verify, sizeof(proposed)))
+  {
+    b1_security_runtime_hold_latch();
+    goto done;
+  }
+  pPtr->hdr.status = zstack_ZStatusValues_ZSuccess;
+done:
+  memset(&active, 0, sizeof(active));
+  memset(&alternate, 0, sizeof(alternate));
+  memset(&logical, 0, sizeof(logical));
+  memset(&proposed, 0, sizeof(proposed));
+  memset(&verify, 0, sizeof(verify));
+  return TRUE;
+}'''
+
+
+NWK_GET = r'''static bool processSecNwkKeyGetReq( uint8_t srcServiceTaskId, void *pMsg )
+{
+  zstackmsg_secNwkKeyGetReq_t *pPtr = (zstackmsg_secNwkKeyGetReq_t *)pMsg;
+  nwkKeyDesc row = {0};
+  uint8_t zeroKey[SEC_KEY_LEN] = {0};
+  uint16_t target;
+  if (pPtr == NULL) return TRUE;
+  pPtr->hdr.status = zstack_ZStatusValues_ZFailure;
+  if (pPtr->pRsp != NULL) memset(pPtr->pRsp, 0, sizeof(*pPtr->pRsp));
+  if (pPtr->pReq == NULL || pPtr->pRsp == NULL)
+  {
+    pPtr->hdr.status = zstack_ZStatusValues_ZInvalidParameter;
+    return TRUE;
+  }
+  if (b1_nv_runtime_hold_active()) return TRUE;
+  target = pPtr->pReq->activeKey ? ZCD_NV_NWK_ACTIVE_KEY_INFO :
+                                   ZCD_NV_NWK_ALTERN_KEY_INFO;
+  if (osal_nv_item_len(target) != sizeof(row) ||
+      osal_nv_read(target, 0, sizeof(row), &row) != ZSUCCESS)
+  {
+    b1_security_runtime_hold_latch();
+    return TRUE;
+  }
+  if (!OsalPort_memcmp(row.key, zeroKey, SEC_KEY_LEN) &&
+      !OsalPort_isBufSet(row.key, 0xFF, SEC_KEY_LEN))
+  {
+    pPtr->pRsp->activeKey = pPtr->pReq->activeKey;
+    pPtr->pRsp->seqNum = row.keySeqNum;
+    OsalPort_memcpy(pPtr->pRsp->key, row.key, SEC_KEY_LEN);
+    pPtr->hdr.status = zstack_ZStatusValues_ZSuccess;
+  }
+  memset(&row, 0, sizeof(row));
+  return TRUE;
+}'''
 
 
 GET = r'''static bool processSecApsLinkKeyGetReq( uint8_t srcServiceTaskId, void *pMsg )
@@ -191,9 +315,13 @@ def patch(source: str) -> str:
     source = replace_once(source, '#include "zd_sec_mgr.h"',
                           '#include "zd_sec_mgr.h"\n#include <stdint.h>\n'
                           'extern int b1_nv_runtime_hold_active(void);\n'
-                          'extern void b1_security_runtime_hold_latch(void);',
+                          'extern void b1_security_runtime_hold_latch(void);\n'
+                          'extern int b1_sec_restored_network_validated(void);\n'
+                          'extern int b1_management_network_ready(void);',
                           'host API security HOLD declarations')
     for signature, replacement in (
+        ('static bool processSecNwkKeySetReq( uint8_t srcServiceTaskId, void *pMsg )', NWK_SET),
+        ('static bool processSecNwkKeyGetReq( uint8_t srcServiceTaskId, void *pMsg )', NWK_GET),
         ('static bool processSecApsLinkKeyGetReq( uint8_t srcServiceTaskId, void *pMsg )', GET),
         ('static bool processSecApsLinkKeySetReq( uint8_t srcServiceTaskId, void *pMsg )', SET),
         ('static bool processSecApsLinkKeyRemoveReq( uint8_t srcServiceTaskId, void *pMsg )', REMOVE),
