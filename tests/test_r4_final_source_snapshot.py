@@ -23,16 +23,21 @@ class FinalSourceSnapshotTest(unittest.TestCase):
         self.out.mkdir()
         self.tracked = "source/ti/zstack/stack/zdo/zd_sec_mgr.c"
         self.added = "source/ti/common/nv/b1_management.c"
+        self.linker = "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd"
         tracked_path = self.root / self.tracked
         tracked_path.parent.mkdir(parents=True)
         tracked_path.write_text("int original(void) { return 1; }\n")
+        linker_path = self.root / self.linker
+        linker_path.parent.mkdir(parents=True)
+        linker_path.write_text("MEMORY { FLASH : origin = 0x0, length = 0x1000 }\n")
         self.git("init", "-q")
         self.git("-c", "user.name=Audit", "-c", "user.email=audit@example.test",
-                 "add", self.tracked)
+                 "add", self.tracked, self.linker)
         self.git("-c", "user.name=Audit", "-c", "user.email=audit@example.test",
                  "commit", "-qm", "pinned TI test")
         self.pin = self.git("rev-parse", "HEAD").strip()
         tracked_path.write_text("int original(void) { return 2; }\n")
+        linker_path.write_text("MEMORY { FLASH : origin = 0x0, length = 0x2000 }\n")
         added_path = self.root / self.added
         added_path.parent.mkdir(parents=True)
         added_path.write_text("int new_security_guard(void) { return 1; }\n")
@@ -42,14 +47,15 @@ class FinalSourceSnapshotTest(unittest.TestCase):
 
     def invoke(self, verify=None):
         return snapshot.run(self.root, self.out, "a" * 40, verify,
-                            required={self.tracked, self.added}, sdk_pin=self.pin)
+                            required={self.tracked, self.added, self.linker}, sdk_pin=self.pin)
 
     def test_capture_contains_tracked_and_new_source_and_stays_stable(self):
         result = self.invoke()
         patch = (self.out / snapshot.PATCH).read_text()
         self.assertIn("int new_security_guard", patch)
         self.assertIn("return 2", patch)
-        self.assertEqual(result["source_changed_files_count"], 2)
+        self.assertIn("length = 0x2000", patch)
+        self.assertEqual(result["source_changed_files_count"], 3)
         self.assertTrue(next(x for x in result["changed_files"]
                              if x["path"] == self.added)["new_file"])
         self.assertEqual(self.invoke(self.out / snapshot.MANIFEST), result)

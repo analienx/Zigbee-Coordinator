@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish the *final* reviewable TI C source delta used by the R4 native build.
+"""Publish the *final* reviewable TI source and linker delta used by R4.
 
 The R4 build composes several immutable overlays.  This tool captures their
 combined effect after the last overlay, including new C/H files that ordinary
@@ -22,7 +22,10 @@ import subprocess
 TI_PIN = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 PATCH = "r4-final-ti-source.patch"
 MANIFEST = "r4-final-ti-source-manifest.json"
-SOURCE_SUFFIXES = {".c", ".h", ".s", ".S", ".asm", ".inc"}
+# A linked TI image is determined by its linker command file as well as C/ASM.
+# The P7U overlay edits the board's .cmd under source/ti; omitting it produces
+# an incomplete review patch and falsely rejects a legitimate native build.
+SOURCE_SUFFIXES = {".c", ".h", ".s", ".S", ".asm", ".inc", ".cmd"}
 MANDATORY = {
     "source/ti/common/nv/nvocmp.c",
     "source/ti/common/nv/b1_management.c",
