@@ -29,8 +29,9 @@ static void zgMigrateTo530SDK( void )
         osal_nv_delete_ex(ZCD_NV_EX_TCLK_TABLE, i, 1);
     }
 }
-#endif
+#endif // ZSTACK_5_30_NV_MIGRATION
 """
+OVERLAID = b"/* B1+B3 checked source overlay */\n" + UPSTREAM
 
 
 class T6LegacyMigrationGuard(unittest.TestCase):
@@ -40,10 +41,18 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         self.sdk = self.root / "sdk"
         self.source = self.sdk / guard.REL
         self.source.parent.mkdir(parents=True)
-        self.source.write_bytes(UPSTREAM)
+        self.source.write_bytes(OVERLAID)
         self.profile = self.root / "profile.json"
         self.profile.write_text(PROFILE.read_text())
         self.receipt = self.root / "evidence.json"
+        self.b1_receipt = self.root / "b1-overlay.json"
+        self.b1_receipt.write_text(json.dumps({
+            "schema": "r4-b1-admission-overlay-v2",
+            "upstream_zglobals_blob": guard.git_blob(UPSTREAM),
+            "post_b1_security_fusion": "B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS",
+            "b3_source_commit": "b481e0beabf1966900644f69d7f5d024708ebf73",
+            "modified_zglobals_sha256": guard.digest(OVERLAID),
+        }))
 
     def tearDown(self):
         self.directory.cleanup()
@@ -57,14 +66,17 @@ class T6LegacyMigrationGuard(unittest.TestCase):
 
     def test_positive_pin_and_actual_full_nv4_profile_guarded(self):
         with patch.object(guard.subprocess, "check_output", side_effect=self.git):
-            proof = guard.stage(self.sdk, self.profile, self.receipt)
+            proof = guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
         self.assertEqual(proof["legacy_migration_if_enabled"], "COMPILE_TIME_ERROR")
         self.assertFalse(proof["actual_tc300_linked_capacity_proven"])
         self.assertFalse(proof["installed_or_flash_authorized"])
         self.assertTrue(self.source.read_bytes().startswith(guard.GUARD.encode()))
         self.assertTrue(self.receipt.is_file())
+        b1 = json.loads(self.b1_receipt.read_text())
+        self.assertEqual(b1["modified_zglobals_sha256"], guard.digest(self.source.read_bytes()))
+        self.assertEqual(b1["t6_legacy_migration_denial"]["full_role_sealed"], False)
         with patch.object(guard.subprocess, "check_output", side_effect=self.git), self.assertRaises(ValueError):
-            guard.stage(self.sdk, self.profile, self.root / "second.json")
+            guard.stage(self.sdk, self.profile, self.root / "second.json", self.b1_receipt)
 
     def test_wrong_capacities_and_authorization_fail_before_source_change(self):
         original = json.loads(self.profile.read_text())
@@ -81,25 +93,52 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         for data in mutants:
             with self.subTest(data=data["capacities"], field=data["policies"]), self.assertRaises(ValueError):
                 self.profile.write_text(json.dumps(data))
-                guard.stage(self.sdk, self.profile, self.receipt)
-            self.assertEqual(self.source.read_bytes(), UPSTREAM)
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+            self.assertEqual(self.source.read_bytes(), OVERLAID)
 
     def test_source_drift_and_wrong_sdk_commit_fail_closed(self):
         with patch.object(guard.subprocess, "check_output", side_effect=lambda args:
                 b"0"*40 if args[-2:] == ["rev-parse", "HEAD"] else UPSTREAM):
             with self.assertRaisesRegex(ValueError, "SDK commit"):
-                guard.stage(self.sdk, self.profile, self.receipt)
-        self.source.write_bytes(UPSTREAM + b"// mutated")
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+        self.source.write_bytes(OVERLAID + b"// mutated")
         with patch.object(guard.subprocess, "check_output", side_effect=self.git):
             with self.assertRaisesRegex(ValueError, "modified"):
-                guard.stage(self.sdk, self.profile, self.receipt)
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+
+    def test_mutated_migration_body_or_stale_b1_receipt_fails_closed(self):
+        self.source.write_bytes(OVERLAID.replace(b"osal_nv_delete_ex",
+                                                 b"osal_nv_write_ex"))
+        with patch.object(guard.subprocess, "check_output", side_effect=self.git):
+            with self.assertRaisesRegex(ValueError, "receipt drift"):
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+        self.assertFalse(self.receipt.exists())
+        self.source.write_bytes(OVERLAID)
+        bound = json.loads(self.b1_receipt.read_text())
+        bound["modified_zglobals_sha256"] = guard.digest(OVERLAID + b"bad")
+        self.b1_receipt.write_text(json.dumps(bound))
+        with patch.object(guard.subprocess, "check_output", side_effect=self.git):
+            with self.assertRaisesRegex(ValueError, "receipt drift"):
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+        self.assertEqual(self.source.read_bytes(), OVERLAID)
+
+    def test_function_body_mutation_rejected_even_with_matching_receipt(self):
+        changed = OVERLAID.replace(b"TCLK_TABLE, i, 1", b"TCLK_TABLE, i, 2")
+        self.source.write_bytes(changed)
+        bound = json.loads(self.b1_receipt.read_text())
+        bound["modified_zglobals_sha256"] = guard.digest(changed)
+        self.b1_receipt.write_text(json.dumps(bound))
+        with patch.object(guard.subprocess, "check_output", side_effect=self.git):
+            with self.assertRaisesRegex(ValueError, "unsafe migration source drift"):
+                guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
+        self.assertFalse(self.receipt.exists())
 
     def test_wrong_index_and_destructive_order_not_patched_silently(self):
         for mutant in (UPSTREAM.replace(b"uint8_t i = 0", b"uint16_t i = 0"),
                        UPSTREAM.replace(b"osal_nv_delete_ex", b"osal_nv_write_ex")):
             with self.subTest(mutant=mutant[:30]):
                 with self.assertRaisesRegex(ValueError, "unsafe migration source drift"):
-                    guard.guarded(mutant)
+                    guard.guarded(mutant, UPSTREAM)
 
     def test_parent_symlink_refuses_write_outside_sdk(self):
         outside = self.root / "external"
@@ -107,22 +146,28 @@ class T6LegacyMigrationGuard(unittest.TestCase):
         srcdir = self.source.parent
         # Only this disposable fixture is removed.
         shutil.rmtree(srcdir)
-        (outside / "zglobals.c").write_bytes(UPSTREAM)
+        (outside / "zglobals.c").write_bytes(OVERLAID)
         srcdir.symlink_to(outside, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symlink"):
-            guard.stage(self.sdk, self.profile, self.receipt)
+            guard.stage(self.sdk, self.profile, self.receipt, self.b1_receipt)
         self.assertEqual((outside / "zglobals.c").read_bytes(), UPSTREAM)
 
-    def test_full_native_workflow_guards_the_disposable_sdk_before_make(self):
+    def test_full_native_workflow_guards_after_all_overlays_before_ccs_import(self):
         workflow = (ROOT / ".github/workflows/test-r4-final-composite-native.yml").read_text()
-        build_scope = 'python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py"'
-        guard_call = 'python "$GITHUB_WORKSPACE/tools/r4_t6_migration_guard.py"'
-        build = '(cd "$sdk" && make -j2)'
-        self.assertEqual(workflow.count(build_scope), 1)
-        self.assertEqual(workflow.count(guard_call), 1)
-        self.assertEqual(workflow.count(build), 1)
-        self.assertLess(workflow.index(build_scope), workflow.index(guard_call))
-        self.assertLess(workflow.index(guard_call), workflow.index(build))
+        markers = (
+            '(cd "$sdk" && make -j2)',
+            'python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/apply_b1.py"',
+            'python "$GITHUB_WORKSPACE/tools/r4_b1_b3_security_fuse.py"',
+            'python "$GITHUB_WORKSPACE/tools/r4_b0_b4_composite_stage.py"',
+            'python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py"',
+            'python "$GITHUB_WORKSPACE/tools/r4_t6_migration_guard.py"',
+            'echo "importing and building the pinned ZNP projectspec"',
+        )
+        for marker in markers:
+            self.assertEqual(workflow.count(marker), 1, marker)
+        offsets = [workflow.index(marker) for marker in markers]
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertIn("--b1-overlay-receipt /tmp/b0out/b1-overlay.json", workflow)
         self.assertIn("tests.test_r4_t6_migration_guard", workflow)
 
     @unittest.skipUnless(shutil.which("gcc"), "host C compiler required")
