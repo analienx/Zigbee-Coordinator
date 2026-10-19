@@ -168,6 +168,7 @@ static uint16_t osal_nv_item_len(uint16_t id)
   ++reads;
   if(missing_singleton==id) return 0;
   if(id==ZCD_NV_NIB) return nib_length;
+  if(id==ZCD_NV_APS_LINK_KEY_TABLE) return sizeof(hdr)+sizeof(entries);
   assert(id==ZCD_NV_LOGICAL_TYPE); return sizeof(logical_type);
 }
 static void *row(uint16_t table, uint16_t i, uint16_t len)
@@ -227,6 +228,8 @@ static uint8_t AddrMgrEntryLookupNwk(AddrMgrEntry_t *p) { (void)p; return FALSE;
 static void AddrMgrEntryRelease(AddrMgrEntry_t *p) { (void)p; }
 static ZStatus_t ZDSecMgrEntryLookupExt(uint8_t *addr,ZDSecMgrEntry_t **entry)
 { (void)addr; *entry=&restored[0]; return ZSuccess; }
+static ZStatus_t ZDSecMgrEntryLookupExtGetIndex(uint8_t *addr,ZDSecMgrEntry_t **entry,uint16_t *index)
+{ (void)addr; *entry=&restored[0]; *index=0; return ZSuccess; }
 static uint8_t b1_sec_write_checked(uint16_t, uint16_t, uint16_t, void *);
 static void setup(void)
 {
@@ -553,6 +556,49 @@ int main(int argc,char **argv)
         else assert(entries[0].ami==1u);
       }
     }
+  } else if(!strncmp(s,"key_",4)) {
+    /* Set-key semantics are extracted from the pinned production function.
+     * A repeat of the SAME key must not reset the nonce counter. */
+    uint8_t key[SEC_KEY_LEN]={0};
+    restored[0]=entries[0];
+    ApsLinkKeyRAMEntry[0].txFrmCntr=170u;
+    ApsLinkKeyRAMEntry[0].rxFrmCntr=55u;
+    key[0]=(!strcmp(s,"key_new") || !strcmp(s,"key_write_fail") ||
+            !strcmp(s,"key_readback_fail") || !strcmp(s,"key_table_commit") ||
+            !strcmp(s,"key_table_fail")) ? 0x44u : 0x33u;
+    if(!strcmp(s,"key_same_pending")) ApsLinkKeyRAMEntry[0].pendingFlag=TRUE;
+    if(!strcmp(s,"key_same_alias")) {
+      restored[0].keyNvId=1u;
+      aps[1]=aps[0];
+      ApsLinkKeyRAMEntry[1]=ApsLinkKeyRAMEntry[0];
+    }
+    if(!strcmp(s,"key_write_fail")) write_fail=TRUE;
+    if(!strcmp(s,"key_readback_fail")) readback_corrupt=TRUE;
+    ZStatus_t status=ZDSecMgrLinkKeySet(key,key);
+    if(!strcmp(s,"key_same_pending")) {
+      assert(status==ZFailure && !held && writes==0 && events==1);
+      assert(aps[0].txFrmCntr==100u && ApsLinkKeyRAMEntry[0].pendingFlag);
+    } else if(!strcmp(s,"key_write_fail") || !strcmp(s,"key_readback_fail")) {
+      assert(status==ZFailure && held && writes==1u);
+      assert(restored[0].keyNvId==0u && ApsLinkKeyRAMEntry[0].txFrmCntr==170u);
+    } else {
+      assert(status==ZSuccess && !held && writes==1u);
+      uint16_t k=!strcmp(s,"key_same_alias") ? 1u : 0u;
+      assert(restored[0].keyNvId==k);
+      if(!strcmp(s,"key_same") || !strcmp(s,"key_same_alias")) {
+        assert(aps[k].key[0]==0x33u && aps[k].txFrmCntr==170u && aps[k].rxFrmCntr==55u);
+        assert(ApsLinkKeyRAMEntry[k].txFrmCntr==170u);
+      } else {
+        assert(aps[0].key[0]==0x44u && aps[0].txFrmCntr==0u && aps[0].rxFrmCntr==0u);
+        assert(ApsLinkKeyRAMEntry[0].txFrmCntr==0u);
+      }
+      if(!strcmp(s,"key_table_commit") || !strcmp(s,"key_table_fail")) {
+        if(strstr(s,"fail")) write_fail=TRUE;
+        assert(ZDSecMgrWriteNV()==(write_fail?FALSE:TRUE));
+        assert(held==write_fail);
+        if(!write_fail) assert(hdr.numRecs==1u && entries[0].ami==1u);
+      }
+    }
   } else if(!strncmp(s,"save_aps_",9) || !strncmp(s,"save_tclk_",10)) {
     uint8_t isaps=s[5]=='a';
     ApsLinkKeyRAMEntry[0].pendingFlag=TRUE; ApsLinkKeyRAMEntry[0].txFrmCntr=120; ApsLinkKeyRAMEntry[0].rxFrmCntr=50;
@@ -603,6 +649,8 @@ SIGNATURES = (
     'static uint8_t ZDSecMgrUpdateNV( uint16_t index )',
     'void ZDSecMgrEntryFree( ZDSecMgrEntry_t* entry )',
     'ZStatus_t ZDSecMgrDeviceRemoveByExtAddr( uint8_t *pAddr )',
+    'ZStatus_t ZDSecMgrLinkKeySet( uint8_t* extAddr, uint8_t* key )',
+    'static uint8_t ZDSecMgrWriteNV( void )',
     'void APSME_TCLinkKeyInit(uint8_t setDefault)',
     'void ZDSecMgrSaveApsLinkKey(void)',
     'void ZDSecMgrSaveTCLinkKey(void)',
@@ -627,10 +675,15 @@ SCENARIOS = (
     'remove_positive', 'remove_table_fail', 'remove_table_readback',
     'remove_key_fail', 'remove_alloc_fail', 'remove_invalid_key',
     'remove_bad_count', 'remove_no_key', 'remove_api_error',
+    'key_same', 'key_same_pending', 'key_same_alias', 'key_new',
+    'key_write_fail', 'key_readback_fail', 'key_table_commit', 'key_table_fail',
     'load_positive', 'load_new_positive', 'load_full_legacy', 'load_wrap', 'load_bounds', 'load_new_fail', 'load_hold', 'load_bad_attributes', 'sticky_hold',
 )
 
 MUTANTS = {
+    'aps_same_key_counter_reset': ('key_same',
+        '  if (identical)\n  {',
+        '  if (!identical)\n  {'),
     'remove_legacy_alias': ('remove_positive',
         '    if (!b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, keyIndex,',
         '    if (!b1_sec_write_checked(keyIndex, keyIndex,'),
@@ -680,7 +733,12 @@ def main():
     p.add_argument('--tc300-mutant', choices=tuple(TC300_MUTANTS))
     a = p.parse_args()
     source = a.source.read_text(encoding='utf-8')
-    functions = [extract_function(source, sig) for sig in SIGNATURES]
+    # The TC300 capacity-only fixture intentionally does not invoke link-key
+    # installation or the APS metadata writer; do not emit unused static C
+    # functions into its -Werror translation unit.
+    selected = (SIGNATURES if not a.tc300 else tuple(sig for sig in SIGNATURES
+                if not sig.startswith('static uint8_t ZDSecMgrWriteNV(')))
+    functions = [extract_function(source, sig) for sig in selected]
     if any('b1_' not in f for f in functions
            if not f.startswith(('void ZDSecMgrEntryInit',
                                 'ZStatus_t ZDSecMgrEntryLookupAMIGetIndex'))):

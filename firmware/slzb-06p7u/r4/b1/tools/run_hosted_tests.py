@@ -327,7 +327,8 @@ def main():
              "; /* mutant permits unsafe stack initialization */", "mutant_boot_stack_hold",
              "stack_calls==", ("nv_failure",), admission=False, management=True)
     for name, (scenario, before, after) in SECURITY_MUTANTS.items():
-        evidence = {"remove_legacy_alias": "table==ZCD_NV_EX_TCLK_TABLE",
+        evidence = {"aps_same_key_counter_reset": "aps[k].key[0]==0x33u",
+                    "remove_legacy_alias": "table==ZCD_NV_EX_TCLK_TABLE",
                     "entry_allocation": "held && ZDSecMgrEntries==NULL",
                     "early_security_attestation": "!b1_sec_restored_network_validated()",
                     "aps_publish": "ApsLinkKeyRAMEntry[0].txFrmCntr==0",

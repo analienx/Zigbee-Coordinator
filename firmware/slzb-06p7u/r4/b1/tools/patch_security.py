@@ -381,6 +381,131 @@ APS_REMOVE_ENTRY = r'''void ZDSecMgrEntryFree( ZDSecMgrEntry_t* entry )
   entry->authenticateOption = ZDSecMgr_Not_Authenticated;
 }'''
 
+# The stock APS setter silently resets counters even for an identical key,
+# creating same-key CCM nonce reuse on repeated Transport-Key delivery. It
+# also publishes RAM and the key-table index when the NV write has failed.
+# Preserve the existing row index and monotonic counters for the same key;
+# for a genuinely different key, publish zero counters only after a verified
+# durable write. A pending asynchronous checkpoint is backpressure, not an
+# excuse to reuse the old on-flash high-water mark.
+APS_LINK_KEY_SET = r'''ZStatus_t ZDSecMgrLinkKeySet( uint8_t* extAddr, uint8_t* key )
+{
+  ZDSecMgrEntry_t *entry = NULL;
+  APSME_ApsLinkKeyNVEntry_t row = {0};
+  uint8_t zero[SEC_KEY_LEN] = {0};
+  uint16_t index = 0;
+  uint16_t keyIndex;
+  uint16_t i;
+  uint8_t identical;
+  if (extAddr == NULL || key == NULL || OsalPort_memcmp(key, zero, SEC_KEY_LEN))
+    return ZFailure;
+  if (b1_nv_runtime_hold_active()) return ZFailure;
+  if (ZDSecMgrEntryLookupExtGetIndex(extAddr, &entry, &index) != ZSuccess ||
+      entry == NULL || index >= gZDSECMGR_ENTRY_MAX)
+    return ZFailure;
+  keyIndex = entry->keyNvId == SEC_NO_KEY_NV_ID ? index : entry->keyNvId;
+  if (keyIndex >= gZDSECMGR_ENTRY_MAX)
+  {
+    b1_security_runtime_hold_latch();
+    return ZFailure;
+  }
+  /* A live entry must never overwrite another entry's security row. */
+  for (i = 0; i < gZDSECMGR_ENTRY_MAX; ++i)
+  {
+    if (i != index && ZDSecMgrEntries[i].ami != INVALID_NODE_ADDR &&
+        ZDSecMgrEntries[i].keyNvId == keyIndex)
+    {
+      b1_security_runtime_hold_latch();
+      return ZFailure;
+    }
+  }
+  if (ApsLinkKeyRAMEntry[keyIndex].pendingFlag)
+  {
+    OsalPort_setEvent(ZDAppTaskID, ZDO_APS_FRAMECOUNTER_CHANGE);
+    return ZFailure;
+  }
+  if (osal_nv_read_ex(ZCD_NV_EX_APS_KEY_DATA_TABLE, keyIndex, 0,
+                      sizeof(row), &row) != SUCCESS)
+  {
+    b1_security_runtime_hold_latch();
+    return ZFailure;
+  }
+  identical = OsalPort_memcmp(row.key, key, SEC_KEY_LEN);
+  if (identical)
+  {
+    /* Never reset a counter under the same key, including after a reboot.
+     * RAM may be ahead of the durable reservation between checkpoints. */
+    if (row.txFrmCntr < ApsLinkKeyRAMEntry[keyIndex].txFrmCntr)
+      row.txFrmCntr = ApsLinkKeyRAMEntry[keyIndex].txFrmCntr;
+    if (row.rxFrmCntr < ApsLinkKeyRAMEntry[keyIndex].rxFrmCntr)
+      row.rxFrmCntr = ApsLinkKeyRAMEntry[keyIndex].rxFrmCntr;
+    if (row.txFrmCntr > UINT32_MAX - ((uint32_t)MAX_APS_FRAMECOUNTER_CHANGES + 1u))
+    {
+      memset(&row, 0, sizeof(row));
+      b1_security_runtime_hold_latch();
+      return ZFailure;
+    }
+  }
+  else
+  {
+    OsalPort_memcpy(row.key, key, SEC_KEY_LEN);
+    row.txFrmCntr = 0;
+    row.rxFrmCntr = 0;
+  }
+  if (!b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, keyIndex,
+                            sizeof(row), &row))
+  {
+    memset(&row, 0, sizeof(row));
+    return ZFailure;
+  }
+  entry->keyNvId = keyIndex;
+  ApsLinkKeyRAMEntry[keyIndex].txFrmCntr = row.txFrmCntr;
+  ApsLinkKeyRAMEntry[keyIndex].rxFrmCntr = row.rxFrmCntr;
+  ApsLinkKeyRAMEntry[keyIndex].pendingFlag = FALSE;
+  memset(&row, 0, sizeof(row));
+  return ZSuccess;
+}'''
+
+# Both stock installation callers ignore the LinkKeySet result, and the
+# stock ZDSecMgrWriteNV silently drops a failed table write. Return failure
+# upstream and latch HOLD if either a key or its index metadata fails to
+# reach durable, read-back-verified NV.
+APS_TABLE_WRITE = r'''static uint8_t ZDSecMgrWriteNV( void )
+{
+  uint16_t len = (uint16_t)(sizeof(nvDeviceListHdr_t) +
+                            gZDSECMGR_ENTRY_MAX * sizeof(ZDSecMgrEntry_t));
+  uint8_t *table = NULL;
+  uint8_t *verify = NULL;
+  nvDeviceListHdr_t hdr = {0};
+  uint16_t i;
+  uint8_t okay = FALSE;
+  if (b1_nv_runtime_hold_active() || ZDSecMgrEntries == NULL ||
+      osal_nv_item_len(ZCD_NV_APS_LINK_KEY_TABLE) != len)
+    goto done;
+  table = (uint8_t *)OsalPort_malloc(len);
+  verify = (uint8_t *)OsalPort_malloc(len);
+  if (table == NULL || verify == NULL) goto done;
+  for (i = 0; i < gZDSECMGR_ENTRY_MAX; ++i)
+  {
+    ZDSecMgrEntry_t entry = ZDSecMgrEntries[i];
+    if (entry.ami != INVALID_NODE_ADDR)
+    {
+      if (entry.keyNvId >= gZDSECMGR_ENTRY_MAX) goto done;
+      ++hdr.numRecs;
+    }
+    OsalPort_memcpy(table + sizeof(hdr) + i * sizeof(entry), &entry, sizeof(entry));
+  }
+  OsalPort_memcpy(table, &hdr, sizeof(hdr));
+  if (osal_nv_write(ZCD_NV_APS_LINK_KEY_TABLE, len, table) == SUCCESS &&
+      osal_nv_read(ZCD_NV_APS_LINK_KEY_TABLE, 0, len, verify) == SUCCESS &&
+      OsalPort_memcmp(table, verify, len)) okay = TRUE;
+done:
+  if (table != NULL) { memset(table, 0, len); OsalPort_free(table); }
+  if (verify != NULL) { memset(verify, 0, len); OsalPort_free(verify); }
+  if (!okay) b1_security_runtime_hold_latch();
+  return okay;
+}'''
+
 
 def checkpoint(name, row_type, ram, table, count):
     return f'''void {name}(void)
@@ -426,6 +551,8 @@ def patch(source: str) -> str:
         ('void APSME_TCLinkKeyInit(uint8_t setDefault)', TCLK_INIT),
         ('void ZDSecMgrEntryFree( ZDSecMgrEntry_t* entry )', APS_REMOVE_ENTRY),
         ('static void ZDSecMgrUpdateNV( uint16_t index )', APS_REMOVE_NV),
+        ('ZStatus_t ZDSecMgrLinkKeySet( uint8_t* extAddr, uint8_t* key )', APS_LINK_KEY_SET),
+        ('static void ZDSecMgrWriteNV( void )', APS_TABLE_WRITE),
         ('void ZDSecMgrSaveApsLinkKey(void)', checkpoint('ZDSecMgrSaveApsLinkKey',
          'APSME_ApsLinkKeyNVEntry_t', 'ApsLinkKeyRAMEntry', 'ZCD_NV_EX_APS_KEY_DATA_TABLE', 'gZDSECMGR_ENTRY_MAX')),
         ('void ZDSecMgrSaveTCLinkKey(void)', checkpoint('ZDSecMgrSaveTCLinkKey',
@@ -437,6 +564,26 @@ def patch(source: str) -> str:
         'static void ZDSecMgrUpdateNV( uint16_t index );',
         'static uint8_t ZDSecMgrUpdateNV( uint16_t index );',
         'checked APS retirement declaration')
+    source = replace_once(source,
+        'static void ZDSecMgrWriteNV(void);',
+        'static uint8_t ZDSecMgrWriteNV(void);',
+        'checked APS table writer declaration')
+    source = replace_once(source,
+        '    ZDSecMgrLinkKeySet( ind->srcExtAddr, ind->key );',
+        '    if (ZDSecMgrLinkKeySet(ind->srcExtAddr, ind->key) != ZSuccess) return;',
+        'transport-key delivery stops on undurable key')
+    source = replace_once(source,
+        '  APSME_LinkKeySet( extAddr, key );',
+        '  if (APSME_LinkKeySet(extAddr, key) != ZSuccess) return ZFailure;',
+        'application-key add propagates NV failure')
+    source = replace_once(source,
+        '    ZDSecMgrWriteNV();  // Write the control record for the new established link key to NV.',
+        '    if (!ZDSecMgrWriteNV()) return; /* missing index must not be published */',
+        'transport-key metadata durability')
+    source = replace_once(source,
+        '  ZDSecMgrWriteNV();  // Write the new established link key to NV.',
+        '  if (!ZDSecMgrWriteNV()) return ZFailure;',
+        'application-key metadata durability')
     source = replace_once(source,
         '    ZDSecMgrEntryFree( pEntry );',
         '    ZDSecMgrEntryFree( pEntry );\n'
