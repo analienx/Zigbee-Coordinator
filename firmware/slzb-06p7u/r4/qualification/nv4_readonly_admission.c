@@ -238,7 +238,16 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                * cannot refer back to their own destination page. Treat a
                * self-referential FC journal as torn/foreign media, not an
                * admission candidate for write-backed vendor init. */
-              header[10] == page || header[14] == page))) {
+              header[10] == page || header[14] == page ||
+              /* Pinned TI NVOCMP_compact() walks source items backwards
+               * (srcOff decreases) and records the final source offset in
+               * XSRCENDHDR. If both source endpoints are on the same page,
+               * the end cannot be beyond the start. A CRC-valid, reversed
+               * same-page journal is foreign/torn metadata, not a safely
+               * completed compaction to hand to write-capable TI init. */
+              (header[10] == header[14] &&
+               (uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) >
+               (uint16_t)(header[8] | ((uint16_t)header[9] << 8u)))))) {
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base + 4u;
             return r;

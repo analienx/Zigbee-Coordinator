@@ -305,6 +305,17 @@ class Nv4AdmissionTests(unittest.TestCase):
                 bad[position] = 0  # destination is page 0
                 self.assertEqual(self.probe(bytes(bad)).code, 4)
 
+    def test_completed_compaction_same_source_page_cannot_run_forwards(self):
+        # Pinned TI four-page compact() decrements srcOff; a same-page
+        # XSRCEND offset larger than XSRCSTART cannot be produced by it.
+        media = bytearray(stock_like())
+        media[6] = 0xfc
+        media[8:11] = bytes((128, 0, 1))
+        media[12:15] = bytes((64, 0, 1))
+        self.assertEqual(self.probe(bytes(media)).code, 8)
+        media[12] = 192  # CRCs remain valid; only journal ordering is wrong.
+        self.assertEqual(self.probe(bytes(media)).code, 4)
+
     def test_crc_failure_holds(self):
         corrupted = bytearray(stock_like())
         corrupted[16] ^= 1
