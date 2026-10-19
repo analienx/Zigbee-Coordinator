@@ -29,7 +29,8 @@ READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
 PAGE_SIZE = 8192
 
 
-def encoded_record(subid: int, *, sysid: int = 1) -> bytes:
+def encoded_record(subid: int, *, sysid: int = 1,
+                   active: bool = True) -> bytes:
     """Real NVOCMP_HDRLE=0 compressed ID/status and CRC, public fake data."""
     data = b'not-a-real-key'
     header = bytearray((sysid << 2, 0x1a, subid >> 2,
@@ -37,7 +38,7 @@ def encoded_record(subid: int, *, sysid: int = 1) -> bytes:
                         (len(data) & 63) << 2))
     crc = forensics.crc8(data + header)
     header[4] |= crc >> 6
-    header += bytes((((crc & 63) << 2) | 2, 0x96))
+    header += bytes((((crc & 63) << 2) | (2 if active else 0), 0x96))
     return data + header
 
 
@@ -89,6 +90,46 @@ def stock_like_semantic(*, bdb: int | None = 0,
     for part in parts:
         media[cursor:cursor + len(part)] = part
         cursor += len(part)
+    return bytes(media)
+
+
+def ti_normal_resume_with_retained_journals() -> bytes:
+    """Synthetic records plus real *state shapes*, never private NV payloads.
+
+    TI NORMAL_RESUME permits tail=XDST page 1, head=page 2 and a separate
+    PGACT page 0. FULL pages may retain PGCSRC=F8 and old compaction journals.
+    """
+    media = bytearray(stock_like_semantic())
+    media[PAGE_SIZE] = 0xfe   # XDST moved from page 3 to page 1
+    media[3 * PAGE_SIZE] = 0x78
+    for page, mode, src, start in ((0, 0xfc, 1, 8170),
+                                   (2, 0xf8, 3, 8169),
+                                   (3, 0xf8, 0, 8190)):
+        base = page * PAGE_SIZE
+        media[base + 6] = mode
+        media[base + 8:base + 11] = start.to_bytes(2, 'little') + bytes((src,))
+        media[base + 12:base + 15] = (16).to_bytes(2, 'little') + bytes((src,))
+    return bytes(media)
+
+
+def dense_ti_normal_resume_media() -> bytes:
+    """714 synthetic records / 366 active spread across three item pages."""
+    media = bytearray(ti_normal_resume_with_retained_journals())
+    active_offset = (16 + len(encoded_record(0)) +
+                     len(legacy_osal_record(0x55, b'\x00')) +
+                     len(legacy_osal_record(0x87, b'\x00')))
+    next_subid = 1
+    for page, count, cursor in ((0, 71, active_offset),
+                                (2, 337, 16),
+                                (3, 303, 16)):
+        base = page * PAGE_SIZE
+        for _ in range(count):
+            record = encoded_record(next_subid, active=next_subid <= 363)
+            assert cursor + len(record) <= PAGE_SIZE
+            media[base + cursor:base + cursor + len(record)] = record
+            cursor += len(record)
+            next_subid += 1
+    assert next_subid == 712
     return bytes(media)
 
 
@@ -276,10 +317,41 @@ class Nv4AdmissionTests(unittest.TestCase):
                 self.assertEqual(result.code, 8)  # CRC-valid structure.
                 self.assertEqual(result.semantic_state, 0)  # But HOLD.
 
-    def test_f8_compaction_is_not_silent_settled_admission(self):
+    def test_f8_on_active_page_can_be_settled_after_ti_all_active_return(self):
+        # TI tags PGACT/PGFULL with PGCSRC mode before its all-active early
+        # return; only the page STATE (PGXSRC) requests write-backed recovery.
         before = bytearray(stock_like())
         before[6] = 0xf8
-        self.assertEqual(self.probe(bytes(before)).code, 4)
+        self.assertEqual(self.probe(bytes(before)).code, 8)
+
+    def test_genuine_ti_normal_resume_page_geometry_not_false_hold(self):
+        result = self.probe(ti_normal_resume_with_retained_journals())
+        self.assertEqual((result.code, result.semantic_state), (8, 1))
+        self.assertEqual((result.records, result.active_records), (3, 3))
+
+    def test_dense_four_page_layout_with_f8_retained_journals(self):
+        # Mirrors record *counts and state shapes* only, without board data.
+        result = self.probe(dense_ti_normal_resume_media())
+        self.assertEqual((result.code, result.semantic_state), (8, 1))
+        self.assertEqual((result.records, result.active_records), (714, 366))
+        self.assertLess(result.reads, 30000)
+
+    def test_f8_partial_journal_or_unexpected_state_still_holds(self):
+        valid = bytearray(ti_normal_resume_with_retained_journals())
+        corrupted = bytearray(valid)
+        corrupted[2 * PAGE_SIZE + 10] = 0xff  # partial source page
+        self.assertEqual(self.probe(bytes(corrupted)).code, 4)
+        corrupted = bytearray(valid)
+        corrupted[PAGE_SIZE + 6] = 0xf8  # XDST may not claim PGCSRC
+        self.assertEqual(self.probe(bytes(corrupted)).code, 4)
+        corrupted = bytearray(valid)
+        corrupted[2 * PAGE_SIZE] = 0x70  # PGXSRC state requires recovery
+        self.assertEqual(self.probe(bytes(corrupted)).code, 4)
+
+    def test_f8_dense_layout_bad_crc_remains_blocked(self):
+        corrupted = bytearray(dense_ti_normal_resume_media())
+        corrupted[2 * PAGE_SIZE + 16] ^= 1
+        self.assertEqual(self.probe(bytes(corrupted)).code, 6)
 
     def test_fc_completed_mode_checks_compaction_header_range(self):
         before = bytearray(stock_like())

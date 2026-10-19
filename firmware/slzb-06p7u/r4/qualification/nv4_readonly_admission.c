@@ -71,6 +71,32 @@ static uint8_t crc8(uint8_t crc, const uint8_t *data, uint32_t length)
     return crc;
 }
 
+static int erased_compaction_journal(const uint8_t header[16])
+{
+    return header[8] == 0xffu && header[9] == 0xffu &&
+           header[10] == 0xffu && header[12] == 0xffu &&
+           header[13] == 0xffu && header[14] == 0xffu;
+}
+
+static int valid_completed_journal(const uint8_t header[16], uint32_t page)
+{
+    uint16_t start = (uint16_t)(header[8] | ((uint16_t)header[9] << 8u));
+    uint16_t end = (uint16_t)(header[12] | ((uint16_t)header[13] << 8u));
+    uint32_t start_page = header[10], end_page = header[14];
+
+    /* A retained completed journal is permitted on FC and F8 pages. TI
+     * leaves historical journal bytes in FULL/ACTIVE pages when it marks
+     * them PGCSRC=0xF8 before deciding to abort an all-active compaction. */
+    if (start < R4_DATA_START || start > R4_NV4_PAGE_SIZE ||
+        end < R4_DATA_START || end > R4_NV4_PAGE_SIZE ||
+        start_page >= R4_NV4_PAGES || end_page >= R4_NV4_PAGES ||
+        start_page == page || end_page == page) return 0;
+    if ((end_page + R4_NV4_PAGES - start_page) % R4_NV4_PAGES >=
+        (page + R4_NV4_PAGES - start_page) % R4_NV4_PAGES) return 0;
+    if (start_page == end_page && end > start) return 0;
+    return 1;
+}
+
 static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
                          uint32_t page_base, uint32_t end,
                          uint32_t *live_ids, uint32_t *live_count,
@@ -192,7 +218,6 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u,
                       R4_NV4_STATE_UNKNOWN_HOLD};
     uint32_t page, active = 0u, full = 0u, destination = 0u, inactive = 0u;
-    uint32_t active_page = R4_NV4_PAGES, destination_page = R4_NV4_PAGES;
     uint32_t live_count = 0u, zstack_live_count = 0u;
     r4_nv4_markers markers = {0u, 0u, 0u, 0u, 0u, 0u};
     /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
@@ -226,49 +251,25 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         mode = header[6];
         if ((logical != 0xffffu &&
              (logical < R4_DATA_START || logical > R4_NV4_PAGE_SIZE)) ||
-            (mode != 0xffu && mode != 0xfcu) ||
-            (mode == 0xffu &&
-             (header[8] != 0xffu || header[9] != 0xffu ||
-              header[10] != 0xffu || header[12] != 0xffu ||
-              header[13] != 0xffu || header[14] != 0xffu)) ||
-            (mode == 0xfcu &&
-             ((uint16_t)(header[8] | ((uint16_t)header[9] << 8u)) < R4_DATA_START ||
-              (uint16_t)(header[8] | ((uint16_t)header[9] << 8u)) > R4_NV4_PAGE_SIZE ||
-              ((uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) < R4_DATA_START) ||
-              ((uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) > R4_NV4_PAGE_SIZE) ||
-              header[10] >= R4_NV4_PAGES || header[14] >= R4_NV4_PAGES ||
-              /* The pinned TI >2-page compactor always selects a distinct
-               * tail destination. Its committed source-start/end headers
-               * cannot refer back to their own destination page. Treat a
-               * self-referential FC journal as torn/foreign media, not an
-               * admission candidate for write-backed vendor init. */
-              header[10] == page || header[14] == page ||
-              /* The actual four-page TI compact() advances source pages
-               * via NVOCMP_INCPAGE and stops before its tail destination.
-               * Source endpoints on opposite sides of the destination in
-               * that forward ring imply an impossible wrap through the
-               * destination, even when both endpoints are individually
-               * in range and every item CRC verifies. */
-              (((uint32_t)header[14] + R4_NV4_PAGES - header[10]) %
-                 R4_NV4_PAGES >=
-               ((page + R4_NV4_PAGES - header[10]) % R4_NV4_PAGES)) ||
-              /* Pinned TI NVOCMP_compact() walks source items backwards
-               * (srcOff decreases) and records the final source offset in
-               * XSRCENDHDR. If both source endpoints are on the same page,
-               * the end cannot be beyond the start. A CRC-valid, reversed
-               * same-page journal is foreign/torn metadata, not a safely
-               * completed compaction to hand to write-capable TI init. */
-              (header[10] == header[14] &&
-               (uint16_t)(header[12] | ((uint16_t)header[13] << 8u)) >
-               (uint16_t)(header[8] | ((uint16_t)header[9] << 8u)))))) {
+            /* TI NVOCMP PGCSRC=0xF8 is a page MODE, not PGXSRC=0x70.
+             * The vendor marks all PGACT/PGFULL pages F8 before checking
+             * the all-active early return. With one XDST and no PGXSRC,
+             * TI init selects NORMAL_RESUME rather than compaction repair.
+             * Such settled pages may retain a completed journal or an
+             * erased journal, but a partial journal still must HOLD. */
+            !((mode == 0xffu && erased_compaction_journal(header)) ||
+              (mode == 0xfcu && valid_completed_journal(header, page)) ||
+              (mode == 0xf8u && (header[0] == 0x7cu || header[0] == 0x78u) &&
+               (erased_compaction_journal(header) ||
+                valid_completed_journal(header, page))))) {
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base + 4u;
             return r;
         }
         switch (header[0]) {
-        case 0x7cu: ++active; active_page = page; break;
+        case 0x7cu: ++active; break;
         case 0x78u: ++full; break;
-        case 0xfeu: ++destination; destination_page = page; break;
+        case 0xfeu: ++destination; break;
         case 0xffu: ++inactive; break;
         default:
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
@@ -300,8 +301,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
     }
     if (active != 1u || destination != 1u || r.active_records == 0u ||
         !((full == 2u && inactive == 0u) ||
-          (full == 0u && inactive == 2u)) ||
-        destination_page != (active_page + R4_NV4_PAGES - 1u) % R4_NV4_PAGES) {
+          (full == 0u && inactive == 2u))) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;
         return r;
     }
