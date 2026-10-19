@@ -1,4 +1,4 @@
-"""Fail-closed TI 8.33 linked ZDApp NV security/counter restore (B1 N12/N13).
+"""Fail-closed TI 8.33 linked ZDApp NV security material and counter paths.
 
 Called only after exact upstream zd_app.c git-blob SHA validation in apply_b1.
 Actual TI function bodies are replaced, preserving public signatures.
@@ -149,6 +149,93 @@ RESTORE_COUNTER = r"""void ZDApp_RestoreNwkSecMaterial(void)
 }"""
 
 
+STORE_MATERIAL = r"""void ZDApp_StoreNwkSecMaterial(void)
+{
+  nwkSecMaterialDesc_t row = {0};
+  nwkSecMaterialDesc_t readback = {0};
+  uint8_t emptyPanID[Z_EXTADDR_LEN] = {0};
+  uint8_t genericPanID[Z_EXTADDR_LEN];
+  uint8_t emptySlot = gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES;
+  uint8_t found = FALSE;
+  uint8_t genericFound = FALSE;
+  uint8_t genericHasCounter = FALSE;
+  uint8_t i;
+
+  if (b1_nv_runtime_hold_active()) return;
+  memset(genericPanID, 0xFF, sizeof(genericPanID));
+  if (gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES == 0 ||
+      OsalPort_memcmp(_NIB.extendedPANID, emptyPanID, Z_EXTADDR_LEN) ||
+      OsalPort_memcmp(_NIB.extendedPANID, genericPanID, Z_EXTADDR_LEN))
+  {
+    b1_nv_runtime_hold_latch();
+    return;
+  }
+
+  /* TI's original loop stops at the first zero-ID slot, even when a later
+   * slot already belongs to this PAN with a nonzero replay counter. Scan
+   * the ENTIRE bounded table before deciding whether to create a row. */
+  for (i = 0; i < gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES; i++)
+  {
+    memset(&row, 0, sizeof(row));
+    if (osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, i, 0,
+                        sizeof(row), &row) != ZSUCCESS)
+    {
+      b1_nv_runtime_hold_latch();
+      return;
+    }
+    if (OsalPort_memcmp(row.extendedPanID, _NIB.extendedPANID,
+                        Z_EXTADDR_LEN))
+    {
+      if (found)
+      {
+        /* Duplicate identity means restore order could choose a stale floor. */
+        b1_nv_runtime_hold_latch();
+        return;
+      }
+      found = TRUE;
+    }
+    else if (OsalPort_memcmp(row.extendedPanID, emptyPanID,
+                            Z_EXTADDR_LEN))
+    {
+      if (row.FrameCounter != 0u)
+      {
+        b1_nv_runtime_hold_latch();
+        return;
+      }
+      if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES) emptySlot = i;
+    }
+    else if (i == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES - 1 &&
+             OsalPort_memcmp(row.extendedPanID, genericPanID,
+                             Z_EXTADDR_LEN))
+    {
+      genericFound = TRUE;
+      genericHasCounter = (row.FrameCounter != 0u);
+    }
+  }
+
+  if (found || (genericFound && genericHasCounter)) return;
+  if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES)
+  {
+    /* An already initialized generic slot may receive the later SAVE. */
+    if (!genericFound) b1_nv_runtime_hold_latch();
+    return;
+  }
+
+  /* First publication of a PAN identity must be durable before startup or
+   * authentication progresses. NEVER zero an existing active counter. */
+  memset(&row, 0, sizeof(row));
+  memcpy(row.extendedPanID, _NIB.extendedPANID, Z_EXTADDR_LEN);
+  if (osal_nv_write_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, emptySlot,
+                       sizeof(row), &row) != ZSUCCESS ||
+      osal_nv_read_ex(ZCD_NV_EX_NWK_SEC_MATERIAL_TABLE, emptySlot, 0,
+                      sizeof(readback), &readback) != ZSUCCESS ||
+      !OsalPort_memcmp(&row, &readback, sizeof(row)))
+  {
+    b1_nv_runtime_hold_latch();
+  }
+}"""
+
+
 def patch(source: str) -> str:
     source = replace_once(
         source, '#include "zcomdef.h"',
@@ -160,6 +247,50 @@ def patch(source: str) -> str:
         'extern int b1_sec_restored_network_validated(void);\n'
         'extern void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore_ok);',
         "ZDApp security declarations")
+
+    old_store = extract_function(source, "void ZDApp_StoreNwkSecMaterial(void)")
+    source = replace_once(source, old_store, STORE_MATERIAL,
+                          "full-table NWK material STORE and checked identity commit")
+
+    network_sig = "void ZDApp_NetworkStartEvt( void )"
+    old_network = extract_function(source, network_sig)
+    new_network = replace_once(
+        old_network,
+        "      ZDApp_NwkWriteNVRequest();\n"
+        "      ZDApp_ChangeState( DEV_ZB_COORD );\n\n"
+        "      if(bdbCommissioningProcedureState.bdbCommissioningState == BDB_COMMISSIONING_STATE_FORMATION)\n"
+        "      {\n"
+        "        bdb_nwkFormationAttempt(TRUE);\n"
+        "        ZDApp_StoreNwkSecMaterial();",
+        "      ZDApp_NwkWriteNVRequest();\n"
+        "      /* Security material must be persisted before READY/formation is announced. */\n"
+        "      if(bdbCommissioningProcedureState.bdbCommissioningState == BDB_COMMISSIONING_STATE_FORMATION)\n"
+        "      {\n"
+        "        ZDApp_StoreNwkSecMaterial();\n"
+        "        if (b1_nv_runtime_hold_active()) return;\n"
+        "      }\n"
+        "      ZDApp_ChangeState( DEV_ZB_COORD );\n\n"
+        "      if(bdbCommissioningProcedureState.bdbCommissioningState == BDB_COMMISSIONING_STATE_FORMATION)\n"
+        "      {\n"
+        "        bdb_nwkFormationAttempt(TRUE);",
+        "coordinator security STORE before READY and formation report")
+    source = replace_once(source, old_network, new_network,
+                          "network-formation security STORE fence")
+
+    sec_sig = "uint32_t ZDApp_ProcessSecEvent( uint8_t task_id, uint32_t events )"
+    old_events = extract_function(source, sec_sig)
+    new_events = replace_once(
+        old_events,
+        "    ZDApp_StoreNwkSecMaterial();\n\n    ZDApp_DeviceAuthEvt();",
+        "    ZDApp_StoreNwkSecMaterial();\n"
+        "    if (b1_nv_runtime_hold_active())\n"
+        "    {\n"
+        "      return (events ^ ZDO_DEVICE_AUTH);\n"
+        "    }\n\n"
+        "    ZDApp_DeviceAuthEvt();",
+        "no authentication progression after failed STORE")
+    source = replace_once(source, old_events, new_events,
+                          "ZDO security-store event fence")
 
     old_counter = extract_function(source, "void ZDApp_RestoreNwkSecMaterial(void)")
     source = replace_once(source, old_counter, RESTORE_COUNTER,

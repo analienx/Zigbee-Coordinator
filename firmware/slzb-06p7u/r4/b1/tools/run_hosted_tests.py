@@ -126,7 +126,10 @@ def main():
         ("zdapp", "make_zdapp_harness.py", SOURCE_PATHS[3], tuple((name,) for name in (
             "new_empty", "positive", "two_reboots", "generic", "missing_key", "zero_key",
             "missing_row", "overflow", "write_fail", "readback", "read_fail",
-            "wrong_generic_identity"))),
+            "wrong_generic_identity", "store_new", "store_later_match",
+            "store_duplicate", "store_full_foreign", "store_generic_floor",
+            "store_write_fail", "store_read_fail", "store_corrupt_readback",
+            "store_nonzero_blank"))),
         ("security", "make_security_harness.py", SOURCE_PATHS[4],
          tuple((name,) for name in SECURITY_SCENARIOS)),
         ("host_aps_api", "make_host_api_harness.py", SOURCE_PATHS[9],
@@ -148,6 +151,14 @@ def main():
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)
+
+    # Recreating TI's original first-empty early exit must reset a later
+    # matching PAN's replay floor and fail the genuine C oracle.
+    mutation(generated["zdapp"],
+             "if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES) emptySlot = i;",
+             "if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES) { emptySlot = i; break; }",
+             "mutant_zdapp_store_first_blank_wins", "rows_written==0u",
+             ("store_later_match",))
 
     for variant in ("sem", "posix"):
         name = "nvocmp_init_" + variant

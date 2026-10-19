@@ -1,4 +1,4 @@
-"""C fault matrix for exact patched TI8.33 ZDApp NWK key/counter restore functions.
+"""C fault matrix for exact patched TI8.33 ZDApp NWK STORE/restore functions.
 
 Compiles function bodies extracted from SHA-pinned SDK after B1 overlay.
 Only synthetic key bytes and fake NV rows; no hardware, ROM, RF, HA or MQTT.
@@ -117,7 +117,58 @@ int main(int argc, char **argv)
     assert(argc == 2);
     const char *scenario = argv[1];
     setup();
-    if (strcmp(scenario,"new_empty")==0) {
+    if (strncmp(scenario,"store_",6)==0) {
+        /* TI initializes all four extended NV items before network auth. */
+        for (unsigned i=0;i<4;i++) {
+            row_present[i]=TRUE;
+            memset(fake_rows[i].extendedPanID,0x50u+(int)i,8u);
+            fake_rows[i].FrameCounter=700u+(uint32_t)i;
+        }
+        memset(fake_rows[3].extendedPanID,0xFF,8u);
+        fake_rows[3].FrameCounter=0u;
+        if (strcmp(scenario,"store_later_match")==0) {
+            memset(fake_rows[0].extendedPanID,0,8u);
+            fake_rows[0].FrameCounter=0u;
+            memcpy(fake_rows[1].extendedPanID,_NIB.extendedPANID,8u);
+            fake_rows[1].FrameCounter=9999u;
+        } else if (strcmp(scenario,"store_duplicate")==0) {
+            memcpy(fake_rows[0].extendedPanID,_NIB.extendedPANID,8u);
+            memcpy(fake_rows[1].extendedPanID,_NIB.extendedPANID,8u);
+        } else if (strcmp(scenario,"store_full_foreign")==0) {
+            memset(fake_rows[3].extendedPanID,0x54u,8u);
+        } else if (strcmp(scenario,"store_generic_floor")==0) {
+            fake_rows[3].FrameCounter=8500u;
+        } else {
+            memset(fake_rows[0].extendedPanID,0,8u);
+            fake_rows[0].FrameCounter=0u;
+            if (strcmp(scenario,"store_write_fail")==0) failure_write=TRUE;
+            else if (strcmp(scenario,"store_read_fail")==0) failure_read=TRUE;
+            else if (strcmp(scenario,"store_corrupt_readback")==0) corrupt_readback=TRUE;
+            else if (strcmp(scenario,"store_nonzero_blank")==0)
+                fake_rows[0].FrameCounter=888u;
+            else assert(strcmp(scenario,"store_new")==0);
+        }
+        ZDApp_StoreNwkSecMaterial();
+        if (strcmp(scenario,"store_new")==0) {
+            assert(!b1_nv_runtime_hold_active() && rows_written==1u);
+            assert(!memcmp(fake_rows[0].extendedPanID,_NIB.extendedPANID,8u));
+            assert(fake_rows[0].FrameCounter==0u);
+        } else if (strcmp(scenario,"store_later_match")==0) {
+            uint8_t emptyPan[8]={0};
+            assert(!b1_nv_runtime_hold_active() && rows_written==0u);
+            assert(fake_rows[1].FrameCounter==9999u);
+            assert(!memcmp(fake_rows[0].extendedPanID,emptyPan,8u));
+        } else if (strcmp(scenario,"store_generic_floor")==0) {
+            assert(!b1_nv_runtime_hold_active() && rows_written==0u);
+            assert(fake_rows[3].FrameCounter==8500u);
+        } else {
+            assert(b1_nv_runtime_hold_active());
+            assert(rows_written==(strcmp(scenario,"store_write_fail")==0 ||
+                                   strcmp(scenario,"store_corrupt_readback")==0));
+            if (strcmp(scenario,"store_full_foreign")==0)
+                assert(fake_rows[3].extendedPanID[0]==0x54u);
+        }
+    } else if (strcmp(scenario,"new_empty")==0) {
         key_present = FALSE;
         row_present[0] = FALSE;
         assert(ZDApp_RestoreNwkKey(TRUE) == FALSE);
@@ -222,6 +273,7 @@ def main():
     a = p.parse_args()
     contents = a.source.read_text(encoding="utf-8")
     functions = [
+        extract_function(contents, "void ZDApp_StoreNwkSecMaterial(void)"),
         extract_function(contents, "void ZDApp_RestoreNwkSecMaterial(void)"),
         extract_function(contents, "uint8_t ZDApp_RestoreNwkKey( uint8_t incrFrmCnt )")
     ]
