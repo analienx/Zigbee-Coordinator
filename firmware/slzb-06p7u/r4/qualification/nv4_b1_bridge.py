@@ -15,9 +15,19 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 
 from nv4_source_overlay import STOCK_BASE, STOCK_SIZE, STOCK_PAGES
 
+
+# TI 8.33 nvocmp.c documents this optional flag as erasing/reformatting
+# *all* NV pages when compaction encounters an error. It is inadmissible for
+# fitted, retained stock NV4: a failed restore must HOLD, not reformat.
+DESTRUCTIVE_COMPACTION_DENIAL = (
+    '#if defined(NVOCMP_RECOVER_FROM_COMPACT_FAILURE)\n'
+    '#error R4_NV4_DESTRUCTIVE_COMPACTION_REFORMAT_FORBIDDEN_PRESERVE_STOCK_NV\n'
+    '#endif\n'
+)
 
 INCLUDE_FROM = '#include "b1_admission.c" /* B1 source-linked native admission */'
 INCLUDE_TO = (INCLUDE_FROM + '\n'
@@ -151,6 +161,10 @@ def transform(source: str) -> str:
     if not (STOCK_BASE == 0xA6000 and STOCK_SIZE == 0x8000 and STOCK_PAGES == 4):
         raise ValueError('R4_NV4_STOCK_GEOMETRY_DRIFT')
     source = source.replace('\r\n', '\n')
+    if (DESTRUCTIVE_COMPACTION_DENIAL in source or
+            re.search(r'(?m)^\s*#\s*define\s+NVOCMP_RECOVER_FROM_COMPACT_FAILURE\b',
+                      source)):
+        raise ValueError('R4_NV4_UNSAFE_COMPACTION_RECOVERY_DEFINE')
     if ('/* B1 source-linked native admission */' not in source or
             '/* B1 N03: no divide by zero/CCFG */' not in source or
             'b1_nv_initializing = 1u;' not in source or
@@ -163,9 +177,16 @@ def transform(source: str) -> str:
     source = one(source, POST_DIVISION_NV2, POST_DIVISION_NV4, 'POST_DIVISION')
     source = one(source, OLD_ADMISSION, NEW_ADMISSION, 'ADMISSION')
     source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
+    # The fallback is declared twice in the pinned TI SDK (multi-page and
+    # 1/2-page variants). Deny it at both *use sites* as well as before
+    # includes, so an included header cannot enable a late destructive path.
+    fallback = '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE'
+    if source.count(fallback) != 2:
+        raise ValueError('R4_NV4_DESTRUCTIVE_COMPACTION_FALLBACK_SOURCE_DRIFT')
+    source = source.replace(fallback, DESTRUCTIVE_COMPACTION_DENIAL + fallback)
     if source.count('NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT') != 0:
         raise ValueError('R4_NV4_B1_LEFTOVER_NATIVE_NV2_GUARD')
-    return source
+    return DESTRUCTIVE_COMPACTION_DENIAL + source
 
 
 def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
@@ -208,6 +229,7 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
             raise ValueError('R4_NV4_B1_SOURCE_RECEIPT_BINDINGS_INVALID')
     result = {
         'schema': 'p7u-nv4-b1-source-only-v1',
+        'destructive_compaction_reformat_if_enabled': 'COMPILE_TIME_ERROR',
         'source_before_sha256': hashlib.sha256(originals[0]).hexdigest(),
         'source_after_sha256': hashlib.sha256(replacement.encode()).hexdigest(),
         'nv4_admission_c_sha256': hashlib.sha256(originals[1]).hexdigest(),
@@ -229,6 +251,7 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
         prior['additional_source_bindings']['nv4_admission_h_sha256'] = (
             'source/ti/common/nv/nv4_readonly_admission.h')
         prior['nv4_readonly_bridge_source'] = 'EXACT_PINNED_FOUR_PAGE_B1_ADMISSION'
+        prior['nv4_destructive_compaction_reformat_if_enabled'] = 'COMPILE_TIME_ERROR'
         b1_receipt.write_text(json.dumps(prior, indent=2, sort_keys=True) + '\n')
         result['b1_overlay_receipt_bound'] = True
     else:

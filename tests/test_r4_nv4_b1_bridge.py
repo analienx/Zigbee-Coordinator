@@ -5,6 +5,8 @@ import importlib.util
 import hashlib
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -31,6 +33,12 @@ def post_b1_fixture() -> str:
         bridge.POST_DIVISION_NV2,
         bridge.OLD_ADMISSION,
         bridge.MULTIPAGE_SCAN,
+        '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
+        '/* pinned TI multi-page destructive branch */',
+        '#endif',
+        '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
+        '/* pinned TI two-page destructive branch */',
+        '#endif',
     ))
 
 
@@ -54,6 +62,44 @@ class Nv4B1BridgeTests(unittest.TestCase):
         self.assertIn('0xA6000u', source)
         self.assertNotIn('NVOCMP_NVPAGES != B1_NV2_PAGE_COUNT', source)
         self.assertNotIn('#ifdef B1_FACTORY_BOOT_AUTHORIZED', source)
+        self.assertTrue(source.startswith(bridge.DESTRUCTIVE_COMPACTION_DENIAL))
+        self.assertEqual(source.count(bridge.DESTRUCTIVE_COMPACTION_DENIAL), 3)
+
+    @unittest.skipUnless(shutil.which('gcc'), 'host C compiler required')
+    def test_stock_nv4_compiler_rejects_lossy_ti_compaction_fallback(self):
+        guarded = bridge.transform(post_b1_fixture())
+        data = (guarded[:len(bridge.DESTRUCTIVE_COMPACTION_DENIAL)] +
+                'int main(void) { return 0; }\n').encode()
+        ordinary = subprocess.run(
+            ['gcc', '-x', 'c', '-fsyntax-only', '-'],
+            input=data, capture_output=True)
+        dangerous = subprocess.run(
+            ['gcc', '-DNVOCMP_RECOVER_FROM_COMPACT_FAILURE=1',
+             '-x', 'c', '-fsyntax-only', '-'],
+            input=data, capture_output=True)
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertNotEqual(dangerous.returncode, 0)
+        self.assertIn(b'R4_NV4_DESTRUCTIVE_COMPACTION_REFORMAT_FORBIDDEN',
+                      dangerous.stderr)
+
+    def test_checked_source_cannot_define_lossy_compaction_recovery_late(self):
+        for injection in ('#define NVOCMP_RECOVER_FROM_COMPACT_FAILURE 1',
+                          ' #  define\tNVOCMP_RECOVER_FROM_COMPACT_FAILURE'):
+            with self.subTest(injection=injection), self.assertRaisesRegex(
+                    ValueError, 'UNSAFE_COMPACTION_RECOVERY_DEFINE'):
+                bridge.transform(post_b1_fixture() + '\n' + injection)
+
+    def test_malformed_or_missing_destructive_fallback_is_rejected(self):
+        original = post_b1_fixture()
+        for mutant in (
+                original.replace('#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
+                                 '#if 0', 1),
+                original.replace('#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
+                                 '#if 0'),
+                original + '\n#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE'):
+            with self.subTest(size=len(mutant)), self.assertRaisesRegex(
+                    ValueError, 'FALLBACK_SOURCE_DRIFT'):
+                bridge.transform(mutant)
 
     def test_missing_or_duplicate_anchors_hold(self):
         source = post_b1_fixture()
@@ -118,6 +164,10 @@ class Nv4B1BridgeTests(unittest.TestCase):
             self.assertEqual(bound['nv4_readonly_bridge_source'],
                              'EXACT_PINNED_FOUR_PAGE_B1_ADMISSION')
             self.assertFalse(result['flash_authorized'])
+            self.assertEqual(result['destructive_compaction_reformat_if_enabled'],
+                             'COMPILE_TIME_ERROR')
+            self.assertEqual(bound['nv4_destructive_compaction_reformat_if_enabled'],
+                             'COMPILE_TIME_ERROR')
 
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
