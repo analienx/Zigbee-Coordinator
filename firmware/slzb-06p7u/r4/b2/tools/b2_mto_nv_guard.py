@@ -62,17 +62,45 @@ AFTER = """void ZDApp_ForceConcentratorChange( void )
   }
 }"""
 
+# Preserve the closed TI library's proven 1000ms request limiter: no added
+# cooldown is justified without observed emitted RF or a reproducible RTG
+# defect. Only prevent MTO requests when the concentrator is inactive.
+FAILURE_SIGNATURE = "void ZDO_ManytoOneFailureIndicationCB()"
+FAILURE_BEFORE = """void ZDO_ManytoOneFailureIndicationCB()
+{
+  // By default, the concentrator automatically redo many-to-one route
+  // discovery to update all many-to-one routes in the network
+  // If you want anything processing other than the default,
+  // please replace the following code.
+
+  RTG_MTORouteReq();
+}"""
+FAILURE_AFTER = """void ZDO_ManytoOneFailureIndicationCB()
+{
+  /* Ignore obsolete error indications after concentrator disable or before
+   * successful network formation. Never activate MTO from a failure hint. */
+  if (zgConcentratorEnable != TRUE ||
+      (devState != DEV_ZB_COORD && devState != DEV_ROUTER))
+  {
+    return;
+  }
+
+  /* Preserve TI's bounded RTG policy and healthy recovery latency here;
+   * application-side backoff needs actual emitted-traffic evidence. */
+  RTG_MTORouteReq();
+}"""
+
 def git(root, *args):
     proc = subprocess.run(["git", "-C", str(root), *args], check=True,
                           capture_output=True, text=True)
     return proc.stdout.strip()
 
-def source_function(source):
-    anchor = SIGNATURE + "\n{"
+def source_function(source, signature=SIGNATURE):
+    anchor = signature + "\n{"
     if source.count(anchor) != 1:
         raise ValueError("B2 MTO pinned function ambiguous or absent")
     start = source.index(anchor)
-    cursor = start + len(SIGNATURE) + 1
+    cursor = start + len(signature) + 1
     depth = 0
     for i in range(cursor, len(source)):
         if source[i] == "{":
@@ -98,13 +126,21 @@ def apply(sdk, receipt):
     original = source_function(source)
     if original != BEFORE or source.count(BEFORE) != 1:
         raise ValueError("B2 MTO exact donor function drift")
-    updated = source.replace(BEFORE, AFTER, 1)
+    failure_original = source_function(source, FAILURE_SIGNATURE)
+    if failure_original != FAILURE_BEFORE or source.count(FAILURE_BEFORE) != 1:
+        raise ValueError("B2 MTO failure callback exact donor drift")
+    updated = source.replace(BEFORE, AFTER, 1).replace(
+        FAILURE_BEFORE, FAILURE_AFTER, 1
+    )
     data = {
-        "schema": "r4-b2-mto-nv-guard-source-v1",
+        "schema": "r4-b2-mto-nv-and-formation-guard-source-v2",
         "donor_sdk_sha": SDK_SHA, "donor_file_blob": ZDAPP_BLOB,
         "modified_source_sha256": hashlib.sha256(updated.encode()).hexdigest(),
         "nv_writes": False, "defaults_changed": False,
         "runtime_nv_read_failure": "DISABLE_MTO_AND_STOP_TIMER",
+        "failure_callback_policy": "ONLY_ACTIVE_FORMED_CONCENTRATOR",
+        "extra_mto_retry_throttle": False,
+        "route_cache_eviction_verified": False,
         "routing_body_verified": False, "real_rf_verified": False,
         "production_flash_authorized": False,
         "status": "DISPOSABLE_TI_SOURCE_ONLY_NO_COMPOSITE",

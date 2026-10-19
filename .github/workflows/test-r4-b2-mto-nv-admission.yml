@@ -75,8 +75,25 @@ jobs:
           assert r["production_flash_authorized"] is False
           assert r["routing_body_verified"] is False
           assert r["defaults_changed"] is False
+          assert r["failure_callback_policy"] == "ONLY_ACTIVE_FORMED_CONCENTRATOR"
+          assert r["extra_mto_retry_throttle"] is False
           print("B2_EXPERIMENTAL_MTO_NV_ADMISSION_ONLY_NOT_NATIVE_OR_RF")
           PY
+      - name: Prove the original unconditional TI callback fails inactive-concentrator admission
+        run: |
+          set -euo pipefail
+          python firmware/slzb-06p7u/r4/b2/tests/mto_extract.py \
+            --source /tmp/r4b2mto/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/r4b2-test/mto_unbounded.c --failure-unmodified
+          gcc -std=c11 -O0 -Wall -Wextra -Werror \
+            -I firmware/slzb-06p7u/r4/b2/tests /tmp/r4b2-test/mto_unbounded.c \
+            firmware/slzb-06p7u/r4/b2/tests/mto_test.c -o /tmp/r4b2-test/mto_unbounded
+          ulimit -c 0
+          if /tmp/r4b2-test/mto_unbounded > /tmp/r4b2-test/mto-unbounded.txt 2>&1; then
+            echo "B2_MTO_INACTIVE_CONCENTRATOR_MUTANT_SURVIVED"; exit 1
+          fi
+          grep -F 'repairRequests==0' /tmp/r4b2-test/mto-unbounded.txt
+          echo "B2_MTO_INACTIVE_CONCENTRATOR_ORIGINAL_DONOR_REJECTED"
       - name: Upload sanitized source-only evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
