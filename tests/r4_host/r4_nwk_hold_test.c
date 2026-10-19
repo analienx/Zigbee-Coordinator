@@ -85,6 +85,16 @@ int main(int argc,char **argv)
         memset(rows[1].extendedPanID,0,Z_EXTADDR_LEN);
         rows[2].FrameCounter=2500u;
     }
+    else if(strcmp(s,"foreign-last-slot")==0) {
+        memset(rows[1].extendedPanID,0,Z_EXTADDR_LEN);
+        memset(rows[2].extendedPanID,0xC4,Z_EXTADDR_LEN);
+        rows[2].FrameCounter=999u; /* below SSP: rollback check alone cannot catch it */
+    }
+    else if(strcmp(s,"empty-last-slot")==0) {
+        memset(rows[1].extendedPanID,0,Z_EXTADDR_LEN);
+        memset(rows[2].extendedPanID,0,Z_EXTADDR_LEN);
+        rows[2].FrameCounter=0u;
+    }
     else if(strcmp(s,"healthy")!=0)assert(!"unknown case");
 
     assert(!b1_nv_runtime_hold_active());
@@ -95,10 +105,16 @@ int main(int argc,char **argv)
     assert(r4_mac_submitted()==2u);
     ZDApp_SaveNwkKey();
 
-    if(strcmp(s,"healthy")==0) {
+    if(strcmp(s,"healthy")==0 || strcmp(s,"empty-last-slot")==0) {
         assert(r4_mac_attempt_secured_and_nodata()==SUCCESS);
         assert(r4_mac_submitted()==4u);
-        assert(rows[1].FrameCounter==2000u);
+        if(strcmp(s,"healthy")==0)assert(rows[1].FrameCounter==2000u);
+        else {
+            uint8_t genericPanID[Z_EXTADDR_LEN];
+            memset(genericPanID,0xFF,sizeof(genericPanID));
+            assert(!memcmp(rows[2].extendedPanID,genericPanID,Z_EXTADDR_LEN));
+            assert(rows[2].FrameCounter==2000u);
+        }
         assert(key_write_count==1 && savedKey.frameCounter==2000u);
         assert(nwkFrameCounterChanges==0u);
         assert(!b1_nv_runtime_hold_active());
@@ -123,6 +139,13 @@ int main(int argc,char **argv)
         }
         if(strcmp(s,"generic-rollback")==0) {
             assert(rows[2].FrameCounter==2500u);
+            assert(table_write_count==0 && key_write_count==0);
+        }
+        if(strcmp(s,"foreign-last-slot")==0) {
+            uint8_t foreignPanID[Z_EXTADDR_LEN];
+            memset(foreignPanID,0xC4,sizeof(foreignPanID));
+            assert(!memcmp(rows[2].extendedPanID,foreignPanID,Z_EXTADDR_LEN));
+            assert(rows[2].FrameCounter==999u);
             assert(table_write_count==0 && key_write_count==0);
         }
     }

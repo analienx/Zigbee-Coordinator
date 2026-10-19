@@ -119,6 +119,31 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
                      "void ZDApp_SaveNwkKey( void )\n{\n"
                      "  if (b1_nv_runtime_hold_active()) return;",
                      "B3_SAVE_ON_HOLD")
+    # TI SAVE/RESTORE treat the last entry as a generic counter fallback,
+    # but STORE can populate that very slot with a specific network PAN.
+    # The baseline SAVE rewrites it when the active PAN does not match.
+    # A foreign PAN in that slot is NOT a generic checkpoint; retiring it
+    # would destroy that network's persisted replay floor.
+    # Admit only a real all-FF generic row or an unallocated all-zero row
+    # with zero counter; any other identity must enter sticky security HOLD.
+    save=replace_one(save,
+        "    // The generic slot also carries an independent persisted high-water.\n",
+        "    /* A populated foreign PAN is not disposable counter storage. */\n"
+        "    {\n"
+        "      uint8_t genericPanID[Z_EXTADDR_LEN];\n"
+        "      uint8_t emptyPanID[Z_EXTADDR_LEN] = {0};\n"
+        "      memset(genericPanID, 0xFF, sizeof(genericPanID));\n"
+        "      if (!OsalPort_memcmp(nwkSecMaterialDesc.extendedPanID,\n"
+        "                             genericPanID, Z_EXTADDR_LEN) &&\n"
+        "          !(nwkSecMaterialDesc.FrameCounter == 0u &&\n"
+        "            OsalPort_memcmp(nwkSecMaterialDesc.extendedPanID,\n"
+        "                               emptyPanID, Z_EXTADDR_LEN)))\n"
+        "      {\n"
+        "        goto b3_checkpoint_done;\n"
+        "      }\n"
+        "    }\n"
+        "    // The generic slot also carries an independent persisted high-water.\n",
+        "B3_FOREIGN_LAST_SLOT_PROTECTION")
     save=save.replace("goto b3_checkpoint_done;",
                       "do { b1_security_runtime_hold_latch(); "
                       "goto b3_checkpoint_done; } while (0);")

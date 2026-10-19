@@ -128,12 +128,13 @@ jobs:
             -o /tmp/r4-nwk-checkpoint-host
           for scenario in healthy backend-write-fail backend-read-fail \
                           table-corrupt-success key-write-fail key-read-fail \
-                          key-corrupt-success counter-rollback generic-rollback; do
+                          key-corrupt-success counter-rollback generic-rollback \
+                          foreign-last-slot empty-last-slot; do
             ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
             UBSAN_OPTIONS=halt_on_error=1 \
               /tmp/r4-nwk-checkpoint-host "$scenario"
           done
-          echo "ACTUAL FUSED TI SOURCE: 9 NWK checkpoint/sticky HOLD scenarios AND 2 real ZMac TX paths per scenario; NO physical radio." >> "$GITHUB_STEP_SUMMARY"
+          echo "ACTUAL FUSED TI SOURCE: 11 NWK checkpoint/sticky HOLD scenarios AND 2 real ZMac TX paths per scenario; NO physical radio." >> "$GITHUB_STEP_SUMMARY"
       - name: Counter rollback guard removal MUST fail cross-phase actual-C security oracle
         shell: bash
         run: |
