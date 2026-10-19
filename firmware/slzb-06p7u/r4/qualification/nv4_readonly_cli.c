@@ -46,10 +46,11 @@ int main(int argc, char **argv)
         fclose(input);
     }
     printf("{\"code\":%u,\"records\":%u,\"active_records\":%u,"
-           "\"reads\":%u,\"fault_offset\":%u,\"writes\":0,\"erases\":0,"
+           "\"reads\":%u,\"fault_offset\":%u,\"semantic_state\":%u,"
+           "\"writes\":0,\"erases\":0,"
            "\"native_ti_recovery_validated\":false,\"flash_authorized\":false}\n",
            (unsigned)report.code, (unsigned)report.records,
            (unsigned)report.active_records, (unsigned)report.reads,
-           (unsigned)report.fault_offset);
+           (unsigned)report.fault_offset, (unsigned)report.semantic_state);
     return report.code == R4_NV4_READONLY_STRUCTURE_ACCEPTED ? 0 : 1;
 }

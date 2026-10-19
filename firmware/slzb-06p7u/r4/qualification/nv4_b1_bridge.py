@@ -68,8 +68,8 @@ OLD_ADMISSION = '''        {
         }'''
 
 NEW_ADMISSION = '''        {
-            /* Existing fitted network only. Factory authorization is NOT
-             * inherited from B1's two-page provisioning mode. */
+            /* Existing fitted four-page NV store only. Factory authorization
+             * is NOT inherited from B1's two-page provisioning mode. */
             r4_nv4_result admission;
             uint8_t reason = B1_NV_HOLD_UNKNOWN_LAYOUT;
             b1_nv_existing_pair = 0u;
@@ -87,20 +87,27 @@ NEW_ADMISSION = '''        {
             case R4_NV4_INVALID_STATUS: reason = B1_NV_HOLD_ITEM_HEADER; break;
             case R4_NV4_NO_ZSTACK_RECORDS: reason = B1_NV_HOLD_UNKNOWN_LAYOUT; break;
             case R4_NV4_READONLY_STRUCTURE_ACCEPTED:
-                /* Reuse existing-network diagnostic category (7), not factory. */
-                reason = B1_NV2_HEADER_CANDIDATE;
+                /* A CRC-valid random record cannot stand in for the stock
+                 * coordinator's BDB+logical-type+NIB state. This remains a
+                 * candidate pending the later native security precheck. */
+                if (admission.semantic_state == R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE ||
+                    admission.semantic_state == R4_NV4_STATE_FORMED_CANDIDATE)
+                    reason = B1_NV2_HEADER_CANDIDATE;
+                else
+                    reason = B1_NV_HOLD_MIXED_LAYOUT;
                 break;
             default: break;
             }
             b1_management_note_nv_probe(reason);
-            if (admission.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED)
+            if (admission.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED ||
+                reason != B1_NV2_HEADER_CANDIDATE)
             {
                 NVOCMP_failF = NVINTF_FAILURE;
                 NVOCMP_failW = NVINTF_FAILURE;
                 b1_management_hold_nv(reason);
                 return NVOCMP_failF;
             }
-            b1_nv_existing_pair = 1u; /* B1 restored-network security path */
+            b1_nv_existing_pair = 1u; /* B1 retained-NV security path */
             b1_management_note_nv_candidate();
         }'''
 

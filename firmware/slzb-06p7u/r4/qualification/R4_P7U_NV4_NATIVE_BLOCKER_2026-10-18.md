@@ -169,3 +169,42 @@ monotonicity. In particular, factory-new P7U captures with 366 live NV
 records must not be reported as formed. The B1 later security precheck is a
 separate fail-closed gate, and full pinned-source T3/physical behavior remain
 open. These additions neither use private NV bytes nor authorize flash.
+
+## 19 October pinned-Z-Stack marker classification (partial T3 follow-up)
+
+The independent NV4 reader now distinguishes **structural validity** from
+**semantic candidacy**. A CRC-valid item store still returns structural code
+`R4_NV4_READONLY_STRUCTURE_ACCEPTED` (8), but the native B1 bridge does not
+advance to its security precheck unless the separate `semantic_state` is
+`UNCOMMISSIONED_CANDIDATE` (1) or `FORMED_CANDIDATE` (2). Every other semantic
+state is an explicit sticky HOLD, even with otherwise valid pages and CRCs.
+
+The classifier uses the immutable TI 8.33 source at SDK revision
+`3615ad5d3f4f271258d18a2f5ce1785064ff9a58`: `osal_nv.c` encodes OSAL
+legacy data in Z-Stack system namespace 1, legacy extended item 0, sub-ID
+equal to the original OSAL NV ID. The pinned `zcomdef.h` defines coordinator
+`logicalType` as sub-ID `0x87`, `bdbNodeIsOnANetwork` as `0x55`, and NIB as
+`0x21`; `zglobals.h` defines coordinator role as 0. Only one-byte BDB and
+role values are read into scratch. The NIB is checked for *presence only*;
+its contents, address, keys and counters are not copied or logged.
+
+| Candidate | Role marker | BDB marker | Live NIB |
+|---|---|---|---|
+| Uncommissioned | present, coordinator 0 | present, false 0 | absent |
+| Formed | present, coordinator 0 | present, true 1 | present |
+| **HOLD** | missing, malformed or noncoordinator | missing, invalid or contradictory | any |
+
+The previously observed stock P7U pair fits the *uncommissioned* marker
+combination. An arbitrary CRC-valid record, an absent marker, BDB=1 without
+NIB, BDB=0 with NIB, noncoordinator role or a malformed one-byte value
+cannot substitute for it. Public tests exercise all such cases with purely
+synthetic records, plus a post-B1 genuine TI host-clone HOLD-before-init
+assertion. The prior source-only test runs pass locally; the native cloned
+tests require the exact pinned TI/overlay inputs in hosted CI.
+
+**Limit:** these are candidates, not security or physical-release proofs.
+Neither candidate validates network identity, NV key material, TC counter
+monotonicity, ABI compatibility, ZDO-ready boot, or actual RF operation.
+Both still traverse B1's separate native security gate. The main T3 finding
+and device-side validation therefore remain open; no NV write, compaction,
+flash, merge or commissioning is authorized by this classifier.

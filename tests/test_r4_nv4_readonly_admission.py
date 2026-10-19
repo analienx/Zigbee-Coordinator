@@ -20,7 +20,8 @@ spec.loader.exec_module(forensics)
 
 class Result(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint32) for name in
-                ('code', 'reads', 'records', 'active_records', 'fault_offset')]
+                ('code', 'reads', 'records', 'active_records', 'fault_offset',
+                 'semantic_state')]
 
 
 READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
@@ -58,6 +59,39 @@ def stock_like(records: int = 1, duplicate: bool = False,
     return bytes(media)
 
 
+def legacy_osal_record(subid: int, payload: bytes) -> bytes:
+    """Exact pinned TI sysid=1, itemid=EX_LEGACY=0, subid=OSAL ID."""
+    assert 0 <= subid <= 1023 and 0 < len(payload) <= 4095
+    length = len(payload)
+    header = bytearray((4, 0, subid >> 2,
+                        ((subid & 3) << 6) | (length >> 6),
+                        (length & 63) << 2))
+    crc = forensics.crc8(payload + header)
+    header[4] |= crc >> 6
+    header += bytes((((crc & 63) << 2) | 2, 0x96))
+    return payload + header
+
+
+def stock_like_semantic(*, bdb: int | None = 0,
+                        logical: int | None = 0, nib: bool = False,
+                        bdb_payload: bytes | None = None) -> bytes:
+    """Public fake coordinator markers, never a real NIB/key/payload."""
+    media = bytearray(stock_like())
+    cursor = 16 + len(encoded_record(0))
+    parts = []
+    if bdb is not None:
+        parts.append(legacy_osal_record(0x55, bdb_payload if bdb_payload is not None
+                                        else bytes((bdb,))))
+    if logical is not None:
+        parts.append(legacy_osal_record(0x87, bytes((logical,))))
+    if nib:
+        parts.append(legacy_osal_record(0x21, b'synthetic-nib-not-a-secret'))
+    for part in parts:
+        media[cursor:cursor + len(part)] = part
+        cursor += len(part)
+    return bytes(media)
+
+
 @unittest.skipUnless(shutil.which('gcc'), 'host gcc needed for independent C preflight')
 class Nv4AdmissionTests(unittest.TestCase):
     @classmethod
@@ -91,6 +125,7 @@ class Nv4AdmissionTests(unittest.TestCase):
         before = stock_like()
         result = self.probe(before)
         self.assertEqual(result.code, 8)
+        self.assertEqual(result.semantic_state, 0)  # Structure is not a network.
         self.assertEqual((result.records, result.active_records), (1, 1))
         self.assertLess(result.reads, 30000)
         self.assertEqual(before, stock_like())
@@ -150,6 +185,25 @@ class Nv4AdmissionTests(unittest.TestCase):
         # NVOCMP status bit 1 is excluded from the record CRC.
         before[16 + len(b'not-a-real-key') + 5] &= ~2
         self.assertEqual(self.probe(bytes(before)).code, 4)
+
+    def test_pinned_legacy_osal_markers_yield_only_candidates(self):
+        unformed = self.probe(stock_like_semantic())
+        self.assertEqual((unformed.code, unformed.semantic_state), (8, 1))
+        formed = self.probe(stock_like_semantic(bdb=1, nib=True))
+        self.assertEqual((formed.code, formed.semantic_state), (8, 2))
+        self.assertEqual((formed.records, formed.active_records), (4, 4))
+
+    def test_missing_incoherent_or_malformed_semantic_markers_hold(self):
+        variants = (
+            dict(bdb=None), dict(logical=None), dict(bdb=2),
+            dict(logical=1), dict(bdb=1), dict(nib=True),
+            dict(bdb_payload=b'\x00\x00'),
+        )
+        for variant in variants:
+            with self.subTest(**variant):
+                result = self.probe(stock_like_semantic(**variant))
+                self.assertEqual(result.code, 8)  # CRC-valid structure.
+                self.assertEqual(result.semantic_state, 0)  # But HOLD.
 
     def test_f8_compaction_is_not_silent_settled_admission(self):
         before = bytearray(stock_like())

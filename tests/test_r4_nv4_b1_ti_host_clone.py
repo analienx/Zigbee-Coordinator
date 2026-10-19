@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.test_r4_nv4_readonly_admission import stock_like
+from tests.test_r4_nv4_readonly_admission import stock_like_semantic
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,18 +66,18 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
         return json.loads(proc.stdout)
 
     def test_real_b1_boot_existing_nv4_no_flash(self):
-        result = self.probe(stock_like())
+        result = self.probe(stock_like_semantic())
         self.assertTrue(result['ti_init_readonly_accepted'])
         self.assertEqual(result['init_code'], 0)
         self.assertEqual(result['ti_init_action'], 1)
         self.assertEqual(result['nv_pages'], 4)
-        self.assertEqual((result['all_items'], result['active_items']), (1, 1))
+        self.assertEqual((result['all_items'], result['active_items']), (3, 3))
         self.assertEqual((result['write_attempts'], result['erase_attempts'],
                           result['compaction_attempts']), (0, 0, 0))
         self.assertFalse(result['flash_authorized'])
 
     def test_bad_crc_holds_before_ti_initialization(self):
-        image = bytearray(stock_like())
+        image = bytearray(stock_like_semantic())
         image[16] ^= 1
         result = self.probe(bytes(image))
         self.assertFalse(result['ti_init_readonly_accepted'])
@@ -86,9 +86,17 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
                           result['compaction_attempts']), (0, 0, 0))
 
     def test_repair_page_state_holds_without_writes(self):
-        image = bytearray(stock_like())
+        image = bytearray(stock_like_semantic())
         image[0] = 0x70  # Power-loss/compaction in progress, not normal NV4
         result = self.probe(bytes(image))
+        self.assertFalse(result['ti_init_readonly_accepted'])
+        self.assertEqual(result['init_code'], 2)
+        self.assertEqual((result['write_attempts'], result['erase_attempts'],
+                          result['compaction_attempts']), (0, 0, 0))
+
+    def test_structurally_valid_unidentified_store_holds_before_native_init(self):
+        from tests.test_r4_nv4_readonly_admission import stock_like
+        result = self.probe(stock_like())
         self.assertFalse(result['ti_init_readonly_accepted'])
         self.assertEqual(result['init_code'], 2)
         self.assertEqual((result['write_attempts'], result['erase_attempts'],

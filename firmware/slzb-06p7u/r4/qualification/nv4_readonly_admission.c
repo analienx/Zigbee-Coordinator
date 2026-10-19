@@ -12,6 +12,23 @@
 #define R4_MAX_RECORDS 2000u
 #define R4_MAX_ACTIVE_IDENTITIES 512u
 
+/* Exact TI SDK 3615ad5: osal_nv.c maps legacy OSAL item IDs to
+ * (NVINTF_SYSID_ZSTACK=1, ZCD_NV_EX_LEGACY=0, subID=original ID).
+ * zcomdef.h: NIB=0x21, bdbNodeIsOnANetwork=0x55, logicalType=0x87.
+ * These are the only Z-Stack payload values read for classification.
+ * NIB/security/key contents are NEVER copied into semantic scratch. */
+#define R4_ZSTACK_SYSID 1u
+#define R4_OSAL_LEGACY_ITEMID 0u
+#define R4_OSAL_NIB 0x21u
+#define R4_OSAL_BDB_ON_NETWORK 0x55u
+#define R4_OSAL_LOGICAL_TYPE 0x87u
+
+typedef struct {
+    uint8_t bdb_seen, bdb_on_network;
+    uint8_t role_seen, logical_type;
+    uint8_t nib_seen, malformed;
+} r4_nv4_markers;
+
 /* Pinned TI 3615ad5: NVOCMP_HDRLE=0, NVOCMP_FASTITEM=0. */
 static uint32_t compressed_id(const uint8_t header[R4_TRAILER])
 {
@@ -57,7 +74,8 @@ static uint8_t crc8(uint8_t crc, const uint8_t *data, uint32_t length)
 static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
                          uint32_t page_base, uint32_t end,
                          uint32_t *live_ids, uint32_t *live_count,
-                         uint32_t *zstack_live_count)
+                         uint32_t *zstack_live_count,
+                         r4_nv4_markers *markers)
 {
     uint8_t header[R4_TRAILER], block[64];
     while (end > R4_DATA_START) {
@@ -124,7 +142,38 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
              * A CRC-valid unrelated NV namespace alone must not be used
              * to grant the B1 existing-network admission path. This still
              * does NOT prove BDB/NIB, key or counter semantics. */
-            if ((header[0] >> 2u) == 1u) ++*zstack_live_count;
+            if ((header[0] >> 2u) == R4_ZSTACK_SYSID) {
+                ++*zstack_live_count;
+                if ((header[0] & 3u) == R4_OSAL_LEGACY_ITEMID &&
+                    header[1] == 0u) {
+                    uint32_t subid = ((uint32_t)header[2] << 2u) |
+                                     (header[3] >> 6u);
+                    if (subid == R4_OSAL_BDB_ON_NETWORK ||
+                        subid == R4_OSAL_LOGICAL_TYPE) {
+                        /* CRC already verified; check the original value
+                         * through the same bounded read-only callback. */
+                        uint8_t value = 0xffu;
+                        if (length != 1u) {
+                            markers->malformed = 1u;
+                        } else {
+                            if (!bounded_read(reader, ctx, r,
+                                page_base + header_offset - length,
+                                &value, 1u)) return 0;
+                            if (subid == R4_OSAL_BDB_ON_NETWORK) {
+                                markers->bdb_seen = 1u;
+                                markers->bdb_on_network = value;
+                            } else {
+                                markers->role_seen = 1u;
+                                markers->logical_type = value;
+                            }
+                        }
+                    } else if (subid == R4_OSAL_NIB) {
+                        /* Presence only; actual ABI and content are checked
+                         * by the later compiled Z-Stack security precheck. */
+                        markers->nib_seen = 1u;
+                    }
+                }
+            }
         }
         end = header_offset - length;
     }
@@ -135,9 +184,11 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
 __attribute__((noinline))
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
-    r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u};
+    r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u,
+                      R4_NV4_STATE_UNKNOWN_HOLD};
     uint32_t page, active = 0u, full = 0u, destination = 0u;
     uint32_t live_count = 0u, zstack_live_count = 0u;
+    r4_nv4_markers markers = {0u, 0u, 0u, 0u, 0u, 0u};
     /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
      * Admission is a single-threaded boot preflight, not a runtime service. */
     static uint32_t live_ids[R4_MAX_ACTIVE_IDENTITIES];
@@ -210,7 +261,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
             }
         } else if (!inspect_items(reader, ctx, &r, base, end,
                                   live_ids, &live_count,
-                                  &zstack_live_count)) return r;
+                                  &zstack_live_count, &markers)) return r;
     }
     if (active != 1u || full != 2u || destination != 1u || r.active_records == 0u) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;
@@ -219,6 +270,17 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
     if (zstack_live_count == 0u) {
         r.code = R4_NV4_NO_ZSTACK_RECORDS;
         return r;
+    }
+    /* This is a *candidate* state, never a validated security decision.
+     * Missing, malformed and incoherent markers remain UNKNOWN_HOLD even
+     * when the media's CRC and four-page structure are valid. */
+    if (!markers.malformed && markers.bdb_seen && markers.role_seen &&
+        markers.logical_type == 0u) { /* coordinator, pinned zglobals.h */
+        if (markers.bdb_on_network == 0u && !markers.nib_seen) {
+            r.semantic_state = R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE;
+        } else if (markers.bdb_on_network == 1u && markers.nib_seen) {
+            r.semantic_state = R4_NV4_STATE_FORMED_CANDIDATE;
+        }
     }
     r.code = R4_NV4_READONLY_STRUCTURE_ACCEPTED;
     return r;

@@ -17,12 +17,19 @@ typedef enum {
     R4_NV4_DUPLICATE_ACTIVE_ID = 9, R4_NV4_INVALID_STATUS = 10,
     R4_NV4_NO_ZSTACK_RECORDS = 11
 } r4_nv4_code;
+/* Observations only: neither candidate authorizes formation, RF or flash. */
+typedef enum {
+    R4_NV4_STATE_UNKNOWN_HOLD = 0,
+    R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE = 1,
+    R4_NV4_STATE_FORMED_CANDIDATE = 2
+} r4_nv4_semantic_state;
 typedef struct {
     r4_nv4_code code;
     uint32_t reads;
     uint32_t records;
     uint32_t active_records;
     uint32_t fault_offset;
+    r4_nv4_semantic_state semantic_state;
 } r4_nv4_result;
 
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *context);
