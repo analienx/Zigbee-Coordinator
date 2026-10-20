@@ -151,10 +151,34 @@ class RetainedSecurityTests(unittest.TestCase):
                     rxFrmCntr=130, extAddr=bytes(range(61, 69)), keyAttributes=attr, SeedShift=9)
                 self.hold(reason)
 
+    def test_pinned_ti_fffe_empty_aps_slot_does_not_alias_live_key(self):
+        # TI 8.33 nwk.h INVALID_NODE_ADDR=0xFFFE, not broadcast 0xFFFF.
+        # An unused slot legitimately carries a stale keyNvId=0.
+        table = record(self.abi, "nvDeviceListHdr_t", numRecs=2)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=9, keyNvId=0)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=10, keyNvId=1)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xfffe, keyNvId=0)
+        self.now[1, 0, 0x4c] = self.before[1, 0, 0x4c] = table
+        for index in range(2):
+            entry = record(self.abi, "APSME_ApsLinkKeyNVEntry_t",
+                key=bytes(range(71 + 16 * index, 87 + 16 * index)),
+                txFrmCntr=110, rxFrmCntr=90)
+            self.now[1, 6, index] = self.before[1, 6, index] = entry
+        result = self.outcome()
+        self.assertTrue(result["semantic_checks_passed"], result["reason_codes"])
+        self.assertEqual(result["aps_live_entries"], 2)
+
+    def test_broadcast_ffff_is_not_an_aps_empty_slot(self):
+        table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xffff, keyNvId=0)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xfffe) * 2
+        self.now[1, 0, 0x4c] = table
+        self.hold("APS_REFERENCE_DUPLICATE_OR_OUT_OF_RANGE")
+
     def test_aps_out_of_range_key_reference_holds(self):
         table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
         table += record(self.abi, "ZDSecMgrEntry_t", ami=9, keyNvId=3)
-        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xffff) * 2
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xfffe) * 2
         self.now[1, 0, 0x4c] = table
         self.hold("APS_REFERENCE_DUPLICATE_OR_OUT_OF_RANGE")
 
