@@ -4,7 +4,9 @@ Target: the single SLZB-06P7U R1.73 / CC2652P7, with the retained107-device
 network. This supersedes historical A6000/direct-ROM APP-only instructions.
 It grants no hardware access, BSL entry, flash, reset or production start.
 
-Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. Preserve Ethernet mode while preparing remote ROM BSL flashing; use USB mode for HA/Z2M only after verified boot. The current guarded stock20260311 adapter is COM-only, so Ethernet transport must be implemented/validated before remotely writing anything.\n\n## Accepted evidence and exact layout
+Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. Preserve Ethernet mode while preparing remote ROM BSL flashing; use USB mode for HA/Z2M only after verified boot. The current guarded stock20260311 adapter is COM-only, so Ethernet transport must be implemented/validated before remotely writing anything.
+
+## Accepted evidence and exact layout
 
 The existing private full capture and genuine pinned TI8.33 RAM initializer
 reported init_code0, 892 parsed records, 779 active records, four pages and
