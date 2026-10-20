@@ -29,6 +29,12 @@ The P7U USB cable is physically connected to **Home Assistant (Raspberry Pi)**, 
 
 **Live incident:** At 19:29 CEST the authorized one-time Zigbee2MQTT start opened the correct HA USB serial by-id but failed waiting 30s for SYS_RESET_IND inside herdsman beginRestore/beginCommissioning. Addon is stopped/error. Independent raw USB SYS_VERSION succeeds. The R4 read-only MT SYS F1 management request returned valid B1S1 with source prefix 828b1b5e, stage=2/HOLD_NV, first error=4, probe=4 and latest NV_INIT 0x21. Normal commands are denied by the firmware HOLD. The actual compiled R4 native seal **includes the 4-page A4000 NV4 bridge**, so code 4 is an ambiguous mapped NV4 rejection, not proof of an NV2-only build. There is no established R4 network/state9 acceptance. Do not start the add-on again, power-cycle, restore backup, write NV, raise counters, or re-pair. Pin the precise NV4 rejection against the private unchanged-at-flash captured bytes and new live ROM read **only when properly controlled**.
 
+**Exact-C follow-up:** The hosted-built, source-sealed observer and exact bridge
+accept both saved preflash captures: 952 records, 779 active, formed candidate,
+bridge probe 7. Original/traced results and all 2,421 reads match. This does not
+prove current live NV unchanged. Use the [forensic decision procedure](P7U_NV_HOLD_FORENSICS_20261020.md)
+before preparing any new firmware or hardware operation.
+
 **Z2M's beginRestore path may attempt NV deletion and startup-option writes before its reset wait.** The observed firmware HOLD appears to reject those commands, but that is not proof of zero persistent writes; a new read-only live capture must establish any continuity claim. Keep preflash snapshots secret on Zephyrus.
 
 ## Minimal R4 flash lane

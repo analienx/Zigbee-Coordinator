@@ -4,7 +4,13 @@ Target: the single SLZB-06P7U R1.73 / CC2652P7, with the retained107-device
 network. This supersedes historical A6000/direct-ROM APP-only instructions.
 It grants no hardware access, BSL entry, flash, reset or production start.
 
-Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. Preserve Ethernet mode while preparing remote ROM BSL flashing; use USB mode for HA/Z2M only after verified boot. The guarded stock20260311 adapter has since gained GitHub-tested private-IPv4 TCP/6638 support; read-only BSL, duplicate full capture and retained-security preflight succeeded on the real unit. A write still requires the exact frozen admission and separate owner confirmation of AC000.
+**Current incident, 2026-10-20:** R4 `828b1b5` has already been flashed and
+responds over HA USB. Its NV HOLD prevents network startup. Leave the unit
+powered in USB mode, with Z2M stopped. The exact C observer accepts both saved
+preflash captures (952 records / 779 active); current live NV equivalence is
+unproven. See the [NV HOLD evidence and decision procedure](P7U_NV_HOLD_FORENSICS_20261020.md).
+
+Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. A new live ROM capture requires an explicitly approved transition to Ethernet/BSL. The guarded stock20260311 adapter supports GitHub-tested private-IPv4 TCP/6638. The earlier APP+AC000 operation and readback succeeded; another write still requires new frozen admission and separate owner confirmation of AC000.
 
 ## Accepted evidence and exact layout
 
@@ -12,6 +18,8 @@ The existing private full capture and genuine pinned TI8.33 RAM initializer
 reported init_code0, 892 parsed records, 779 active records, four pages and
 zero write, erase or compaction attempts. That is successful retained-store
 initialization, not coordinator boot or restored security/RF acceptance.
+This was an earlier retained snapshot, distinct from the 952-record preflash
+pair accepted by the exact C observer on 2026-10-20; do not conflate them.
 Reuse that evidence; do not repeat restore, add a counter margin or re-pair.
 
 | Range | Role and transition rule |
