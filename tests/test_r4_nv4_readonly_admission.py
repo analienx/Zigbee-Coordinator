@@ -177,6 +177,26 @@ class Nv4AdmissionTests(unittest.TestCase):
         self.assertEqual((result.records, result.active_records), (366, 366))
         self.assertLess(result.reads, 30000)
 
+    def test_779_active_identities_do_not_trigger_false_capacity_hold(self):
+        # Reproduces the record *count* of the private 20260311 snapshot
+        # with public fake payloads and unique IDs. No private NV is stored.
+        media = bytearray(stock_like(records=1))
+        next_id = 1
+        for page, count in ((0, 260), (1, 260), (2, 258)):
+            offset = 16 + (len(encoded_record(0)) if page == 0 else 0)
+            base = page * PAGE_SIZE
+            for _ in range(count):
+                record = encoded_record(next_id)
+                media[base + offset:base + offset + len(record)] = record
+                offset += len(record)
+                next_id += 1
+            self.assertLessEqual(offset, PAGE_SIZE)
+        self.assertEqual(next_id, 779)
+        report = self.probe(bytes(media))
+        self.assertEqual((report.code, report.records, report.active_records),
+                         (8, 779, 779))
+        self.assertLess(report.reads, 30000)
+
     def test_this_logical_end_skips_retired_physical_suffix(self):
         before = bytearray(stock_like())
         logical_end = 16 + len(encoded_record(0))

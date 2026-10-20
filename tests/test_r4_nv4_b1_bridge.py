@@ -65,6 +65,29 @@ class Nv4B1BridgeTests(unittest.TestCase):
         self.assertTrue(source.startswith(bridge.DESTRUCTIVE_COMPACTION_DENIAL))
         self.assertEqual(source.count(bridge.DESTRUCTIVE_COMPACTION_DENIAL), 3)
 
+    def test_current_stock_20260311_explicit_nv_base(self):
+        source = bridge.transform(post_b1_fixture(), stock_base=0xA4000)
+        self.assertIn('0xA4000u', source)
+        self.assertNotIn('0xA6000u', source)
+        self.assertIn('r4_nv4_admit', source)
+        self.assertIn('B1_NV_HOLD_SCAN_LIMIT', source)
+        with self.assertRaisesRegex(ValueError, 'UNQUALIFIED_NV_BASE'):
+            bridge.transform(post_b1_fixture(), stock_base=0xA0000)
+
+    def test_current_stock_20260311_bridge_receipt_is_explicit(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            nv = root / 'source/ti/common/nv/nvocmp.c'
+            nv.parent.mkdir(parents=True)
+            nv.write_text(post_b1_fixture())
+            report = bridge.apply(root, QUAL / 'nv4_readonly_admission.c',
+                                  QUAL / 'nv4_readonly_admission.h',
+                                  root / 'bridge.json', stock_base=0xA4000)
+            self.assertEqual(report['region_base'], '0xA4000')
+            self.assertIn('0xA4000u', nv.read_text())
+            self.assertNotIn('0xA6000u', nv.read_text())
+            self.assertFalse(report['flash_authorized'])
+
     @unittest.skipUnless(shutil.which('gcc'), 'host C compiler required')
     def test_stock_nv4_compiler_rejects_lossy_ti_compaction_fallback(self):
         guarded = bridge.transform(post_b1_fixture())

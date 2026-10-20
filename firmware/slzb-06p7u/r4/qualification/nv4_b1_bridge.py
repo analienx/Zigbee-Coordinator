@@ -155,11 +155,15 @@ def one(source: str, before: str, after: str, label: str) -> str:
     return source.replace(before, after, 1)
 
 
-def transform(source: str) -> str:
+def transform(source: str, *, stock_base: int = STOCK_BASE) -> str:
     if not isinstance(source, str) or not source:
         raise ValueError('R4_NV4_B1_SOURCE_REQUIRED')
     if not (STOCK_BASE == 0xA6000 and STOCK_SIZE == 0x8000 and STOCK_PAGES == 4):
         raise ValueError('R4_NV4_STOCK_GEOMETRY_DRIFT')
+    # Explicit alternative for the exact captured P7U stock 20260311 pages.
+    # Never silently infer NV base from a boot image or expand this set.
+    if type(stock_base) is not int or stock_base not in (0xA6000, 0xA4000):
+        raise ValueError('R4_NV4_UNQUALIFIED_NV_BASE')
     source = source.replace('\r\n', '\n')
     if (DESTRUCTIVE_COMPACTION_DENIAL in source or
             re.search(r'(?m)^\s*#\s*define\s+NVOCMP_RECOVER_FROM_COMPACT_FAILURE\b',
@@ -173,7 +177,9 @@ def transform(source: str) -> str:
         raise ValueError('R4_NV4_B1_REQUIRES_PINNED_B1_APPLIED_SOURCE')
     source = one(source, INCLUDE_FROM, INCLUDE_TO, 'INCLUDE')
     source = one(source, READ_CALLBACK, READ_CALLBACK_NV4, 'READ_CALLBACK')
-    source = one(source, PRE_DIVISION_NV2, PRE_DIVISION_NV4, 'PRE_DIVISION')
+    expected_pre = PRE_DIVISION_NV4.replace(
+        '0xA6000u', f'0x{stock_base:05X}u')
+    source = one(source, PRE_DIVISION_NV2, expected_pre, 'PRE_DIVISION')
     source = one(source, POST_DIVISION_NV2, POST_DIVISION_NV4, 'POST_DIVISION')
     source = one(source, OLD_ADMISSION, NEW_ADMISSION, 'ADMISSION')
     source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
@@ -190,7 +196,7 @@ def transform(source: str) -> str:
 
 
 def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
-          b1_receipt: Path | None = None) -> dict:
+          b1_receipt: Path | None = None, *, stock_base: int = STOCK_BASE) -> dict:
     """Prevalidate all sources, then modify disposable SDK and add NV4 C/H."""
     sdk = sdk.resolve()
     nv = sdk / 'source/ti/common/nv/nvocmp.c'
@@ -201,7 +207,8 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
             any(p.exists() or p.is_symlink() for p in dst[1:3])):
         raise ValueError('R4_NV4_B1_DESTINATION_NOT_DISPOSABLE')
     originals = [nv.read_bytes(), c_source.read_bytes(), h_source.read_bytes()]
-    replacement = transform(originals[0].decode('utf-8'))
+    replacement = transform(originals[0].decode('utf-8'),
+                            stock_base=stock_base)
     if b'R4_NV4_REGION_SIZE' not in originals[2] or b'r4_nv4_admit' not in originals[1]:
         raise ValueError('R4_NV4_B1_ADMISSION_SOURCES_MISSING')
     prior = None
@@ -234,7 +241,8 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
         'source_after_sha256': hashlib.sha256(replacement.encode()).hexdigest(),
         'nv4_admission_c_sha256': hashlib.sha256(originals[1]).hexdigest(),
         'nv4_admission_h_sha256': hashlib.sha256(originals[2]).hexdigest(),
-        'region_base': '0xA6000', 'region_size': '0x8000', 'nv_pages': 4,
+        'region_base': f'0x{stock_base:05X}', 'region_size': '0x8000',
+        'nv_pages': 4,
         'factory_boot_authorized': False, 'hardware_contact': False,
         'native_linked': False, 'security_counter_continuity_verified': False,
         'flash_authorized': False,
@@ -269,9 +277,13 @@ def main() -> None:
                         default=Path(__file__).with_name('nv4_readonly_admission.h'))
     parser.add_argument('--receipt', type=Path, required=True)
     parser.add_argument('--b1-overlay-receipt', type=Path)
+    parser.add_argument('--nv-base', choices=('0xA6000', '0xA4000'),
+                        default='0xA6000',
+                        help='Explicit fitted stock NV geometry; no flash')
     args = parser.parse_args()
     print(json.dumps(apply(args.sdk, args.admission_c, args.admission_h,
-                           args.receipt, args.b1_overlay_receipt), sort_keys=True))
+                           args.receipt, args.b1_overlay_receipt,
+                           stock_base=int(args.nv_base, 16)), sort_keys=True))
 
 
 if __name__ == '__main__':

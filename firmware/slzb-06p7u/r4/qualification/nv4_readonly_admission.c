@@ -10,7 +10,10 @@
 #define R4_TRAILER 7u
 #define R4_MAX_READS 30000u
 #define R4_MAX_RECORDS 2000u
-#define R4_MAX_ACTIVE_IDENTITIES 512u
+/* The restored 20260311 P7U capture has 779 active identities across 892
+ * CRC-valid NVOCMP records. 512 falsely HOLDs a valid formed-network
+ * candidate. 1024 is a fail-closed capacity (4 KiB static identity table). */
+#define R4_MAX_ACTIVE_IDENTITIES 1024u
 
 /* Exact TI SDK 3615ad5: osal_nv.c maps legacy OSAL item IDs to
  * (NVINTF_SYSID_ZSTACK=1, ZCD_NV_EX_LEGACY=0, subID=original ID).
