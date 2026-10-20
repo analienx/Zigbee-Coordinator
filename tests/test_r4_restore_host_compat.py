@@ -68,3 +68,12 @@ def test_overlay_requires_pinned_mt_sources_and_receipts():
         '"modified_mt_version_sha256": SDK_MT_VERSION',
     ):
         assert required in apply
+
+
+def test_composite_b4_accepts_only_attested_b1_mt_sys():
+    stage = (Path(__file__).resolve().parents[1] / "tools"
+             / "r4_b0_b4_composite_stage.py").read_text()
+    assert stage.count("for name in (TASK,UART,SYS):") == 2
+    assert 'hashlib.sha256((sdk/name).read_bytes()).hexdigest()!=v' in stage
+    assert 'bindings=b1.get("additional_source_bindings",{})' in stage
+    assert 'B1 source changed before B4 overlay:' in stage

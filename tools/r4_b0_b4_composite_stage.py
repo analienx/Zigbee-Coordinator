@@ -97,13 +97,13 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
                          b2failure.FAILURE_AFTER,"B2_MTO_FAILURE_GUARD")
     (sdk/ZDO).write_text(patched,encoding="utf-8",newline="")
 
-    # B4 v3's standalone script requires pristine TI NPI_TASK/UART.
-    # Those TWO inputs are legitimately B1-modified. Permit them ONLY
-    # when exact B1 overlay receipts attest their exact byte digests.
-    # All other B4 donor files still require strict pristine TI bytes.
+    # B4 v3 expects pristine TI NPI_TASK/UART/MT_SYS. These THREE
+    # files are legitimately B1-modified (the MT restore-read gate and
+    # Z-Stack identity live in MT_SYS). Permit only the exact B1 receipt
+    # fingerprints; all other B4 donor files remain pinned to pristine TI.
     bindings=b1.get("additional_source_bindings",{})
     expected={}
-    for name in (TASK,UART):
+    for name in (TASK,UART,SYS):
         keys=[key for key,val in bindings.items() if val==name]
         if len(keys)!=1:raise ValueError("B1_NPI_SOURCE_RECEIPT_AMBIGUOUS "+name)
         v=b1.get(keys[0])
@@ -160,7 +160,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         afterhash[name]=hashlib.sha256((sdk/name).read_bytes()).hexdigest()
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
-    for name in (TASK,UART):
+    for name in (TASK,UART,SYS):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
