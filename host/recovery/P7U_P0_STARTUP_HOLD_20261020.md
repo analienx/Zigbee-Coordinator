@@ -11,7 +11,7 @@ When the NIB/configured marker is absent, the pinned determineStrategy() can sel
 | Evidence | Action |
 | --- | --- |
 | Existing coherent configured NIB, PAN/extended PAN and keys | Resume existing network; no commissioning |
-| NIB absent with backup, configured flag, active/alternate key or Trust Center record | HOLD before deleting NIB, setting startup flags or resetting |
+| NIB absent with backup, configured flag, active/alternate key, Trust Center record, BDB network-state or TCLK seed | HOLD before deleting NIB, setting startup flags or resetting |
 | Configuration mismatch, incomplete NV read, or transport error | HOLD |
 | Startup-option clear-state/config or frame-counter reset bit is present | HOLD |
 | Truly virgin: no NIB, configured marker, backup, key or Trust Center evidence; no pending clear | New-network commissioning with single-use token |

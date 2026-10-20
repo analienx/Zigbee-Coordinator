@@ -40,6 +40,7 @@ def plan(checkout):
         """    // P7U_P0_NONDESTRUCTIVE_STARTUP_HOLD: one-shot virgin admission.
     private p7uVirginCommissioningAdmitted = false;
     private p7uClearAdapterAuthorized = false;
+    private p7uAutomaticRestoreDisabled = true;
     private znp: Znp;
 """,
     )
@@ -66,6 +67,8 @@ def plan(checkout):
             throw new Error("P7U HOLD_EXISTING_NV: pending startup clear or counter-reset flag");
         }
         const p7uTrustCenter = await this.nv.readItem(NvItemsIds.TRUSTCENTER_ADDR);
+        const p7uBdbState = await this.nv.readItem(NvItemsIds.BDBNODEISONANETWORK);
+        const p7uTclkSeed = await this.nv.readItem(NvItemsIds.TCLK_SEED);
         const p7uNonEmpty = (raw: Buffer): boolean =>
             raw.length > 0 && !raw.every((byte) => byte === 0) &&
             !raw.every((byte) => byte === 0xff);
@@ -75,7 +78,9 @@ def plan(checkout):
             !backup && !nib && !hasConfigured &&
             !p7uKeyEvidence(activeKeyInfo) &&
             !p7uKeyEvidence(alternateKeyInfo) &&
-            !(p7uTrustCenter && p7uNonEmpty(p7uTrustCenter));
+            !(p7uTrustCenter && p7uNonEmpty(p7uTrustCenter)) &&
+            !(p7uBdbState && p7uNonEmpty(p7uBdbState)) &&
+            !(p7uTclkSeed && p7uNonEmpty(p7uTclkSeed));
 
         /* Determine startup strategy */
 """,
@@ -95,6 +100,18 @@ def plan(checkout):
             }
             this.p7uVirginCommissioningAdmitted = true;
             return "startCommissioning";""",
+    )
+    source = once(
+        source,
+        """    private async beginRestore(): Promise<void> {
+        const backup = this.backup.getStoredBackup();""",
+        """    private async beginRestore(): Promise<void> {
+        // P7U_P0_NONDESTRUCTIVE_STARTUP_HOLD: never create a random
+        // provisioning network before the original NV security is proven.
+        if (this.p7uAutomaticRestoreDisabled) {
+            throw new Error("P7U HOLD_EXISTING_NV: automatic backup replay disabled");
+        }
+        const backup = this.backup.getStoredBackup();""",
     )
     source = once(
         source,

@@ -30,6 +30,8 @@ function fixture(state = {}) {
         [NvItemsIds.NWK_ACTIVE_KEY_INFO, state.key ? {key: Buffer.from(config.networkKey)} : null],
         [NvItemsIds.NWK_ALTERN_KEY_INFO, state.key ? {key: Buffer.from(config.networkKey)} : null],
         [NvItemsIds.TRUSTCENTER_ADDR, state.tc ? Buffer.alloc(8, 0x24) : null],
+        [NvItemsIds.BDBNODEISONANETWORK, state.bdb ? Buffer.from([1]) : null],
+        [NvItemsIds.TCLK_SEED, state.tclk ? Buffer.alloc(16, 0x42) : null],
         [NvItemsIds.STARTUP_OPTION, state.startup === undefined ? Buffer.from([0]) : state.startup],
     ]);
     const writes = [];
@@ -84,6 +86,8 @@ test("missing NIB with matching coordinator backup never auto-restores", async (
 test("deleted NIB with retained key or Trust Center without backup holds", async () => {
     await holds({key: true}, /HOLD_EXISTING_NV/);
     await holds({tc: true}, /HOLD_EXISTING_NV/);
+    await holds({bdb: true}, /HOLD_EXISTING_NV/);
+    await holds({tclk: true}, /HOLD_EXISTING_NV/);
 });
 test("configured flag surviving absent NIB holds", async () => {
     await holds({configured: true}, /HOLD_EXISTING_NV/);
@@ -114,7 +118,7 @@ test("provably virgin allows only one commissioning attempt", async () => {
     await assert.rejects(manager.clearAdapter(), /HOLD_EXISTING_NV/);
     assert.deepEqual(writes, ["delete:" + NvItemsIds.NIB]);
 });
-test("direct beginRestore cannot commission retained network", async () => {
+test("direct beginRestore is vetoed before random provisioning", async () => {
     const {manager, writes} = fixture({backup: true, key: true});
     await assert.rejects(manager.beginRestore(), /HOLD_EXISTING_NV/);
     assert.deepEqual(writes, []);
