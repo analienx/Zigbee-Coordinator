@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Audit an ACTUAL CCS ZNP Intel HEX against live-stock P7U NV4 boundaries.
+"""Audit HISTORICAL stock-20240716 native ZNP build only (NEVER FLASH 20260311).
 
-This verifies absence of image bytes in the fitted NV4 region; it never
-qualifies CCFG replacement, flash-tool erase behavior, or network continuity.
+Current stock-20260311 P7U has NV at A4000, resident boot at AC000 and
+CCFG IMAGE_VALID=AC000. This archived A6000/direct-ROM-vector-zero gate
+cannot validate the current device. No flash authorization is possible here.
 """
 from __future__ import annotations
 

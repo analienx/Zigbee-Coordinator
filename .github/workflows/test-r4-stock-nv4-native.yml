@@ -1,4 +1,4 @@
-name: P7U existing-network NV4 full ZNP native (NO FLASH)
+name: HISTORICAL P7U 20240716 NV4 ZNP native (AUDIT ONLY, NO FLASH)
 
 on:
   pull_request:
@@ -102,9 +102,10 @@ jobs:
             2>&1 | tee -a /tmp/nv4out/build.log
           project=/tmp/nv4ws/znp_LP_CC1352P7_4_tirtos7_ticlang
           test -f "$project/znp.syscfg"
-          # CURRENT fitted stock after 18-Oct stock return is 20240716,
-          # direct-ROM CCFG at vector 0, NOT the superseded 20240710 DCDC
-          # setting or the old 0xAC000 resident-loader state.
+          # HISTORICAL SOURCE ONLY. The actual same-board 20260311 stock
+          # capture has IMAGE_VALID=0xAC000, resident boot at 0xAC000,
+          # and restored NV4 beginning at 0xA4000. This legacy 20240716
+          # vector-zero/A6000 build must NEVER be flashed to that device.
           python - "$project/znp.syscfg" <<'PY'
           from pathlib import Path
           import sys
