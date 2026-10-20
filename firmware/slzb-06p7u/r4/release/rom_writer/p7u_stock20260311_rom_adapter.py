@@ -15,9 +15,12 @@ Protocol: TI SWRA466E and pinned SMLIGHT command.py at 9a1d33571c1cdaed.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import ipaddress
 import json
 import re
+from urllib.parse import urlsplit
 
 from p7u_rom_lowlevel import (
     DOWNLOAD, GET_STATUS, MEMORY_READ, SECTOR_ERASE, RomSerial, RomWireError,
@@ -56,11 +59,37 @@ class Stock20260311ROM(RomSerial):
         self._boot_tail_sent = False
 
     async def open(self, device: str, baud: int = 115200):
-        if not isinstance(device, str) or re.fullmatch(r"COM[1-9][0-9]*", device, re.I) is None:
-            _deny("EXPLICIT_WINDOWS_COM_ONLY")
+        """Open only an explicit Windows COM or a private IPv4 SMLIGHT TCP/6638.
+
+        Network mode carries the identical framed TI ROM BSL protocol. It does
+        not discover a device, enter BSL, reset, retry, or send an opcode.
+        Live ROM identity/capture/admission are still mandatory before erase.
+        """
         if type(baud) is not int or baud != 115200:
             _deny("FIXED_BSL_BAUD")
-        await super().open(device, baud)
+        if not isinstance(device, str):
+            _deny("EXPLICIT_BSL_ENDPOINT_REQUIRED")
+        if re.fullmatch(r"COM[1-9][0-9]*", device, re.I):
+            await super().open(device, baud)
+            return
+        try:
+            endpoint = urlsplit(device)
+            address = ipaddress.ip_address(endpoint.hostname or "")
+            port = endpoint.port
+        except (ValueError, TypeError):
+            _deny("NETWORK_ENDPOINT_INVALID")
+        if (endpoint.scheme != "tcp" or endpoint.netloc != f"{address}:6638"
+                or endpoint.path or endpoint.query or endpoint.fragment
+                or endpoint.username or endpoint.password or port != 6638
+                or address.version != 4 or not address.is_private
+                or address.is_loopback or address.is_link_local
+                or address.is_multicast or address.is_unspecified):
+            _deny("NETWORK_ENDPOINT_NOT_PRIVATE_SMLIGHT_6638")
+        try:
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection(str(address), port), timeout=3.0)
+        except (OSError, asyncio.TimeoutError) as e:
+            raise RomWireError("P7U_STOCK20260311_BSL_NETWORK_CONNECT_FAILED") from e
 
     async def read(self, address: int, length: int) -> bytes:
         if (type(address) is not int or type(length) is not int
