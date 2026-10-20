@@ -29,7 +29,9 @@ def body(source: str, prefix: str, index: int) -> str:
 
 
 def transform(pristine: bytes, crc: bytes, bridged: bytes,
-              expected_sha256: str) -> str:
+              expected_sha256: str, *, stock_base: int = 0xA6000) -> str:
+    if type(stock_base) is not int or stock_base not in (0xA6000, 0xA4000):
+        raise ValueError('B1_NV4_HOST_UNQUALIFIED_BASE')
     if git_blob(pristine) != TI_NV_GIT_BLOB or git_blob(crc) != TI_CRC_GIT_BLOB:
         raise ValueError('B1_NV4_PINNED_TI_OR_CRC_MISMATCH')
     if hashlib.sha256(bridged).hexdigest() != expected_sha256:
@@ -41,6 +43,16 @@ def transform(pristine: bytes, crc: bytes, bridged: bytes,
         raise ValueError('B1_NV4_BRIDGE_MARKERS_MISSING')
     pristine_source = pristine.decode('utf-8').replace('\r\n', '\n')
     host = ti_transform(pristine, crc)
+    # The pristine RAM emulator predates stock-20260311 and defaults to
+    # A6000. Bind its fake NVS attributes to the exact B1 bridge variant.
+    old_base = 'a->regionBase=(void *)(uintptr_t)0xA6000u;'
+    desired_base = f'a->regionBase=(void *)(uintptr_t)0x{stock_base:05X}u;'
+    if host.count(old_base) != 1:
+        raise ValueError('B1_NV4_HOST_NVS_REGION_ANCHOR_DRIFT')
+    host = host.replace(old_base, desired_base, 1)
+    expected_guard = f'(uintptr_t)NVOCMP_nvsAttrs.regionBase != (uintptr_t)0x{stock_base:05X}u'
+    if post.count(expected_guard) != 1:
+        raise ValueError('B1_NV4_HOST_BRIDGE_REGION_MISMATCH')
     for prefix in PREFIXES:
         index = INDICES.get(prefix, 0)
         old = body(pristine_source, prefix, index)
@@ -79,8 +91,10 @@ def main() -> None:
     if (receipt.get('schema') != 'p7u-nv4-b1-source-only-v1' or
             receipt.get('flash_authorized') is not False):
         raise ValueError('B1_NV4_BRIDGE_RECEIPT_INVALID')
+    stock_base = int(receipt.get('region_base', ''), 16)
     source = transform(args.nvocmp_source.read_bytes(), args.crc_source.read_bytes(),
-                       args.bridged_source.read_bytes(), receipt['source_after_sha256'])
+                       args.bridged_source.read_bytes(), receipt['source_after_sha256'],
+                       stock_base=stock_base)
     args.output.write_text(source, encoding='utf-8')
     print('B1_NV4_REAL_TI_RAM_CLONE_SOURCE_SHA256_' +
           hashlib.sha256(source.encode()).hexdigest())

@@ -29,6 +29,9 @@ class PinnedIntegrityTests(unittest.TestCase):
     def test_public_pinned_sources_and_bridge_receipt_required(self):
         with self.assertRaisesRegex(ValueError, 'PINNED_TI_OR_CRC_MISMATCH'):
             clone.transform(b'wrong', b'wrong', b'wrong', '0' * 64)
+        with self.assertRaisesRegex(ValueError, 'UNQUALIFIED_BASE'):
+            clone.transform(b'wrong', b'wrong', b'wrong', '0' * 64,
+                            stock_base=0xAA000)
 
 
 @unittest.skipUnless(shutil.which('gcc') and all(os.environ.get(k) for k in NEEDED),
@@ -41,8 +44,10 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
         crc = Path(os.environ['R4_TI_CRC_SOURCE']).read_bytes()
         bridged = Path(os.environ['R4_B1_NV4_SOURCE']).read_bytes()
         receipt = json.loads(Path(os.environ['R4_B1_NV4_RECEIPT']).read_text())
+        cls.stock_base = int(receipt['region_base'], 16)
         cls.generated = clone.transform(pristine, crc, bridged,
-                                        receipt['source_after_sha256'])
+                                        receipt['source_after_sha256'],
+                                        stock_base=cls.stock_base)
         cls.binary = Path(cls.temp.name) / 'b1_nv4_ti'
         source = Path(cls.temp.name) / 'host.c'
         source.write_text(cls.generated)
@@ -64,6 +69,14 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
                               capture_output=True, check=True, timeout=10)
         self.assertFalse(proc.stderr)
         return json.loads(proc.stdout)
+
+    def test_host_nvs_address_and_bridge_guard_are_same_receipted_base(self):
+        self.assertIn(
+            f'a->regionBase=(void *)(uintptr_t)0x{self.stock_base:05X}u;',
+            self.generated)
+        self.assertIn(
+            f'(uintptr_t)NVOCMP_nvsAttrs.regionBase != (uintptr_t)0x{self.stock_base:05X}u',
+            self.generated)
 
     def test_real_b1_boot_existing_nv4_no_flash(self):
         result = self.probe(stock_like_semantic())
