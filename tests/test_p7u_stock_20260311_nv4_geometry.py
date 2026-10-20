@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import struct
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -90,6 +92,65 @@ class Stock20260311GeometryTests(unittest.TestCase):
                                     project)
         with self.assertRaises(ValueError):
             geometry.remap_composed(sc, ld, "-DNVOCMP_NVPAGES=2")
+
+    def test_bound_legacy_overlay_remap_is_source_only(self):
+        sc = ("NVS1.internalFlash.regionBase = 0xA6000;\n"
+              "NVS1.internalFlash.regionSize = 0x8000;\n")
+        ld = ("#define FLASH_SIZE              0xA6000\n"
+              "#define FLASH_NV_BASE           0xA6000\n"
+              "#define FLASH_NV_SIZE           0x8000\n"
+              "#define FLASH_LAST_BASE         0xAE000\n")
+        project = "-DNVOCMP_NVPAGES=4\n--define=NVOCMP_NVPAGES=4\n"
+        with tempfile.TemporaryDirectory() as dirname:
+            root = Path(dirname)
+            sources = [root / item for item in ("znp.syscfg", "p7.cmd", "znp.projectspec")]
+            for path, value in zip(sources, (sc, ld, project)):
+                path.write_text(value, encoding="utf-8")
+            prior = root / "prior.json"
+            prior.write_text(json.dumps({
+                "schema": "r4-stock-p7u-nv4-source-overlay-v1",
+                "source_after_sha256": [
+                    hashlib.sha256(p.read_bytes()).hexdigest() for p in sources
+                ],
+                "flash_authorized": False,
+            }))
+            output = root / "new.json"
+            result = geometry.remap_pinned_paths(*sources, prior, output)
+            self.assertEqual(result["nv_region"], ["0xa4000", "0xac000"])
+            self.assertFalse(result["flash_authorized"])
+            self.assertIn("#define FLASH_SIZE              0xA0000",
+                          sources[1].read_text())
+            self.assertIn("#define FLASH_NV_BASE           0xA4000",
+                          sources[1].read_text())
+            self.assertIn("regionBase = 0xA4000", sources[0].read_text())
+            self.assertEqual(json.loads(output.read_text()), result)
+
+    def test_unbound_legacy_overlay_remap_rejects_without_writes(self):
+        sc = "NVS1.internalFlash.regionBase = 0xA6000;\nNVS1.internalFlash.regionSize = 0x8000;\n"
+        ld = ("#define FLASH_SIZE              0xA6000\n"
+              "#define FLASH_NV_BASE           0xA6000\n"
+              "#define FLASH_NV_SIZE           0x8000\n"
+              "#define FLASH_LAST_BASE         0xAE000\n")
+        project = "-DNVOCMP_NVPAGES=4\n--define=NVOCMP_NVPAGES=4\n"
+        with tempfile.TemporaryDirectory() as dirname:
+            root = Path(dirname)
+            sources = [root / item for item in ("znp.syscfg", "p7.cmd", "znp.projectspec")]
+            for path, value in zip(sources, (sc, ld, project)):
+                path.write_text(value, encoding="utf-8")
+            old_bytes = [p.read_bytes() for p in sources]
+            prior = root / "prior.json"
+            prior.write_text(json.dumps({
+                "schema": "r4-stock-p7u-nv4-source-overlay-v1",
+                "source_after_sha256": [
+                    hashlib.sha256(x).hexdigest() for x in old_bytes
+                ],
+                "flash_authorized": True,
+            }))
+            output = root / "new.json"
+            with self.assertRaisesRegex(ValueError, "UNBOUND_PINNED_SOURCE_RECEIPT"):
+                geometry.remap_pinned_paths(*sources, prior, output)
+            self.assertEqual([p.read_bytes() for p in sources], old_bytes)
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

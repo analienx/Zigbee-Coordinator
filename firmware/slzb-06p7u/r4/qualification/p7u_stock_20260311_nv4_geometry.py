@@ -107,15 +107,80 @@ def compose(syscfg: str, linker: str, project: str) -> tuple[str, str, str]:
     return remap_composed(*base.transform_pinned(syscfg, linker, project))
 
 
+def remap_stock_overlay(syscfg: str, linker: str, project: str) -> tuple[str, str, str]:
+    """Existing pinned overlay v1 -> conservative A0000 app -> A4000 NV4."""
+    if ("#define FLASH_SIZE              0xA6000" not in linker or
+            "#define FLASH_NV_BASE           0xA6000" not in linker or
+            "#define FLASH_LAST_BASE         0xAE000" not in linker):
+        reject("LEGACY_OVERLAY_LINKER_GEOMETRY")
+    bounded = _once(linker, "#define FLASH_SIZE              0xA6000",
+                    "#define FLASH_SIZE              0xA0000",
+                    "CONSERVATIVE_APP_CEILING")
+    return remap_composed(syscfg, bounded, project)
+
+
+def remap_pinned_paths(syscfg: Path, linker: Path, project: Path,
+                       prior_receipt: Path, receipt: Path) -> dict:
+    """Apply to disposable, already-pinned TI source only; never a ROM image."""
+    paths = [syscfg, linker, project, prior_receipt, receipt]
+    if len({p.resolve() for p in paths}) != len(paths):
+        reject("SOURCE_PATH_ALIAS")
+    if (receipt.exists() or any(p.is_symlink() or not p.is_file()
+                                for p in paths[:-1])):
+        reject("SOURCE_MISSING_OR_UNTRUSTED")
+    prior = json.loads(prior_receipt.read_bytes())
+    originals = [p.read_bytes() for p in paths[:3]]
+    if (prior.get("schema") != "r4-stock-p7u-nv4-source-overlay-v1" or
+            prior.get("flash_authorized") is not False or
+            prior.get("source_after_sha256") != [sha(x) for x in originals]):
+        reject("UNBOUND_PINNED_SOURCE_RECEIPT")
+    changed = remap_stock_overlay(*(x.decode("utf-8") for x in originals))
+    report = {
+        "schema": "p7u-stock-20260311-source-remap-v1",
+        "prior_source_receipt_sha256": sha(prior_receipt.read_bytes()),
+        "input_source_sha256": [sha(x) for x in originals],
+        "upstream_overlay_schema": prior["schema"],
+        "output_source_sha256": [sha(x.encode()) for x in changed],
+        "nv_region": [hex(NV_BASE), hex(NV_END)],
+        "app_ceiling": "0xa0000",
+        "resident_boot_unchanged": True,
+        "ccfg_unchanged": True,
+        "native_compiled": False,
+        "same_board_capture_required_before_hardware": True,
+        "flash_authorized": False,
+    }
+    # The source copies are disposable SDK staging material, not user files.
+    for path, value in zip(paths[:3], changed):
+        path.write_text(value, encoding="utf-8", newline="\n")
+    receipt.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--capture", type=Path, required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--capture", type=Path)
+    group.add_argument("--syscfg", type=Path)
+    parser.add_argument("--linker", type=Path)
+    parser.add_argument("--projectspec", type=Path)
+    parser.add_argument("--prior-receipt", type=Path)
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
     if args.receipt.exists() or args.receipt.is_symlink():
         reject("RECEIPT_ALREADY_EXISTS")
-    report = check_capture(args.capture.read_bytes())
-    args.receipt.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    if args.capture is not None:
+        if any(p is not None for p in
+               (args.linker, args.projectspec, args.prior_receipt)):
+            reject("MIXED_CAPTURE_AND_SOURCE_ARGS")
+        report = check_capture(args.capture.read_bytes())
+        args.receipt.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    else:
+        if any(p is None for p in
+               (args.linker, args.projectspec, args.prior_receipt)):
+            reject("SOURCE_ARGS_INCOMPLETE")
+        report = remap_pinned_paths(args.syscfg, args.linker,
+                                    args.projectspec, args.prior_receipt,
+                                    args.receipt)
     print(json.dumps(report, sort_keys=True))
 
 
