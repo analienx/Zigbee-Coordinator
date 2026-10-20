@@ -1,0 +1,95 @@
+name: P7U stock20260311 private Win64 security reader (PUBLIC SOURCE ONLY)
+
+on:
+  push:
+    branches:
+      - codex/p7u-win-reader-20261020
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  reader-win64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      PINNED_SOURCE_SHA: 550902dc8a9060e9297552c8b978291738c1c198
+      PINNED_RUN: '39417776236'
+      CANDIDATE: p7u-stock20260311-candidate-550902dc8a9060e9297552c8b978291738c1c198
+    steps:
+      - name: Checkout workflow branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reject modifications to the pinned firmware and security reader source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$PINNED_SOURCE_SHA^{commit}"
+          git diff --exit-code "$PINNED_SOURCE_SHA" HEAD -- firmware/slzb-06p7u/r4/qualification firmware/slzb-06p7u/r4/b1
+      - name: Install cross-compiler on GitHub runner only
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+      - name: Retrieve exact, published Linux-native candidate (no private bytes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/candidate"
+          gh run download "$PINNED_RUN" -R analienx/Zigbee-Coordinator -n "$CANDIDATE" -D "$RUNNER_TEMP/candidate"
+      - name: Validate all candidate SHA-256 pins and exact generated source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'candidate'
+          manifest = json.loads((root / 'candidate.json').read_bytes())
+          assert manifest['source_sha'] == os.environ['PINNED_SOURCE_SHA']
+          assert manifest['github_run_id'] == os.environ['PINNED_RUN']
+          files = manifest['files']
+          assert len(files) == 28
+          for name, digest in files.items():
+              data = (root / name).read_bytes()
+              assert hashlib.sha256(data).hexdigest() == digest, name
+          assert files['security-reader.c'] == 'bef91f4521fbd88d8e6c57070bd4088ac3b94732baaf1a3de5aad8aedd53d863'
+          print('PINNED_CANDIDATE_AND_GENERATED_SOURCE_OK')
+          PY
+      - name: Build actual Windows PE64 security reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/winreader"
+          x86_64-w64-mingw32-gcc -std=c11 -O1 -Wall -Wextra -Werror \
+            -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare \
+            -I "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1" \
+            -I "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/include" \
+            "$RUNNER_TEMP/candidate/security-reader.c" -o "$RUNNER_TEMP/winreader/security-reader-win64.exe"
+          x86_64-w64-mingw32-objdump -f "$RUNNER_TEMP/winreader/security-reader-win64.exe" | grep -F 'pei-x86-64'
+          file "$RUNNER_TEMP/winreader/security-reader-win64.exe" | grep -F 'PE32+ executable'
+      - name: Emit reproducible public provenance receipt
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'winreader'
+          binary = (p / 'security-reader-win64.exe').read_bytes()
+          receipt = dict(schema='p7u-security-reader-win64-v1', status='WINDOWS_PE64_CROSS_COMPILED_SOURCE_PINNED',
+                         source_sha=os.environ['PINNED_SOURCE_SHA'], candidate_run_id=os.environ['PINNED_RUN'],
+                         reader_source_sha256='bef91f4521fbd88d8e6c57070bd4088ac3b94732baaf1a3de5aad8aedd53d863',
+                         reader_win64_sha256=hashlib.sha256(binary).hexdigest(),
+                         private_capture_uploaded=False, flash_authorized=False)
+          (p / 'reader-win64-provenance.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
+          print('WINDOWS_READER_SHA256', receipt['reader_win64_sha256'])
+          PY
+      - name: Upload portable private-execution reader
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-stock20260311-security-reader-win64-550902d
+          path: |
+            ${{ runner.temp }}/winreader/security-reader-win64.exe
+            ${{ runner.temp }}/winreader/reader-win64-provenance.json
+          if-no-files-found: error
+          retention-days: 30
