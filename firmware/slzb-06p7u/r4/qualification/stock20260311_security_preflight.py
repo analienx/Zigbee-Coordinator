@@ -327,9 +327,11 @@ def inspect_state(records: dict, abi: dict) -> dict:
             entry = table[header_size + index * entry_size:header_size + (index + 1) * entry_size]
             ami = number(entry, abi, "ZDSecMgrEntry_t", "ami")
             keyid = number(entry, abi, "ZDSecMgrEntry_t", "keyNvId")
-            if ami == 0xffff:
+            # Pinned TI 8.33 nwk.h: INVALID_NODE_ADDR is 0xFFFE.
+            # The unused slot may retain keyNvId=0 and must not alias a live key.
+            if ami == 0xfffe:
                 continue
-            require(ami not in aps and keyid < 3 and keyid not in slots,
+            require(ami != 0xffff and ami not in aps and keyid < 3 and keyid not in slots,
                     "APS_REFERENCE_DUPLICATE_OR_OUT_OF_RANGE")
             key = get(records, 6, keyid, abi["structs"]["APSME_ApsLinkKeyNVEntry_t"]["size"])
             key_bytes = field(key, abi, "APSME_ApsLinkKeyNVEntry_t", "key")
