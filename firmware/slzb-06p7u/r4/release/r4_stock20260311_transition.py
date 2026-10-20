@@ -147,6 +147,7 @@ def prepare(*, candidate: dict, expected_candidate_sha256: str,
         'profile_sha256': candidate['profile_sha256'],
         'native_manifest_sha256': candidate['native_manifest_sha256'],
         'security_receipt_sha256': expected_security_receipt_sha256,
+        'plan_kind': 'INSTALL_CURRENT_APP_AND_COMPILED_HANDOFF',
         'program_order': sorted(targets - {0}) + [0, BOOT],
         'sector_sha256': {str(a): sha(b) for a, b in sectors.items()},
         'boot_sector_before_sha256': sha(pass1[BOOT:TOP]),
@@ -156,6 +157,53 @@ def prepare(*, candidate: dict, expected_candidate_sha256: str,
         'flash_authorized': False, 'flash_performed': False}
     manifest['plan_sha256'] = sha(canonical(manifest))
     return _frozen(Transition(manifest, pass1, sectors), manifest['plan_sha256'])
+
+
+def prepare_recovery(forward: Transition, *, expected_forward_plan_sha256: str,
+                     pass1: bytes, pass2: bytes, expected_capture_sha256: str,
+                     security_receipt: dict, expected_security_receipt_sha256: str) -> Transition:
+    """Prepare a NEW, separately approved rollback from a fresh observed state.
+
+    Restore only original APP and boot bytes. In particular the before-image NV
+    is never a restore payload. New legitimate NV/counter state must pass the
+    private retained-security preflight and stays byte-identical to pass1.
+    Unknown damage outside the forward allowlist/NV cannot be papered over.
+    """
+    original = _frozen(forward, expected_forward_plan_sha256)
+    if original.manifest.get('plan_kind') != 'INSTALL_CURRENT_APP_AND_COMPILED_HANDOFF':
+        deny('RECOVERY_REQUIRES_ORIGINAL_INSTALL_PLAN')
+    if (type(pass1) is not bytes or type(pass2) is not bytes or len(pass1) != FLASH
+            or pass1 != pass2 or sha(pass1) != pin(expected_capture_sha256)):
+        deny('DUPLICATE_CURRENT_CAPTURE')
+    security = copy.deepcopy(security_receipt)
+    if (sha(canonical(security)) != pin(expected_security_receipt_sha256)
+            or security.get('schema') != 'p7u-stock20260311-security-preflight-v1'
+            or security.get('status') != 'PASS_RETAINED_SECURITY_OFFLINE_ONLY'
+            or security.get('capture_sha256') != expected_capture_sha256
+            or security.get('baseline_capture_sha256') != original.manifest['capture_sha256']
+            or security.get('profile_sha256') != original.manifest['profile_sha256']
+            or security.get('native_manifest_sha256') != original.manifest['native_manifest_sha256']
+            or security.get('flash_authorized') is not False
+            or any(type(security.get(k)) is not int or security[k] != 0
+                   for k in ('write_attempts', 'erase_attempts', 'compaction_attempts'))):
+        deny('RECOVERY_RETAINED_SECURITY_NOT_ADMITTED')
+    for address in range(0, FLASH, SECTOR):
+        if address in original.sectors or 0xA4000 <= address < BOOT:
+            continue
+        if pass1[address:address + SECTOR] != original.snapshot[address:address + SECTOR]:
+            deny('RECOVERY_UNEXPLAINED_NON_TARGET_DRIFT')
+    restored = {a: original.snapshot[a:a + SECTOR] for a in original.sectors}
+    manifest = copy.deepcopy(original.manifest)
+    manifest.pop('plan_sha256')
+    manifest.update(plan_kind='RECOVER_ORIGINAL_APP_AND_BOOT_ONLY',
+        recovery_of_plan_sha256=expected_forward_plan_sha256,
+        capture_sha256=expected_capture_sha256,
+        security_receipt_sha256=expected_security_receipt_sha256,
+        sector_sha256={str(a): sha(b) for a, b in restored.items()},
+        boot_sector_before_sha256=sha(pass1[BOOT:TOP]),
+        ccfg_sector_before_sha256=sha(pass1[TOP:FLASH]))
+    manifest['plan_sha256'] = sha(canonical(manifest))
+    return _frozen(Transition(manifest, pass1, restored), manifest['plan_sha256'])
 
 
 async def _observe(rom, live_identity):

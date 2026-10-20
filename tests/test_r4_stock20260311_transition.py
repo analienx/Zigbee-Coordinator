@@ -212,6 +212,51 @@ class CurrentTransitionTests(unittest.TestCase):
             self.assertEqual([item[1] for item in rom.trace if item[0] == "erase"], [0x2000, 0, m.BOOT])
         asyncio.run(scenario())
 
+    def test_explicit_recovery_restores_only_original_app_boot_and_keeps_current_nv(self):
+        async def scenario():
+            data = inputs()
+            forward = m.prepare(**data)
+            current = bytearray(forward.snapshot)
+            current[:m.SECTOR] = forward.sectors[0]
+            current[0x2000:0x4000] = b"\xff"*m.SECTOR
+            current[0x2000:0x2080] = forward.sectors[0x2000][:0x80]
+            current[m.BOOT:m.TOP] = b"\xff"*m.SECTOR
+            current[m.BOOT+8:m.BOOT+128] = forward.sectors[m.BOOT][8:128]
+            # Synthetic newly admitted NV state: its bytes may not be replayed
+            # from the original forward snapshot even during APP rollback.
+            current[0xA4004] ^= 1
+            current = bytes(current)
+            def recovery_args(capture):
+                security = dict(data["security_receipt"])
+                security.update(capture_sha256=m.sha(capture),
+                                baseline_capture_sha256=forward.manifest["capture_sha256"])
+                return {"expected_forward_plan_sha256": forward.manifest["plan_sha256"],
+                        "pass1": capture, "pass2": capture, "expected_capture_sha256": m.sha(capture),
+                        "security_receipt": security,
+                        "expected_security_receipt_sha256": m.sha(m.canonical(security))}
+            recovery = m.prepare_recovery(forward, **recovery_args(current))
+            self.assertEqual(recovery.manifest["plan_kind"], "RECOVER_ORIGINAL_APP_AND_BOOT_ONLY")
+            self.assertEqual(set(recovery.sectors), set(forward.sectors))
+            rom, args = FakeROM(current), capture_args(recovery)
+            admission = await m.admit(rom, recovery, **args)
+            async def journal(event):
+                return True
+            result = await m.execute(rom, recovery, admission, **args,
+                expected_admission_sha256=admission["admission_sha256"], journal=journal)
+            for address in forward.sectors:
+                self.assertEqual(rom.image[address:address+m.SECTOR],
+                                 forward.snapshot[address:address+m.SECTOR])
+            self.assertEqual(rom.image[0xA4000:m.BOOT], current[0xA4000:m.BOOT])
+            self.assertNotEqual(rom.image[0xA4000:m.BOOT], forward.snapshot[0xA4000:m.BOOT])
+            self.assertFalse(result["automatic_rollback"])
+            self.assertFalse(result["reset_issued"])
+            for address in (0xA2000, m.TOP+0x100):
+                drift = bytearray(current)
+                drift[address] ^= 1
+                with self.subTest(address=hex(address)), self.assertRaisesRegex(ValueError, "UNEXPLAINED_NON_TARGET_DRIFT"):
+                    m.prepare_recovery(forward, **recovery_args(bytes(drift)))
+        asyncio.run(scenario())
+
 
 if __name__ == "__main__":
     unittest.main()
