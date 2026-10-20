@@ -33,6 +33,8 @@ def post_b1_fixture() -> str:
         bridge.POST_DIVISION_NV2,
         bridge.OLD_ADMISSION,
         bridge.MULTIPAGE_SCAN,
+        bridge.R4_REPAIR_API_ANCHOR,
+        bridge.R4_REPAIR_INIT_FROM,
         '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
         '/* pinned TI multi-page destructive branch */',
         '#endif',
@@ -47,6 +49,9 @@ class Nv4B1BridgeTests(unittest.TestCase):
         source = bridge.transform(post_b1_fixture())
         self.assertIn('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)', source)
         self.assertIn('b1_nv_existing_pair = 1u;', source)
+        self.assertIn('r4_nv4_finish_nib_repair()', source)
+        self.assertIn('R4_RECOVER_NIB_LENGTH', source)
+        self.assertIn('r4_nv4_probe_nib', source)
         self.assertIn('b1_nv_existing_pair = 0u;', source)
         self.assertIn('b1_management_note_nv_candidate()', source)
         self.assertIn('b1_management_hold_nv(reason)', source)

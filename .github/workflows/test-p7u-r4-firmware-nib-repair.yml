@@ -1,0 +1,33 @@
+name: P7U P0 firmware original-NIB recovery source (NO FLASH)
+
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_nib_repair_probe.*'
+      - 'tests/test_r4_nv4_nib_repair_probe.py'
+      - 'tests/test_r4_nv4_b1_bridge.py'
+      - '.github/workflows/test-p7u-r4-firmware-nib-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-firmware-repair-gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact firmware candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile real C probe and check irreversible reset guard
+        run: |
+          python -m unittest -v tests.test_r4_nv4_nib_repair_probe
+          python -m unittest -v tests.test_r4_nv4_b1_bridge
+          python -m unittest -v tests.test_r4_nv4_readonly_admission
+      - name: Verify source syntax and flash denials
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py
+          python -m unittest -v tests.test_r4_nv4_native_seal
