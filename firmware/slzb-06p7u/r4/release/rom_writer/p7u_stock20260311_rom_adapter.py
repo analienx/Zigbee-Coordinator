@@ -77,6 +77,17 @@ class Stock20260311ROM(RomSerial):
             result.extend(chunk)
         return bytes(result)
 
+    async def flash_size(self) -> int:
+        """Capture-pair API: independently validate the live size register."""
+        size = await self._read_rom_word(FLASH_SIZE_REG)
+        if size[0] * SECTOR != FLASH:
+            _deny("LIVE_FLASH_GEOMETRY_CHANGED")
+        return FLASH
+
+    async def read_flash(self, address: int, length: int) -> bytes:
+        """Capture-pair API: use the identical ROM read bounds/protocol."""
+        return await self.read(address, length)
+
     async def _read_rom_word(self, address: int) -> bytes:
         data = await self._call(MEMORY_READ, address=address, extra=b"\x01\x01")
         if type(data) is not bytes or len(data) != 4:
