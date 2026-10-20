@@ -1,9 +1,11 @@
 """No-hardware protocol and negative-window tests for stock20260311 ROM adapter."""
-import asyncio
+import binascii
 import hashlib
 import importlib.util
 from pathlib import Path
+import struct
 import sys
+import tempfile
 import unittest
 
 
@@ -42,6 +44,8 @@ class FakeWire(m.Stock20260311ROM):
             return bytes(self.flash[address:address+4*count])
         if opcode == m.GET_STATUS:
             return 0x44 if self.fail_status else 0x40
+        if opcode == 0x27:
+            return struct.pack(">I", binascii.crc32(self.flash[address:address+length]) & 0xFFFFFFFF)
         if opcode == m.SECTOR_ERASE:
             self.flash[address:address+m.SECTOR] = b"\xff"*m.SECTOR
             return True
@@ -61,12 +65,15 @@ class FakeWire(m.Stock20260311ROM):
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_batched_read_and_bounded_full_sector(self):
         r = FakeWire()
+        self.assertEqual(await r.flash_size(), m.FLASH)
         section = await r.read(0x2000, m.SECTOR)
         self.assertEqual(section, bytes(r.flash[0x2000:0x4000]))
-        calls = [c for c in r.calls if c[0] == m.MEMORY_READ]
-        self.assertEqual(len(calls), 35)
+        self.assertEqual(await r.read_flash(0x2000, 240), bytes(r.flash[0x2000:0x20f0]))
+        self.assertEqual(await r.crc32(0, m.FLASH), binascii.crc32(r.flash) & 0xFFFFFFFF)
+        calls = [c for c in r.calls if c[0] == m.MEMORY_READ and c[1] != m.FLASH_SIZE_REG]
+        self.assertEqual(len(calls), 36)
         self.assertEqual(calls[0][-1], b"\x01\x3c")
-        self.assertEqual(calls[-1][-1], b"\x01\x08")
+        self.assertEqual(calls[-2][-1], b"\x01\x08")
         self.assertTrue(all(0 < c[-1][1] <= 60 for c in calls))
         for address, length in ((-4, 4), (m.FLASH, 4), (m.FLASH-4, 8), (0, 3), (0, 0)):
             with self.subTest(address=address, length=length), self.assertRaisesRegex(m.RomWireError, "FLASH_READ_BOUNDS"):
@@ -148,6 +155,27 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         for endpoint in ("socket://192.0.2.1:6638", "COM0", "\\\\.\\COM6", "", "localhost"):
             with self.subTest(endpoint=endpoint), self.assertRaisesRegex(m.RomWireError, "EXPLICIT_WINDOWS_COM_ONLY"):
                 await r.open(endpoint)
+
+    async def test_capture_pair_adapter_contract_without_hardware(self):
+        capture_path = ROOT.parents[1] / "qualification" / "capture_pair.py"
+        spec = importlib.util.spec_from_file_location("stock20260311_capture_pair", capture_path)
+        capture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(capture)
+        r = FakeWire()
+        original = m.FACTORY_CCFG_SHA
+        m.FACTORY_CCFG_SHA = hashlib.sha256(CCFG).hexdigest()
+        try:
+            identity = await r.identity_sha256()
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp) / "fresh-private"
+                report = await capture.capture_pair(r, root,
+                    expected_identity_sha256=identity, total_timeout_seconds=30)
+                self.assertEqual(report["status"], "DUPLICATE_READBACK_MATCH")
+                self.assertEqual(report["pass1_sha256"], report["pass2_sha256"])
+                self.assertEqual((root / "current-pass1.bin").read_bytes(), bytes(r.flash))
+                self.assertFalse(report["flash_performed"])
+        finally:
+            m.FACTORY_CCFG_SHA = original
 
 
 if __name__ == "__main__":
