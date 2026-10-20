@@ -73,9 +73,10 @@ int r4_nv4_probe_nib(r4_nv4_read read, void *ctx,
             end = logical;
         } else {
             for (off = R4_REPAIR_DATA; off < R4_NV4_PAGE_SIZE; off += 64u) {
-                uint32_t i;
-                if (!r4_rread(read, ctx, base + off, block, 64u)) goto done;
-                for (i = 0u; i < 64u; ++i)
+                uint32_t i, count = R4_NV4_PAGE_SIZE - off;
+                if (count > sizeof(block)) count = sizeof(block);
+                if (!r4_rread(read, ctx, base + off, block, count)) goto done;
+                for (i = 0u; i < count; ++i)
                     if (block[i] != 0xffu) end = off + i + 1u;
             }
         }
