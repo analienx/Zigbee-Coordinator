@@ -73,8 +73,13 @@ explicit owner-directed hardware operation and a fresh exact-device baseline.
 
 `p7u_stock20260311_rom_adapter.py` is a separate, opt-in ROM BSL adapter
 for the **new** frozen `r4_stock20260311_transition.py`. It leaves the legacy
-23-sector writer untouched. It accepts only an operator-specified Windows COM
-port at 115200, does not enter BSL/reset, and exposes only ROM chip/identity,
+23-sector writer untouched. It accepts an explicitly named native Windows COM port at 115200 **or**
+a private-IPv4 `tcp://<address>:6638` SMLIGHT Zigbee socket. The TCP route
+requires pre-existing ROM BSL; opening it never toggles a mode, probes for
+hardware, enters BSL, resets or writes. The USB cable of this P7U is attached
+to Home Assistant, not Zephyrus. See
+[`P7U_TRANSPORT_AND_FLASH_QUICKSTART.md`](../P7U_TRANSPORT_AND_FLASH_QUICKSTART.md).
+The adapter exposes only ROM chip/identity,
 read, CRC, per-sector erase, DOWNLOAD, SEND_DATA, and status. Sector erase is
 restricted to `00000..9FFFF` and **only** `AC000` beyond it; reserved
 `A0000..A3FFF`, NV4 `A4000..ABFFF` and top/CCFG
