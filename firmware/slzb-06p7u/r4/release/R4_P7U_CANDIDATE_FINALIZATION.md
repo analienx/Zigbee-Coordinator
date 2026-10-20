@@ -1,5 +1,12 @@
 # SLZB-06P7U R4 qualification candidate
 
+**Historical 20240716/direct-ROM layout only. This candidate and the next-step
+recipe below are ineligible for the currently installed stock 20260311.**
+Current restored NV is A4000..ABFFF; AC000..ADFFF is resident boot code.
+Use `R4_P7U_STOCK20260311_FINALIZATION.md` and the separate current-layout
+native workflow. Never relabel an A6000 image or bypass the APP-only writer's
+nonzero boot-entry rejection.
+
 Target is the existing **SLZB-06P7U R1.73 / CC2652P7** profile, as confirmed by the owner. This package does not target SLZB-07P7.
 
 **Owner decision, 19 October 2026:** SLZB-06P7U is the correct physical

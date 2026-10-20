@@ -75,14 +75,20 @@ def serialize(padded):
     return ("\n".join(result) + "\n").encode("ascii")
 
 
-def isolate(native):
+def isolate(native, *, stock20260311=False):
     if not native or min(native) != 0 or max(native) >= CHIP_END:
         deny("NATIVE_CHIP_ADDRESS_INVALID")
     if not set(range(CCFG_START, CHIP_END)).issubset(native):
         deny("STOCK_CCFG_MISSING")
     ccfg = bytes(native[x] for x in range(CCFG_START, CHIP_END))
-    if sha(ccfg) != STOCK_20240716_CCFG_SHA256:
-        deny("LINKED_CCFG_DIFFERS_FROM_20240716")
+    if stock20260311:
+        import full_nv4_profile as full
+        full.validate_profile(full.STOCK_20260311_PROFILE)
+        expected_ccfg = full.STOCK_20260311_CCFG_SHA
+    else:
+        expected_ccfg = STOCK_20240716_CCFG_SHA256
+    if sha(ccfg) != expected_ccfg:
+        deny("LINKED_CCFG_DIFFERS_FROM_" + ("20260311" if stock20260311 else "20240716"))
     if any(APP_CEILING <= a < CCFG_START for a in native):
         deny("NATIVE_NV4_GAP_OR_CCFG_SECTOR_WRITTEN")
     app = {a: v for a, v in native.items() if a < APP_CEILING}
@@ -113,9 +119,12 @@ def isolate(native):
     order = [x for x in sectors if x != 0] + [0]
     return payload, {
         "schema": "r4-full-p7u-nv4-app-only-unsealed-v1",
-        "image_class": "FULL_NV4_NATIVE_ENVELOPE_ONLY_UNSEALED_NOT_FLASH_READY",
+        "image_class": ("STOCK20260311_APP_VECTOR_ZERO_UNBOOTABLE_UNTIL_SEPARATE_BOOT_HANDOFF"
+                        if stock20260311 else "FULL_NV4_NATIVE_ENVELOPE_ONLY_UNSEALED_NOT_FLASH_READY"),
         "app_limit_exclusive": "0xA0000",
-        "protected_nv4": ["0xA6000", "0xAE000"],
+        "protected_nv4": ["0xA4000", "0xAC000"] if stock20260311 else ["0xA6000", "0xAE000"],
+        "resident_boot": ["0xAC000", "0xAE000"] if stock20260311 else None,
+        "app_vector_zero_bootable": False,
         "protected_ccfg": ["0xAE000", "0xB0000"],
         "linked_stock_ccfg_sha256": sha(ccfg),
         "application_sectors": [f"0x{x:05X}" for x in sectors],
@@ -132,7 +141,7 @@ def isolate(native):
     }
 
 
-def prepare(artifacts: Path, out: Path, *, expected_manifest_sha256: str):
+def prepare(artifacts: Path, out: Path, *, expected_manifest_sha256: str, stock20260311=False):
     """Audit and extract one externally pinned snapshot, never reopened inputs."""
     if out.exists() or out.is_symlink() or artifacts.is_symlink():
         deny("INPUT_OR_OUTPUT_UNTRUSTED")
@@ -146,14 +155,15 @@ def prepare(artifacts: Path, out: Path, *, expected_manifest_sha256: str):
             deny(str(exc))
         # Both the full geometry/content audit and HEX extraction read only
         # this exclusively owned snapshot, after all original digests pass.
-        status, message = audit(base, frozen, full_nv4=True)
+        layout = {"stock20260311": True} if stock20260311 else {"full_nv4": True}
+        status, message = audit(base, frozen, **layout)
         if status != 0:
             deny("REAL_ELF_XML_HEX_BIN_AUDIT_" + re.sub(r"[^A-Z0-9]", "_", message.upper())[:80])
         raw_name = manifest["files"]["hex"]["file"]
         native, error = _parse_intel_hex(frozen / raw_name)
         if error:
             deny("NATIVE_HEX_UNREADABLE")
-        payload, receipt = isolate(native)
+        payload, receipt = isolate(native, stock20260311=stock20260311)
     receipt["source_native_manifest_sha256"] = expected_manifest_sha256
     receipt["source_native_artifact_sha256"] = {
         kind: manifest["files"][kind]["sha256"] for kind in ("elf", "hex", "bin", "xml")}
@@ -170,11 +180,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--stock20260311", action="store_true")
     parser.add_argument("--manifest-sha256", required=True,
                         help="Externally pinned native manifest SHA-256; never inferred from the input")
     args = parser.parse_args()
     receipt = prepare(args.artifacts, args.out_dir,
-                      expected_manifest_sha256=args.manifest_sha256)
+                      expected_manifest_sha256=args.manifest_sha256,
+                      stock20260311=args.stock20260311)
     print(json.dumps({"status": receipt["image_class"],
                       "sectors": receipt["sectors_to_program"],
                       "flash_authorized": False}))

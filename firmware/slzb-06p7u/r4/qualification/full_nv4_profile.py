@@ -17,6 +17,11 @@ import board_profile
 import nv4_source_overlay as nv4
 
 DEFAULT_PROFILE = Path(__file__).resolve().parents[1] / "profiles/p7u-r4-full-nv4.json"
+STOCK_20260311_PROFILE = DEFAULT_PROFILE.with_name("p7u-r4-stock20260311-nv4.json")
+STOCK_20260311_ID = "P7U_R4_STOCK_20260311_NV4"
+# Public 20240716 CCFG with only IMAGE_VALID_CONF set to factory AC000.
+# A private operator must still compare all 88 bytes to the current unit.
+STOCK_20260311_CCFG_SHA = "74707d474dc5ef0d1fdcc18fcd9d930f9a30030046833bdda7c1237219ae3758"
 SDK_SHA = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 CCFG_SHA = "fa750d46003f4cc059140ac75a83282ec61543b0d898c50cd2add61988c08b47"
 APP_END = 0xA0000
@@ -75,12 +80,24 @@ def validate_profile(path: Path):
             "physical_flash_authorized": False, "full_b0_b4_sealed": False,
         },
     }
+    if profile.get("profile_id") == STOCK_20260311_ID:
+        # Explicit separate expectation; never relabel the historical profile.
+        expected["profile_id"] = STOCK_20260311_ID
+        expected["boot"] = {"mode": "FACTORY_RESIDENT_BOOT_HANDOFF_REQUIRED",
+                            "vector_address": "0x00000", "image_valid_conf": "0xAC000",
+                            "resident_boot_start": "0xAC000", "resident_boot_end_exclusive": "0xAE000",
+                            "app_vector_zero_bootable": False}
+        expected["flash"]["stock_nv4_start"] = "0xA4000"
+        expected["flash"]["stock_nv4_end_exclusive"] = "0xAC000"
+        expected["flash"].pop("stock_20240716_ccfg_sha256")
+        expected["flash"]["stock_20260311_ccfg_sha256"] = STOCK_20260311_CCFG_SHA
+        expected["board_power_reference"] = "stock-20260311"
     if profile != expected:
         block("EXACT_PROFILE_SEMANTICS_DRIFT")
     return profile
 
 
-def transform_pinned(syscfg: str, linker: str, projectspec: str):
+def transform_pinned(syscfg: str, linker: str, projectspec: str, *, stock20260311=False):
     sc, ld, project = nv4.transform(syscfg, linker, projectspec)
     # The fitted NV4 pages start at A6000. Deliberately stop app at A0000,
     # leaving three unused sectors as a conservative linked size margin.
@@ -94,8 +111,14 @@ def transform_pinned(syscfg: str, linker: str, projectspec: str):
     if ld.count("--stack_size=1024") != 1 or "--stack_size=4096" in ld:
         block("CIRQ_LINKER_STACK_SOURCE_DRIFT")
     ld = ld.replace("--stack_size=1024", "--stack_size=4096", 1)
+    if stock20260311:
+        sc = nv4.replace_one(sc, "NVS1.internalFlash.regionBase = 0xA6000;",
+                              "NVS1.internalFlash.regionBase = 0xA4000;", "CURRENT_NVS")
+        ld = nv4.replace_one(ld, "#define FLASH_NV_BASE           0xA6000",
+                              "#define FLASH_NV_BASE           0xA4000", "CURRENT_LINKER")
+    nv_base = "0xA4000" if stock20260311 else "0xA6000"
     if not all(part in ld for part in (
-            "#define FLASH_NV_BASE           0xA6000",
+            "#define FLASH_NV_BASE           " + nv_base,
             "#define FLASH_NV_SIZE           0x8000",
             "#define FLASH_LAST_BASE         0xAE000",
             "#define FLASH_LAST_SIZE         0x2000",
@@ -103,7 +126,7 @@ def transform_pinned(syscfg: str, linker: str, projectspec: str):
             "#define FLASH_SIZE              0xA0000",
             "--stack_size=4096")):
         block("LINKER_NV4_APP_OR_CCFG_DRIFT")
-    if (sc.count("NVS1.internalFlash.regionBase = 0xA6000;") != 1 or
+    if (sc.count("NVS1.internalFlash.regionBase = " + nv_base + ";") != 1 or
             sc.count("NVS1.internalFlash.regionSize = 0x8000;") != 1 or
             "-DNVOCMP_NVPAGES=4" not in project or
             "--define=NVOCMP_NVPAGES=4" not in project):
@@ -113,7 +136,8 @@ def transform_pinned(syscfg: str, linker: str, projectspec: str):
 
 def apply_pinned(syscfg: Path, linker: Path, projectspec: Path,
                  receipt: Path, profile: Path = DEFAULT_PROFILE):
-    validate_profile(profile)
+    selected = validate_profile(profile)
+    current = selected["profile_id"] == STOCK_20260311_ID
     paths = (syscfg, linker, projectspec)
     resolved = [path.resolve() for path in (*paths, receipt, profile)]
     if len(set(resolved)) != len(resolved) or receipt.exists() or receipt.is_symlink():
@@ -123,16 +147,17 @@ def apply_pinned(syscfg: Path, linker: Path, projectspec: Path,
     original = [path.read_bytes() for path in paths]
     if tuple(nv4.git_blob(raw) for raw in original) != nv4.UPSTREAM_GIT_BLOBS:
         block("PINNED_TI_SOURCE_BLOB_DRIFT")
-    changed = transform_pinned(*(raw.decode("utf-8") for raw in original))
+    changed = transform_pinned(*(raw.decode("utf-8") for raw in original), stock20260311=current)
     report = {
         "schema": "p7u-r4-full-nv4-source-composition-v1",
+        "profile_id": selected["profile_id"],
         "profile_sha256": sha(profile.read_bytes()),
         "sdk_commit": SDK_SHA,
         "original_git_blobs": list(nv4.UPSTREAM_GIT_BLOBS),
         "original_source_sha256": [sha(raw) for raw in original],
         "composed_source_sha256": [sha(text.encode()) for text in changed],
         "app_link_end_exclusive": "0xA0000",
-        "stock_nv4_range": ["0xA6000", "0xAE000"],
+        "stock_nv4_range": ["0xA4000", "0xAC000"] if current else ["0xA6000", "0xAE000"],
         "ccfg_erase_sector": ["0xAE000", "0xB0000"],
         "nvocmp_pages": 4,
         "native_compiled": False, "full_b0_b4_sealed": False,
@@ -146,7 +171,8 @@ def apply_pinned(syscfg: Path, linker: Path, projectspec: Path,
 
 def apply_imported(syscfg: Path, pinned_receipt: Path, receipt: Path,
                    profile: Path = DEFAULT_PROFILE):
-    validate_profile(profile)
+    selected = validate_profile(profile)
+    current = selected["profile_id"] == STOCK_20260311_ID
     if any(path.is_symlink() for path in (syscfg, pinned_receipt, receipt, profile)):
         block("IMPORTED_SOURCE_SYMLINK")
     if receipt.exists() or not syscfg.is_file() or not pinned_receipt.is_file():
@@ -161,18 +187,32 @@ def apply_imported(syscfg: Path, pinned_receipt: Path, receipt: Path,
     normalized = source.replace(b"\r\n", b"\n")
     if sha(normalized) != prior["composed_source_sha256"][0]:
         block("CCS_IMPORT_SOURCE_DIFFERS_FROM_PINNED_NV4")
-    power = board_profile.settings(reference="vendor-20240716")
+    reference = "historical-fitted-20260311" if current else "vendor-20240716"
+    power = board_profile.settings(reference=reference)
     result = board_profile.transform(normalized.decode(), power, transport_only=False)
+    if current:
+        # ROM still enters the untouched resident manager at AC000. These
+        # settings preserve factory CCFG in the audit image, not boot APP0.
+        result += ("\n// P7U_STOCK_20260311_FACTORY_BOOT: NOT APP0 boot authorization.\n"
+                   "device.enableBootloader = true;\n"
+                   "device.enableBootloaderBackdoor = true;\n"
+                   "device.dioBootloaderBackdoor = 15;\n"
+                   "device.levelBootloaderBackdoor = \"Active low\";\n"
+                   "device.setFlashVectorTable = true;\n"
+                   "device.addressFlashVectorTable = 0xAC000;\n")
+    nv_base = "0xA4000" if current else "0xA6000"
     if (result.count("device.forceVddr = true;") != 1 or
             result.count("device.enableDCDC = true;") != 1 or
-            result.count("NVS1.internalFlash.regionBase = 0xA6000;") != 1 or
+            result.count("NVS1.internalFlash.regionBase = " + nv_base + ";") != 1 or
             result.count("NVS1.internalFlash.regionSize = 0x8000;") != 1):
         block("CURRENT_BOARD_NV4_POWER_COMPOSITION_DRIFT")
     report = {
         "schema": "p7u-r4-full-nv4-imported-board-v1",
         "source_pin_receipt_sha256": sha(pinned_receipt.read_bytes()),
-        "reference_power": "vendor-20240716",
-        "ccfg_expected_sha256": CCFG_SHA,
+        "reference_power": reference,
+        "profile_id": selected["profile_id"],
+        "ccfg_expected_sha256": STOCK_20260311_CCFG_SHA if current else CCFG_SHA,
+        "app_vector_zero_bootable": False if current else None,
         "input_sha256": sha(source),
         "output_sha256": sha(result.encode()),
         "source_only": True, "native_verified": False,

@@ -84,7 +84,11 @@ def main():
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--nv4-bridge", action="store_true",
                         help="require live stock NV4 bridge, never obsolete B1 NV2 probe")
+    parser.add_argument("--stock20260311", action="store_true",
+                        help="require the separate A4000 four-page current factory layout")
     args = parser.parse_args()
+    if args.stock20260311 and not args.nv4_bridge:
+        parser.error("stock20260311 requires nv4-bridge")
     expected = args.expected_sha
     if not re.fullmatch("[0-9a-f]{40}", expected):
         raise ValueError("Expected source SHA must be a full commit SHA")
@@ -132,7 +136,7 @@ def main():
                 composite.get("source_modified_sha256", {}).get(
                     "source/ti/common/nv/nvocmp.c") or
                 bridge.get("source_after_sha256") != overlay.get("modified_nv_sha256") or
-                bridge.get("region_base") != "0xA6000" or
+                bridge.get("region_base") != ("0xA4000" if args.stock20260311 else "0xA6000") or
                 bridge.get("region_size") != "0x8000" or
                 bridge.get("nv_pages") != 4):
             raise ValueError("B1 NV4 bridge source/geometry provenance chain broken")
@@ -169,7 +173,11 @@ def main():
         source_files[relative] = hashlib.sha256(committed).hexdigest()
     report = {
         "schema": "r4-b1-native-seal-v1", "source_sha": expected,
-        "classification": "HOSTED_NATIVE_LINKED_NV4_BRIDGE_UNSEALED" if args.nv4_bridge else "HOSTED_NATIVE_LINKED",
+        "classification": ("HOSTED_NATIVE_LINKED_STOCK20260311_HANDOFF_REQUIRED" if args.stock20260311 else
+                           "HOSTED_NATIVE_LINKED_NV4_BRIDGE_UNSEALED" if args.nv4_bridge else "HOSTED_NATIVE_LINKED"),
+        "stock20260311": args.stock20260311,
+        "nv4_region_base": "0xA4000" if args.stock20260311 else "0xA6000" if args.nv4_bridge else "0xAA000",
+        "boot_handoff_required": args.stock20260311,
         "nv4_bridge_compiled": args.nv4_bridge,
         "full_b0_b4_sealed": False,
         "github_run_id": os.environ.get("GITHUB_RUN_ID"),

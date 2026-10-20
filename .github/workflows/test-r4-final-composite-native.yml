@@ -1,4 +1,4 @@
-name: R4 direct ROM boot B0-B4 dual native (NOT FLASH)
+name: HISTORICAL 20240716 R4 full NV4 dual native (AUDIT ONLY)
 
 on:
   pull_request:
@@ -848,7 +848,8 @@ jobs:
           shutil.copyfile(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json',out/'app-only-receipt.json')
           shutil.copyfile('firmware/slzb-06p7u/r4/release/R4_P7U_CANDIDATE_FINALIZATION.md',out/'START_HERE.md')
           receipt={'schema':'r4-p7u-engineering-candidate-v1',
-              'candidate_class':'R4_R01_R05_ISOLATED_QUALIFICATION_CANDIDATE',
+              'candidate_class':'HISTORICAL_20240716_NOT_CURRENT_STOCK20260311',
+              'installed_stock20260311_eligible':False,
               'source_sha':source,'github_run_id':os.environ['GITHUB_RUN_ID'],
               'board':'SLZB-06P7U-r1.73-CC2652P7','profile_sha256':profile_sha,
               'replicas':replicas,'host_receipt_sha256':sha(out/'host-integration-receipt.json'),
@@ -862,7 +863,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: p7u-r1-r5-qualification-candidate-${{ env.B1_SOURCE_SHA }}
+          name: historical-20240716-p7u-r1-r5-candidate-${{ env.B1_SOURCE_SHA }}
           path: /tmp/p7u-r1-r5-candidate/
           if-no-files-found: error
           retention-days: 30

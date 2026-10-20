@@ -39,7 +39,7 @@ def digest(raw: bytes) -> str:
 
 
 def validate_profile(profile: dict) -> None:
-    if (profile.get("profile_id") != "P7U_R4_FULL_NV4" or
+    if (profile.get("profile_id") not in ("P7U_R4_FULL_NV4", "P7U_R4_STOCK_20260311_NV4") or
             profile.get("source_sdk_sha") != PIN or
             profile.get("capacities", {}).get("trust_center_devices") != 300 or
             profile.get("flash", {}).get("nvocmp_pages") != 4 or
@@ -110,7 +110,8 @@ def stage(sdk: Path, profile_file: Path, receipt: Path, b1_receipt: Path) -> dic
         raise ValueError("T6 receipt must be a new independent path")
     if b1_receipt.is_symlink() or not b1_receipt.is_file():
         raise ValueError("T6 bound B1/B3 receipt absent or linked")
-    validate_profile(json.loads(profile_file.read_text()))
+    profile = json.loads(profile_file.read_text())
+    validate_profile(profile)
     head = subprocess.check_output(["git", "-C", str(sdk), "rev-parse", "HEAD"]).decode().strip()
     if head != PIN:
         raise ValueError("T6 SDK commit mismatch")
@@ -129,7 +130,7 @@ def stage(sdk: Path, profile_file: Path, receipt: Path, b1_receipt: Path) -> dic
     result = {
         "schema": "r4-t6-tc300-legacy-migration-prohibition-v3",
         "source_pin": PIN,
-        "profile_id": "P7U_R4_FULL_NV4",
+        "profile_id": profile["profile_id"],
         "source_rel": REL,
         "before_sha256": digest(actual),
         "after_sha256": digest(changed),

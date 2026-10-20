@@ -21,19 +21,23 @@ def load(root):
 
 LINKED_NV2 = "HOSTED_NATIVE_LINKED"
 LINKED_NV4 = "HOSTED_NATIVE_LINKED_NV4_BRIDGE_UNSEALED"
+LINKED_STOCK20260311 = "HOSTED_NATIVE_LINKED_STOCK20260311_HANDOFF_REQUIRED"
 
 
 def validate_linked_mode(item: dict) -> str:
     mode = item.get("classification")
     functions = item.get("linked_functions")
-    if mode not in (LINKED_NV2, LINKED_NV4) or not isinstance(functions, dict):
+    if mode not in (LINKED_NV2, LINKED_NV4, LINKED_STOCK20260311) or not isinstance(functions, dict):
         raise ValueError("Native comparison requires linked native evidence")
     if item.get("full_b0_b4_sealed") is not False:
         raise ValueError("Native comparison cannot promote an unproved full role seal")
-    if mode == LINKED_NV4:
+    if mode in (LINKED_NV4, LINKED_STOCK20260311):
         if (item.get("nv4_bridge_compiled") is not True or
                 "r4_nv4_admit" not in functions or "b1_nv_probe" in functions):
             raise ValueError("NV4 native comparison requires actual linked observer and no NV2 probe")
+        if mode == LINKED_STOCK20260311 and (item.get("stock20260311") is not True or
+                item.get("nv4_region_base") != "0xA4000" or item.get("boot_handoff_required") is not True):
+            raise ValueError("Current stock20260311 native requires its separate source/boot class")
     elif item.get("nv4_bridge_compiled") is not False or "b1_nv_probe" not in functions:
         raise ValueError("NV2 native comparison requires original linked B1 probe")
     return mode
@@ -74,7 +78,8 @@ def main():
     report = {"schema": "r4-b1-native-reproducibility-v1",
               "source_sha": args.expected_sha,
               "classification": a["classification"],
-              "nv4_bridge_compiled": a["classification"] == LINKED_NV4,
+              "nv4_bridge_compiled": a["classification"] in (LINKED_NV4, LINKED_STOCK20260311),
+              "stock20260311": a["classification"] == LINKED_STOCK20260311,
               "full_b0_b4_sealed": False,
               "result": "TWO_CLEAN_NATIVE_BUILDS_BYTE_IDENTICAL",
               "artifacts": a["artifacts"], "normalized_xml_fields": ["link_time"],

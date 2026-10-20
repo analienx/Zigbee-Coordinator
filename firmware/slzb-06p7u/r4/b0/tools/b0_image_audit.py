@@ -267,7 +267,7 @@ def _int_maybe(text):
         return None
 
 
-def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, direct_rom_boot=False, full_nv4=False):
+def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, direct_rom_boot=False, full_nv4=False, stock20260311=False):
     """Validate the genuine TI --xml_link_info document.
 
     Returns (evidence, error): evidence carries the parsed memory
@@ -315,13 +315,14 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, 
     # Match the complete pinned TI linker layout, not just NV and LAST
     # region starts. Reject duplicate/malformed region declarations above
     # before accepting any flash image as layout-compatible.
-    if sum((preserve_resident_boot, direct_rom_boot, full_nv4)) > 1:
+    if sum((preserve_resident_boot, direct_rom_boot, full_nv4, stock20260311)) > 1:
         return None, "audit boot profiles mutually exclusive"
     expected_geometry = {
         "FLASH": ((0x00000080, 0x9FF80) if preserve_resident_boot else
-                  (0x00000000, 0xA0000) if direct_rom_boot or full_nv4 else
+                  (0x00000000, 0xA0000) if direct_rom_boot or full_nv4 or stock20260311 else
                   (0x00000000, 0xAA000)),
-        "FLASH_NV": ((0xA6000, 0x8000) if full_nv4 else
+        "FLASH_NV": ((0xA4000, 0x8000) if stock20260311 else
+                     (0xA6000, 0x8000) if full_nv4 else
                      (0xA0000, 0x4000) if preserve_resident_boot or direct_rom_boot else
                      (0xAA000, 0x4000)),
         "FLASH_LAST": (0xAE000, 0x2000),
@@ -333,6 +334,7 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, 
                           "(got %r; want %r)" % (region, areas[region], expected))
     nvs_base, nvs_size = areas["FLASH_NV"]
     expected_base, expected_size = (
+        (0xA4000, 0x8000) if stock20260311 else
         (0xA6000, 0x8000) if full_nv4 else
         (0xA0000, 0x4000) if preserve_resident_boot or direct_rom_boot else
         (DONOR_NVS_BASE, DONOR_NVS_SIZE)
@@ -406,7 +408,7 @@ def _parse_link_xml(text, elf_name, elf_entry, *, preserve_resident_boot=False, 
                 break
     if stack_size is None:
         return None, "audit missing C/IRQ stack size"
-    expected_cirq = FULL_NV4_CIRQ_STACK if full_nv4 else DONOR_CSTACK
+    expected_cirq = FULL_NV4_CIRQ_STACK if full_nv4 or stock20260311 else DONOR_CSTACK
     if stack_size != expected_cirq:
         return None, ("audit wrong C/IRQ stack expectation "
                       "(want %d linked bytes; observed %d)" % (expected_cirq, stack_size))
@@ -675,7 +677,7 @@ def _validate_reset_vectors(payload, evidence, elf_segments, *, vector_address=0
     return None
 
 
-def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False, direct_rom_boot=False, full_nv4=False):
+def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False, direct_rom_boot=False, full_nv4=False, stock20260311=False):
     """Returns (exit_code, message). Never raises.
 
     Log markers are a tripwire only -- real proof is the ELF/XML
@@ -800,7 +802,8 @@ def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False
         return 1, err
     evidence, err = _parse_link_xml(xml_text, targets["elf"].name, elf_entry,
                                     preserve_resident_boot=preserve_resident_boot,
-                                    direct_rom_boot=direct_rom_boot, full_nv4=full_nv4)
+                                    direct_rom_boot=direct_rom_boot, full_nv4=full_nv4,
+                                    stock20260311=stock20260311)
     if err:
         return 1, err
     if not fixture_oracle:
@@ -816,6 +819,19 @@ def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False
     payload, err = _parse_intel_hex(targets["hex"])
     if err:
         return 1, err
+    if stock20260311:
+        # APP vectors do not override ROM's preserved factory AC000 selection.
+        qualification = Path(__file__).resolve().parents[2] / "qualification"
+        sys.path.insert(0, str(qualification))
+        import full_nv4_profile as full
+        full.validate_profile(full.STOCK_20260311_PROFILE)
+        if any(0xA0000 <= a < 0xAFFA8 for a in payload):
+            return 1, "audit stock20260311 image writes reserved NV/boot/top bytes"
+        ccfg = bytes(payload.get(a, 0) for a in range(0xAFFA8, 0xB0000))
+        if (not set(range(0xAFFA8, 0xB0000)).issubset(payload) or
+                hashlib.sha256(ccfg).hexdigest() != full.STOCK_20260311_CCFG_SHA or
+                int.from_bytes(ccfg[0x44:0x48], "little") != 0xAC000):
+            return 1, "audit stock20260311 factory-derived complete CCFG mismatch"
     elf_segments, err = _parse_elf_load_segments(targets["elf"])
     if err:
         return 1, err
@@ -838,6 +854,8 @@ def audit(base, artifacts, *, fixture_oracle=False, preserve_resident_boot=False
                                   vector_address=0x80 if preserve_resident_boot else 0)
     if err:
         return 1, err
+    if stock20260311:
+        return 0, "R4 stock20260311 native APP audit OK; FACTORY AC000 BOOT HANDOFF REQUIRED"
     return 0, "R4-B0 image audit OK"
 
 
@@ -850,16 +868,18 @@ def main(argv):
         preserve_boot = profile == "--preserve-resident-boot"
         direct_boot = profile == "--direct-rom-boot"
         full_nv4 = profile == "--full-nv4"
+        stock20260311 = profile == "--stock20260311"
         if (len(argv) not in (4, 5) or argv[0] != "audit"
                 or argv[2] != "--artifacts"
-                or (len(argv) == 5 and not (fixture_oracle or preserve_boot or direct_boot or full_nv4))):
+                or (len(argv) == 5 and not (fixture_oracle or preserve_boot or direct_boot or full_nv4 or stock20260311))):
             print("usage: b0_image_audit.py audit <b0-base-dir> "
-                  "--artifacts <dir> [--synthetic-fixture-oracle|--preserve-resident-boot|--direct-rom-boot|--full-nv4]")
+                  "--artifacts <dir> [--synthetic-fixture-oracle|--preserve-resident-boot|--direct-rom-boot|--full-nv4|--stock20260311]")
             return 2
         code, message = audit(Path(argv[1]), Path(argv[3]),
                               fixture_oracle=fixture_oracle,
                               preserve_resident_boot=preserve_boot,
-                              direct_rom_boot=direct_boot, full_nv4=full_nv4)
+                              direct_rom_boot=direct_boot, full_nv4=full_nv4,
+                              stock20260311=stock20260311)
     except Exception as exc:  # noqa: BLE001 -- fail closed, never traceback
         print("b0 audit error (%s)" % exc)
         return 1
