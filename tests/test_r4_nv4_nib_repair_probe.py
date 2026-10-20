@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_r4_nv4_readonly_admission import (
+from tests.test_r4_nv4_readonly_admission import (
     PAGE_SIZE, READ, encoded_record, forensics, stock_like,
 )
 
