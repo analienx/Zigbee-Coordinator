@@ -55,6 +55,8 @@ def test_unknown_or_twice_patched_donor_fails_closed():
 
 def test_overlay_requires_pinned_mt_sources_and_receipts():
     apply = (TOOLS / "apply_b1.py").read_text()
+    hosted = (TOOLS / "run_hosted_tests.py").read_text()
+    assert 'SDK_MT_VERSION,  # do not shift existing SOURCE_PATHS harness indices' in hosted
     for required in (
         'SDK_MT_SYS', 'SDK_MT_VERSION', 'SHA_MT_SYS', 'SHA_MT_VERSION',
         'git_blob_sha(mt_sys) != SHA_MT_SYS',

@@ -12,7 +12,7 @@ import subprocess
 import sys
 import urllib.request
 
-from apply_b1 import overlay, HERDSMAN_FILE
+from apply_b1 import overlay, HERDSMAN_FILE, SDK_MT_VERSION
 from patch_management import PINS, EXTRA_PINS, HERDSMAN_PIN, HERDSMAN_PATH
 from make_security_harness import SCENARIOS as SECURITY_SCENARIOS, MUTANTS as SECURITY_MUTANTS
 from make_host_api_harness import SCENARIOS as HOST_API_SCENARIOS
@@ -32,6 +32,7 @@ SOURCE_PATHS = (
     "source/ti/zstack/startup/zstackstartup.c",
     "source/ti/zstack/osal/osal_nv.c",
     "source/ti/zstack/stack/api/zstacktask.c",
+    SDK_MT_VERSION,  # do not shift existing SOURCE_PATHS harness indices
 )
 
 
