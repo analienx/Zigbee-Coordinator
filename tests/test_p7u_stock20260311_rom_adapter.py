@@ -13,8 +13,7 @@ SPEC = importlib.util.spec_from_file_location("stock20260311_rom", ROOT / "p7u_s
 m = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(m)
 
-CCFG = bytes.fromhex(
-    "000080011000c0fffdff5800ffc1b9f1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc50ffec5ffffffff00ffffff00c5c5ff000000ff00c00a00ffffffffffffffff")
+CCFG = bytes(range(88))  # Synthetic fixture, never a production CCFG image.
 
 
 class FakeWire(m.Stock20260311ROM):
@@ -75,16 +74,21 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_identity_checks_silicon_and_factory_ccfg_fresh(self):
         r = FakeWire()
-        identity = await r.identity_sha256()
-        self.assertEqual(len(identity), 64)
-        self.assertNotEqual(identity, hashlib.sha256(bytes(r.flash)).hexdigest())
-        r.flash[-1] ^= 1
-        with self.assertRaisesRegex(m.RomWireError, "FACTORY_CCFG_CHANGED"):
-            await r.identity_sha256()
-        r.flash[-1] ^= 1
-        r.rom_words[m.FLASH_SIZE_REG] = b"\x57\x00\x00\x00"
-        with self.assertRaisesRegex(m.RomWireError, "NOT_CC26X2X7"):
-            await r.identity_sha256()
+        original = m.FACTORY_CCFG_SHA
+        m.FACTORY_CCFG_SHA = hashlib.sha256(CCFG).hexdigest()
+        try:
+            identity = await r.identity_sha256()
+            self.assertEqual(len(identity), 64)
+            self.assertNotEqual(identity, hashlib.sha256(bytes(r.flash)).hexdigest())
+            r.flash[-1] ^= 1
+            with self.assertRaisesRegex(m.RomWireError, "FACTORY_CCFG_CHANGED"):
+                await r.identity_sha256()
+            r.flash[-1] ^= 1
+            r.rom_words[m.FLASH_SIZE_REG] = b"\x57\x00\x00\x00"
+            with self.assertRaisesRegex(m.RomWireError, "NOT_CC26X2X7"):
+                await r.identity_sha256()
+        finally:
+            m.FACTORY_CCFG_SHA = original
 
     async def test_only_app_full_sector_and_boot_tail_then_vectors(self):
         r = FakeWire()
