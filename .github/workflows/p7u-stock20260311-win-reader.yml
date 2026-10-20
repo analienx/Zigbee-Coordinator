@@ -22,7 +22,7 @@ jobs:
       - name: Checkout workflow branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Reject modifications to the pinned firmware and security reader source
         shell: bash
         run: |
