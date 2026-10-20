@@ -81,3 +81,24 @@ initializer result used a different retained snapshot.
 PR #136 remains draft. A successful boot handoff and working USB transport have
 already been observed; operational finalization now depends on resolving this
 specific admission discrepancy and then verifying retained network operation.
+
+## Prepared capture handoff, not executed
+
+The reviewed private wrapper on Zephyrus is
+`p7u-r4-ethernet-flash-20261020/capture_nv_hold_live_once.py`, SHA256
+`668a581c61e8f0143d6536985635df69f2646946735c501e5d7dec195aee5c5a`.
+It requires fresh human approval, explicit confirmation of existing Ethernet
+mode, externally pinned management/ROM identities, original/public-source
+hashes, and a new private output directory before requesting BSL entry.
+It reuses `capture_pair.py` for full duplicate reads and CRCs (600-second
+capture bound), restricts outgoing ROM opcodes to reads/status/identity/sync,
+and closes the TCP transport without an application-return command.
+
+The wrapper does not select Ethernet mode. No reviewed mode-switch API was
+established, and its possible ESP/radio reset effects are unverified. The
+operator must select Ethernet deliberately and approve the single BSL entry;
+never infer that approval from preparing this file or from an older window.
+The original user handover explicitly prohibits entering Flash Mode/reset
+without fresh, specific authorization. Keep Z2M stopped and verify ownership
+again before any subsequently approved capture. No capture, mode switch,
+reset, flash or second Z2M start occurred during this forensic continuation.
