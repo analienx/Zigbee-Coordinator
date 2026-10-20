@@ -68,3 +68,36 @@ Neither implies source is a vendor-signed firmware updater.
 
 Never run a private operator script on a connected coordinator without an
 explicit owner-directed hardware operation and a fresh exact-device baseline.
+
+## Current stock20260311 isolated adapter (source-only)
+
+`p7u_stock20260311_rom_adapter.py` is a separate, opt-in ROM BSL adapter
+for the **new** frozen `r4_stock20260311_transition.py`. It leaves the legacy
+23-sector writer untouched. It accepts only an operator-specified Windows COM
+port at 115200, does not enter BSL/reset, and exposes only ROM chip/identity,
+read, CRC, per-sector erase, DOWNLOAD, SEND_DATA, and status. Sector erase is
+restricted to `00000..9FFFF` and **only** `AC000` beyond it; reserved
+`A0000..A3FFF`, NV4 `A4000..ABFFF` and top/CCFG
+`AE000..AFFFF` are never erase/write targets. Every download requires a
+previous exact-sector erase; AC000 can be transmitted only as `AC008..ADFFF`
+followed by its first eight vector bytes. Any uncertain write poisons the
+session. No retry, bank erase, arbitrary memory write or reset opcode exists.
+
+CC26xx counted MEMORY_READ uses up to 60 four-byte words per ROM response,
+with exact length checks; this allows read/CRC of the 704-KiB flash without
+180,224 separate serial read commands. The **first physical admission must
+prove this counted-read behavior independently before any erase**. The ROM
+identity digest includes actual silicon/FCFG and factory CCFG; it must be
+pinned independently, not trusted from an arbitrary operator-supplied string.
+
+This adapter is **not a flash CLI**, flash permission, or completed hardware
+qualification. Actual APP+AC000 execution still requires two independent
+matching same-unit captures, the genuine TI private semantic preflight PASS,
+external source/plan/identity/receipt pins, the transition's durable journal,
+and a separate owner decision explicitly authorizing **AC000 replacement of
+the factory boot trust boundary**. Stock restore is a distinct, separately
+approved APP+original-AC000 recovery; it never replays outdated NV/counters.
+The single production P7U is not to be reset, re-paired or flashed based solely
+on hosted software receipts.
+
+GitHub-hosted regression: `python -m pytest -q tests/test_p7u_stock20260311_rom_adapter.py`.
