@@ -27,6 +27,6 @@ The P7U USB cable is physically connected to **Home Assistant (Raspberry Pi)**, 
 
 ### Important constraints
 
-- The current versioned `p7u_stock20260311_rom_adapter.py` is **COM-only**. Ethernet flashing is *not yet implemented* in that adapter; never claim it can flash over TCP until an explicitly scoped, reviewed, GitHub-verified network transport exists and live read-only admission succeeds.
+- The versioned `p7u_stock20260311_rom_adapter.py` now supports **explicit private IPv4 TCP/6638** as well as COM. [GitHub-hosted adapter regression #39433211887](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39433211887) passed. On 2026-10-20 the real SLZB-06p7U at `192.168.50.59` entered ROM BSL over Ethernet and a 240-byte counted read succeeded. Two independent full 704-KiB captures matched each other; genuine TI8.33 semantic security preflight passed against a previous retained snapshot even though four NV pages changed. **No flash has yet been performed.**
 - SMLIGHT supports Ethernet flashing of its Zigbee SoC but cautions that a stable **wired** connection is important. Its generic `smlight-cc-flasher -ewv` example is **not** authorization for this partial-sector R4 migration: the `-e` path may erase areas we must preserve.
 - Vendor guidance: [SMLIGHT CC2652 flashing methods](https://github.com/smlight-dev/slzb-06-manual/blob/main/docs/guide/flashing-and-updating/updating-cc2652p.md), [SMLIGHT CC flasher transport](https://github.com/smlight-tech/smlight-cc-flasher).
