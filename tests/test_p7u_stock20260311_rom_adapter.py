@@ -7,6 +7,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1] / "firmware/slzb-06p7u/r4/release/rom_writer"
@@ -150,11 +151,28 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(m.RomWireError, "SESSION_POISONED"):
             await s.erase_sector(0x2000)
 
-    async def test_no_auto_usb_reconnect_or_network_endpoint(self):
+    async def test_explicit_private_tcp_only_opens_existing_bsl_socket(self):
         r = FakeWire()
-        for endpoint in ("socket://192.0.2.1:6638", "COM0", "\\\\.\\COM6", "", "localhost"):
-            with self.subTest(endpoint=endpoint), self.assertRaisesRegex(m.RomWireError, "EXPLICIT_WINDOWS_COM_ONLY"):
-                await r.open(endpoint)
+        with patch.object(m.asyncio, "open_connection", new_callable=AsyncMock) as connect:
+            connect.return_value = ("reader", "writer")
+            await r.open("tcp://192.168.50.59:6638")
+            connect.assert_awaited_once_with("192.168.50.59", 6638)
+            self.assertEqual((r.reader, r.writer), ("reader", "writer"))
+            self.assertEqual(r._download_remaining, 0)
+
+    async def test_network_endpoint_guards_and_no_probe(self):
+        r = FakeWire()
+        invalid = ("socket://192.168.50.59:6638", "tcp://8.8.8.8:6638",
+                   "tcp://127.0.0.1:6638", "tcp://192.168.50.59:6639",
+                   "tcp://192.168.50.59:6638/extra",
+                   "tcp://user@192.168.50.59:6638",
+                   "tcp://slzb-06.local:6638", "COM0",
+                   r"\\\\.\\COM6", "", "localhost")
+        with patch.object(m.asyncio, "open_connection", new_callable=AsyncMock) as connect:
+            for endpoint in invalid:
+                with self.subTest(endpoint=endpoint), self.assertRaises(m.RomWireError):
+                    await r.open(endpoint)
+            connect.assert_not_awaited()
 
     async def test_capture_pair_adapter_contract_without_hardware(self):
         capture_path = ROOT.parents[1] / "qualification" / "capture_pair.py"
