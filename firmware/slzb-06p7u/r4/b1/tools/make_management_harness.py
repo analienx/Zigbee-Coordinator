@@ -296,7 +296,12 @@ int main(int argc,char **argv) {
             uint8_t bad[8]={'B','1','Q','1',1,8,0,0};
             route(0x21,B1_STATUS_COMMAND,bad,7); assert(last_reply[3]==4);
             for(unsigned i=0;i<8;i++) { uint8_t flip=i==6?2u:1u; bad[i]^=flip; route(0x21,B1_STATUS_COMMAND,bad,8);
-                assert(last_reply[0]==3 && last_reply[1]==0x60 && last_reply[3]==3); bad[i]^=flip; }
+                if(i==6) {
+                    /* Byte six changes op0 to the new, valid RAM-only op2. */
+                    assert(last_reply[0]==B1_STARTUP_REPLY_SIZE && last_reply[1]==0x61);
+                    assert(memcmp(last_reply+3,"B1P1",4)==0 && mutations==0);
+                } else assert(last_reply[0]==3 && last_reply[1]==0x60 && last_reply[3]==3);
+                bad[i]^=flip; }
         } else if(strcmp(s,"bad_fcs")==0) {
             static const uint8_t good[]={0xFE,8,0x21,B1_STATUS_COMMAND,'B','1','Q','1',1,8,0,0,0};
             memcpy(wire_buffer,good,sizeof(good)); wire_size=sizeof(good); wire_cursor=0;
