@@ -19,9 +19,11 @@ spec.loader.exec_module(forensics)
 
 
 class Result(ctypes.Structure):
-    _fields_ = [(name, ctypes.c_uint32) for name in
-                ('code', 'reads', 'records', 'active_records', 'fault_offset',
-                 'semantic_state', 'semantic_flags')]
+    _fields_ = ([(name, ctypes.c_uint32) for name in
+                 ('code', 'reads', 'records', 'active_records', 'fault_offset',
+                  'semantic_state', 'semantic_flags')] +
+                [('logical_sum', ctypes.c_uint64),
+                 ('logical_xor', ctypes.c_uint64)])
 
 
 READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
@@ -218,6 +220,27 @@ class Nv4AdmissionTests(unittest.TestCase):
         self.assertEqual((result.records, result.active_records), (1, 1))
         self.assertLess(result.reads, 30000)
         self.assertEqual(before, stock_like())
+
+    def test_relocation_independent_fingerprint_rejects_changed_live_payload(self):
+        initial = bytearray(stock_like())
+        relayout = bytearray(initial)
+        first = encoded_record(0)
+        relayout[16:16 + len(first)] = b'\xff' * len(first)
+        relayout[PAGE_SIZE + 16:PAGE_SIZE + 16 + len(first)] = first
+        original = self.probe(bytes(initial))
+        relocated = self.probe(bytes(relayout))
+        self.assertEqual((original.code, relocated.code), (8, 8))
+        self.assertEqual(original.active_records, relocated.active_records)
+        self.assertEqual((original.logical_sum, original.logical_xor),
+                         (relocated.logical_sum, relocated.logical_xor))
+        different = bytearray(initial)
+        changed = encoded_record(0, data=b'not-a-real-keY')
+        self.assertEqual(len(first), len(changed))
+        different[16:16 + len(changed)] = changed
+        modified = self.probe(bytes(different))
+        self.assertEqual((modified.code, modified.active_records), (8, 1))
+        self.assertNotEqual((original.logical_sum, original.logical_xor),
+                            (modified.logical_sum, modified.logical_xor))
 
     def test_366_item_synthetic_population_is_not_blank(self):
         result = self.probe(stock_like(records=366))

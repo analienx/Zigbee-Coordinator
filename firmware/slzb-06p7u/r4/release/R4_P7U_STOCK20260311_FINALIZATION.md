@@ -180,3 +180,16 @@ These undecidable cuts remain HOLD and require the already-proven
 stock recovery playbook. Automatic FORCE_CLEAN/virgin commissioning
 remain denied. Native compilation and hardware boot still need to pass
 before considering the device image deployable.
+
+### Logical-state continuity during TI journal replay
+
+For admitted interrupted compaction, the read-only NV4 source now
+computes two order-independent 64-bit accumulators over each CRC-valid
+active item (compressed identity, payload length and payload bytes,
+excluding mutable status and CRC bits). Native TI recovery may relocate
+records across pages but cannot change the resulting logical inventory.
+Before allowing Zigbee startup, the R4 B1 init bridge requires matching
+active record count AND both full logical accumulators, followed by
+normal stock Z-Stack security restoration. This comparison does not
+authorize arbitrary source erasure and does not replace the host's
+PAN/E-PAN/key identity checks or confidential flash backup.

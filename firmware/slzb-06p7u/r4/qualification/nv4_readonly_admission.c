@@ -123,6 +123,8 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
     while (end > R4_DATA_START) {
         uint32_t header_offset, length, offset;
         uint8_t crc = 0u, saved_crc, last, first_payload_byte = 0xffu;
+        uint64_t item_digest = UINT64_C(14695981039346656037);
+        uint32_t digest_i;
         if (r->records >= R4_MAX_RECORDS) {
             r->code = R4_NV4_SCAN_LIMIT;
             r->fault_offset = page_base + end;
@@ -144,6 +146,13 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
             return 0;
         }
         saved_crc = (uint8_t)(((header[4] & 3u) << 6) | (header[5] >> 2));
+        /* Stable identity/length metadata, explicitly excluding recorded
+         * CRC bits and the mutable ACTIVE/VALID marker. */
+        for (digest_i = 0u; digest_i < 5u; ++digest_i) {
+            uint8_t byte = (digest_i == 4u) ?
+                (uint8_t)(header[4] & 0xfcu) : header[digest_i];
+            item_digest = (item_digest ^ byte) * UINT64_C(1099511628211);
+        }
         for (offset = header_offset - length; offset < header_offset;) {
             uint32_t count = header_offset - offset;
             if (count > sizeof(block)) count = sizeof(block);
@@ -155,6 +164,9 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
             if (offset == header_offset - length)
                 first_payload_byte = block[0];
             crc = crc8(crc, block, count);
+            for (digest_i = 0u; digest_i < count; ++digest_i)
+                item_digest = (item_digest ^ block[digest_i]) *
+                              UINT64_C(1099511628211);
             offset += count;
         }
         crc = crc8(crc, header, 4u);
@@ -189,6 +201,8 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
             }
             live_ids[(*live_count)++] = identity;
             ++r->active_records;
+            r->logical_sum += item_digest;
+            r->logical_xor ^= item_digest;
             /* The fitted stock P7U's active records are Z-Stack sysid 1.
              * A CRC-valid unrelated NV namespace alone must not be used
              * to grant the B1 existing-network admission path. This still
@@ -236,7 +250,7 @@ __attribute__((noinline))
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u,
-                      R4_NV4_STATE_UNKNOWN_HOLD, 0u};
+                      R4_NV4_STATE_UNKNOWN_HOLD, 0u, 0u, 0u};
     uint32_t page, active = 0u, full = 0u, destination = 0u, inactive = 0u;
     uint32_t xsource = 0u, compact_dest = 0u;
     uint8_t inactive_page = 0xffu, destination_page = 0xffu;

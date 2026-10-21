@@ -37,6 +37,12 @@ typedef struct {
     /* Diagnostic bits: BDB seen/on-network, role seen/coordinator, NIB seen,
      * startup seen/safe, malformed marker. No payload bytes are exposed. */
     uint32_t semantic_flags;
+    /* Order-independent, read-only digest of all CRC-validated ACTIVE
+     * NV identity+length+payload bytes, not physical page placement.
+     * Used only to compare before/after the same boot's TI replay.
+     * It is NOT a MAC or substitute for independent security validation. */
+    uint64_t logical_sum;
+    uint64_t logical_xor;
 } r4_nv4_result;
 
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *context);

@@ -108,6 +108,7 @@ NEW_ADMISSION = '''        {
                 if (admission.semantic_state == R4_NV4_STATE_FORMED_CANDIDATE)
                 {
                     reason = B1_NV2_HEADER_CANDIDATE;
+                    r4_nv4_prior = admission;
                     r4_nv4_recovery_pending = 1u;
                 }
                 break;
@@ -153,6 +154,7 @@ INIT_DECLARATION = "static uint8_t NVOCMP_initNvApi(void *param)\n{"
 INIT_RECOVERY_DECLARATION = (INIT_DECLARATION +
     "\n#ifndef NV_LINUX\n"
     "    uint8_t r4_nv4_recovery_pending = 0u;\n"
+    "    r4_nv4_result r4_nv4_prior;\n"
     "#endif")
 
 INIT_REPAIR_HOOK = """        NVOCMP_initNv(&NVOCMP_nvHandle);"""
@@ -167,7 +169,10 @@ INIT_REPAIR_VERIFIED = """        NVOCMP_initNv(&NVOCMP_nvHandle);
             if (NVOCMP_failF != NVINTF_SUCCESS ||
                 NVOCMP_failW != NVINTF_SUCCESS ||
                 after.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED ||
-                after.semantic_state != R4_NV4_STATE_FORMED_CANDIDATE)
+                after.semantic_state != R4_NV4_STATE_FORMED_CANDIDATE ||
+                after.active_records != r4_nv4_prior.active_records ||
+                after.logical_sum != r4_nv4_prior.logical_sum ||
+                after.logical_xor != r4_nv4_prior.logical_xor)
             {
                 NVOCMP_failF = NVINTF_FAILURE;
                 NVOCMP_failW = NVINTF_FAILURE;
