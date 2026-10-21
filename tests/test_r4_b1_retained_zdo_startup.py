@@ -35,6 +35,18 @@ class TestRestoredStartup(unittest.TestCase):
         self.assertIn("static __attribute__((noinline)) uint8_t " + module.HELPER_NAME, result)
         self.assertIn("retValue = " + module.HELPER_NAME + "();", result)
 
+    def test_startup_request_only_queues_and_returns(self):
+        result = module.patch(self.source)
+        request = result[result.index("static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)"):]
+        request = request[:request.index("void b1_mt_zdo_retained_startup_event(void)")]
+        self.assertIn("OsalPort_setEvent(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT)", request)
+        self.assertNotIn("bdb_StartCommissioning", request)
+        self.assertIn("b1_retained_startup_state = 1", request)
+        event = result[result.index("void b1_mt_zdo_retained_startup_event(void)"):]
+        self.assertIn("bdb_StartCommissioning(0)", event)
+        self.assertIn("b1_security_runtime_hold_latch()", event)
+        self.assertIn("b1_retained_startup_state = 2", event)
+
     def test_drift_fails_closed(self):
         with self.assertRaises(ValueError):
             module.patch(self.source.replace("BDB_COMMISSIONING_MODE_NWK_FORMATION", "0"))

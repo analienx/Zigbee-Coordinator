@@ -85,6 +85,27 @@ def patch_startup_restore(source: str) -> str:
                       "void ZDApp_ChangeState( devStates_t state )"):
         source = _entry_guard(source, signature,
                               "if (b1_nv_runtime_hold_active()) return;")
+
+    # MT_ZDO dispatch runs on the NPI side. It must return its SRSP before
+    # entering TI's retained restore path, so run that path on ZDApp's event
+    # task after the MT handler has queued it.
+    source = replace_once(source, '#include "zd_app.h"',
+        '#include "zd_app.h"\n'
+        '#define B1_RETAINED_STARTUP_EVENT 0x00010000u\n'
+        'extern void b1_mt_zdo_retained_startup_event(void);',
+        "retained startup event declaration")
+    signature = "uint32_t ZDApp_event_loop( uint8_t task_id, uint32_t events )"
+    original = extract_function(source, signature)
+    changed = replace_once(original, signature + "\n{",
+        signature + "\n{\n"
+        "  if (events & B1_RETAINED_STARTUP_EVENT)\n"
+        "  {\n"
+        "    b1_mt_zdo_retained_startup_event();\n"
+        "    return (events ^ B1_RETAINED_STARTUP_EVENT);\n"
+        "  }\n",
+        "retained startup executes on ZDApp event task")
+    source = replace_once(source, original, changed,
+                          "retained startup event dispatcher")
     return source
 
 

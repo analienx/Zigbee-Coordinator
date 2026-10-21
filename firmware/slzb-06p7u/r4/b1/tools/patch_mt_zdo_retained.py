@@ -19,8 +19,11 @@ BEFORE = """  if(ZG_BUILD_COORDINATOR_TYPE && ZG_DEVICE_COORDINATOR_TYPE)
 
 STARTUP_SIGNATURE = "static void MT_ZdoStartupFromApp(uint8_t *pBuf)\n{"
 HELPER_NAME = "b1_mt_zdo_retained_startup"
-HELPER = """/* This guard prevents formation; BDB0 is not a proven startup-hang cure. */
-static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)
+HELPER = """/* Queue retained initialization on the ZDApp task. Running BDB from
+ * the MT/NPI dispatcher blocks its SRSP and starves the host interface. */
+#define B1_RETAINED_STARTUP_EVENT 0x00010000u
+uint8_t b1_retained_startup_state;
+static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)
 {
   if(ZG_BUILD_COORDINATOR_TYPE && ZG_DEVICE_COORDINATOR_TYPE)
   {
@@ -40,16 +43,34 @@ static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)
     {
       return ZFailure;
     }
-    else
-    {
-      bdb_StartCommissioning(0); /* Initialize original network only */
-      return b1_nv_runtime_hold_active() ? ZFailure : ZSuccess;
-    }
+    return ZSuccess;
   }
-  else
-  {
+  return ZFailure;
+}
+
+static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)
+{
+  if (b1_retained_startup_state != 0 ||
+      b1_mt_zdo_retained_valid() != ZSuccess)
     return ZFailure;
+  b1_retained_startup_state = 1;
+  OsalPort_setEvent(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT);
+  return ZSuccess; /* MT dispatcher can now send the SRSP promptly. */
+}
+
+void b1_mt_zdo_retained_startup_event(void)
+{
+  if (b1_retained_startup_state != 1)
+    return;
+  b1_retained_startup_state = 2; /* one attempt for this radio boot */
+  if (b1_mt_zdo_retained_valid() != ZSuccess)
+  {
+    b1_security_runtime_hold_latch();
+    return;
   }
+  bdb_StartCommissioning(0); /* Initialize original network only */
+  if (b1_nv_runtime_hold_active())
+    b1_security_runtime_hold_latch();
 }
 
 """
@@ -64,5 +85,6 @@ def patch(source: str) -> str:
     return source.replace(
         header, header + "\nextern int b1_nv_runtime_hold_active(void);"
         "\nextern int b1_nv_existing_header_candidate(void);"
-        "\nextern int b1_sec_restored_network_validated(void);", 1
+        "\nextern int b1_sec_restored_network_validated(void);"
+        "\nextern void b1_security_runtime_hold_latch(void);", 1
     ).replace(BEFORE, AFTER, 1).replace(STARTUP_SIGNATURE, HELPER + STARTUP_SIGNATURE, 1)

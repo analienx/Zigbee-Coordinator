@@ -26,9 +26,11 @@ PREAMBLE = r'''
 enum {ZCD_NV_NIB, ZCD_NV_STARTUP_OPTION,
       ZCD_NV_BDBNODEISONANETWORK, ZCD_NV_LOGICAL_TYPE};
 static int held, candidate, security_valid, coordinator, read_fault, bdb_latch;
+static uint8_t ZDAppTaskID=7;
+extern uint8_t b1_retained_startup_state;
 static uint16_t lengths[4];
 static uint8_t values[4], response;
-static unsigned bdb_calls, response_calls, reads;
+static unsigned bdb_calls, response_calls, reads, queued_events, security_latches;
 static int b1_nv_runtime_hold_active(void) {return held;}
 static int b1_nv_existing_header_candidate(void) {return candidate;}
 static int b1_sec_restored_network_validated(void) {return security_valid;}
@@ -46,6 +48,10 @@ static uint8_t osal_nv_read(uint16_t id,uint16_t offset,uint16_t count,void *out
 }
 static void bdb_StartCommissioning(uint8_t mode)
 {assert(mode==0);++bdb_calls;if(bdb_latch)held=1;}
+static void OsalPort_setEvent(uint8_t task,uint32_t event)
+{assert(task==ZDAppTaskID&&event==0x00010000u);++queued_events;}
+static void b1_security_runtime_hold_latch(void)
+{++security_latches;held=1;}
 static void MT_BuildAndSendZToolResponse(uint8_t type,uint8_t cmd,uint8_t count,void *data)
 {assert(type==(MT_RPC_CMD_SRSP|MT_RPC_SYS_ZDO)&&cmd==0x40&&count==1);
  ++response_calls;response=*(uint8_t*)data;}
@@ -57,16 +63,19 @@ static void reset_case(void)
 {held=0;candidate=1;security_valid=1;coordinator=1;read_fault=-1;bdb_latch=0;
  lengths[0]=116;for(unsigned i=1;i<4;i++)lengths[i]=1;
  values[1]=0;values[2]=TRUE;values[3]=0;
- bdb_calls=0;response_calls=0;reads=0;response=0xff;}
-static void invoke_expected(int success,unsigned expected_bdb_calls)
+ b1_retained_startup_state=0;bdb_calls=0;response_calls=0;reads=0;queued_events=0;
+ security_latches=0;response=0xff;}
+static void invoke_expected(int success,unsigned expected_events)
 {uint8_t request[]={2,MT_RPC_CMD_SREQ|MT_RPC_SYS_ZDO,0x40,0,0};
  MT_ZdoStartupFromApp(request);
  assert(response_calls==1&&response==(success?ZSuccess:ZFailure));
- assert(bdb_calls==expected_bdb_calls);}
+ assert(queued_events==expected_events&&bdb_calls==0);}
 static void invoke(int success) {invoke_expected(success,(unsigned)success);}
 int main(void)
 {
  reset_case();invoke(1);assert(reads==3);
+ b1_mt_zdo_retained_startup_event();assert(bdb_calls==1&&security_latches==0);
+ b1_mt_zdo_retained_startup_event();assert(bdb_calls==1); /* one run per boot */
  reset_case();held=1;invoke(0);assert(reads==0);
  reset_case();candidate=0;invoke(0);assert(reads==0);
  reset_case();security_valid=0;invoke(0);assert(reads==0);
@@ -85,8 +94,9 @@ int main(void)
  reset_case();values[2]=0;invoke(0);
  reset_case();values[2]=2;invoke(0);
  reset_case();values[3]=1;invoke(0);
- reset_case();bdb_latch=1;invoke_expected(0,1);assert(held);
- puts("PINNED_TI_RETAINED_MT_ZDO_STARTUP_GUARD_PASS bdb_mode=0 rejected_calls=0 hang_cure=unproved");
+ reset_case();bdb_latch=1;invoke(1);assert(queued_events==1&&bdb_calls==0);
+ b1_mt_zdo_retained_startup_event();assert(held&&security_latches==1&&bdb_calls==1);
+ puts("PINNED_TI_RETAINED_MT_ZDO_STARTUP_ASYNC_PASS immediate_srsp=1 queued_events=1 bdb_mode=0 one_attempt=1");
  return 0;
 }
 '''
@@ -98,12 +108,15 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     source = args.source.read_text()
+    valid = extract_function(
+        source, "static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)")
     helper = extract_function(
         source, "static __attribute__((noinline)) uint8_t " + HELPER_NAME + "(void)")
+    event = extract_function(source, "void b1_mt_zdo_retained_startup_event(void)")
     startup = extract_function(source, STARTUP_SIGNATURE.removesuffix("\n{"))
     if startup.count("retValue = " + HELPER_NAME + "();") != 1:
         raise ValueError("Actual MT ZDO startup does not call the qualified retained helper")
-    args.output.write_text(PREAMBLE + helper + "\n\n" + startup + MAIN)
+    args.output.write_text(PREAMBLE + valid + "\n\n" + helper + "\n\n" + event + "\n\n" + startup + MAIN)
     print("PINNED_TI_RETAINED_MT_ZDO_STARTUP_EXTRACTED")
 
 
