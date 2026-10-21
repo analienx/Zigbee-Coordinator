@@ -229,6 +229,13 @@ class RetainedSecurityTests(unittest.TestCase):
         self.hold("RETAINED_NETWORK_IDENTITY_OR_KEY_CHANGED")
 
     def test_address_manager_growth_preserves_stock_tail_and_only_adds_empty_rows(self):
+        # The real TI capacity-extension default is 12 bytes of all-FF,
+        # including user=0xFF. This used to falsely reject a healthy tail.
+        size = self.abi["structs"]["AddrMgrEntry_t"]["size"]
+        for index in range(357, 406):
+            self.now[1, 1, index] = b"\xff" * size
+        self.assertTrue(self.outcome()["semantic_checks_passed"])
+        # Existing native zero-user empty rows remain accepted as well.
         for index in range(357, 406):
             self.now[1, 1, index] = record(self.abi, "AddrMgrEntry_t", nwkAddr=0xfffe)
         self.assertTrue(self.outcome()["semantic_checks_passed"])

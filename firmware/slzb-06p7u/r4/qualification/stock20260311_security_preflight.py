@@ -336,9 +336,15 @@ def inspect_state(records: dict, abi: dict) -> dict:
             "ADDRESS_MANAGER_ALLOCATION_INVALID")
     for row in addresses.values():
         field(row, abi, "AddrMgrEntry_t", "extAddr")  # exact native serialized size
+    # Two native representations of an unoccupied address slot are valid:
+    # serialized vacant rows with user=0 and no IEEE identity, and newly
+    # allocated capacity-tail records initialized to the all-FF TI default.
+    # An all-FF row has user=0xFF, so testing user==0 alone is incorrect.
+    # Neither representation may authorize or conceal a populated new peer.
     empty_addresses = {index for index, row in addresses.items()
-                       if number(row, abi, "AddrMgrEntry_t", "user") == 0 and
-                       not real(field(row, abi, "AddrMgrEntry_t", "extAddr"))}
+                       if row == b"\xff" * len(row) or
+                       (number(row, abi, "AddrMgrEntry_t", "user") == 0 and
+                        not real(field(row, abi, "AddrMgrEntry_t", "extAddr")))}
     # 5. APS table header and every referenced APS3 row, with unambiguous IDs.
     header_size = abi["structs"]["nvDeviceListHdr_t"]["size"]
     entry_size = abi["structs"]["ZDSecMgrEntry_t"]["size"]
