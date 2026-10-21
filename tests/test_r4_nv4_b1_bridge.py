@@ -85,7 +85,7 @@ class Nv4B1BridgeTests(unittest.TestCase):
                               ('add', bridge.R4_NV4_REPAIR_ADD_FROM)]:
             with self.subTest(label=label), self.assertRaisesRegex(
                     ValueError, 'PREIMAGE_RESCUE'):
-                bridge.transform(post_b1_fixture().replace(anchor, anchor + 'X'))
+                bridge.transform(post_b1_fixture().replace(anchor, 'X' + anchor[1:]))
 
     def test_current_stock_20260311_explicit_nv_base(self):
         source = bridge.transform(post_b1_fixture(), stock_base=0xA4000)
