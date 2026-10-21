@@ -115,8 +115,7 @@ NEW_ADMISSION = '''        {
                 /* A CRC-valid random record cannot stand in for the stock
                  * coordinator's BDB+logical-type+NIB state. This remains a
                  * candidate pending the later native security precheck. */
-                if (admission.semantic_state == R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE ||
-                    admission.semantic_state == R4_NV4_STATE_FORMED_CANDIDATE)
+                if (admission.semantic_state == R4_NV4_STATE_FORMED_CANDIDATE)
                     reason = B1_NV2_HEADER_CANDIDATE;
                 else
                     reason = B1_NV_HOLD_MIXED_LAYOUT;

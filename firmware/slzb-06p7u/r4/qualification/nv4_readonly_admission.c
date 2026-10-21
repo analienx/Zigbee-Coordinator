@@ -239,7 +239,9 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                       R4_NV4_STATE_UNKNOWN_HOLD, 0u};
     uint32_t page, active = 0u, full = 0u, destination = 0u, inactive = 0u;
     uint32_t xsource = 0u, compact_dest = 0u;
-    uint8_t inactive_page = 0xffu, completed_source_page = 0xffu;
+    uint8_t inactive_page = 0xffu, destination_page = 0xffu;
+    uint8_t xsource_page = 0xffu, completed_dest_page = 0xffu;
+    uint8_t completed_source_page = 0xffu;
     uint8_t completed_source_erased = 0u;
     uint8_t candidate_action = 0u; /* TI RECOVER_COMPACT=1, RECOVER_ERASE=2 */
     uint8_t partial_destination = 0u;
@@ -308,9 +310,9 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         switch (header[0]) {
         case 0x7cu: ++active; break;
         case 0x78u: ++full; break;
-        case 0xfeu: ++destination; break;
+        case 0xfeu: ++destination; destination_page = (uint8_t)page; break;
         case 0xffu: ++inactive; inactive_page = (uint8_t)page; break;
-        case 0x70u: ++xsource; break;
+        case 0x70u: ++xsource; xsource_page = (uint8_t)page; break;
         default:
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base;
@@ -343,6 +345,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                                   &zstack_live_count, &markers)) return r;
         if (mode == 0xfeu && header[0] != 0xfeu) {
             ++compact_dest;
+            completed_dest_page = (uint8_t)page;
             /* This conservative RECOVER_ERASE gate allows only a SINGLE
              * source page that has ALREADY BEEN ERASED by TI cleanPage.
              * A still-live source may contain records not yet copied;
@@ -362,16 +365,19 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
      * destination with committed source-range headers chooses RECOVER_ERASE.
      * Every other layout HOLDS instead of reaching TI FORCE_CLEAN. */
     if (xsource == 1u && destination == 1u && !compact_dest &&
+        xsource_page == (destination_page + 1u) % R4_NV4_PAGES &&
         active + full + inactive + xsource + destination == R4_NV4_PAGES) {
         candidate_action = 1u;
     } else if (xsource == 1u && destination == 0u &&
                inactive == 1u && !compact_dest &&
+               xsource_page == (inactive_page + 1u) % R4_NV4_PAGES &&
                active + full + inactive + xsource == R4_NV4_PAGES) {
         candidate_action = 1u;
     } else if (xsource == 0u && destination == 0u &&
                inactive == 1u && compact_dest == 1u &&
                completed_source_erased &&
                completed_source_page == inactive_page &&
+               completed_source_page == (completed_dest_page + 1u) % R4_NV4_PAGES &&
                active + full + inactive == R4_NV4_PAGES) {
         /* TI has already formatted the source NACT page (no live records).
          * RECOVER_ERASE will only re-erase that proven-empty page, while

@@ -32,6 +32,8 @@ def post_b1_fixture() -> str:
         bridge.PRE_DIVISION_NV2,
         bridge.POST_DIVISION_NV2,
         bridge.OLD_ADMISSION,
+        bridge.INIT_DECLARATION,
+        bridge.INIT_REPAIR_HOOK,
         bridge.MULTIPAGE_SCAN,
         '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
         '/* pinned TI multi-page destructive branch */',
@@ -53,7 +55,11 @@ class Nv4B1BridgeTests(unittest.TestCase):
         self.assertIn('b1_nv_runtime_hold_active()', source)
         self.assertIn('B1_NV_HOLD_ITEM_CRC', source)
         self.assertIn('R4_NV4_NO_ZSTACK_RECORDS: reason = B1_NV_HOLD_UNKNOWN_LAYOUT', source)
-        self.assertIn('admission.semantic_state == R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE', source)
+        self.assertNotIn('admission.semantic_state == R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE', source)
+        self.assertIn('R4_NV4_RECOVER_COMPACT_CANDIDATE', source)
+        self.assertIn('R4_NV4_RECOVER_ERASE_CANDIDATE', source)
+        self.assertIn('r4_nv4_recovery_pending', source)
+        self.assertIn('b1_management_hold_nv(B1_NV_HOLD_MIXED_LAYOUT)', source)
         self.assertIn('admission.semantic_state == R4_NV4_STATE_FORMED_CANDIDATE', source)
         self.assertIn('reason != B1_NV2_HEADER_CANDIDATE', source)
         self.assertIn('NVOCMP_failF != NVINTF_SUCCESS', source)
