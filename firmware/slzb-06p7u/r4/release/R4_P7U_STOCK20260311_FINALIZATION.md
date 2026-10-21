@@ -125,3 +125,22 @@ Primary boot references: [TI ROM/CCFG boot chain](https://www.ti.com/lit/an/swra
 [TI ROM BSL](https://www.ti.com/lit/an/swra466e/swra466e.pdf),
 [ARM core register/reset state](https://arm-software.github.io/CMSIS_6/latest/Core/group__Core__Register__gr.html),
 [MCUboot signing](https://docs.mcuboot.com/signed_images.html).
+
+## P0 retained-only runtime boundary (2026-10-21)
+
+The TI MT SYS raw-NV handler never interprets missing/ambiguous B1 NV
+admission as permission for virgin commissioning, deletion, creation,
+compaction or write. It permits *only* exact byte-identical legacy no-op
+writes against an admitted retained store with no runtime HOLD; ordinary
+internal stack security-counter persistence remains intact. The read-only
+NV4 observer limits total historical records by the physical four-page
+capacity rather than a lower arbitrary wear/churn count. These are narrow
+non-destructive startup reliability fixes, not a new restore implementation.
+
+Reuse the previously versioned P7U stock/Herdsman restore sequence from
+`skills/p7u-zstack-restore-recovery/SKILL.md` if recovery is approved after
+private backup, identity and counter continuity checks. Historical stock
+restore wrote the original network NV, but **did not establish coordinator
+state 9**. Do not repeat that write operation to cure a startup timeout,
+replay an older backup over newer counters, invent a custom NVOCMP repair,
+or interpret a successful GitHub build as hardware acceptance.

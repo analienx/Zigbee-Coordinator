@@ -24,10 +24,12 @@ static uint8_t b1_mt_nv_mutation_guard(uint8_t *frame, uint8_t legacyWrite)
   uint8_t reply = NV_OPER_FAILED;
   uint8_t command;
   if (frame == NULL) return 1u;
-  if (!b1_nv_existing_header_candidate() && !b1_nv_runtime_hold_active())
-    return 0u; /* Explicit virgin provisioning retains the original TI path. */
+  /* No inferred virgin bypass. This deployed image is retained-network
+   * ONLY: a missing/unreadable header is an ambiguous state, NOT authority
+   * to create/delete/compact NV. Existing stock restore remains separate. */
   command = frame[MT_RPC_POS_CMD1];
-  if (legacyWrite && !b1_nv_runtime_hold_active() && frame[1] == 0x21u &&
+  if (legacyWrite && b1_nv_existing_header_candidate() &&
+      !b1_nv_runtime_hold_active() && frame[1] == 0x21u &&
       (command == MT_SYS_OSAL_NV_WRITE || command == MT_SYS_OSAL_NV_WRITE_EXT))
   {
     uint8_t *payload = frame + MT_RPC_FRAME_HDR_SZ;

@@ -9,10 +9,17 @@
 #define R4_DATA_START 16u
 #define R4_TRAILER 7u
 #define R4_MAX_READS 30000u
-#define R4_MAX_RECORDS 2000u
+/* A physical NVOCMP record occupies at least one payload byte plus the
+ * seven-byte item trailer. 4 NV pages reserve one full page for compaction,
+ * so the physical data-page maximum, not an arbitrary lifetime-churn limit,
+ * bounds legitimate records. A stale 2000-record scan ceiling could HOLD an
+ * otherwise healthy retained network after repeated normal counter writes. */
+#define R4_MAX_RECORDS (((R4_NV4_PAGES - 1u) * \
+                         (R4_NV4_PAGE_SIZE - R4_DATA_START)) / \
+                        (R4_TRAILER + 1u))
 /* The restored 20260311 P7U capture has 779 active identities across 892
- * CRC-valid NVOCMP records. 512 falsely HOLDs a valid formed-network
- * candidate. 1024 is a fail-closed capacity (4 KiB static identity table). */
+ * CRC-valid NVOCMP records. The active-identity index has a separate 1024
+ * RAM safety cap; never silently conflate it with total journal records. */
 #define R4_MAX_ACTIVE_IDENTITIES 1024u
 
 /* Exact TI SDK 3615ad5: osal_nv.c maps legacy OSAL item IDs to

@@ -123,10 +123,14 @@ int main(void)
  missing=1;invoke(MT_SysOsalNVWrite,frame,false);missing=0;
  held=1;invoke(MT_SysOsalNVWrite,frame,false);held=0;
  assert(mutations==0&&globals==0);
- /* The shim really observes mutation and the virgin TI path is preserved. */
+ /* Previously, !candidate && !HOLD accidentally enabled destructive
+  * 'virgin' NV writes. This is a retained-only build, so it must be denied
+  * even before admission and when the observer is unable to classify NV. */
  retained=0;frame[0]=4;frame[1]=0x21;frame[2]=MT_SYS_OSAL_NV_DELETE;
- invoke(MT_SysOsalNVDelete,frame,true);assert(mutations==1);
- puts("PINNED_TI_RETAINED_MT_NV_GUARD_PASS resume_noop=3 retained_mutations=0 virgin_delete=1");
+ invoke(MT_SysOsalNVDelete,frame,false);assert(mutations==0&&globals==0);
+ legacy(frame,false,ZCD_NV_STARTUP_OPTION,0,1,&zero);
+ invoke(MT_SysOsalNVWrite,frame,false);assert(mutations==0&&globals==0);
+ puts("PINNED_TI_RETAINED_MT_NV_GUARD_PASS resume_noop=3 retained_mutations=0 ambiguous_mutations=0");
  return 0;
 }
 '''
