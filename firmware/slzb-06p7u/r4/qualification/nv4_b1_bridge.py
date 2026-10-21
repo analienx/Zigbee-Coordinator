@@ -147,7 +147,7 @@ READ_CALLBACK_NV4 = '''static int r4_nv4_nvs_read(void *opaque, uint32_t off,
            NVS_STATUS_SUCCESS ? 0 : -1;
 }
 /* Fixed-size pre-Zigbee maintenance scratch; never exported by NPI. */
-static uint8_t r4_nv4_nib_repair_pending;
+static uint8_t r4_nv4_repair_write_window;\nstatic uint8_t r4_nv4_nib_repair_pending;
 static uint8_t r4_nv4_nib_expected_startup;
 static uint32_t r4_nv4_nib_source_offset;
 static uint8_t r4_nv4_nib_data[R4_RECOVER_NIB_LENGTH];'''
@@ -170,8 +170,53 @@ MULTIPAGE_SCAN_CHECKED = '''    status = NVOCMP_scanPage(pNvHandle, pg, pPageInf
 # R4 P0: real pre-Zigbee firmware operation, attached to pinned TI NVOCMP.
 # The function sits *after* the vendor's declarations of native write/read
 # APIs, and never adds a new image start/boot mode or a network formation path.
+R4_NV4_REPAIR_DST_FROM = '''static uint8_t NVOCMP_getDstPage(NVOCMP_nvHandle_t *pNvHandle, uint16_t len)
+{
+  uint8_t dstPg = NVOCMP_NULLPAGE;
+  uint8_t pg = pNvHandle->actPage;
+  NVOCMP_pageHdr_t pageHdr;'''
+R4_NV4_REPAIR_DST_TO = '''static uint8_t NVOCMP_getDstPage(NVOCMP_nvHandle_t *pNvHandle, uint16_t len)
+{
+  uint8_t dstPg = NVOCMP_NULLPAGE;
+  uint8_t pg = pNvHandle->actPage;
+  NVOCMP_pageHdr_t pageHdr;
+  /* Never rotate, compact or change flash page state in NIB rescue. */
+  if(r4_nv4_repair_write_window)
+  {
+    if(pg >= NVOCMP_NVSIZE || pg == pNvHandle->tailPage ||
+       pNvHandle->pageInfo[pg].state != NVOCMP_PGACT ||
+       pNvHandle->actOffset != pNvHandle->pageInfo[pg].offset ||
+       pNvHandle->actOffset > FLASH_PAGE_SIZE ||
+       len > FLASH_PAGE_SIZE - pNvHandle->actOffset)
+    {
+      NVOCMP_failW = NVINTF_FAILURE;
+      return NVOCMP_NULLPAGE;
+    }
+    NVOCMP_read(pg, NVOCMP_PGHDROFS, (uint8_t *)&pageHdr, NVOCMP_PGHDRLEN);
+    if(pageHdr.state != NVOCMP_PGACT)
+    {
+      NVOCMP_failW = NVINTF_FAILURE;
+      return NVOCMP_NULLPAGE;
+    }
+    return pg;
+  }'''
+R4_NV4_REPAIR_ADD_FROM = '''    dstPg = NVOCMP_getDstPage(pNvHandle, iLen);
+
+    if(dstPg == NVOCMP_NULLPAGE)
+    {'''
+R4_NV4_REPAIR_ADD_TO = '''    dstPg = NVOCMP_getDstPage(pNvHandle, iLen);
+
+    if(dstPg == NVOCMP_NULLPAGE)
+    {
+      /* A destination failure must not fall back to compactPage(). */
+      if(r4_nv4_repair_write_window)
+      {
+        NVOCMP_failW = NVINTF_FAILURE;
+        return NVINTF_FAILURE;
+      }'''
+
 R4_REPAIR_API_ANCHOR = '\nstatic uint8_t NVOCMP_initNvApi(void *param)\n{'
-R4_REPAIR_HELPER = "#ifndef NV_LINUX\n/* Invoked synchronously during NV init, before Zigbee tasks/radio startup.\n * Never formats, erases, forms a network, writes TCLK/counters or compacts.\n * An incomplete transaction stays in B1 HOLD until a subsequent reset.\n */\nstatic uint8_t r4_nv4_finish_nib_repair(void)\n{\n    NVINTF_itemID_t startup_id = {1u, 0u, R4_RECOVER_STARTUP_OPTION};\n    NVINTF_itemID_t nib_id = {1u, 0u, R4_RECOVER_NIB_ID};\n    r4_nv4_nib_candidate after;\n    r4_nv4_result formed;\n    uint8_t saved_nib[R4_RECOVER_NIB_LENGTH];\n    uint8_t actual_nib[R4_RECOVER_NIB_LENGTH];\n    uint8_t startup_zero = 0u, value = 0xffu;\n    uint8_t rc = NVINTF_FAILURE;\n\n    if (!r4_nv4_nib_repair_pending) return NVINTF_SUCCESS;\n    memset(saved_nib, 0, sizeof(saved_nib));\n    memset(actual_nib, 0, sizeof(actual_nib));\n\n    /* Both records must fit the current ACT page: refuse any compaction,\n     * page rotation, page erase or init-time \"repair\" ambiguity. */\n    if (gAction != NVOCMP_NORMAL_RESUME ||\n        NVOCMP_failF != NVINTF_SUCCESS ||\n        NVOCMP_failW != NVINTF_SUCCESS ||\n        b1_nv_runtime_hold_active() ||\n        NVOCMP_nvHandle.actPage >= NVOCMP_NVPAGES ||\n        NVOCMP_nvHandle.actPage == NVOCMP_nvHandle.tailPage ||\n        NVOCMP_nvHandle.pageInfo[NVOCMP_nvHandle.actPage].state != NVOCMP_PGACT ||\n        NVOCMP_nvHandle.pageInfo[NVOCMP_nvHandle.actPage].offset !=\n          NVOCMP_nvHandle.actOffset ||\n        NVOCMP_nvHandle.actOffset >\n          FLASH_PAGE_SIZE - (R4_RECOVER_NIB_LENGTH + 2u * NVOCMP_ITEMHDRLEN + 1u))\n        goto done;\n\n    /* First neutralize destructive STARTUP_OPTION 0x03. If power fails\n     * here, the next boot sees the same inactive NIB and option 0x00,\n     * and is eligible to retry. An option 0 needs no redundant write. */\n    if (r4_nv4_nib_expected_startup == 0x03u) {\n        if (NVOCMP_writeItemApi(startup_id, 1u, &startup_zero) != NVINTF_SUCCESS)\n            goto done;\n    }\n    if (NVOCMP_readItemApi(startup_id, 0u, 1u, &value) != NVINTF_SUCCESS ||\n        value != 0u)\n        goto done;\n\n    /* Revalidate live retained security/NIB relationship *after* the flag\n     * change. The probe never attempts to repair its own malformed media. */\n    if (!r4_nv4_probe_nib(r4_nv4_nvs_read, NVOCMP_nvsHandle,\n                          &after, saved_nib) ||\n        after.nib_payload_offset != r4_nv4_nib_source_offset ||\n        after.startup_value != 0u ||\n        memcmp(saved_nib, r4_nv4_nib_data, R4_RECOVER_NIB_LENGTH) != 0)\n        goto done;\n\n    if (NVOCMP_writeItemApi(nib_id, R4_RECOVER_NIB_LENGTH,\n                            r4_nv4_nib_data) != NVINTF_SUCCESS)\n        goto done;\n    if (NVOCMP_readItemApi(nib_id, 0u, R4_RECOVER_NIB_LENGTH,\n                           actual_nib) != NVINTF_SUCCESS ||\n        memcmp(actual_nib, r4_nv4_nib_data, R4_RECOVER_NIB_LENGTH) != 0)\n        goto done;\n    formed = r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle);\n    if (formed.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED ||\n        formed.semantic_state != R4_NV4_STATE_FORMED_CANDIDATE)\n        goto done;\n    rc = NVINTF_SUCCESS;\ndone:\n    memset(saved_nib, 0, sizeof(saved_nib));\n    memset(actual_nib, 0, sizeof(actual_nib));\n    memset(r4_nv4_nib_data, 0, sizeof(r4_nv4_nib_data));\n    r4_nv4_nib_repair_pending = 0u;\n    return rc;\n}\n#endif /* !NV_LINUX */\n"
+R4_REPAIR_HELPER = "#ifndef NV_LINUX\n/* Invoked synchronously during NV init, before Zigbee tasks/radio startup.\n * Never formats, erases, forms a network, writes TCLK/counters or compacts.\n * An incomplete transaction stays in B1 HOLD until a subsequent reset.\n */\nstatic uint8_t r4_nv4_finish_nib_repair(void)\n{\n    NVINTF_itemID_t startup_id = {1u, 0u, R4_RECOVER_STARTUP_OPTION};\n    NVINTF_itemID_t nib_id = {1u, 0u, R4_RECOVER_NIB_ID};\n    r4_nv4_nib_candidate after;\n    r4_nv4_result formed;\n    uint8_t saved_nib[R4_RECOVER_NIB_LENGTH];\n    uint8_t actual_nib[R4_RECOVER_NIB_LENGTH];\n    uint8_t startup_zero = 0u, value = 0xffu;\n    uint8_t rc = NVINTF_FAILURE;\n    uint8_t write_status = NVINTF_FAILURE;\n\n    if (!r4_nv4_nib_repair_pending) return NVINTF_SUCCESS;\n    memset(saved_nib, 0, sizeof(saved_nib));\n    memset(actual_nib, 0, sizeof(actual_nib));\n\n    /* Both records must fit the current ACT page: refuse any compaction,\n     * page rotation, page erase or init-time \"repair\" ambiguity. */\n    if (gAction != NVOCMP_NORMAL_RESUME ||\n        NVOCMP_failF != NVINTF_SUCCESS ||\n        NVOCMP_failW != NVINTF_SUCCESS ||\n        b1_nv_runtime_hold_active() ||\n        NVOCMP_nvHandle.actPage >= NVOCMP_NVPAGES ||\n        NVOCMP_nvHandle.actPage == NVOCMP_nvHandle.tailPage ||\n        NVOCMP_nvHandle.pageInfo[NVOCMP_nvHandle.actPage].state != NVOCMP_PGACT ||\n        NVOCMP_nvHandle.pageInfo[NVOCMP_nvHandle.actPage].offset !=\n          NVOCMP_nvHandle.actOffset ||\n        NVOCMP_nvHandle.actOffset >\n          FLASH_PAGE_SIZE - (R4_RECOVER_NIB_LENGTH + 2u * NVOCMP_ITEMHDRLEN + 1u))\n        goto done;\n\n    /* First neutralize destructive STARTUP_OPTION 0x03. If power fails\n     * here, the next boot sees the same inactive NIB and option 0x00,\n     * and is eligible to retry. An option 0 needs no redundant write. */\n    if (r4_nv4_nib_expected_startup == 0x03u) {\n        r4_nv4_repair_write_window = 1u;\n        write_status = NVOCMP_writeItemApi(startup_id, 1u, &startup_zero);\n        r4_nv4_repair_write_window = 0u;\n        if (write_status != NVINTF_SUCCESS) goto done;\n    }\n    if (NVOCMP_readItemApi(startup_id, 0u, 1u, &value) != NVINTF_SUCCESS ||\n        value != 0u)\n        goto done;\n\n    /* Revalidate live retained security/NIB relationship *after* the flag\n     * change. The probe never attempts to repair its own malformed media. */\n    if (!r4_nv4_probe_nib(r4_nv4_nvs_read, NVOCMP_nvsHandle,\n                          &after, saved_nib) ||\n        after.nib_payload_offset != r4_nv4_nib_source_offset ||\n        after.startup_value != 0u ||\n        memcmp(saved_nib, r4_nv4_nib_data, R4_RECOVER_NIB_LENGTH) != 0)\n        goto done;\n\n    r4_nv4_repair_write_window = 1u;\n    write_status = NVOCMP_writeItemApi(nib_id, R4_RECOVER_NIB_LENGTH,\n                                       r4_nv4_nib_data);\n    r4_nv4_repair_write_window = 0u;\n    if (write_status != NVINTF_SUCCESS) goto done;\n    if (NVOCMP_readItemApi(nib_id, 0u, R4_RECOVER_NIB_LENGTH,\n                           actual_nib) != NVINTF_SUCCESS ||\n        memcmp(actual_nib, r4_nv4_nib_data, R4_RECOVER_NIB_LENGTH) != 0)\n        goto done;\n    formed = r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle);\n    if (formed.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED ||\n        formed.semantic_state != R4_NV4_STATE_FORMED_CANDIDATE)\n        goto done;\n    rc = NVINTF_SUCCESS;\ndone:\n    r4_nv4_repair_write_window = 0u;\n    memset(saved_nib, 0, sizeof(saved_nib));\n    memset(actual_nib, 0, sizeof(actual_nib));\n    memset(r4_nv4_nib_data, 0, sizeof(r4_nv4_nib_data));\n    r4_nv4_nib_repair_pending = 0u;\n    return rc;\n}\n#endif /* !NV_LINUX */\n"
 R4_REPAIR_INIT_FROM = '''        b1_nv_initializing = 0u;
         if (NVOCMP_failF != NVINTF_SUCCESS || b1_nv_runtime_hold_active())
         {
@@ -224,6 +269,8 @@ def transform(source: str, *, stock_base: int = STOCK_BASE) -> str:
     source = one(source, POST_DIVISION_NV2, POST_DIVISION_NV4, 'POST_DIVISION')
     source = one(source, OLD_ADMISSION, NEW_ADMISSION, 'ADMISSION')
     source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
+    source = one(source, R4_NV4_REPAIR_DST_FROM,\n                 R4_NV4_REPAIR_DST_TO, 'RESCUE_DESTINATION_NO_ROTATION')
+    source = one(source, R4_NV4_REPAIR_ADD_FROM,\n                 R4_NV4_REPAIR_ADD_TO, 'RESCUE_NO_COMPACTION')
     source = one(source, R4_REPAIR_API_ANCHOR,
                  R4_REPAIR_HELPER + '\n' + R4_REPAIR_API_ANCHOR, 'REPAIR_BODY')
     source = one(source, R4_REPAIR_INIT_FROM,

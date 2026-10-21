@@ -62,6 +62,7 @@ def transform(pristine: bytes, crc: bytes, bridged: bytes,
         host = host.replace(old, new, 1)
     callback = body(post, 'static int r4_nv4_nvs_read(', 0)
     scratch = (
+        'static uint8_t r4_nv4_repair_write_window;\n'
         'static uint8_t r4_nv4_nib_repair_pending;\n'
         'static uint8_t r4_nv4_nib_expected_startup;\n'
         'static uint32_t r4_nv4_nib_source_offset;\n'

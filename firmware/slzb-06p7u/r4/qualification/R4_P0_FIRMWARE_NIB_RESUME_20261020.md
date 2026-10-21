@@ -54,3 +54,26 @@ the pinned P7U TI ABI, not a general-purpose Zigbee backup migrator.
 
 Primary code: TI SDK git 3615ad5, source/ti/common/nv/nvocmp.c,
 source/ti/zstack/stack/sys/zcomdef.h and source/ti/zstack/stack/nwk/nwk.h.
+
+## 21 October — crash-safety hardening
+
+TI 8.33's `NVOCMP_getDstPage` can mutate page state during destination
+selection; `NVOCMP_addItem` falls back to compaction when no destination is
+available. The previous free-space preflight was not a strict guarantee.
+
+Both repair append calls now use a scoped `r4_nv4_repair_write_window`:
+`getDstPage` accepts only the current verified ACTIVE page and sufficient
+contiguous space, and `addItem` refuses compaction if destination selection
+fails. The guard is cleared after every append and on every failure exit;
+normal operations use the unmodified TI path.
+
+**Remaining limitation:** a loss of power during NVS_write may leave a torn
+new item, which correctly leaves firmware in HOLD rather than attempting
+unsafe reformat or speculative repeated writes. Full byte-boundary
+fault-injection against the actual NIB-repair write path is still required;
+green existing RAM *reader* tests do not establish it.
+
+Sources: TI E2E CC2642R historical NVOCMP power-cut report
+https://e2e.ti.com/support/wireless-connectivity/bluetooth-group/bluetooth/f/bluetooth-forum/873501/
+and CC2652R low-voltage flash corruption discussion
+https://e2e.ti.com/support/wireless-connectivity/zigbee-thread-group/zigbee-and-thread/f/zigbee-thread-forum/1233083/
