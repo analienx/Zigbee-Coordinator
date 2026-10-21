@@ -23,6 +23,7 @@ PREAMBLE = r'''
 #define MT_RPC_CMD_SRSP 0x60
 #define MT_RPC_CMD_TYPE_MASK 0xe0
 #define MT_RPC_SYS_ZDO 5
+#define B1_RETAINED_STARTUP_EVENT 0x00010000u
 enum {ZCD_NV_NIB, ZCD_NV_STARTUP_OPTION,
       ZCD_NV_BDBNODEISONANETWORK, ZCD_NV_LOGICAL_TYPE};
 static int held, candidate, security_valid, coordinator, read_fault, bdb_latch;
