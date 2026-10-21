@@ -121,11 +121,51 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         elif actual != pristine:
             raise ValueError("source modified before B4 overlay: " + path)'''
     v3source=replace_once(v3source,old_check,new_check,"B4_B1_VERIFIED_PREIMAGE_RULE")
+    # B1 and B4 intentionally use the SAME physical UART2 handle and EOT
+    # event. The immutable standalone B4 script rejects all previous owners.
+    # Here the B1 receipt sealed the exact already-owned preimage; allow only
+    # that owner and chain its callback AFTER B4 leaves its critical section.
+    b4_subscription_guard = (
+        '    if "params.eventCallback" in uart or "params.eventMask" in uart:\n'
+        '        raise ValueError("existing UART event subscriber: do not replace ownership")'
+    )
+    reconciled_guard = (
+        '    if (uart.count("params.eventCallback = b1_startup_uart_event;") != 1 or\n'
+        '            uart.count("params.eventMask |= UART2_EVENT_TX_FINISHED;") != 1 or\n'
+        '            uart.count("static void b1_startup_uart_event(UART2_Handle handle,") != 1 or\n'
+        '            uart.count("if (event & UART2_EVENT_TX_FINISHED) b1_startup_tx_eot();") != 1):\n'
+        '        raise ValueError("unknown UART event owner: retain fail-closed policy")'
+    )
+    v3source=replace_once(v3source,b4_subscription_guard,reconciled_guard,
+                          "B1_EXACT_UART_CALLBACK_OWNERSHIP")
+    b4_callback_tail = (
+        '        OsalPort_leaveCS(key);\n'
+        '    }\n'
+        '}\n\n'
+        '""" + callback_anchor, 1)'
+    )
+    chained_callback_tail = (
+        '        OsalPort_leaveCS(key);\n'
+        '        /* B1 startup is notified only AFTER B4 releases the UART CS. */\n'
+        '        b1_startup_uart_event(handle, event, data, userArg);\n'
+        '    }\n'
+        '}\n\n'
+        '""" + callback_anchor, 1)'
+    )
+    v3source=replace_once(v3source,b4_callback_tail,chained_callback_tail,
+                          "B4_TO_B1_SINGLE_UART_EOT_FANOUT")
     v3source="B1_NPI_PRIOR_HASHES = "+repr(expected)+"\n"+v3source
     v3local=baseline/"b4_v3_exact_b1_reconciled.py"
     v3local.write_text(v3source,encoding="utf-8")
     v3=load("r4_reviewed_b4_v3_reconciled",v3local)
     native_v3=v3.apply(sdk)
+    # Re-read the actual composed C, not the Python patch recipe. Exactly one
+    # UART2 event subscriber is active and its callback must fan out to B1.
+    combined_uart=(sdk/UART).read_text(encoding="utf-8")
+    if (combined_uart.count("params.eventCallback = B4_NpiUartTxFinishedCallback;") != 1 or
+        combined_uart.count("b1_startup_uart_event(handle, event, data, userArg);") != 1 or
+        combined_uart.count("uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);") != 1):
+        raise ValueError("B1_B4_UART_SINGLE_OWNER_FANOUT_NOT_PROVEN")
     v4=load("r4_immutable_b4_v4",b4v4script)
     native_v4=v4.apply(sdk)
 
@@ -181,6 +221,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "b4_v3_patch_evidence":native_v3,
         "b4_v4_patch_evidence":native_v4,
         "b1_f1_and_b4_f0_f2_dispatch":True,
+        "b1_b4_uart_single_owner_tx_finished_fanout":True,
         "b1_f2_hold_exception_enabled_for_disposable_composite":True,
         "source_modified_sha256":afterhash,
         "b1_prior_source_sha256":beforehash,
