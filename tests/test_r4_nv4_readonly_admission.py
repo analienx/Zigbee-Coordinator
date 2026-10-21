@@ -509,7 +509,7 @@ class Nv4AdmissionTests(unittest.TestCase):
     def test_protected_geometry_is_exact_four_pages(self):
         self.assertEqual(self.probe(stock_like()[:-1]).code, 2)
 
-    def test_record_ceiling_is_scan_limit_not_bad_item(self):
+    def test_legitimate_historical_record_churn_beyond_old_ceiling(self):
         media = bytearray(stock_like())
         for page, count in ((0, 1000), (1, 1000), (2, 1)):
             base = page * PAGE_SIZE
@@ -519,15 +519,19 @@ class Nv4AdmissionTests(unittest.TestCase):
                 trailer = bytearray((4, 0x1a, 0, 0, 4))
                 crc = forensics.crc8(payload + trailer)
                 trailer[4] |= crc >> 6
-                # Obsolete valid versions may repeat an identity. Active
-                # duplicates deliberately hit a different admission guard
-                # before the 2000-record scan ceiling can be exercised.
+                # Obsolete valid versions may repeat an identity. They must
+                # not exhaust a stale total-record ceiling before the reader
+                # reaches the actual NV4 physical boundary.
                 trailer.extend((((crc & 63) << 2), 0x96))
                 media[base + offset:base + offset + 8] = payload + trailer
                 offset += 8
         result = self.probe(bytes(media))
-        self.assertEqual(result.records, 2000)
-        self.assertEqual(result.code, 7)  # R4_NV4_SCAN_LIMIT
+        self.assertEqual(result.records, 2001)
+        # All newly written entries are inactive, so there may be no active
+        # record candidate. That semantic HOLD is correct; an artificial
+        # scan-limit HOLD at exactly 2000 records is not.
+        self.assertNotEqual(result.code, 7)  # no arbitrary R4_NV4_SCAN_LIMIT
+        self.assertNotEqual(result.code, 5)  # no malformed item
 
 
 if __name__ == '__main__':
