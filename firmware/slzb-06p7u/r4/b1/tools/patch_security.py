@@ -808,11 +808,34 @@ def patch(source: str) -> str:
 
 def patch_zglobals(source: str) -> str:
     source = replace_once(source, '#include "zcomdef.h"', '#include "zcomdef.h"\n'
-        'extern int b1_sec_validate_restored(void);', 'early security precheck declaration')
-    return replace_once(source, 'uint8_t zgInit( void )\n{',
+        'extern int b1_sec_validate_restored(void);\n'
+        'extern int b1_nv_runtime_hold_active(void);\n'
+        'extern void b1_nv_runtime_hold_latch(void);', 'early security precheck declaration')
+    source = replace_once(source, 'uint8_t zgInit( void )\n{',
         'uint8_t zgInit( void )\n{\n'
         '  if (!b1_sec_validate_restored()) return NV_OPER_FAILED;',
         'security precheck before first item initialization')
+    original = extract_function(source, 'void zgInitItems( uint8_t setDefault )')
+    changed = replace_once(original, '\n{\n', '\n{\n'
+        '  if (b1_nv_runtime_hold_active()) return;\n',
+        'do not initialize globals after HOLD')
+    changed = replace_once(changed,
+        '    zgItemInit( zgItemTable[i].id, zgItemTable[i].len, zgItemTable[i].buf, setDefault  );',
+        '    uint8_t b1_item_status = zgItemInit( zgItemTable[i].id, zgItemTable[i].len, zgItemTable[i].buf, setDefault  );\n'
+        '    if ((b1_item_status != ZSUCCESS && b1_item_status != NV_ITEM_UNINIT) ||\n'
+        '        b1_nv_runtime_hold_active())\n'
+        '    {\n'
+        '      b1_nv_runtime_hold_latch();\n'
+        '      return; /* do not publish host callback readiness after failed init */\n'
+        '    }', 'preserve initialization failure before runtime callback setup')
+    changed = changed[:-1] + (
+        '#if defined(ZNP_NPI) && !defined(MT_TASK)\n'
+        '  /* Retained R4 uses direct ZDO responses expected by Herdsman.\n'
+        '   * Override only this RAM callback switch, after successful item init.\n'
+        '   * Preserve NV ZCD_NV_ZDO_DIRECT_CB and every network/security record. */\n'
+        '  zgZdoDirectCB = TRUE;\n'
+        '#endif\n}')
+    return replace_once(source, original, changed, 'ZNP RAM-only direct ZDO callback')
 
 
 def patch_osal_nv(source: str) -> str:

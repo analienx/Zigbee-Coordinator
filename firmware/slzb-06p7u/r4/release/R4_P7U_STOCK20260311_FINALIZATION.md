@@ -11,6 +11,10 @@ MT NV changes on an admitted network, blocks pending destructive startup
 flags, accepts the valid mixed FULL/INACTIVE page rotation, adds precise
 read-only NV4 diagnostics, and includes protected herdsman startup in the host
 bundle. Internal Zigbee counter/routing persistence remains enabled.
+After successful globals initialization, the ZNP profile enables direct ZDO
+callbacks in RAM so a retained disabled callback setting cannot suppress
+host responses. The stored callback setting remains unchanged; initialization
+failure latches HOLD before enabling the runtime switch.
 
 Deploy the firmware with its matching protected host bundle. This is a
 retained-network candidate; it does not authorize or implement an automatic

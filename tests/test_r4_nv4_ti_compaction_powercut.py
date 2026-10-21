@@ -81,7 +81,7 @@ class T4PinnedSourceFourPageCuts(unittest.TestCase):
         self.assertIn('NOT_PROVEN=counter_monotonicity', output)
         return output
 
-    def test_three_public_unformed_records_and_torn_erase(self):
+    def test_four_public_unformed_records_and_torn_erase(self):
         output = self.run_cuts(stock_like_semantic())
         # TI sets seven harmless early F8 *mode* variants before entering
         # PGXSRC. The C harness proves their media bytes are unchanged except
@@ -96,7 +96,8 @@ class T4PinnedSourceFourPageCuts(unittest.TestCase):
         media = bytearray(stock_like(records=120))
         cursor = 16 + 120 * len(encoded_record(0))
         for row in (legacy_osal_record(0x55, b'\x00'),
-                    legacy_osal_record(0x87, b'\x00')):
+                    legacy_osal_record(0x87, b'\x00'),
+                    legacy_osal_record(0x03, b'\x00')):
             media[cursor:cursor + len(row)] = row
             cursor += len(row)
         self.run_cuts(bytes(media))
