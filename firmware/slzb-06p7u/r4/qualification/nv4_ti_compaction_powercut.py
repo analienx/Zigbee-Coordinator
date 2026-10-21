@@ -195,6 +195,10 @@ int main(void)
   }
  }
  assert(tests==2u*operations && holds>0u);
+ /* P0 gate: the new classifier must really enable at least one ordinary
+  * TI recovery of a production-like formed journal, not just keep HOLDing. */
+ if(initial.semantic_state==R4_NV4_STATE_FORMED_CANDIDATE)
+   assert(recoveries>0u);
   printf("R4_T4_PINNED_TI_FOUR_PAGE_COMPACTION_CUTS_PASS "
         "operations=%u trials=%u held=%u candidates=%u prep=%u committed=%u native_holds=%u recovered=%u "
         "NOT_PROVEN=counter_monotonicity,seed_immutability,physical_flash\n",
