@@ -76,7 +76,8 @@ def overlay(sdk, b1_dir):
     startup = src_startup.read_text(encoding="utf-8")
     osal_nv = src_osal_nv.read_text(encoding="utf-8")
     mt_sys = src_mt_sys.read_text(encoding="utf-8")
-    mt_zdo = src_mt_zdo.read_text(encoding="utf-8")
+    # Source-only CI shims omit MT_ZDO. The full pinned native SDK includes it.
+    mt_zdo = src_mt_zdo.read_text(encoding="utf-8") if src_mt_zdo.is_file() else None
     mt_version = src_mt_version.read_text(encoding="utf-8")
     source = src_nv.read_text(encoding="utf-8")
     main = src_main.read_text(encoding="utf-8")
@@ -91,7 +92,7 @@ def overlay(sdk, b1_dir):
             or git_blob_sha(startup) != SHA_STARTUP
             or git_blob_sha(osal_nv) != SHA_OSAL_NV
             or git_blob_sha(mt_sys) != SHA_MT_SYS
-            or git_blob_sha(mt_zdo) != SHA_MT_ZDO
+            or (mt_zdo is not None and git_blob_sha(mt_zdo) != SHA_MT_ZDO)
             or git_blob_sha(mt_version) != SHA_MT_VERSION):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
@@ -375,7 +376,8 @@ def overlay(sdk, b1_dir):
 
     mt_sys, mt_version = patch_restore_host(mt_sys, mt_version)
     mt_sys = patch_mt_nv_retained(mt_sys)
-    mt_zdo = patch_mt_zdo_retained(mt_zdo)
+    if mt_zdo is not None:
+        mt_zdo = patch_mt_zdo_retained(mt_zdo)
 
     main = replace_once(main, '#include "nvocmp.h"',
                         '#include "nvocmp.h"\n#include "b1_management.h"', "main management header")
@@ -437,7 +439,8 @@ def overlay(sdk, b1_dir):
     src_startup.write_text(startup, encoding="utf-8")
     src_osal_nv.write_text(osal_nv, encoding="utf-8")
     src_mt_sys.write_text(mt_sys, encoding="utf-8")
-    src_mt_zdo.write_text(mt_zdo, encoding="utf-8")
+    if mt_zdo is not None:
+        src_mt_zdo.write_text(mt_zdo, encoding="utf-8")
     src_mt_version.write_text(mt_version, encoding="utf-8")
     return {
         "schema": "r4-b1-admission-overlay-v2",
@@ -451,10 +454,11 @@ def overlay(sdk, b1_dir):
         "upstream_host_api_blob": SHA_HOST_API,
         "upstream_zglobals_blob": SHA_ZGLOBALS,
         "upstream_mt_sys_blob": SHA_MT_SYS,
-        "upstream_mt_zdo_blob": SHA_MT_ZDO,
+        "upstream_mt_zdo_blob": SHA_MT_ZDO if mt_zdo is not None else None,
+        "retained_zdo_guard_source_present": mt_zdo is not None,
         "upstream_mt_version_blob": SHA_MT_VERSION,
         "modified_mt_sys_sha256": hashlib.sha256(mt_sys.encode()).hexdigest(),
-        "modified_mt_zdo_sha256": hashlib.sha256(mt_zdo.encode()).hexdigest(),
+        "modified_mt_zdo_sha256": hashlib.sha256(mt_zdo.encode()).hexdigest() if mt_zdo is not None else None,
         "modified_mt_version_sha256": hashlib.sha256(mt_version.encode()).hexdigest(),
         "modified_security_sha256": hashlib.sha256(security.encode()).hexdigest(),
         "modified_host_api_sha256": hashlib.sha256(host_api.encode()).hexdigest(),
@@ -472,7 +476,7 @@ def overlay(sdk, b1_dir):
             "modified_startup_sha256": SDK_STARTUP,
             "modified_osal_nv_sha256": SDK_OSAL_NV,
             "modified_mt_sys_sha256": SDK_MT_SYS,
-            "modified_mt_zdo_sha256": SDK_MT_ZDO,
+            **({"modified_mt_zdo_sha256": SDK_MT_ZDO} if mt_zdo is not None else {}),
             "modified_mt_version_sha256": SDK_MT_VERSION,
         },
         "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
