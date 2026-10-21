@@ -272,8 +272,13 @@ int main(int argc,char **argv) {
                 if(ready) b1_management_note_zdo_state(1,1);
                 frame[0]=1;frame[1]=0x2f;frame[2]=5;frame[3]=4;
                 assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
-                frame[3]=2;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_CONTINUE);
-                frame[3]=0x10;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_CONTINUE);
+                /* Non-forming commissioning is allowed only after attested
+                 * coordinator readiness; B1 must deny it on retained HOLD. */
+                assert(b1_management_network_ready()==(int)ready);
+                frame[3]=2;assert(b1_management_mt_filter(frame,reply,&error)==
+                                  (ready?B1_MT_CONTINUE:B1_MT_REJECT));
+                frame[3]=0x10;assert(b1_management_mt_filter(frame,reply,&error)==
+                                     (ready?B1_MT_CONTINUE:B1_MT_REJECT));
                 frame[0]=0;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT && error==4);
                 frame[1]=0x26;frame[2]=5;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
                 frame[1]=0x21;frame[2]=3;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
