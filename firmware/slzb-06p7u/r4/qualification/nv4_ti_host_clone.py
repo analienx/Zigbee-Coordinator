@@ -13,6 +13,8 @@ import argparse
 import hashlib
 from pathlib import Path
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nv4_record_geometry import C_LIMITS
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'b1/tools'))
@@ -56,7 +58,7 @@ int main(void)
       if(NVOCMP_nvHandle.pageInfo[page].state == NVOCMP_PGXDST) continue;
       while(end>NVOCMP_PGDATAOFS && good) {
         NVOCMP_itemHdr_t h;
-        if (++all>2000u || end<NVOCMP_PGDATAOFS+NVOCMP_ITEMHDRLEN) {good=0u;break;}
+        if (++all>R4_NV4_MAX_RECORDS || end<NVOCMP_PGDATAOFS+NVOCMP_ITEMHDRLEN) {good=0u;break;}
         unsigned off=end-NVOCMP_ITEMHDRLEN;
         NVOCMP_readHeader((uint8_t)page,(uint16_t)off,&h,false);
         if(NVOCMP_failF!=NVINTF_SUCCESS || h.sig!=NVOCMP_SIGNATURE ||
@@ -153,7 +155,7 @@ def transform(nv_raw: bytes, crc_raw: bytes) -> str:
         boundary = boundary.replace(old, new)
     preamble += ('\n#define R4_NV4_RAM_REGION_SIZE (4u*8192u)\n'
                  '#define NVOCMP_ASSERT1(x) do { NVOCMP_failF=NVINTF_FAILURE; } while(0);\n')
-    return (preamble + definitions + boundary +
+    return (preamble + definitions + C_LIMITS + boundary +
             crc.replace('#include "crc.h"', '/* crc_t from host shim */') +
             prototypes + '\n#pragma GCC diagnostic push\n'
             '#pragma GCC diagnostic ignored "-Wunused-parameter"\n'

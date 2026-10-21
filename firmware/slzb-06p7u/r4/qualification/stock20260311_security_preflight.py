@@ -23,11 +23,12 @@ import sys
 
 import nv4_ti_host_clone as ti
 import stock20260311_security_abi as abi_tool
+from nv4_record_geometry import MAX_RECORDS, MAX_PRIVATE_OUTPUT
 
 SCHEMA = "p7u-stock20260311-security-preflight-v1"
 FLASH_BYTES, NV_START, NV_END = 0xB0000, 0xA4000, 0xAC000
 MAGIC, DONE = b"R4SECR1\0", b"R4DONE\0\0"
-MAX_OUTPUT = 65536
+MAX_OUTPUT = MAX_PRIVATE_OUTPUT
 
 # A two-pass bounded host reader: no private output until every logical record
 # has passed the actual TI reader. Duplicate active identities are refused, so
@@ -37,7 +38,7 @@ PRIVATE_MAIN = r'''
 #include <io.h>
 #include <fcntl.h>
 #endif
-static NVOCMP_itemHdr_t private_rows[1024];
+static NVOCMP_itemHdr_t private_rows[R4_NV4_MAX_RECORDS];
 static void private_u32(uint32_t n) {
   uint8_t b[4]={(uint8_t)n,(uint8_t)(n>>8),(uint8_t)(n>>16),(uint8_t)(n>>24)};
   if(fwrite(b,1,4,stdout)!=4) exit(9);
@@ -64,7 +65,7 @@ int main(int argc, char **argv)
     if(NVOCMP_nvHandle.pageInfo[page].state==NVOCMP_PGXDST) continue;
     while(end>NVOCMP_PGDATAOFS) {
       NVOCMP_itemHdr_t h;
-      if(++all>2000u || end<NVOCMP_PGDATAOFS+NVOCMP_ITEMHDRLEN) return 8;
+      if(++all>R4_NV4_MAX_RECORDS || end<NVOCMP_PGDATAOFS+NVOCMP_ITEMHDRLEN) return 8;
       unsigned off=end-NVOCMP_ITEMHDRLEN;
       NVOCMP_readHeader((uint8_t)page,(uint16_t)off,&h,false);
       if(NVOCMP_failF!=NVINTF_SUCCESS || h.sig!=NVOCMP_SIGNATURE ||
@@ -74,7 +75,7 @@ int main(int argc, char **argv)
       if(NVOCMP_readItem(&h,0u,h.len,item,false)!=NVINTF_SUCCESS) return 8;
       memset(item,0,sizeof(item));
       if(h.stats&NVOCMP_ACTIVEIDBIT) {
-        if(active>=1024u) return 8;
+        if(active>=R4_NV4_MAX_RECORDS) return 8;
         for(unsigned i=0u;i<active;++i)
           if(private_rows[i].cmpid==h.cmpid) return 8;
         private_rows[active++]=h;
@@ -117,7 +118,7 @@ def parse_private_pipe(raw: bytes) -> tuple[dict[tuple[int, int, int], bytes], d
     if not 36 <= len(raw) <= MAX_OUTPUT or raw[:8] != MAGIC:
         raise ValueError("TI_READER_PRIVATE_PIPE_INVALID")
     all_count, count = struct.unpack_from("<II", raw, 8)
-    if not 1 <= count <= 1024 or not count <= all_count <= 2000:
+    if not 1 <= count <= MAX_RECORDS or not count <= all_count <= MAX_RECORDS:
         raise ValueError("TI_READER_RECORD_BUDGET")
     offset, records = 16, {}
     for _ in range(count):
@@ -194,7 +195,9 @@ def validate_abi(abi: dict) -> None:
             abi.get("flash_authorized") is False, "NATIVE_ABI_EVIDENCE_REQUIRED")
     widths = {
         "nwkIB_t": {"nwkDevAddress": 2, "nwkLogicalChannel": 1, "nwkCoordAddress": 2,
-                    "nwkPanId": 2, "extendedPANID": 8, "nwkKeyLoaded": 1},
+                    "nwkPanId": 2, "extendedPANID": 8, "nwkKeyLoaded": 1,
+                    "nwkCoordExtAddress": 8, "SecurityLevel": 1, "channelList": 4,
+                    "nwkManagerAddr": 2, "nwkUpdateId": 1, "nwkProtocolVersion": 1},
         "nwkKeyDesc": {"keySeqNum": 1, "key": 16},
         "nwkActiveKeyItems": {"frameCounter": 4},
         "nwkSecMaterialDesc_t": {"FrameCounter": 4, "extendedPanID": 8},
@@ -203,6 +206,7 @@ def validate_abi(abi: dict) -> None:
         "APSME_ApsLinkKeyNVEntry_t": {"key": 16, "txFrmCntr": 4, "rxFrmCntr": 4},
         "nvDeviceListHdr_t": {"numRecs": 2},
         "ZDSecMgrEntry_t": {"ami": 2, "keyNvId": 2},
+        "AddrMgrEntry_t": {"user": 1, "nwkAddr": 2, "extAddr": 8},
     }
     try:
         for name, fields in abi_tool.FIELDS.items():
@@ -225,7 +229,9 @@ def validate_abi(abi: dict) -> None:
         constants = abi["constants"]
         require(constants["ZDSECMGR_TC_DEVICE_MAX"] == 300 and
                 constants["ZDSECMGR_ENTRY_MAX"] == 3 and
-                constants["MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES"] == 5,
+                constants["MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES"] == 5 and
+                constants["NWK_MAX_ADDRESSES"] == 406 and
+                constants["ADDRMGR_USER_SECURITY"] == 2,
                 "TC300_APS3_NATIVE_CAPACITY_MISMATCH")
         for key in abi_tool.CONSTANTS:
             require(type(constants[key]) is int and 0 <= constants[key] < 0xffffffff,
@@ -248,11 +254,17 @@ def inspect_state(records: dict, abi: dict) -> dict:
             n("nwkPanId") != 0xffff and
             11 <= n("nwkLogicalChannel") <= 26 and n("nwkKeyLoaded") == 1 and real(pan),
             "FORMED_NATIVE_NIB_INVALID")
+    require(n("SecurityLevel") == 5 and n("nwkProtocolVersion") == 2 and
+            n("channelList") & (1 << n("nwkLogicalChannel")),
+            "NIB_SECURITY_OR_CHANNEL_SEMANTICS_INVALID")
     ext = get(records, 0, 1, 8)
     tc = get(records, 0, 0x71, 8)
     require(real(ext) and tc == ext, "COORDINATOR_TRUST_CENTER_IDENTITY_MISMATCH")
     # 2. The legacy NWKKEY active descriptor must equal ACTIVE_KEY_INFO.
     active = get(records, 0, 0x3a, abi["structs"]["nwkKeyDesc"]["size"])
+    # Alternate keys live in ALT_KEY_INFO, not the deprecated NIB spare fields.
+    # An unused descriptor may be zero/FF; preserve its exact epoch and bytes.
+    alternate = get(records, 0, 0x3b, abi["structs"]["nwkKeyDesc"]["size"])
     legacy = get(records, 0, 0x82, abi["structs"]["nwkActiveKeyItems"]["size"])
     require(field(legacy, abi, "nwkActiveKeyItems", "active") == active and
             real(field(active, abi, "nwkKeyDesc", "key")), "ACTIVE_NETWORK_KEY_MISMATCH")
@@ -313,6 +325,20 @@ def inspect_state(records: dict, abi: dict) -> dict:
                        "tx": v("txFrmCntr"), "rx": v("rxFrmCntr")}
     require(not any(system == 1 and item == 4 and sub >= 300 for system, item, sub in records),
             "TC_RECORD_OUTSIDE_NATIVE_CAPACITY")
+    # Serialized address-manager rows omit the transient AddrMgr API index.
+    # The restored stock allocation may be 357 while this image's maximum is
+    # 406. Existing valid rows remain valid; admission never manufactures the
+    # additional rows or truncates the old association/binding tail.
+    addresses = {sub: raw for (system, item, sub), raw in records.items()
+                 if system == 1 and item == 1}
+    require(bool(addresses) and set(addresses) == set(range(len(addresses))) and
+            len(addresses) <= abi["constants"]["NWK_MAX_ADDRESSES"],
+            "ADDRESS_MANAGER_ALLOCATION_INVALID")
+    for row in addresses.values():
+        field(row, abi, "AddrMgrEntry_t", "extAddr")  # exact native serialized size
+    empty_addresses = {index for index, row in addresses.items()
+                       if number(row, abi, "AddrMgrEntry_t", "user") == 0 and
+                       not real(field(row, abi, "AddrMgrEntry_t", "extAddr"))}
     # 5. APS table header and every referenced APS3 row, with unambiguous IDs.
     header_size = abi["structs"]["nvDeviceListHdr_t"]["size"]
     entry_size = abi["structs"]["ZDSecMgrEntry_t"]["size"]
@@ -321,7 +347,7 @@ def inspect_state(records: dict, abi: dict) -> dict:
     count = number(table[:header_size], abi, "nvDeviceListHdr_t", "numRecs")
     require(count <= 3, "APS_TABLE_EXCEEDS_NATIVE_CAPACITY")
     aps, slots = {}, set()
-    if count:
+    if count or len(table) > header_size:
         require(len(table) >= header_size + 3 * entry_size, "APS_TABLE_NATIVE_SIZE_MISMATCH")
         for index in range(3):
             entry = table[header_size + index * entry_size:header_size + (index + 1) * entry_size]
@@ -333,6 +359,12 @@ def inspect_state(records: dict, abi: dict) -> dict:
                 continue
             require(ami != 0xffff and ami not in aps and keyid < 3 and keyid not in slots,
                     "APS_REFERENCE_DUPLICATE_OR_OUT_OF_RANGE")
+            require(ami in addresses, "APS_ADDRESS_MANAGER_REFERENCE_MISSING")
+            address = addresses[ami]
+            peer = field(address, abi, "AddrMgrEntry_t", "extAddr")
+            require(number(address, abi, "AddrMgrEntry_t", "user") &
+                    abi["constants"]["ADDRMGR_USER_SECURITY"] and real(peer),
+                    "APS_ADDRESS_MANAGER_SECURITY_REFERENCE_INVALID")
             key = get(records, 6, keyid, abi["structs"]["APSME_ApsLinkKeyNVEntry_t"]["size"])
             key_bytes = field(key, abi, "APSME_ApsLinkKeyNVEntry_t", "key")
             tx = number(key, abi, "APSME_ApsLinkKeyNVEntry_t", "txFrmCntr")
@@ -342,14 +374,19 @@ def inspect_state(records: dict, abi: dict) -> dict:
                     "APS_COUNTER_EXHAUSTED")
             slots.add(keyid)
             aps[ami] = {"keyid": keyid, "key": key_bytes, "tx": tx, "rx": rx,
+                        "peer": peer,
                         "authentication": field(entry, abi, "ZDSecMgrEntry_t", "authenticateOption")}
         require(len(aps) == count, "APS_LIVE_COUNT_MISMATCH")
     # Metadata used only in-memory for exact baseline identity/key comparison.
-    identity = (ext, tc, pan, n("nwkPanId"), n("nwkLogicalChannel"), n("nwkCoordAddress"))
+    identity = (ext, tc, pan, n("nwkPanId"), n("nwkLogicalChannel"), n("nwkCoordAddress"),
+                field(nib, abi, "nwkIB_t", "nwkCoordExtAddress"), n("SecurityLevel"),
+                n("channelList"), n("nwkManagerAddr"), n("nwkUpdateId"), n("nwkProtocolVersion"))
     # The actual candidate reads its first APS3 entries and ignores any tail.
     # Retain that opaque tail exactly, rather than pretend a larger old table
     # was resized or migrated by this read-only operation.
-    return {"identity": identity, "active": active, "seed": seed, "selected_floor": selected,
+    return {"identity": identity, "active": active, "alternate": alternate,
+            "seed": seed, "addresses": addresses, "empty_addresses": empty_addresses,
+            "selected_floor": selected,
             "legacy_floor": legacy_floor, "materials": materials, "peers": peers, "aps": aps,
             "aps_opaque_tail": table[header_size + 3 * entry_size:]}
 
@@ -357,8 +394,15 @@ def inspect_state(records: dict, abi: dict) -> dict:
 def compare_retained(current: dict, baseline: dict) -> None:
     # 6. Preserve network/seed/key epoch; no permissive key-rotation guess.
     require(current["identity"] == baseline["identity"] and
-            current["active"] == baseline["active"] and current["seed"] == baseline["seed"],
+            current["active"] == baseline["active"] and current["seed"] == baseline["seed"] and
+            current["alternate"] == baseline["alternate"],
             "RETAINED_NETWORK_IDENTITY_OR_KEY_CHANGED")
+    require(all(current["addresses"].get(index) == raw
+                for index, raw in baseline["addresses"].items()),
+            "ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED")
+    require((current["addresses"].keys() - baseline["addresses"].keys()).issubset(
+                current["empty_addresses"]),
+            "ADDRESS_MANAGER_NEW_TAIL_NOT_EMPTY")
     require(current["aps_opaque_tail"] == baseline["aps_opaque_tail"],
             "APS_OPAQUE_TAIL_CHANGED_NO_MIGRATION_AUTHORIZED")
     # 7. Persisted NWK replay floors never regress relative to baseline.

@@ -28,7 +28,9 @@ def patch_startup_restore(source: str) -> str:
         signature + "\n{\n  /* B1_ZDO_RESTORE_HOLD_PROPAGATION */\n  " + fail,
         "ZDO entry HOLD")
     changed = replace_once(changed, "    zgInitItems( FALSE );",
-        "    zgInitItems( FALSE );\n    " + fail,
+        "    if (!b1_startup_checkpoint(B1_PHASE_GLOBALS)) return 0xFFu;\n"
+        "    zgInitItems( FALSE );\n    " + fail + "\n"
+        "    b1_startup_note_phase(B1_PHASE_GLOBALS, 0u, 0u);",
         "ZDO globals failure before MAC access")
     changed = replace_once(changed,
         "  if ( networkStateNV == ZDO_INITDEV_RESTORED_NETWORK_STATE )\n  {\n"
@@ -51,17 +53,27 @@ def patch_startup_restore(source: str) -> str:
     changed = replace_once(original, signature + "\n{",
         signature + "\n{\n  " + fail, "NWK restore entry HOLD")
     changed = replace_once(changed, "  nvStat = NLME_InitNV();",
-        "  nvStat = NLME_InitNV();\n  " + fail,
+        "  if (!b1_startup_checkpoint(B1_PHASE_CAPACITY)) return 0xFFu;\n"
+        "  if (b1_sec_restored_network_validated() &&\n"
+        "      (!b1_nv_prepare_retained_capacity() || b1_nv_runtime_hold_active())) return 0xFFu;\n"
+        "  b1_startup_note_phase(B1_PHASE_CAPACITY, 0u, 0u);\n"
+        "  if (!b1_startup_checkpoint(B1_PHASE_NLME_INIT)) return 0xFFu;\n"
+        "  nvStat = NLME_InitNV();\n  " + fail + "\n"
+        "  b1_startup_note_phase(B1_PHASE_NLME_INIT, nvStat, 0u);",
         "NWK NV initialization failure fence")
     changed = replace_once(changed, "    if ( NLME_RestoreFromNV() )",
+        "    if (!b1_startup_checkpoint(B1_PHASE_NLME_RESTORE)) return 0xFFu;\n"
         "    uint8_t b1_nwk_restored = NLME_RestoreFromNV();\n    " + fail + "\n"
+        "    b1_startup_note_phase(B1_PHASE_NLME_RESTORE, b1_nwk_restored, 0u);\n"
         "    if (!b1_nwk_restored && b1_sec_restored_network_validated())\n"
         "    {\n      b1_security_runtime_hold_latch();\n      return 0xFFu;\n    }\n"
         "    if ( b1_nwk_restored )", "NLME failure before counter reservation")
     changed = replace_once(changed, "      ZDApp_RestoreNwkKey( TRUE );",
+        "      if (nvStat == SUCCESS && !b1_startup_checkpoint(B1_PHASE_NWK_RESERVE)) return 0xFFu;\n"
         "      if (nvStat == SUCCESS &&\n"
         "          (!ZDApp_RestoreNwkKey(TRUE) || b1_nv_runtime_hold_active()))\n"
-        "      {\n        b1_security_runtime_hold_latch();\n        return 0xFFu;\n      }",
+        "      {\n        b1_security_runtime_hold_latch();\n        return 0xFFu;\n      }\n"
+        "      b1_startup_note_phase(B1_PHASE_NWK_RESERVE, 0u, 0u);",
         "NWK key/counter void caller must propagate failure")
     changed = replace_once(changed, "  if ( nvStat == ZSUCCESS )",
         "  if (nvStat != ZSUCCESS && b1_sec_restored_network_validated())\n"
@@ -75,7 +87,9 @@ def patch_startup_restore(source: str) -> str:
         signature + "\n{\n  if (b1_nv_runtime_hold_active()) return;",
         "security initialization entry HOLD")
     changed = replace_once(changed, "  ZDSecMgrInit(state);",
-        "  ZDSecMgrInit(state);\n  if (b1_nv_runtime_hold_active()) return;",
+        "  if (!b1_startup_checkpoint(B1_PHASE_SECURITY)) return;\n"
+        "  ZDSecMgrInit(state);\n  if (b1_nv_runtime_hold_active()) return;\n"
+        "  b1_startup_note_phase(B1_PHASE_SECURITY, 0u, 0u);",
         "security-manager failure before key update or device-list publication")
     source = replace_once(source, original, changed, "void security failure fence")
 
@@ -86,12 +100,13 @@ def patch_startup_restore(source: str) -> str:
         source = _entry_guard(source, signature,
                               "if (b1_nv_runtime_hold_active()) return;")
 
-    # MT_ZDO dispatch runs on the NPI side. It must return its SRSP before
-    # entering TI's retained restore path, so run that path on ZDApp's event
-    # task after the MT handler has queued it.
+    # MT and ZDApp share TI's stack task. Wire EOT gates response delivery;
+    # this event does not claim to cure an inner restore wait or busy loop.
     source = replace_once(source, '#include "zd_app.h"',
-        '#include "zd_app.h"\n'
+        '#include "zd_app.h"\n#include "b1_management.h"\n'
         '#define B1_RETAINED_STARTUP_EVENT 0x00010000u\n'
+        '#define B1_RETAINED_STARTUP_EXPIRE_EVENT 0x00020000u\n'
+        'extern int b1_nv_prepare_retained_capacity(void);\n'
         'extern void b1_mt_zdo_retained_startup_event(void);',
         "retained startup event declaration")
     signature = "uint32_t ZDApp_event_loop( uint8_t task_id, uint32_t events )"
@@ -102,10 +117,24 @@ def patch_startup_restore(source: str) -> str:
         "  {\n"
         "    b1_mt_zdo_retained_startup_event();\n"
         "    return (events ^ B1_RETAINED_STARTUP_EVENT);\n"
+        "  }\n"
+        "  if (events & B1_RETAINED_STARTUP_EXPIRE_EVENT)\n"
+        "  {\n"
+        "    b1_startup_expire();\n"
+        "    return (events ^ B1_RETAINED_STARTUP_EXPIRE_EVENT);\n"
         "  }\n",
         "retained startup executes on ZDApp event task")
     source = replace_once(source, original, changed,
                           "retained startup event dispatcher")
+    for signature, phase in (
+        ("void ZDApp_NetworkInit( uint16_t delay )", "B1_PHASE_NETWORK_INIT"),
+        ("void ZDApp_NetworkStartEvt( void )", "B1_PHASE_NETWORK_START")):
+        body = extract_function(source, signature)
+        guard = signature + "\n{\n  if (b1_nv_runtime_hold_active()) return;"
+        changed = replace_once(body, guard, guard + "\n"
+            "  if (!b1_startup_checkpoint(" + phase + ")) return;",
+            "network diagnostic boundary")
+        source = replace_once(source, body, changed, "network phase checkpoint")
     return source
 
 

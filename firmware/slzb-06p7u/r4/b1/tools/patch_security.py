@@ -839,10 +839,12 @@ def patch_zglobals(source: str) -> str:
 
 
 def patch_osal_nv(source: str) -> str:
-    return replace_once(source,
+    from patch_nv_capacity import patch as patch_nv_capacity
+    source = replace_once(source,
         'if ( pZStackCfg->nvFps.readItem( nvId, ndx, len, buf ) == NVINTF_FAILURE )',
         'if ( pZStackCfg->nvFps.readItem( nvId, ndx, len, buf ) != NVINTF_SUCCESS )',
         'OSAL read propagates every failed status including NOTFOUND')
+    return patch_nv_capacity(source)
 
 
 def patch_startup(source: str) -> str:

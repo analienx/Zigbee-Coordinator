@@ -21,9 +21,12 @@ import stock20260311_security_preflight as security
 
 def synthetic_abi() -> dict:
     layouts = {
-        "nwkIB_t": (20, {"nwkDevAddress": (0, 2), "nwkLogicalChannel": (2, 1),
+        "nwkIB_t": (40, {"nwkDevAddress": (0, 2), "nwkLogicalChannel": (2, 1),
                         "nwkCoordAddress": (4, 2), "nwkPanId": (6, 2), "nwkState": (8, 1),
-                        "extendedPANID": (9, 8), "nwkKeyLoaded": (17, 1)}),
+                        "extendedPANID": (9, 8), "nwkKeyLoaded": (17, 1),
+                        "nwkCoordExtAddress": (18, 8), "SecurityLevel": (26, 1),
+                        "channelList": (28, 4), "nwkManagerAddr": (32, 2),
+                        "nwkUpdateId": (34, 1), "nwkProtocolVersion": (35, 1)}),
         "nwkKeyDesc": (17, {"keySeqNum": (0, 1), "key": (1, 16)}),
         "nwkActiveKeyItems": (24, {"active": (0, 17), "frameCounter": (20, 4)}),
         "nwkSecMaterialDesc_t": (12, {"FrameCounter": (0, 4), "extendedPanID": (4, 8)}),
@@ -33,6 +36,7 @@ def synthetic_abi() -> dict:
         "APSME_ApsLinkKeyNVEntry_t": (24, {"key": (0, 16), "txFrmCntr": (16, 4), "rxFrmCntr": (20, 4)}),
         "nvDeviceListHdr_t": (2, {"numRecs": (0, 2)}),
         "ZDSecMgrEntry_t": (6, {"ami": (0, 2), "keyNvId": (2, 2), "authenticateOption": (4, 1)}),
+        "AddrMgrEntry_t": (12, {"user": (0, 1), "nwkAddr": (2, 2), "extAddr": (4, 8)}),
     }
     return {"schema": "p7u-security-native-abi-v1", "sdk_sha": security.abi_tool.SDK_SHA,
             "status": "ACTUAL_ARM_ELF_SERIALIZED_LAYOUTS_EXTRACTED", "byte_order": "little",
@@ -40,7 +44,8 @@ def synthetic_abi() -> dict:
             "structs": {name: {"size": size, "fields": fields} for name, (size, fields) in layouts.items()},
             "constants": {"NWK_ROUTER": 8, "ZDSECMGR_TC_DEVICE_MAX": 300,
                           "ZDSECMGR_ENTRY_MAX": 3, "MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES": 5,
-                          "MAX_APS_FRAMECOUNTER_CHANGES": 1000, "MAX_TCLK_FRAMECOUNTER_CHANGES": 10}}
+                          "MAX_APS_FRAMECOUNTER_CHANGES": 1000, "MAX_TCLK_FRAMECOUNTER_CHANGES": 10,
+                          "NWK_MAX_ADDRESSES": 406, "ADDRMGR_USER_SECURITY": 2}}
 
 
 def record(abi: dict, typename: str, **values) -> bytes:
@@ -59,12 +64,19 @@ def formed(abi: dict) -> dict:
     records = {(1, 0, 1): ext, (1, 0, 3): b"\x00", (1, 0, 0x55): b"\x01",
                (1, 0, 0x87): b"\x00", (1, 0, 0x71): ext,
                (1, 0, 0x101): bytes(range(41, 57)), (1, 0, 0x3a): active,
+               (1, 0, 0x3b): bytes(17),
                (1, 0, 0x82): record(abi, "nwkActiveKeyItems", active=active, frameCounter=400),
                (1, 0, 0x21): record(abi, "nwkIB_t", nwkDevAddress=0, nwkLogicalChannel=15,
                                       nwkCoordAddress=0, nwkPanId=123, nwkState=8,
-                                      extendedPANID=pan, nwkKeyLoaded=1),
+                                      extendedPANID=pan, nwkKeyLoaded=1, SecurityLevel=5,
+                                      channelList=1 << 15, nwkProtocolVersion=2),
                (1, 7, 0): record(abi, "nwkSecMaterialDesc_t", FrameCounter=500, extendedPanID=pan),
                (1, 0, 0x4c): record(abi, "nvDeviceListHdr_t", numRecs=0)}
+    for index in range(357):
+        records[1, 1, index] = record(abi, "AddrMgrEntry_t", nwkAddr=0xfffe)
+    for index in (9, 10):
+        records[1, 1, index] = record(abi, "AddrMgrEntry_t", user=2, nwkAddr=index,
+                                    extAddr=bytes([index]) * 8)
     for index in range(300):
         records[1, 4, index] = record(abi, "APSME_TCLinkKeyNVEntry_t", keyAttributes=0xff)
     records[1, 4, 299] = record(abi, "APSME_TCLinkKeyNVEntry_t", txFrmCntr=150, rxFrmCntr=130,
@@ -104,7 +116,7 @@ class RetainedSecurityTests(unittest.TestCase):
         for identity, value, reason in [
             ((1, 0, 0x55), b"\x00", "FORMED_COORDINATOR_MARKERS_INVALID"),
             ((1, 0, 3), b"\x80", "DESTRUCTIVE_STARTUP_OPTIONS_SET"),
-            ((1, 0, 0x21), bytes(20), "FORMED_NATIVE_NIB_INVALID"),
+            ((1, 0, 0x21), bytes(40), "FORMED_NATIVE_NIB_INVALID"),
         ]:
             with self.subTest(reason=reason):
                 self.now = copy.deepcopy(self.before)
@@ -197,6 +209,50 @@ class RetainedSecurityTests(unittest.TestCase):
             security.parse_private_pipe(prefix + entry + entry + sealed)
         with self.assertRaisesRegex(ValueError, "UNSEALED"):
             security.parse_private_pipe(security.MAGIC + struct.pack("<II", 1, 1) + entry + sealed[:-1])
+
+    def test_physical_record_budget_accepts_history_above_old_2000_limit(self):
+        entry = struct.pack("<BHHH", 1, 0, 0x55, 1) + b"\x01"
+        seal = security.DONE + struct.pack("<III", 0, 0, 0)
+        _, receipt = security.parse_private_pipe(security.MAGIC + struct.pack("<II", 2001, 1) + entry + seal)
+        self.assertEqual(receipt["all_records"], 2001)
+        self.assertEqual(security.MAX_RECORDS, 3066)
+        entries = b"".join(struct.pack("<BHHH", 1, 2 + i // 1024, i % 1024, 1) + b"x"
+                           for i in range(security.MAX_RECORDS))
+        raw = security.MAGIC + struct.pack("<II", security.MAX_RECORDS, security.MAX_RECORDS) + entries + seal
+        self.assertEqual(len(raw), security.MAX_OUTPUT)
+        self.assertEqual(len(security.parse_private_pipe(raw)[0]), security.MAX_RECORDS)
+        with self.assertRaisesRegex(ValueError, "BUDGET"):
+            security.parse_private_pipe(security.MAGIC + struct.pack("<II", security.MAX_RECORDS + 1, 1) + entry + seal)
+
+    def test_alternate_key_descriptor_is_retained_without_using_nib_spares(self):
+        self.now[1, 0, 0x3b] = record(self.abi, "nwkKeyDesc", keySeqNum=8, key=b"q" * 16)
+        self.hold("RETAINED_NETWORK_IDENTITY_OR_KEY_CHANGED")
+
+    def test_address_manager_growth_preserves_stock_tail_and_only_adds_empty_rows(self):
+        for index in range(357, 406):
+            self.now[1, 1, index] = record(self.abi, "AddrMgrEntry_t", nwkAddr=0xfffe)
+        self.assertTrue(self.outcome()["semantic_checks_passed"])
+        self.now[1, 1, 405] = record(self.abi, "AddrMgrEntry_t", user=2, extAddr=b"p" * 8)
+        self.hold("ADDRESS_MANAGER_NEW_TAIL_NOT_EMPTY")
+        self.now = copy.deepcopy(self.before)
+        self.now[1, 1, 356] = record(self.abi, "AddrMgrEntry_t", user=4, extAddr=b"b" * 8)
+        self.hold("ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED")
+
+    def test_aps_reference_requires_existing_address_and_security_user(self):
+        table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=9, keyNvId=0)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xfffe) * 2
+        self.now[1, 0, 0x4c] = self.before[1, 0, 0x4c] = table
+        self.now[1, 6, 0] = self.before[1, 6, 0] = record(self.abi, "APSME_ApsLinkKeyNVEntry_t",
+            key=b"k" * 16, txFrmCntr=110, rxFrmCntr=90)
+        self.now[1, 1, 9] = record(self.abi, "AddrMgrEntry_t", user=1, extAddr=b"p" * 8)
+        self.hold("APS_ADDRESS_MANAGER_SECURITY_REFERENCE_INVALID")
+        self.now = copy.deepcopy(self.before)
+        table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=400, keyNvId=0)
+        table += record(self.abi, "ZDSecMgrEntry_t", ami=0xfffe) * 2
+        self.now[1, 0, 0x4c] = table
+        self.hold("APS_ADDRESS_MANAGER_REFERENCE_MISSING")
 
     def test_aggregate_counts_cannot_replace_private_records_or_emit_pass(self):
         capture = bytes(security.FLASH_BYTES)

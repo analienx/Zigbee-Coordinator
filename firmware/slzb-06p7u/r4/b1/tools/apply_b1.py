@@ -13,7 +13,7 @@ from patch_security import patch as patch_security, patch_zglobals, patch_startu
 from patch_host_api import patch as patch_host_api
 from patch_restore_host import patch_restore_host
 from patch_mt_nv_retained import patch as patch_mt_nv_retained
-from patch_mt_zdo_retained import patch as patch_mt_zdo_retained
+from patch_mt_zdo_retained import patch as patch_mt_zdo_retained, patch_app_cnf, APP_CNF_BLOB
 from patch_startup_restore import patch_startup_restore, patch_bdb_restore
 from patch_nwk_rotation import patch_security as patch_nwk_rotation_security, patch_host_api as patch_nwk_rotation_host
 from patch_nv_integrity import patch as patch_nv_integrity
@@ -31,6 +31,7 @@ SDK_STARTUP = "source/ti/zstack/startup/zstackstartup.c"
 SDK_OSAL_NV = "source/ti/zstack/osal/osal_nv.c"
 SDK_MT_SYS = "source/ti/zstack/mt/mt_sys.c"
 SDK_MT_ZDO = "source/ti/zstack/mt/mt_zdo.c"
+SDK_MT_APP_CNF = "source/ti/zstack/mt/mt_app_config.c"
 SDK_BDB = "source/ti/zstack/stack/bdb/bdb.c"
 SDK_MT_VERSION = "source/ti/zstack/mt/mt_version.c"
 SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
@@ -72,6 +73,7 @@ def overlay(sdk, b1_dir):
     src_osal_nv = sdk / SDK_OSAL_NV
     src_mt_sys = sdk / SDK_MT_SYS
     src_mt_zdo = sdk / SDK_MT_ZDO
+    src_mt_app_cnf = sdk / SDK_MT_APP_CNF
     src_bdb = sdk / SDK_BDB
     src_mt_version = sdk / SDK_MT_VERSION
     security = src_security.read_text(encoding="utf-8")
@@ -82,6 +84,7 @@ def overlay(sdk, b1_dir):
     mt_sys = src_mt_sys.read_text(encoding="utf-8")
     # Source-only CI shims omit MT_ZDO. The full pinned native SDK includes it.
     mt_zdo = src_mt_zdo.read_text(encoding="utf-8") if src_mt_zdo.is_file() else None
+    mt_app_cnf = src_mt_app_cnf.read_text(encoding="utf-8") if src_mt_app_cnf.is_file() else None
     bdb = src_bdb.read_text(encoding="utf-8") if src_bdb.is_file() else None
     mt_version = src_mt_version.read_text(encoding="utf-8")
     source = src_nv.read_text(encoding="utf-8")
@@ -98,6 +101,7 @@ def overlay(sdk, b1_dir):
             or git_blob_sha(osal_nv) != SHA_OSAL_NV
             or git_blob_sha(mt_sys) != SHA_MT_SYS
             or (mt_zdo is not None and git_blob_sha(mt_zdo) != SHA_MT_ZDO)
+            or (mt_app_cnf is not None and git_blob_sha(mt_app_cnf) != APP_CNF_BLOB)
             or (bdb is not None and git_blob_sha(bdb) != SHA_BDB)
             or git_blob_sha(mt_version) != SHA_MT_VERSION):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
@@ -385,6 +389,10 @@ def overlay(sdk, b1_dir):
     mt_sys = patch_mt_nv_retained(mt_sys)
     if mt_zdo is not None:
         mt_zdo = patch_mt_zdo_retained(mt_zdo)
+    if mt_app_cnf is not None:
+        if mt_zdo is None:
+            raise RuntimeError("APP_CNF must not bypass missing MT_ZDO guard")
+        mt_app_cnf = patch_app_cnf(mt_app_cnf)
     if bdb is not None:
         bdb = patch_bdb_restore(bdb)
 
@@ -450,6 +458,8 @@ def overlay(sdk, b1_dir):
     src_mt_sys.write_text(mt_sys, encoding="utf-8")
     if mt_zdo is not None:
         src_mt_zdo.write_text(mt_zdo, encoding="utf-8")
+    if mt_app_cnf is not None:
+        src_mt_app_cnf.write_text(mt_app_cnf, encoding="utf-8")
     if bdb is not None:
         src_bdb.write_text(bdb, encoding="utf-8")
     src_mt_version.write_text(mt_version, encoding="utf-8")

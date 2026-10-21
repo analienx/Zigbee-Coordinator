@@ -79,6 +79,14 @@ def patch(source: str) -> str:
                           "retained MT NV string declarations")
     anchor = "static void MT_SysOsalNVWrite(uint8_t *pBuf)\n{"
     source = replace_once(source, anchor, SUPPORT + "\n" + anchor, "retained MT NV helper")
+    source = replace_once(source,
+        'uint8_t MT_SysCommandProcessing(uint8_t *pBuf)\n{',
+        'uint8_t MT_SysCommandProcessing(uint8_t *pBuf)\n{\n'
+        '  /* Validate newly exposed reads before MT_ParseNvExtId touches data. */\n'
+        '  if ((pBuf[MT_RPC_POS_CMD1] == MT_SYS_NV_LENGTH && pBuf[0] != 5u) ||\n'
+        '      (pBuf[MT_RPC_POS_CMD1] == MT_SYS_NV_READ && pBuf[0] != 8u))\n'
+        '    return MT_RPC_ERR_LENGTH;\n',
+        "extended NV exact read request lengths")
     for name in HANDLERS:
         signature = "static void " + name + "(uint8_t *pBuf)"
         original = extract_function(source, signature)

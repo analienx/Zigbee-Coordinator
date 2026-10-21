@@ -32,20 +32,34 @@ class TestRestoredStartup(unittest.TestCase):
                         "osal_nv_item_len(ZCD_NV_BDBNODEISONANETWORK) != 1",
                         "osal_nv_item_len(ZCD_NV_LOGICAL_TYPE) != 1"):
             self.assertIn(anchor, result)
-        self.assertIn("static __attribute__((noinline)) uint8_t " + module.HELPER_NAME, result)
-        self.assertIn("retValue = " + module.HELPER_NAME + "();", result)
+        self.assertIn("__attribute__((noinline)) uint8_t " + module.HELPER_NAME, result)
+        self.assertIn("retValue = " + module.HELPER_NAME + "(0x65u, 0x40u);", result)
 
     def test_startup_request_only_queues_and_returns(self):
         result = module.patch(self.source)
-        request = result[result.index("static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)"):]
+        request = result[result.index("__attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(uint8_t subsystem, uint8_t command)"):]
         request = request[:request.index("void b1_mt_zdo_retained_startup_event(void)")]
-        self.assertIn("OsalPortTimers_startTimer(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT,", request)
+        self.assertIn("OsalPortTimers_startTimer(ZDAppTaskID, B1_RETAINED_STARTUP_EXPIRE_EVENT,", request)
         self.assertNotIn("bdb_StartCommissioning", request)
-        self.assertIn("b1_retained_startup_state = 1", request)
+        self.assertIn("b1_startup_admit(subsystem, command)", request)
         event = result[result.index("void b1_mt_zdo_retained_startup_event(void)"):]
         self.assertIn("bdb_StartCommissioning(0)", event)
         self.assertIn("b1_security_runtime_hold_latch()", event)
-        self.assertIn("b1_retained_startup_state = 2", event)
+        self.assertIn("b1_startup_begin()", event)
+
+    def test_app_cnf_mode_zero_is_the_same_guarded_startup(self):
+        source = ('#include "bdb.h"\n'
+                  'static void MT_AppCnfBDBStartCommissioning(uint8_t* pBuf)\n{\n'
+                  '  uint8_t retValue = 0;\n  uint8_t cmdId = 1;\n'
+                  '  bdb_StartCommissioning(*pBuf);\n}\n')
+        modified = module.patch_app_cnf(source)
+        self.assertIn('b1_mt_zdo_retained_startup(0x6fu, cmdId)', modified)
+        self.assertIn('!b1_management_network_ready()', modified)
+        self.assertIn('(*pBuf & 4u)', modified)
+        with self.assertRaises(ValueError):
+            module.patch_app_cnf(modified)
+        apply = (ROOT / 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py').read_text()
+        self.assertIn('mt_app_cnf = patch_app_cnf(mt_app_cnf)', apply)
 
     def test_drift_fails_closed(self):
         with self.assertRaises(ValueError):

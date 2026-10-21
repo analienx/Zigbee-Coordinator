@@ -8,6 +8,9 @@ extern uintptr_t b1_management_test_disable(void);
 extern void b1_management_test_restore(uintptr_t key);
 #define B1_CS_ENTER() b1_management_test_disable()
 #define B1_CS_LEAVE(key) b1_management_test_restore(key)
+/* Standalone legacy harnesses do not extract the native ZDApp scheduler. */
+__attribute__((weak)) void b1_startup_post_run(void) {}
+__attribute__((weak)) void b1_startup_trace_tx_done(void) {}
 #else
 #include <ti/drivers/dpl/HwiP.h>
 #define B1_CS_ENTER() HwiP_disable()
@@ -24,6 +27,17 @@ static uint8_t b1_network_ready_attested;
 static uint8_t b1_network_needs_fresh_validation;
 static uint8_t b1_nv4_measured;
 static uint32_t b1_nv4_result[7];
+static uint8_t b1_boot_startup_state;
+static uint8_t b1_startup_response_subsystem, b1_startup_response_command;
+static uint8_t b1_startup_phase, b1_startup_status, b1_startup_first_failure;
+static uint8_t b1_startup_trace, b1_startup_trace_consumed, b1_startup_srsp_eot;
+static uint8_t b1_startup_nv_stage, b1_startup_nv_op;
+static uint16_t b1_startup_index, b1_startup_nv_item, b1_startup_nv_sub;
+static uint32_t b1_startup_sequence, b1_startup_nv_sequence;
+/* A numeric cookie survives freeing the original NPI queue record. */
+static uint8_t b1_tx_kind, b1_tx_complete, b1_tx_accepted, b1_tx_eot;
+static uint16_t b1_tx_length, b1_trace_expected_sequence;
+static uint8_t b1_trace_expected;
 
 static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
 {
@@ -36,6 +50,8 @@ static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
     b1_management_stage = stage;
     b1_network_ready_attested = 0u; /* irreversible fault revokes ready */
     b1_management_flags |= flag;
+    if (b1_boot_startup_state != B1_STARTUP_IDLE)
+        b1_boot_startup_state = B1_STARTUP_FAILED;
     B1_CS_LEAVE(key);
 }
 
@@ -148,6 +164,7 @@ void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore
     {
         b1_network_ready_attested = 1u;
         b1_management_stage = B1_STAGE_NETWORK_READY;
+        b1_boot_startup_state = B1_STARTUP_READY;
     }
     B1_CS_LEAVE(key);
 }
@@ -201,6 +218,237 @@ static void b1_nv4_pack16(uint8_t *out, uint32_t value)
     if (value > 0xffffu) value = 0xffffu;
     out[0] = (uint8_t)value;
     out[1] = (uint8_t)(value >> 8u);
+}
+
+uint8_t b1_startup_state(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    uint8_t state = b1_boot_startup_state;
+    B1_CS_LEAVE(key);
+    return state;
+}
+
+int b1_startup_admit(uint8_t subsystem, uint8_t command)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int okay = 0;
+    if (b1_network_ready_attested && b1_management_first_error == 0u)
+        okay = 1; /* Ready requests are idempotent: no second BDB call. */
+    else if (b1_boot_startup_state == B1_STARTUP_IDLE &&
+             b1_management_first_error == 0u)
+    {
+        b1_startup_response_subsystem = subsystem;
+        b1_startup_response_command = command;
+        b1_boot_startup_state = B1_STARTUP_WAIT_SRSP_TX;
+        b1_startup_phase = B1_PHASE_ADMITTED;
+        ++b1_startup_sequence;
+        okay = 1;
+    }
+    B1_CS_LEAVE(key);
+    return okay;
+}
+
+int b1_startup_begin(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int okay = b1_boot_startup_state == B1_STARTUP_QUEUED &&
+               b1_management_first_error == 0u;
+    if (okay) b1_boot_startup_state = B1_STARTUP_RUNNING;
+    B1_CS_LEAVE(key);
+    return okay;
+}
+
+void b1_startup_fail(uint8_t reason)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_boot_startup_state = B1_STARTUP_FAILED;
+    if (b1_startup_first_failure == 0u) b1_startup_first_failure = reason;
+    B1_CS_LEAVE(key);
+}
+
+void b1_startup_expire(void)
+{
+    if (b1_startup_state() == B1_STARTUP_WAIT_SRSP_TX)
+    {
+        b1_startup_fail(B1_ERROR_STARTUP_TX_TIMEOUT);
+        b1_management_transport_failed(B1_ERROR_STARTUP_TX_TIMEOUT);
+    }
+}
+
+int b1_startup_trace_armed(void) { return b1_startup_trace != 0u; }
+
+void b1_startup_note_phase(uint8_t phase, uint8_t status, uint16_t index)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (b1_boot_startup_state == B1_STARTUP_RUNNING)
+    {
+        b1_startup_phase = phase;
+        b1_startup_status = status;
+        b1_startup_index = index;
+        ++b1_startup_sequence;
+    }
+    B1_CS_LEAVE(key);
+}
+
+void b1_startup_note_nv(uint8_t stage, uint8_t op, uint16_t item,
+                        uint16_t sub, uint8_t status)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (b1_boot_startup_state == B1_STARTUP_RUNNING)
+    {
+        b1_startup_nv_stage = stage;
+        b1_startup_nv_op = op;
+        b1_startup_nv_item = item;
+        b1_startup_nv_sub = sub;
+        b1_startup_status = status;
+        ++b1_startup_nv_sequence;
+    }
+    B1_CS_LEAVE(key);
+}
+
+static void b1_startup_pack32(uint8_t *out, uint32_t value)
+{
+    uint8_t i;
+    for (i = 0u; i < 4u; ++i) out[i] = (uint8_t)(value >> (i * 8u));
+}
+
+void b1_startup_snapshot(uint8_t reply[B1_STARTUP_REPLY_SIZE])
+{
+    uintptr_t key = B1_CS_ENTER();
+    memset(reply, 0, B1_STARTUP_REPLY_SIZE);
+    memcpy(reply, "B1P1", 4u);
+    reply[4] = 1u; reply[5] = B1_STARTUP_REPLY_SIZE;
+    reply[6] = b1_boot_startup_state; reply[7] = b1_startup_phase;
+    reply[8] = b1_startup_status; reply[9] = b1_startup_first_failure;
+    reply[10] = (uint8_t)((b1_startup_trace ? 1u : 0u) |
+                         (b1_startup_srsp_eot ? 2u : 0u) |
+                         (b1_trace_expected ? 4u : 0u));
+    reply[11] = b1_startup_nv_stage;
+#ifdef B1_BUILD_DIGEST_BYTES
+    {
+        static const uint8_t digest[4] = { B1_BUILD_DIGEST_BYTES };
+        memcpy(reply + 12, digest, sizeof(digest));
+    }
+#endif
+    b1_startup_pack32(reply + 16, b1_startup_sequence);
+    b1_nv4_pack16(reply + 20, b1_startup_index);
+    reply[22] = b1_startup_nv_op;
+    b1_startup_pack32(reply + 24, b1_startup_nv_sequence);
+    b1_nv4_pack16(reply + 28, b1_startup_nv_item);
+    b1_nv4_pack16(reply + 30, b1_startup_nv_sub);
+    B1_CS_LEAVE(key);
+}
+
+uint8_t b1_startup_query(const uint8_t *frame,
+                        uint8_t reply[B1_STARTUP_REPLY_SIZE], uint8_t *error)
+{
+    static const uint8_t prefix[6] = { 'B','1','Q','1',1u,8u };
+    uintptr_t key;
+    if (frame == NULL || reply == NULL || error == NULL) return B1_MT_DROP;
+    if ((frame[1] & 0x1fu) != 1u || frame[2] != B1_STATUS_COMMAND)
+        return B1_MT_CONTINUE;
+    if (frame[0] != B1_STATUS_QUERY_SIZE) return B1_MT_CONTINUE;
+    if (frame[9] != 2u) return B1_MT_CONTINUE; /* op0/op1 ABI is unchanged. */
+    *error = 3u;
+    if (frame[1] != 0x21u) return B1_MT_DROP;
+    if (memcmp(frame + 3, prefix, sizeof(prefix)) != 0 || frame[10] > 1u)
+        return B1_MT_REJECT;
+    key = B1_CS_ENTER();
+    if (frame[10] == 1u)
+    {
+        if (b1_boot_startup_state != B1_STARTUP_IDLE ||
+            b1_startup_trace_consumed || b1_management_first_error != 0u)
+        { B1_CS_LEAVE(key); return B1_MT_REJECT; }
+        b1_startup_trace = b1_startup_trace_consumed = 1u;
+    }
+    B1_CS_LEAVE(key);
+    b1_startup_snapshot(reply);
+    return B1_MT_STATUS;
+}
+
+void b1_startup_trace_expect(uint16_t sequence)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_trace_expected_sequence = sequence;
+    b1_trace_expected = 1u;
+    B1_CS_LEAVE(key);
+}
+
+/* Called by the original UART owner under its existing submission CS. */
+void b1_startup_tx_submit(const uint8_t *frame, uint16_t length)
+{
+    uint8_t check = 0u;
+    uint16_t i;
+    uintptr_t key = B1_CS_ENTER();
+    uint8_t kind = 0u;
+    if (frame != NULL && length >= 5u && frame[0] == 0xfeu &&
+        length == (uint16_t)(frame[1] + 5u))
+    {
+        for (i = 1u; i < length; ++i) check ^= frame[i];
+        if (check == 0u && length == 6u && frame[1] == 1u && frame[4] == 0u &&
+            b1_boot_startup_state == B1_STARTUP_WAIT_SRSP_TX &&
+            frame[2] == b1_startup_response_subsystem &&
+            frame[3] == b1_startup_response_command) kind = 1u;
+        if (check == 0u && length == B1_STARTUP_REPLY_SIZE + 5u &&
+            frame[2] == 0x41u && frame[3] == B1_STARTUP_TRACE_COMMAND &&
+            b1_trace_expected && frame[20] == (uint8_t)b1_trace_expected_sequence &&
+            frame[21] == (uint8_t)(b1_trace_expected_sequence >> 8u)) kind = 2u;
+    }
+    /* Later ordinary messages must not erase an SRSP waiting for wire EOT. */
+    if (kind != 0u && b1_tx_kind == 0u)
+    {
+        b1_tx_kind = kind; b1_tx_length = length;
+        b1_tx_complete = b1_tx_accepted = b1_tx_eot = 0u;
+    }
+    B1_CS_LEAVE(key);
+}
+
+static void b1_startup_tx_publish(void)
+{
+    uint8_t action = 0u;
+    uintptr_t key = B1_CS_ENTER();
+    if (b1_tx_kind && b1_tx_complete && b1_tx_accepted && b1_tx_eot)
+    {
+        action = b1_tx_kind;
+        b1_tx_kind = 0u;
+        if (action == 1u && b1_boot_startup_state == B1_STARTUP_WAIT_SRSP_TX)
+        {
+            b1_startup_srsp_eot = 1u;
+            b1_boot_startup_state = B1_STARTUP_QUEUED;
+        }
+        else if (action == 1u) action = 0u;
+        if (action == 2u) b1_trace_expected = 0u;
+    }
+    B1_CS_LEAVE(key);
+    if (action == 1u) b1_startup_post_run();
+    else if (action == 2u) b1_startup_trace_tx_done();
+}
+
+void b1_startup_tx_result(uint16_t length, int success)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (b1_tx_kind && !b1_tx_complete && success && length == b1_tx_length)
+        b1_tx_complete = 1u;
+    B1_CS_LEAVE(key);
+    if (!success) b1_startup_fail(B1_ERROR_UART_WRITE);
+    b1_startup_tx_publish();
+}
+
+void b1_startup_tx_accepted(uint16_t length, int success)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (b1_tx_kind && success && length == b1_tx_length) b1_tx_accepted = 1u;
+    B1_CS_LEAVE(key);
+    if (!success) b1_startup_fail(B1_ERROR_UART_WRITE);
+    b1_startup_tx_publish();
+}
+
+void b1_startup_tx_eot(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (b1_tx_kind) b1_tx_eot = 1u;
+    B1_CS_LEAVE(key);
+    b1_startup_tx_publish();
 }
 
 uint8_t b1_management_mt_filter(const uint8_t *frame,
@@ -304,6 +552,7 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
             if (frame[1] != 0x2fu) return B1_MT_DROP;
             if (frame[0] != 1u) { *rpc_error = 4u; return B1_MT_REJECT; }
             if (frame[3] & 4u) return B1_MT_REJECT;
+            if (frame[3] != 0u && !network_ready) return B1_MT_REJECT;
         }
     }
     if (!held) return B1_MT_CONTINUE;

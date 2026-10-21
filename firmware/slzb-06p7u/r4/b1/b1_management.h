@@ -21,6 +21,24 @@
 #define B1_ERROR_MT_NOT_REGISTERED 0x65u
 #define B1_ERROR_NPI_RX_OVERFLOW 0x66u
 #define B1_ERROR_UART_WRITE 0x67u
+#define B1_ERROR_STARTUP_TX_TIMEOUT 0x68u
+#define B1_STARTUP_REPLY_SIZE 32u
+#define B1_STARTUP_TRACE_COMMAND 0xF3u
+
+enum {
+    B1_STARTUP_IDLE = 0, B1_STARTUP_WAIT_SRSP_TX = 1,
+    B1_STARTUP_QUEUED = 2, B1_STARTUP_RUNNING = 3,
+    B1_STARTUP_READY = 4, B1_STARTUP_FAILED = 5
+};
+enum {
+    B1_PHASE_ADMITTED = 1, B1_PHASE_BDB = 2, B1_PHASE_GLOBALS = 3,
+    B1_PHASE_CAPACITY = 4, B1_PHASE_NLME_INIT = 5,
+    B1_PHASE_NLME_RESTORE = 6, B1_PHASE_NWK_RESERVE = 7,
+    B1_PHASE_SECURITY = 8, B1_PHASE_SEC_ENTRIES = 9,
+    B1_PHASE_SSP = 10, B1_PHASE_SEC_CONFIG = 11,
+    B1_PHASE_NETWORK_INIT = 12, B1_PHASE_NETWORK_START = 13,
+    B1_PHASE_COORDINATOR = 14, B1_PHASE_CONFIGURED = 15
+};
 
 enum {
     B1_STAGE_PRE_BOOT = 0,
@@ -76,4 +94,26 @@ int b1_management_network_ready(void);
 uint8_t b1_management_mt_filter(const uint8_t *frame,
                               uint8_t reply[B1_STATUS_REPLY_SIZE],
                               uint8_t *rpc_error);
+/* Shared per-boot startup admission; all helpers below are RAM-only. */
+uint8_t b1_startup_state(void);
+int b1_startup_admit(uint8_t response_subsystem, uint8_t response_command);
+int b1_startup_begin(void);
+void b1_startup_expire(void);
+void b1_startup_fail(uint8_t reason);
+void b1_startup_note_phase(uint8_t phase, uint8_t status, uint16_t index);
+void b1_startup_note_nv(uint8_t stage, uint8_t op, uint16_t item,
+                        uint16_t sub, uint8_t status);
+int b1_startup_trace_armed(void);
+uint8_t b1_startup_query(const uint8_t *frame,
+                        uint8_t reply[B1_STARTUP_REPLY_SIZE], uint8_t *error);
+void b1_startup_snapshot(uint8_t reply[B1_STARTUP_REPLY_SIZE]);
+void b1_startup_tx_submit(const uint8_t *frame, uint16_t length);
+void b1_startup_tx_result(uint16_t length, int success);
+void b1_startup_tx_accepted(uint16_t length, int success);
+void b1_startup_tx_eot(void);
+/* Native stack-task hooks are defined by the pinned MT_ZDO overlay. */
+void b1_startup_post_run(void);
+int b1_startup_checkpoint(uint8_t phase);
+void b1_startup_trace_tx_done(void);
+void b1_startup_trace_expect(uint16_t sequence);
 #endif

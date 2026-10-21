@@ -35,6 +35,8 @@ SOURCE_PATHS = (
     SDK_MT_VERSION,  # do not shift existing SOURCE_PATHS harness indices
     "source/ti/zstack/mt/mt_zdo.c",
     "source/ti/zstack/stack/bdb/bdb.c",
+    "source/ti/common/nv/nvintf.h",
+    "source/ti/zstack/mt/mt_app_config.c",
 )
 
 
@@ -71,8 +73,18 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     sdk = work / "sdk"
     fetch_sources(sdk)
+    pristine_nv = work / "pristine-nvocmp.c"
+    pristine_nv.write_bytes((sdk / SOURCE_PATHS[0]).read_bytes())
     receipt = overlay(sdk, b1)
-    # Zigbee2MQTT/Herdsman uses MT SYS extended NV length/read on startup.
+    # Fail if the alternative BDB commissioning handler still bypasses
+    # guarded one-attempt retained startup; native links both MT components.
+    app_cnf = (sdk / "source/ti/zstack/mt/mt_app_config.c").read_text(encoding="utf-8")
+    if "b1_mt_zdo_retained_startup(0x6fu, cmdId)" not in app_cnf or \
+            "if (*pBuf == 0u)" not in app_cnf or \
+            "!b1_management_network_ready()" not in app_cnf:
+        raise RuntimeError("APP_CNF_BYPASSES_COMMON_RETAINED_STARTUP")
+    receipt["app_cnf_guarded_retained_entry"] = True
+    # Zigbee2MQTT/Herdsman uses extended NV for security tables and backups.
     # TI disables these dispatch cases unless FEATURE_NVEXID is enabled.
     mt_sys = (sdk / "source/ti/zstack/mt/mt_sys.c").read_text(encoding="utf-8")
     flag = "#define FEATURE_NVEXID 1"
@@ -133,6 +145,13 @@ def main():
                         "intended_failure": evidence,
                         "generated_c_sha256": hashlib.sha256(mutated.read_bytes()).hexdigest()})
 
+    environment.update(R4_TI_NVOCMP_SOURCE=str(pristine_nv),
+                       R4_TI_CRC_SOURCE=str(sdk / SOURCE_PATHS[6]),
+                       R4_TI_NVINTF_SOURCE=str(sdk / "source/ti/common/nv/nvintf.h"))
+    run([sys.executable, "-m", "unittest", "-v", "tests.test_r4_nv4_startup_replay"], check=True)
+    results.append({"test":"genuine_ti_nv4_startup_append_replay", "result":"PASS",
+                    "classification":"HOSTED_SYNTHETIC_NOT_RF"})
+
     positive(compile_c(b1 / "tests/test_admission.c", "admission"))
     harnesses = (
         ("nvocmp_init", "make_nvocmp_init_harness.py", SOURCE_PATHS[0], ((),)),
@@ -164,6 +183,7 @@ def main():
              "marker_missing", "marker_existing", "marker_unconfigured", "marker_length",
              "marker_write_fail", "marker_readback"))),
         ("osal_nv", "make_osal_nv_harness.py", SOURCE_PATHS[8], ((),)),
+        ("retained_capacity", "make_nv_capacity_harness.py", SOURCE_PATHS[8], ((),)),
     )
     generated = {}
     for name, generator, relative, scenarios in harnesses:
@@ -171,7 +191,7 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              "--source", sdk / relative, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api", "retained_mt_nv", "retained_mt_zdo")),
+        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api", "retained_mt_nv", "retained_mt_zdo", "retained_capacity")),
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)

@@ -2,6 +2,7 @@
 import asyncio
 import binascii
 import importlib.util
+import json
 from pathlib import Path
 import struct
 import sys
@@ -62,6 +63,48 @@ def capture_args(plan):
             "expected_live_identity_sha256": LIVE}
 
 
+def upgrade_inputs(*, shrink=False):
+    old = inputs()
+    installed = m.prepare(**old)
+    capture = bytearray(installed.snapshot)
+    for address, payload in installed.sectors.items():
+        capture[address:address + m.SECTOR] = payload
+    capture[0xA4004] ^= 1  # legitimate post-boot NV is never a rollback payload
+    capture = bytes(capture)
+    new = inputs()
+    vector = struct.pack("<II", 0x20022000, 0x181) + b"\x00" * 0x34
+    lines = [ihex_record(0, 0, vector), ihex_record(0, 0x180, b"\x00\xbf")]
+    if not shrink:
+        lines.append(ihex_record(0, 0x2000, b"\x01\xbf"))
+    new["app_hex"] = ("\n".join(lines + [ihex_record(1, 0, b"")]) + "\n").encode()
+    new["handoff"] = old["handoff"][:-1] + b"\x00"
+    candidate = dict(new["candidate"], source_sha="4" * 40,
+        app_hex_sha256=m.sha(new["app_hex"]), handoff_sha256=m.sha(new["handoff"]))
+    receipt = {"schema": "r4-p7u-stock20260311-compiled-handoff-v1",
+        "status": "COMPILED_M4F_SINGLE_SECTOR_TRANSFER_AUDITED",
+        "sector_sha256": candidate["handoff_sha256"], "profile_sha256": candidate["profile_sha256"],
+        "source_native_manifest_sha256": candidate["native_manifest_sha256"],
+        "app_initial_sp": "0x20022000", "app_reset_thumb": "0x181"}
+    receipt = json.dumps(receipt).encode()
+    candidate["files"] = {"handoff-receipt.json": m.sha(receipt)}
+    security = dict(new["security_receipt"], capture_sha256=m.sha(capture),
+                    baseline_capture_sha256=installed.manifest["capture_sha256"])
+    new.update(candidate=candidate, expected_candidate_sha256=m.sha(m.canonical(candidate)),
+        pass1=capture, pass2=capture, expected_capture_sha256=m.sha(capture),
+        security_receipt=security, expected_security_receipt_sha256=m.sha(m.canonical(security)))
+    result = {"status": "APP_AND_AC000_VERIFIED_STILL_IN_BSL",
+              "written_sectors": [a for a in installed.manifest["program_order"]
+                                  if installed.sectors[a] != installed.snapshot[a:a + m.SECTOR]],
+              "nv_touched": False, "ccfg_touched": False, "reset_issued": False,
+              "automatic_rollback": False}
+    return dict(new, installed_plan=installed,
+        expected_installed_plan_sha256=installed.manifest["plan_sha256"],
+        installed_candidate=old["candidate"], expected_installed_candidate_sha256=old["expected_candidate_sha256"],
+        installed_app_hex=old["app_hex"], installed_handoff=old["handoff"],
+        installed_result=result, expected_installed_result_sha256=m.sha(m.canonical(result)),
+        handoff_receipt=receipt)
+
+
 class FakeROM:
     def __init__(self, capture):
         self.image = bytearray(capture)
@@ -104,6 +147,49 @@ class FakeROM:
 
 
 class CurrentTransitionTests(unittest.TestCase):
+    def test_known_r4_upgrade_uses_fresh_nv_and_retires_only_old_owned_app(self):
+        data = upgrade_inputs(shrink=True)
+        plan = m.prepare_upgrade(**data)
+        self.assertEqual(plan.manifest["plan_kind"], "UPGRADE_KNOWN_R4_APP_AND_COMPILED_HANDOFF")
+        self.assertEqual(plan.manifest["retired_owned_app_sectors"], [0x2000])
+        self.assertEqual(plan.sectors[0x2000], b"\xff" * m.SECTOR)
+        self.assertEqual(plan.snapshot[0xA4000:m.BOOT], data["pass1"][0xA4000:m.BOOT])
+        self.assertEqual(set(plan.sectors), {0, 0x2000, m.BOOT})
+        self.assertEqual(plan.manifest["program_order"], [0x2000, 0, m.BOOT])
+        common = {k: data[k] for k in inputs()}
+        with self.assertRaisesRegex(ValueError, "CURRENT_FACTORY_BOOT_OR_CCFG"):
+            m.prepare(**common)
+
+    def test_upgrade_rejects_partial_pair_and_unexplained_non_nv_drift(self):
+        for address in (0, 0x2000, 0x8000, m.BOOT, m.TOP):
+            data = upgrade_inputs()
+            damaged = bytearray(data["pass1"])
+            damaged[address] ^= 1
+            damaged = bytes(damaged)
+            data.update(pass1=damaged, pass2=damaged, expected_capture_sha256=m.sha(damaged))
+            data["security_receipt"]["capture_sha256"] = m.sha(damaged)
+            data["expected_security_receipt_sha256"] = m.sha(m.canonical(data["security_receipt"]))
+            with self.subTest(address=hex(address)), self.assertRaisesRegex(ValueError, "TRANSITION_BLOCKED"):
+                m.prepare_upgrade(**data)
+
+    def test_upgrade_requires_bound_success_and_matching_compiled_handoff(self):
+        for failure in ("receipt", "handoff_pair", "baseline"):
+            data = upgrade_inputs()
+            if failure == "receipt":
+                data["installed_result"]["nv_touched"] = True
+                data["expected_installed_result_sha256"] = m.sha(m.canonical(data["installed_result"]))
+            elif failure == "handoff_pair":
+                receipt = json.loads(data["handoff_receipt"])
+                receipt["app_reset_thumb"] = "0x101"
+                data["handoff_receipt"] = json.dumps(receipt).encode()
+                data["candidate"]["files"]["handoff-receipt.json"] = m.sha(data["handoff_receipt"])
+                data["expected_candidate_sha256"] = m.sha(m.canonical(data["candidate"]))
+            else:
+                data["security_receipt"]["baseline_capture_sha256"] = "f" * 64
+                data["expected_security_receipt_sha256"] = m.sha(m.canonical(data["security_receipt"]))
+            with self.subTest(failure=failure), self.assertRaisesRegex(ValueError, "TRANSITION_BLOCKED"):
+                m.prepare_upgrade(**data)
+
     def test_complete_order_protects_nv_top_and_commits_boot_vectors_last(self):
         async def scenario():
             data = inputs()

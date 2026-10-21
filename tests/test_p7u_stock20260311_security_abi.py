@@ -19,7 +19,11 @@ def words() -> list[int]:
         result.append(128)
         for index, _ in enumerate(fields):
             result.extend((index * 4, 4))
-    result.extend((8, 300, 3, 5, 1000, 10))
+    constants = {"NWK_ROUTER": 8, "ZDSECMGR_TC_DEVICE_MAX": 300, "ZDSECMGR_ENTRY_MAX": 3,
+                 "MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES": 5, "MAX_APS_FRAMECOUNTER_CHANGES": 1000,
+                 "MAX_TCLK_FRAMECOUNTER_CHANGES": 10, "NWK_MAX_ADDRESSES": 406,
+                 "ADDRMGR_USER_SECURITY": 2}
+    result.extend(constants[name] for name in abi.CONSTANTS)
     return result
 
 
@@ -28,7 +32,9 @@ class SecurityAbiTests(unittest.TestCase):
         raw = words()
         result = abi.decode_words(struct.pack("<%dI" % len(raw), *raw))
         self.assertEqual(result["constants"]["ZDSECMGR_TC_DEVICE_MAX"], 300)
-        for bad in (raw[:-1], [0] + raw[1:], raw[:-5] + [192] + raw[-4:]):
+        changed_capacity = list(raw)
+        changed_capacity[-len(abi.CONSTANTS) + abi.CONSTANTS.index("ZDSECMGR_TC_DEVICE_MAX")] = 192
+        for bad in (raw[:-1], [0] + raw[1:], changed_capacity):
             with self.subTest(length=len(bad)):
                 with self.assertRaises(ValueError):
                     abi.decode_words(struct.pack("<%dI" % len(bad), *bad))
@@ -65,6 +71,8 @@ class SecurityAbiTests(unittest.TestCase):
         text = abi.declaration()
         self.assertIn("offsetof(ZDSecMgrEntry_t, keyNvId)", text)
         self.assertIn("sizeof(((nwkIB_t *)0)->nwkState)", text)
+        self.assertIn("offsetof(AddrMgrEntry_t, index)", text)
+        self.assertIn("offsetof(nwkIB_t, SecurityLevel)", text)
         self.assertNotIn("main(", text)
         self.assertNotIn("NVS_write", text)
 

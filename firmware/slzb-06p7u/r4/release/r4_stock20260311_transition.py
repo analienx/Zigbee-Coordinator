@@ -79,7 +79,7 @@ def _frozen(plan, expected_plan_sha256):
     return result
 
 
-def prepare(*, candidate: dict, expected_candidate_sha256: str,
+def _prepare_common(*, candidate: dict, expected_candidate_sha256: str,
             app_hex: bytes, handoff: bytes, pass1: bytes, pass2: bytes,
             expected_capture_sha256: str, board_identity_sha256: str,
             security_receipt: dict, expected_security_receipt_sha256: str) -> Transition:
@@ -117,7 +117,7 @@ def prepare(*, candidate: dict, expected_candidate_sha256: str,
                    for k in ('write_attempts', 'erase_attempts', 'compaction_attempts'))):
         deny('RETAINED_SECURITY_NOT_ADMITTED')
     word = lambda address: struct.unpack_from('<I', pass1, address)[0]
-    if (word(0) != 0x96F3B83D or word(0xAFFEC) != BOOT
+    if (word(0xAFFEC) != BOOT
             or word(0xAFFD8) != 0xC5FE0FC5
             or sha(pass1[0xAFFA8:FLASH]) != FACTORY_CCFG_SHA):
         deny('CURRENT_FACTORY_BOOT_OR_CCFG')
@@ -159,6 +159,116 @@ def prepare(*, candidate: dict, expected_candidate_sha256: str,
     return _frozen(Transition(manifest, pass1, sectors), manifest['plan_sha256'])
 
 
+def prepare(*, candidate: dict, expected_candidate_sha256: str,
+            app_hex: bytes, handoff: bytes, pass1: bytes, pass2: bytes,
+            expected_capture_sha256: str, board_identity_sha256: str,
+            security_receipt: dict, expected_security_receipt_sha256: str) -> Transition:
+    """Original stock-to-R4 path; an installed R4 is never a stock baseline."""
+    plan = _prepare_common(candidate=candidate, expected_candidate_sha256=expected_candidate_sha256,
+        app_hex=app_hex, handoff=handoff, pass1=pass1, pass2=pass2,
+        expected_capture_sha256=expected_capture_sha256, board_identity_sha256=board_identity_sha256,
+        security_receipt=security_receipt, expected_security_receipt_sha256=expected_security_receipt_sha256)
+    if struct.unpack_from('<I', plan.snapshot)[0] != 0x96F3B83D:
+        deny('CURRENT_FACTORY_BOOT_OR_CCFG')
+    return plan
+
+
+def prepare_upgrade(*, installed_plan: Transition, expected_installed_plan_sha256: str,
+                    installed_candidate: dict, expected_installed_candidate_sha256: str,
+                    installed_app_hex: bytes, installed_handoff: bytes,
+                    installed_result: dict, expected_installed_result_sha256: str,
+                    handoff_receipt: bytes, **current) -> Transition:
+    """Explicit known-R4 upgrade, from a fresh duplicate same-unit capture.
+
+    The previous private frozen plan and successful write receipt bind the
+    installed public APP/boot pair. Only NV may have evolved since that install.
+    An interrupted/unknown APP or boot is recovery, never an upgrade baseline.
+    """
+    old = _frozen(installed_plan, expected_installed_plan_sha256)
+    if (old.manifest.get('plan_kind') not in ('INSTALL_CURRENT_APP_AND_COMPILED_HANDOFF',
+                                           'UPGRADE_KNOWN_R4_APP_AND_COMPILED_HANDOFF') or
+            old.manifest['candidate_sha256'] != pin(expected_installed_candidate_sha256) or
+            sha(canonical(installed_candidate)) != expected_installed_candidate_sha256 or
+            installed_candidate.get('source_sha') != old.manifest['source_sha'] or
+            sha(installed_app_hex) != installed_candidate.get('app_hex_sha256') or
+            sha(installed_handoff) != installed_candidate.get('handoff_sha256') or
+            installed_handoff != old.sectors[BOOT]):
+        deny('INSTALLED_PUBLIC_PAIR_BINDING')
+    with tempfile.TemporaryDirectory(prefix='p7u-installed-envelope-') as directory:
+        path = Path(directory) / 'installed.hex'
+        path.write_bytes(installed_app_hex)
+        payload, error = _parse_intel_hex(path)
+    if error or not payload or min(payload) != 0 or max(payload) >= APP_LIMIT:
+        deny('INSTALLED_APP_ENVELOPE')
+    old_owned = set(old.sectors) - {BOOT}
+    public_owned = {a // SECTOR * SECTOR for a in payload}
+    if not public_owned.issubset(old_owned):
+        deny('INSTALLED_APP_OWNERSHIP')
+    for address in old_owned:
+        expected = bytes(payload.get(i, 255) for i in range(address, address + SECTOR))
+        if old.sectors[address] != expected:
+            deny('INSTALLED_APP_PLAN_MISMATCH')
+    result = copy.deepcopy(installed_result)
+    expected_writes = [a for a in old.manifest['program_order']
+                       if old.sectors[a] != old.snapshot[a:a + SECTOR]]
+    if (sha(canonical(result)) != pin(expected_installed_result_sha256) or
+            result.get('status') != 'APP_AND_AC000_VERIFIED_STILL_IN_BSL' or
+            result.get('written_sectors') != expected_writes or
+            any(result.get(k) is not False for k in ('nv_touched', 'ccfg_touched',
+                                                    'reset_issued', 'automatic_rollback'))):
+        deny('INSTALLED_SUCCESS_RECEIPT')
+    plan = _prepare_common(**current)
+    if (plan.manifest['board_identity_sha256'] != old.manifest['board_identity_sha256'] or
+            plan.manifest['profile_sha256'] != old.manifest['profile_sha256'] or
+            current['security_receipt'].get('baseline_capture_sha256') != old.manifest['capture_sha256']):
+        deny('UPGRADE_IDENTITY_PROFILE_OR_SECURITY_BASELINE')
+    for address in range(0, FLASH, SECTOR):
+        if 0xA4000 <= address < BOOT:
+            continue
+        expected = old.sectors.get(address, old.snapshot[address:address + SECTOR])
+        if plan.snapshot[address:address + SECTOR] != expected:
+            deny('INSTALLED_PAIR_OR_NON_TARGET_STATE_CHANGED')
+    # The public candidate's hash-bound compiled receipt names the exact APP
+    # reset pair used by its checked handoff; a generic SP-range check cannot
+    # establish compatibility with the previous boot sector.
+    if type(handoff_receipt) is not bytes:
+        deny('UPGRADE_HANDOFF_RECEIPT_BYTES_REQUIRED')
+    try:
+        receipt = json.loads(handoff_receipt)
+    except (ValueError, UnicodeDecodeError):
+        deny('UPGRADE_HANDOFF_RECEIPT_INVALID')
+    candidate = current['candidate']
+    if (sha(handoff_receipt) !=
+            candidate.get('files', {}).get('handoff-receipt.json') or
+            receipt.get('schema') != 'r4-p7u-stock20260311-compiled-handoff-v1' or
+            receipt.get('status') != 'COMPILED_M4F_SINGLE_SECTOR_TRANSFER_AUDITED' or
+            receipt.get('sector_sha256') != candidate['handoff_sha256'] or
+            receipt.get('profile_sha256') != candidate['profile_sha256'] or
+            receipt.get('source_native_manifest_sha256') != candidate['native_manifest_sha256'] or
+            receipt.get('app_initial_sp') != hex(struct.unpack_from('<I', plan.sectors[0])[0]) or
+            receipt.get('app_reset_thumb') != hex(struct.unpack_from('<I', plan.sectors[0], 4)[0])):
+        deny('UPGRADE_APP_HANDOFF_PAIR_NOT_PROVEN')
+    sectors = dict(plan.sectors)
+    retired = old_owned - set(sectors)
+    sectors.update({a: b'\xff' * SECTOR for a in retired})
+    for address in sectors:
+        index = address // SECTOR
+        protection = struct.unpack_from('<I', plan.snapshot, 0xAFFF0 + (index // 32) * 4)[0]
+        if not protection & (1 << (index % 32)):
+            deny('TARGET_WRITE_PROTECTED')
+    manifest = copy.deepcopy(plan.manifest)
+    manifest.pop('plan_sha256')
+    manifest.update(plan_kind='UPGRADE_KNOWN_R4_APP_AND_COMPILED_HANDOFF',
+        installed_plan_sha256=expected_installed_plan_sha256,
+        installed_candidate_sha256=expected_installed_candidate_sha256,
+        installed_result_sha256=expected_installed_result_sha256,
+        retired_owned_app_sectors=sorted(retired),
+        program_order=sorted(set(sectors) - {0, BOOT}) + [0, BOOT],
+        sector_sha256={str(a): sha(b) for a, b in sectors.items()})
+    manifest['plan_sha256'] = sha(canonical(manifest))
+    return _frozen(Transition(manifest, plan.snapshot, sectors), manifest['plan_sha256'])
+
+
 def prepare_recovery(forward: Transition, *, expected_forward_plan_sha256: str,
                      pass1: bytes, pass2: bytes, expected_capture_sha256: str,
                      security_receipt: dict, expected_security_receipt_sha256: str) -> Transition:
@@ -170,7 +280,8 @@ def prepare_recovery(forward: Transition, *, expected_forward_plan_sha256: str,
     Unknown damage outside the forward allowlist/NV cannot be papered over.
     """
     original = _frozen(forward, expected_forward_plan_sha256)
-    if original.manifest.get('plan_kind') != 'INSTALL_CURRENT_APP_AND_COMPILED_HANDOFF':
+    if original.manifest.get('plan_kind') not in ('INSTALL_CURRENT_APP_AND_COMPILED_HANDOFF',
+                                               'UPGRADE_KNOWN_R4_APP_AND_COMPILED_HANDOFF'):
         deny('RECOVERY_REQUIRES_ORIGINAL_INSTALL_PLAN')
     if (type(pass1) is not bytes or type(pass2) is not bytes or len(pass1) != FLASH
             or pass1 != pass2 or sha(pass1) != pin(expected_capture_sha256)):

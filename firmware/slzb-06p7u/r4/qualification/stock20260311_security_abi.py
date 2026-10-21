@@ -20,7 +20,9 @@ SYMBOL = "r4_stock20260311_security_abi"
 MAGIC = 0x52345341
 FIELDS = {
     "nwkIB_t": ("nwkDevAddress", "nwkLogicalChannel", "nwkCoordAddress",
-                "nwkPanId", "nwkState", "extendedPANID", "nwkKeyLoaded"),
+                "nwkPanId", "nwkState", "extendedPANID", "nwkKeyLoaded",
+                "nwkCoordExtAddress", "SecurityLevel", "channelList",
+                "nwkManagerAddr", "nwkUpdateId", "nwkProtocolVersion"),
     "nwkKeyDesc": ("keySeqNum", "key"),
     "nwkActiveKeyItems": ("active", "frameCounter"),
     "nwkSecMaterialDesc_t": ("FrameCounter", "extendedPanID"),
@@ -29,10 +31,13 @@ FIELDS = {
     "APSME_ApsLinkKeyNVEntry_t": ("key", "txFrmCntr", "rxFrmCntr"),
     "nvDeviceListHdr_t": ("numRecs",),
     "ZDSecMgrEntry_t": ("ami", "keyNvId", "authenticateOption"),
+    "AddrMgrEntry_t": ("user", "nwkAddr", "extAddr"),
 }
 CONSTANTS = ("NWK_ROUTER", "ZDSECMGR_TC_DEVICE_MAX", "ZDSECMGR_ENTRY_MAX",
              "MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES", "MAX_APS_FRAMECOUNTER_CHANGES",
-             "MAX_TCLK_FRAMECOUNTER_CHANGES")
+             "MAX_TCLK_FRAMECOUNTER_CHANGES", "NWK_MAX_ADDRESSES", "ADDRMGR_USER_SECURITY")
+# AddrMgr's final index is an API lookup result, never serialized in NV.
+SERIALIZED_SIZES = {"AddrMgrEntry_t": "offsetof(AddrMgrEntry_t, index)"}
 
 
 def sha(raw: bytes) -> str:
@@ -65,13 +70,13 @@ def check_profile(raw: bytes) -> dict:
 def declaration() -> str:
     expressions = ["0x%08Xu" % MAGIC, "1u"]
     for name, fields in FIELDS.items():
-        expressions.append("sizeof(%s)" % name)
+        expressions.append(SERIALIZED_SIZES.get(name, "sizeof(%s)" % name))
         for field in fields:
             expressions.extend(("offsetof(%s, %s)" % (name, field),
                                 "sizeof(((%s *)0)->%s)" % (name, field)))
     expressions.extend(CONSTANTS)
     return ("\n/* Read-only native ABI witness; no runtime initialization. */\n"
-            "#include <stddef.h>\n#include \"nwk_globals.h\"\n"
+            "#include <stddef.h>\n#include \"nwk_globals.h\"\n#include \"addr_mgr.h\"\n"
             "const uint32_t " + SYMBOL + "[] __attribute__((used, retain)) = {\n  " +
             ",\n  ".join(expressions) + "\n};\n")
 
@@ -96,7 +101,9 @@ def decode_words(raw: bytes) -> dict:
     constants = {name: next(values) for name in CONSTANTS}
     if (constants["ZDSECMGR_TC_DEVICE_MAX"] != 300 or
             constants["ZDSECMGR_ENTRY_MAX"] != 3 or
-            constants["MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES"] != 5):
+            constants["MAX_NWK_SEC_MATERIAL_TABLE_ENTRIES"] != 5 or
+            constants["NWK_MAX_ADDRESSES"] != 406 or
+            constants["ADDRMGR_USER_SECURITY"] != 2):
         raise ValueError("SECURITY_ABI_NATIVE_CAPACITY_MISMATCH")
     return {"structs": layouts, "constants": constants}
 
