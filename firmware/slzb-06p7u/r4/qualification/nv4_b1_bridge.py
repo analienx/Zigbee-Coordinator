@@ -184,6 +184,72 @@ INIT_REPAIR_VERIFIED = """        NVOCMP_initNv(&NVOCMP_nvHandle);
 #endif"""
 
 
+# Two real TI8.33 >2-page automatic destructive fallbacks are forbidden on
+# a retained-only coordinator. The read-only observer already rejects all
+# malformed headers and virgin journals. This *second* enforcement prevents
+# vendor internals from silently reformatting on a race/driver mismatch.
+TI_SCAN_ERASE_FALLBACK = """  if(corruptFlag || (pHdr->version != NVOCMP_VERSION) || (pHdr->signature != NVOCMP_SIGNATURE))
+  {
+    // NV page and NV driver versions are different
+    NVOCMP_ALERT(false, "Corrupted or Version/Signature mismatch.")
+    NVOCMP_EXCEPTION(pg, NVINTF_BADVERSION);
+    NVOCMP_failW = NVOCMP_erase(pNvHandle, pg);
+    if(NVOCMP_failW == NVINTF_SUCCESS)
+    {
+      // Get page header
+      NVOCMP_read(pg, NVOCMP_PGHDROFS, (uint8_t *)pHdr, NVOCMP_PGHDRLEN);
+      NVOCMP_getCompactHdr(pg, THISPAGEHDR, &thisHdr);
+      NVOCMP_getCompactHdr(pg, XSRCSTARTHDR, &startHdr);
+      NVOCMP_getCompactHdr(pg, XSRCENDHDR, &endHdr);
+    }
+    else if(NVOCMP_failW == NVINTF_LOWPOWER)
+    {
+      return(NVINTF_LOWPOWER);
+    }
+    else
+    {
+      return(NVINTF_FAILURE);
+    }
+  }"""
+
+TI_SCAN_NO_REFORMAT = """  if(corruptFlag || (pHdr->version != NVOCMP_VERSION) || (pHdr->signature != NVOCMP_SIGNATURE))
+  {
+    /* R4 P0: no scan-time erase of an unknown, retained NV page. */
+    NVOCMP_failF = NVINTF_FAILURE;
+    NVOCMP_failW = NVINTF_FAILURE;
+    b1_nv_runtime_hold_latch();
+    b1_management_hold_nv(B1_NV_HOLD_UNKNOWN_LAYOUT);
+    return NVINTF_FAILURE;
+  }"""
+
+TI_FORCE_CLEAN = """  case NVOCMP_FORCE_CLEAN :
+      // Erase All pages before start
+      for(pg = 0; pg < NVOCMP_NVSIZE; pg++)
+      {
+        NVOCMP_failW |= NVOCMP_erase(pNvHandle, pg);
+      }
+      // init should be followed by force clean
+  case NVOCMP_NORMAL_INIT :
+      // initial state, set head page, act page and tail page
+      pNvHandle->headPage = 0;
+      pNvHandle->tailPage = NVOCMP_NVSIZE - 1;
+      pNvHandle->actPage = 0;
+      pNvHandle->actOffset = pNvHandle->pageInfo[pNvHandle->actPage].offset;
+      NVOCMP_changePageState(pNvHandle, pNvHandle->headPage, NVOCMP_PGRDY);
+      NVOCMP_changePageState(pNvHandle, pNvHandle->tailPage, NVOCMP_PGXDST);
+      break;"""
+
+TI_NEVER_REFORMAT = """  case NVOCMP_FORCE_CLEAN :
+  case NVOCMP_NORMAL_INIT :
+      /* R4 P0: this coordinator MUST retain its network. No blank
+       * initialization or driver-driven erase-all is authorized.
+       * Recoverable journal paths are handled in dedicated TI cases. */
+      NVOCMP_failF = NVINTF_FAILURE;
+      NVOCMP_failW = NVINTF_FAILURE;
+      b1_nv_runtime_hold_latch();
+      b1_management_hold_nv(B1_NV_HOLD_UNKNOWN_LAYOUT);
+      return;"""
+
 MULTIPAGE_SCAN = '''    status = NVOCMP_scanPage(pNvHandle, pg, pPageInfo);
     if(status != NVINTF_SUCCESS)
     {
@@ -238,6 +304,10 @@ def transform(source: str, *, stock_base: int = STOCK_BASE) -> str:
     source = one(source, INIT_REPAIR_HOOK, INIT_REPAIR_VERIFIED,
                  'POST_NATIVE_REPAIR_VERIFICATION')
     source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
+    source = one(source, TI_SCAN_ERASE_FALLBACK, TI_SCAN_NO_REFORMAT,
+                 'NO_SCAN_ERROR_PAGE_ERASE')
+    source = one(source, TI_FORCE_CLEAN, TI_NEVER_REFORMAT,
+                 'NO_FORCE_CLEAN_OR_VIRGIN_FORMAT')
     # The fallback is declared twice in the pinned TI SDK (multi-page and
     # 1/2-page variants). Deny it at both *use sites* as well as before
     # includes, so an included header cannot enable a late destructive path.

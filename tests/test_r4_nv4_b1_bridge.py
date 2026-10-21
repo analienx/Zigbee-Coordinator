@@ -35,6 +35,8 @@ def post_b1_fixture() -> str:
         bridge.INIT_DECLARATION,
         bridge.INIT_REPAIR_HOOK,
         bridge.MULTIPAGE_SCAN,
+        bridge.TI_SCAN_ERASE_FALLBACK,
+        bridge.TI_FORCE_CLEAN,
         '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
         '/* pinned TI multi-page destructive branch */',
         '#endif',
@@ -54,6 +56,10 @@ class Nv4B1BridgeTests(unittest.TestCase):
         self.assertIn('b1_management_hold_nv(reason)', source)
         self.assertIn('b1_nv_runtime_hold_active()', source)
         self.assertIn('B1_NV_HOLD_ITEM_CRC', source)
+        self.assertIn(bridge.TI_SCAN_NO_REFORMAT, source)
+        self.assertIn(bridge.TI_NEVER_REFORMAT, source)
+        self.assertNotIn(bridge.TI_SCAN_ERASE_FALLBACK, source)
+        self.assertNotIn(bridge.TI_FORCE_CLEAN, source)
         self.assertIn('R4_NV4_NO_ZSTACK_RECORDS: reason = B1_NV_HOLD_UNKNOWN_LAYOUT', source)
         self.assertNotIn('admission.semantic_state == R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE', source)
         self.assertIn('R4_NV4_RECOVER_COMPACT_CANDIDATE', source)

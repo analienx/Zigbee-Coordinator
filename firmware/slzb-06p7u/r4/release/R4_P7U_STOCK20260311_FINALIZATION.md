@@ -193,3 +193,15 @@ active record count AND both full logical accumulators, followed by
 normal stock Z-Stack security restoration. This comparison does not
 authorize arbitrary source erasure and does not replace the host's
 PAN/E-PAN/key identity checks or confidential flash backup.
+
+### No destructive TI initialization fallback in retained R4
+
+The exact TI 8.33 `NVOCMP_scanPage` invalid page/header fallback
+previously erased its corrupted sector; the >2-page `NVOCMP_initNv`
+`FORCE_CLEAN` erased all four sectors, and `NORMAL_INIT` created a
+new empty NV journal. The pinned source bridge replaces all three
+paths with sticky runtime HOLD **without NVS_erase or NVS_write**.
+All real TI `NORMAL_RESUME`, `RECOVER_COMPACT` and narrow
+`RECOVER_ERASE` cases remain unchanged; only the proven preflight
+permits those recovery paths. Exact body preimage validation prevents
+a future unreviewed SDK version from silently re-enabling formatting.
