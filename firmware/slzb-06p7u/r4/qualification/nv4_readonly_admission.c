@@ -238,6 +238,11 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u,
                       R4_NV4_STATE_UNKNOWN_HOLD, 0u};
     uint32_t page, active = 0u, full = 0u, destination = 0u, inactive = 0u;
+    uint32_t xsource = 0u, compact_dest = 0u;
+    uint8_t inactive_page = 0xffu, completed_source_page = 0xffu;
+    uint8_t completed_source_erased = 0u;
+    uint8_t candidate_action = 0u; /* TI RECOVER_COMPACT=1, RECOVER_ERASE=2 */
+    uint8_t partial_destination = 0u;
     uint32_t live_count = 0u, zstack_live_count = 0u;
     r4_nv4_markers markers = {0};
     /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
@@ -249,7 +254,7 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         uint32_t base = page * R4_NV4_PAGE_SIZE, end = R4_DATA_START;
         uint32_t off;
         uint16_t logical;
-        uint8_t mode;
+        uint8_t mode, is_discarded_destination;
         if (!bounded_read(reader, ctx, &r, base, header, sizeof(header))) return r;
         /* Real TI NVOCMP_cleanPage can recycle the source to PGNACT=0xFF:
          * the *valid header* is reprogrammed, but data remain erased. It is
@@ -269,6 +274,12 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         logical = (uint16_t)((uint16_t)header[4] |
                              ((uint16_t)header[5] << 8u));
         mode = header[6];
+        /* TI >2-page NVOCMP first marks sources PGCSRC/PGXSRC, then
+         * writes destination PGCDST, and marks the copied destination
+         * PGACT/PGFULL before erasing the old source. The in-progress
+         * XDST bytes are uncommitted and get erased by RECOVER_COMPACT;
+         * NEVER authenticate them as source or require a valid item CRC. */
+        is_discarded_destination = (header[0] == 0xfeu && mode == 0xfeu);
         if ((logical != 0xffffu &&
              (logical < R4_DATA_START || logical > R4_NV4_PAGE_SIZE)) ||
             /* TI NVOCMP PGCSRC=0xF8 is a page MODE, not PGXSRC=0x70.
@@ -279,9 +290,17 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
              * erased journal, but a partial journal still must HOLD. */
             !((mode == 0xffu && erased_compaction_journal(header)) ||
               (mode == 0xfcu && valid_completed_journal(header, page)) ||
-              (mode == 0xf8u && (header[0] == 0x7cu || header[0] == 0x78u) &&
+              (mode == 0xf8u &&
+               (header[0] == 0x7cu || header[0] == 0x78u ||
+                header[0] == 0x70u) &&
                (erased_compaction_journal(header) ||
-                valid_completed_journal(header, page))))) {
+                valid_completed_journal(header, page))) ||
+              (is_discarded_destination) ||
+              /* Destination's final records and source range must already
+               * be fully committed before allowing RECOVER_ERASE. */
+              (mode == 0xfeu &&
+               (header[0] == 0x7cu || header[0] == 0x78u) &&
+               valid_completed_journal(header, page)))) {
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base + 4u;
             return r;
@@ -290,7 +309,8 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
         case 0x7cu: ++active; break;
         case 0x78u: ++full; break;
         case 0xfeu: ++destination; break;
-        case 0xffu: ++inactive; break;
+        case 0xffu: ++inactive; inactive_page = (uint8_t)page; break;
+        case 0x70u: ++xsource; break;
         default:
             r.code = R4_NV4_UNSAFE_PAGE_STATES;
             r.fault_offset = base;
@@ -309,21 +329,68 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
             end = logical;
         }
         if (header[0] == 0xfeu || header[0] == 0xffu) {
-            if (end != R4_DATA_START || logical != 0xffffu ||
-                mode != 0xffu) {
+            if (logical != 0xffffu ||
+                (header[0] == 0xffu && (end != R4_DATA_START || mode != 0xffu)) ||
+                (header[0] == 0xfeu &&
+                 !(is_discarded_destination || (end == R4_DATA_START && mode == 0xffu)))) {
                 r.code = R4_NV4_UNSAFE_PAGE_STATES;
                 r.fault_offset = base + end;
                 return r;
             }
+            if (is_discarded_destination) partial_destination = 1u;
         } else if (!inspect_items(reader, ctx, &r, base, end,
                                   live_ids, &live_count,
                                   &zstack_live_count, &markers)) return r;
+        if (mode == 0xfeu && header[0] != 0xfeu) {
+            ++compact_dest;
+            /* This conservative RECOVER_ERASE gate allows only a SINGLE
+             * source page that has ALREADY BEEN ERASED by TI cleanPage.
+             * A still-live source may contain records not yet copied;
+             * permitting source erasure based on journal metadata alone
+             * could irrevocably lose NIB or monotonic TC counters. */
+            if (header[10] == header[14] &&
+                header[12] == R4_DATA_START && header[13] == 0u) {
+                completed_source_page = header[10];
+                completed_source_erased = 1u;
+            }
+        }
+    }
+    /* Replicate ONLY deterministic TI 8.33 init dispatch. An in-progress
+     * source plus XDST is RECOVER_COMPACT; the tentative destination gets
+     * erased and the surviving CRC-valid source is copied again. A source
+     * plus one blank NACT also chooses RECOVER_COMPACT. An already-complete
+     * destination with committed source-range headers chooses RECOVER_ERASE.
+     * Every other layout HOLDS instead of reaching TI FORCE_CLEAN. */
+    if (xsource == 1u && destination == 1u && !compact_dest &&
+        active + full + inactive + xsource + destination == R4_NV4_PAGES) {
+        candidate_action = 1u;
+    } else if (xsource == 1u && destination == 0u &&
+               inactive == 1u && !compact_dest &&
+               active + full + inactive + xsource == R4_NV4_PAGES) {
+        candidate_action = 1u;
+    } else if (xsource == 0u && destination == 0u &&
+               inactive == 1u && compact_dest == 1u &&
+               completed_source_erased &&
+               completed_source_page == inactive_page &&
+               active + full + inactive == R4_NV4_PAGES) {
+        /* TI has already formatted the source NACT page (no live records).
+         * RECOVER_ERASE will only re-erase that proven-empty page, while
+         * the fully CRC-validated destination owns the active records. */
+        candidate_action = 2u;
+    }
+    if (partial_destination && candidate_action != 1u) {
+        r.code = R4_NV4_UNSAFE_PAGE_STATES;
+        return r;
     }
     /* TI's >2-page normal ring can retain either, both or neither of the
      * other data pages as FULL after cleanPage. A formatted empty NACT page
      * is already authenticated above; FULL1/NACT1 is not a torn topology. */
-    if (active != 1u || destination != 1u || r.active_records == 0u ||
-        full + inactive != R4_NV4_PAGES - 2u) {
+    if ((!candidate_action &&
+         (active != 1u || destination != 1u ||
+          full + inactive != R4_NV4_PAGES - 2u)) ||
+        r.active_records == 0u ||
+        (candidate_action == 1u && xsource != 1u) ||
+        (candidate_action == 2u && !completed_source_erased)) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;
         return r;
     }
@@ -351,6 +418,19 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
             r.semantic_state = R4_NV4_STATE_FORMED_CANDIDATE;
         }
     }
-    r.code = R4_NV4_READONLY_STRUCTURE_ACCEPTED;
+    /* Recover ONLY a formed coordinator. Automatic commissioning and a
+     * blank/newly provisioned network must never inherit this authority. */
+    if (candidate_action) {
+        if (r.semantic_state != R4_NV4_STATE_FORMED_CANDIDATE) {
+            r.code = R4_NV4_UNSAFE_PAGE_STATES;
+            r.semantic_state = R4_NV4_STATE_UNKNOWN_HOLD;
+            return r;
+        }
+        r.code = candidate_action == 1u ?
+            R4_NV4_RECOVER_COMPACT_CANDIDATE :
+            R4_NV4_RECOVER_ERASE_CANDIDATE;
+    } else {
+        r.code = R4_NV4_READONLY_STRUCTURE_ACCEPTED;
+    }
     return r;
 }

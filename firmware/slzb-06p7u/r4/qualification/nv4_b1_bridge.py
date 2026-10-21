@@ -100,6 +100,17 @@ NEW_ADMISSION = '''        {
             case R4_NV4_DUPLICATE_ACTIVE_ID: reason = B1_NV_HOLD_MIXED_LAYOUT; break;
             case R4_NV4_INVALID_STATUS: reason = B1_NV_HOLD_ITEM_HEADER; break;
             case R4_NV4_NO_ZSTACK_RECORDS: reason = B1_NV_HOLD_UNKNOWN_LAYOUT; break;
+            case R4_NV4_RECOVER_COMPACT_CANDIDATE:
+            case R4_NV4_RECOVER_ERASE_CANDIDATE:
+                /* Already formed, complete surviving source. The *only*
+                 * permitted writes are the pinned TI init journal replay.
+                 * Post-init scan below must return a settled formed ring. */
+                if (admission.semantic_state == R4_NV4_STATE_FORMED_CANDIDATE)
+                {
+                    reason = B1_NV2_HEADER_CANDIDATE;
+                    r4_nv4_recovery_pending = 1u;
+                }
+                break;
             case R4_NV4_READONLY_STRUCTURE_ACCEPTED:
                 /* A CRC-valid random record cannot stand in for the stock
                  * coordinator's BDB+logical-type+NIB state. This remains a
@@ -113,7 +124,9 @@ NEW_ADMISSION = '''        {
             default: break;
             }
             b1_management_note_nv_probe(reason);
-            if (admission.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED ||
+            if ((admission.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED &&
+                 admission.code != R4_NV4_RECOVER_COMPACT_CANDIDATE &&
+                 admission.code != R4_NV4_RECOVER_ERASE_CANDIDATE) ||
                 reason != B1_NV2_HEADER_CANDIDATE)
             {
                 NVOCMP_failF = NVINTF_FAILURE;
@@ -136,6 +149,36 @@ READ_CALLBACK_NV4 = '''static int r4_nv4_nvs_read(void *opaque, uint32_t off,
     return NVS_read((NVS_Handle)opaque, off, data, len) ==
            NVS_STATUS_SUCCESS ? 0 : -1;
 }'''
+
+INIT_DECLARATION = "static uint8_t NVOCMP_initNvApi(void *param)\n{"
+INIT_RECOVERY_DECLARATION = (INIT_DECLARATION +
+    "\n#ifndef NV_LINUX\n"
+    "    uint8_t r4_nv4_recovery_pending = 0u;\n"
+    "#endif")
+
+INIT_REPAIR_HOOK = """        NVOCMP_initNv(&NVOCMP_nvHandle);"""
+INIT_REPAIR_VERIFIED = """        NVOCMP_initNv(&NVOCMP_nvHandle);
+#ifndef NV_LINUX
+        if (r4_nv4_recovery_pending)
+        {
+            r4_nv4_result after = r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle);
+            /* No stack startup until the TI native transaction committed
+             * a settled, formed ring with all records still CRC-valid.
+             * Driver errors remain sticky, not merely logged. */
+            if (NVOCMP_failF != NVINTF_SUCCESS ||
+                NVOCMP_failW != NVINTF_SUCCESS ||
+                after.code != R4_NV4_READONLY_STRUCTURE_ACCEPTED ||
+                after.semantic_state != R4_NV4_STATE_FORMED_CANDIDATE)
+            {
+                NVOCMP_failF = NVINTF_FAILURE;
+                NVOCMP_failW = NVINTF_FAILURE;
+                b1_nv_runtime_hold_latch();
+                b1_management_hold_nv(B1_NV_HOLD_MIXED_LAYOUT);
+                return NVOCMP_failF;
+            }
+        }
+#endif"""
+
 
 MULTIPAGE_SCAN = '''    status = NVOCMP_scanPage(pNvHandle, pg, pPageInfo);
     if(status != NVINTF_SUCCESS)
@@ -186,6 +229,10 @@ def transform(source: str, *, stock_base: int = STOCK_BASE) -> str:
     source = one(source, PRE_DIVISION_NV2, expected_pre, 'PRE_DIVISION')
     source = one(source, POST_DIVISION_NV2, POST_DIVISION_NV4, 'POST_DIVISION')
     source = one(source, OLD_ADMISSION, NEW_ADMISSION, 'ADMISSION')
+    source = one(source, INIT_DECLARATION, INIT_RECOVERY_DECLARATION,
+                 'RECOVERY_LOCAL')
+    source = one(source, INIT_REPAIR_HOOK, INIT_REPAIR_VERIFIED,
+                 'POST_NATIVE_REPAIR_VERIFICATION')
     source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
     # The fallback is declared twice in the pinned TI SDK (multi-page and
     # 1/2-page variants). Deny it at both *use sites* as well as before

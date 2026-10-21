@@ -21,7 +21,7 @@ spec.loader.exec_module(forensics)
 class Result(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint32) for name in
                 ('code', 'reads', 'records', 'active_records', 'fault_offset',
-                 'semantic_state')]
+                 'semantic_state', 'semantic_flags')]
 
 
 READ = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
@@ -340,6 +340,73 @@ class Nv4AdmissionTests(unittest.TestCase):
         invalid = bytearray(media)
         invalid[PAGE_SIZE + 64] = 0x5a
         self.assertEqual(self.probe(bytes(invalid)).code, 4)
+
+    def test_ti_powercut_source_and_uncommitted_destination_recovery(self):
+        # Genuine TI >=3-page RECOVER_COMPACT decision: one PGXSRC and XDST.
+        # Source is CRC valid, full formed markers; discarded XDST can be
+        # partially written because TI erases it before recopying source.
+        raw = bytearray(stock_like_semantic(bdb=1, nib=True))
+        raw[0] = 0x70
+        raw[6] = 0xf8
+        raw[3 * PAGE_SIZE + 6] = 0xfe
+        raw[3 * PAGE_SIZE + 16:3 * PAGE_SIZE + 21] = b'\x12\x34\x56\x78\x00'
+        admitted = self.probe(bytes(raw))
+        self.assertEqual((admitted.code, admitted.semantic_state), (12, 2))
+        # Corrupted source must not authorize irreversible destination erase.
+        source_corrupt = bytearray(raw)
+        source_corrupt[16] ^= 0x10
+        self.assertEqual(self.probe(bytes(source_corrupt)).code, 6)
+        # No NIB or formed marker is not an automatic commissioning license.
+        unformed = bytearray(stock_like_semantic())
+        unformed[0] = 0x70
+        unformed[6] = 0xf8
+        unformed[3 * PAGE_SIZE + 6] = 0xfe
+        self.assertEqual(self.probe(bytes(unformed)).code, 4)
+        # A torn page header cannot be delegated to TI's erasing scanPage.
+        bad_header = bytearray(raw)
+        bad_header[3 * PAGE_SIZE + 3] = 0xff
+        self.assertEqual(self.probe(bytes(bad_header)).code, 3)
+
+    def test_native_recover_erase_requires_fully_committed_journal(self):
+        raw = bytearray(stock_like_semantic(bdb=1, nib=True))
+        raw[0] = 0x70                 # PGXSRC still present
+        raw[6] = 0xf8                 # PGCSRC
+        raw[3 * PAGE_SIZE] = 0x7c     # copied destination now ACTIVE
+        raw[3 * PAGE_SIZE + 6] = 0xfe # PGCDST still awaiting source cleanup
+        base = 3 * PAGE_SIZE
+        raw[base+8:base+11] = (16).to_bytes(2, 'little') + bytes((0,))
+        raw[base+12:base+15] = (16).to_bytes(2, 'little') + bytes((0,))
+        # A live PGXSRC has not been proved copied; NEVER erase it.
+        admitted = self.probe(bytes(raw))
+        self.assertNotEqual(admitted.code, 13)
+        torn = bytearray(raw)
+        torn[base+11] = 0xff
+        self.assertEqual(self.probe(bytes(torn)).code, 3)
+        incomplete = bytearray(raw)
+        incomplete[base+14] = 0xff
+        self.assertEqual(self.probe(bytes(incomplete)).code, 4)
+
+        # Safe post-erase phase: the one source page is already formatted
+        # NACT, and a CRC-valid destination holds the formed records.
+        settled = bytearray(stock_like_semantic(bdb=1, nib=True))
+        destination = bytes(settled[16:16 + len(encoded_record(0))] +
+                            settled[16 + len(encoded_record(0)):
+                                    16 + len(encoded_record(0)) +
+                                    len(legacy_osal_record(0x55, b"\x01")) +
+                                    len(legacy_osal_record(0x87, b"\x00")) +
+                                    len(legacy_osal_record(0x03, b"\x00")) +
+                                    len(legacy_osal_record(0x21, b"synthetic-nib-not-a-secret"))])
+        settled[3*PAGE_SIZE] = 0x7c
+        settled[3*PAGE_SIZE + 6] = 0xfe
+        settled[3*PAGE_SIZE + 8:3*PAGE_SIZE + 11] = (
+            len(destination) + 16).to_bytes(2, 'little') + bytes((0,))
+        settled[3*PAGE_SIZE + 12:3*PAGE_SIZE + 15] = (
+            16).to_bytes(2, 'little') + bytes((0,))
+        settled[3*PAGE_SIZE + 16:3*PAGE_SIZE + 16 + len(destination)] = destination
+        settled[0] = 0xff
+        settled[16:PAGE_SIZE] = b'\xff' * (PAGE_SIZE - 16)
+        recovered = self.probe(bytes(settled))
+        self.assertEqual((recovered.code, recovered.semantic_state), (13, 2))
 
     def test_pinned_legacy_osal_markers_yield_only_candidates(self):
         unformed = self.probe(stock_like_semantic())

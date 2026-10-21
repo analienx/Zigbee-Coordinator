@@ -15,7 +15,11 @@ typedef enum {
     R4_NV4_BAD_ITEM = 5, R4_NV4_BAD_CRC = 6,
     R4_NV4_SCAN_LIMIT = 7, R4_NV4_READONLY_STRUCTURE_ACCEPTED = 8,
     R4_NV4_DUPLICATE_ACTIVE_ID = 9, R4_NV4_INVALID_STATUS = 10,
-    R4_NV4_NO_ZSTACK_RECORDS = 11
+    R4_NV4_NO_ZSTACK_RECORDS = 11,
+    /* Read-only authorization to invoke PINNED TI init recovery, NOT a
+     * permission to form a Zigbee network or erase the original source. */
+    R4_NV4_RECOVER_COMPACT_CANDIDATE = 12,
+    R4_NV4_RECOVER_ERASE_CANDIDATE = 13
 } r4_nv4_code;
 /* Observations only: neither candidate authorizes formation, RF or flash. */
 typedef enum {

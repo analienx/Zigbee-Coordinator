@@ -159,3 +159,24 @@ The pinned multi-page TI driver retains `RECOVER_COMPACT` and
 `RECOVER_ERASE` for legitimate interrupted states. The strict R4
 read-only pre-init classifier still HOLDs unrecognized/torn journals;
 no auto-reformat or unconditional TI recovery bypass is introduced.
+
+## R4 native journal recovery boundary
+
+R4 allows the pinned TI 8.33 `RECOVER_COMPACT` when one CRC-verified
+formed-network PGXSRC source survives and the destination is either
+an XDST (possibly partially written and discardable) or a formatted
+empty NACT page. TI recovers the original records; R4 then requires
+a fully settled CRC-valid formed ring and zero sticky NV backend errors
+before Zigbee starts. No new flash copy or restore algorithm is used.
+
+`RECOVER_ERASE` is authorized only after the exact single-page source
+has **already been erased** and formatted NACT, the completed PGCDST
+journal identifies that same source and the remaining destination
+records independently prove the coordinator's formed state.
+A still-live source with a destination journal is **NOT** authority to
+erase source content: without explicit bit-for-bit record equivalence
+that would risk losing security material or rolling back counters.
+These undecidable cuts remain HOLD and require the already-proven
+stock recovery playbook. Automatic FORCE_CLEAN/virgin commissioning
+remain denied. Native compilation and hardware boot still need to pass
+before considering the device image deployable.
