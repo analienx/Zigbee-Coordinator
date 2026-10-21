@@ -37,7 +37,11 @@ def transform(pristine: bytes, crc: bytes, bridged: bytes,
     if hashlib.sha256(bridged).hexdigest() != expected_sha256:
         raise ValueError('B1_NV4_BRIDGED_SOURCE_SHA256_MISMATCH')
     post = bridged.decode('utf-8').replace('\r\n', '\n')
-    if (post.count('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)') != 1 or
+    # R4 P0 now performs a second *read-only* admission after the original
+    # TI journal replay and compares the logical active-item inventory.
+    if (post.count('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)') != 2 or
+            post.count('after.logical_sum != r4_nv4_prior.logical_sum') != 1 or
+            post.count('after.logical_xor != r4_nv4_prior.logical_xor') != 1 or
             post.count('b1_nv_existing_pair = 1u;') != 1 or
             post.count('NVOCMP_NVPAGES != R4_NV4_PAGES') != 2):
         raise ValueError('B1_NV4_BRIDGE_MARKERS_MISSING')
