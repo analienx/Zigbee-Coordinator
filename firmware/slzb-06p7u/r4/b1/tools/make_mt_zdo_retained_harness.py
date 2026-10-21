@@ -40,29 +40,18 @@ PREAMBLE = r'''
 #define B1_STARTUP_FAILED 5u
 enum {ZCD_NV_NIB, ZCD_NV_STARTUP_OPTION,
       ZCD_NV_BDBNODEISONANETWORK, ZCD_NV_LOGICAL_TYPE};
-typedef int Semaphore_Struct;
-typedef Semaphore_Struct *Semaphore_Handle;
-typedef struct {int mode;} Semaphore_Params;
-#define Semaphore_Mode_BINARY 1
-static void Semaphore_Params_init(Semaphore_Params *p) {p->mode=0;}
-static void Semaphore_construct(Semaphore_Struct *p,int count,Semaphore_Params *args)
-{(void)args;*p=count;}
-static Semaphore_Handle Semaphore_handle(Semaphore_Struct *p) {return p;}
 static uint32_t Clock_tickPeriod=1000u, now_ticks;
 static uint32_t Clock_getTicks(void) {return now_ticks;}
-static Semaphore_Struct b1_startup_trace_sem;
-static Semaphore_Handle b1_startup_trace_handle;
 static uint32_t b1_startup_admitted_tick;
 static int held,candidate,security_valid,coordinator,read_fault,bdb_latch,timer_fail,ready;
 static uint8_t ZDAppTaskID=7u, startup_state;
 static uint16_t lengths[4];
 static uint8_t values[4],response;
-static unsigned bdb_calls,response_calls,reads,queued_events,security_latches,timer_starts,timer_stops,failures;
+static unsigned bdb_calls,response_calls,reads,queued_events,security_latches,timer_starts,timer_stops,failures,phase_calls;
 static int b1_nv_runtime_hold_active(void) {return held;}
 static int b1_nv_existing_header_candidate(void) {return candidate;}
 static int b1_sec_restored_network_validated(void) {return security_valid;}
 static int b1_management_network_ready(void) {return ready;}
-static int b1_startup_trace_armed(void) {return 0;}
 static uint8_t b1_startup_admit(uint8_t sub,uint8_t cmd)
 {assert(sub==0x65u&&cmd==0x40u);
  if(startup_state!=B1_STARTUP_IDLE)return 0;
@@ -72,10 +61,10 @@ static uint8_t b1_startup_begin(void)
  startup_state=B1_STARTUP_RUNNING;return 1;}
 static void b1_startup_fail(uint8_t code) {(void)code;++failures;startup_state=B1_STARTUP_FAILED;}
 static void b1_management_transport_failed(uint8_t code) {(void)code;held=1;}
+static uint8_t b1_startup_state(void) {return startup_state;}
+static int b1_management_get_hold_active(void) {return held;}
 static void b1_startup_note_phase(uint8_t phase,uint8_t status,uint16_t idx)
-{assert(phase==B1_PHASE_BDB);(void)status;(void)idx;}
-static int b1_startup_checkpoint(uint8_t phase)
-{assert(phase==B1_PHASE_BDB);return 1;}
+{assert(phase==B1_PHASE_BDB);assert(status==0xffu||status==0u);(void)idx;++phase_calls;}
 static uint16_t osal_nv_item_len(uint16_t id)
 {assert(id<4);return lengths[id];}
 static uint8_t osal_nv_read(uint16_t id,uint16_t offset,uint16_t count,void *out)
@@ -106,8 +95,8 @@ static void reset_case(void)
  lengths[0]=116;for(unsigned i=1;i<4;i++)lengths[i]=1;
  values[1]=0;values[2]=TRUE;values[3]=0;
  startup_state=B1_STARTUP_IDLE;bdb_calls=response_calls=reads=queued_events=0;
- security_latches=timer_starts=timer_stops=failures=0;response=0xff;
- now_ticks=1u;b1_startup_trace_handle=NULL;b1_startup_admitted_tick=0u;}
+ security_latches=timer_starts=timer_stops=failures=phase_calls=0;response=0xff;
+ now_ticks=1u;b1_startup_admitted_tick=0u;}
 static void invoke(int success)
 {uint8_t request[]={2,MT_RPC_CMD_SREQ|MT_RPC_SYS_ZDO,0x40,0,0};
  unsigned before=response_calls;MT_ZdoStartupFromApp(request);
@@ -121,8 +110,15 @@ int main(void)
  invoke(0);assert(bdb_calls==0&&queued_events==0);
  b1_mt_zdo_retained_startup_event();assert(bdb_calls==0);
  wire_eot();assert(queued_events==1&&bdb_calls==0);
- b1_mt_zdo_retained_startup_event();assert(bdb_calls==1&&security_latches==0&&timer_stops==1);
+ b1_mt_zdo_retained_startup_event();assert(bdb_calls==1&&security_latches==0&&timer_stops==1&&phase_calls==2);
  b1_mt_zdo_retained_startup_event();assert(bdb_calls==1);
+ /* Directly exercise the extracted real checkpoint in ARMED-style running
+  * state. No trace UART operation or semaphore is allowed, and each phase
+  * updates only RAM. The MT response stub aborts on any unplanned frame. */
+ reset_case();startup_state=B1_STARTUP_RUNNING;assert(b1_startup_checkpoint(B1_PHASE_BDB));
+ assert(phase_calls==1&&response_calls==0&&bdb_calls==0);
+ held=1;assert(!b1_startup_checkpoint(B1_PHASE_BDB));
+ assert(phase_calls==2&&response_calls==0);
  reset_case();timer_fail=1;invoke(0);assert(failures==1&&startup_state==B1_STARTUP_FAILED);
  reset_case();held=1;invoke(0);assert(reads==0);
  reset_case();candidate=0;invoke(0);assert(reads==0);
@@ -156,12 +152,17 @@ def main():
     signatures=(
         "static uint32_t b1_startup_timeout_ticks(void)",
         "void b1_startup_post_run(void)",
+        "int b1_startup_checkpoint(uint8_t phase)",
         "static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)",
         "__attribute__((noinline)) uint8_t "+HELPER_NAME+"(uint8_t subsystem, uint8_t command)",
         "void b1_mt_zdo_retained_startup_event(void)",
         STARTUP_SIGNATURE.removesuffix("\n{"),
     )
     bodies="\n\n".join(extract_function(source,s) for s in signatures)
+    if ("Semaphore_pend" in bodies or "Semaphore_construct" in bodies or
+            "B1_STARTUP_TRACE_COMMAND" in bodies or
+            bodies.count("b1_startup_checkpoint(uint8_t phase)")!=1):
+        raise ValueError("Blocking diagnostic trace regressed into actual startup")
     if bodies.count("retValue = "+HELPER_NAME+"(0x65u, 0x40u);")!=1:
         raise ValueError("Actual MT ZDO startup does not call the qualified retained helper")
     args.output.write_text(PREAMBLE+bodies+MAIN)

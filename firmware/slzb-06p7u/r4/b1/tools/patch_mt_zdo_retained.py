@@ -24,8 +24,6 @@ HELPER = """/* MT and ZDApp services share TI's stack task. Defer only until the
 #define B1_RETAINED_STARTUP_EVENT 0x00010000u
 #define B1_RETAINED_STARTUP_EXPIRE_EVENT 0x00020000u
 #define B1_RETAINED_STARTUP_TIMEOUT_MS 1000u
-static Semaphore_Struct b1_startup_trace_sem;
-static Semaphore_Handle b1_startup_trace_handle;
 static uint32_t b1_startup_admitted_tick;
 
 static uint32_t b1_startup_timeout_ticks(void)
@@ -44,34 +42,15 @@ void b1_startup_post_run(void)
   }
 }
 
-void b1_startup_trace_tx_done(void)
-{
-  if (b1_startup_trace_handle != NULL) Semaphore_post(b1_startup_trace_handle);
-}
-
-/* Diagnostic wire barriers run only at known-unlocked stack-task boundaries.
- * Waiting on a separate semaphore yields to the existing NPI task. Never call
- * from an NV backend, a critical section, an ISR, or another RTOS task. */
+/* Progress is only RAM state. B1P1 op2 is served by the independent NPI task.
+ * No trace frames, semaphore waits, heap use or NPI calls on this stack task.
+ * A blocked TI restore cannot block the observation owner. */
+void b1_startup_trace_tx_done(void) { /* obsolete wire barrier, never armed */ }
 int b1_startup_checkpoint(uint8_t phase)
 {
-  uint8_t reply[B1_STARTUP_REPLY_SIZE];
-  uint16_t sequence;
   if (b1_startup_state() != B1_STARTUP_RUNNING) return 1;
   b1_startup_note_phase(phase, 0xffu, 0u);
-  if (!b1_startup_trace_armed()) return !b1_management_get_hold_active();
-  if (b1_startup_trace_handle == NULL) goto failed;
-  (void)Semaphore_pend(b1_startup_trace_handle, 0u);
-  b1_startup_snapshot(reply);
-  sequence = (uint16_t)reply[16] | ((uint16_t)reply[17] << 8u);
-  b1_startup_trace_expect(sequence);
-  MT_BuildAndSendZToolResponse(0x41u, B1_STARTUP_TRACE_COMMAND,
-                              B1_STARTUP_REPLY_SIZE, reply);
-  if (!Semaphore_pend(b1_startup_trace_handle, b1_startup_timeout_ticks())) goto failed;
   return !b1_management_get_hold_active();
-failed:
-  b1_startup_fail(B1_ERROR_STARTUP_TX_TIMEOUT);
-  b1_management_transport_failed(B1_ERROR_STARTUP_TX_TIMEOUT);
-  return 0;
 }
 
 static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)
@@ -105,14 +84,6 @@ __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(uint8_t subsystem, 
   if (b1_mt_zdo_retained_valid() != ZSuccess ||
       !b1_startup_admit(subsystem, command))
     return ZFailure;
-  if (b1_startup_trace_armed() && b1_startup_trace_handle == NULL)
-  {
-    Semaphore_Params params;
-    Semaphore_Params_init(&params);
-    params.mode = Semaphore_Mode_BINARY;
-    Semaphore_construct(&b1_startup_trace_sem, 0, &params);
-    b1_startup_trace_handle = Semaphore_handle(&b1_startup_trace_sem);
-  }
   b1_startup_admitted_tick = Clock_getTicks();
   if (OsalPortTimers_startTimer(ZDAppTaskID, B1_RETAINED_STARTUP_EXPIRE_EVENT,
                                B1_RETAINED_STARTUP_TIMEOUT_MS) != SUCCESS)
@@ -150,7 +121,7 @@ def patch(source: str) -> str:
         raise ValueError("P7U MT ZDO source drift: refuse unqualified patch")
     return source.replace(
         header, header + '\n#include "b1_management.h"'
-        '\n#include <ti/sysbios/knl/Semaphore.h>'
+
         '\n#include <ti/sysbios/knl/Clock.h>'
         "\nextern int b1_nv_runtime_hold_active(void);"
         "\nextern int b1_nv_existing_header_candidate(void);"

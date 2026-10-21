@@ -47,6 +47,22 @@ class TestRestoredStartup(unittest.TestCase):
         self.assertIn("b1_security_runtime_hold_latch()", event)
         self.assertIn("b1_startup_begin()", event)
 
+    def test_trace_armed_checkpoint_never_blocks_stack(self):
+        result = module.patch(self.source)
+        start = result.index("int b1_startup_checkpoint(uint8_t phase)")
+        end = result.index("static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)", start)
+        checkpoint = result[start:end]
+        self.assertIn("b1_startup_note_phase(phase, 0xffu, 0u)", checkpoint)
+        self.assertIn("return !b1_management_get_hold_active()", checkpoint)
+        for forbidden in ("Semaphore_", "MT_BuildAndSendZToolResponse", "b1_startup_trace_expect",
+                          "b1_startup_snapshot(", "b1_startup_trace_armed()"):
+            self.assertNotIn(forbidden, checkpoint)
+        self.assertNotIn("#include <ti/sysbios/knl/Semaphore.h>", result)
+        self.assertIn("b1_startup_checkpoint(B1_PHASE_BDB)", result)
+        owner = (ROOT / "firmware/slzb-06p7u/r4/b1/tools/patch_management.py").read_text()
+        self.assertIn("uint8_t action = b1_startup_query(pReq, reply, &error)", owner)
+        self.assertIn("Only strict, bounded, RAM-only startup op2 bypasses the stack task", owner)
+
     def test_app_cnf_mode_zero_is_the_same_guarded_startup(self):
         source = ('#include "bdb.h"\n'
                   'static void MT_AppCnfBDBStartCommissioning(uint8_t* pBuf)\n{\n'
