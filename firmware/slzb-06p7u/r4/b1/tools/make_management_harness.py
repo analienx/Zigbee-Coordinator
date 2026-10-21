@@ -13,6 +13,7 @@ SCENARIOS = (
     "bad_query", "bad_fcs", "areq", "alloc_fail", "npi_queue", "npi_sem",
     "npi_register", "uart_open", "uart_read", "start_hold", "start_healthy", "npi_first",
     "storm", "nv4_detail", "retained_commands", "uncommissioned_commands",
+    "startup_tx_generation", "startup_tx_short",
 )
 
 PREAMBLE = r'''
@@ -223,7 +224,33 @@ static void query(void) {
 }
 int main(int argc,char **argv) {
     assert(argc==2); const char *s=argv[1]; init_dispatch();
-    if(strcmp(s,"start_healthy")==0) {
+    if(strcmp(s,"startup_tx_generation")==0 || strcmp(s,"startup_tx_short")==0) {
+        /* Numeric reservation: an unrelated earlier UART EOT must never run
+         * BDB before the exact admitted SRSP physically leaves the wire. */
+        uint8_t unrelated[]={0xfe,1,0x61,2,0,0x62};
+        uint8_t startup[]={0xfe,1,0x65,0x40,0,0x24};
+        assert(b1_startup_admit(0x65u,0x40u));
+        b1_startup_tx_submit(unrelated,sizeof(unrelated));
+        b1_startup_tx_accepted(sizeof(unrelated),1);
+        b1_startup_tx_result(sizeof(unrelated),1);
+        b1_startup_tx_submit(startup,sizeof(startup));
+        assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
+        if(strcmp(s,"startup_tx_short")==0) {
+            b1_startup_tx_accepted(sizeof(startup),1);
+            b1_startup_tx_result(sizeof(startup)-1,1);
+            assert(b1_startup_state()==B1_STARTUP_FAILED);
+            assert(b1_management_get_hold_active());
+        } else {
+            b1_startup_tx_accepted(sizeof(startup),1);
+            b1_startup_tx_result(sizeof(startup),1);
+            b1_startup_tx_eot(); /* completion of unrelated command */
+            assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
+            b1_startup_tx_eot(); /* exact target SRSP finally completed */
+            assert(b1_startup_state()==B1_STARTUP_QUEUED);
+            assert(b1_startup_begin());
+            assert(!b1_startup_begin());
+        }
+    } else if(strcmp(s,"start_healthy")==0) {
         b1_management_note_mt_registered();
         NPITask_Fxn(0,0);
         assert(mt_id_reads==1 && process_started==1 && sem_posts==1 && npiTaskID==0);
