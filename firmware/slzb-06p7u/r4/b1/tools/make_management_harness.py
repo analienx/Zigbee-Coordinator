@@ -73,6 +73,7 @@ PREAMBLE = r'''
 #define UART2_ReadReturnMode_PARTIAL 1
 #define CONFIG_DISPLAY_UART 0
 #define UART2_STATUS_SUCCESS 0
+#define UART2_EVENT_TX_FINISHED 1u
 typedef uint8_t uint8;
 typedef uint8_t byte;
 typedef uint16_t uint16;
@@ -95,7 +96,9 @@ typedef void (*npiIncomingFrameCBack_t)(uint8_t,uint8_t*,NPIMSG_Type);
 #define MT_SOF 0xFE
 typedef void *UART2_Handle;
 typedef struct { int baudRate, dataLength, stopBits, readMode, writeMode, readReturnMode;
-                 void (*readCallback)(void); void (*writeCallback)(void); } UART2_Params;
+                 void (*readCallback)(void); void (*writeCallback)(void);
+                 uint32_t eventMask;
+                 void (*eventCallback)(UART2_Handle,uint32_t,uint32_t,void*); } UART2_Params;
 typedef struct { int mode; } Semaphore_Params;
 #define MAX_TASKS 15
 typedef int sem_t;
@@ -175,6 +178,8 @@ void NPIRxBuf_ReadFromRxBuf(uint8_t *dst,uint8_t n) {
 uint8_t npiframe_calcMTFCS(uint8_t*,uint8_t);
 void UART2_Params_init(UART2_Params *p) { memset(p,0,sizeof(*p)); }
 UART2_Handle UART2_open(int index,UART2_Params *p) { assert(index==0 && p->baudRate==115200);
+    assert(p->eventMask & UART2_EVENT_TX_FINISHED);
+    assert(p->eventCallback != NULL);
     ++uart_opens; return fail_uart?NULL:&task_sentinel; }
 int UART2_read(UART2_Handle h,void *p,size_t n,void *unused) {
     (void)p;(void)unused; assert(h && n==32); ++uart_reads; return fail_read?-1:0; }
@@ -358,6 +363,7 @@ def make(sdk):
         extract_function(sys, "static void MT_SysPing(void)"),
         extract_function(sys, "static void MT_SysVersion(void)"), sys_dispatch,
         extract_function(mt, "void MT_ProcessIncoming(uint8_t *pBuf)"),
+        extract_function(uart, "static void b1_startup_uart_event(UART2_Handle handle, uint32_t event,\n                                 uint32_t data, void *userArg)"),
         extract_function(uart, "void NPITLUART_readTransport(void)"),
         extract_function(uart, "void NPITLUART_initializeTransport(uint8_t *tRxBuf, uint8_t *tTxBuf, npiCB_t npiCBack)"),
         extract_function(osal, "uint8_t OsalPort_registerTask(void* taskHndl, void* taskSem, uint32_t* pEvent)"),
