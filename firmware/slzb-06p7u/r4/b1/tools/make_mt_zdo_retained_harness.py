@@ -63,8 +63,6 @@ static int b1_nv_existing_header_candidate(void) {return candidate;}
 static int b1_sec_restored_network_validated(void) {return security_valid;}
 static int b1_management_network_ready(void) {return ready;}
 static int b1_startup_trace_armed(void) {return 0;}
-static int b1_management_get_hold_active(void) {return held;}
-static uint8_t b1_startup_state(void) {return startup_state;}
 static uint8_t b1_startup_admit(uint8_t sub,uint8_t cmd)
 {assert(sub==0x65u&&cmd==0x40u);
  if(startup_state!=B1_STARTUP_IDLE)return 0;
