@@ -269,8 +269,10 @@ def transform(source: str, *, stock_base: int = STOCK_BASE) -> str:
     source = one(source, POST_DIVISION_NV2, POST_DIVISION_NV4, 'POST_DIVISION')
     source = one(source, OLD_ADMISSION, NEW_ADMISSION, 'ADMISSION')
     source = one(source, MULTIPAGE_SCAN, MULTIPAGE_SCAN_CHECKED, 'MULTIPAGE_SCAN')
-    source = one(source, R4_NV4_REPAIR_DST_FROM,\n                 R4_NV4_REPAIR_DST_TO, 'RESCUE_DESTINATION_NO_ROTATION')
-    source = one(source, R4_NV4_REPAIR_ADD_FROM,\n                 R4_NV4_REPAIR_ADD_TO, 'RESCUE_NO_COMPACTION')
+    source = one(source, R4_NV4_REPAIR_DST_FROM,
+                 R4_NV4_REPAIR_DST_TO, 'RESCUE_DESTINATION_NO_ROTATION')
+    source = one(source, R4_NV4_REPAIR_ADD_FROM,
+                 R4_NV4_REPAIR_ADD_TO, 'RESCUE_NO_COMPACTION')
     source = one(source, R4_REPAIR_API_ANCHOR,
                  R4_REPAIR_HELPER + '\n' + R4_REPAIR_API_ANCHOR, 'REPAIR_BODY')
     source = one(source, R4_REPAIR_INIT_FROM,
