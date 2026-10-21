@@ -28,7 +28,7 @@ enum {ZCD_NV_NIB, ZCD_NV_STARTUP_OPTION,
       ZCD_NV_BDBNODEISONANETWORK, ZCD_NV_LOGICAL_TYPE};
 static int held, candidate, security_valid, coordinator, read_fault, bdb_latch;
 static uint8_t ZDAppTaskID=7;
-extern uint8_t b1_retained_startup_state;
+uint8_t b1_retained_startup_state;
 static uint16_t lengths[4];
 static uint8_t values[4], response;
 static unsigned bdb_calls, response_calls, reads, queued_events, security_latches;
