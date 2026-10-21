@@ -85,6 +85,7 @@ int main(void)
  volatile unsigned cut=0u,partial=0u;
  unsigned operations;
  volatile unsigned tests=0u,holds=0u,candidates=0u,native_holds=0u;
+ volatile unsigned recoveries=0u;
  volatile unsigned preparation_candidates=0u,committed_candidates=0u;
  r4_nv4_result initial;
  if(fread(nv,1,sizeof(nv),stdin)!=sizeof(nv) || getchar()!=EOF) return 7;
@@ -162,8 +163,31 @@ int main(void)
      assert(memcmp(copy,nv,sizeof(nv))==0);
      assert(denied_reboot_writes==0u || native_holds>0u);
      reboot_read_only=0u;
+   } else if(result.code==R4_NV4_RECOVER_COMPACT_CANDIDATE ||
+             result.code==R4_NV4_RECOVER_ERASE_CANDIDATE) {
+     /* Genuine pinned TI 8.33 replay over throwaway NOR media.
+      * Counter/key continuity must be checked against the original
+      * ACTIVE logical inventory, not just a pretty page header. */
+     r4_nv4_result after;
+     assert(initial.semantic_state==R4_NV4_STATE_FORMED_CANDIDATE);
+     assert(result.semantic_state==R4_NV4_STATE_FORMED_CANDIDATE);
+     assert(result.active_records==initial.active_records);
+     assert(result.logical_sum==initial.logical_sum);
+     assert(result.logical_xor==initial.logical_xor);
+     reboot_read_only=0u;
+     memset(&NVOCMP_nvHandle,0,sizeof(NVOCMP_nvHandle));
+     NVOCMP_failF=NVINTF_NOTREADY;
+     assert(NVOCMP_initNvApi(NULL)==NVINTF_SUCCESS);
+     assert(NVOCMP_failF==NVINTF_SUCCESS && NVOCMP_failW==NVINTF_SUCCESS);
+     after=r4_nv4_admit(read_only_media,NULL);
+     assert(after.code==R4_NV4_READONLY_STRUCTURE_ACCEPTED);
+     assert(after.semantic_state==R4_NV4_STATE_FORMED_CANDIDATE);
+     assert(after.active_records==result.active_records);
+     assert(after.logical_sum==result.logical_sum);
+     assert(after.logical_xor==result.logical_xor);
+     ++recoveries;
    } else {
-     /* HOLD instead of any factory-new/erase/rebuild path. */
+     /* Truly ambiguous/torn media must HOLD, never guess. */
      assert(result.semantic_state==R4_NV4_STATE_UNKNOWN_HOLD);
      ++holds;
    }
@@ -172,10 +196,10 @@ int main(void)
  }
  assert(tests==2u*operations && holds>0u);
   printf("R4_T4_PINNED_TI_FOUR_PAGE_COMPACTION_CUTS_PASS "
-        "operations=%u trials=%u held=%u candidates=%u prep=%u committed=%u native_holds=%u "
+        "operations=%u trials=%u held=%u candidates=%u prep=%u committed=%u native_holds=%u recovered=%u "
         "NOT_PROVEN=counter_monotonicity,seed_immutability,physical_flash\n",
         operations,tests,holds,candidates,preparation_candidates,
-        committed_candidates,native_holds);
+        committed_candidates,native_holds,recoveries);
  memset(nv,0,sizeof(nv));memset(before,0,sizeof(before));
  memset(baseline_media,0,sizeof(baseline_media));
  return 0;
