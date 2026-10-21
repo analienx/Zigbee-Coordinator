@@ -39,7 +39,7 @@ class TestRestoredStartup(unittest.TestCase):
         result = module.patch(self.source)
         request = result[result.index("static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)"):]
         request = request[:request.index("void b1_mt_zdo_retained_startup_event(void)")]
-        self.assertIn("OsalPort_setEvent(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT)", request)
+        self.assertIn("OsalPortTimers_startTimer(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT,", request)
         self.assertNotIn("bdb_StartCommissioning", request)
         self.assertIn("b1_retained_startup_state = 1", request)
         event = result[result.index("void b1_mt_zdo_retained_startup_event(void)"):]

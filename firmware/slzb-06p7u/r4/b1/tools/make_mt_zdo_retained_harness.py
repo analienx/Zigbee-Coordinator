@@ -13,6 +13,7 @@ PREAMBLE = r'''
 #define TRUE 1
 #define ZSuccess 0
 #define ZSUCCESS 0
+#define SUCCESS 0
 #define ZFailure 1
 #define ZG_BUILD_COORDINATOR_TYPE 1
 #define ZG_DEVICE_COORDINATOR_TYPE coordinator
@@ -24,6 +25,7 @@ PREAMBLE = r'''
 #define MT_RPC_CMD_TYPE_MASK 0xe0
 #define MT_RPC_SYS_ZDO 5
 #define B1_RETAINED_STARTUP_EVENT 0x00010000u
+#define B1_RETAINED_STARTUP_DELAY_MS 30u
 enum {ZCD_NV_NIB, ZCD_NV_STARTUP_OPTION,
       ZCD_NV_BDBNODEISONANETWORK, ZCD_NV_LOGICAL_TYPE};
 static int held, candidate, security_valid, coordinator, read_fault, bdb_latch;
@@ -32,6 +34,7 @@ uint8_t b1_retained_startup_state;
 static uint16_t lengths[4];
 static uint8_t values[4], response;
 static unsigned bdb_calls, response_calls, reads, queued_events, security_latches;
+static int timer_fail;
 static int b1_nv_runtime_hold_active(void) {return held;}
 static int b1_nv_existing_header_candidate(void) {return candidate;}
 static int b1_sec_restored_network_validated(void) {return security_valid;}
@@ -49,8 +52,10 @@ static uint8_t osal_nv_read(uint16_t id,uint16_t offset,uint16_t count,void *out
 }
 static void bdb_StartCommissioning(uint8_t mode)
 {assert(mode==0);++bdb_calls;if(bdb_latch)held=1;}
-static void OsalPort_setEvent(uint8_t task,uint32_t event)
-{assert(task==ZDAppTaskID&&event==0x00010000u);++queued_events;}
+static uint8_t OsalPortTimers_startTimer(uint8_t task,uint32_t event,uint32_t ms)
+{assert(task==ZDAppTaskID&&event==0x00010000u&&ms==30u);
+ if(timer_fail)return ZFailure;
+ ++queued_events;return SUCCESS;}
 static void b1_security_runtime_hold_latch(void)
 {++security_latches;held=1;}
 static void MT_BuildAndSendZToolResponse(uint8_t type,uint8_t cmd,uint8_t count,void *data)
@@ -65,7 +70,7 @@ static void reset_case(void)
  lengths[0]=116;for(unsigned i=1;i<4;i++)lengths[i]=1;
  values[1]=0;values[2]=TRUE;values[3]=0;
  b1_retained_startup_state=0;bdb_calls=0;response_calls=0;reads=0;queued_events=0;
- security_latches=0;response=0xff;}
+ security_latches=0;timer_fail=0;response=0xff;}
 static void invoke_expected(int success,unsigned expected_events)
 {uint8_t request[]={2,MT_RPC_CMD_SREQ|MT_RPC_SYS_ZDO,0x40,0,0};
  MT_ZdoStartupFromApp(request);
@@ -77,6 +82,7 @@ int main(void)
  reset_case();invoke(1);assert(reads==3);
  b1_mt_zdo_retained_startup_event();assert(bdb_calls==1&&security_latches==0);
  b1_mt_zdo_retained_startup_event();assert(bdb_calls==1); /* one run per boot */
+ reset_case();timer_fail=1;invoke(0);assert(queued_events==0&&b1_retained_startup_state==0);
  reset_case();held=1;invoke(0);assert(reads==0);
  reset_case();candidate=0;invoke(0);assert(reads==0);
  reset_case();security_valid=0;invoke(0);assert(reads==0);

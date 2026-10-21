@@ -22,6 +22,7 @@ HELPER_NAME = "b1_mt_zdo_retained_startup"
 HELPER = """/* Queue retained initialization on the ZDApp task. Running BDB from
  * the MT/NPI dispatcher blocks its SRSP and starves the host interface. */
 #define B1_RETAINED_STARTUP_EVENT 0x00010000u
+#define B1_RETAINED_STARTUP_DELAY_MS 30u
 uint8_t b1_retained_startup_state;
 static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)
 {
@@ -54,8 +55,16 @@ static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(void)
       b1_mt_zdo_retained_valid() != ZSuccess)
     return ZFailure;
   b1_retained_startup_state = 1;
-  OsalPort_setEvent(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT);
-  return ZSuccess; /* MT dispatcher can now send the SRSP promptly. */
+  /* NPI transport is asynchronous. A plain ZDApp event in the SAME stack
+   * task can run before the SRSP bytes reach the radio UART. Give NPI a
+   * bounded delivery window without creating a second Zigbee stack task. */
+  if (OsalPortTimers_startTimer(ZDAppTaskID, B1_RETAINED_STARTUP_EVENT,
+                               B1_RETAINED_STARTUP_DELAY_MS) != SUCCESS)
+  {
+    b1_retained_startup_state = 0;
+    return ZFailure;
+  }
+  return ZSuccess; /* Request admitted, NOT network-ready yet. */
 }
 
 void b1_mt_zdo_retained_startup_event(void)
