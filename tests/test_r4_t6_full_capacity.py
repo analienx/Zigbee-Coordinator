@@ -50,6 +50,7 @@ class FullCapacityAuditTests(unittest.TestCase):
             root = Path(temporary)
             opts = root / "znp_cnf.opts"
             defines = {**capacity.ROUTING, **capacity.DEFINES,
+                       **capacity.NV_FLASH_SAFETY,
                        "ZDSECMGR_DEVICE_MAX": aps_define}
             opts.write_text("".join(f"-D{name}={value}\n"
                                     for name, value in defines.items()))
@@ -59,6 +60,7 @@ class FullCapacityAuditTests(unittest.TestCase):
                     capacity.full.DEFAULT_PROFILE.read_bytes()),
                 "result_sha256": capacity.digest(opts.read_bytes()),
                 "new_compiler_defines": capacity.DEFINES,
+                "nvocmp_brownout_flash_guard": capacity.NV_FLASH_SAFETY,
             }
             opts_receipt = root / "opts.json"
             opts_receipt.write_text(json.dumps(admitted))
