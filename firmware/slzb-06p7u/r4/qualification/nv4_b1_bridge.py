@@ -383,6 +383,16 @@ def apply(sdk: Path, c_source: Path, h_source: Path, receipt: Path,
             'source/ti/common/nv/nv4_readonly_admission.c')
         prior['additional_source_bindings']['nv4_admission_h_sha256'] = (
             'source/ti/common/nv/nv4_readonly_admission.h')
+        linked = prior.get('additional_required_functions', [])
+        if (not isinstance(linked, list) or
+                any(not isinstance(item, str) for item in linked) or
+                'b1_management_note_nv4' in linked):
+            raise ValueError('R4_NV4_REQUIRED_LIVE_FUNCTION_PREIMAGE_DRIFT')
+        # The direct legacy B1/NV2 build never calls this observer. Requiring
+        # it there caused valid native ELFs to be rejected as missing an
+        # optimized-out function. Only the real NV4 bridge makes it live.
+        prior['additional_required_functions'] = linked + [
+            'b1_management_note_nv4']
         prior['nv4_readonly_bridge_source'] = 'EXACT_PINNED_FOUR_PAGE_B1_ADMISSION'
         prior['nv4_destructive_compaction_reformat_if_enabled'] = 'COMPILE_TIME_ERROR'
         b1_receipt.write_text(json.dumps(prior, indent=2, sort_keys=True) + '\n')

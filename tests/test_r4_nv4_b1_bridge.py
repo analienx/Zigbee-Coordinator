@@ -198,6 +198,8 @@ class Nv4B1BridgeTests(unittest.TestCase):
                                  result[f'nv4_admission_{kind}_sha256'])
             self.assertEqual(bound['nv4_readonly_bridge_source'],
                              'EXACT_PINNED_FOUR_PAGE_B1_ADMISSION')
+            self.assertEqual(bound['additional_required_functions'],
+                             ['b1_management_note_nv4'])
             self.assertFalse(result['flash_authorized'])
             self.assertEqual(result['destructive_compaction_reformat_if_enabled'],
                              'COMPILE_TIME_ERROR')

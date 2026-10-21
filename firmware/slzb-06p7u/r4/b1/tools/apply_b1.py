@@ -467,7 +467,8 @@ def overlay(sdk, b1_dir):
         "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
             "b1_management_mt_filter", "b1_security_runtime_hold_latch",
             "b1_management_npi_initialized",
-            "b1_management_note_nv4",
+            # NV4 note function is only live in four-page builds. It is
+            # sealed by nv4_b1_bridge.py when the NV4 scanner is linked.
             "b1_management_note_zdo_state", "b1_sec_restored_network_validated",
             "ZDApp_ChangeState", "b1_mt_nv_mutation_guard"],
         "retained_raw_mt_nv_mutations": "DENY_EXCEPT_EXACT_IDEMPOTENT_LEGACY_WRITE_WITHOUT_NV_WRITE",
