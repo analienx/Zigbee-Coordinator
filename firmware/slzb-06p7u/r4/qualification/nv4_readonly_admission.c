@@ -17,11 +17,16 @@
 
 /* Exact TI SDK 3615ad5: osal_nv.c maps legacy OSAL item IDs to
  * (NVINTF_SYSID_ZSTACK=1, ZCD_NV_EX_LEGACY=0, subID=original ID).
- * zcomdef.h: NIB=0x21, bdbNodeIsOnANetwork=0x55, logicalType=0x87.
+ * zcomdef.h: STARTUP_OPTION=0x03, NIB=0x21,
+ * bdbNodeIsOnANetwork=0x55, logicalType=0x87.
  * These are the only Z-Stack payload values read for classification.
  * NIB/security/key contents are NEVER copied into semantic scratch. */
 #define R4_ZSTACK_SYSID 1u
 #define R4_OSAL_LEGACY_ITEMID 0u
+#define R4_OSAL_STARTUP_OPTION 0x03u
+/* Pinned zcomdef.h: CLEAR_CONFIG=0x01, CLEAR_STATE=0x02 and
+ * CLEAR_NWK_FRAME_COUNTER=0x80. AUTO_START=0x04 does not clear NV. */
+#define R4_DESTRUCTIVE_STARTUP_OPTIONS 0x83u
 #define R4_OSAL_NIB 0x21u
 #define R4_OSAL_BDB_ON_NETWORK 0x55u
 #define R4_OSAL_LOGICAL_TYPE 0x87u
@@ -29,6 +34,7 @@
 typedef struct {
     uint8_t bdb_seen, bdb_on_network;
     uint8_t role_seen, logical_type;
+    uint8_t startup_seen, startup_options;
     uint8_t nib_seen, malformed;
 } r4_nv4_markers;
 
@@ -186,14 +192,18 @@ static int inspect_items(r4_nv4_read reader, void *ctx, r4_nv4_result *r,
                     header[1] == 0u) {
                     uint32_t subid = ((uint32_t)header[2] << 2u) |
                                      (header[3] >> 6u);
-                    if (subid == R4_OSAL_BDB_ON_NETWORK ||
+                    if (subid == R4_OSAL_STARTUP_OPTION ||
+                        subid == R4_OSAL_BDB_ON_NETWORK ||
                         subid == R4_OSAL_LOGICAL_TYPE) {
                         /* Use the verified payload byte, not an unverified
                          * second flash read after CRC validation. */
                         if (length != 1u) {
                             markers->malformed = 1u;
                         } else {
-                            if (subid == R4_OSAL_BDB_ON_NETWORK) {
+                            if (subid == R4_OSAL_STARTUP_OPTION) {
+                                markers->startup_seen = 1u;
+                                markers->startup_options = first_payload_byte;
+                            } else if (subid == R4_OSAL_BDB_ON_NETWORK) {
                                 markers->bdb_seen = 1u;
                                 markers->bdb_on_network = first_payload_byte;
                             } else {
@@ -219,10 +229,10 @@ __attribute__((noinline))
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
 {
     r4_nv4_result r = {R4_NV4_BAD_READER, 0u, 0u, 0u, 0u,
-                      R4_NV4_STATE_UNKNOWN_HOLD};
+                      R4_NV4_STATE_UNKNOWN_HOLD, 0u};
     uint32_t page, active = 0u, full = 0u, destination = 0u, inactive = 0u;
     uint32_t live_count = 0u, zstack_live_count = 0u;
-    r4_nv4_markers markers = {0u, 0u, 0u, 0u, 0u, 0u};
+    r4_nv4_markers markers = {0};
     /* Pre-init bounded scratch: do not consume half the 4 KiB C/IRQ stack.
      * Admission is a single-threaded boot preflight, not a runtime service. */
     static uint32_t live_ids[R4_MAX_ACTIVE_IDENTITIES];
@@ -302,9 +312,11 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
                                   live_ids, &live_count,
                                   &zstack_live_count, &markers)) return r;
     }
+    /* TI's >2-page normal ring can retain either, both or neither of the
+     * other data pages as FULL after cleanPage. A formatted empty NACT page
+     * is already authenticated above; FULL1/NACT1 is not a torn topology. */
     if (active != 1u || destination != 1u || r.active_records == 0u ||
-        !((full == 2u && inactive == 0u) ||
-          (full == 0u && inactive == 2u))) {
+        full + inactive != R4_NV4_PAGES - 2u) {
         r.code = R4_NV4_UNSAFE_PAGE_STATES;
         return r;
     }
@@ -315,7 +327,16 @@ r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *ctx)
     /* This is a *candidate* state, never a validated security decision.
      * Missing, malformed and incoherent markers remain UNKNOWN_HOLD even
      * when the media's CRC and four-page structure are valid. */
+    r.semantic_flags = (markers.bdb_seen ? 1u : 0u) |
+        (markers.bdb_on_network == 1u ? 2u : 0u) |
+        (markers.role_seen ? 4u : 0u) |
+        (markers.role_seen && markers.logical_type == 0u ? 8u : 0u) |
+        (markers.nib_seen ? 16u : 0u) | (markers.startup_seen ? 32u : 0u) |
+        (markers.startup_seen && !(markers.startup_options & R4_DESTRUCTIVE_STARTUP_OPTIONS) ? 64u : 0u) |
+        (markers.malformed ? 128u : 0u);
     if (!markers.malformed && markers.bdb_seen && markers.role_seen &&
+        markers.startup_seen &&
+        !(markers.startup_options & R4_DESTRUCTIVE_STARTUP_OPTIONS) &&
         markers.logical_type == 0u) { /* coordinator, pinned zglobals.h */
         if (markers.bdb_on_network == 0u && !markers.nib_seen) {
             r.semantic_state = R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE;

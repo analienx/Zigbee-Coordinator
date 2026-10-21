@@ -12,7 +12,7 @@ SCENARIOS = (
     "healthy", "hold_nv", "hold_security", "first_current", "sticky",
     "bad_query", "bad_fcs", "areq", "alloc_fail", "npi_queue", "npi_sem",
     "npi_register", "uart_open", "uart_read", "start_hold", "start_healthy", "npi_first",
-    "storm",
+    "storm", "nv4_detail", "retained_commands",
 )
 
 PREAMBLE = r'''
@@ -245,11 +245,11 @@ int main(int argc,char **argv) {
         assert(mt_id_reads==0 && process_started==0 && sem_posts==0);
         assert(sent==0 && forwarded==0 && mutations==0);
     } else {
-        if(strcmp(s,"healthy")==0) b1_management_note_mt_registered();
+        if(strcmp(s,"healthy")==0 || strcmp(s,"retained_commands")==0) b1_management_note_mt_registered();
         else if(strcmp(s,"hold_security")==0) b1_security_runtime_hold_latch();
         else b1_management_hold_nv(B1_ERROR_NV_OPEN);
         NPITask_Fxn(0,0); assert(process_started==1 && b1_management_npi_initialized());
-        assert(mt_id_reads==(strcmp(s,"healthy")==0?1u:0u));
+        assert(mt_id_reads==((strcmp(s,"healthy")==0 || strcmp(s,"retained_commands")==0)?1u:0u));
         if(strcmp(s,"healthy")==0) {
             route(0x24,1,NULL,0); assert(forwarded==1 && sent==0);
             uint8_t ping[]={0,0x21,1}; MT_ProcessIncoming(ping);
@@ -259,11 +259,39 @@ int main(int argc,char **argv) {
             assert(last_reply[0]==sizeof(MTVersionString));
             assert(memcmp(last_reply+3,MTVersionString,sizeof(MTVersionString))==0);
             query(); assert(last_reply[9]==0 && last_reply[10]==0);
+        } else if(strcmp(s,"retained_commands")==0) {
+            uint8_t reply[24], error, frame[4]={1,0x2f,5,4};
+            b1_management_note_nv4(8,2,2421,952,779,0,0x7f);
+            b1_management_note_nv_candidate();
+            for(unsigned ready=0;ready<2;ready++) {
+                if(ready) b1_management_note_zdo_state(1,1);
+                frame[0]=1;frame[1]=0x2f;frame[2]=5;frame[3]=4;
+                assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
+                frame[3]=2;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_CONTINUE);
+                frame[3]=0x10;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_CONTINUE);
+                frame[0]=0;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT && error==4);
+                frame[1]=0x26;frame[2]=5;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
+                frame[1]=0x21;frame[2]=3;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
+                frame[1]=0x2b;frame[2]=0;assert(b1_management_mt_filter(frame,reply,&error)==B1_MT_REJECT);
+            }
+            assert(mutations==0 && !b1_management_get_hold_active());
+        } else if(strcmp(s,"nv4_detail")==0) {
+            uint8_t detail[8]={'B','1','Q','1',1,8,1,0};
+            route(0x21,B1_STATUS_COMMAND,detail,8);
+            assert(memcmp(last_reply+3,"B1N1",4)==0 && last_reply[9]==0xff && last_reply[10]==0xff);
+            b1_management_note_nv4(8,0,2083,783,778,0,0x2f);
+            route(0x21,B1_STATUS_COMMAND,detail,8);
+            assert(last_reply[0]==24 && last_reply[9]==8 && last_reply[10]==0);
+            assert(last_reply[11]==15 && last_reply[12]==3); /* 783 */
+            assert(last_reply[13]==10 && last_reply[14]==3); /* 778 */
+            assert(last_reply[15]==35 && last_reply[16]==8); /* 2083 */
+            assert(last_reply[23]==1 && last_reply[24]==0x2f && mutations==0 && b1_management_get_hold_active());
+            query(); assert(memcmp(last_reply+3,"B1S1",4)==0); /* old query unchanged */
         } else if(strcmp(s,"bad_query")==0) {
             uint8_t bad[8]={'B','1','Q','1',1,8,0,0};
             route(0x21,B1_STATUS_COMMAND,bad,7); assert(last_reply[3]==4);
-            for(unsigned i=0;i<8;i++) { bad[i]^=1; route(0x21,B1_STATUS_COMMAND,bad,8);
-                assert(last_reply[0]==3 && last_reply[1]==0x60 && last_reply[3]==3); bad[i]^=1; }
+            for(unsigned i=0;i<8;i++) { uint8_t flip=i==6?2u:1u; bad[i]^=flip; route(0x21,B1_STATUS_COMMAND,bad,8);
+                assert(last_reply[0]==3 && last_reply[1]==0x60 && last_reply[3]==3); bad[i]^=flip; }
         } else if(strcmp(s,"bad_fcs")==0) {
             static const uint8_t good[]={0xFE,8,0x21,B1_STATUS_COMMAND,'B','1','Q','1',1,8,0,0,0};
             memcpy(wire_buffer,good,sizeof(good)); wire_size=sizeof(good); wire_cursor=0;

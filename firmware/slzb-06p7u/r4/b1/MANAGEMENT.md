@@ -2,7 +2,8 @@
 
 Source implementation; hosted evidence must name the exact commit and successful
 run. Physical UART delivery, a deployed herdsman decoder and RF acceptance remain
-unmeasured. No `NETWORK_READY` state or capability is implemented here.
+unmeasured. `NETWORK_READY` requires the source-backed restored ZDO/security
+attestation; a status reply or version response alone never grants it.
 
 ## Actual startup path
 
@@ -99,10 +100,10 @@ Response: MT `SRSP SYS` (`CMD0=0x61`), `CMD1=0xF1`, exactly 24 data bytes:
 | 0 | 4 | ASCII `B1S1` |
 | 4 | 1 | version 1 |
 | 5 | 1 | size 24 |
-| 6 | 1 | current state: 0 PRE_BOOT; 1 NV_HEADER_CANDIDATE; 2 HOLD_NV; 3 HOLD_SECURITY; 4 HOLD_TRANSPORT |
+| 6 | 1 | current state: 0 PRE_BOOT; 1 NV_HEADER_CANDIDATE; 2 HOLD_NV; 3 HOLD_SECURITY; 4 HOLD_TRANSPORT; 5 NETWORK_READY |
 | 7 | 1 | first error, sticky until C-runtime reboot |
 | 8 | 1 | source-observation flags below |
-| 9 | 1 | capabilities: bit 0 status snapshot; bit 1 MT HOLD admission; bit 2 source-prefix present |
+| 9 | 1 | capabilities: bit 0 status snapshot; bit 1 MT HOLD admission; bit 2 source-prefix present; bit 3 restored network ready |
 | 10 | 1 | most recently latched error; a benign read/event never clears it |
 | 11 | 1 | exact `b1_nv_probe_code` from `b1_admission.h`; 0 means not reached |
 | 12 | 4 | first four bytes of the exact public source commit SHA, when capability bit 2 is set |
@@ -125,6 +126,32 @@ The source SHA prefix is public build context, not a radio boot identity or an
 ELF digest. There are no restored key bytes, addresses, actual frame counters,
 NV payload bytes, invented queue measurements or boot-continuity claims in this
 packet. A header candidate never implies a restored/ready network.
+
+## B1N1 raw NV4 detail, version 1
+
+The alternate exact eight-byte query `42 31 51 31 01 08 01 00` selects a
+read-only detail snapshot, including while held. It uses the same SYS F1
+command and 24-byte reply length; the original op0 B1S1 reply is unchanged.
+
+| Offset | Bytes | Meaning |
+|---:|---:|---|
+| 0 | 4 | ASCII `B1N1` |
+| 4 | 2 | version 1, size 24 |
+| 6 | 1 | raw NV4 observer code, before lossy B1 mapping; FF if unmeasured |
+| 7 | 1 | semantic state: 0 unknown/HOLD; 1 uncommissioned candidate; 2 formed candidate; FF if unmeasured |
+| 8 | 2 | parsed record count, little endian |
+| 10 | 2 | active record count, little endian |
+| 12 | 2 | read count, little endian |
+| 14 | 2 | fault offset relative to NV4 base, little endian |
+| 16 | 4 | public source SHA prefix |
+| 20 | 1 | snapshot measured flag |
+| 21 | 1 | semantic flags: bits 0/1 BDB seen/on-network, 2/3 role seen/coordinator, 4 NIB seen, 5/6 startup seen/safe, 7 malformed marker |
+| 22 | 2 | reserved zero |
+
+Counts/offset saturate at FFFF instead of wrapping. This exposes no record
+identities, payloads, network addresses, security keys or frame-counter values.
+Raw structural acceptance with semantic state 0 is still HOLD; the detail
+query cannot authorize provisioning or change the admission outcome.
 
 ## Test boundary and limits
 

@@ -55,6 +55,10 @@ int b1_management_get_hold_active(void);
 int b1_management_nv_security_hold_active(void);
 void b1_management_note_nv_candidate(void);
 void b1_management_note_nv_probe(uint8_t code);
+/* Read-only F1 detail query: preserve the raw NV4 result before B1 mapping. */
+void b1_management_note_nv4(uint32_t code, uint32_t semantic, uint32_t reads,
+                           uint32_t records, uint32_t active, uint32_t fault,
+                           uint32_t semantic_flags);
 void b1_management_transport_failed(uint8_t reason);
 void b1_management_note_uart_opened(void);
 void b1_management_note_npi_initialized(void);

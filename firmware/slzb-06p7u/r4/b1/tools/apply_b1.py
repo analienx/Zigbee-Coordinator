@@ -12,6 +12,7 @@ from patch_zdapp import patch as patch_zdapp
 from patch_security import patch as patch_security, patch_zglobals, patch_startup, patch_osal_nv
 from patch_host_api import patch as patch_host_api
 from patch_restore_host import patch_restore_host
+from patch_mt_nv_retained import patch as patch_mt_nv_retained
 from patch_nwk_rotation import patch_security as patch_nwk_rotation_security, patch_host_api as patch_nwk_rotation_host
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
@@ -367,6 +368,7 @@ def overlay(sdk, b1_dir):
     osal_nv = patch_osal_nv(osal_nv)
 
     mt_sys, mt_version = patch_restore_host(mt_sys, mt_version)
+    mt_sys = patch_mt_nv_retained(mt_sys)
 
     main = replace_once(main, '#include "nvocmp.h"',
                         '#include "nvocmp.h"\n#include "b1_management.h"', "main management header")
@@ -465,8 +467,10 @@ def overlay(sdk, b1_dir):
         "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
             "b1_management_mt_filter", "b1_security_runtime_hold_latch",
             "b1_management_npi_initialized",
+            "b1_management_note_nv4",
             "b1_management_note_zdo_state", "b1_sec_restored_network_validated",
-            "ZDApp_ChangeState"],
+            "ZDApp_ChangeState", "b1_mt_nv_mutation_guard"],
+        "retained_raw_mt_nv_mutations": "DENY_EXCEPT_EXACT_IDEMPOTENT_LEGACY_WRITE_WITHOUT_NV_WRITE",
         "modified_zdapp_sha256": hashlib.sha256(zdapp.encode()).hexdigest(),
         "modified_zmac_sha256": hashlib.sha256(zmac.encode()).hexdigest(),
         "modified_nv_sha256": hashlib.sha256(source.encode()).hexdigest(),

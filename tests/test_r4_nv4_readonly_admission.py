@@ -30,10 +30,10 @@ PAGE_SIZE = 8192
 
 
 def encoded_record(subid: int, *, sysid: int = 1,
-                   active: bool = True) -> bytes:
+                   active: bool = True, itemid: int = 0x1a,
+                   data: bytes = b'not-a-real-key') -> bytes:
     """Real NVOCMP_HDRLE=0 compressed ID/status and CRC, public fake data."""
-    data = b'not-a-real-key'
-    header = bytearray((sysid << 2, 0x1a, subid >> 2,
+    header = bytearray(((sysid << 2) | (itemid >> 8), itemid & 0xff, subid >> 2,
                         ((subid & 3) << 6) | (len(data) >> 6),
                         (len(data) & 63) << 2))
     crc = forensics.crc8(data + header)
@@ -75,7 +75,9 @@ def legacy_osal_record(subid: int, payload: bytes) -> bytes:
 
 def stock_like_semantic(*, bdb: int | None = 0,
                         logical: int | None = 0, nib: bool = False,
-                        bdb_payload: bytes | None = None) -> bytes:
+                        bdb_payload: bytes | None = None,
+                        startup: int | None = 0,
+                        startup_payload: bytes | None = None) -> bytes:
     """Public fake coordinator markers, never a real NIB/key/payload."""
     media = bytearray(stock_like())
     cursor = 16 + len(encoded_record(0))
@@ -85,6 +87,9 @@ def stock_like_semantic(*, bdb: int | None = 0,
                                         else bytes((bdb,))))
     if logical is not None:
         parts.append(legacy_osal_record(0x87, bytes((logical,))))
+    if startup is not None:
+        parts.append(legacy_osal_record(0x03, startup_payload if startup_payload is not None
+                                       else bytes((startup,))))
     if nib:
         parts.append(legacy_osal_record(0x21, b'synthetic-nib-not-a-secret'))
     for part in parts:
@@ -113,11 +118,12 @@ def ti_normal_resume_with_retained_journals() -> bytes:
 
 
 def dense_ti_normal_resume_media() -> bytes:
-    """714 synthetic records / 366 active spread across three item pages."""
+    """715 synthetic records / 367 active spread across three item pages."""
     media = bytearray(ti_normal_resume_with_retained_journals())
     active_offset = (16 + len(encoded_record(0)) +
                      len(legacy_osal_record(0x55, b'\x00')) +
-                     len(legacy_osal_record(0x87, b'\x00')))
+                     len(legacy_osal_record(0x87, b'\x00')) +
+                     len(legacy_osal_record(0x03, b'\x00')))
     next_subid = 1
     for page, count, cursor in ((0, 71, active_offset),
                                 (2, 337, 16),
@@ -130,6 +136,48 @@ def dense_ti_normal_resume_media() -> bytes:
             cursor += len(record)
             next_subid += 1
     assert next_subid == 712
+    return bytes(media)
+
+
+def formed_tc300_rollover_media() -> bytes:
+    """779 active IDs, 300 real-width synthetic TC rows, 16 obsolete versions.
+
+    Only the population/TC serialization width and valid settled ring are
+    represented, not private board data or Z-Stack security restoration proof.
+    FULL0/ACTIVE1/NACT2/XDST3 is a normal TI post-cleanPage shape.
+    """
+    media = bytearray(stock_like())
+    for page, state in enumerate((0x78, 0x7c, 0xff, 0xfe)):
+        media[page * PAGE_SIZE] = state
+        media[page * PAGE_SIZE + 16:(page + 1) * PAGE_SIZE] = b'\xff' * (PAGE_SIZE - 16)
+    media[2] = 0x0c  # FULL page contains obsolete, CRC-valid versions.
+    records = [encoded_record(0), legacy_osal_record(0x55, b'\x01'),
+               legacy_osal_record(0x87, b'\x00'), legacy_osal_record(0x03, b'\x00'),
+               legacy_osal_record(0x21, bytes(range(1, 117)))]
+
+    def tc_payload(index, *, previous=False):
+        if index >= 107:
+            return bytes(16) + b'\xff\x00\x00\x00'  # allocated empty peer slot
+        return ((100000 + index - int(previous)).to_bytes(4, 'little') +
+                (200000 + index).to_bytes(4, 'little') +
+                (index + 1).to_bytes(8, 'little') + bytes((2, 0, index % 16, 0)))
+
+    records.extend(encoded_record(index, itemid=4, active=False,
+                                  data=tc_payload(index, previous=True))
+                   for index in range(16))
+    records.extend(encoded_record(index, itemid=4, data=tc_payload(index))
+                   for index in range(300))
+    records.extend(encoded_record(index, data=index.to_bytes(8, 'little'))
+                   for index in range(1, 475))
+    page, cursor = 0, 16
+    for part in records:
+        if cursor + len(part) > PAGE_SIZE:
+            page, cursor = page + 1, 16
+        assert page < 2, 'public population must fit the two live item pages'
+        start = page * PAGE_SIZE + cursor
+        media[start:start + len(part)] = part
+        cursor += len(part)
+    assert len(records) == 795
     return bytes(media)
 
 
@@ -237,12 +285,9 @@ class Nv4AdmissionTests(unittest.TestCase):
             before[page * PAGE_SIZE] = 0xff
         candidate = self.probe(bytes(before))
         self.assertEqual((candidate.code, candidate.semantic_state), (8, 1))
-        self.assertEqual(candidate.active_records, 3)
+        self.assertEqual(candidate.active_records, 4)
 
         mutants = []
-        half_recycled = bytearray(before)
-        half_recycled[PAGE_SIZE] = 0x78  # mixed old/new ring states
-        mutants.append(half_recycled)
         torn_body = bytearray(before)
         torn_body[PAGE_SIZE + 23] = 0xf7  # non-erased inactive page
         mutants.append(torn_body)
@@ -282,7 +327,7 @@ class Nv4AdmissionTests(unittest.TestCase):
             media[page * PAGE_SIZE] = 0xff
         settled = self.probe(bytes(media))
         self.assertEqual((settled.code, settled.semantic_state), (8, 1))
-        self.assertEqual((settled.records, settled.active_records), (3, 3))
+        self.assertEqual((settled.records, settled.active_records), (4, 4))
 
         # A blank unformatted page, half-erased header or residual item bytes
         # must never be treated as the formatted, empty PGNACT page.
@@ -301,13 +346,14 @@ class Nv4AdmissionTests(unittest.TestCase):
         self.assertEqual((unformed.code, unformed.semantic_state), (8, 1))
         formed = self.probe(stock_like_semantic(bdb=1, nib=True))
         self.assertEqual((formed.code, formed.semantic_state), (8, 2))
-        self.assertEqual((formed.records, formed.active_records), (4, 4))
+        self.assertEqual((formed.records, formed.active_records), (5, 5))
 
     def test_marker_byte_comes_from_crc_checked_read_without_reread(self):
         raw = stock_like_semantic()
         bdb_offset = 16 + len(encoded_record(0))
         role_offset = bdb_offset + len(legacy_osal_record(0x55, b'\x00'))
-        marker_reads = {bdb_offset: 0, role_offset: 0}
+        startup_offset = role_offset + len(legacy_osal_record(0x87, b'\x00'))
+        marker_reads = {bdb_offset: 0, role_offset: 0, startup_offset: 0}
 
         def traced(_ctx, off, to, count):
             if off + count > len(raw):
@@ -323,19 +369,44 @@ class Nv4AdmissionTests(unittest.TestCase):
 
         result = self.lib.r4_nv4_admit(READ(traced), None)
         self.assertEqual((result.code, result.semantic_state), (8, 1))
-        self.assertEqual(marker_reads, {bdb_offset: 1, role_offset: 1})
+        self.assertEqual(marker_reads, {bdb_offset: 1, role_offset: 1, startup_offset: 1})
 
     def test_missing_incoherent_or_malformed_semantic_markers_hold(self):
         variants = (
             dict(bdb=None), dict(logical=None), dict(bdb=2),
             dict(logical=1), dict(bdb=1), dict(nib=True),
             dict(bdb_payload=b'\x00\x00'),
+            dict(startup=None), dict(startup_payload=b'\x00\x00'),
         )
         for variant in variants:
             with self.subTest(**variant):
                 result = self.probe(stock_like_semantic(**variant))
                 self.assertEqual(result.code, 8)  # CRC-valid structure.
                 self.assertEqual(result.semantic_state, 0)  # But HOLD.
+
+    def test_pending_destructive_startup_flags_hold_before_stack_initialization(self):
+        for formed in (False, True):
+            for startup in (0x01, 0x02, 0x03, 0x80, 0x83, 0xff):
+                with self.subTest(formed=formed, startup=startup):
+                    result = self.probe(stock_like_semantic(bdb=int(formed), nib=formed,
+                                                           startup=startup))
+                    self.assertEqual((result.code, result.semantic_state), (8, 0))
+        # TI AUTO_START is a separate non-destructive option, not a clear bit.
+        result = self.probe(stock_like_semantic(bdb=1, nib=True, startup=0x04))
+        self.assertEqual((result.code, result.semantic_state), (8, 2))
+
+    def test_mixed_full_inactive_normal_rollover_keeps_crc_and_empty_page_guards(self):
+        media = bytearray(formed_tc300_rollover_media())
+        result = self.probe(bytes(media))
+        self.assertEqual((result.code, result.semantic_state), (8, 2))
+        self.assertEqual((result.records, result.active_records), (795, 779))
+        self.assertLess(result.reads, 30000)
+        for page, offset, value in ((2, 20, 0x7f), (2, 0, 0x7e),
+                                    (3, 0, 0xff), (0, 16, media[16] ^ 1)):
+            with self.subTest(page=page, offset=offset):
+                corrupted = bytearray(media)
+                corrupted[page * PAGE_SIZE + offset] = value
+                self.assertNotEqual(self.probe(bytes(corrupted)).code, 8)
 
     def test_f8_on_active_page_can_be_settled_after_ti_all_active_return(self):
         # TI tags PGACT/PGFULL with PGCSRC mode before its all-active early
@@ -347,13 +418,13 @@ class Nv4AdmissionTests(unittest.TestCase):
     def test_genuine_ti_normal_resume_page_geometry_not_false_hold(self):
         result = self.probe(ti_normal_resume_with_retained_journals())
         self.assertEqual((result.code, result.semantic_state), (8, 1))
-        self.assertEqual((result.records, result.active_records), (3, 3))
+        self.assertEqual((result.records, result.active_records), (4, 4))
 
     def test_dense_four_page_layout_with_f8_retained_journals(self):
         # Mirrors record *counts and state shapes* only, without board data.
         result = self.probe(dense_ti_normal_resume_media())
         self.assertEqual((result.code, result.semantic_state), (8, 1))
-        self.assertEqual((result.records, result.active_records), (714, 366))
+        self.assertEqual((result.records, result.active_records), (715, 367))
         self.assertLess(result.reads, 30000)
 
     def test_f8_partial_journal_or_unexpected_state_still_holds(self):

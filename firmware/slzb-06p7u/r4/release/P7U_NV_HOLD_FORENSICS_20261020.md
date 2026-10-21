@@ -3,6 +3,22 @@
 Target: the single SLZB-06P7U R1.73 attached by USB to Home Assistant.
 This document grants no BSL entry, transport switch, reset, write or Z2M start.
 
+**Resolved discrepancy:** the subsequently approved duplicate live capture
+reproduces HOLD 4: 783 structurally valid records / 778 active, BDB on-network,
+coordinator role, but no active NIB. The only missing active identity is NIB;
+its one inactive CRC-valid 116-byte copy exactly matches preflash. Startup
+option changed from 0 to 3. All 24 programmed APP/boot sectors match the frozen
+plan, and reserved/top/CCFG bytes are unchanged. The host's source-confirmed
+`beginRestore -> beginCommissioning -> deleteItem(NIB) -> startup=3 -> reset`
+explains this terminal state. The initial strategy selection trigger remains
+unproven; record this distinction rather than guessing a TI media fault.
+
+**2026-10-21 priority:** finalize firmware and protected host startup. Preserve
+the captured evidence; do not spend the release on one-off NIB repair. The
+last capture issued one approved BSL entry, no flash programming and no app
+restart. Current engineering changes add prevention and diagnostics; they do
+not repair the device or restart Z2M.
+
 ## Current evidence
 
 R4 firmware source `828b1b5e55d24a13dccf88bffe74108bf4b56bcc`, built by
@@ -55,7 +71,7 @@ of current live NV, target execution equivalence, native TI recovery, or a
 successful coordinator/security restore. The earlier genuine-TI 892/779
 initializer result used a different retained snapshot.
 
-## Implementation decision
+## Original forensic decision (completed through live comparison)
 
 1. Preserve the current USB HOLD state. Do not repeat Z2M startup, reformat NV,
    replay a backup, increment counters or change admission predicates.

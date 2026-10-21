@@ -19,6 +19,7 @@ jobs:
     env:
       HERDSMAN_PIN: 0968f979d558874b17396c96b66382d4236bbdcd
       B4_HERDSMAN_ROOT: /tmp/b4-herdsman-src
+      P7U_HERDSMAN_ROOT: /tmp/b4-herdsman-src
       B4_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -47,6 +48,7 @@ jobs:
         run: |
           python host/r4-b4/herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-overlay.json
           python host/r4-b4/b4_v4_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v4-overlay.json
+          PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --composition-receipt /tmp/b4-herdsman-v4-overlay.json --receipt /tmp/p7u-startup-hold.json
           test "$(python -c 'import json; print(json.load(open("/tmp/b4-herdsman-overlay.json"))["serial_owner"])')" = EXISTING_ZNP_ONLY
       - name: Verify exact pinned diagnostic DEBUG payload redaction
         run: |
@@ -65,7 +67,7 @@ jobs:
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
-          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-owner-lifecycle.cjs \
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
         run: |
@@ -129,13 +131,13 @@ jobs:
                   raise ValueError('B4 tested checkout pin changed')
 
           paths = sorted(p.decode() for p in
-                         git('ls-files', '-z', '--', 'host/r4-b4').split(b'\0') if p)
+                         git('ls-files', '-z', '--', 'host/r4-b4', 'host/recovery').split(b'\0') if p)
           if not paths:
               raise ValueError('B4 source bundle has no tracked inputs')
           frozen = {}
           for name in paths:
               path = Path(name)
-              if not name.startswith('host/r4-b4/') or path.is_symlink() or not path.is_file():
+              if not name.startswith(('host/r4-b4/', 'host/recovery/')) or path.is_symlink() or not path.is_file():
                   raise ValueError('Unsafe B4 source bundle member')
               data = path.read_bytes()
               if data != git('show', source_sha + ':' + name):
@@ -155,7 +157,7 @@ jobs:
                           bundle.addfile(member, io.BytesIO(data))
           for name in ('b4-herdsman-overlay.json', 'b4-herdsman-v4-overlay.json',
                        'b4-z2m-ota-receipt.json', 'b4-v4-z2m-ota-receipt.json',
-                       'b4-host-runtime-tests.tap'):
+                       'b4-host-runtime-tests.tap', 'p7u-startup-hold.json'):
               shutil.copyfile(Path('/tmp') / name, output / name)
           files = {}
           for path in sorted(output.iterdir()):
@@ -176,6 +178,9 @@ jobs:
               'herdsman_typescript_compiled': True,
               'z2m_typescript_compiled': True,
               'host_runtime_tests_completed': True,
+              'retained_startup_protected': True,
+              'automatic_backup_restore': False,
+              'blank_backup_restore_supported': False,
               'default_enabled': False,
               'installed_host_changed': False,
               'full_b0_b4_sealed': False,

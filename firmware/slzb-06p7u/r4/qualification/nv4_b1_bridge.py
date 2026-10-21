@@ -84,6 +84,10 @@ NEW_ADMISSION = '''        {
             uint8_t reason = B1_NV_HOLD_UNKNOWN_LAYOUT;
             b1_nv_existing_pair = 0u;
             admission = r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle);
+            b1_management_note_nv4((uint32_t)admission.code,
+                (uint32_t)admission.semantic_state, admission.reads,
+                admission.records, admission.active_records, admission.fault_offset,
+                admission.semantic_flags);
             switch (admission.code)
             {
             case R4_NV4_BAD_READER: reason = B1_NV_HOLD_NO_READER; break;

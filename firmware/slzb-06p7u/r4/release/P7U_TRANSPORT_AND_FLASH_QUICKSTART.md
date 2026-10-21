@@ -8,7 +8,7 @@ The P7U USB cable is physically connected to **Home Assistant (Raspberry Pi)**, 
 
 | Situation | Radio mode | Operator/data path | What to do |
 |---|---|---|---|
-| **Current state: R4 flashed, USB live, NV HOLD** | **USB** | SMLIGHT radio -> Home Assistant /dev/ttyACM0; ESP management still via LAN | **Do not restart Z2M or power-cycle the radio.** Z2M startup failed at 19:29 CEST 2026-10-20; read-only F1 reports NV HOLD. Preserve this state pending retained-NV forensic decision. |
+| **Last approved device operation: duplicate live capture completed** | **Ethernet / ROM BSL** | Zephyrus qualified read-only TCP/6638 adapter | Two full reads, ROM CRCs and identity matched; no app-return command followed. Current work finalizes firmware; it performs no device recovery or Z2M start. |
 | R4 flash with validated Ethernet BSL support | **Ethernet** | Native Windows operator -> TCP/6638 in ROM BSL; management control enters BSL separately | Preferred when the exact host, stable link, readback, silicon ID and safety admission work. No WSL or device-mode toggle. Never use a generic mass-erase flasher. |
 | Ethernet BSL admission fails, or network path is unstable | Stop, unchanged unless explicitly directed | Assess HA-attached USB path or move physical cable to Windows under a *new explicit plan* | Do not pretend USB mode creates a Zephyrus COM port. Do not flash via an unreviewed TCP bridge. |
 | Post-flash verification while still in BSL | **Keep Ethernet/BSL** | Pinned APP+AC000 readback, all unchanged NV/CCFG sectors checked | Do not start Z2M or change mode until the write has been positively verified and the controlled boot action is authorized. |
@@ -36,6 +36,12 @@ prove current live NV unchanged. Use the [forensic decision procedure](P7U_NV_HO
 before preparing any new firmware or hardware operation.
 
 **Z2M's beginRestore path may attempt NV deletion and startup-option writes before its reset wait.** The observed firmware HOLD appears to reject those commands, but that is not proof of zero persistent writes; a new read-only live capture must establish any continuity claim. Keep preflash snapshots secret on Zephyrus.
+
+**2026-10-21 resolution:** the approved live capture reproduced semantic HOLD:
+NIB is inactive and startup option is 3, while APP/boot/CCFG match their pins.
+The next candidate protects retained NV at raw MT entry points and ships with
+non-destructive host startup. Its firmware work does not re-run capture or
+repair the incident state. See the [current candidate procedure](R4_P7U_STOCK20260311_FINALIZATION.md).
 
 ## Minimal R4 flash lane
 

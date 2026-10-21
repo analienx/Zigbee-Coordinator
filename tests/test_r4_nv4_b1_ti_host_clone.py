@@ -11,7 +11,9 @@ import sys
 import tempfile
 import unittest
 
-from tests.test_r4_nv4_readonly_admission import stock_like_semantic
+from tests.test_r4_nv4_readonly_admission import (
+    formed_tc300_rollover_media, stock_like_semantic,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +86,7 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
         self.assertEqual(result['init_code'], 0)
         self.assertEqual(result['ti_init_action'], 1)
         self.assertEqual(result['nv_pages'], 4)
-        self.assertEqual((result['all_items'], result['active_items']), (3, 3))
+        self.assertEqual((result['all_items'], result['active_items']), (4, 4))
         self.assertEqual((result['write_attempts'], result['erase_attempts'],
                           result['compaction_attempts']), (0, 0, 0))
         self.assertFalse(result['flash_authorized'])
@@ -96,7 +98,19 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
         result = self.probe(bytes(media))
         self.assertTrue(result['ti_init_readonly_accepted'])
         self.assertEqual(result['ti_init_action'], 1)
-        self.assertEqual((result['all_items'], result['active_items']), (3, 3))
+        self.assertEqual((result['all_items'], result['active_items']), (4, 4))
+        self.assertEqual((result['write_attempts'], result['erase_attempts'],
+                          result['compaction_attempts']), (0, 0, 0))
+        self.assertFalse(result['flash_authorized'])
+
+    def test_genuine_ti_accepts_tc300_mixed_rollover_without_any_init_mutation(self):
+        # Real TI/B1 init/CRC/read functions over public fake data, not a
+        # Z-Stack key/NIB restoration or a physical/network acceptance claim.
+        result = self.probe(formed_tc300_rollover_media())
+        self.assertTrue(result['ti_init_readonly_accepted'])
+        self.assertEqual((result['init_code'], result['ti_init_action']), (0, 1))
+        self.assertEqual(result['page_states'], [0x78, 0x7c, 0xff, 0xfe])
+        self.assertEqual((result['all_items'], result['active_items']), (795, 779))
         self.assertEqual((result['write_attempts'], result['erase_attempts'],
                           result['compaction_attempts']), (0, 0, 0))
         self.assertFalse(result['flash_authorized'])
@@ -129,7 +143,9 @@ class PostB1Nv4TiIntegrationTests(unittest.TestCase):
 
     def test_semantic_contradictions_hold_before_native_init(self):
         for variant in (dict(bdb=1), dict(nib=True), dict(logical=1),
-                        dict(bdb=None), dict(bdb_payload=b'\x00\x00')):
+                        dict(bdb=None), dict(bdb_payload=b'\x00\x00'),
+                        dict(startup=None), dict(startup=3), dict(startup=0x80),
+                        dict(startup_payload=b'\x00\x00')):
             with self.subTest(**variant):
                 result = self.probe(stock_like_semantic(**variant))
                 self.assertFalse(result['ti_init_readonly_accepted'])

@@ -15,6 +15,9 @@ import json
 from pathlib import Path
 import re
 import struct
+import subprocess
+from functools import lru_cache
+from urllib.request import urlopen
 
 
 QUAL = Path(__file__).resolve().parent
@@ -35,9 +38,27 @@ def digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+@lru_cache(maxsize=4)
 def public_source(name: str) -> str:
     path = QUAL.parent / 'b1' / name if name == 'b1_admission.h' else QUAL / name
     raw = path.read_bytes().replace(b'\r\n', b'\n')
+    if digest(raw) != PINS[name]:
+        # This oracle describes the actually flashed 828b1b5 image. Later
+        # firmware fixes must not silently change its saved-media diagnosis.
+        root = QUAL.parents[3]
+        relative = path.relative_to(root).as_posix()
+        try:
+            raw = subprocess.check_output(
+                ['git', '-C', str(root), 'show', f'{LIVE_FIRMWARE_SHA}:{relative}'],
+                stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            # Shallow hosted checkouts need only these public, hash-pinned
+            # historical sources; no private capture is sent over the network.
+            with urlopen('https://raw.githubusercontent.com/analienx/'
+                         f'Zigbee-Coordinator/{LIVE_FIRMWARE_SHA}/{relative}',
+                         timeout=20) as response:
+                raw = response.read(262144)
+        raw = raw.replace(b'\r\n', b'\n')
     if digest(raw) != PINS[name]:
         raise ValueError('NV4_ORACLE_PIN_DRIFT_' + name)
     return raw.decode('utf-8')

@@ -4,13 +4,23 @@ Target: the single SLZB-06P7U R1.73 / CC2652P7, with the retained107-device
 network. This supersedes historical A6000/direct-ROM APP-only instructions.
 It grants no hardware access, BSL entry, flash, reset or production start.
 
-**Current incident, 2026-10-20:** R4 `828b1b5` has already been flashed and
-responds over HA USB. Its NV HOLD prevents network startup. Leave the unit
-powered in USB mode, with Z2M stopped. The exact C observer accepts both saved
-preflash captures (952 records / 779 active); current live NV equivalence is
-unproven. See the [NV HOLD evidence and decision procedure](P7U_NV_HOLD_FORENSICS_20261020.md).
+**Reliability candidate, 2026-10-21:** the `828b1b5` image booted and answered
+ZNP, but an automatic herdsman restore deleted NIB and left startup option 3;
+its subsequent NV HOLD was correct. This revision prevents destructive raw
+MT NV changes on an admitted network, blocks pending destructive startup
+flags, accepts the valid mixed FULL/INACTIVE page rotation, adds precise
+read-only NV4 diagnostics, and includes protected herdsman startup in the host
+bundle. Internal Zigbee counter/routing persistence remains enabled.
 
-Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. A new live ROM capture requires an explicitly approved transition to Ethernet/BSL. The guarded stock20260311 adapter supports GitHub-tested private-IPv4 TCP/6638. The earlier APP+AC000 operation and readback succeeded; another write still requires new frozen admission and separate owner confirmation of AC000.
+Deploy the firmware with its matching protected host bundle. This is a
+retained-network candidate; it does not authorize or implement an automatic
+blank-NV backup restore. An intentional backup restore may use the separately
+qualified stock bootstrap followed by an NV-preserving R4 reflash. Incident
+specific inactive-NIB repair is outside this candidate. Hardware operations
+and installed HA changes remain separate from preparing/building this image.
+See the [NV HOLD evidence](P7U_NV_HOLD_FORENSICS_20261020.md).
+
+Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. The last approved operation captured full flash twice over Ethernet/ROM BSL, without an app-return command. Firmware work after that operation does not contact or restart the unit. The earlier APP+AC000 operation and readback succeeded; another write still requires new frozen admission and separate owner confirmation of AC000.
 
 ## Accepted evidence and exact layout
 

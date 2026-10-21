@@ -140,6 +140,8 @@ def main():
          tuple((name,) for name in HOST_API_SCENARIOS)),
         ("host_nwk_api", "make_nwk_host_api_harness.py", SOURCE_PATHS[9],
          tuple((name,) for name in NWK_HOST_API_SCENARIOS)),
+        ("retained_mt_nv", "make_mt_nv_retained_harness.py",
+         "source/ti/zstack/mt/mt_sys.c", ((),)),
         ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
         ("network_ready", "make_network_ready_harness.py", SOURCE_PATHS[3],
          tuple((name,) for name in ("healthy", "premature", "no_nv",
@@ -153,7 +155,7 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              "--source", sdk / relative, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api")),
+        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api", "retained_mt_nv")),
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)

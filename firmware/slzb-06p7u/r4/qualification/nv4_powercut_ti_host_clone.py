@@ -96,7 +96,7 @@ int main(void)
   static volatile unsigned cuts=0u, holds=0u, candidates=0u;
   static volatile unsigned preparation_candidates=0u,committed_candidates=0u;
   r4_nv4_result pre;
-  unsigned total;
+  unsigned total,baseline_records,baseline_active;
   volatile unsigned erased_operations=0u;
   if(fread(nv,1,sizeof(nv),stdin)!=sizeof(nv)||getchar()!=EOF) return 7;
   memcpy(before,nv,sizeof(nv));
@@ -106,7 +106,8 @@ int main(void)
   pre=r4_nv4_admit(independent_read,NULL);
   assert(pre.code==R4_NV4_READONLY_STRUCTURE_ACCEPTED);
   assert(pre.semantic_state==R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE);
-  assert(pre.records==3u && pre.active_records==3u);
+  assert(pre.records>=4u && pre.records==pre.active_records);
+  baseline_records=pre.records;baseline_active=pre.active_records;
   baseline_handle=NVOCMP_nvHandle;
   memcpy(baseline_media,nv,sizeof(nv));
   restore_trial();
@@ -119,7 +120,7 @@ int main(void)
   pre=r4_nv4_admit(independent_read,NULL);
   assert(pre.code==R4_NV4_READONLY_STRUCTURE_ACCEPTED);
   assert(pre.semantic_state==R4_NV4_STATE_UNCOMMISSIONED_CANDIDATE);
-  assert(pre.records==3u && pre.active_records==3u);
+  assert(pre.records==baseline_records && pre.active_records==baseline_active);
   for(volatile unsigned at=1u;at<=total;++at) {
     unsigned n=op_lengths[at-1u];
     assert(n>0u);
@@ -158,7 +159,7 @@ int main(void)
           ++committed_candidates;
         }
         ++candidates;
-        assert(pre.records==3u && pre.active_records==3u);
+        assert(pre.records==baseline_records && pre.active_records==baseline_active);
         memset(&NVOCMP_nvHandle,0,sizeof(NVOCMP_nvHandle));
         NVOCMP_failF=NVINTF_NOTREADY;NVOCMP_failW=NVINTF_NOTREADY;
         readonly_guard=1u;

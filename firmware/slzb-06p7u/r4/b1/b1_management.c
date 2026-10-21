@@ -22,6 +22,8 @@ static uint8_t b1_management_stage;
 static uint8_t b1_management_nv_probe;
 static uint8_t b1_network_ready_attested;
 static uint8_t b1_network_needs_fresh_validation;
+static uint8_t b1_nv4_measured;
+static uint32_t b1_nv4_result[7];
 
 static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
 {
@@ -177,6 +179,30 @@ void b1_management_note_nv_probe(uint8_t code)
     B1_CS_LEAVE(key);
 }
 
+__attribute__((noinline))
+void b1_management_note_nv4(uint32_t code, uint32_t semantic, uint32_t reads,
+                           uint32_t records, uint32_t active, uint32_t fault,
+                           uint32_t semantic_flags)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_nv4_result[0] = code;
+    b1_nv4_result[1] = semantic;
+    b1_nv4_result[2] = reads;
+    b1_nv4_result[3] = records;
+    b1_nv4_result[4] = active;
+    b1_nv4_result[5] = fault;
+    b1_nv4_result[6] = semantic_flags;
+    b1_nv4_measured = 1u;
+    B1_CS_LEAVE(key);
+}
+
+static void b1_nv4_pack16(uint8_t *out, uint32_t value)
+{
+    if (value > 0xffffu) value = 0xffffu;
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8u);
+}
+
 uint8_t b1_management_mt_filter(const uint8_t *frame,
                               uint8_t reply[B1_STATUS_REPLY_SIZE],
                               uint8_t *rpc_error)
@@ -185,7 +211,7 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
         { 'B', '1', 'Q', '1', 1u, B1_STATUS_QUERY_SIZE, 0u, 0u };
     uintptr_t key;
     uint8_t flags, stage, first_error, current_error, nv_probe, network_ready;
-    int held;
+    int held, retained_formed;
     if (frame == NULL || reply == NULL || rpc_error == NULL)
         return B1_MT_DROP;
 
@@ -197,6 +223,8 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
     current_error = b1_management_current_error;
     nv_probe = b1_management_nv_probe;
     network_ready = b1_network_ready_attested;
+    retained_formed = b1_nv4_measured && b1_nv4_result[0] == 8u &&
+        b1_nv4_result[1] == 2u && (flags & B1_FLAG_NV_HEADER_CANDIDATE);
     B1_CS_LEAVE(key);
     held = (flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
                      B1_FLAG_HOLD_TRANSPORT)) != 0u;
@@ -210,9 +238,35 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
             *rpc_error = 4u; /* donor MT_RPC_ERR_LENGTH */
             return B1_MT_REJECT;
         }
-        if (memcmp(frame + 3, query, sizeof(query)) != 0)
+        if (memcmp(frame + 3, query, 6u) != 0 || frame[9] > 1u || frame[10] != 0u)
             return B1_MT_REJECT;
         memset(reply, 0, B1_STATUS_REPLY_SIZE);
+        if (frame[9] == 1u)
+        {
+            /* B1Q1 v1/8 op1 -> B1N1 v1/24. Counts and offsets only;
+             * no item identities, NIB contents, network keys or counters.
+             * The original op0 B1S1 response remains byte compatible. */
+            memcpy(reply, "B1N1", 4u);
+            reply[4] = 1u;
+            reply[5] = B1_STATUS_REPLY_SIZE;
+            key = B1_CS_ENTER();
+            reply[6] = b1_nv4_measured ? (uint8_t)b1_nv4_result[0] : 0xffu;
+            reply[7] = b1_nv4_measured ? (uint8_t)b1_nv4_result[1] : 0xffu;
+            b1_nv4_pack16(reply + 8, b1_nv4_result[3]);
+            b1_nv4_pack16(reply + 10, b1_nv4_result[4]);
+            b1_nv4_pack16(reply + 12, b1_nv4_result[2]);
+            b1_nv4_pack16(reply + 14, b1_nv4_result[5]);
+            reply[20] = b1_nv4_measured;
+            reply[21] = (uint8_t)b1_nv4_result[6];
+            B1_CS_LEAVE(key);
+#ifdef B1_BUILD_DIGEST_BYTES
+            {
+                static const uint8_t build_digest[4] = { B1_BUILD_DIGEST_BYTES };
+                memcpy(reply + 16, build_digest, sizeof(build_digest));
+            }
+#endif
+            return B1_MT_STATUS;
+        }
         memcpy(reply, "B1S1", 4u);
         reply[4] = 1u;
         reply[5] = B1_STATUS_REPLY_SIZE;
@@ -231,6 +285,24 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
         }
 #endif
         return B1_MT_STATUS;
+    }
+    if (retained_formed)
+    {
+        uint8_t subsystem = frame[1] & 0x1fu;
+        /* Alternate raw host paths must not bypass the SYS NV backstop:
+         * SAPI writeConfiguration and ZNP basicCfg can rewrite network NV. */
+        if ((subsystem == 1u && frame[2] == 3u) || /* SYS setExtAddr */
+            (subsystem == 6u && frame[2] == 5u) ||
+            (subsystem == 11u && frame[2] == 0u))
+            return (frame[1] & 0xe0u) == 0x20u ? B1_MT_REJECT : B1_MT_DROP;
+        if (subsystem == 15u && frame[2] == 5u)
+        {
+            /* TI bdb_StartCommissioning: formation=04, steering=02,
+             * initialization=10. Resume/permit joining remain available. */
+            if (frame[1] != 0x2fu) return B1_MT_DROP;
+            if (frame[0] != 1u) { *rpc_error = 4u; return B1_MT_REJECT; }
+            if (frame[3] & 4u) return B1_MT_REJECT;
+        }
     }
     if (!held) return B1_MT_CONTINUE;
 #if defined(B1_B4_F2_HOLD_DIAGNOSTIC_REVIEWED)

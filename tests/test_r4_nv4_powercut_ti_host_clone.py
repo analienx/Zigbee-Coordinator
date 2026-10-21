@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -68,8 +69,17 @@ class PinnedTiFourPagePowercutTests(unittest.TestCase):
         self.assertIn(b'R4_T4_PINNED_TI_NV4_NOR_CUTS_PASS', proc.stdout)
         # Seven modes-only preparation cuts are safe; every torn record move,
         # cleanup and erase still HOLDS until the fully committed final op.
-        self.assertIn(b'cuts=24703 ops=26 holds=24695 candidates=8 '
-                      b'prep=7 committed=1', proc.stdout)
+        counts = re.search(rb'cuts=(\d+) ops=(\d+) holds=(\d+) candidates=(\d+) '
+                           rb'prep=(\d+) committed=(\d+)', proc.stdout)
+        self.assertIsNotNone(counts)
+        cuts, operations, holds, candidates, preparation, committed = map(int, counts.groups())
+        # Count every byte boundary from the current four-marker fixture;
+        # fixed byte totals from the old three-record fixture are obsolete.
+        self.assertGreater(cuts, 3 * operations)
+        self.assertGreater(holds, 0)
+        self.assertEqual(cuts, holds + candidates)
+        self.assertEqual((preparation, committed), (7, 1))
+        self.assertEqual(candidates, preparation + committed)
         self.assertIn(b'flash_authorized=false', proc.stdout)
 
     def test_short_nv_snapshot_is_refused(self):

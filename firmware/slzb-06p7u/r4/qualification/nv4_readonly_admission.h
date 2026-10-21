@@ -30,6 +30,9 @@ typedef struct {
     uint32_t active_records;
     uint32_t fault_offset;
     r4_nv4_semantic_state semantic_state;
+    /* Diagnostic bits: BDB seen/on-network, role seen/coordinator, NIB seen,
+     * startup seen/safe, malformed marker. No payload bytes are exposed. */
+    uint32_t semantic_flags;
 } r4_nv4_result;
 
 r4_nv4_result r4_nv4_admit(r4_nv4_read reader, void *context);
