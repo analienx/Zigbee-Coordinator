@@ -33,6 +33,10 @@ def post_b1_fixture() -> str:
         bridge.POST_DIVISION_NV2,
         bridge.OLD_ADMISSION,
         bridge.MULTIPAGE_SCAN,
+        bridge.R4_NV4_REPAIR_DST_FROM,
+        bridge.R4_NV4_REPAIR_ADD_FROM,
+        bridge.R4_REPAIR_API_ANCHOR,
+        bridge.R4_REPAIR_INIT_FROM,
         '#ifdef NVOCMP_RECOVER_FROM_COMPACT_FAILURE',
         '/* pinned TI multi-page destructive branch */',
         '#endif',
@@ -47,6 +51,13 @@ class Nv4B1BridgeTests(unittest.TestCase):
         source = bridge.transform(post_b1_fixture())
         self.assertIn('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)', source)
         self.assertIn('b1_nv_existing_pair = 1u;', source)
+        self.assertIn('r4_nv4_finish_nib_repair()', source)
+        self.assertIn('if(r4_nv4_repair_write_window)', source)
+        self.assertIn('len > FLASH_PAGE_SIZE - pNvHandle->actOffset', source)
+        self.assertIn('write_status = NVOCMP_writeItemApi(nib_id', source)
+        self.assertIn('r4_nv4_repair_write_window = 0u;', source)
+        self.assertIn('R4_RECOVER_NIB_LENGTH', source)
+        self.assertIn('r4_nv4_probe_nib', source)
         self.assertIn('b1_nv_existing_pair = 0u;', source)
         self.assertIn('b1_management_note_nv_candidate()', source)
         self.assertIn('b1_management_hold_nv(reason)', source)
@@ -64,6 +75,17 @@ class Nv4B1BridgeTests(unittest.TestCase):
         self.assertNotIn('#ifdef B1_FACTORY_BOOT_AUTHORIZED', source)
         self.assertTrue(source.startswith(bridge.DESTRUCTIVE_COMPACTION_DENIAL))
         self.assertEqual(source.count(bridge.DESTRUCTIVE_COMPACTION_DENIAL), 3)
+
+    def test_rescue_writer_never_enters_compaction_fallback(self):
+        source = bridge.transform(post_b1_fixture())
+        self.assertEqual(source.count('if(r4_nv4_repair_write_window)'), 2)
+        self.assertIn('if(pageHdr.state != NVOCMP_PGACT)', source)
+        self.assertIn('NVOCMP_failW = NVINTF_FAILURE;', source)
+        for label, anchor in [('destination', bridge.R4_NV4_REPAIR_DST_FROM),
+                              ('add', bridge.R4_NV4_REPAIR_ADD_FROM)]:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                    ValueError, 'PREIMAGE_RESCUE'):
+                bridge.transform(post_b1_fixture().replace(anchor, 'X' + anchor[1:]))
 
     def test_current_stock_20260311_explicit_nv_base(self):
         source = bridge.transform(post_b1_fixture(), stock_base=0xA4000)

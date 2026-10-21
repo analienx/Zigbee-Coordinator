@@ -37,7 +37,7 @@ def transform(pristine: bytes, crc: bytes, bridged: bytes,
     if hashlib.sha256(bridged).hexdigest() != expected_sha256:
         raise ValueError('B1_NV4_BRIDGED_SOURCE_SHA256_MISMATCH')
     post = bridged.decode('utf-8').replace('\r\n', '\n')
-    if (post.count('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)') != 1 or
+    if (post.count('r4_nv4_admit(r4_nv4_nvs_read, NVOCMP_nvsHandle)') != 2 or
             post.count('b1_nv_existing_pair = 1u;') != 1 or
             post.count('NVOCMP_NVPAGES != R4_NV4_PAGES') != 2):
         raise ValueError('B1_NV4_BRIDGE_MARKERS_MISSING')
@@ -61,9 +61,26 @@ def transform(pristine: bytes, crc: bytes, bridged: bytes,
             raise ValueError('B1_NV4_COMPILED_BODY_NOT_UNIQUE_' + prefix[:28])
         host = host.replace(old, new, 1)
     callback = body(post, 'static int r4_nv4_nvs_read(', 0)
+    scratch = (
+        'static uint8_t r4_nv4_repair_write_window;\n'
+        'static uint8_t r4_nv4_nib_repair_pending;\n'
+        'static uint8_t r4_nv4_nib_expected_startup;\n'
+        'static uint32_t r4_nv4_nib_source_offset;\n'
+        'static uint8_t r4_nv4_nib_data[R4_RECOVER_NIB_LENGTH];'
+    )
+    if post.count(scratch) != 1 or post.count(
+        'static uint8_t r4_nv4_finish_nib_repair(void)') != 1:
+        raise ValueError('B1_NV4_RESCUE_FW_MARKERS_MISSING')
+    # This legacy RAM clone denies ALL writes and only tests ordinary
+    # formed/uncommissioned/ambiguous init. Its maintenance helper is
+    # deliberately a HOLD stub; real repair must be tested separately
+    # against actual TI writer bodies and the native firmware build.
     addition = ('#include "b1_admission.c" /* B1 real sticky/candidate code */\n'
                 '#include "nv4_readonly_admission.c" /* strict 4-page C code */\n'
-                + callback + '\n')
+                '#include "nv4_nib_repair_probe.c" /* read-only rescue gate */\n'
+                + callback + '\n' + scratch + '\n'
+                'static uint8_t r4_nv4_finish_nib_repair(void)\n'
+                '{ return NVINTF_FAILURE; } /* writes prohibited by this clone */\n')
     marker = '#pragma GCC diagnostic push'
     if host.count(marker) != 1:
         raise ValueError('B1_NV4_HOST_PREAMBLE_DRIFT')
