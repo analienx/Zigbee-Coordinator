@@ -74,7 +74,8 @@ def patch(source: str) -> str:
     if "B1_RETAINED_MT_NV_GUARD" in source:
         raise RuntimeError("B1_MT_NV_GUARD_ALREADY_APPLIED")
     source = replace_once(source, '#include "mt_version.h"',
-                          '#include "mt_version.h"\n#include <string.h>',
+                          '#include "mt_version.h"\n#include <string.h>\n'
+                          '#ifndef FEATURE_NVEXID\n#define FEATURE_NVEXID 1\n#endif',
                           "retained MT NV string declarations")
     anchor = "static void MT_SysOsalNVWrite(uint8_t *pBuf)\n{"
     source = replace_once(source, anchor, SUPPORT + "\n" + anchor, "retained MT NV helper")

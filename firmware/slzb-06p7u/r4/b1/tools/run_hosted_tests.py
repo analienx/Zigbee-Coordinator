@@ -72,6 +72,16 @@ def main():
     sdk = work / "sdk"
     fetch_sources(sdk)
     receipt = overlay(sdk, b1)
+    # Zigbee2MQTT/Herdsman uses MT SYS extended NV length/read on startup.
+    # TI disables these dispatch cases unless FEATURE_NVEXID is enabled.
+    mt_sys = (sdk / "source/ti/zstack/mt/mt_sys.c").read_text(encoding="utf-8")
+    flag = "#define FEATURE_NVEXID 1"
+    dispatch = "case MT_SYS_NV_LENGTH:"
+    if (mt_sys.count(flag) != 1 or mt_sys.find(flag) > mt_sys.find(dispatch) or
+            "case MT_SYS_NV_READ:" not in mt_sys or
+            "B1_RETAINED_MT_NV_GUARD" not in mt_sys):
+        raise RuntimeError("B1_EXTENDED_NV_READ_DISPATCH_MISSING_OR_UNGUARDED")
+    receipt["extended_nv_read_dispatch_enabled"] = True
     source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True).strip()
     if source_sha != os.environ["B1_SOURCE_SHA"]:
