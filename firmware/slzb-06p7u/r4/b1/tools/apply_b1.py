@@ -14,6 +14,7 @@ from patch_host_api import patch as patch_host_api
 from patch_restore_host import patch_restore_host
 from patch_mt_nv_retained import patch as patch_mt_nv_retained
 from patch_mt_zdo_retained import patch as patch_mt_zdo_retained
+from patch_startup_restore import patch_startup_restore, patch_bdb_restore
 from patch_nwk_rotation import patch_security as patch_nwk_rotation_security, patch_host_api as patch_nwk_rotation_host
 from patch_nv_integrity import patch as patch_nv_integrity
 import patch_management
@@ -30,6 +31,7 @@ SDK_STARTUP = "source/ti/zstack/startup/zstackstartup.c"
 SDK_OSAL_NV = "source/ti/zstack/osal/osal_nv.c"
 SDK_MT_SYS = "source/ti/zstack/mt/mt_sys.c"
 SDK_MT_ZDO = "source/ti/zstack/mt/mt_zdo.c"
+SDK_BDB = "source/ti/zstack/stack/bdb/bdb.c"
 SDK_MT_VERSION = "source/ti/zstack/mt/mt_version.c"
 SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
 SHA_HOST_API = "d85758d2274097d2efe7c395e97e394f70fd352e"
@@ -38,6 +40,7 @@ SHA_STARTUP = "72073f7a90d3de183533e84c3396e239343731e5"
 SHA_OSAL_NV = "65c7667475627989cbe2e3f5fdd46335b50eb660"
 SHA_MT_SYS = "ef45121d6276d9c78da577f6153800cbdb45df9c"
 SHA_MT_ZDO = "f43df5cbf44f6cfa32e36644df33a0f75691ba80"
+SHA_BDB = "dbaa595d961044761bc2a333b8d3c0e314f72c82"
 SHA_MT_VERSION = "831aeb699839f3dfe1a6091186fdb54fe911de6a"
 HERDSMAN_FILE = ".b1-prerequisites/herdsman-definition.ts"
 SHA_NV = "01b2b0827d278c10c012b33e5791e53bc5662f10"
@@ -69,6 +72,7 @@ def overlay(sdk, b1_dir):
     src_osal_nv = sdk / SDK_OSAL_NV
     src_mt_sys = sdk / SDK_MT_SYS
     src_mt_zdo = sdk / SDK_MT_ZDO
+    src_bdb = sdk / SDK_BDB
     src_mt_version = sdk / SDK_MT_VERSION
     security = src_security.read_text(encoding="utf-8")
     host_api = src_host_api.read_text(encoding="utf-8")
@@ -78,6 +82,7 @@ def overlay(sdk, b1_dir):
     mt_sys = src_mt_sys.read_text(encoding="utf-8")
     # Source-only CI shims omit MT_ZDO. The full pinned native SDK includes it.
     mt_zdo = src_mt_zdo.read_text(encoding="utf-8") if src_mt_zdo.is_file() else None
+    bdb = src_bdb.read_text(encoding="utf-8") if src_bdb.is_file() else None
     mt_version = src_mt_version.read_text(encoding="utf-8")
     source = src_nv.read_text(encoding="utf-8")
     main = src_main.read_text(encoding="utf-8")
@@ -93,6 +98,7 @@ def overlay(sdk, b1_dir):
             or git_blob_sha(osal_nv) != SHA_OSAL_NV
             or git_blob_sha(mt_sys) != SHA_MT_SYS
             or (mt_zdo is not None and git_blob_sha(mt_zdo) != SHA_MT_ZDO)
+            or (bdb is not None and git_blob_sha(bdb) != SHA_BDB)
             or git_blob_sha(mt_version) != SHA_MT_VERSION):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
@@ -366,6 +372,7 @@ def overlay(sdk, b1_dir):
 
     # Runtime NWK counter continuity: persist, read back, then publish.
     zdapp = patch_zdapp(zdapp)
+    zdapp = patch_startup_restore(zdapp)
     security = patch_security(security)
     security = patch_nwk_rotation_security(security)
     host_api = patch_host_api(host_api)
@@ -378,6 +385,8 @@ def overlay(sdk, b1_dir):
     mt_sys = patch_mt_nv_retained(mt_sys)
     if mt_zdo is not None:
         mt_zdo = patch_mt_zdo_retained(mt_zdo)
+    if bdb is not None:
+        bdb = patch_bdb_restore(bdb)
 
     main = replace_once(main, '#include "nvocmp.h"',
                         '#include "nvocmp.h"\n#include "b1_management.h"', "main management header")
@@ -441,6 +450,8 @@ def overlay(sdk, b1_dir):
     src_mt_sys.write_text(mt_sys, encoding="utf-8")
     if mt_zdo is not None:
         src_mt_zdo.write_text(mt_zdo, encoding="utf-8")
+    if bdb is not None:
+        src_bdb.write_text(bdb, encoding="utf-8")
     src_mt_version.write_text(mt_version, encoding="utf-8")
     return {
         "schema": "r4-b1-admission-overlay-v2",
@@ -456,9 +467,12 @@ def overlay(sdk, b1_dir):
         "upstream_mt_sys_blob": SHA_MT_SYS,
         "upstream_mt_zdo_blob": SHA_MT_ZDO if mt_zdo is not None else None,
         "retained_zdo_guard_source_present": mt_zdo is not None,
+        "upstream_bdb_blob": SHA_BDB if bdb is not None else None,
+        "retained_bdb_restore_source_present": bdb is not None,
         "upstream_mt_version_blob": SHA_MT_VERSION,
         "modified_mt_sys_sha256": hashlib.sha256(mt_sys.encode()).hexdigest(),
         "modified_mt_zdo_sha256": hashlib.sha256(mt_zdo.encode()).hexdigest() if mt_zdo is not None else None,
+        "modified_bdb_sha256": hashlib.sha256(bdb.encode()).hexdigest() if bdb is not None else None,
         "modified_mt_version_sha256": hashlib.sha256(mt_version.encode()).hexdigest(),
         "modified_security_sha256": hashlib.sha256(security.encode()).hexdigest(),
         "modified_host_api_sha256": hashlib.sha256(host_api.encode()).hexdigest(),
@@ -477,6 +491,7 @@ def overlay(sdk, b1_dir):
             "modified_osal_nv_sha256": SDK_OSAL_NV,
             "modified_mt_sys_sha256": SDK_MT_SYS,
             **({"modified_mt_zdo_sha256": SDK_MT_ZDO} if mt_zdo is not None else {}),
+            **({"modified_bdb_sha256": SDK_BDB} if bdb is not None else {}),
             "modified_mt_version_sha256": SDK_MT_VERSION,
         },
         "additional_required_functions": ["b1_sec_validate_restored", "APSME_TCLinkKeyInit",
@@ -485,7 +500,9 @@ def overlay(sdk, b1_dir):
             # NV4 note function is only live in four-page builds. It is
             # sealed by nv4_b1_bridge.py when the NV4 scanner is linked.
             "b1_management_note_zdo_state", "b1_sec_restored_network_validated",
-            "ZDApp_ChangeState", "b1_mt_nv_mutation_guard"],
+            "ZDApp_ChangeState", "b1_mt_nv_mutation_guard", "b1_znp_publish_configured",
+            *(["b1_mt_zdo_retained_startup"] if mt_zdo is not None else []),
+            *(["b1_bdb_restore_failed"] if bdb is not None else [])],
         "retained_raw_mt_nv_mutations": "DENY_EXCEPT_EXACT_IDEMPOTENT_LEGACY_WRITE_WITHOUT_NV_WRITE",
         "modified_zdapp_sha256": hashlib.sha256(zdapp.encode()).hexdigest(),
         "modified_zmac_sha256": hashlib.sha256(zmac.encode()).hexdigest(),

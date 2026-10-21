@@ -25,8 +25,15 @@ class TestRestoredStartup(unittest.TestCase):
         self.assertNotIn("bdb_StartCommissioning(BDB_COMMISSIONING_MODE_NWK_STEERING)", result)
         for anchor in ("b1_nv_runtime_hold_active()", "ZCD_NV_NIB", "ZCD_NV_STARTUP_OPTION",
                        "ZCD_NV_BDBNODEISONANETWORK", "ZCD_NV_LOGICAL_TYPE",
-                       "retValue = ZFailure", "startupOption != 0", "logicalType != 0"):
+                        "return ZFailure", "startupOption != 0", "logicalType != 0",
+                        "!b1_nv_existing_header_candidate()",
+                        "!b1_sec_restored_network_validated()",
+                        "osal_nv_item_len(ZCD_NV_STARTUP_OPTION) != 1",
+                        "osal_nv_item_len(ZCD_NV_BDBNODEISONANETWORK) != 1",
+                        "osal_nv_item_len(ZCD_NV_LOGICAL_TYPE) != 1"):
             self.assertIn(anchor, result)
+        self.assertIn("static __attribute__((noinline)) uint8_t " + module.HELPER_NAME, result)
+        self.assertIn("retValue = " + module.HELPER_NAME + "();", result)
 
     def test_drift_fails_closed(self):
         with self.assertRaises(ValueError):

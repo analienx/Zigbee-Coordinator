@@ -270,6 +270,46 @@ STORE_MATERIAL = r"""void ZDApp_StoreNwkSecMaterial(void)
 }"""
 
 
+PUBLISH_CONFIGURED = r"""/* Koenkk's application marker is bookkeeping, never authority to restore.
+ * Publish it only at the actual restored coordinator transition, after the
+ * full security preflight and durable NWK counter reservation have passed.
+ * This permits ordinary Herdsman startup without a maintained host fork. */
+__attribute__((noinline))
+static uint8_t b1_znp_publish_configured(void)
+{
+  const uint16_t item = 0x0060u; /* ZNP_HAS_CONFIGURED_ZSTACK3 */
+  uint8_t value = 0x55u;
+  uint16_t length;
+  uint8_t status;
+  if (b1_nv_runtime_hold_active() || !b1_sec_restored_network_validated())
+    return FALSE;
+  length = osal_nv_item_len(item);
+  if (b1_nv_runtime_hold_active()) return FALSE;
+  if (length == 0u)
+  {
+    status = osal_nv_item_init(item, sizeof(value), &value);
+    if ((status != ZSUCCESS && status != NV_ITEM_UNINIT) ||
+        b1_nv_runtime_hold_active()) goto fail;
+  }
+  else if (length != sizeof(value)) goto fail;
+  else
+  {
+    if (osal_nv_read(item, 0u, sizeof(value), &value) != ZSUCCESS ||
+        b1_nv_runtime_hold_active()) goto fail;
+    if (value == 0x55u) return TRUE; /* No flash wear on normal resumes. */
+    value = 0x55u;
+    if (osal_nv_write(item, sizeof(value), &value) != ZSUCCESS ||
+        b1_nv_runtime_hold_active()) goto fail;
+  }
+  value = 0u;
+  if (osal_nv_read(item, 0u, sizeof(value), &value) == ZSUCCESS &&
+      value == 0x55u && !b1_nv_runtime_hold_active()) return TRUE;
+fail:
+  b1_security_runtime_hold_latch();
+  return FALSE; /* Never acknowledge an unverified bookkeeping commit. */
+}"""
+
+
 def patch(source: str) -> str:
     source = replace_once(
         source, '#include "zcomdef.h"',
@@ -365,13 +405,18 @@ def patch(source: str) -> str:
     old_state = extract_function(source, state_sig)
     new_state = replace_once(
         old_state, "    devState = state;",
+        "    if (state == DEV_ZB_COORD && FrameCounterUpdated &&\n"
+        "        b1_nv_existing_header_candidate() &&\n"
+        "        b1_sec_restored_network_validated() &&\n"
+        "        !b1_znp_publish_configured()) return;\n"
         "    devState = state;\n"
         "    b1_management_note_zdo_state((uint8_t)(state == DEV_ZB_COORD),\n"
         "        (uint8_t)(state == DEV_ZB_COORD && FrameCounterUpdated &&\n"
         "                  b1_nv_existing_header_candidate() &&\n"
         "                  b1_sec_restored_network_validated()));",
         "ZDO actual state-change ready attestation")
-    source = replace_once(source, old_state, new_state, "actual ZDO callback body")
+    source = replace_once(source, old_state, PUBLISH_CONFIGURED + "\n\n" + new_state,
+                          "actual ZDO callback body")
 
     # A persistence fault in these paths is a security-domain failure.
     source = source.replace('b1_nv_runtime_hold_latch()',

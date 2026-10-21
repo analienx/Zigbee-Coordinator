@@ -39,6 +39,8 @@ static void seed_candidate(void)
   b1_management_note_nv_candidate();
 }
 int b1_sec_restored_network_validated(void) {return 1;}
+/* Marker NV behavior is exercised by the actual helper in network_ready. */
+static uint8_t b1_znp_publish_configured(void) {return 1;}
 static void OsalPort_setEvent(uint8_t task,uint32_t event)
 {
   assert(task==ZDAppTaskID && event==ZDO_STATE_CHANGE_EVT);

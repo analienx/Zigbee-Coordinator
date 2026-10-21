@@ -16,15 +16,21 @@ callbacks in RAM so a retained disabled callback setting cannot suppress
 host responses. The stored callback setting remains unchanged; initialization
 failure latches HOLD before enabling the runtime switch.
 
-Deploy the firmware with its matching protected host bundle. This is a
-retained-network candidate; it does not authorize or implement an automatic
+Production targets ordinary Zigbee2MQTT / unmodified Herdsman. The bundled
+protected host profile is optional diagnostic tooling, not a maintained HA
+dependency. At the actual coordinator transition, after complete security
+validation and durable counter reservation, firmware creates the missing
+one-byte Herdsman configured marker (0x60=0x55) with checked readback. An
+existing correct marker is untouched; a one-byte unconfigured marker is
+completed without restoring network data. Malformed length or a failed
+read/commit holds startup. This retained-network candidate does not implement an automatic
 blank-NV backup restore. An intentional backup restore may use the separately
 qualified stock bootstrap followed by an NV-preserving R4 reflash. Incident
 specific inactive-NIB repair is outside this candidate. Hardware operations
 and installed HA changes remain separate from preparing/building this image.
 See the [NV HOLD evidence](P7U_NV_HOLD_FORENSICS_20261020.md).
 
-Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. The last approved operation captured full flash twice over Ethernet/ROM BSL, without an app-return command. Firmware work after that operation does not contact or restart the unit. The earlier APP+AC000 operation and readback succeeded; another write still requires new frozen admission and separate owner confirmation of AC000.
+Operational transport/mode decision: [P7U Ethernet-versus-HA-USB quickstart](P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The USB cable is connected to **Home Assistant**, not Zephyrus. The latest owner report has stock firmware responding over Ethernet, original NV restored, and coordinator state 0 after two failed starts. Firmware work does not contact or restart the unit. Another write requires new frozen admission and separate owner confirmation of AC000.
 
 ## Accepted evidence and exact layout
 
@@ -106,18 +112,16 @@ and original AC000 (vectors last), preserves current NV/top, and verifies all
 flash before reset. After firmware has run, do not replay an old NV snapshot;
 current committed security/counter state must be retained and re-admitted.
 
-Physical acceptance has two ordered phases. First, after a controlled verified
-boot, obtain read-only B1/F1 and ZNP SYS/UTIL responses, confirm no HOLD and
-match persisted identity/security against the qualified backup. Second, let
-the owner select HA-attached USB and start exactly one matching protected
-Herdsman/Zigbee2MQTT instance. Only **after protected host startup** may
-coordinator state 9 and representative router/end-device traffic be required;
-do not deadlock acceptance by demanding state 9 before its host can run.
-Stop on any restore/commissioning request or security mismatch; never
-fall through to normal Herdsman recovery against ambiguous retained NV.
-The incident's current inactive NIB and STARTUP_OPTION=3 are not repaired by
-APP/AC000 reflashing. Backup-led, intentionally blank NV restoration remains
-a distinct unimplemented one-time protocol, not a permitted auto-restore.
+Physical acceptance starts on the existing Ethernet path: verify healthy
+B1/F1 and SYS/UTIL, admitted retained NV, identity, keys and current counter
+floors. A separately approved one-time retained ZDO startup uses the guarded
+non-forming BDB0 path. Require actual state 9, continuous ZNP responses and
+the verified configured marker before the deliberate USB return and ordinary
+Zigbee2MQTT startup. The marker is not a substitute for identity/key agreement;
+configuration mismatch must stop, and raw NV mutation remains blocked.
+The earlier missing-NIB incident has since been restored by the owner; do
+not repeat that restore. Backup-led, intentionally blank NV restoration
+remains separate from this retained-only image.
 NWK key UPDATE/SWITCH and B5 stay disabled. FULL_B0_B4 remains unsealed until
 actual persistence/RF acceptance; native linking is not live300-device fit.
 

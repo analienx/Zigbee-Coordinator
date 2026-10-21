@@ -2,6 +2,12 @@
 
 Updated 2026-10-21. Exact zigbee-herdsman **10.9.1**, commit **0968f979d558874b17396c96b66382d4236bbdcd**, used by Zigbee2MQTT **2.14.0**. This is the retained R4 host profile, generated on a disposable checkout and compiled/tested in GitHub Actions. It does not install software on HA or access the coordinator. No Herdsman 9.x compatibility is claimed.
 
+This profile is optional diagnostic tooling. Production targets ordinary,
+unmodified Zigbee2MQTT: firmware protects retained NV, uses non-forming ZDO
+startup, and publishes the configured marker only after actual coordinator
+startup with validated security and a durable counter. Do not install a
+maintained HA fork merely because this source bundle is included.
+
 ## Source-confirmed failure path
 
 Pinned `determineStrategy()` selects `restoreBackup` when the configured marker or NIB is missing and a backup matches configuration. `beginRestore()` first commissions a random provisioning network. `beginCommissioning()` deletes NIB, then `clearAdapter()` writes STARTUP_OPTION=0x03 and resets. R4's next read-only boot admission correctly refuses BDB=1 with missing NIB, preventing backup replay. The host must preserve a healthy retained network even when its optional 0x60 configured marker is absent.

@@ -33,6 +33,8 @@ SOURCE_PATHS = (
     "source/ti/zstack/osal/osal_nv.c",
     "source/ti/zstack/stack/api/zstacktask.c",
     SDK_MT_VERSION,  # do not shift existing SOURCE_PATHS harness indices
+    "source/ti/zstack/mt/mt_zdo.c",
+    "source/ti/zstack/stack/bdb/bdb.c",
 )
 
 
@@ -142,11 +144,15 @@ def main():
          tuple((name,) for name in NWK_HOST_API_SCENARIOS)),
         ("retained_mt_nv", "make_mt_nv_retained_harness.py",
          "source/ti/zstack/mt/mt_sys.c", ((),)),
+        ("retained_mt_zdo", "make_mt_zdo_retained_harness.py",
+         "source/ti/zstack/mt/mt_zdo.c", ((),)),
         ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
         ("network_ready", "make_network_ready_harness.py", SOURCE_PATHS[3],
          tuple((name,) for name in ("healthy", "premature", "no_nv",
              "no_security", "no_counter", "no_mt", "loss_of_coordinator", "loss_then_regain",
-             "after_nv_hold", "after_security_hold", "after_transport_hold"))),
+             "after_nv_hold", "after_security_hold", "after_transport_hold",
+             "marker_missing", "marker_existing", "marker_unconfigured", "marker_length",
+             "marker_write_fail", "marker_readback"))),
         ("osal_nv", "make_osal_nv_harness.py", SOURCE_PATHS[8], ((),)),
     )
     generated = {}
@@ -155,7 +161,7 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              "--source", sdk / relative, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api", "retained_mt_nv")),
+        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api", "retained_mt_nv", "retained_mt_zdo")),
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)

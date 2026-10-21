@@ -11,11 +11,13 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import xml.etree.ElementTree as ET
 
 REQUIRED_FUNCTIONS = (
     "b1_nv_probe", "b1_nv_runtime_hold_active", "b1_nv_runtime_hold_latch",
     "b1_nv_existing_header_candidate", "ZMacDataReqSec", "ZMacSendNoData",
     "ZDApp_RestoreNwkKey", "ZDApp_RestoreNwkSecMaterial",
+    "b1_mt_zdo_retained_startup", "b1_bdb_restore_failed", "b1_znp_publish_configured",
 )
 NV4_REQUIRED_FUNCTIONS = tuple(
     name for name in REQUIRED_FUNCTIONS if name != "b1_nv_probe"
@@ -27,7 +29,61 @@ SOURCE_BINDINGS = {
     "modified_main_sha256": "source/ti/zstack/startup/main.c",
     "modified_zmac_sha256": "source/ti/zstack/zmac/f8w/zmac.c",
     "modified_zdapp_sha256": "source/ti/zstack/stack/zdo/zd_app.c",
+    "modified_mt_zdo_sha256": "source/ti/zstack/mt/mt_zdo.c",
+    "modified_bdb_sha256": "source/ti/zstack/stack/bdb/bdb.c",
 }
+MT_ZDO_BLOB = "f43df5cbf44f6cfa32e36644df33a0f75691ba80"
+MT_ZDO_GUARD = "b1_mt_zdo_retained_startup"
+BDB_BLOB = "dbaa595d961044761bc2a333b8d3c0e314f72c82"
+BDB_GUARD = "b1_bdb_restore_failed"
+
+
+def require_retained_zdo_source(overlay):
+    """Reduced source shims are permitted by apply_b1, never by a native seal."""
+    if (overlay.get("retained_zdo_guard_source_present") is not True or
+            overlay.get("upstream_mt_zdo_blob") != MT_ZDO_BLOB or
+            overlay.get("additional_source_bindings", {}).get("modified_mt_zdo_sha256") !=
+            SOURCE_BINDINGS["modified_mt_zdo_sha256"] or
+            not re.fullmatch("[0-9a-f]{64}", str(overlay.get("modified_mt_zdo_sha256")))):
+        raise ValueError("Native seal requires exact retained MT ZDO source, not a reduced SDK shim")
+
+
+def require_retained_bdb_source(overlay):
+    if (overlay.get("retained_bdb_restore_source_present") is not True or
+            overlay.get("upstream_bdb_blob") != BDB_BLOB or
+            overlay.get("additional_source_bindings", {}).get("modified_bdb_sha256") !=
+            SOURCE_BINDINGS["modified_bdb_sha256"] or
+            not re.fullmatch("[0-9a-f]{64}", str(overlay.get("modified_bdb_sha256")))):
+        raise ValueError("Native seal requires exact retained BDB source, not a reduced SDK shim")
+
+
+def linked_guard_ownership(xml, functions, name, object_name):
+    """No retain attribute: each helper must belong to its live TI object."""
+    tree = ET.parse(xml)
+    components = [item for item in tree.iter("object_component")
+                  if item.findtext("name") == ".text." + name]
+    if len(components) != 1 or name not in functions:
+        raise ValueError("Retained startup guard has no unique live executable component: " + name)
+    component = components[0]
+    reference = component.find("input_file_ref")
+    owners = [item for item in tree.iter("input_file")
+              if reference is not None and item.get("id") == reference.get("idref")]
+    function = functions[name]
+    address = int(component.findtext("run_address"), 0)
+    size = int(component.findtext("size"), 0)
+    if (len(owners) != 1 or owners[0].findtext("kind") != "object" or
+            owners[0].findtext("file") != object_name or
+            component.findtext("executable") != "true" or
+            address != function["address"] or
+            not 0 < function["size"] <= size):
+        raise ValueError("Retained startup guard ELF/XML ownership differs from " + object_name)
+    return {"function": name, "owner": object_name, **function}
+
+
+def retained_zdo_ownership(xml, functions):
+    return {**linked_guard_ownership(xml, functions, MT_ZDO_GUARD, "mt_zdo.o"),
+            "startup_mode": "GUARDED_RETAINED_BDB0_ONLY",
+            "shared_startup_hang_fixed": False}
 
 
 def digest(path):
@@ -100,6 +156,8 @@ def main():
     overlay = json.loads((root / "b1-overlay.json").read_text())
     if overlay.get("source_sha") != expected:
         raise ValueError("Overlay source SHA differs from expected source")
+    require_retained_zdo_source(overlay)
+    require_retained_bdb_source(overlay)
     bindings = dict(SOURCE_BINDINGS)
     bindings.update(overlay.get("additional_source_bindings", {}))
     for key, relative in bindings.items():
@@ -158,6 +216,9 @@ def main():
     missing = sorted(set(required) - functions.keys())
     if missing:
         raise ValueError("B1 functions absent from live executable ELF: " + ", ".join(missing))
+    zdo_guard = retained_zdo_ownership(root / artifacts["xml"]["file"], functions)
+    bdb_guard = linked_guard_ownership(root / artifacts["xml"]["file"], functions,
+                                     BDB_GUARD, "bdb.o")
     tracked = subprocess.check_output(["git", "-C", str(repo), "ls-files", "firmware/slzb-06p7u/r4/b1",
                                        ".github/workflows/test-r4-b1-direct-native.yml"],
                                       text=True).splitlines()
@@ -185,6 +246,8 @@ def main():
         "replica": os.environ.get("B1_NATIVE_REPLICA"),
         "artifacts": artifacts,
         "linked_functions": {name: functions[name] for name in required},
+        "retained_zdo_startup": zdo_guard,
+        "retained_bdb_restore_failure": bdb_guard,
         "overlay_sha256": digest(root / "b1-overlay.json"),
         "source_files": source_files,
         "physical_rf": "NOT_MEASURED", "stock_nv": "STOCK_NV_LAYOUT_UNKNOWN",
