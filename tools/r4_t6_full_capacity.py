@@ -26,6 +26,11 @@ DEFINES = {
     "ZDSECMGR_DEVICE_MAX": 3,
     "NWK_MAX_DEVICE_LIST": 96,  # TI NWK_MAX_DEVICES = list + one parent
 }
+# Native TI 8.33 NVOCMP installs an AONBatMon voltage check during
+# initNV only when this build define is present. 2000 mV is TI's documented
+# conservative recommendation for low-voltage flash-write exclusion.
+# This reduces brownout corruption, not full power-cut recovery.
+NV_FLASH_SAFETY = {"NVOCMP_MIN_VDD_FLASH_MV": 2000}
 ROUTING = {
     "MAX_RTG_SRC_ENTRIES": 192,
     "MAX_NEIGHBOR_ENTRIES": 64,
@@ -156,17 +161,19 @@ def stage_opts(opts: Path, profile: Path, receipt: Path) -> dict:
     for name, value in ROUTING.items():
         if found.get(name) != [value]:
             deny("B2_P1_NOT_ACTUALLY_APPLIED_" + name)
-    for name in DEFINES:
+    for name in (*DEFINES, *NV_FLASH_SAFETY):
         if name in found or re.search(
                 rf"(?:^|\s)(?:-D|--define=){re.escape(name)}(?:=|\s|$)", text):
             deny("PREEXISTING_SECURITY_OR_CHILD_DEFINE_" + name)
-    added = "".join(f"-D{name}={value}\n" for name, value in sorted(DEFINES.items()))
+    added = "".join(f"-D{name}={value}\n" for name, value in
+                    sorted({**DEFINES, **NV_FLASH_SAFETY}.items()))
     updated = text + ("" if text.endswith("\n") else "\n") + added
     report = {
         "schema": "r4-r05-full-native-capacity-opts-v1",
         "profile_sha256": digest(profile.read_bytes()),
         "pre_b2_routing_verified": ROUTING,
         "new_compiler_defines": DEFINES,
+        "nvocmp_brownout_flash_guard": NV_FLASH_SAFETY,
         "original_sha256": digest(original),
         "result_sha256": digest(updated.encode()),
         "native_linked_capacity_verified": False,
@@ -213,10 +220,11 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
     if (admitted.get("schema") != "r4-r05-full-native-capacity-opts-v1" or
             admitted.get("profile_sha256") != digest(profile.read_bytes()) or
             admitted.get("result_sha256") != digest(raw_opts) or
-            admitted.get("new_compiler_defines") != DEFINES):
+            admitted.get("new_compiler_defines") != DEFINES or
+            admitted.get("nvocmp_brownout_flash_guard") != NV_FLASH_SAFETY):
         deny("UNBOUND_NATIVE_COMPILER_OPTIONS")
     found = parse_defines(raw_opts.decode("utf-8"))
-    for name, value in DEFINES.items():
+    for name, value in {**DEFINES, **NV_FLASH_SAFETY}.items():
         if found.get(name) != [value]:
             deny("EFFECTIVE_COMPILER_DEFINE_DRIFT_" + name)
     for name, value in ROUTING.items():

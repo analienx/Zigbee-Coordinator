@@ -144,3 +144,18 @@ restore wrote the original network NV, but **did not establish coordinator
 state 9**. Do not repeat that write operation to cure a startup timeout,
 replay an older backup over newer counters, invent a custom NVOCMP repair,
 or interpret a successful GitHub build as hardware acceptance.
+
+## R4 NV flash brownout guard (TI 8.33)
+
+The current-stock P7U native response file explicitly compiles
+`NVOCMP_MIN_VDD_FLASH_MV=2000`. This activates the genuine TI
+`NVOCMP_checkVoltage` / AONBatMon low-voltage refusal in `initNV`
+for normal flash writes and erase/compaction work, rather than adding
+a proprietary voltage algorithm. The native CCS options receipt
+and post-link audit bind the exact define. It does not eliminate
+instantaneous power cuts or authorize unknown NV journal repairs.
+
+The pinned multi-page TI driver retains `RECOVER_COMPACT` and
+`RECOVER_ERASE` for legitimate interrupted states. The strict R4
+read-only pre-init classifier still HOLDs unrecognized/torn journals;
+no auto-reformat or unconditional TI recovery bypass is introduced.
