@@ -12,7 +12,7 @@ SCENARIOS = (
     "healthy", "hold_nv", "hold_security", "first_current", "sticky",
     "bad_query", "bad_fcs", "areq", "alloc_fail", "npi_queue", "npi_sem",
     "npi_register", "uart_open", "uart_read", "start_hold", "start_healthy", "npi_first",
-    "storm", "nv4_detail", "retained_commands",
+    "storm", "nv4_detail", "retained_commands", "uncommissioned_commands",
 )
 
 PREAMBLE = r'''
@@ -245,11 +245,11 @@ int main(int argc,char **argv) {
         assert(mt_id_reads==0 && process_started==0 && sem_posts==0);
         assert(sent==0 && forwarded==0 && mutations==0);
     } else {
-        if(strcmp(s,"healthy")==0 || strcmp(s,"retained_commands")==0) b1_management_note_mt_registered();
+        if(strcmp(s,"healthy")==0 || strcmp(s,"retained_commands")==0 || strcmp(s,"uncommissioned_commands")==0) b1_management_note_mt_registered();
         else if(strcmp(s,"hold_security")==0) b1_security_runtime_hold_latch();
         else b1_management_hold_nv(B1_ERROR_NV_OPEN);
         NPITask_Fxn(0,0); assert(process_started==1 && b1_management_npi_initialized());
-        assert(mt_id_reads==((strcmp(s,"healthy")==0 || strcmp(s,"retained_commands")==0)?1u:0u));
+        assert(mt_id_reads==((strcmp(s,"healthy")==0 || strcmp(s,"retained_commands")==0 || strcmp(s,"uncommissioned_commands")==0)?1u:0u));
         if(strcmp(s,"healthy")==0) {
             route(0x24,1,NULL,0); assert(forwarded==1 && sent==0);
             uint8_t ping[]={0,0x21,1}; MT_ProcessIncoming(ping);
@@ -259,9 +259,9 @@ int main(int argc,char **argv) {
             assert(last_reply[0]==sizeof(MTVersionString));
             assert(memcmp(last_reply+3,MTVersionString,sizeof(MTVersionString))==0);
             query(); assert(last_reply[9]==0 && last_reply[10]==0);
-        } else if(strcmp(s,"retained_commands")==0) {
+        } else if(strcmp(s,"retained_commands")==0 || strcmp(s,"uncommissioned_commands")==0) {
             uint8_t reply[24], error, frame[4]={1,0x2f,5,4};
-            b1_management_note_nv4(8,2,2421,952,779,0,0x7f);
+            b1_management_note_nv4(8,strcmp(s,"uncommissioned_commands")==0?1:2,2421,952,779,0,0x7f);
             b1_management_note_nv_candidate();
             for(unsigned ready=0;ready<2;ready++) {
                 if(ready) b1_management_note_zdo_state(1,1);

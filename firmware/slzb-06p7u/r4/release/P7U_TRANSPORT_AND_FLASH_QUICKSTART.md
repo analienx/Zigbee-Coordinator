@@ -45,11 +45,11 @@ repair the incident state. See the [current candidate procedure](R4_P7U_STOCK202
 
 ## Minimal R4 flash lane
 
-1. **GitHub Actions only** for build/test. Reuse pinned native candidate from commit `828b1b5e55d24a13dccf88bffe74108bf4b56bcc`, run `39425070812`. No WSL builds, new candidate, or generic repeated CI cycles unless a specific failure demands it. Artifacts live in `C:\Workspace\artifacts`; secret board reads and journals live under `C:\Workspace\.analienx\zigbee-private`, never in a worktree or GitHub.
+1. **GitHub Actions only** for build/test. The **current** dual-native reproducible candidate is commit `d924faadff7603cce23e1a771f3dc33028796db9`, run `39554982599`, including a matching protected host bundle. The older `828b1b5` image is incident evidence, not the image to deploy. No WSL builds or generic repeated CI cycles unless a specific failure demands it. Artifacts live in `C:\Workspace\artifacts`; secret board reads and journals live under `C:\Workspace\.analienx\zigbee-private`, never in a worktree or GitHub.
 2. Confirm **actual current device** is reachable through the selected BSL transport; read-only silicon identity, factory CCFG and independently captured full backup, with approved genuine-TI security preflight. Do not use stale NV/counter snapshots as live equivalence evidence.
 3. Freeze exact approved sector list from `r4_stock20260311_transition.prepare`. R4 writes **23 APP sectors** and exactly **one AC000 boot/handoff sector**; the latter replaces the factory boot trust boundary. Explicit owner authorization must name AC000. `0xA0000..0xABFFF` (gap/NV) and `0xAE000..0xAFFFF` (top/CCFG) are **never erased or written**.
 4. `admit` reads/checks live board identity and all 88 sector SHA/ROM CRC values. `execute` journals each sector, writes APP vector sector last, then AC000 tail and **AC000 vectors last**. A timeout/unknown write stops in BSL with no retry, automatic stock restore, reset, bank erase or counter increment.
-5. After exact readback and controlled boot, verify ZNP/identity/security and traffic; **then** switch to USB for HA Z2M. Keep routing issue #137 on HOLD until physical evidence exists.
+5. After exact readback and controlled boot, verify read-only B1/F1, ZNP and retained identity/security **before** enabling a host. Then the owner switches to HA USB and runs **one matching protected host**; accept state 9 and representative device traffic only **after** that startup. Never start the ordinary restore strategy against the currently damaged NV. Keep routing issue #137 on HOLD until physical evidence exists.
 
 ### Important constraints
 

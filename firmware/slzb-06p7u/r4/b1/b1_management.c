@@ -211,7 +211,7 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
         { 'B', '1', 'Q', '1', 1u, B1_STATUS_QUERY_SIZE, 0u, 0u };
     uintptr_t key;
     uint8_t flags, stage, first_error, current_error, nv_probe, network_ready;
-    int held, retained_formed;
+    int held;
     if (frame == NULL || reply == NULL || rpc_error == NULL)
         return B1_MT_DROP;
 
@@ -223,8 +223,6 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
     current_error = b1_management_current_error;
     nv_probe = b1_management_nv_probe;
     network_ready = b1_network_ready_attested;
-    retained_formed = b1_nv4_measured && b1_nv4_result[0] == 8u &&
-        b1_nv4_result[1] == 2u && (flags & B1_FLAG_NV_HEADER_CANDIDATE);
     B1_CS_LEAVE(key);
     held = (flags & (B1_FLAG_HOLD_NV | B1_FLAG_HOLD_SECURITY |
                      B1_FLAG_HOLD_TRANSPORT)) != 0u;
@@ -286,9 +284,13 @@ uint8_t b1_management_mt_filter(const uint8_t *frame,
 #endif
         return B1_MT_STATUS;
     }
-    if (retained_formed)
     {
         uint8_t subsystem = frame[1] & 0x1fu;
+        /* This retained-network image has NO authenticated one-shot restore
+         * or virgin-new grant. A reported UNCOMMISSIONED candidate is not
+         * proof of erased security/keys, so it must not open destructive
+         * raw-MT paths. Explicit provisioning must introduce a separate
+         * fail-closed authorization boundary before relaxing this rule. */
         /* Alternate raw host paths must not bypass the SYS NV backstop:
          * SAPI writeConfiguration and ZNP basicCfg can rewrite network NV. */
         if ((subsystem == 1u && frame[2] == 3u) || /* SYS setExtAddr */

@@ -106,9 +106,18 @@ and original AC000 (vectors last), preserves current NV/top, and verifies all
 flash before reset. After firmware has run, do not replay an old NV snapshot;
 current committed security/counter state must be retained and re-admitted.
 
-Physical acceptance remains B1 exits HOLD, valid SYS/UTIL, coordinator state9,
-retained identity/security and representative device traffic. Only after that
-consider the owner's deliberate return to existing USB settings/Z2M startup.
+Physical acceptance has two ordered phases. First, after a controlled verified
+boot, obtain read-only B1/F1 and ZNP SYS/UTIL responses, confirm no HOLD and
+match persisted identity/security against the qualified backup. Second, let
+the owner select HA-attached USB and start exactly one matching protected
+Herdsman/Zigbee2MQTT instance. Only **after protected host startup** may
+coordinator state 9 and representative router/end-device traffic be required;
+do not deadlock acceptance by demanding state 9 before its host can run.
+Stop on any restore/commissioning request or security mismatch; never
+fall through to normal Herdsman recovery against ambiguous retained NV.
+The incident's current inactive NIB and STARTUP_OPTION=3 are not repaired by
+APP/AC000 reflashing. Backup-led, intentionally blank NV restoration remains
+a distinct unimplemented one-time protocol, not a permitted auto-restore.
 NWK key UPDATE/SWITCH and B5 stay disabled. FULL_B0_B4 remains unsealed until
 actual persistence/RF acceptance; native linking is not live300-device fit.
 
