@@ -26,6 +26,9 @@ class OperatorTests(unittest.TestCase):
         self.manifest = {
             "source_sha": self.source,
             "github_run_id": "1234",
+            "board": "SLZB-06P7U-r1.73-CC2652P7",
+            "boot_contract": "APP0_REQUIRES_SEPARATE_AC000_HANDOFF",
+            "private_current_capture_and_security_preflight_required": True,
             "flash_authorized": False,
             "hardware_boot_qualified": False,
             "files": {"package.bin": op.sha(raw)},
@@ -69,25 +72,52 @@ class OperatorTests(unittest.TestCase):
             "flash_authorized": False,
             "capture_sha256": cap,
         })
-        self.json(self.private / "frozen-plan.json", {
+        plan = {
+            "source_sha": self.source,
+            "candidate_sha256": op.sha(op.canonical(self.manifest)),
             "program_order": [8192, 0, op.BOOT],
-            "plan_sha256": "3" * 64,
-        })
+            "sector_sha256": {"8192": "1" * 64, "0": "3" * 64,
+                              str(op.BOOT): "2" * 64},
+        }
+        plan["plan_sha256"] = op.sha(op.canonical(plan))
+        self.json(self.private / "frozen-plan.json", plan)
         self.json(self.private / "admission-input.json", {
             "new_source_sha": self.source,
             "current_capture_sha256": cap,
-            "plan_sha256": "3" * 64,
+            "plan_sha256": plan["plan_sha256"],
             "nv_touched": False,
         })
 
     def flash(self):
         self.prepare()
+        plan = json.loads((self.private / "frozen-plan.json").read_bytes())
+        capture = (self.private / "readback-1/current-pass1.bin").read_bytes()
+        observed = {str(addr): op.sha(capture[addr:addr + 8192])
+                    for addr in range(0, op.FLASH_BYTES, 8192)}
+        admission = {"plan_sha256": plan["plan_sha256"],
+                     "observed_sector_sha256": observed}
+        admission["admission_sha256"] = op.sha(op.canonical({
+            **admission, "observed_sector_sha256": {int(k): v for k, v in observed.items()}}))
+        self.json(self.private / "admission.json", admission)
         self.json(self.private / "flash-result.json", {
             "status": "APP_AND_AC000_VERIFIED_STILL_IN_BSL",
             "nv_touched": False, "ccfg_touched": False,
             "reset_issued": False, "automatic_rollback": False,
             "written_sectors": [8192, 0, op.BOOT],
         })
+        entries = []
+        for addr in plan["program_order"]:
+            entries.append({"event": "BEFORE_ERASE", "address": addr,
+                "plan_sha256": plan["plan_sha256"],
+                "before_sha256": observed[str(addr)],
+                "after_sha256": plan["sector_sha256"][str(addr)]})
+            if addr == op.BOOT:
+                entries.append({"event": "BEFORE_BOOT_VECTOR_COMMIT",
+                                "address": addr, "plan_sha256": plan["plan_sha256"]})
+            entries.append({"event": "SECTOR_VERIFIED", "address": addr,
+                            "sha256": plan["sector_sha256"][str(addr)]})
+        (self.private / "flash-journal.jsonl").write_text(
+            "".join(json.dumps(x) + "\n" for x in entries))
 
     def test_package_tamper_is_blocked(self):
         self.assertEqual(op.candidate_verify(self.candidate, self.source)["github_run_id"], "1234")
@@ -119,7 +149,7 @@ class OperatorTests(unittest.TestCase):
             "program_order": [0xA4000, 0, op.BOOT],
             "plan_sha256": "3" * 64,
         })
-        with self.assertRaisesRegex(op.Stop, "UNSAFE_OR_CHANGED_SECTOR"):
+        with self.assertRaisesRegex(op.Stop, "FROZEN_PLAN_HASH_MISMATCH"):
             op.prepare_verify(self.private, self.manifest)
 
     def test_no_duplicate_flash_after_partial_journal(self):
@@ -141,6 +171,18 @@ class OperatorTests(unittest.TestCase):
         with self.assertRaisesRegex(op.Stop, "STOP_INCOMPLETE_ONE_SHOT"):
             op.run_through(self.private, self.candidate, self.source, "startup",
                            allow_bsl=True, allow_flash=True, allow_boot=True)
+
+    def test_journal_missing_hash_fails_closed(self):
+        self.flash()
+        (self.private / "flash-journal.jsonl").write_text("{}\n")
+        self.assertIn("FLASH_JOURNAL_EVENTS_NOT_COMPLETE", op.stage_state(self.private, self.manifest)["flash"])
+
+    def test_second_operator_is_rejected_by_persistent_lock(self):
+        self.flash()
+        (self.private / ".r4-operator-one-shot-lock").write_text("previous attempt")
+        args = ["--candidate", str(self.candidate), "--private", str(self.private),
+                "--source", self.source, "run", "--through", "flash"]
+        self.assertEqual(op.main(args), 2)
 
     def test_approved_stages_do_not_rerun(self):
         self.flash()

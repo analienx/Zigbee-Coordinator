@@ -11,6 +11,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 FLASH_BYTES = 720896
@@ -33,6 +34,19 @@ def require(ok: bool, message: str) -> None:
 def sha(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
+def canonical(value) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+def digest_ok(value) -> bool:
+    return isinstance(value, str) and re.fullmatch("[0-9a-f]{64}", value) is not None
+
+def frozen_sha(receipt: dict, key: str) -> str:
+    require(digest_ok(receipt.get(key)), "FROZEN_RECEIPT_HASH_MISSING: " + key)
+    value = {k: v for k, v in receipt.items() if k != key}
+    if "observed_sector_sha256" in value:
+        value["observed_sector_sha256"] = {int(k): v for k, v in value["observed_sector_sha256"].items()}
+    return sha(canonical(value))
+
 def read_json(path: Path) -> dict:
     require(path.is_file(), "MISSING_RECEIPT: " + path.name)
     result = json.loads(path.read_bytes())
@@ -42,8 +56,13 @@ def read_json(path: Path) -> dict:
 def candidate_verify(folder: Path, expected_source: str) -> dict:
     require(folder.is_dir(), "MISSING_CANDIDATE_DIRECTORY")
     c = read_json(folder / "candidate.json")
-    require(c.get("source_sha") == expected_source and
-            len(expected_source) == 40, "CANDIDATE_SOURCE_MISMATCH")
+    require(re.fullmatch("[0-9a-f]{40}", expected_source) and
+            c.get("source_sha") == expected_source,
+            "CANDIDATE_SOURCE_MISMATCH")
+    require(c.get("board") == "SLZB-06P7U-r1.73-CC2652P7" and
+            c.get("boot_contract") == "APP0_REQUIRES_SEPARATE_AC000_HANDOFF" and
+            c.get("private_current_capture_and_security_preflight_required") is True,
+            "CANDIDATE_BOARD_OR_SAFETY_CONTRACT_CHANGED")
     require(c.get("flash_authorized") is False and
             c.get("hardware_boot_qualified") is False,
             "PUBLIC_CANDIDATE_IS_NOT_A_FLASH_APPROVAL")
@@ -55,6 +74,7 @@ def candidate_verify(folder: Path, expected_source: str) -> dict:
             c["replicas"][1]["handoff_sha256"] == c["handoff_sha256"],
             "NONREPRODUCIBLE_BOOT_HANDOFF")
     for name, digest in c["files"].items():
+        require(digest_ok(digest), "INVALID_ARTIFACT_DIGEST")
         p = folder / name
         require(p.resolve().is_relative_to(folder.resolve()) and p.is_file(),
                 "MISSING_OR_UNSAFE_ARTIFACT: " + name)
@@ -90,11 +110,13 @@ def prepare_verify(private: Path, candidate: dict) -> dict:
     require(receipt.get("capture_sha256") == capture["pass1_sha256"],
             "SECURITY_CAPTURE_STALE")
     plan = read_json(private / "frozen-plan.json")
+    require(plan.get("plan_sha256") == frozen_sha(plan, "plan_sha256"), "FROZEN_PLAN_HASH_MISMATCH")
     admission = read_json(private / "admission-input.json")
     require(admission.get("new_source_sha") == candidate["source_sha"] and
             admission.get("plan_sha256") == plan.get("plan_sha256") and
             admission.get("current_capture_sha256") == capture["pass1_sha256"],
             "PREPARE_INPUTS_CHANGED")
+    require(plan.get("source_sha") == candidate["source_sha"], "FROZEN_PLAN_SOURCE_MISMATCH")
     order = plan.get("program_order")
     require(type(order) is list and len(order) <= 25 and len(order) >= 2 and
             len(set(order)) == len(order) and
@@ -103,7 +125,27 @@ def prepare_verify(private: Path, candidate: dict) -> dict:
                 a % 8192 == 0 for a in order),
             "UNSAFE_OR_CHANGED_SECTOR_ALLOWLIST")
     require(admission.get("nv_touched") is False, "NV_WRITE_PROHIBITED")
+    require(plan.get("candidate_sha256") == sha(canonical(candidate)), "FROZEN_CANDIDATE_HASH_MISMATCH")
     return plan
+
+def verify_live_admission(private: Path, plan: dict) -> tuple[dict, list[int]]:
+    admission = read_json(private / "admission.json")
+    require(admission.get("admission_sha256") == frozen_sha(admission, "admission_sha256") and
+            admission.get("plan_sha256") == plan["plan_sha256"],
+            "LIVE_ADMISSION_HASH_OR_PLAN_MISMATCH")
+    observed = admission.get("observed_sector_sha256")
+    require(isinstance(observed, dict) and
+            set(observed) == {str(addr) for addr in range(0, FLASH_BYTES, 8192)},
+            "LIVE_ADMISSION_ALL_88_SECTORS_REQUIRED")
+    capture = (private / "readback-1" / "current-pass1.bin").read_bytes()
+    require(all(observed[str(addr)] == sha(capture[addr:addr + 8192])
+                for addr in range(0, FLASH_BYTES, 8192)),
+            "LIVE_ADMISSION_CHANGED_FROM_CAPTURE")
+    target = plan["sector_sha256"]
+    order = plan["program_order"]
+    require(set(target) == {str(addr) for addr in order},
+            "TARGET_SECTOR_DIGEST_SET_MISMATCH")
+    return target, [addr for addr in order if observed[str(addr)] != target[str(addr)]]
 
 def flash_verify(private: Path, candidate: dict) -> dict:
     plan = prepare_verify(private, candidate)
@@ -115,10 +157,33 @@ def flash_verify(private: Path, candidate: dict) -> dict:
             result.get("automatic_rollback") is False,
             "FLASH_VERIFICATION_MISSING")
     verified = result.get("written_sectors")
-    require(type(verified) is list and len(set(verified)) == len(verified) and
-            set(verified).issubset(set(plan["program_order"])) and
-            BOOT in verified,
+    target, changed = verify_live_admission(private, plan)
+    require(verified == changed and BOOT in verified,
             "FLASH_RESULT_SECTOR_MISMATCH")
+    events = [json.loads(line) for line in
+              (private / "flash-journal.jsonl").read_text().splitlines()]
+    expected = []
+    for address in changed:
+        expected.append(("BEFORE_ERASE", address))
+        if address == BOOT:
+            expected.append(("BEFORE_BOOT_VECTOR_COMMIT", address))
+        expected.append(("SECTOR_VERIFIED", address))
+    require([(e.get("event"), e.get("address")) for e in events] == expected,
+            "FLASH_JOURNAL_EVENTS_NOT_COMPLETE_OR_ORDERED")
+    capture = (private / "readback-1" / "current-pass1.bin").read_bytes()
+    for event in events:
+        addr = event["address"]
+        if event["event"] == "BEFORE_ERASE":
+            require(event.get("plan_sha256") == plan["plan_sha256"] and
+                    event.get("before_sha256") == sha(capture[addr:addr + 8192]) and
+                    event.get("after_sha256") == target[str(addr)],
+                    "FLASH_JOURNAL_ERASE_DIGEST_MISMATCH")
+        elif event["event"] == "SECTOR_VERIFIED":
+            require(event.get("sha256") == target[str(addr)],
+                    "FLASH_JOURNAL_VERIFIED_DIGEST_MISMATCH")
+        else:
+            require(event.get("plan_sha256") == plan["plan_sha256"],
+                    "FLASH_BOOT_VECTOR_PLAN_MISMATCH")
     return result
 
 def startup_verify(private: Path, candidate: dict) -> dict:
@@ -184,8 +249,8 @@ def run_through(private: Path, folder: Path, source: str, target: str,
         if step == "flash":
             require(allow_flash, "EXPLICIT_APP_AC000_FLASH_APPROVAL_REQUIRED")
             prepare_verify(private, c)
-            require((private / "owner-request.json").is_file(),
-                    "FROZEN_OWNER_APPROVAL_MISSING")
+            require(read_json(private / "owner-request.json").get("reviewed_firmware_source") == source,
+                    "FROZEN_OWNER_SOURCE_MISMATCH")
         if step == "startup":
             require(allow_boot, "EXPLICIT_BOOT_AND_ONE_START_APPROVAL_REQUIRED")
             flash_verify(private, c)
@@ -221,9 +286,15 @@ def main(argv=None) -> int:
             print(json.dumps({"source_sha": args.source, "github_run_id": c["github_run_id"],
                               "stages": stage_state(args.private, c)}, indent=2))
         else:
+            lock = args.private / ".r4-operator-one-shot-lock"
+            with lock.open("xb") as exclusive:
+                exclusive.write(canonical({"source": args.source, "through": args.through}))
+                exclusive.flush()
+            # An interrupted/failed transaction keeps the lock for manual review.
             run_through(args.private, args.candidate, args.source, args.through,
                         allow_bsl=args.allow_bsl, allow_flash=args.allow_flash,
                         allow_boot=args.allow_boot)
+            lock.unlink()
         return 0
     except (Stop, OSError, KeyError, ValueError, TypeError) as error:
         print("R4_OPERATOR_HOLD:", str(error), file=sys.stderr)

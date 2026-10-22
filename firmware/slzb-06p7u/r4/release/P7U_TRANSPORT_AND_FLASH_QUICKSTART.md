@@ -49,7 +49,7 @@ but did **not** reach coordinator state 9 in 80 seconds. Last state=3,
 phase=2 (BDB), status=0, error=0; the source of the stall is unresolved.
 `startup-result.json` is a permanently consumed one-shot failure receipt;
 **do not rerun**, reflash, reset, or start Z2M to paper over the failure.
-Firmware code and live network recovery are separate acceptance gates.
+Firmware code and live network recovery are separate acceptance gates. The BDB phase-2 marker is recorded after the BDB call returns, so it is not proof of an in-call stall.
 
 ## Physical wiring is not the selected transport
 
