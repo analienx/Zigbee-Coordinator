@@ -361,7 +361,8 @@ def service_main():
                 previous_clock = clocks
                 # Observations are private, bounded and passive even when
                 # notifications and resets are independently disabled.
-                passive.record({
+                try:
+                    passive.record({
                     "utc":observation.utc, "epoch_id":sample.get("epoch_id"),
                     "epoch_start_utc":sample.get("epoch_start_utc"),
                     "phase":runner.state.phase,
@@ -374,6 +375,13 @@ def service_main():
                     "ota_active":sample.get("ota_active"),
                     "ota_unknown":sample.get("ota_unknown"),
                     "resets_enabled":active})
+                except Exception as exc:
+                    # Losing a log-history disk must never silently suppress
+                    # warning-only detection. Physical actions fail closed.
+                    print("PASSIVE_HISTORY_NOT_PERSISTED",type(exc).__name__,flush=True)
+                    if active:
+                        runner.hold("PASSIVE_HISTORY_NOT_PERSISTED", notify)
+                        active = False
                 result = runner.step(observation, active=active, notify=notify)
                 reporter.retry_pending()
                 atomic_json(DATA / "status.json", {
