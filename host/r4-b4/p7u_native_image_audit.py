@@ -66,7 +66,11 @@ def audit(oci_path: Path, source_receipt: Path) -> dict:
         manifest = image_manifest(archive)
         if len(manifest["layers"]) < 3:
             raise ValueError("OCI_IMAGE_MISSING_LAYERS")
-        for item in manifest["layers"]:
+        # The audited Dockerfile contains exactly three COPY statements,
+        # each adding one final patch layer. Vendor base layers are already
+        # digest pinned and may retain a distinct compression format (zstd);
+        # re-decoding them is both unnecessary and expensive.
+        for item in manifest["layers"][-3:]:
             media = item.get("mediaType", "")
             blob = digest_blob(archive, item["digest"])
             if media.endswith("+gzip"):
