@@ -290,6 +290,7 @@ static uint8_t b1_znp_publish_configured(void)
   uint8_t value = 0x55u;
   uint16_t length;
   uint8_t status;
+  if (b1_retained_attempt_active()) b1_evidence_milestone(B1_M_MARKER_ENTRY, 0u);
   if (b1_nv_runtime_hold_active() || !FrameCounterUpdated ||
       !b1_nv_existing_header_candidate() || !b1_sec_restored_network_validated())
     return FALSE;
@@ -310,15 +311,20 @@ static uint8_t b1_znp_publish_configured(void)
   {
     if (osal_nv_read(item, 0u, sizeof(value), &value) != ZSUCCESS ||
         b1_nv_runtime_hold_active()) goto fail;
-    if (value == 0x55u) return TRUE; /* No flash wear on normal resumes. */
+    if (value == 0x55u) {
+      if (b1_retained_attempt_active()) b1_evidence_milestone(B1_M_MARKER_RESULT, 0u);
+      return TRUE; } /* No flash wear on normal resumes. */
     value = 0x55u;
     if (osal_nv_write(item, sizeof(value), &value) != ZSUCCESS ||
         b1_nv_runtime_hold_active()) goto fail;
   }
   value = 0u;
   if (osal_nv_read(item, 0u, sizeof(value), &value) == ZSUCCESS &&
-      value == 0x55u && !b1_nv_runtime_hold_active()) return TRUE;
+      value == 0x55u && !b1_nv_runtime_hold_active()) {
+    if (b1_retained_attempt_active()) b1_evidence_milestone(B1_M_MARKER_RESULT, 0u);
+    return TRUE; }
 fail:
+  if (b1_retained_attempt_active()) b1_evidence_milestone(B1_M_MARKER_RESULT, 1u);
   b1_security_runtime_hold_latch();
   return FALSE; /* Never acknowledge an unverified bookkeeping commit. */
 }"""
@@ -335,7 +341,7 @@ def patch(source: str) -> str:
         'extern int b1_sec_restored_network_validated(void);\n'
         'extern void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore_ok);\n'
         'extern int b1_management_network_ready(void);\n'
-        'extern void b1_stack_startup_observer_priority(uint8_t);',
+        '',
         "ZDApp security declarations")
 
     old_store = extract_function(source, "void ZDApp_StoreNwkSecMaterial(void)")
@@ -421,6 +427,9 @@ def patch(source: str) -> str:
     old_state = extract_function(source, state_sig)
     new_state = replace_once(
         old_state, "    devState = state;",
+        "    if (b1_retained_attempt_active()) b1_evidence_set_status(3u, state);\n"
+        "    if (state == DEV_ZB_COORD && b1_retained_attempt_active())\n"
+        "        b1_evidence_milestone(B1_M_COORDINATOR, 0u);\n"
         "    if (state == DEV_ZB_COORD && FrameCounterUpdated &&\n"
         "        b1_nv_existing_header_candidate() &&\n"
         "        b1_sec_restored_network_validated() &&\n"
@@ -430,8 +439,7 @@ def patch(source: str) -> str:
         "        (uint8_t)(state == DEV_ZB_COORD && FrameCounterUpdated &&\n"
         "                  b1_nv_existing_header_candidate() &&\n"
         "                  b1_sec_restored_network_validated()));\n"
-        "    if (state == DEV_ZB_COORD && b1_management_network_ready())\n"
-        "        b1_stack_startup_observer_priority(0u);",
+        "",
         "ZDO actual state-change ready attestation")
     source = replace_once(source, old_state, PUBLISH_CONFIGURED + "\n\n" + new_state,
                           "actual ZDO callback body")

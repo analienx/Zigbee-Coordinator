@@ -42,6 +42,193 @@ static uint32_t b1_uart_submit_generation, b1_uart_eot_generation;
 static uint32_t b1_tx_target_generation;
 static uint16_t b1_tx_length, b1_trace_expected_sequence;
 static uint8_t b1_trace_expected;
+static uint8_t b1_retained_admitted, b1_retained_network_started;
+static uint8_t b1_retained_attempt_completed;
+
+typedef struct {
+    uint32_t mask, activity, stack_wakes, zdapp_loops, last_zdapp_input;
+    uint32_t npi_wakes, dispatch_entry, dispatch_exit, last_dispatch_input;
+    uint32_t last_dispatch_returned;
+    uint16_t counts[7];
+    uint8_t order[B1_MILESTONES], first_status[B1_MILESTONES];
+    uint8_t first_order_next, last_milestone, current_service;
+    uint8_t bdb_branch, restore_result, dev_state, confirmation, nlme_result;
+    uint32_t *zdapp_pending;
+} b1_evidence_ram_t;
+static b1_evidence_ram_t b1_ev; /* BSS: not NV, never cleared by requests. */
+
+static void b1_ev_sat32(uint32_t *value)
+{
+    if (*value != UINT32_MAX) ++*value;
+}
+static void b1_ev_note_locked(uint8_t milestone, uint8_t status)
+{
+    if (milestone >= B1_MILESTONES) return;
+    b1_ev_sat32(&b1_ev.activity);
+    b1_ev.last_milestone = milestone;
+    if (!(b1_ev.mask & ((uint32_t)1u << milestone)))
+    {
+        b1_ev.mask |= ((uint32_t)1u << milestone);
+        if (b1_ev.first_order_next < 24u)
+            b1_ev.order[milestone] = ++b1_ev.first_order_next;
+        b1_ev.first_status[milestone] = status;
+    }
+}
+void b1_evidence_milestone(uint8_t milestone, uint8_t status)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_ev_note_locked(milestone, status);
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_count(uint8_t slot)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (slot < 7u && b1_ev.counts[slot] != UINT16_MAX)
+        ++b1_ev.counts[slot];
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_bind_pending(uint32_t *events)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (!b1_ev.zdapp_pending) b1_ev.zdapp_pending = events;
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_dispatch(uint8_t service, uint32_t input)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_ev_sat32(&b1_ev.stack_wakes);
+    b1_ev_sat32(&b1_ev.dispatch_entry);
+    b1_ev.current_service = service;
+    b1_ev.last_dispatch_input = input;
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_dispatch_end(uint32_t returned)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_ev.last_dispatch_returned = returned;
+    b1_ev_sat32(&b1_ev.dispatch_exit);
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_note_npi_wake(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    b1_ev_sat32(&b1_ev.npi_wakes);
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_note_zdapp_loop(uint32_t events)
+{
+    uintptr_t key=B1_CS_ENTER();
+    b1_ev_sat32(&b1_ev.zdapp_loops);
+    b1_ev.last_zdapp_input=events;
+    B1_CS_LEAVE(key);
+}
+void b1_evidence_set_status(uint8_t slot, uint8_t value)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (slot == 1u) b1_ev.bdb_branch = value;
+    else if (slot == 2u) b1_ev.restore_result = value;
+    else if (slot == 3u) b1_ev.dev_state = value;
+    else if (slot == 4u) b1_ev.confirmation = value;
+    else if (slot == 5u) b1_ev.nlme_result = value;
+    B1_CS_LEAVE(key);
+}
+static void b1_ev_pack32(uint8_t *out, uint32_t val)
+{
+    unsigned j;
+    for (j = 0u; j < 4u; ++j) out[j] = (uint8_t)(val >> (8u*j));
+}
+static void b1_ev_pack16(uint8_t *out, uint16_t val)
+{
+    out[0] = (uint8_t)val;
+    out[1] = (uint8_t)(val >> 8u);
+}
+void b1_evidence_snapshot(uint8_t out[B1_EVIDENCE_REPLY_SIZE])
+{
+    b1_evidence_ram_t local;
+    uint32_t pending = 0u;
+    uint8_t first_error, state, flags;
+    unsigned j;
+    uintptr_t key = B1_CS_ENTER();
+    memcpy(&local, &b1_ev, sizeof(local));
+    if (b1_ev.zdapp_pending) pending = *b1_ev.zdapp_pending;
+    state = b1_boot_startup_state;
+    first_error = b1_startup_first_failure;
+    flags = (uint8_t)((b1_retained_admitted ? 1u : 0u) |
+                      (b1_retained_network_started ? 2u : 0u) |
+                      (b1_retained_attempt_completed ? 4u : 0u));
+    B1_CS_LEAVE(key);
+    memset(out, 0, B1_EVIDENCE_REPLY_SIZE);
+    memset(out+40, 0xff, 8u);
+    memset(out+88, 0xff, 24u);
+    memcpy(out, "B1E1", 4u);
+    out[4]=1u;out[5]=B1_EVIDENCE_REPLY_SIZE;
+    out[6]=state;out[7]=flags;
+#ifdef B1_BUILD_DIGEST_BYTES
+    { static const uint8_t digest[4] = { B1_BUILD_DIGEST_BYTES };
+      memcpy(out+8, digest, 4u); }
+#endif
+    b1_ev_pack32(out+12,local.mask);
+    b1_ev_pack32(out+16,local.activity);
+    b1_ev_pack32(out+20,local.stack_wakes);
+    b1_ev_pack32(out+24,local.zdapp_loops);
+    b1_ev_pack32(out+28,local.last_zdapp_input);
+    b1_ev_pack32(out+32,pending);
+    b1_ev_pack32(out+36,local.npi_wakes);
+    out[40]=first_error;
+    out[41]=local.bdb_branch;out[42]=local.restore_result;
+    out[43]=local.dev_state;out[44]=local.confirmation;
+    out[45]=local.nlme_result;out[46]=5u;out[47]=4u;
+    for (j=0u;j<7u;++j) b1_ev_pack16(out+48+2*j,local.counts[j]);
+    out[62]=local.last_milestone;out[63]=local.current_service;
+    for (j=0u;j<B1_MILESTONES;++j)
+    {
+        out[64+j]=local.order[j];
+        if (local.mask & ((uint32_t)1u << j))
+            out[88+j]=local.first_status[j];
+    }
+    b1_ev_pack32(out+112,local.dispatch_entry);
+    b1_ev_pack32(out+116,local.dispatch_exit);
+    b1_ev_pack32(out+120,local.last_dispatch_input);
+    b1_ev_pack32(out+124,local.last_dispatch_returned);
+}
+uint8_t b1_evidence_query(const uint8_t *frame,
+                          uint8_t out[B1_EVIDENCE_REPLY_SIZE],
+                          uint8_t *error)
+{
+    static const uint8_t prefix[6] = {'B','1','Q','1',1u,8u};
+    if (!frame || !out || !error) return B1_MT_DROP;
+    if ((frame[1] & 0x1fu) != 1u || frame[2] != B1_STATUS_COMMAND ||
+        frame[0] != B1_STATUS_QUERY_SIZE || frame[9] != 3u)
+        return B1_MT_CONTINUE;
+    *error = 3u;
+    if (frame[1] != 0x21u) return B1_MT_DROP;
+    if (memcmp(frame+3,prefix,6u) != 0 || frame[10] != 0u)
+        return B1_MT_REJECT;
+    b1_evidence_snapshot(out);
+    return B1_MT_STATUS;
+}
+int b1_retained_attempt_active(void)
+{
+    uintptr_t key=B1_CS_ENTER();
+    int result=b1_retained_admitted && !b1_retained_attempt_completed;
+    B1_CS_LEAVE(key);
+    return result;
+}
+/* The caller must validate native MODE_RESUME, coordinator logical type and
+ * restored key/HOLD before invoking; tokens are set before NLME calls. */
+int b1_retained_start_gate(uint8_t mode_ok,uint8_t security_ok)
+{
+    uintptr_t key=B1_CS_ENTER();
+    int active=b1_retained_admitted && !b1_retained_attempt_completed;
+    int okay=active && b1_boot_startup_state==B1_STARTUP_RUNNING &&
+             !b1_retained_network_started && mode_ok && security_ok &&
+             b1_management_first_error==0u;
+    if(okay)b1_retained_network_started=1u;
+    B1_CS_LEAVE(key);
+    if(active && !okay && !b1_retained_network_started)
+        b1_startup_fail(B1_ERROR_RESUME_MODE);
+    return okay;
+}
 
 static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
 {
@@ -172,6 +359,8 @@ void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore
         b1_network_ready_attested = 1u;
         b1_management_stage = B1_STAGE_NETWORK_READY;
         b1_boot_startup_state = B1_STARTUP_READY;
+        b1_retained_attempt_completed = 1u;
+        b1_ev_note_locked(B1_M_READY, 0u);
     }
     B1_CS_LEAVE(key);
 }
@@ -247,6 +436,7 @@ int b1_startup_admit(uint8_t subsystem, uint8_t command)
         b1_startup_response_subsystem = subsystem;
         b1_startup_response_command = command;
         b1_boot_startup_state = B1_STARTUP_WAIT_SRSP_TX;
+        b1_retained_admitted = 1u;
         b1_startup_phase = B1_PHASE_ADMITTED;
         ++b1_startup_sequence;
         okay = 1;
@@ -269,6 +459,7 @@ void b1_startup_fail(uint8_t reason)
 {
     uintptr_t key = B1_CS_ENTER();
     b1_boot_startup_state = B1_STARTUP_FAILED;
+    b1_ev_note_locked(B1_M_FAILED, reason);
     if (b1_startup_first_failure == 0u) b1_startup_first_failure = reason;
     B1_CS_LEAVE(key);
 }

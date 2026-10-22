@@ -37,6 +37,7 @@ SOURCE_PATHS = (
     "source/ti/zstack/stack/bdb/bdb.c",
     "source/ti/common/nv/nvintf.h",
     "source/ti/zstack/mt/mt_app_config.c",
+    "source/ti/zstack/stack/zdo/zd_object.c",
 )
 
 
@@ -195,6 +196,28 @@ def main():
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)
+
+    # Compile the exact patched TI stack task dispatcher. Reproduces the
+    # two-bit returned-event deadlock and its same-loop concurrent-post case.
+    dispatcher_source = work / "actual_stack_dispatcher.c"
+    run([sys.executable, b1 / "tools/make_dispatcher_harness.py",
+         "--source", sdk / SOURCE_PATHS[7],
+         "--output", dispatcher_source], check=True)
+    dispatcher_binary = compile_c(dispatcher_source, "stack_dispatcher",
+                                  admission=False)
+    positive(dispatcher_binary, ("returned",))
+    positive(dispatcher_binary, ("concurrent",))
+    dispatcher_mutant = work / "mutant_stack_dispatcher.c"
+    run([sys.executable, b1 / "tools/make_dispatcher_harness.py",
+         "--source", sdk / SOURCE_PATHS[7], "--output", dispatcher_mutant,
+         "--mutant"], check=True)
+    mutant_binary = compile_c(dispatcher_mutant, "stack_dispatcher_mutant",
+                              admission=False)
+    mutant_run = run([mutant_binary, "returned"], capture_output=True)
+    if mutant_run.returncode == 0:
+        raise RuntimeError("DISPATCHER_NO_WAKEUP_MUTANT_SURVIVED")
+    results.append({"test": "stack_dispatch_no_repost",
+                    "result": "MUTANT_REJECTED"})
 
     # Exercise the real caller and callee together: the old tails-only
     # initializer rejected the publisher's missing 0x60 marker before state 9.

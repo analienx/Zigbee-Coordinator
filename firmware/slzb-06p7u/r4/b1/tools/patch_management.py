@@ -112,8 +112,27 @@ def patch_npi(text):
     /* HOLD has no stack/MT task registration. Its frames stay with this
      * original NPI owner and enter the gated real MT dispatcher below. */""", "NPI hold does not read unregistered MT task")
     text = once(text, "    uint8 *pReq = (uint8 *)pMsg->pBuf;", """    uint8 *pReq = (uint8 *)pMsg->pBuf;
-    /* Only strict, bounded, RAM-only startup op2 bypasses the stack task.
-     * Ordinary op0/op1 and all Zigbee commands preserve their existing owner. */
+    /* Strict, RAM-only op3 B1E1 and op2 B1P1 share original NPI owner.
+     * Ordinary op0/op1 and all Zigbee commands preserve their stack owner. */
+    {
+        static uint8_t evidence[B1_EVIDENCE_REPLY_SIZE]; /* static: bounded NPI stack */
+        uint8_t error = 3u;
+        uint8_t action = b1_evidence_query(pReq, evidence, &error);
+        if (action != B1_MT_CONTINUE)
+        {
+            if (action == B1_MT_STATUS)
+                MT_BuildAndSendZToolResponse(0x61u, B1_STATUS_COMMAND,
+                                            B1_EVIDENCE_REPLY_SIZE, evidence);
+            else if (action == B1_MT_REJECT && (pReq[1] & 0xe0u) == 0x20u)
+            {
+                uint8_t rejected[3] = {error, pReq[1], pReq[2]};
+                MT_BuildAndSendZToolResponse(0x60u, 0u, 3u, rejected);
+            }
+            OsalPort_msgDeallocate(pMsg->pBuf);
+            OsalPort_free(pMsg);
+            return 0;
+        }
+    }
     {
         uint8_t reply[B1_STARTUP_REPLY_SIZE];
         uint8_t error = 3u;
@@ -140,6 +159,10 @@ def patch_npi(text):
         OsalPort_free(pMsg);
         return 0;
     }""", "NPI hold stays in existing owner")
+    text = once(text, "        Semaphore_pend(npiSemHandle, BIOS_WAIT_FOREVER);",
+        "        Semaphore_pend(npiSemHandle, BIOS_WAIT_FOREVER);\n"
+        "        b1_evidence_note_npi_wake();",
+        "NPI owner real semaphore service evidence")
     # Stock TI flow-off RX callback spins forever when the ring buffer fills.
     # The parser cannot safely re-synchronize after losing an arbitrary byte.
     # Stop receiving/parsing; do not form an unbounded ISR busy-loop and do

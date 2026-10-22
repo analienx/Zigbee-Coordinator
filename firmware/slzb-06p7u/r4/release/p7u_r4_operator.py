@@ -13,6 +13,7 @@ import subprocess
 import sys
 import re
 from pathlib import Path
+from p7u_r4_startup_observer import verify_success_frames
 
 FLASH_BYTES = 720896
 BOOT = 0xAC000
@@ -194,6 +195,7 @@ def startup_verify(private: Path, candidate: dict) -> dict:
             result.get("post_state") == 9 and
             result.get("attempts") == 1,
             "COORDINATOR_STATE9_NOT_CONFIRMED")
+    verify_success_frames(result.get("frames"), candidate["source_sha"])
     return result
 
 def stage_state(private: Path, candidate: dict) -> dict[str, str]:

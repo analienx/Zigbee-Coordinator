@@ -17,6 +17,7 @@ from patch_mt_zdo_retained import patch as patch_mt_zdo_retained, patch_app_cnf,
 from patch_startup_restore import patch_startup_restore, patch_bdb_restore
 from patch_nwk_rotation import patch_security as patch_nwk_rotation_security, patch_host_api as patch_nwk_rotation_host
 from patch_nv_integrity import patch as patch_nv_integrity
+from patch_zd_object_resume import patch as patch_zd_object_resume, SHA_ZD_OBJECT
 import patch_management
 import subprocess
 
@@ -33,6 +34,7 @@ SDK_MT_SYS = "source/ti/zstack/mt/mt_sys.c"
 SDK_MT_ZDO = "source/ti/zstack/mt/mt_zdo.c"
 SDK_MT_APP_CNF = "source/ti/zstack/mt/mt_app_config.c"
 SDK_BDB = "source/ti/zstack/stack/bdb/bdb.c"
+SDK_ZD_OBJECT = "source/ti/zstack/stack/zdo/zd_object.c"
 SDK_MT_VERSION = "source/ti/zstack/mt/mt_version.c"
 SHA_SECURITY = "65d7857cc9c62b75419807a8c0d03a62ec1a5574"
 SHA_HOST_API = "d85758d2274097d2efe7c395e97e394f70fd352e"
@@ -75,6 +77,7 @@ def overlay(sdk, b1_dir):
     src_mt_zdo = sdk / SDK_MT_ZDO
     src_mt_app_cnf = sdk / SDK_MT_APP_CNF
     src_bdb = sdk / SDK_BDB
+    src_zd_object = sdk / SDK_ZD_OBJECT
     src_mt_version = sdk / SDK_MT_VERSION
     security = src_security.read_text(encoding="utf-8")
     host_api = src_host_api.read_text(encoding="utf-8")
@@ -86,6 +89,7 @@ def overlay(sdk, b1_dir):
     mt_zdo = src_mt_zdo.read_text(encoding="utf-8") if src_mt_zdo.is_file() else None
     mt_app_cnf = src_mt_app_cnf.read_text(encoding="utf-8") if src_mt_app_cnf.is_file() else None
     bdb = src_bdb.read_text(encoding="utf-8") if src_bdb.is_file() else None
+    zd_object = src_zd_object.read_text(encoding="utf-8") if src_zd_object.is_file() else None
     mt_version = src_mt_version.read_text(encoding="utf-8")
     source = src_nv.read_text(encoding="utf-8")
     main = src_main.read_text(encoding="utf-8")
@@ -103,6 +107,7 @@ def overlay(sdk, b1_dir):
             or (mt_zdo is not None and git_blob_sha(mt_zdo) != SHA_MT_ZDO)
             or (mt_app_cnf is not None and git_blob_sha(mt_app_cnf) != APP_CNF_BLOB)
             or (bdb is not None and git_blob_sha(bdb) != SHA_BDB)
+            or (zd_object is not None and git_blob_sha(zd_object) != SHA_ZD_OBJECT)
             or git_blob_sha(mt_version) != SHA_MT_VERSION):
         raise RuntimeError("BLOCKED: pinned TI upstream source SHA mismatch; no patch applied")
     if not (b1_dir / "b1_admission.c").is_file() or not (b1_dir / "b1_admission.h").is_file():
@@ -395,6 +400,8 @@ def overlay(sdk, b1_dir):
         mt_app_cnf = patch_app_cnf(mt_app_cnf)
     if bdb is not None:
         bdb = patch_bdb_restore(bdb)
+    if zd_object is not None:
+        zd_object = patch_zd_object_resume(zd_object)
 
     main = replace_once(main, '#include "nvocmp.h"',
                         '#include "nvocmp.h"\n#include "b1_management.h"', "main management header")
@@ -442,7 +449,7 @@ def overlay(sdk, b1_dir):
     (src_nv.parent / "b1_admission.c").write_bytes((b1_dir / "b1_admission.c").read_bytes())
     for name in ("b1_management.c", "b1_management.h"):
         (src_nv.parent / name).write_bytes((b1_dir / name).read_bytes())
-    for directory in (sdk / "source/ti/zstack/mt", sdk / "source/ti/zstack/npi", src_main.parent):
+    for directory in (sdk / "source/ti/zstack/mt", sdk / "source/ti/zstack/npi", src_main.parent, src_zdapp.parent):
         (directory / "b1_management.h").write_bytes((b1_dir / "b1_management.h").read_bytes())
     for relative, text in management_sources.items():
         (sdk / relative).write_text(text, encoding="utf-8")
@@ -462,6 +469,8 @@ def overlay(sdk, b1_dir):
         src_mt_app_cnf.write_text(mt_app_cnf, encoding="utf-8")
     if bdb is not None:
         src_bdb.write_text(bdb, encoding="utf-8")
+    if zd_object is not None:
+        src_zd_object.write_text(zd_object, encoding="utf-8")
     src_mt_version.write_text(mt_version, encoding="utf-8")
     return {
         "schema": "r4-b1-admission-overlay-v2",

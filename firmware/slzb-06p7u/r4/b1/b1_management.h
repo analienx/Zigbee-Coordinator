@@ -22,6 +22,33 @@
 #define B1_ERROR_NPI_RX_OVERFLOW 0x66u
 #define B1_ERROR_UART_WRITE 0x67u
 #define B1_ERROR_STARTUP_TX_TIMEOUT 0x68u
+#define B1_ERROR_EVENT_POST 0x69u
+#define B1_ERROR_RESUME_MODE 0x6Au
+#define B1_ERROR_RESUME_REJECTED 0x6Bu
+#define B1_ERROR_CONFIRMATION 0x6Cu
+#define B1_ERROR_BDB_UNEXPECTED 0x6Du
+#define B1_EVIDENCE_REPLY_SIZE 128u
+#define B1_MILESTONES 24u
+enum {
+    B1_M_RETAINED_DISPATCH = 0, B1_M_BDB_ENTRY = 1,
+    B1_M_BDB_BRANCH = 2, B1_M_ZDO_INIT_ENTRY = 3,
+    B1_M_ZDO_INIT_RESULT = 4, B1_M_NWK_INIT_ENTRY = 5,
+    B1_M_INIT_POST = 6, B1_M_BDB_RETURN = 7,
+    B1_M_INIT_DISPATCH = 8, B1_M_STARTDEV_ENTRY = 9,
+    B1_M_RESUME_ENTRY = 10, B1_M_RESUME_RESULT = 11,
+    B1_M_STARTDEV_RETURN = 12, B1_M_FORMATION_CNF = 13,
+    B1_M_ROUTER_CNF = 14, B1_M_START_POST = 15,
+    B1_M_START_POST_RESULT = 16, B1_M_START_DISPATCH = 17,
+    B1_M_NETWORK_START_ENTRY = 18, B1_M_COORDINATOR = 19,
+    B1_M_MARKER_ENTRY = 20, B1_M_MARKER_RESULT = 21,
+    B1_M_READY = 22, B1_M_FAILED = 23
+};
+enum {
+    B1_C_INIT_POST = 0, B1_C_INIT_DISPATCH = 1,
+    B1_C_START_POST = 2, B1_C_START_DISPATCH = 3,
+    B1_C_STARTDEV = 4, B1_C_RESUME = 5,
+    B1_C_CONFIRM = 6
+};
 #define B1_STARTUP_REPLY_SIZE 32u
 #define B1_STARTUP_TRACE_COMMAND 0xF3u
 
@@ -116,4 +143,19 @@ void b1_startup_post_run(void);
 int b1_startup_checkpoint(uint8_t phase);
 void b1_startup_trace_tx_done(void);
 void b1_startup_trace_expect(uint16_t sequence);
+/* B1E1 v1: strictly RAM-only; monotonic milestones cannot be reset. */
+void b1_evidence_milestone(uint8_t index, uint8_t first_status);
+void b1_evidence_count(uint8_t counter);
+void b1_evidence_dispatch(uint8_t service, uint32_t input);
+void b1_evidence_dispatch_end(uint32_t returned);
+void b1_evidence_bind_pending(uint32_t *event_word);
+void b1_evidence_note_npi_wake(void);
+void b1_evidence_note_zdapp_loop(uint32_t events);
+void b1_evidence_set_status(uint8_t slot, uint8_t value);
+void b1_evidence_snapshot(uint8_t out[B1_EVIDENCE_REPLY_SIZE]);
+uint8_t b1_evidence_query(const uint8_t *frame,
+                          uint8_t out[B1_EVIDENCE_REPLY_SIZE],
+                          uint8_t *error);
+int b1_retained_attempt_active(void);
+int b1_retained_start_gate(uint8_t mode, uint8_t logical_type);
 #endif

@@ -26,15 +26,6 @@ HELPER = """/* MT and ZDApp services share TI's stack task. Defer only until the
 #define B1_RETAINED_STARTUP_TIMEOUT_MS 1000u
 static uint32_t b1_startup_admitted_tick;
 
-/* This is called only on TI\'s original stack task, for both MT startup
- * admission and the real ZDO coordinator transition. Raising the stack
- * back to its pinned priority 5 occurs ONLY after verified state 9. */
-__attribute__((noinline))
-void b1_stack_startup_observer_priority(uint8_t admitted)
-{
-  Task_setPri(Task_self(), admitted ? 3 : 5);
-}
-
 static uint32_t b1_startup_timeout_ticks(void)
 {
   return (1000000u + Clock_tickPeriod - 1u) / Clock_tickPeriod;
@@ -100,10 +91,6 @@ __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(uint8_t subsystem, 
     b1_startup_fail(B1_ERROR_STARTUP_TX_TIMEOUT);
     return ZFailure;
   }
-  /* TI ZNP has Task.numPriorities=6 (legal 0..5): do NOT elevate NPI
-   * to 6. Lower only this original stack task from 5 to 3 while startup
-   * runs so the independent NPI task at 4 can process RAM-only queries. */
-  b1_stack_startup_observer_priority(TRUE);
   return ZSuccess; /* Only request admission, never a readiness claim. */
 }
 
@@ -117,8 +104,10 @@ void b1_mt_zdo_retained_startup_event(void)
     return;
   }
   if (!b1_startup_checkpoint(B1_PHASE_BDB)) return;
+  b1_evidence_milestone(B1_M_RETAINED_DISPATCH, 0u);
+  b1_evidence_milestone(B1_M_BDB_ENTRY, 0u);
   bdb_StartCommissioning(0); /* Initialize original network only, once per boot. */
-  b1_startup_note_phase(B1_PHASE_BDB, 0u, 0u);
+  b1_evidence_milestone(B1_M_BDB_RETURN, 0u);
   if (b1_nv_runtime_hold_active())
     b1_security_runtime_hold_latch();
 }
@@ -140,7 +129,7 @@ def patch(source: str) -> str:
         "\nextern int b1_nv_existing_header_candidate(void);"
         "\nextern int b1_sec_restored_network_validated(void);"
         "\nextern void b1_security_runtime_hold_latch(void);"
-        "\n#include <ti/sysbios/knl/Task.h>", 1
+        "", 1
     ).replace(BEFORE, AFTER, 1).replace(STARTUP_SIGNATURE, HELPER + STARTUP_SIGNATURE, 1)
 
 

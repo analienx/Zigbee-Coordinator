@@ -861,9 +861,33 @@ def patch_startup(source: str) -> str:
         '    }\n'
         '    MT_TaskInit( tmpServiceId );\n'
         '    b1_management_note_mt_registered();', 'MT actual registration lifecycle')
+    # TI 8.33 dispatcher consumes one semaphore credit before selecting a
+    # highest-ready service. Returned bits are ORed back, but the donor
+    # forgot to restore any credit. A two-bit event can strand the second
+    # bit forever with no further external activity. Preserve concurrent
+    # OsalPort posts by retaining the donor's same critical-section merge.
+    source = replace_once(source,
+        "        *(pTasksEvents[idx]) |= events;  // Add back unprocessed events to the current task.\n"
+        "        OsalPort_leaveCS(key);",
+        "        *(pTasksEvents[idx]) |= events;  // Add back unprocessed events to the current task.\n"
+        "        OsalPort_leaveCS(key);\n"
+        "        if (events != 0u) Semaphore_post(stackSemHandle);",
+        "dispatch returned-bits semaphore credit")
+    source = replace_once(source,
+        "    pTasksEvents[idx] = &zdAppServiceEvents;\n    idx++;",
+        "    pTasksEvents[idx] = &zdAppServiceEvents;\n"
+        "    b1_evidence_bind_pending(&zdAppServiceEvents);\n"
+        "    idx++;", "bind one original ZDApp event-word owner")
+    source = replace_once(source,
+        "        events = (zstackTasksArr[idx])( 0U, events );",
+        "        b1_evidence_dispatch(idx, events);\n"
+        "        events = (zstackTasksArr[idx])( 0U, events );\n"
+        "        b1_evidence_dispatch_end(events);",
+        "true stack dispatch input and returned masks")
     # Header and helper symbols compile within the existing donor source unit.
     return replace_once(source,
         '#include "zstackconfig.h"', '#include "zstackconfig.h"\n'
+        '#include "b1_management.h"\n'
         'extern int b1_sec_validate_restored(void);\n'
         'extern void b1_management_transport_failed(uint8_t reason);\n'
         'extern void b1_management_note_mt_registered(void);', 'startup security declarations')
