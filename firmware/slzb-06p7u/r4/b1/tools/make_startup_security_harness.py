@@ -31,6 +31,9 @@ static uint32_t task_events,*event_pointer=&task_events,**pTasksEvents=&event_po
 static uint32_t event_fn(uint8_t id,uint32_t ev) {(void)id;return ev;}
 static uint32_t (*zstackTasksArr[])(uint8_t,uint32_t)={event_fn};
 static int b1_sec_validate_restored(void) {++checks;return valid;}
+static void b1_evidence_dispatch(uint8_t idx,uint32_t events)
+{(void)idx;(void)events;}
+static void b1_evidence_dispatch_end(uint32_t events) {(void)events;}
 static void stackInit(void) {++mac_calls;longjmp(boundary,1);}
 static void OsalPortTimers_registerCleanupEvent(uint8_t id,uint16_t ev) {(void)id;(void)ev;}
 static void Semaphore_pend(void *s,uint32_t timeout) {(void)s;(void)timeout;++sem_calls;}

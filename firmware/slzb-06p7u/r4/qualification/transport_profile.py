@@ -187,6 +187,29 @@ def transform(texts: dict[str, str], source_sha: str) -> dict[str, str]:
                '#include <ti/drivers/dpl/ClockP.h>\n#include <ti/sysbios/knl/Clock.h>',
                "NPI_DIAGNOSTIC_DELAY_CLOCK")
     uart = patch_management.patch_uart(texts[UART])
+    # Transport-only qualification has no retained-network startup at all.
+    # Preserve the original, single TI UART owner and its error handling, but
+    # remove B1's startup-specific EOT hook rather than linking B1 state into
+    # a supposedly isolated no-NV, no-stack diagnostic image.
+    callback_signature = (
+        "static void b1_startup_uart_event(UART2_Handle handle, uint32_t event,\n"
+        "                                 uint32_t data, void *userArg)"
+    )
+    uart = once(uart, extract_function(uart, callback_signature) + "\n",
+                "", "TRANSPORT_ONLY_REMOVE_B1_EOT_CALLBACK")
+    uart = once(
+        uart,
+        "    params.eventCallback = b1_startup_uart_event;\n"
+        "    params.eventMask |= UART2_EVENT_TX_FINISHED;\n",
+        "", "TRANSPORT_ONLY_REMOVE_B1_EOT_SUBSCRIPTION")
+    for hook in (
+        "    b1_startup_tx_result((uint16_t)size, 1);\n",
+        "        b1_startup_tx_submit(TransportTxBuf, TransportTxLen);\n",
+        "        b1_startup_tx_accepted(TransportTxLen, b1_write_status == UART2_STATUS_SUCCESS);\n",
+    ):
+        uart = once(uart, hook, "", "TRANSPORT_ONLY_REMOVE_" + hook.strip())
+    if "b1_startup_" in uart:
+        raise ValueError("TRANSPORT_ONLY_RETAINED_STARTUP_HOOK_LEAK")
     names = {
         '"b1_management.h"': '"r4_transport_only_support.h"',
         "b1_management_transport_failed": "r4q_transport_failed",

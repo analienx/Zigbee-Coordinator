@@ -184,6 +184,8 @@ class RealPinnedDonor(unittest.TestCase):
         self.assertNotIn("MT_SYS_OSAL", dispatch)
         self.assertEqual(dispatch.count("case MT_SYS_"), 2)
         self.assertNotIn("b1_management", "".join(changed.values()))
+        self.assertNotIn("b1_startup_", changed[profile.UART])
+        self.assertNotIn("params.eventCallback = b1_startup_uart_event", changed[profile.UART])
 
     def test_every_real_preimage_is_individually_pinned(self):
         for relative in profile.PINS:
