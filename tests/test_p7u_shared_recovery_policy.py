@@ -163,6 +163,30 @@ class RecoveryPolicyTests(unittest.TestCase):
                          recovery_attempts_24h=(t-500, t-300))
         self.assertEqual(evaluate(sample(at=t), capped).action, "ALERT_HUMAN")
 
+    def test_esp_reboot_usb_detach_allowed_briefly_not_indefinitely(self):
+        start=1_800_000_000
+        state=State(phase="ESP_BOOT", stage_since=start,
+                    incident_since=start, last_sample_utc=start)
+        down=sample(at=start+50, esp_reachable=False, expected_usb=False,
+                    expected_identity=False)
+        d=evaluate(down,state)
+        self.assertEqual(d.state.phase,"ESP_BOOT")
+        self.assertEqual(d.action,"NONE")
+        late=evaluate(replace(down,utc=start+181), d.state)
+        self.assertEqual(late.action,"ALERT_HUMAN")
+
+    def test_completed_recovery_rearms_with_cooldown(self):
+        start=1_800_000_000
+        s=State(phase="COMPLETE", last_recovery_utc=start-60,
+                recovery_attempts_24h=(start-300,))
+        d=evaluate(sample(at=start),s)
+        self.assertEqual(d.state.phase,"MONITOR")
+        next=evaluate(sample(at=start+30),d.state)
+        self.assertEqual(next.state.phase,"SUSPECT")
+        blocked=evaluate(sample(at=start+70),next.state)
+        self.assertEqual(blocked.action,"ALERT_HUMAN")
+        self.assertIn("COOLDOWN",blocked.reason)
+
     def test_epoch_or_state_corruption_fail_closed(self):
         self.assertEqual(evaluate(sample(), State(phase="INVALID")).action,
                          "ALERT_HUMAN")
