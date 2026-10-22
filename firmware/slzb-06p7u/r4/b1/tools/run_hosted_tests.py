@@ -38,6 +38,7 @@ SOURCE_PATHS = (
     "source/ti/common/nv/nvintf.h",
     "source/ti/zstack/mt/mt_app_config.c",
     "source/ti/zstack/stack/zdo/zd_object.c",
+    "source/ti/zstack/zmac/f8w/zmac_cb.c",  # exact MAC confirmation blob, append only
 )
 
 
