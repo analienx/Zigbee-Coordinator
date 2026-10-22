@@ -1,6 +1,6 @@
 # Shared stock/R4 P7U recovery guard
 
-This is the independent Home Assistant watchdog for [#143](https://github.com/analienx/Zigbee-Coordinator/issues/143), reviewed in [draft PR #146](https://github.com/analienx/Zigbee-Coordinator/pull/146). It never opens the Zigbee serial port. Version 0.2.1 corrects the first dry-run's persistence, evidence attribution and HA control boundaries. Source qualification and live acceptance are separate gates.
+This is the independent Home Assistant watchdog for [#143](https://github.com/analienx/Zigbee-Coordinator/issues/143), reviewed in [draft PR #146](https://github.com/analienx/Zigbee-Coordinator/pull/146). It never opens the Zigbee serial port. Version 0.2.2 corrects the first dry-run's persistence, evidence attribution and HA control boundaries. Source qualification and live acceptance are separate gates.
 
 ## Defaults and admission
 

@@ -4,10 +4,13 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host" / "recovery"))
 from policy import Observation, State
-from run import GuardRunner, active_admission, configuration, owner_configuration_valid
+from run import GuardRunner, active_admission, configuration, owner_configuration_valid, seed_history
 
 
 class FakeActor:
@@ -41,6 +44,23 @@ def fault(now=1800000000):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_history_bootstrap_follows_rotation_to_the_original_startup_marker(self):
+        def line(at,text):
+            return '['+datetime.fromtimestamp(at,ZoneInfo('Europe/Prague')).strftime('%Y-%m-%d %H:%M:%S')+'] info: z2m: '+text+'\n'
+        class HistoryObserver:
+            def seed_process_epoch(self,*args):pass
+            def seed_process_history(self,stream,now):self.lines=list(stream)
+        with TemporaryDirectory() as directory:
+            root=Path(directory);session=root/'log'/'session';session.mkdir(parents=True)
+            boot=line(1800000000,'Starting Zigbee2MQTT version 2.14.0')
+            recent=line(1800000100,'Current log entry')
+            (session/'log1.log').write_text(boot)
+            (session/'log.log').write_text(recent)
+            observer=HistoryObserver()
+            with patch('run.CONFIG',root/'configuration.yaml'):
+                self.assertTrue(seed_history(observer,boot,1800000101))
+            self.assertEqual(observer.lines,[boot,recent])
+
     def test_full_esp_transaction_uses_one_restart_and_start(self):
         with TemporaryDirectory() as directory:
             actor = FakeActor()

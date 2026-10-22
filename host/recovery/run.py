@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from contextlib import ExitStack
+import itertools
 import json
 import os
+import re
 from pathlib import Path
 import time
 import uuid
@@ -214,17 +217,31 @@ def seed_history(observer, prefix, now):
     folder = datetime.fromtimestamp(start, timezone.utc).astimezone().strftime("%Y-%m-%d.%H-%M-%S")
     candidates = [root / folder / "log.log"] + sorted(root.glob("*/log.log"), reverse=True)[:8]
     for path in dict.fromkeys(candidates):
-        if not path.is_file() or path.stat().st_size > 512 * 1024 * 1024:
+        if not path.is_file():
             continue
-        with path.open(encoding="utf-8", errors="replace") as stream:
-            beginning = "".join(stream.readline() for _ in range(40))
-            markers = [timestamp(line) for line in beginning.splitlines()
-                       if "Starting Zigbee2MQTT version" in line]
-            if start not in markers:
+        segments, markers, total = [], [], 0
+        for segment in path.parent.iterdir():
+            if not segment.is_file() or not re.fullmatch(r"log\d*\.log", segment.name):
                 continue
-            stream.seek(0)
-            observer.seed_process_history(stream, now)
-            return True
+            total += segment.stat().st_size
+            if total > 512 * 1024 * 1024 or len(segments) >= 100:
+                raise RuntimeError("CURRENT_LOG_HISTORY_TOO_LARGE")
+            with segment.open(encoding="utf-8", errors="replace") as stream:
+                beginning = [stream.readline() for _ in range(40)]
+            times = [timestamp(line) for line in beginning if timestamp(line) is not None]
+            markers.extend(timestamp(line) for line in beginning
+                           if "Starting Zigbee2MQTT version" in line)
+            if times:
+                segments.append((min(times), segment))
+        if start not in markers:
+            continue
+        # Z2M rotates log.log into log1.log, log2.log, etc. Numeric names
+        # do not establish chronological order; use original record time.
+        with ExitStack() as opened:
+            streams = [opened.enter_context(segment.open(encoding="utf-8", errors="replace"))
+                       for _, segment in sorted(segments)]
+            observer.seed_process_history(itertools.chain.from_iterable(streams), now)
+        return True
     return False
 
 
@@ -290,7 +307,7 @@ def service_main():
         return fresh
 
     runner = GuardRunner(DATA, actor, reporter, observer, pre_action)
-    print("P7U_WATCHDOG_STARTED VERSION=0.2.1 FIRST=ESP32 RESETS_DEFAULT_OFF", flush=True)
+    print("P7U_WATCHDOG_STARTED VERSION=0.2.2 FIRST=ESP32 RESETS_DEFAULT_OFF", flush=True)
     previous_clock = None
     poll_number = 0
     try:
@@ -312,7 +329,7 @@ def service_main():
                 reporter.retry_pending()
                 atomic_json(DATA / "status.json", {
                     "schema": "p7u-recovery-status-v2", "utc": observation.utc,
-                    "version": "0.2.1", "resets_enabled": active, "phase": result.phase,
+                    "version": "0.2.2", "resets_enabled": active, "phase": result.phase,
                     **{k: sample.get(k) for k in (
                         "epoch_id", "epoch_start_utc", "observation_valid", "rx_valid",
                         "mqtt_reachable", "fresh_device_topics_120s", "srsp_120s",
