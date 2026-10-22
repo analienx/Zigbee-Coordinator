@@ -10,6 +10,7 @@ never replay the old NV snapshot after the candidate has run.
 from __future__ import annotations
 
 import asyncio
+import binascii
 import copy
 import hashlib
 import json
@@ -323,12 +324,22 @@ async def _observe(rom, live_identity):
     return {a: sha(await _sector(rom, a)) for a in range(0, FLASH, SECTOR)}
 
 
-async def _guard(rom, address, expected, live_identity):
+async def _guard(rom, address, expected, live_identity, expected_crc=None):
+    """Check every protected sector and the target before irreversible I/O.
+
+    An already SHA-admitted and immutable capture supplies CRC baselines.
+    ROM CRC32 is a *read-only interim tripwire*, never a replacement for the
+    admission's 88 SHA readbacks, each written sector's bytewise readback,
+    or the final 88-SHA parity. This avoids thousands of 240-byte TCP reads.
+    """
     if await rom.identity_sha256() != live_identity:
         deny('LIVE_IDENTITY_CHANGED')
     for guard in sorted(set(range(APP_LIMIT, FLASH, SECTOR)) | {address}):
-        if sha(await _sector(rom, guard)) != expected[guard]:
-            deny('STATE_CHANGED_BEFORE_ERASE')
+        if expected_crc is None:
+            if sha(await _sector(rom, guard)) != expected[guard]:
+                deny('STATE_CHANGED_BEFORE_ERASE')
+        elif await rom.crc32(guard, SECTOR) != expected_crc[guard]:
+            deny('CRC32_GUARD_CHANGED_BEFORE_ERASE')
 
 
 async def _journal(rom, callback, event):
@@ -395,11 +406,18 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     if current != admission or current['admission_sha256'] != pin(expected_admission_sha256):
         deny('STALE_ADMISSION')
     expected = dict(current['observed_sector_sha256'])
+    expected_crc = {addr: binascii.crc32(plan.snapshot[addr:addr + SECTOR]) & 0xffffffff
+                    for addr in range(0, FLASH, SECTOR)}
+    # Verify genuine TI ROM CRC agrees with SHA-bound capture on four regions
+    # before first erase. No CRC is ever used as final acceptance evidence.
+    for probe in (0, 0xA4000, BOOT, TOP):
+        if await rom.crc32(probe, SECTOR) != expected_crc[probe]:
+            deny('ROM_CRC32_NOT_EQUIVALENT_TO_ADMITTED_CAPTURE')
     completed = []
     for address in plan.manifest['program_order']:
         # The whole reserved/NV/boot/CCFG range and next target are re-read
         # before every erase. Only our verified writes may change their pins.
-        await _guard(rom, address, expected, expected_live_identity_sha256)
+        await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT and await _observe(rom, expected_live_identity_sha256) != expected:
             deny('APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
         payload = plan.sectors[address]
@@ -412,7 +430,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         await _journal(rom, journal, event)
         # A journal callback yields control. Revalidate after it, before the
         # first irreversible adapter call, rather than trusting stale reads.
-        await _guard(rom, address, expected, expected_live_identity_sha256)
+        await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT and await _observe(rom, expected_live_identity_sha256) != expected:
             deny('APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
         if await rom.erase_sector(address) is not True or await rom.status() is not True:
@@ -427,6 +445,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                 if await _sector(rom, BOOT) != partial:
                     deny('BOOT_TAIL_NOT_VERIFIED')
                 expected[BOOT] = sha(partial)
+                expected_crc[BOOT] = binascii.crc32(partial) & 0xffffffff
                 if await _observe(rom, expected_live_identity_sha256) != expected:
                     deny('STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 await _journal(rom, journal, {'event': 'BEFORE_BOOT_VECTOR_COMMIT',
@@ -442,6 +461,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         if await _sector(rom, address) != payload:
             deny('SECTOR_READBACK')
         expected[address] = sha(payload)
+        expected_crc[address] = binascii.crc32(payload) & 0xffffffff
         completed.append(address)
         await _journal(rom, journal, {'event': 'SECTOR_VERIFIED', 'address': address,
                                     'sha256': expected[address]})

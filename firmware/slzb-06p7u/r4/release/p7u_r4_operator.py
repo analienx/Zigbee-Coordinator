@@ -14,6 +14,7 @@ import sys
 import re
 from pathlib import Path
 from p7u_r4_startup_observer import verify_success_frames
+from p7u_r4_adapter_provision import provision, verify_seal, ProvisionHold
 
 FLASH_BYTES = 720896
 BOOT = 0xAC000
@@ -234,6 +235,10 @@ def script_check(private: Path, stage: str, source: str) -> Path:
 def run_through(private: Path, folder: Path, source: str, target: str,
                 *, allow_bsl: bool, allow_flash: bool, allow_boot: bool) -> None:
     c = candidate_verify(folder, source)
+    try:
+        verify_seal(private, source, c)
+    except ProvisionHold as err:
+        raise Stop(str(err)) from err
     progress = stage_state(private, c)
     for step in STAGES[:STAGES.index(target) + 1]:
         if progress[step] == "PASS":
@@ -260,6 +265,10 @@ def run_through(private: Path, folder: Path, source: str, target: str,
             require(allow_boot, "EXPLICIT_BOOT_AND_ONE_START_APPROVAL_REQUIRED")
             flash_verify(private, c)
         script = script_check(private, step, source)
+        try:
+            verify_seal(private, source, c)
+        except ProvisionHold as err:
+            raise Stop(str(err)) from err
         print("RUN_ONE_SHOT", step, script.name, flush=True)
         completed = subprocess.run([sys.executable, "-u", str(script)],
                                    cwd=private, check=False)
@@ -271,6 +280,22 @@ def run_through(private: Path, folder: Path, source: str, target: str,
         print("VERIFIED", step, flush=True)
     print("REQUESTED_STAGES_COMPLETED", target, flush=True)
 
+def journal_progress(private: Path) -> dict:
+    """Read-only bounded metadata; a final receipt alone proves completion."""
+    path = private / "flash-journal.jsonl"
+    if not path.exists():
+        return {"started": False}
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    verify = [r for r in records if r.get("event") == "SECTOR_VERIFIED"]
+    last = records[-1] if records else None
+    return {"started": True, "verified_sectors": len(verify),
+            "max_program_sectors": 25,
+            "last_event": last.get("event") if last else None,
+            "last_sector": hex(last["address"]) if last and
+                           type(last.get("address")) is int else None,
+            "verified_flash_receipt_present": (private / "flash-result.json").is_file()}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", required=True, type=Path)
@@ -278,6 +303,10 @@ def main(argv=None) -> int:
     parser.add_argument("--source", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("status")
+    setup = commands.add_parser("provision")
+    setup.add_argument("--template-dir", required=True, type=Path)
+    setup.add_argument("--recipe", required=True, type=Path)
+    setup.add_argument("--recipe-sha256", required=True)
     run = commands.add_parser("run")
     run.add_argument("--through", required=True, choices=STAGES)
     run.add_argument("--allow-bsl", action="store_true")
@@ -288,8 +317,21 @@ def main(argv=None) -> int:
         c = candidate_verify(args.candidate, args.source)
         require(args.private.is_dir(), "MISSING_PRIVATE_WORKSPACE")
         if args.action == "status":
-            print(json.dumps({"source_sha": args.source, "github_run_id": c["github_run_id"],
+            print(json.dumps({"source_sha": args.source,
+                              "github_run_id": c["github_run_id"],
+                              "one_shot_lock_present":
+                                  (args.private / ".r4-operator-one-shot-lock").exists(),
+                              "adapter_seal_present":
+                                  (args.private / "operator-adapters.json").exists(),
+                              "flash_journal": journal_progress(args.private),
                               "stages": stage_state(args.private, c)}, indent=2))
+        elif args.action == "provision":
+            seal = provision(args.private, args.template_dir, args.recipe,
+                             args.recipe_sha256, args.source, c)
+            print(json.dumps({"status": "FOUR_REVIEWED_ADAPTERS_SEALED_NO_HARDWARE",
+                              "source_sha": seal["source_sha"],
+                              "recipe_sha256": seal["reviewed_recipe_sha256"],
+                              "scripts": sorted(seal["scripts_sha256"])}, indent=2))
         else:
             lock = args.private / ".r4-operator-one-shot-lock"
             with lock.open("xb") as exclusive:
@@ -301,7 +343,7 @@ def main(argv=None) -> int:
                         allow_boot=args.allow_boot)
             lock.unlink()
         return 0
-    except (Stop, OSError, KeyError, ValueError, TypeError) as error:
+    except (Stop, ProvisionHold, OSError, KeyError, ValueError, TypeError) as error:
         print("R4_OPERATOR_HOLD:", str(error), file=sys.stderr)
         return 2
 

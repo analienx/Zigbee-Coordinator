@@ -2,6 +2,8 @@
 
 Applies only to the **single production SMLIGHT SLZB-06P7U R1.73 / CC2652P7**. Do not substitute the historical 06P7, MR4U, P10, or a hypothetical spare.
 
+**2026-10-22 current incident:** The 36aa811 APP+AC000 flash has been fully verified. Its single retained-startup attempt returned SRSP success but never yielded a valid diagnostic snapshot within 80 seconds; the one-shot attempt remains consumed, and coordinator state 9 is **unproven**. Do not rerun startup or restart Zigbee2MQTT. See [the complete operator, faster-readback and provisioning record](P7U_R4_OPERATOR_PROVISIONING_AND_FAST_GUARDS.md). The older 8f52d39 examples below are historical only.
+
 ## One-command R4 operator (versioned, Python, no WSL)
 
 Use `release/p7u_r4_operator.py` rather than manually invoking the
