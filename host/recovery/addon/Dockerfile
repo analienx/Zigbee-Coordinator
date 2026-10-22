@@ -1,5 +1,5 @@
 FROM python:3.12-alpine
-ARG BUILD_VERSION=0.2.0
+ARG BUILD_VERSION=0.2.1
 ARG BUILD_ARCH=aarch64
 LABEL io.hass.version="${BUILD_VERSION}" io.hass.type="app" io.hass.arch="${BUILD_ARCH}"
 RUN apk add --no-cache tzdata && pip install --no-cache-dir "paho-mqtt==2.1.0" "PyYAML==6.0.2"

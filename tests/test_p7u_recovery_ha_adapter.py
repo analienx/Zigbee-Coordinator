@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 import unittest
 import hashlib
+import gzip
+import io
 import json
 from tempfile import TemporaryDirectory
 from unittest.mock import patch, Mock
@@ -57,6 +59,17 @@ class FakeRadio:
         return True
 
 class AdapterTests(unittest.TestCase):
+    def test_installed_gzip_script_is_bounded_and_hashed_as_decoded_source(self):
+        class Response(io.BytesIO):
+            status=200
+            headers={"Content-Encoding":"gzip"}
+        c=SmlightControl(CFG)
+        with patch.object(c.opener,"open",return_value=Response(gzip.compress(JS.encode()))):
+            self.assertEqual(c.fetch("/js/httpApi.js"),JS)
+        with patch.object(c.opener,"open",return_value=Response(gzip.compress(b"x"*300001))):
+            with self.assertRaises(ControlError):
+                c.fetch("/js/httpApi.js")
+
     def test_first_line_esp_route(self):
         cfg=replace(CFG,allow_private_http_fallback=True)
         h=FakeHA();r=FakeRadio()

@@ -1,5 +1,5 @@
 name: "P7U Coordinator Recovery Guard"
-version: "0.2.0"
+version: "0.2.1"
 slug: "p7u_recovery"
 description: "Independent, firmware-agnostic ESP-first Zigbee2MQTT watchdog"
 url: "https://github.com/analienx/Zigbee-Coordinator"
@@ -29,7 +29,7 @@ options:
   zigbee_restart_entity: ""
   expected_mac: ""
   expected_sw_version: "v3.4.3.dev1"
-  expected_js_sha256: "1c281812686d1d78911ea8163daca74a8c7507e31305f09e505d5385a5e70834"
+  expected_js_sha256: "2d50552d71bf55f8f87aeabece9f4dae01d589d9e2e88699ec0b15e8e8e600ed"
 schema:
   enabled: bool
   dry_run: bool

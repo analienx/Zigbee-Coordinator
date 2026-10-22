@@ -4,7 +4,7 @@ The sole SLZB-06P7U is running R4 `323949a` with the retained network. The demon
 
 ## Current iteration: shared watchdog #143 / draft PR #146
 
-Version 0.2.0 implements the independent review corrections described in [README.md](README.md): transaction-scoped durable results, restart reconciliation, continuous stability, genuine timestamp-based RF evidence, semantic SRSP attribution, OTA inhibition, precise controls and two-destination warning delivery.
+Version 0.2.1 implements the independent review corrections described in [README.md](README.md): transaction-scoped durable results, restart reconciliation, continuous stability, genuine timestamp-based RF evidence, semantic SRSP attribution, OTA inhibition, precise controls and two-destination warning delivery.
 
 Required final gates:
 

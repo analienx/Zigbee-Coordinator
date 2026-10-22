@@ -1,12 +1,12 @@
 # Shared stock/R4 P7U recovery guard
 
-This is the independent Home Assistant watchdog for [#143](https://github.com/analienx/Zigbee-Coordinator/issues/143), reviewed in [draft PR #146](https://github.com/analienx/Zigbee-Coordinator/pull/146). It never opens the Zigbee serial port. Version 0.2.0 corrects the first dry-run's persistence, evidence attribution and HA control boundaries. Source qualification and live acceptance are separate gates.
+This is the independent Home Assistant watchdog for [#143](https://github.com/analienx/Zigbee-Coordinator/issues/143), reviewed in [draft PR #146](https://github.com/analienx/Zigbee-Coordinator/pull/146). It never opens the Zigbee serial port. Version 0.2.1 corrects the first dry-run's persistence, evidence attribution and HA control boundaries. Source qualification and live acceptance are separate gates.
 
 ## Defaults and admission
 
 The add-on defaults to `enabled:false`, `dry_run:true`, manual boot and private HTTP fallback disabled. Physical recovery additionally requires `serial_owner_approved:true`, `notify_on_confirmed_hang:true`, the pinned coordinator MAC/version, and both verified restart controls. Merely entering button entity IDs cannot qualify unrelated buttons. No automatic arming is part of deployment.
 
-Configure the real MAC privately in add-on options. The reviewed SLZB-OS version is `v3.4.3.dev1`; its command script SHA256 is `1c281812686d1d78911ea8163daca74a8c7507e31305f09e505d5385a5e70834`. A version or script change requires new review. Native SMLIGHT buttons are preferred when installed. The optional private route permits only ESP restart command 3 and Zigbee radio restart command 1. Hard reset, power cycling, flash, NV restoration and connection-mode changes are absent from the guard.
+Configure the real MAC privately in add-on options. The reviewed SLZB-OS version is `v3.4.3.dev1`; its decoded command script SHA256 is `2d50552d71bf55f8f87aeabece9f4dae01d589d9e2e88699ec0b15e8e8e600ed`. A version or script change requires new review. Native SMLIGHT buttons are preferred when installed. The optional private route permits only ESP restart command 3 and Zigbee radio restart command 1. Hard reset, power cycling, flash, NV restoration and connection-mode changes are absent from the guard.
 
 `maintenance` and `firmware_flash_active` are live inhibition options, reloaded before actions. Operators must set maintenance before OTA/flash/recovery work outside this guard. Runtime checks also inspect OTA evidence, exact Supervisor tty identity, actual Z2M serial options, socat and the competing native watchdog. The explicit ownership approval is an admission assertion, not a claim that a container can inspect every host file descriptor.
 

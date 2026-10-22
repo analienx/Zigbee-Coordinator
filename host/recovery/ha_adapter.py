@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import gzip
+import io
 import re
 import urllib.error
 import urllib.parse
@@ -20,7 +22,7 @@ ADDON_SLUG = "45df7312_zigbee2mqtt"
 EXPECTED_BY_ID = "usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00"
 _ALLOWED = {"RESET_RADIO": (1, "zigbee_button"),
             "RESTART_ESP": (3, "core_button")}
-REVIEWED_JS_SHA256 = "1c281812686d1d78911ea8163daca74a8c7507e31305f09e505d5385a5e70834"
+REVIEWED_JS_SHA256 = "2d50552d71bf55f8f87aeabece9f4dae01d589d9e2e88699ec0b15e8e8e600ed"
 
 
 @dataclass(frozen=True)
@@ -195,6 +197,17 @@ class SmlightControl:
             body = r.read(300_001)
             if len(body) > 300_000:
                 raise ControlError("SLZB_RESPONSE_TOO_LARGE")
+            encoding = r.headers.get("Content-Encoding", "").lower()
+            if encoding == "gzip" or body.startswith(b"\x1f\x8b"):
+                try:
+                    with gzip.GzipFile(fileobj=io.BytesIO(body)) as stream:
+                        body = stream.read(300_001)
+                except (OSError, EOFError) as exc:
+                    raise ControlError("SLZB_INVALID_GZIP_RESPONSE") from exc
+                if len(body) > 300_000:
+                    raise ControlError("SLZB_DECOMPRESSED_RESPONSE_TOO_LARGE")
+            elif encoding not in ("", "identity"):
+                raise ControlError("SLZB_UNSUPPORTED_CONTENT_ENCODING")
             return body.decode("utf-8", "strict")
 
     def identity(self) -> dict:
