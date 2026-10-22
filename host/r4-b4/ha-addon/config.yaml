@@ -1,0 +1,58 @@
+name: P7U R4 native F2 collector (diagnostic)
+version: "0.1.0"
+slug: p7u_r4_native_host
+description: Versioned, one-owner Zigbee2MQTT 2.14.0 host candidate; never run beside official add-on
+arch:
+  - aarch64
+startup: application
+boot: manual
+init: false
+watchdog: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:zigbee
+uart: true
+udev: true
+services:
+  - mqtt:want
+map:
+  - type: homeassistant_config
+    path: /config
+    read_only: false
+  - type: app_config
+    path: /addon_config
+    read_only: false
+  - type: share
+    path: /share
+    read_only: false
+environment:
+  P7U_B4_COLLECTOR: "1"
+options:
+  data_path: /config/zigbee2mqtt
+  socat:
+    enabled: false
+  mqtt: {}
+  serial: {}
+schema:
+  data_path: str
+  socat:
+    enabled: bool?
+    master: str?
+    slave: str?
+    options: str?
+    log: bool?
+  mqtt:
+    server: str?
+    ca: str?
+    key: str?
+    cert: str?
+    user: str?
+    password: password?
+    base_topic: str?
+  serial:
+    port: str?
+    adapter: str?
+    baudrate: int?
+    rtscts: bool?
+  watchdog: str?
+  force_onboarding: bool?
