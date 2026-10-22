@@ -1,0 +1,31 @@
+name: "P7U Coordinator Recovery Guard"
+version: "0.1.0"
+slug: "p7u_recovery"
+description: "Independent, firmware-agnostic ESP-first Zigbee2MQTT watchdog"
+url: "https://github.com/analienx/Zigbee-Coordinator"
+arch:
+  - aarch64
+startup: application
+init: false
+boot: manual
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+services:
+  - mqtt:need
+options:
+  enabled: false
+  dry_run: true
+  maintenance: false
+  slzb_url: "http://192.168.50.59"
+  allow_private_http_fallback: false
+  esp_restart_entity: ""
+  zigbee_restart_entity: ""
+schema:
+  enabled: bool
+  dry_run: bool
+  maintenance: bool
+  slzb_url: str
+  allow_private_http_fallback: bool
+  esp_restart_entity: str
+  zigbee_restart_entity: str
