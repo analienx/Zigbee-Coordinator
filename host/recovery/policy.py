@@ -60,7 +60,7 @@ class State:
     last_sample_utc: int = 0
     incident_since: int = 0
     stage_since: int = 0
-    radio_resets_24h: tuple[int, ...] = ()
+    recovery_attempts_24h: tuple[int, ...] = ()
     last_recovery_utc: int = 0
     reason: str = ""
 
@@ -138,14 +138,14 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
                                     reason=cause), "NONE", "REARM_SUSPICION")
         if o.utc - s.suspect_since < 30 or cause != s.reason:
             return Decision(s, "NONE", "WAIT_FOR_INDEPENDENT_CONFIRMATION")
-        history = tuple(t for t in s.radio_resets_24h if o.utc - t < 86400)
+        history = tuple(t for t in s.recovery_attempts_24h if o.utc - t < 86400)
         if len(history) >= 2 or (s.last_recovery_utc and
                                  o.utc - s.last_recovery_utc < 21600):
             return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
-                            "RESET_BUDGET_OR_COOLDOWN_EXHAUSTED")
+                            "RECOVERY_BUDGET_OR_COOLDOWN_EXHAUSTED")
         return Decision(replace(s, phase="CAPTURE_PENDING",
                                 incident_since=o.utc, stage_since=o.utc,
-                                radio_resets_24h=history),
+                                recovery_attempts_24h=history),
                         "CAPTURE_EVIDENCE", cause)
     if s.phase == "CAPTURE_PENDING":
         if not o.saved_evidence:
@@ -155,40 +155,10 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
     if s.phase == "STOP_PENDING":
         if not o.stopped_receipt or o.addon not in ("error", "stopped"):
             return Decision(s, "NONE", "AWAIT_Z2M_STOP_PROOF")
-        new = replace(s, phase="RADIO_RESET_PENDING", stage_since=o.utc,
-                      radio_resets_24h=s.radio_resets_24h + (o.utc,))
-        return Decision(new, "RESET_RADIO", "ONE_RADIO_RESET_QUEUED")
-    if s.phase == "RADIO_RESET_PENDING":
-        if not o.radio_reset_ack:
-            return Decision(s, "NONE", "RADIO_RESET_PENDING_NO_RETRY")
-        return Decision(replace(s, phase="RADIO_BOOT", stage_since=o.utc),
-                        "NONE", "WAIT_RADIO_BOOT")
-    if s.phase == "RADIO_BOOT":
-        if o.utc - s.stage_since < 20:
-            return Decision(s, "NONE", "BOUNDED_BOOT_GRACE")
-        return Decision(replace(s, phase="RADIO_START_PENDING", stage_since=o.utc),
-                        "START_Z2M", "ONE_HOST_RECONNECT_AFTER_RADIO_RESET")
-    if s.phase == "RADIO_START_PENDING":
-        if not o.z2m_start_ack:
-            return Decision(s, "NONE", "HOST_START_PENDING_NO_RETRY")
-        return Decision(replace(s, phase="RADIO_VERIFY", stage_since=o.utc),
-                        "NONE", "VERIFY_REAL_ZIGBEE_TRAFFIC")
-    if s.phase == "RADIO_VERIFY":
-        if _running_proven(o):
-            if o.utc - s.stage_since < 120:
-                return Decision(s, "NONE", "STABILITY_GRACE")
-            return Decision(replace(s, phase="COMPLETE", last_recovery_utc=o.utc),
-                            "RECOVERY_SUCCEEDED", "REAL_TRAFFIC_VERIFIED")
-        if o.addon == "error" and o.adapter_error in FAULTS and (
-            o.utc - s.stage_since >= 20
-        ):
-            return Decision(replace(s, phase="ESP_RESET_PENDING",
-                                    stage_since=o.utc),
-                            "RESTART_ESP", "RADIO_STAGE_FAILED_ESCALATE_ONCE")
-        if o.utc - s.stage_since > 240:
-            return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
-                            "RADIO_VERIFY_TIMEOUT_AMBIGUOUS")
-        return Decision(s, "NONE", "RADIO_VERIFY_PENDING")
+        # First-line, physically demonstrated successful recovery: ESP restart.
+        new = replace(s, phase="ESP_RESET_PENDING", stage_since=o.utc,
+                      recovery_attempts_24h=s.recovery_attempts_24h + (o.utc,))
+        return Decision(new, "RESTART_ESP", "FIRST_LINE_ESP_RESTART")
     if s.phase == "ESP_RESET_PENDING":
         if not o.esp_restart_ack:
             return Decision(s, "NONE", "ESP_RESTART_PENDING_NO_RETRY")
@@ -210,8 +180,40 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
                 return Decision(s, "NONE", "STABILITY_GRACE")
             return Decision(replace(s, phase="COMPLETE", last_recovery_utc=o.utc),
                             "RECOVERY_SUCCEEDED", "REAL_TRAFFIC_VERIFIED_AFTER_ESP")
+        # Fallback is radio-only reset, not a second ESP reboot.
+        if o.addon == "error" and o.adapter_error in FAULTS and (
+            o.utc - s.stage_since >= 20
+        ):
+            return Decision(replace(s, phase="RADIO_RESET_PENDING",
+                                    stage_since=o.utc),
+                            "RESET_RADIO", "ESP_STAGE_FAILED_RADIO_FALLBACK_ONCE")
+        if o.utc - s.stage_since > 240:
+            return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
+                            "ESP_VERIFY_TIMEOUT_AMBIGUOUS")
+        return Decision(s, "NONE", "ESP_VERIFY_PENDING")
+    if s.phase == "RADIO_RESET_PENDING":
+        if not o.radio_reset_ack:
+            return Decision(s, "NONE", "RADIO_RESET_PENDING_NO_RETRY")
+        return Decision(replace(s, phase="RADIO_BOOT", stage_since=o.utc),
+                        "NONE", "WAIT_RADIO_BOOT")
+    if s.phase == "RADIO_BOOT":
+        if o.utc - s.stage_since < 20:
+            return Decision(s, "NONE", "BOUNDED_BOOT_GRACE")
+        return Decision(replace(s, phase="RADIO_START_PENDING", stage_since=o.utc),
+                        "START_Z2M", "ONE_HOST_RECONNECT_AFTER_RADIO_RESET")
+    if s.phase == "RADIO_START_PENDING":
+        if not o.z2m_start_ack:
+            return Decision(s, "NONE", "HOST_START_PENDING_NO_RETRY")
+        return Decision(replace(s, phase="RADIO_VERIFY", stage_since=o.utc),
+                        "NONE", "VERIFY_REAL_ZIGBEE_TRAFFIC")
+    if s.phase == "RADIO_VERIFY":
+        if _running_proven(o):
+            if o.utc - s.stage_since < 120:
+                return Decision(s, "NONE", "STABILITY_GRACE")
+            return Decision(replace(s, phase="COMPLETE", last_recovery_utc=o.utc),
+                            "RECOVERY_SUCCEEDED", "REAL_TRAFFIC_VERIFIED_AFTER_RADIO")
         if o.utc - s.stage_since > 240 or o.addon == "error":
             return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
-                            "ESP_STAGE_FAILED_NO_FURTHER_AUTOMATIC_RESETS")
-        return Decision(s, "NONE", "ESP_VERIFY_PENDING")
+                            "RADIO_FALLBACK_FAILED_NO_MORE_RESTARTS")
+        return Decision(s, "NONE", "RADIO_VERIFY_PENDING")
     raise AssertionError("unreachable state")
