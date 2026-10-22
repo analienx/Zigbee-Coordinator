@@ -11,7 +11,7 @@ import time
 Q0 = b"B1Q1\x01\x08\x00\x00"
 Q2 = b"B1Q1\x01\x08\x02\x00"
 Q3 = b"B1Q1\x01\x08\x03\x00"
-TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,17,18,19,20,21,22)
+TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,14,15,16,17,18,19,20,21,22)
 
 class EvidenceError(RuntimeError):
     pass
@@ -89,7 +89,8 @@ def verify_success_frames(frames: dict, source: str) -> dict:
             "NLME_CONFIRM_OR_MARKER_NOT_SUCCESSFUL")
     counters=info["counters"]
     require(counters[0]>=1 and counters[1]==1 and counters[4]==1
-            and counters[5]==1 and counters[6]>=1,
+            and counters[5]==1 and counters[6]>=1
+            and counters[2]==1 and counters[3]==1,
             "DUPLICATE_OR_MISSING_NETWORK_REQUEST")
     require(info["first_order"][11] < info["first_order"][19] <
             info["first_order"][20] < info["first_order"][21] <
