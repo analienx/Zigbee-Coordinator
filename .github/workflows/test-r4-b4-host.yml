@@ -79,6 +79,7 @@ jobs:
           python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
           python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
+          python host/r4-b4/b4_v4_live_collector_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-collector-receipt.json
       - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
         run: |
           set -euo pipefail
@@ -90,6 +91,102 @@ jobs:
           rm node_modules/zigbee-herdsman
           ln -s "$B4_HERDSMAN_ROOT" node_modules/zigbee-herdsman
           pnpm exec tsc --noEmit
+      - name: Inspect real Z2M steady-state lifecycle and bounded sampler admission
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/b4-z2m-host/lib/controller.ts').read_text()
+          assert s.count('this.#b4Operational') >= 7
+          assert 'this.#startAbortController = undefined; // gc' in s
+          assert 'this.#b4Operational = true;' in s
+          assert 'this.#b4Operational = false;' in s
+          assert s.count('!this.#b4Operational') >= 2
+          assert 'P7U_B4_COLLECTOR !== "1"' in s
+          assert 'this.b4ProbeReadOnlyDiagnosticsV4(true)' in s
+          assert 'setTimeout(() => { void this.#b4Sample(); }, delay)' in s
+          assert 'this.#b4Persist(' in s
+          assert 'B4_HISTORY_CORRUPT_NO_OVERWRITE' in s
+          print('PASS: repaired steady-state lifecycle, owner-only timer, fail-closed persistence')
+          PY
+
+      - name: Emit exact-source compiled native-owner candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/b4-z2m-host
+          pnpm exec tsc
+          test -s dist/controller.js
+          test -s dist/extension/otaUpdate.js
+          root=/tmp/p7u-r4-native-image
+          mkdir -p "$root"
+          cp dist/controller.js "$root/z2m-controller.js"
+          cp dist/extension/otaUpdate.js "$root/z2m-otaUpdate.js"
+          cp -a "$B4_HERDSMAN_ROOT/dist" "$root/herdsman-dist"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u-z2m-native-collector.Dockerfile" "$root/Dockerfile"
+          node --check "$root/z2m-controller.js"
+          node --check "$root/z2m-otaUpdate.js"
+          node --check "$root/herdsman-dist/adapter/z-stack/adapter/zStackAdapter.js"
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root=Path('/tmp/p7u-r4-native-image')
+          doc={
+           'schema':'p7u-r4-z2m-host-image-v1',
+           'source_sha':os.environ['B4_SOURCE_SHA'],
+           'image_base_digest':'sha256:97246758dab5099113c5a46fcbc1b9a36968a0eb9fd95ce8df6e2868cc7f533f',
+           'z2m_upstream_sha':'62b02e2aa1997c574223b80c196677b63a25f4a7',
+           'herdsman_upstream_sha':os.environ['HERDSMAN_PIN'],
+           'runtime':'Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1',
+           'default_enabled':False,'hardware_verified':False,'installed':False,
+           'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in sorted(root.rglob('*')) if p.is_file()},
+          }
+          (root/'SOURCE_RECEIPT.json').write_text(json.dumps(doc,indent=2,sort_keys=True)+'\n')
+          PY
+      - name: Build reviewed arm64 host OCI on GitHub runner without startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version
+          docker buildx create --name p7u-r4-oci --driver docker-container --use
+          docker buildx inspect --bootstrap
+          mkdir -p /tmp/p7u-r4-host-image-artifact
+          tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
+          docker buildx build --platform linux/arm64 \
+            --tag "$tag" \
+            --file /tmp/p7u-r4-native-image/Dockerfile \
+            --output type=oci,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            --output type=docker,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar \
+            /tmp/p7u-r4-native-image
+          cp /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json /tmp/p7u-r4-host-image-artifact/
+          sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            > /tmp/p7u-r4-host-image-artifact/oci.sha256
+          sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar \
+            > /tmp/p7u-r4-host-image-artifact/docker.sha256
+      - name: Confirm exported OCI image contains exact compiled source binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host/r4-b4/p7u_native_image_audit.py \
+            --oci /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            --source /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json \
+            --receipt /tmp/p7u-r4-host-image-artifact/OCI_SOURCE_AUDIT.json
+      - name: Verify Docker-format backup artifact is directly loadable
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
+          docker load --input /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar
+          docker image inspect "$tag" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
+          docker image inspect "$tag" --format '{{.Config.Image}}' >/dev/null || true
+          echo "PASS: exact-source arm64 Docker archive loads; container was not started"
+      - name: Publish candidate image for separately authorized rollout
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-r4-z2m-native-image-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-r4-host-image-artifact/
+          if-no-files-found: error
+          compression-level: 0
       - name: Deny any production installation inference
         run: |
           echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
