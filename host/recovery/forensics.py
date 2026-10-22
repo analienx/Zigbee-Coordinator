@@ -100,6 +100,9 @@ class PassiveForensics:
             if doc.get("schema") != "p7u-passive-history-v1" or not isinstance(doc.get("rows"),list):
                 raise ValueError("INVALID_HISTORY")
             old = doc["rows"]
+            if len(old) > MAX_ROWS or any(not isinstance(x, dict) or
+                    type(x.get("utc")) is not int for x in old):
+                raise ValueError("INVALID_HISTORY_ROWS")
         previous = old[-1] if old else None
         if previous and now < previous["utc"]:
             raise ValueError("BACKWARD_OBSERVATION_TIME")
@@ -123,14 +126,19 @@ class PassiveForensics:
             return False
         redacted = {k:summary.get(k) for k in SAFE_FIELDS}
         # Advisory only: no raw native frame, boot token or key is captured.
-        native = self.root.parent / "r4-native-last-good.json"
+        native = Path("/homeassistant/zigbee2mqtt/p7u-b4-diagnostics/last-good.json")
         native_summary = None
         if native.is_file() and not native.is_symlink() and native.stat().st_size <= 4096:
             try:
                 candidate = json.loads(native.read_text(encoding="utf-8"))
+                if (candidate.get("schema") != "p7u-b4-native-sample-v1"
+                    or candidate.get("kind") != "VALID"
+                    or type(candidate.get("utc")) is not int):
+                    raise ValueError("INVALID_NATIVE_SUMMARY")
                 native_summary = {k:candidate.get(k) for k in (
                     "utc","abi","sequence","validityMask",
-                    "srspDepth","srspHighWater","uartTxFinishedEvents")}
+                    "srspDepth","srspHighWater","uartTxFinishedEvents",
+                    "radioEpochTag","imageRuntimeAttested")}
             except (ValueError,OSError):
                 native_summary = None
         atomic_json(self.root/(name+".json"),{
@@ -138,6 +146,14 @@ class PassiveForensics:
             "created_utc":int(time.time()),
             "summary":redacted, "host":_logs(self.supervisor,self.slug),
             "native_last_good_advisory":native_summary})
+        # Only first-error captures are retired; retain exclusive intent
+        # markers to prevent crash/restart duplicate captures.
+        if name.startswith("first-error-"):
+            saved = sorted(self.root.glob("first-error-*.json"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in saved[64:]:
+                if path.is_file() and not path.is_symlink():
+                    path.unlink()
         return True
 
     def incident(self, state, observation):
