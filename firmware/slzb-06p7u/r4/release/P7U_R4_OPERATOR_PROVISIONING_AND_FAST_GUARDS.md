@@ -6,7 +6,13 @@ the exact seven-job native/reproducibility GitHub Actions workflow. Operations
 run locally on the authorized Windows host, not WSL. No broad erase, formation
 fallback, NV replay, counter rewriting or automatic reset is supported.
 
-## Current physical incident (2026-10-22)
+## Latest physical completion and speed finding (2026-10-22)
+
+- Verified deployed `323949a`: **capture, prepare, flash, startup all PASS**. Three sectors were written, 88-sector parity passed, and genuine coordinator state 9 with marker `0x60=0x55` was confirmed on the first startup. Network traffic via USB Zigbee2MQTT is pending. Board should return to HA USB mode rather than changing Z2M to TCP.
+- Flash stage consumed **494.27s** for just three changed 8-KiB APP sectors because of duplicate 704-KiB admissions and final full-image readback over 240-byte serial ROM packets. The initial duplicate 704-KiB snapshot took **234.91s**. This is **not** optimized for fastest flashing.
+- Read-only inspection of actual device SLZB-OS JavaScript exposed its staged custom Zigbee-upload path; it could bypass the host/network ROM-packet loop, but sparse APP+AC000 and NV/CCFG guarantees remain unverified. See [the technical investigation, fast-lane proposal and source caveats](R4_FLASH_PERFORMANCE_2026-10-22.md). **Do not flash a generic contiguous BIN or use automatic NVM erase.**
+
+## Historical 36aa811 physical incident (2026-10-22)
 
 - Source `36aa8117df8508f6236baa633c1f7907e0626fd7`, GitHub run
   [39764140206](https://github.com/analienx/Zigbee-Coordinator/actions/runs/39764140206)

@@ -2,7 +2,7 @@
 
 Applies only to the **single production SMLIGHT SLZB-06P7U R1.73 / CC2652P7**. Do not substitute the historical 06P7, MR4U, P10, or a hypothetical spare.
 
-**2026-10-22 current incident:** The 36aa811 APP+AC000 flash has been fully verified. Its single retained-startup attempt returned SRSP success but never yielded a valid diagnostic snapshot within 80 seconds; the one-shot attempt remains consumed, and coordinator state 9 is **unproven**. Do not rerun startup or restart Zigbee2MQTT. See [the complete operator, faster-readback and provisioning record](P7U_R4_OPERATOR_PROVISIONING_AND_FAST_GUARDS.md). The older 8f52d39 examples below are historical only.
+**2026-10-22 latest verified state:** **Native source `323949a` flashed and booted successfully.** The prior `2aca9c9` was the actual installed baseline; the `36aa811` incident below is historical, not current. Three APP sectors changed and passed final all-88 parity, with NV/CCFG unchanged. One source-bound startup reached real **coordinator state 9 and marker 0x60=0x55**. Zigbee2MQTT end-to-end traffic has **not** been accepted yet. The board must now return to its normal **USB mode for HA**, where the Zigbee2MQTT USB by-id path is already configured; do not rewrite it to TCP just because Ethernet was used for flashing. Avoid extra power cycles or restart retries. See [measured flash bottleneck and safer staged-UI fast-lane proposal](R4_FLASH_PERFORMANCE_2026-10-22.md). Other historical examples below are retained as dated forensic context.
 
 ## One-command R4 operator (versioned, Python, no WSL)
 
