@@ -38,7 +38,11 @@ def addon(name):
 def running(name):
     p = subprocess.run(("docker", "inspect", "app_" + name),
                        capture_output=True, text=True, timeout=20)
-    return p.returncode == 0 and bool(json.loads(p.stdout)[0]["State"]["Running"])
+    if p.returncode != 0:
+        if "No such object" in p.stderr or "No such container" in p.stderr:
+            return False
+        raise RuntimeError("DOCKER_OWNER_STATE_UNAVAILABLE")
+    return bool(json.loads(p.stdout)[0]["State"]["Running"])
 
 
 def backup_valid():
