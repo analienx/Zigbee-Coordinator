@@ -42,7 +42,7 @@ int b1_sec_restored_network_validated(void) {return 1;}
 /* Marker NV behavior is exercised by the actual helper in network_ready. */
 static uint8_t b1_znp_publish_configured(void) {return 1;}
 static unsigned observer_priority_restores;
-static void b1_npi_startup_observer_priority(uint8_t elevated)
+static void b1_stack_startup_observer_priority(uint8_t elevated)
 {assert(!elevated);++observer_priority_restores;}
 static void OsalPort_setEvent(uint8_t task,uint32_t event)
 {

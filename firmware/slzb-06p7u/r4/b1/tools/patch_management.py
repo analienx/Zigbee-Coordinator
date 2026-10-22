@@ -230,21 +230,6 @@ def patch_npi(text):
     if start_index < 0 or before[start_index:].count(old) != 1 or not before.endswith(old):
         raise RuntimeError("BLOCKED: NPI callback terminator changed")
     text = before[:-len(old)] + replacement + end + after
-    # Native stack task priority is 5, NPI priority is 4. During a retained
-    # startup a stuck higher-priority stack task can starve even the bounded
-    # NPI-only F1/B1P1 observer. Change the ORIGINAL task's priority only
-    # after NPI initialization and an admitted startup; no second UART owner.
-    text += """\n/* R4 retained-startup NPI observability. Stack=5, normal NPI=4.
- * Elevation=6 is temporary; ZDO state 9 drops it back to 4. On a
- * blocked/failed restore, keep diagnostics runnable without touching NV. */
-__attribute__((noinline))
-void b1_npi_startup_observer_priority(uint8_t elevated)
-{
-    if (!b1_management_npi_initialized()) return;
-    Task_setPri(Task_handle(&npiTaskStruct),
-                elevated ? 6 : NPITASK_PRIORITY);
-}
-"""
     return text
 
 

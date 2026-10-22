@@ -30,7 +30,7 @@ static uint8_t FrameCounterUpdated, existing_candidate, valid_security;
 static uint16_t marker_length=1u;
 static uint8_t marker_value=0x55u, marker_init_fail, marker_bad_readback;
 static unsigned marker_creates, marker_writes, npi_priority_restores;
-static void b1_npi_startup_observer_priority(uint8_t elevated)
+static void b1_stack_startup_observer_priority(uint8_t elevated)
 { assert(!elevated); ++npi_priority_restores; }
 static unsigned irq_depth;
 uintptr_t b1_management_test_disable(void)

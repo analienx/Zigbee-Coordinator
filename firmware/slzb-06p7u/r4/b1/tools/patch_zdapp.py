@@ -335,7 +335,7 @@ def patch(source: str) -> str:
         'extern int b1_sec_restored_network_validated(void);\n'
         'extern void b1_management_note_zdo_state(uint8_t coordinator, uint8_t persisted_restore_ok);\n'
         'extern int b1_management_network_ready(void);\n'
-        'extern void b1_npi_startup_observer_priority(uint8_t);',
+        'extern void b1_stack_startup_observer_priority(uint8_t);',
         "ZDApp security declarations")
 
     old_store = extract_function(source, "void ZDApp_StoreNwkSecMaterial(void)")
@@ -431,7 +431,7 @@ def patch(source: str) -> str:
         "                  b1_nv_existing_header_candidate() &&\n"
         "                  b1_sec_restored_network_validated()));\n"
         "    if (state == DEV_ZB_COORD && b1_management_network_ready())\n"
-        "        b1_npi_startup_observer_priority(0u);",
+        "        b1_stack_startup_observer_priority(0u);",
         "ZDO actual state-change ready attestation")
     source = replace_once(source, old_state, PUBLISH_CONFIGURED + "\n\n" + new_state,
                           "actual ZDO callback body")

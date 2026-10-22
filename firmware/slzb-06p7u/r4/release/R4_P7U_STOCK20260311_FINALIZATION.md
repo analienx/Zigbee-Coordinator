@@ -30,10 +30,14 @@ frame was received: the device's phase, configured marker and state 9 are
 pinned stack task runs at priority 5 while the original NPI owner runs at
 priority 4. Thus a continuously runnable stack thread can starve even the
 NPI-side RAM-only observer; calling it independent was too strong. A bounded
-correction temporarily raises the **same original NPI task** to priority 6
+correction temporarily lowers the original Zigbee stack task from priority 5 to 3
 only after a validated retained-startup admission and successful expiry-timer
-creation; the actual attested ZDO coordinator transition restores priority 4.
-Failed/blocked startup deliberately leaves the observer schedulable. No
+creation. This keeps the existing NPI task at priority 4 schedulable during a
+stalled stack startup; the actual attested ZDO coordinator transition restores
+the original stack priority 5. Importantly, TI's *exact pinned* ZNP SysConfig
+sets `Task.numPriorities = 6`: elevating NPI to priority 6 is invalid
+(legal task priorities are 0 through 5) and is therefore explicitly rejected.
+Failed/blocked startup deliberately leaves diagnostics schedulable. No
 second serial owner, RTOS task, NV access, network mutation, or automatic
 startup retry is added. This fixes a proven *observability design flaw*,
 **not** the still-unlocated firmware stall: HWI-off loops, faults and broken

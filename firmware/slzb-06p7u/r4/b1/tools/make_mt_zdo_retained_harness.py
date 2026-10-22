@@ -62,8 +62,13 @@ static uint8_t b1_startup_begin(void)
 static void b1_startup_fail(uint8_t code) {(void)code;++failures;startup_state=B1_STARTUP_FAILED;}
 static void b1_management_transport_failed(uint8_t code) {(void)code;held=1;}
 static unsigned observer_priority_raises, observer_priority_restores;
-static void b1_npi_startup_observer_priority(uint8_t elevate)
-{if (elevate) ++observer_priority_raises; else ++observer_priority_restores;}
+static int task_priority=5;
+static void *Task_self(void) {return &task_priority;}
+static int Task_setPri(void *self,int pri)
+{assert(self==&task_priority && (pri==3 || pri==5));
+ int old=task_priority; task_priority=pri;
+ if(pri==3) ++observer_priority_raises; else ++observer_priority_restores;
+ return old;}
 static uint8_t b1_startup_state(void) {return startup_state;}
 static int b1_management_get_hold_active(void) {return held;}
 static void b1_startup_note_phase(uint8_t phase,uint8_t status,uint16_t idx)
@@ -99,7 +104,7 @@ static void reset_case(void)
  values[1]=0;values[2]=TRUE;values[3]=0;
  startup_state=B1_STARTUP_IDLE;bdb_calls=response_calls=reads=queued_events=0;
  security_latches=timer_starts=timer_stops=failures=phase_calls=0;response=0xff;
- observer_priority_raises=observer_priority_restores=0;
+ observer_priority_raises=observer_priority_restores=0;task_priority=5;
  now_ticks=1u;b1_startup_admitted_tick=0u;}
 static void invoke(int success)
 {uint8_t request[]={2,MT_RPC_CMD_SREQ|MT_RPC_SYS_ZDO,0x40,0,0};
@@ -111,7 +116,7 @@ static void wire_eot(void)
 int main(void)
 {
  reset_case();invoke(1);assert(reads==3&&timer_starts==1&&queued_events==0&&bdb_calls==0);
- assert(observer_priority_raises==1&&observer_priority_restores==0);
+ assert(observer_priority_raises==1&&observer_priority_restores==0&&task_priority==3);
  invoke(0);assert(bdb_calls==0&&queued_events==0);
  b1_mt_zdo_retained_startup_event();assert(bdb_calls==0);
  wire_eot();assert(queued_events==1&&bdb_calls==0);
@@ -157,6 +162,7 @@ def main():
     source=args.source.read_text()
     signatures=(
         "static uint32_t b1_startup_timeout_ticks(void)",
+        "void b1_stack_startup_observer_priority(uint8_t admitted)",
         "void b1_startup_post_run(void)",
         "int b1_startup_checkpoint(uint8_t phase)",
         "static __attribute__((noinline)) uint8_t b1_mt_zdo_retained_valid(void)",
