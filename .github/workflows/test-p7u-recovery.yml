@@ -28,6 +28,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install pinned host configuration dependency
+        run: python -m pip -q install 'PyYAML==6.0.2'
       - name: Compile all recovery sources
         run: python -m compileall -q host/recovery tests/test_p7u_shared_recovery_policy.py tests/test_p7u_recovery_executor.py
       - name: Offline policy and journal tests, no hardware
