@@ -41,6 +41,9 @@ static void seed_candidate(void)
 int b1_sec_restored_network_validated(void) {return 1;}
 /* Marker NV behavior is exercised by the actual helper in network_ready. */
 static uint8_t b1_znp_publish_configured(void) {return 1;}
+static unsigned observer_priority_restores;
+static void b1_npi_startup_observer_priority(uint8_t elevated)
+{assert(!elevated);++observer_priority_restores;}
 static void OsalPort_setEvent(uint8_t task,uint32_t event)
 {
   assert(task==ZDAppTaskID && event==ZDO_STATE_CHANGE_EVT);
@@ -58,6 +61,7 @@ SCENARIO = r'''
         assert(!b1_management_network_ready());
         ZDApp_ChangeState(DEV_ZB_COORD);
         assert(zdo_events==1u && b1_management_network_ready());
+        assert(observer_priority_restores==1u);
         route(0x21,B1_STATUS_COMMAND,q,sizeof(q));
         assert(last_reply[0]==B1_STATUS_REPLY_SIZE && last_reply[9]==B1_STAGE_NETWORK_READY);
         assert((last_reply[12]&8u)!=0u && sent==1u && forwarded==1u);

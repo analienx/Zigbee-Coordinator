@@ -431,7 +431,7 @@ def patch(source: str) -> str:
         "                  b1_nv_existing_header_candidate() &&\n"
         "                  b1_sec_restored_network_validated()));\n"
         "    if (state == DEV_ZB_COORD && b1_management_network_ready())\n"
-        "        b1_npi_startup_observer_priority(FALSE);",
+        "        b1_npi_startup_observer_priority(0u);",
         "ZDO actual state-change ready attestation")
     source = replace_once(source, old_state, PUBLISH_CONFIGURED + "\n\n" + new_state,
                           "actual ZDO callback body")
