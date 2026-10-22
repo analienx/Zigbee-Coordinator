@@ -21,6 +21,16 @@ class OneOwnerCutoverTests(unittest.TestCase):
         check.assert_called_once()
         stop.assert_not_called()
 
+    def test_docker_owner_query_fails_closed_on_daemon_error(self):
+        from subprocess import CompletedProcess
+        with patch.object(mod.subprocess, "run", return_value=CompletedProcess(
+                ["docker"], 1, "", "Cannot connect to the Docker daemon")):
+            with self.assertRaisesRegex(RuntimeError, "DOCKER_OWNER_STATE_UNAVAILABLE"):
+                mod.running(mod.OLD)
+        with patch.object(mod.subprocess, "run", return_value=CompletedProcess(
+                ["docker"], 1, "", "Error: No such object: app_missing")):
+            self.assertFalse(mod.running("missing"))
+
     def test_missing_backup_fails_closed(self):
         with patch.object(mod, "BACKUP", Path("/__p7u_test_not_real_backup__")):
             self.assertFalse(mod.backup_valid())
