@@ -29,7 +29,9 @@ static unsigned events;
 static uint8_t FrameCounterUpdated, existing_candidate, valid_security;
 static uint16_t marker_length=1u;
 static uint8_t marker_value=0x55u, marker_init_fail, marker_bad_readback;
-static unsigned marker_creates, marker_writes;
+static unsigned marker_creates, marker_writes, npi_priority_restores;
+static void b1_npi_startup_observer_priority(uint8_t elevated)
+{ assert(!elevated); ++npi_priority_restores; }
 static unsigned irq_depth;
 uintptr_t b1_management_test_disable(void)
 { assert(irq_depth==0);irq_depth=1;return 0xABu; }
@@ -96,12 +98,14 @@ int main(int argc,char **argv)
       assert(marker_creates==(strcmp(s,"marker_missing")==0?1u:0u));
       assert(marker_writes==(strcmp(s,"marker_unconfigured")==0?1u:0u));
       check_status(1);
+      assert(npi_priority_restores==1u);
       ZDApp_ChangeState(DEV_ZB_COORD);
       assert(events==1u); /* repeated notification never writes again */
     } else {
       assert(devState==DEV_INIT && events==0u && b1_nv_runtime_hold_active());
       if(strcmp(s,"marker_length")==0)assert(marker_length==2u && marker_creates==0u);
       check_status(0);
+      assert(npi_priority_restores==0u);
     }
     puts("B1_ORDINARY_HERDSMAN_MARKER_ONLY_AFTER_COORDINATOR_PASS");return 0;
   }
