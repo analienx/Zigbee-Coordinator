@@ -110,6 +110,33 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(runner.receipts, {})
             self.assertEqual(reporter.calls[0][0], "DETECTED")
 
+    def test_passive_confirmation_capture_restart_and_sustained_resolution(self):
+        class Capture:
+            def __init__(self): self.calls = []
+            def incident(self, state, observation):
+                self.calls.append(state.incident_id)
+        with TemporaryDirectory() as directory:
+            actor, reporter, capture = FakeActor(), FakeReporter(), Capture()
+            runner = GuardRunner(Path(directory), actor, reporter, FakeObserver(),
+                                 passive=capture)
+            runner.step(fault(),notify=True)
+            state=runner.step(fault(1800000040),notify=True)
+            self.assertEqual(state.phase,"CAPTURE_PENDING")
+            self.assertEqual(len(capture.calls),1)
+            restarted=GuardRunner(Path(directory),actor,reporter,FakeObserver(),
+                                  passive=capture)
+            good=lambda sec: replace(fault(1800000000+sec),
+                addon="started",adapter_error="",srsp_120s=0,
+                fresh_device_topics_120s=5,health_fresh=True,
+                observation_valid=True,rx_valid=True)
+            for seconds in (60,80,100,120,140,160,180):
+                state=restarted.step(good(seconds),notify=True)
+            self.assertEqual(state.phase,"COMPLETE")
+            self.assertEqual(actor.calls,[])
+            self.assertEqual(restarted.state.phase,"MONITOR")
+            self.assertIn("OBSERVED_RECOVERED",[x[0] for x in reporter.calls])
+            self.assertEqual(len(set(capture.calls)),1)
+
     def test_active_ambiguous_capture_holds_and_warns(self):
         with TemporaryDirectory() as directory:
             actor, reporter = FakeActor(timeout=True), FakeReporter()

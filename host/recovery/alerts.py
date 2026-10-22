@@ -21,7 +21,7 @@ from urllib.error import HTTPError
 
 NOTIFICATION_ID = "p7u_coordinator_hang_warning"
 TEST_NOTIFICATION_ID = "p7u_coordinator_recovery_acceptance_test"
-_TYPES = frozenset(("DETECTED", "RECOVERED", "RECOVERY_FAILED"))
+_TYPES = frozenset(("DETECTED", "RECOVERED", "OBSERVED_RECOVERED", "RECOVERY_FAILED"))
 _REASONS = frozenset((
     "ADAPTER_SPECIFIC_START_FAILURE", "MULTI_DEVICE_AF_ZNP_STARVATION",
     "ESP_STAGE_FAILED_RADIO_FALLBACK_ONCE", "RADIO_FALLBACK_FAILED_NO_MORE_RESTARTS",
@@ -54,10 +54,20 @@ def _content(kind: str, incident: int, reason: str) -> tuple[str, str, str]:
             f"**Incident:** {timestamp}\n\n"
             "**Coordinator:** SMLIGHT SLZB-06P7U (USB)\n\n"
             f"**Observed fault:** `{reason}`\n\n"
-            "**State:** Confirmed. Evidence capture and bounded ESP-first recovery "
-            "are the next steps. Do not factory-reset or repeatedly restart "
-            "Zigbee2MQTT.\n\n"
-            "The warning will be updated when recovery is verified or blocked."
+            "**State:** Confirmed radio communication degradation. Read-only "
+            "evidence is captured when available. A notification does NOT "
+            "mean any automatic reset is authorized or has occurred.\n\n"
+            "Avoid repeated pairing commands. The warning will be updated "
+            "after sustained fresh device traffic or an explicit recovery outcome."
+        )
+    elif kind == "OBSERVED_RECOVERED":
+        title = "✅ Zigbee coordinator traffic restored (observed)"
+        body = (
+            f"**Incident:** {timestamp}\n\n"
+            "**State:** At least 120 seconds of continuous fresh receive "
+            "evidence were observed. No automatic restart or physical reset "
+            "was performed by the passive guard. This does not prove every "
+            "route is reliable."
         )
     elif kind == "RECOVERED":
         title = "✅ Zigbee coordinator recovered"
@@ -74,7 +84,7 @@ def _content(kind: str, incident: int, reason: str) -> tuple[str, str, str]:
             "No further reset attempts will be issued. "
             f"**Reason:** `{reason}`."
         )
-    log_level = "warning" if kind != "RECOVERED" else "info"
+    log_level = "warning" if kind not in ("RECOVERED", "OBSERVED_RECOVERED") else "info"
     return title, body, log_level
 
 
@@ -162,7 +172,8 @@ class HAIncidentReporter:
     @staticmethod
     def _order(document):
         return (document["incident"], {"DETECTED": 0, "RECOVERY_FAILED": 1,
-                                      "RECOVERED": 2, "TEST": 0}[document["kind"]])
+                                      "RECOVERED": 2, "OBSERVED_RECOVERED": 2,
+                                      "TEST": 0}[document["kind"]])
 
     def _notification(self, document):
         incident, kind = document["incident"], document["kind"]

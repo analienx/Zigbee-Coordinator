@@ -19,6 +19,7 @@ from ha_adapter import (SupervisorClient, SmlightControl, Configuration, HAActua
                         verify_native_binding)
 from observer import PassiveObserver
 from alerts import HAIncidentReporter
+from forensics import PassiveForensics
 
 DATA = Path("/data")
 CONFIG = Path("/homeassistant/zigbee2mqtt/configuration.yaml")
@@ -100,9 +101,10 @@ def action_receipts(state: State, receipts: dict) -> dict:
 
 class GuardRunner:
     """Testable runner boundary; shadow decisions cannot reach the actuator."""
-    def __init__(self, data: Path, actor, reporter, observer, pre_action=None):
+    def __init__(self, data: Path, actor, reporter, observer, pre_action=None, passive=None):
         self.data, self.actor, self.reporter, self.observer = data, actor, reporter, observer
         self.pre_action = pre_action
+        self.passive = passive
         self.evidence = data / "evidence"
         self.evidence.mkdir(mode=0o700, exist_ok=True)
         self.real_path, self.shadow_path = data / "watchdog-state.json", data / "dry-run-state.json"
@@ -115,6 +117,8 @@ class GuardRunner:
         if not notify or not state.incident_since:
             return
         kind = ("RECOVERY_FAILED" if state.phase == "HOLD" else
+                "OBSERVED_RECOVERED" if state.phase == "COMPLETE"
+                    and state.reason == "PASSIVE_OBSERVED_RECOVERED" else
                 "RECOVERED" if state.phase == "COMPLETE" else "DETECTED")
         print("RECOVERY_NOTIFICATION", kind,
               self.reporter.report(kind, state.incident_since, state.reason), flush=True)
@@ -128,17 +132,40 @@ class GuardRunner:
         if self.state.phase == "HOLD":
             self._report(self.state, notify)
         if not active:
-            # A shadow confirmation stops before physical phases. Preserve the
-            # real transaction, receipts and recovery budgets through dry-run.
+            # Warning-only incidents are durable and have no physical actions.
+            # Require real continuous receive evidence before marking recovery.
+            if self.shadow.phase == "COMPLETE":
+                self._report(self.shadow, notify)
+                self.shadow = State(
+                    recovery_attempts_24h=self.state.recovery_attempts_24h,
+                    last_recovery_utc=self.state.last_recovery_utc)
             if self.shadow.phase == "CAPTURE_PENDING":
-                if (observation.addon == "started" and observation.rx_valid
-                    and observation.health_fresh and observation.srsp_120s == 0
-                    and observation.fresh_device_topics_120s >= 3):
-                    self.shadow = State(last_sample_utc=observation.utc,
-                        recovery_attempts_24h=self.state.recovery_attempts_24h,
-                        last_recovery_utc=self.state.last_recovery_utc)
+                if notify and self.passive:
+                    try:
+                        self.passive.incident(self.shadow, observation)
+                    except Exception as exc:
+                        # Intent may already be durable. Never retry as a new
+                        # incident or invent a physical capture receipt.
+                        print("PASSIVE_EVIDENCE_NOT_CONFIRMED",type(exc).__name__,flush=True)
+                healthy = bool(
+                    observation.addon == "started"
+                    and observation.rx_valid and observation.observation_valid
+                    and observation.health_fresh and observation.mqtt_reachable
+                    and observation.expected_identity and observation.expected_usb
+                    and observation.srsp_120s == 0
+                    and observation.fresh_device_topics_120s >= 3)
+                contiguous = (0 <= observation.utc - self.shadow.last_sample_utc <= 60)
+                since = (self.shadow.stable_since if healthy and contiguous
+                         and self.shadow.stable_since else
+                         observation.utc if healthy else 0)
+                self.shadow = replace(self.shadow, stable_since=since,
+                                      last_sample_utc=observation.utc)
+                if healthy and since and observation.utc - since >= 120:
+                    self.shadow = replace(self.shadow, phase="COMPLETE",
+                                          reason="PASSIVE_OBSERVED_RECOVERED")
+                    save_ledger(self.shadow_path, self.shadow, {})
+                    self._report(self.shadow, notify)
                 else:
-                    self.shadow = replace(self.shadow, last_sample_utc=observation.utc)
                     self._report(self.shadow, notify)
             else:
                 if self.shadow.phase == "HOLD" and not self.shadow.incident_id:
@@ -147,9 +174,15 @@ class GuardRunner:
                 self.shadow = decision.state
                 if decision.action == "CAPTURE_EVIDENCE":
                     self.shadow = replace(self.shadow, incident_id=uuid.uuid4().hex,
-                                          reason=decision.reason)
+                                          reason=decision.reason, stable_since=0)
                     print("DRY_RUN_WOULD_RECOVER", decision.reason, flush=True)
                     save_ledger(self.shadow_path, self.shadow, {})
+                    # Capture also occurs after restart from CAPTURE_PENDING.
+                    if notify and self.passive:
+                        try:
+                            self.passive.incident(self.shadow, observation)
+                        except Exception as exc:
+                            print("PASSIVE_EVIDENCE_NOT_CONFIRMED",type(exc).__name__,flush=True)
                     self._report(self.shadow, notify)
             save_ledger(self.shadow_path, self.shadow, {})
             return self.shadow
@@ -306,7 +339,8 @@ def service_main():
         verify_controls(cfg, supervisor)
         return fresh
 
-    runner = GuardRunner(DATA, actor, reporter, observer, pre_action)
+    passive = PassiveForensics(DATA, supervisor, cfg.addon_slug)
+    runner = GuardRunner(DATA, actor, reporter, observer, pre_action, passive)
     print("P7U_WATCHDOG_STARTED VERSION=0.2.2 FIRST=ESP32 RESETS_DEFAULT_OFF", flush=True)
     previous_clock = None
     poll_number = 0
@@ -325,6 +359,21 @@ def service_main():
                         runner.hold("CLOCK_DISCONTINUITY", notify)
                     raise RuntimeError("CLOCK_DISCONTINUITY")
                 previous_clock = clocks
+                # Observations are private, bounded and passive even when
+                # notifications and resets are independently disabled.
+                passive.record({
+                    "utc":observation.utc, "epoch_id":sample.get("epoch_id"),
+                    "epoch_start_utc":sample.get("epoch_start_utc"),
+                    "phase":runner.state.phase,
+                    "observation_valid":sample.get("observation_valid"),
+                    "rx_valid":sample.get("rx_valid"),
+                    "mqtt_reachable":sample.get("mqtt_reachable"),
+                    "srsp_120s":sample.get("srsp_120s"),
+                    "affected_devices_120s":sample.get("affected_devices_120s"),
+                    "fresh_device_topics_120s":sample.get("fresh_device_topics_120s"),
+                    "ota_active":sample.get("ota_active"),
+                    "ota_unknown":sample.get("ota_unknown"),
+                    "resets_enabled":active})
                 result = runner.step(observation, active=active, notify=notify)
                 reporter.retry_pending()
                 atomic_json(DATA / "status.json", {
