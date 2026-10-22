@@ -61,6 +61,22 @@ class HAWarningTests(unittest.TestCase):
                              api.calls[1][2]["notification_id"])
             self.assertEqual(api.calls[2][2]["level"], "info")
 
+    def test_passive_observed_recovery_never_claims_automatic_reset(self):
+        api=FakeSupervisor()
+        with TemporaryDirectory() as temp:
+            r=HAIncidentReporter(api,Path(temp))
+            r.report("DETECTED",1800000000,"MULTI_DEVICE_AF_ZNP_STARVATION")
+            r.report("OBSERVED_RECOVERED",1800000000,"PASSIVE_OBSERVED_RECOVERED")
+            self.assertEqual(len(api.calls),4)
+            body=api.calls[-1][2]["message"]
+            self.assertIn("No automatic restart",body)
+            self.assertIn("120 seconds",body)
+            self.assertEqual(api.calls[-1][2]["notification_id"],NOTIFICATION_ID)
+            self.assertEqual(api.calls[-2][2]["level"],"info")
+            self.assertTrue(all("ALREADY_ATTEMPTED" in x for x in
+                r.report("OBSERVED_RECOVERED",1800000000,"PASSIVE_OBSERVED_RECOVERED").values()))
+            self.assertEqual(len(api.calls),4)
+
     def test_failure_stays_as_warning(self):
         api = FakeSupervisor()
         with TemporaryDirectory() as temp:
