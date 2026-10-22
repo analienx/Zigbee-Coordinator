@@ -249,8 +249,11 @@ def run_through(private: Path, folder: Path, source: str, target: str,
         if step == "flash":
             require(allow_flash, "EXPLICIT_APP_AC000_FLASH_APPROVAL_REQUIRED")
             prepare_verify(private, c)
-            require(read_json(private / "owner-request.json").get("reviewed_firmware_source") == source,
-                    "FROZEN_OWNER_SOURCE_MISMATCH")
+            approval = read_json(private / "owner-request.json")
+            require(approval.get("reviewed_firmware_source") == source and
+                    approval.get("plan_sha256") == read_json(private / "frozen-plan.json")["plan_sha256"] and
+                    approval.get("scope") == "EXACT_R4_TO_R4_APP_AND_MATCHING_AC000_PRESERVE_NV_AND_CCFG",
+                    "FROZEN_OWNER_SOURCE_PLAN_OR_SCOPE_MISMATCH")
         if step == "startup":
             require(allow_boot, "EXPLICIT_BOOT_AND_ONE_START_APPROVAL_REQUIRED")
             flash_verify(private, c)

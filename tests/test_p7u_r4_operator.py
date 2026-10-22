@@ -177,6 +177,17 @@ class OperatorTests(unittest.TestCase):
         (self.private / "flash-journal.jsonl").write_text("{}\n")
         self.assertIn("FLASH_JOURNAL_EVENTS_NOT_COMPLETE", op.stage_state(self.private, self.manifest)["flash"])
 
+    def test_owner_approval_wrong_plan_never_starts_flash(self):
+        self.prepare()
+        self.json(self.private / "owner-request.json", {
+            "reviewed_firmware_source": self.source,
+            "plan_sha256": "0" * 64,
+            "scope": "EXACT_R4_TO_R4_APP_AND_MATCHING_AC000_PRESERVE_NV_AND_CCFG",
+        })
+        with self.assertRaisesRegex(op.Stop, "FROZEN_OWNER_SOURCE_PLAN_OR_SCOPE_MISMATCH"):
+            op.run_through(self.private, self.candidate, self.source, "flash",
+                           allow_bsl=True, allow_flash=True, allow_boot=False)
+
     def test_second_operator_is_rejected_by_persistent_lock(self):
         self.flash()
         (self.private / ".r4-operator-one-shot-lock").write_text("previous attempt")
