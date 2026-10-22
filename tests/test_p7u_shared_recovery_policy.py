@@ -93,50 +93,63 @@ class RecoveryPolicyTests(unittest.TestCase):
         self.assertEqual(z.action, "NONE")
         z = evaluate(sample(at=t+4, addon="stopped", stopped_receipt=True),
                      y.state)
-        self.assertEqual(z.action, "RESET_RADIO")
+        self.assertEqual(z.action, "RESTART_ESP")
         self.assertEqual(evaluate(sample(at=t+5, addon="stopped"),
                                   z.state).action, "NONE")
-        self.assertEqual(len(z.state.radio_resets_24h), 1)
+        self.assertEqual(len(z.state.recovery_attempts_24h), 1)
 
-    def test_radio_then_esp_same_maintained_network(self):
+    def test_esp_first_success_in_actual_incident(self):
+        x = self.confirm()
+        ts = x.state.last_sample_utc
+        s = evaluate(sample(at=ts+1, saved_evidence=True), x.state).state
+        first = evaluate(sample(at=ts+2, addon="stopped",
+                                stopped_receipt=True), s)
+        self.assertEqual(first.action, "RESTART_ESP")
+        self.assertEqual(first.state.phase, "ESP_RESET_PENDING")
+        self.assertEqual(len(first.state.recovery_attempts_24h), 1)
+        self.assertEqual(evaluate(sample(at=ts+3, addon="stopped"),
+                                  first.state).action, "NONE")
+        s = evaluate(sample(at=ts+5, addon="stopped",
+                            esp_restart_ack=True), first.state).state
+        self.assertEqual(s.phase, "ESP_BOOT")
+        self.assertEqual(evaluate(sample(at=ts+15), s).action, "NONE")
+        start = evaluate(sample(at=ts+26), s)
+        self.assertEqual(start.action, "START_Z2M")
+        s = evaluate(sample(at=ts+29, z2m_start_ack=True), start.state).state
+        self.assertEqual(s.phase, "ESP_VERIFY")
+        traffic = sample(at=ts+50, fresh_device_topics_120s=12,
+                         srsp_120s=0, bridge_online_fresh=True,
+                         herdsman_started_fresh=True)
+        self.assertEqual(evaluate(traffic, s).action, "NONE")
+        done = evaluate(replace(traffic, utc=ts+160), s)
+        self.assertEqual(done.action, "RECOVERY_SUCCEEDED")
+        self.assertEqual(done.state.phase, "COMPLETE")
+
+    def test_esp_failure_falls_back_once_to_radio(self):
         x = self.confirm()
         ts = x.state.last_sample_utc
         s = evaluate(sample(at=ts+1, saved_evidence=True), x.state).state
         s = evaluate(sample(at=ts+2, addon="stopped",
                             stopped_receipt=True), s).state
-        s = evaluate(sample(at=ts+3, addon="stopped",
-                            radio_reset_ack=True), s).state
-        self.assertEqual(s.phase, "RADIO_BOOT")
-        self.assertEqual(evaluate(sample(at=ts+15), s).action, "NONE")
-        start = evaluate(sample(at=ts+24), s)
+        s = evaluate(sample(at=ts+4, addon="stopped",
+                            esp_restart_ack=True), s).state
+        s = evaluate(sample(at=ts+26), s).state
+        s = evaluate(sample(at=ts+28, z2m_start_ack=True), s).state
+        radio = evaluate(sample(at=ts+51, addon="error",
+                                adapter_error="SRSP_AF_REGISTER"), s)
+        self.assertEqual(radio.action, "RESET_RADIO")
+        self.assertEqual(radio.state.phase, "RADIO_RESET_PENDING")
+        self.assertEqual(evaluate(sample(at=ts+52, addon="error"),
+                                  radio.state).action, "NONE")
+        s = evaluate(sample(at=ts+54, addon="error",
+                            radio_reset_ack=True), radio.state).state
+        start = evaluate(sample(at=ts+78), s)
         self.assertEqual(start.action, "START_Z2M")
-        radio_verify = evaluate(sample(at=ts+26, z2m_start_ack=True),
-                                start.state)
-        self.assertEqual(radio_verify.state.phase, "RADIO_VERIFY")
-        esp = evaluate(sample(at=ts+50, addon="error",
-                              adapter_error="SRSP_AF_REGISTER"),
-                       radio_verify.state)
-        self.assertEqual(esp.action, "RESTART_ESP")
-        self.assertEqual(evaluate(sample(at=ts+55, addon="error",
-                                         adapter_error="SRSP_AF_REGISTER"),
-                                  esp.state).action, "NONE")
-        s = evaluate(sample(at=ts+65, addon="error",
-                            esp_restart_ack=True), esp.state).state
-        self.assertEqual(evaluate(sample(at=ts+72), s).action, "NONE")
-        start2 = evaluate(sample(at=ts+86), s)
-        self.assertEqual(start2.action, "START_Z2M")
-        s = evaluate(sample(at=ts+89, z2m_start_ack=True),
-                     start2.state).state
-        self.assertEqual(s.phase, "ESP_VERIFY")
-        traffic = sample(at=ts+125, fresh_device_topics_120s=12,
-                         srsp_120s=0, bridge_online_fresh=True,
-                         herdsman_started_fresh=True)
-        self.assertEqual(evaluate(traffic, s).action, "NONE")
-        done = evaluate(replace(traffic, utc=ts+220), s)
-        self.assertEqual(done.action, "RECOVERY_SUCCEEDED")
-        self.assertEqual(done.state.phase, "COMPLETE")
-        self.assertEqual(evaluate(replace(traffic, utc=ts+240),
-                                  done.state).action, "NONE")
+        s = evaluate(sample(at=ts+82, z2m_start_ack=True), start.state).state
+        failure = evaluate(sample(at=ts+103, addon="error",
+                                  adapter_error="SRSP_SYS_PING"), s)
+        self.assertEqual(failure.action, "ALERT_HUMAN")
+        self.assertEqual(failure.state.phase, "HOLD")
 
     def test_cooldown_and_cap(self):
         t = 1_800_000_000
@@ -147,7 +160,7 @@ class RecoveryPolicyTests(unittest.TestCase):
         self.assertEqual(decision.action, "ALERT_HUMAN")
         self.assertIn("COOLDOWN", decision.reason)
         capped = replace(base, last_recovery_utc=0,
-                         radio_resets_24h=(t-500, t-300))
+                         recovery_attempts_24h=(t-500, t-300))
         self.assertEqual(evaluate(sample(at=t), capped).action, "ALERT_HUMAN")
 
     def test_epoch_or_state_corruption_fail_closed(self):
