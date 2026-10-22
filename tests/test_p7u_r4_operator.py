@@ -143,6 +143,46 @@ class OperatorTests(unittest.TestCase):
         self.assertEqual(op.stage_state(self.private, self.manifest)["prepare"], "PASS")
         self.assertEqual(op.stage_state(self.private, self.manifest)["flash"], "PASS")
 
+    def test_unchanged_boot_skips_erase_but_requires_exact_target(self):
+        self.flash()
+        plan_path = self.private / "frozen-plan.json"
+        plan = json.loads(plan_path.read_text())
+        image = (self.private / "readback-1/current-pass1.bin").read_bytes()
+        boot_digest = op.sha(image[op.BOOT:op.BOOT + 8192])
+        plan["sector_sha256"][str(op.BOOT)] = boot_digest
+        plan["plan_sha256"] = op.frozen_sha(plan, "plan_sha256")
+        self.json(plan_path, plan)
+        admission_path = self.private / "admission.json"
+        admission = json.loads(admission_path.read_text())
+        admission["plan_sha256"] = plan["plan_sha256"]
+        admission["admission_sha256"] = op.frozen_sha(admission, "admission_sha256")
+        self.json(admission_path, admission)
+        input_path = self.private / "admission-input.json"
+        admission_input = json.loads(input_path.read_text())
+        admission_input["plan_sha256"] = plan["plan_sha256"]
+        self.json(input_path, admission_input)
+        result_path = self.private / "flash-result.json"
+        result = json.loads(result_path.read_text())
+        result["written_sectors"].remove(op.BOOT)
+        self.json(result_path, result)
+        journal_path = self.private / "flash-journal.jsonl"
+        events = [json.loads(line) for line in journal_path.read_text().splitlines()]
+        journal_path.write_text("".join(json.dumps({**x, "plan_sha256": plan["plan_sha256"]}
+                                                  if x["event"] == "BEFORE_ERASE" else x) + "\n"
+                                        for x in events if x["address"] != op.BOOT))
+        self.assertEqual(op.flash_verify(self.private, self.manifest), result)
+        # A target that differs from the untouched boot must never be accepted.
+        plan["sector_sha256"][str(op.BOOT)] = "1" * 64
+        plan["plan_sha256"] = op.frozen_sha(plan, "plan_sha256")
+        self.json(plan_path, plan)
+        admission["plan_sha256"] = plan["plan_sha256"]
+        admission["admission_sha256"] = op.frozen_sha(admission, "admission_sha256")
+        self.json(admission_path, admission)
+        admission_input["plan_sha256"] = plan["plan_sha256"]
+        self.json(input_path, admission_input)
+        with self.assertRaisesRegex(op.Stop, "FLASH_RESULT_SECTOR_MISMATCH"):
+            op.flash_verify(self.private, self.manifest)
+
     def test_protected_sector_in_plan_is_denied(self):
         self.prepare()
         self.json(self.private / "frozen-plan.json", {

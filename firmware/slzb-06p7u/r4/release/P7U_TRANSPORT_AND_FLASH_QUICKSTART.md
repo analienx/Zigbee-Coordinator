@@ -2,7 +2,7 @@
 
 Applies only to the **single production SMLIGHT SLZB-06P7U R1.73 / CC2652P7**. Do not substitute the historical 06P7, MR4U, P10, or a hypothetical spare.
 
-**2026-10-22 current incident:** The 36aa811 APP+AC000 flash has been fully verified. Its single retained-startup attempt returned SRSP success but never yielded a valid diagnostic snapshot within 80 seconds; the one-shot attempt remains consumed, and coordinator state 9 is **unproven**. Do not rerun startup or restart Zigbee2MQTT. See [the complete operator, faster-readback and provisioning record](P7U_R4_OPERATOR_PROVISIONING_AND_FAST_GUARDS.md). The older 8f52d39 examples below are historical only.
+**2026-10-22 latest verified state:** **Native source `323949a` flashed and booted successfully; USB Zigbee2MQTT is now RUNNING with live MQTT device traffic.** The prior `2aca9c9` was the actual installed baseline; the `36aa811` incident below is historical. Three APP sectors passed final 88-sector parity without NV/CCFG changes. One coordinator startup reached genuine **state 9, marker 0x60=0x55**. Owner switched to USB; HA enumerated the configured `/dev/serial/by-id/` device. One Zigbee2MQTT start succeeded: herdsman up, MQTT connected, natural reports flowing. **Routing health remains DEGRADED:** multiple devices still report `NWK_NO_ROUTE` after warmup, so not all 107 original devices are accepted. Do not change the Z2M serial option to TCP, repeat startup, erase NV or force re-pair. See [reusable USB acceptance scripts and evidence](R4_USB_Z2M_ACCEPTANCE_AND_WEB_FLASH_AUDIT_2026-10-22.md) and [future fast flash audit](R4_FLASH_PERFORMANCE_2026-10-22.md). Older examples below are preserved solely as dated forensic context.
 
 ## One-command R4 operator (versioned, Python, no WSL)
 
