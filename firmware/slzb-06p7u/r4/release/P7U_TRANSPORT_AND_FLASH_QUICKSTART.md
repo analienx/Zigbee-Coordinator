@@ -2,6 +2,55 @@
 
 Applies only to the **single production SMLIGHT SLZB-06P7U R1.73 / CC2652P7**. Do not substitute the historical 06P7, MR4U, P10, or a hypothetical spare.
 
+## One-command R4 operator (versioned, Python, no WSL)
+
+Use `release/p7u_r4_operator.py` rather than manually invoking the
+capture/preflight/writer/startup scripts one by one. It is an **orchestrator**,
+not another flasher: the audited Windows ROM writer and original one-shot,
+source-pinned private adapters still perform physical operations. It verifies
+the GitHub candidate and every file hash, validates duplicate 704-KiB live
+captures, retained-security admission, the frozen 25-sector APP+AC000 plan,
+and saved hardware receipts. Verified stages are skipped; an initiated but
+incomplete or failed one-shot stage **always HOLDS** (never retries).
+
+```powershell
+# Script + candidate data live outside the private NV/security workspace.
+python firmware/slzb-06p7u/r4/release/p7u_r4_operator.py `
+  --candidate C:\\Workspace\\artifacts\\p7u-r4-release-8f52d39 `
+  --private C:\\Workspace\\.analienx\\zigbee-private\\p7u-r4-8f52d39-current-20261022 `
+  --source 8f52d3936bee49be91ab63887f5847666ba6b125 status
+
+# On a NEW prepared deployment only (never rerun current failed startup):
+# replace paths and source SHA with its exact CI candidate receipt.
+# Add --allow-bsl if capture is required; --allow-flash for APP+AC000,
+# and --allow-boot only when a fully verified physical boot is wanted.
+python firmware/slzb-06p7u/r4/release/p7u_r4_operator.py `
+  --candidate <artifact-dir> --private <private-deployment-dir> `
+  --source <40-character-tested-source-commit> `
+  run --through flash --allow-bsl --allow-flash
+```
+
+The private deployment workspace must contain one-use source-pinned scripts
+`capture_current_once.py`, `prepare_upgrade_once.py`,
+`flash_upgrade_once.py`, and `startup_once.py`, plus the original
+board-specific identity, private security reader and backup provenance.
+These source-pinned private files are deliberately not committed or regenerated
+over an existing hardware journal. The operator refuses stage replay on
+partial captures, journaled erase, or one-shot startup failure.
+The remaining improvement is parameterizing the existing private adapters
+from a reviewed per-device manifest, without weakening their fail-closed
+constraints. No blanket erase, automatic stock restore, NV replay, counter
+increase, reset, or Z2M auto-start is provided.
+
+**Physical result of source `8f52d39` on 2026-10-22:** 25/25 sectors
+verified and final all-88 parity PASS; NV/CCFG untouched. One approved app
+boot and one guarded retained startup produced continuous RAM NPI progress
+but did **not** reach coordinator state 9 in 80 seconds. Last state=3,
+phase=2 (BDB), status=0, error=0; the source of the stall is unresolved.
+`startup-result.json` is a permanently consumed one-shot failure receipt;
+**do not rerun**, reflash, reset, or start Z2M to paper over the failure.
+Firmware code and live network recovery are separate acceptance gates.
+
 ## Physical wiring is not the selected transport
 
 The P7U USB cable is physically connected to **Home Assistant (Raspberry Pi)**, **not** to the Zephyrus Windows computer. The coordinator's ESP/SLZB-OS switches which *logical* Zigbee data path is active; switching modes does not move that physical cable. No COM port on Zephyrus in Ethernet mode is expected.
