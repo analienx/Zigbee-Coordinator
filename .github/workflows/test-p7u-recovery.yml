@@ -1,0 +1,52 @@
+name: P7U shared recovery safety (source only)
+
+on:
+  push:
+    branches:
+      - codex/p7u-shared-recovery-policy-20261022
+    paths:
+      - 'host/recovery/**'
+      - 'tests/test_p7u_shared_recovery_policy.py'
+      - 'tests/test_p7u_recovery_executor.py'
+      - '.github/workflows/test-p7u-recovery.yml'
+  pull_request:
+    paths:
+      - 'host/recovery/**'
+      - 'tests/test_p7u_shared_recovery_policy.py'
+      - 'tests/test_p7u_recovery_executor.py'
+      - '.github/workflows/test-p7u-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-policy:
+    name: Policy and one-shot journal regressions
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile all recovery sources
+        run: python -m compileall -q host/recovery tests/test_p7u_shared_recovery_policy.py tests/test_p7u_recovery_executor.py
+      - name: Offline policy and journal tests, no hardware
+        run: python -m unittest discover -s tests -p 'test_p7u_*recovery*.py' -v
+      - name: Guard explicitly inert by default
+        run: |
+          python - <<'PY'
+          import ast, pathlib
+          root = pathlib.Path('host/recovery')
+          for target in root.glob('*.py'):
+              tree = ast.parse(target.read_text())
+              assert not any(
+                  isinstance(node, (ast.Import, ast.ImportFrom))
+                  and any(alias.name.split('.')[0] in (
+                      'serial','requests','paho','aiohttp','httpx'
+                  ) for alias in node.names)
+                  for node in ast.walk(tree)
+              ), target
+          print('PASS: source-only; no serial or HTTP/MQTT actuator imported')
+          PY
