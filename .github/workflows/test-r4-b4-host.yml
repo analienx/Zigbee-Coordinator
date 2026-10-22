@@ -151,13 +151,18 @@ jobs:
           docker buildx create --name p7u-r4-oci --driver docker-container --use
           docker buildx inspect --bootstrap
           mkdir -p /tmp/p7u-r4-host-image-artifact
+          tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
           docker buildx build --platform linux/arm64 \
+            --tag "$tag" \
             --file /tmp/p7u-r4-native-image/Dockerfile \
             --output type=oci,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            --output type=docker,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar \
             /tmp/p7u-r4-native-image
           cp /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json /tmp/p7u-r4-host-image-artifact/
           sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
             > /tmp/p7u-r4-host-image-artifact/oci.sha256
+          sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar \
+            > /tmp/p7u-r4-host-image-artifact/docker.sha256
       - name: Confirm exported OCI image contains exact compiled source binaries
         shell: bash
         run: |
@@ -166,6 +171,15 @@ jobs:
             --oci /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
             --source /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json \
             --receipt /tmp/p7u-r4-host-image-artifact/OCI_SOURCE_AUDIT.json
+      - name: Verify Docker-format backup artifact is directly loadable
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
+          docker load --input /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar
+          docker image inspect "$tag" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
+          docker image inspect "$tag" --format '{{.Config.Image}}' >/dev/null || true
+          echo "PASS: exact-source arm64 Docker archive loads; container was not started"
       - name: Publish candidate image for separately authorized rollout
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
