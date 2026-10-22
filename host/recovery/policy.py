@@ -1,7 +1,7 @@
 """Fail-closed shared coordinator recovery policy: stock or custom P7U.
 
 Pure state machine: never opens serial, MQTT, HTTP, HA, or sends any command.
-Its 'action' is a PROPOSAL to a separately reviewed, exactly-once HA executor.
+Its 'action' is a PROPOSAL to a separately reviewed, at-most-once HA executor.
 All times are UTC Unix seconds from the host. No secrets, IEEE, PAN or keys.
 """
 from __future__ import annotations
@@ -20,6 +20,11 @@ PHASES = frozenset((
     "ESP_START_PENDING", "ESP_VERIFY", "COMPLETE", "HOLD",
 ))
 FAULTS = frozenset(("SRSP_SYS_PING", "SRSP_AF_REGISTER", "SRSP_SYS_RESETIND"))
+MAX_SAMPLE_GAP_S = 60
+PENDING_DEADLINE_S = 120
+BOOT_DEADLINE_S = 180
+VERIFY_DEADLINE_S = 240
+STABILITY_S = 120
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,10 @@ class Observation:
     affected_devices_120s: int = 0
     fresh_device_topics_120s: int = 0
     health_fresh: bool = False
+    # Actual runner supplies calibrated, current-epoch validity. Defaults retain
+    # compatibility with deterministic callers which already validate inputs.
+    observation_valid: bool = True
+    rx_valid: bool = True
     bridge_online_fresh: bool = False
     herdsman_started_fresh: bool = False
     saved_evidence: bool = False
@@ -59,7 +68,11 @@ class State:
     fault_samples: int = 0
     last_sample_utc: int = 0
     incident_since: int = 0
+    # Assigned by the runner before the CAPTURE_EVIDENCE decision is persisted.
+    # The pure policy never generates randomness or performs I/O.
+    incident_id: str = ""
     stage_since: int = 0
+    stable_since: int = 0
     recovery_attempts_24h: tuple[int, ...] = ()
     last_recovery_utc: int = 0
     reason: str = ""
@@ -86,10 +99,13 @@ def _prohibited(o: Observation) -> str:
 
 
 def _fault(o: Observation) -> str:
-    if o.addon in ("error", "stopped") and o.adapter_error in FAULTS:
+    if not o.observation_valid:
+        return ""
+    # A plain stopped add-on may be an intentional operator stop.
+    if o.addon == "error" and o.adapter_error in FAULTS:
         return "ADAPTER_SPECIFIC_START_FAILURE"
     if o.addon == "started" and o.app_uptime_s >= 180 and (
-        o.mqtt_reachable and o.health_fresh and o.srsp_120s >= 5
+        o.rx_valid and o.mqtt_reachable and o.health_fresh and o.srsp_120s >= 5
         and o.affected_devices_120s >= 3 and o.fresh_device_topics_120s == 0
     ):
         return "MULTI_DEVICE_AF_ZNP_STARVATION"
@@ -99,10 +115,37 @@ def _fault(o: Observation) -> str:
 def _running_proven(o: Observation) -> bool:
     # Retained bridge MQTT state or an HA 'started' process is NOT proof.
     return bool(
-        o.addon == "started" and o.bridge_online_fresh
+        o.observation_valid and o.rx_valid and o.health_fresh
+        and o.addon == "started" and o.bridge_online_fresh
         and o.herdsman_started_fresh and o.fresh_device_topics_120s >= 3
         and o.srsp_120s == 0
     )
+
+
+def _hold(s: State, reason: str) -> Decision:
+    return Decision(replace(s, phase="HOLD", stable_since=0, reason=reason),
+                    "ALERT_HUMAN", reason)
+
+
+def _verify(o: Observation, s: State) -> Decision:
+    tier = "ESP" if s.phase == "ESP_VERIFY" else "RADIO"
+    if o.utc - s.stage_since > VERIFY_DEADLINE_S:
+        return _hold(s, tier + "_VERIFY_TIMEOUT_AMBIGUOUS")
+    if _running_proven(o):
+        stable = s.stable_since or o.utc
+        s = replace(s, stable_since=stable)
+        if o.utc - stable < STABILITY_S:
+            return Decision(s, "NONE", "STABILITY_GRACE")
+        return Decision(replace(s, phase="COMPLETE"), "RECOVERY_SUCCEEDED",
+                        "REAL_TRAFFIC_VERIFIED_AFTER_" + tier)
+    s = replace(s, stable_since=0)
+    if (tier == "ESP" and o.observation_valid and o.addon == "error"
+            and o.adapter_error in FAULTS and o.utc - s.stage_since >= 20):
+        return Decision(replace(s, phase="RADIO_RESET_PENDING", stage_since=o.utc),
+                        "RESET_RADIO", "ESP_STAGE_FAILED_RADIO_FALLBACK_ONCE")
+    if tier == "RADIO" and o.addon == "error":
+        return _hold(s, "RADIO_FALLBACK_FAILED_NO_MORE_RESTARTS")
+    return Decision(s, "NONE", tier + "_VERIFY_PENDING")
 
 
 def evaluate(o: Observation, s: State = State()) -> Decision:
@@ -113,14 +156,23 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
     a pending action on restart, even if an HTTP timeout hides whether it ran.
     """
     if o.utc <= 0 or s.phase not in PHASES:
-        return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN", "BAD_TIME_OR_STATE")
+        return _hold(s, "BAD_TIME_OR_STATE")
     if s.last_sample_utc and o.utc < s.last_sample_utc:
-        return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN", "CLOCK_REWIND")
+        return _hold(s, "CLOCK_REWIND")
+    if s.last_sample_utc and o.utc == s.last_sample_utc:
+        return Decision(s, "NONE", "DUPLICATE_SAMPLE")
+    sample_gap = o.utc - s.last_sample_utc if s.last_sample_utc else 0
     s = replace(s, last_sample_utc=o.utc)
+    if sample_gap > MAX_SAMPLE_GAP_S:
+        s = replace(s, stable_since=0)
+        if s.phase == "SUSPECT":
+            s = replace(s, phase="MONITOR", suspect_since=0, fault_samples=0)
     if s.phase == "COMPLETE":
         # Re-arm for future incidents while retaining cooldown and daily budget.
         return Decision(replace(s, phase="MONITOR", suspect_since=0,
-                                fault_samples=0, reason=""), "NONE", "RECOVERY_CLOSED")
+                                fault_samples=0, incident_id="", incident_since=0,
+                                stage_since=0, stable_since=0, reason=""),
+                        "NONE", "RECOVERY_CLOSED")
     if s.phase == "HOLD":
         return Decision(s, "NONE", "HOLD")
     gate = _prohibited(o)
@@ -136,10 +188,17 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
             "INDEPENDENT_CONTROL_PLANE_UNAVAILABLE",
             "UNKNOWN_MODE_IDENTITY_OR_USB"
         ):
-            if o.utc - s.stage_since <= 180:
+            if o.utc - s.stage_since <= BOOT_DEADLINE_S:
                 return Decision(s, "NONE", "AWAIT_RADIO_OR_ESP_REENUMERATION")
-        return Decision(replace(s, phase="HOLD", reason=gate),
-                        "ALERT_HUMAN", gate)
+        return _hold(s, gate)
+    if s.phase.endswith("_PENDING") and (
+        o.utc - s.stage_since > PENDING_DEADLINE_S
+    ):
+        return _hold(s, "PENDING_ACTION_OR_PROOF_TIMEOUT_NO_RETRY")
+    if s.phase in ("ESP_BOOT", "RADIO_BOOT") and (
+        o.utc - s.stage_since > BOOT_DEADLINE_S
+    ):
+        return _hold(s, "BOOT_REENUMERATION_TIMEOUT_NO_RETRY")
     if s.phase in ("MONITOR", "SUSPECT"):
         cause = _fault(o)
         if not cause:
@@ -158,10 +217,10 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
         history = tuple(t for t in s.recovery_attempts_24h if o.utc - t < 86400)
         if len(history) >= 2 or (s.last_recovery_utc and
                                  o.utc - s.last_recovery_utc < 21600):
-            return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
-                            "RECOVERY_BUDGET_OR_COOLDOWN_EXHAUSTED")
+            return _hold(s, "RECOVERY_BUDGET_OR_COOLDOWN_EXHAUSTED")
         return Decision(replace(s, phase="CAPTURE_PENDING",
-                                incident_since=o.utc, stage_since=o.utc,
+                                incident_since=o.utc, incident_id="",
+                                stage_since=o.utc, stable_since=0,
                                 recovery_attempts_24h=history),
                         "CAPTURE_EVIDENCE", cause)
     if s.phase == "CAPTURE_PENDING":
@@ -174,7 +233,8 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
             return Decision(s, "NONE", "AWAIT_Z2M_STOP_PROOF")
         # First-line, physically demonstrated successful recovery: ESP restart.
         new = replace(s, phase="ESP_RESET_PENDING", stage_since=o.utc,
-                      recovery_attempts_24h=s.recovery_attempts_24h + (o.utc,))
+                      recovery_attempts_24h=tuple(s.recovery_attempts_24h) + (o.utc,),
+                      last_recovery_utc=o.utc)
         return Decision(new, "RESTART_ESP", "FIRST_LINE_ESP_RESTART")
     if s.phase == "ESP_RESET_PENDING":
         if not o.esp_restart_ack:
@@ -189,25 +249,11 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
     if s.phase == "ESP_START_PENDING":
         if not o.z2m_start_ack:
             return Decision(s, "NONE", "ESP_HOST_START_PENDING_NO_RETRY")
-        return Decision(replace(s, phase="ESP_VERIFY", stage_since=o.utc),
+        return Decision(replace(s, phase="ESP_VERIFY", stage_since=o.utc,
+                                stable_since=0),
                         "NONE", "VERIFY_REAL_ZIGBEE_TRAFFIC")
     if s.phase == "ESP_VERIFY":
-        if _running_proven(o):
-            if o.utc - s.stage_since < 120:
-                return Decision(s, "NONE", "STABILITY_GRACE")
-            return Decision(replace(s, phase="COMPLETE", last_recovery_utc=o.utc),
-                            "RECOVERY_SUCCEEDED", "REAL_TRAFFIC_VERIFIED_AFTER_ESP")
-        # Fallback is radio-only reset, not a second ESP reboot.
-        if o.addon == "error" and o.adapter_error in FAULTS and (
-            o.utc - s.stage_since >= 20
-        ):
-            return Decision(replace(s, phase="RADIO_RESET_PENDING",
-                                    stage_since=o.utc),
-                            "RESET_RADIO", "ESP_STAGE_FAILED_RADIO_FALLBACK_ONCE")
-        if o.utc - s.stage_since > 240:
-            return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
-                            "ESP_VERIFY_TIMEOUT_AMBIGUOUS")
-        return Decision(s, "NONE", "ESP_VERIFY_PENDING")
+        return _verify(o, s)
     if s.phase == "RADIO_RESET_PENDING":
         if not o.radio_reset_ack:
             return Decision(s, "NONE", "RADIO_RESET_PENDING_NO_RETRY")
@@ -221,16 +267,9 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
     if s.phase == "RADIO_START_PENDING":
         if not o.z2m_start_ack:
             return Decision(s, "NONE", "HOST_START_PENDING_NO_RETRY")
-        return Decision(replace(s, phase="RADIO_VERIFY", stage_since=o.utc),
+        return Decision(replace(s, phase="RADIO_VERIFY", stage_since=o.utc,
+                                stable_since=0),
                         "NONE", "VERIFY_REAL_ZIGBEE_TRAFFIC")
     if s.phase == "RADIO_VERIFY":
-        if _running_proven(o):
-            if o.utc - s.stage_since < 120:
-                return Decision(s, "NONE", "STABILITY_GRACE")
-            return Decision(replace(s, phase="COMPLETE", last_recovery_utc=o.utc),
-                            "RECOVERY_SUCCEEDED", "REAL_TRAFFIC_VERIFIED_AFTER_RADIO")
-        if o.utc - s.stage_since > 240 or o.addon == "error":
-            return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN",
-                            "RADIO_FALLBACK_FAILED_NO_MORE_RESTARTS")
-        return Decision(s, "NONE", "RADIO_VERIFY_PENDING")
+        return _verify(o, s)
     raise AssertionError("unreachable state")

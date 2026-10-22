@@ -1,254 +1,345 @@
-"""Persistent independent HA watchdog. DRY RUN by default. Never opens ZNP.
-
-Single owner + no automatic retry after ambiguous side effect. Operates through
-Supervisor/API and SMLIGHT existing control plane only. All runtime evidence
-is sanitized, private, and bounded. No network action when options disabled.
-"""
+"""Independent P7U recovery guard. No serial owner; reset execution defaults off."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import replace
 from datetime import datetime, timezone
-import fcntl
 import json
 import os
 from pathlib import Path
-import sys
 import time
-from urllib.error import HTTPError, URLError
+import uuid
 
 from policy import State, Observation, evaluate
-from executor import dispatch
-from ha_adapter import SupervisorClient, SmlightControl, Configuration, HAActuator
-from observer import PassiveObserver, start_failure_kind
+from executor import dispatch, accepted_receipt
+from persistence import atomic_json, load_ledger, save_ledger, reconcile_pending
+from ha_adapter import (SupervisorClient, SmlightControl, Configuration, HAActuator,
+                        verify_native_binding)
+from observer import PassiveObserver
 from alerts import HAIncidentReporter
 
 DATA = Path("/data")
+CONFIG = Path("/homeassistant/zigbee2mqtt/configuration.yaml")
 Z2M_ADDON = "45df7312_zigbee2mqtt"
 POLL_SECONDS = 20
+ACTIONS = frozenset(("CAPTURE_EVIDENCE", "STOP_Z2M", "RESTART_ESP",
+                     "RESET_RADIO", "START_Z2M"))
 
 
-def atomic_json(path: Path, obj: dict):
-    p = path.with_name(path.name + ".new")
-    with p.open("x", encoding="utf-8") as f:
-        json.dump(obj, f, sort_keys=True, separators=(",", ":"))
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    p.replace(path)
-    directory = os.open(str(path.parent), os.O_RDONLY)
-    try: os.fsync(directory)
-    finally: os.close(directory)
-
-
-def load_options() -> dict:
-    obj = json.loads((DATA / "options.json").read_text())
-    expected = ("enabled", "dry_run", "maintenance",
-                "slzb_url", "allow_private_http_fallback")
-    if not all(k in obj for k in expected):
-        raise RuntimeError("INVALID_ADDON_OPTIONS")
+def load_options(path: Path | None = None) -> dict:
+    obj = json.loads((path or DATA / "options.json").read_text())
+    for key in ("enabled", "dry_run", "maintenance", "allow_private_http_fallback"):
+        if type(obj.get(key)) is not bool:
+            raise ValueError("INVALID_ADDON_BOOLEAN_OPTION")
+    for key in ("notify_on_confirmed_hang", "firmware_flash_active", "serial_owner_approved"):
+        if type(obj.get(key, False)) is not bool:
+            raise ValueError("INVALID_ADDON_BOOLEAN_OPTION")
     return obj
 
 
-def load_state(path: Path) -> tuple[State, dict]:
-    if not path.exists():
-        return State(), {}
-    data = json.loads(path.read_text())
-    if data.get("schema") != "p7u-recovery-state-v1":
-        raise RuntimeError("INCOMPATIBLE_WATCHDOG_STATE")
-    # Fields are intentionally strictly selected; never deserialize arbitrary
-    # objects or execute state-file contents.
-    fields = State.__dataclass_fields__
-    state = State(**{k:v for k,v in data["state"].items() if k in fields})
-    return state, dict(data.get("receipts") or {})
+def configuration(opts: dict) -> Configuration:
+    return Configuration(
+        slzb_url=opts.get("slzb_url", "http://192.168.50.59"), addon_slug=Z2M_ADDON,
+        esp_restart_entity=opts.get("esp_restart_entity", ""),
+        zigbee_restart_entity=opts.get("zigbee_restart_entity", ""),
+        allow_private_http_fallback=opts["allow_private_http_fallback"],
+        expected_mac=opts.get("expected_mac", ""),
+        expected_sw_version=opts.get("expected_sw_version", "v3.4.3.dev1"),
+        expected_js_sha256=opts.get("expected_js_sha256", ""),
+    )
 
 
-def save_state(path: Path, state: State, receipts: dict):
-    atomic_json(path, {"schema":"p7u-recovery-state-v1",
-                       "state":asdict(state), "receipts":receipts})
+def owner_configuration_valid(info: dict, cfg: Configuration) -> bool:
+    options = info.get("options") or {}
+    serial = options.get("serial") or {}
+    return bool(serial.get("port") == "/dev/serial/by-id/" + cfg.expected_by_id
+        and serial.get("adapter") == "zstack" and serial.get("baudrate") == 115200
+        and serial.get("rtscts") is False
+        and (options.get("socat") or {}).get("enabled") is False
+        and info.get("watchdog") is False)
 
 
-def handle_action(observer, evidence_dir):
+def active_admission(opts: dict, cfg: Configuration) -> bool:
+    return bool(opts["enabled"] and not opts["dry_run"]
+        and opts.get("serial_owner_approved") is True
+        and opts.get("notify_on_confirmed_hang") is True
+        and cfg.expected_mac and cfg.expected_sw_version
+        and ((cfg.esp_restart_entity and cfg.zigbee_restart_entity)
+             or (cfg.allow_private_http_fallback and cfg.expected_js_sha256)))
+
+
+def verify_controls(cfg, supervisor):
+    """Read-only admission of BOTH controls before quiescing the live owner."""
+    need_private = False
+    for action, entity in (("RESTART_ESP", cfg.esp_restart_entity),
+                           ("RESET_RADIO", cfg.zigbee_restart_entity)):
+        if entity:
+            verify_native_binding(cfg, action, entity)
+            supervisor.button_available(entity)
+        elif cfg.allow_private_http_fallback:
+            need_private = True
+        else:
+            raise RuntimeError("BOTH_RECOVERY_CONTROLS_REQUIRED")
+    if need_private:
+        SmlightControl(cfg).verify_private_control()
+
+
+def action_receipts(state: State, receipts: dict) -> dict:
+    """Acknowledge only this exact incident and original action phase."""
+    return {
+        "saved_evidence": accepted_receipt(receipts, state, "CAPTURE_EVIDENCE", "CAPTURE_PENDING"),
+        "stopped_receipt": accepted_receipt(receipts, state, "STOP_Z2M", "STOP_PENDING"),
+        "esp_restart_ack": accepted_receipt(receipts, state, "RESTART_ESP", "ESP_RESET_PENDING"),
+        "radio_reset_ack": accepted_receipt(receipts, state, "RESET_RADIO", "RADIO_RESET_PENDING"),
+        "z2m_start_ack": accepted_receipt(receipts, state, "START_Z2M",
+            "RADIO_START_PENDING" if state.phase.startswith("RADIO_") else "ESP_START_PENDING"),
+    }
+
+
+class GuardRunner:
+    """Testable runner boundary; shadow decisions cannot reach the actuator."""
+    def __init__(self, data: Path, actor, reporter, observer, pre_action=None):
+        self.data, self.actor, self.reporter, self.observer = data, actor, reporter, observer
+        self.pre_action = pre_action
+        self.evidence = data / "evidence"
+        self.evidence.mkdir(mode=0o700, exist_ok=True)
+        self.real_path, self.shadow_path = data / "watchdog-state.json", data / "dry-run-state.json"
+        self.state, self.receipts = load_ledger(self.real_path)
+        self.state = reconcile_pending(self.state, self.receipts, self.evidence)
+        save_ledger(self.real_path, self.state, self.receipts)
+        self.shadow, _ = load_ledger(self.shadow_path)
+
+    def _report(self, state, notify):
+        if not notify or not state.incident_since:
+            return
+        kind = ("RECOVERY_FAILED" if state.phase == "HOLD" else
+                "RECOVERED" if state.phase == "COMPLETE" else "DETECTED")
+        print("RECOVERY_NOTIFICATION", kind,
+              self.reporter.report(kind, state.incident_since, state.reason), flush=True)
+
+    def hold(self, reason: str, notify: bool):
+        self.state = replace(self.state, phase="HOLD", stable_since=0, reason=reason)
+        save_ledger(self.real_path, self.state, self.receipts)
+        self._report(self.state, notify)
+
+    def step(self, observation: Observation, *, active=False, notify=False):
+        if self.state.phase == "HOLD":
+            self._report(self.state, notify)
+        if not active:
+            # A shadow confirmation stops before physical phases. Preserve the
+            # real transaction, receipts and recovery budgets through dry-run.
+            if self.shadow.phase == "CAPTURE_PENDING":
+                if (observation.addon == "started" and observation.rx_valid
+                    and observation.health_fresh and observation.srsp_120s == 0
+                    and observation.fresh_device_topics_120s >= 3):
+                    self.shadow = State(last_sample_utc=observation.utc,
+                        recovery_attempts_24h=self.state.recovery_attempts_24h,
+                        last_recovery_utc=self.state.last_recovery_utc)
+                else:
+                    self.shadow = replace(self.shadow, last_sample_utc=observation.utc)
+                    self._report(self.shadow, notify)
+            else:
+                if self.shadow.phase == "HOLD" and not self.shadow.incident_id:
+                    self.shadow = State()
+                decision = evaluate(observation, self.shadow)
+                self.shadow = decision.state
+                if decision.action == "CAPTURE_EVIDENCE":
+                    self.shadow = replace(self.shadow, incident_id=uuid.uuid4().hex,
+                                          reason=decision.reason)
+                    print("DRY_RUN_WOULD_RECOVER", decision.reason, flush=True)
+                    save_ledger(self.shadow_path, self.shadow, {})
+                    self._report(self.shadow, notify)
+            save_ledger(self.shadow_path, self.shadow, {})
+            return self.shadow
+
+        observation = replace(observation, **action_receipts(self.state, self.receipts))
+        decision = evaluate(observation, self.state)
+        previous = self.state
+        self.state = decision.state
+        if decision.action == "CAPTURE_EVIDENCE":
+            self.state = replace(self.state, incident_id=uuid.uuid4().hex, reason=decision.reason)
+            decision = replace(decision, state=self.state)
+        save_ledger(self.real_path, self.state, self.receipts)
+        if self.state.phase == "HOLD":
+            self._report(self.state, notify)
+            return self.state
+        if decision.action == "CAPTURE_EVIDENCE":
+            self._report(self.state, notify)
+        if decision.action in ACTIONS:
+            try:
+                fresh = self.pre_action(self.state) if self.pre_action else observation
+                fresh = replace(fresh, utc=observation.utc,
+                                **action_receipts(self.state, self.receipts))
+                if decision.action == "START_Z2M":
+                    self.observer.begin_startup(observation.utc)
+                report = dispatch(decision, fresh, self.actor, self.evidence, enabled=True)
+                if report.outcome:
+                    self.receipts[report.action_key] = report.outcome
+                save_ledger(self.real_path, self.state, self.receipts)
+                if report.status != "COMMAND_ACCEPTED_NOT_YET_VERIFIED":
+                    self.hold("AMBIGUOUS_ACTION", notify)
+            except Exception:
+                self.hold("ACTION_ADMISSION_OR_JOURNAL_FAILURE", notify)
+        elif decision.action == "RECOVERY_SUCCEEDED":
+            self._report(self.state, notify)
+        elif previous.phase == "COMPLETE" and self.state.phase == "MONITOR":
+            self.receipts = {}
+            save_ledger(self.real_path, self.state, self.receipts)
+        return self.state
+
+
+def capture_callback(observer, evidence_dir):
     def capture():
-        data = observer.sample()
-        receipt = {"schema": "p7u-recovery-evidence-v1",
-                   "recorded_utc":datetime.now(timezone.utc).isoformat(),
-                   "mq_connected":data.get("mqtt_reachable"),
-                   "fresh_topic_count":data.get("fresh_device_topics_120s"),
-                   "srsp_count":data.get("srsp_120s"),
-                   "distinct_failed_devices":data.get("affected_devices_120s"),
-                   "epoch_start_utc":data.get("epoch_start_utc")}
-        stamp = int(time.time())
-        path = evidence_dir / f"evidence-{stamp}.json"
-        # A stable marker exists before returning ACK; no sensitive packets.
-        with path.open("x", encoding="utf-8") as f:
-            json.dump(receipt,f)
-            f.flush();os.fsync(f.fileno())
+        sample = observer.sample()
+        keys = ("mqtt_reachable", "rx_valid", "observation_valid", "epoch_id",
+                "fresh_device_topics_120s", "srsp_120s", "affected_devices_120s",
+                "epoch_start_utc", "ota_active", "ota_unknown")
+        atomic_json(evidence_dir / ("evidence-" + uuid.uuid4().hex + ".json"), {
+            "schema": "p7u-recovery-evidence-v2",
+            "recorded_utc": datetime.now(timezone.utc).isoformat(),
+            **{k: sample.get(k) for k in keys}})
         return True
     return capture
 
 
+def seed_history(observer, prefix, now):
+    """Replay matching current logs transiently without exporting packet payloads."""
+    observer.seed_process_epoch(prefix, now)
+    from observer import timestamp
+    starts = [timestamp(line) for line in prefix.splitlines()
+              if "Starting Zigbee2MQTT version" in line]
+    start = next((t for t in starts if t is not None), None)
+    if start is None:
+        return False
+    root = CONFIG.parent / "log"
+    folder = datetime.fromtimestamp(start, timezone.utc).astimezone().strftime("%Y-%m-%d.%H-%M-%S")
+    candidates = [root / folder / "log.log"] + sorted(root.glob("*/log.log"), reverse=True)[:8]
+    for path in dict.fromkeys(candidates):
+        if not path.is_file() or path.stat().st_size > 512 * 1024 * 1024:
+            continue
+        with path.open(encoding="utf-8", errors="replace") as stream:
+            beginning = "".join(stream.readline() for _ in range(40))
+            markers = [timestamp(line) for line in beginning.splitlines()
+                       if "Starting Zigbee2MQTT version" in line]
+            if start not in markers:
+                continue
+            stream.seek(0)
+            observer.seed_process_history(stream, now)
+            return True
+    return False
+
+
 def service_main():
     opts = load_options()
+    cfg = configuration(opts)
     supervisor = SupervisorClient(os.environ.get("SUPERVISOR_TOKEN", ""))
-    cfg = Configuration(
-        slzb_url=opts.get("slzb_url", "http://192.168.50.59"),
-        addon_slug=Z2M_ADDON,
-        esp_restart_entity=opts.get("esp_restart_entity", ""),
-        zigbee_restart_entity=opts.get("zigbee_restart_entity", ""),
-        allow_private_http_fallback=bool(opts["allow_private_http_fallback"]),
-    )
-    slzb = SmlightControl(cfg)
-    observer = PassiveObserver()
-    evidence_dir = DATA / "evidence"
-    evidence_dir.mkdir(exist_ok=True, mode=0o700)
-    journal_path = DATA / "watchdog-state.json"
-
-    # No MQTT service is registered in this HA installation. Zigbee2MQTT
-    # already owns configured EMQX credentials; reuse them read-only from
-    # the HA config mount. Never copy those secrets into incident reports.
     from mqtt_settings import load_broker_settings
-    broker = load_broker_settings(
-        Path("/homeassistant/zigbee2mqtt/configuration.yaml"))
+    broker = load_broker_settings(CONFIG)
+    observer = PassiveObserver(broker.base_topic, last_seen_epoch=broker.last_seen_epoch)
     observer.start(broker.host, broker.port, broker.username, broker.password)
+    evidence_dir = DATA / "evidence"
+    evidence_dir.mkdir(mode=0o700, exist_ok=True)
     reporter = HAIncidentReporter(supervisor, evidence_dir)
-    actor = HAActuator(cfg, supervisor, slzb,
-                       handle_action(observer, evidence_dir))
-    state, receipts = load_state(journal_path)
-    active = bool(opts["enabled"]) and not bool(opts["dry_run"])
-    if active and not (
-        (cfg.esp_restart_entity and cfg.zigbee_restart_entity) or
-        cfg.allow_private_http_fallback
-    ):
-        raise RuntimeError("ACTIVE_RECOVERY_REQUIRES_BOTH_VERIFIED_RESET_CONTROLS")
-    print("P7U_WATCHDOG_STARTED",
-          "MODE="+("ENABLED" if active else "DRY_RUN"),
-          "FIRST=ESP32",flush=True)
-    if active and state.phase not in ("MONITOR","SUSPECT","COMPLETE","HOLD"):
-        print("RECOVERY_PENDING_AFTER_HOST_RESTART_NO_REPLAY",state.phase,flush=True)
+    actor = HAActuator(cfg, supervisor, SmlightControl(cfg), capture_callback(observer, evidence_dir))
 
+    def observe(*, refresh_logs=True):
+        current = load_options()
+        if configuration(current) != cfg:
+            raise RuntimeError("CONTROL_BINDING_CHANGED_RESTART_GUARD_REQUIRED")
+        info = supervisor.addon_info(cfg.addon_slug)
+        if refresh_logs:
+            prefix, tail = supervisor.log_window(cfg.addon_slug)
+            observer.seed_process_epoch(prefix, time.time())
+            epoch = observer.sample().get("epoch_id")
+            if getattr(observe, "history_epoch", None) != epoch:
+                if seed_history(observer, prefix, time.time()):
+                    observe.history_epoch = epoch
+            observer.read_log(tail, time.time())
+        if load_broker_settings(CONFIG) != broker:
+            raise RuntimeError("BROKER_OR_RECEIVE_CONFIGURATION_CHANGED_RESTART_GUARD_REQUIRED")
+        sample = observer.sample()
+        identity = False
+        try:
+            SmlightControl(cfg).identity()
+            identity = True
+        except Exception:
+            pass
+        return Observation(
+            utc=int(time.time()), addon=str(info.get("state", "unknown")),
+            adapter_error=sample.get("adapter_error", ""), mode="USB",
+            expected_identity=identity,
+            expected_usb=supervisor.hardware_has_port(cfg.expected_by_id),
+            esp_reachable=identity, ha_reachable=True,
+            mqtt_reachable=sample["mqtt_reachable"], maintenance=current["maintenance"],
+            ota_active=sample.get("ota_active", True) or sample.get("ota_unknown", True),
+            firmware_flash_active=current.get("firmware_flash_active", False),
+            serial_owner_exclusive=owner_configuration_valid(info, cfg),
+            observation_valid=sample.get("observation_valid", False),
+            rx_valid=sample.get("rx_valid", False),
+            **{key: sample[key] for key in (
+                "app_uptime_s", "srsp_120s", "affected_devices_120s",
+                "fresh_device_topics_120s", "health_fresh", "bridge_online_fresh",
+                "herdsman_started_fresh")}), current, sample
+
+    def pre_action(state):
+        fresh, current, _ = observe(refresh_logs=False)
+        if not active_admission(current, cfg):
+            raise RuntimeError("ACTIVE_RECOVERY_ADMISSION_REVOKED")
+        verify_controls(cfg, supervisor)
+        return fresh
+
+    runner = GuardRunner(DATA, actor, reporter, observer, pre_action)
+    print("P7U_WATCHDOG_STARTED VERSION=0.2.0 FIRST=ESP32 RESETS_DEFAULT_OFF", flush=True)
+    previous_clock = None
+    poll_number = 0
     try:
         while True:
-            now = int(time.time())
+            notify = False
             try:
-                addon = supervisor.addon_state(cfg.addon_slug)
-                logs = supervisor.log_text(cfg.addon_slug)
-                observer.read_log(logs, now)
-                telem = observer.sample(now)
-                hardware = supervisor.hardware_has_port(cfg.expected_by_id)
-                try:
-                    slzb.identity()
-                    identity = True
-                except Exception:
-                    identity = False
-                # Observe maintenance flags from *configuration* first,
-                # not a guessed dynamic OTA packet that could allow a flash.
-                blocked = bool(opts["maintenance"])
-                ota = any(
-                    text in logs[-30000:].lower()
-                    for text in ("ota update started", "starting ota update",
-                                 "updating firmware of"))
-                error = start_failure_kind(logs, now) if addon in ("error","stopped") else ""
-                # For running errors, require errors from live app epoch;
-                # retained errors from before the latest startup are ignored
-                # by timestamp expiry inside observer.
-                o = Observation(
-                    utc=now, addon=addon, adapter_error=error,
-                    mode="USB", expected_identity=identity,
-                    expected_usb=hardware, esp_reachable=identity,
-                    ha_reachable=True, mqtt_reachable=telem["mqtt_reachable"],
-                    maintenance=blocked, ota_active=ota,
-                    firmware_flash_active=False,
-                    serial_owner_exclusive=True,
-                    app_uptime_s=telem["app_uptime_s"],
-                    srsp_120s=telem["srsp_120s"],
-                    affected_devices_120s=telem["affected_devices_120s"],
-                    fresh_device_topics_120s=telem["fresh_device_topics_120s"],
-                    health_fresh=telem["health_fresh"],
-                    bridge_online_fresh=telem["bridge_online_fresh"],
-                    herdsman_started_fresh=telem["herdsman_started_fresh"],
-                    saved_evidence=bool(receipts.get("CAPTURE_EVIDENCE")),
-                    stopped_receipt=bool(receipts.get("STOP_Z2M")),
-                    radio_reset_ack=bool(receipts.get("RESET_RADIO")),
-                    esp_restart_ack=bool(receipts.get("RESTART_ESP")),
-                    z2m_start_ack=bool(
-                        receipts.get("START_Z2M_RADIO") if
-                        state.phase in ("RADIO_START_PENDING","RADIO_VERIFY")
-                        else receipts.get("START_Z2M")),
-                )
-                decision = evaluate(o, state)
-                if not active:
-                    # DRY RUN must not lock an actual recovery incident, and
-                    # cannot call the HA actuator. We still inspect the full
-                    # source policy and record sanitized health transitions.
-                    if decision.action not in ("NONE",):
-                        print("DRY_RUN_PROPOSAL", decision.action,
-                              decision.reason, flush=True)
-                    state = State(last_sample_utc=now,
-                                  recovery_attempts_24h=state.recovery_attempts_24h,
-                                  last_recovery_utc=state.last_recovery_utc)
-                    save_state(journal_path,state,{})
-                else:
-                    # Durable decision state first. Every side effect gets
-                    # a distinct exclusive write-ahead journal in executor.
-                    save_state(journal_path,decision.state,receipts)
-                    state = decision.state
-                    if decision.action == "CAPTURE_EVIDENCE":
-                        # Two independent, durable, once-per-incident warnings:
-                        # the HA System Log and the bell notifications area.
-                        # A malformed or temporarily unavailable HA service
-                        # must not turn into repeated Zigbee reset attempts.
-                        result = reporter.report("DETECTED", state.incident_since,
-                                                 decision.reason)
-                        print("CONFIRMED_HANG_WARNING", result, flush=True)
-                    if decision.action in (
-                        "CAPTURE_EVIDENCE","STOP_Z2M","RESTART_ESP",
-                        "RESET_RADIO","START_Z2M"
-                    ):
-                        if decision.action == "START_Z2M":
-                            ack_key = ("START_Z2M_RADIO" if
-                                       state.phase=="RADIO_START_PENDING" else "START_Z2M")
-                        else:
-                            ack_key = decision.action
-                        report = dispatch(decision,o,actor,evidence_dir,enabled=True)
-                        if report.status == "COMMAND_ACCEPTED_NOT_YET_VERIFIED":
-                            receipts[ack_key] = True
-                            save_state(journal_path,state,receipts)
-                        else:
-                            print("HOLD_AMBIGUOUS_ACTION",
-                                  report.status,report.detail,flush=True)
-                            state = State(**{**asdict(state),"phase":"HOLD",
-                                            "reason":"AMBIGUOUS_ACTION"})
-                            save_state(journal_path,state,receipts)
-                    elif decision.action in ("ALERT_HUMAN","RECOVERY_SUCCEEDED"):
-                        print(decision.action,decision.reason,flush=True)
-                        if state.incident_since:
-                            kind = ("RECOVERED" if
-                                    decision.action == "RECOVERY_SUCCEEDED"
-                                    else "RECOVERY_FAILED")
-                            result = reporter.report(kind, state.incident_since,
-                                                     decision.reason)
-                            print("RECOVERY_NOTIFICATION", kind, result, flush=True)
-                        if decision.action=="RECOVERY_SUCCEEDED":
-                            receipts = {}
-                            save_state(journal_path,state,receipts)
-                # Rate-limit normal log output: no raw MQTT payloads or names.
-                if now % 180 < POLL_SECONDS:
-                    print("SAMPLE", "addon="+addon,
-                          "fresh_topics="+str(telem["fresh_device_topics_120s"]),
-                          "srsp="+str(telem["srsp_120s"]),
-                          "phase="+state.phase,flush=True)
-            except (HTTPError,URLError,TimeoutError,ValueError,RuntimeError) as exc:
-                print("PASSIVE_POLL_UNAVAILABLE_NO_RESET",
-                      type(exc).__name__,flush=True)
-                # Fail closed. Don't advance phases or reset on an unknown
-                # supervisor, bridge or broker state.
+                observation, current, sample = observe()
+                active = active_admission(current, cfg)
+                notify = current.get("notify_on_confirmed_hang", False)
+                if current["enabled"] and not current["dry_run"] and not active:
+                    raise RuntimeError("ACTIVE_RECOVERY_REQUIRES_VERIFIED_ADMISSION")
+                clocks = (time.time(), time.monotonic())
+                if previous_clock and abs((clocks[0]-previous_clock[0])-(clocks[1]-previous_clock[1])) > 30:
+                    if active:
+                        runner.hold("CLOCK_DISCONTINUITY", notify)
+                    raise RuntimeError("CLOCK_DISCONTINUITY")
+                previous_clock = clocks
+                result = runner.step(observation, active=active, notify=notify)
+                reporter.retry_pending()
+                atomic_json(DATA / "status.json", {
+                    "schema": "p7u-recovery-status-v2", "utc": observation.utc,
+                    "version": "0.2.0", "resets_enabled": active, "phase": result.phase,
+                    **{k: sample.get(k) for k in (
+                        "epoch_id", "epoch_start_utc", "observation_valid", "rx_valid",
+                        "mqtt_reachable", "fresh_device_topics_120s", "srsp_120s",
+                        "affected_devices_120s", "ota_active", "ota_unknown")}})
+                if poll_number % 3 == 0:
+                    print("SAMPLE", "addon="+observation.addon,
+                          "rx_devices="+str(observation.fresh_device_topics_120s),
+                          "rx_valid="+str(observation.rx_valid),
+                          "observer_valid="+str(observation.observation_valid),
+                          "srsp="+str(observation.srsp_120s), "phase="+result.phase,
+                          "resets_enabled="+str(active), flush=True)
+                poll_number += 1
+            except Exception as exc:
+                print("GUARD_POLL_FAILED_NO_RESET", type(exc).__name__, flush=True)
+                if runner.state.phase not in ("MONITOR", "SUSPECT", "COMPLETE", "HOLD"):
+                    try:
+                        runner.hold("OBSERVATION_OR_PERSISTENCE_FAILURE", notify)
+                    except Exception:
+                        print("GUARD_STORAGE_UNAVAILABLE_NO_ACTIONS", flush=True)
             time.sleep(POLL_SECONDS)
     finally:
         observer.close()
 
 
-if __name__=="__main__":
-    with (DATA/"p7u-watcher-owner.lock").open("a+") as f:
-        try: fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError: raise SystemExit("SECOND_RECOVERY_OWNER_FORBIDDEN")
+if __name__ == "__main__":
+    import fcntl
+    with (DATA / "p7u-watcher-owner.lock").open("a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit("SECOND_RECOVERY_OWNER_FORBIDDEN")
         service_main()

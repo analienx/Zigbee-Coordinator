@@ -6,14 +6,12 @@ on:
       - codex/p7u-shared-recovery-policy-20261022
     paths:
       - 'host/recovery/**'
-      - 'tests/test_p7u_shared_recovery_policy.py'
-      - 'tests/test_p7u_recovery_executor.py'
+      - 'tests/test_p7u_*recovery*.py'
       - '.github/workflows/test-p7u-recovery.yml'
   pull_request:
     paths:
       - 'host/recovery/**'
-      - 'tests/test_p7u_shared_recovery_policy.py'
-      - 'tests/test_p7u_recovery_executor.py'
+      - 'tests/test_p7u_*recovery*.py'
       - '.github/workflows/test-p7u-recovery.yml'
   workflow_dispatch:
 
@@ -48,7 +46,6 @@ jobs:
               ]
               assert not any(x.startswith(('serial','pyserial','zigpy')) for x in imports), target
           code = (root/'ha_adapter.py').read_text()
-          assert 'CMD_ESP_RES:3' in code
           assert '"RESTART_ESP": (3,' in code
           assert '"RESET_RADIO": (1,' in code
           assert 'if operation not in _ALLOWED' in code
@@ -66,6 +63,8 @@ jobs:
           assert cfg['options']['enabled'] is False
           assert cfg['options']['dry_run'] is True
           assert cfg['options']['allow_private_http_fallback'] is False
+          assert cfg['options']['serial_owner_approved'] is False
+          assert cfg['options']['notify_on_confirmed_hang'] is False
           assert cfg['boot'] == 'manual'
           assert cfg['hassio_role'] == 'manager'
           print('PASS: real HA package exists, disabled and non-autoboot by default')

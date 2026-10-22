@@ -3,10 +3,14 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+import json
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host" / "recovery"))
 
-from alerts import HAIncidentReporter, NOTIFICATION_ID, _content
+from alerts import (HAIncidentReporter, NOTIFICATION_ID, TEST_NOTIFICATION_ID,
+                    _content)
 
 
 class FakeSupervisor:
@@ -73,11 +77,11 @@ class HAWarningTests(unittest.TestCase):
             r = HAIncidentReporter(api, Path(temp))
             result = r.report("DETECTED", 1800000000,
                               "ADAPTER_SPECIFIC_START_FAILURE")
-            self.assertIn("NOT_CONFIRMED_NO_REPEAT", result["notification"])
+            self.assertIn("NOT_CONFIRMED_RETRY_PENDING", result["notification"])
             again = r.report("DETECTED", 1800000000,
                              "ADAPTER_SPECIFIC_START_FAILURE")
             self.assertEqual(len(api.calls), 2)
-            self.assertIn("ALREADY_ATTEMPTED", again["notification"])
+            self.assertEqual(again["notification"],"DELIVERY_PENDING_RETRY")
 
     def test_bad_reason_is_redacted_and_invalid_incident_rejected(self):
         title,body,level=_content("DETECTED",1800000000,
@@ -88,6 +92,90 @@ class HAWarningTests(unittest.TestCase):
             _content("DETECTED",0,"foo")
         with self.assertRaises(ValueError):
             _content("UNKNOWN",1800000000,"foo")
+
+    def test_bad_reason_redacted_in_actual_payloads_and_journals(self):
+        api=FakeSupervisor()
+        with TemporaryDirectory() as temp:
+            r=HAIncidentReporter(api,Path(temp))
+            r.report("DETECTED",1800000000,"secret=network-key")
+            self.assertNotIn("secret=network-key",json.dumps(api.calls))
+            self.assertIn("COORDINATOR_HEALTH_DEGRADED",api.calls[0][2]["message"])
+            for path in Path(temp).glob("*.json"):
+                self.assertNotIn("secret=network-key",path.read_text())
+
+    def test_idempotent_notification_retry_is_bounded_and_durable(self):
+        api=FakeSupervisor(broken_channel="persistent_notification")
+        with TemporaryDirectory() as temp, patch("alerts.time.time",return_value=1800000000) as clock:
+            directory=Path(temp)
+            r=HAIncidentReporter(api,directory)
+            r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            for seconds in (61,122):
+                clock.return_value=1800000000+seconds
+                r=HAIncidentReporter(api,directory)  # simulated process restart
+                r.retry_pending()
+            clock.return_value=1800000200
+            self.assertEqual(r.retry_pending()["notification"],"DELIVERY_RETRY_BUDGET_EXHAUSTED")
+            self.assertEqual(len(api.calls),4)  # one log plus three same-ID notifications
+            self.assertEqual({c[2]["notification_id"] for c in api.calls[1:]},{NOTIFICATION_ID})
+            self.assertEqual(len(list(directory.glob("*notification.outcome*.json"))),3)
+
+    def test_recovery_supersedes_failed_detection_retry(self):
+        api=FakeSupervisor(broken_channel="persistent_notification")
+        with TemporaryDirectory() as temp, patch("alerts.time.time",return_value=1800000000) as clock:
+            r=HAIncidentReporter(api,Path(temp))
+            r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            clock.return_value=1800000001
+            api.broken=None
+            r.report("RECOVERED",1800000000,"REAL_TRAFFIC_VERIFIED_AFTER_ESP")
+            clock.return_value=1800000200
+            r.retry_pending()
+            old=r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            self.assertEqual(old["notification"],"SUPERSEDED_NO_SEND")
+            self.assertEqual(len(api.calls),4)
+            self.assertIn("recovered",api.calls[-1][2]["title"])
+
+    def test_definite_client_rejection_is_recorded_without_retry(self):
+        class Denied(FakeSupervisor):
+            def call(self,*args,**kwargs):
+                super().call(*args,**kwargs)
+                raise HTTPError("http://supervisor",403,"Forbidden",{},None)
+        api=Denied()
+        with TemporaryDirectory() as temp, patch("alerts.time.time",return_value=1800000000) as clock:
+            r=HAIncidentReporter(api,Path(temp))
+            result=r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            self.assertEqual(result["notification"],"REJECTED_HTTP_403")
+            clock.return_value=1800001000
+            self.assertEqual(r.retry_pending()["notification"],"DELIVERY_REJECTED_NO_RETRY")
+            self.assertEqual(len(api.calls),2)
+
+    def test_ambiguous_system_log_is_not_repeated(self):
+        api=FakeSupervisor(broken_channel="system_log")
+        with TemporaryDirectory() as temp:
+            r=HAIncidentReporter(api,Path(temp))
+            result=r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            self.assertIn("NOT_CONFIRMED_NO_REPEAT",result["system_log"])
+            r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            self.assertEqual(len(api.calls),2)
+
+    def test_synthetic_warning_has_dedicated_id_and_cannot_replace_real_incident(self):
+        api=FakeSupervisor()
+        with TemporaryDirectory() as temp:
+            r=HAIncidentReporter(api,Path(temp))
+            r.report("DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            latest=(Path(temp)/"notification-latest.json").read_text()
+            r.report_test(1800000100)
+            self.assertEqual(api.calls[-1][2]["notification_id"],TEST_NOTIFICATION_ID)
+            self.assertIn("TEST",api.calls[-1][2]["title"])
+            self.assertIn("no reset",api.calls[-2][2]["message"])
+            self.assertEqual((Path(temp)/"notification-latest.json").read_text(),latest)
+
+    def test_malformed_success_body_is_not_accepted(self):
+        api=FakeSupervisor()
+        api.call=lambda *args,**kwargs:{"result":"error"}
+        with TemporaryDirectory() as temp:
+            result=HAIncidentReporter(api,Path(temp)).report(
+                "DETECTED",1800000000,"ADAPTER_SPECIFIC_START_FAILURE")
+            self.assertTrue(all("NOT_CONFIRMED" in value for value in result.values()))
 
 
 if __name__=="__main__":

@@ -120,10 +120,14 @@ class RecoveryPolicyTests(unittest.TestCase):
         traffic = sample(at=ts+50, fresh_device_topics_120s=12,
                          srsp_120s=0, bridge_online_fresh=True,
                          herdsman_started_fresh=True)
-        self.assertEqual(evaluate(traffic, s).action, "NONE")
-        done = evaluate(replace(traffic, utc=ts+160), s)
+        for delta in range(50, 170, 20):
+            step = evaluate(replace(traffic, utc=ts+delta), s)
+            self.assertEqual(step.action, "NONE")
+            s = step.state
+        done = evaluate(replace(traffic, utc=ts+170), s)
         self.assertEqual(done.action, "RECOVERY_SUCCEEDED")
         self.assertEqual(done.state.phase, "COMPLETE")
+        self.assertEqual(done.state.last_recovery_utc, ts+2)
 
     def test_esp_failure_falls_back_once_to_radio(self):
         x = self.confirm()
@@ -192,6 +196,69 @@ class RecoveryPolicyTests(unittest.TestCase):
                          "ALERT_HUMAN")
         self.assertEqual(evaluate(sample(at=10),
                          State(last_sample_utc=11)).action, "ALERT_HUMAN")
+
+    def test_intentional_stop_with_recent_adapter_error_never_recovers(self):
+        first = evaluate(sample(addon="stopped", adapter_error="SRSP_SYS_PING"))
+        later = evaluate(sample(at=1_800_000_040, addon="stopped",
+                                adapter_error="SRSP_SYS_PING"), first.state)
+        self.assertEqual(later.state.phase, "MONITOR")
+        self.assertEqual(later.action, "NONE")
+
+    def test_uncalibrated_observation_or_rx_cannot_confirm_running_hang(self):
+        for field in ("observation_valid", "rx_valid"):
+            first = evaluate(sample(**{field: False}))
+            later = evaluate(sample(at=1_800_000_040, **{field: False}), first.state)
+            self.assertEqual(later.action, "NONE")
+            self.assertEqual(later.state.phase, "MONITOR")
+
+    def test_first_healthy_sample_after_121_seconds_is_not_stability(self):
+        t = 1_800_000_000
+        state = State(phase="ESP_VERIFY", stage_since=t, last_sample_utc=t+101)
+        healthy = sample(at=t+121, fresh_device_topics_120s=5, srsp_120s=0,
+                         bridge_online_fresh=True, herdsman_started_fresh=True)
+        result = evaluate(healthy, state)
+        self.assertEqual(result.action, "NONE")
+        self.assertEqual(result.state.stable_since, t+121)
+
+    def test_unhealthy_or_missing_sample_restarts_stability(self):
+        t = 1_800_000_000
+        state = State(phase="RADIO_VERIFY", stage_since=t, last_sample_utc=t)
+        healthy = sample(at=t+10, fresh_device_topics_120s=5, srsp_120s=0,
+                         bridge_online_fresh=True, herdsman_started_fresh=True)
+        state = evaluate(healthy, state).state
+        bad = evaluate(replace(healthy, utc=t+30, rx_valid=False), state)
+        self.assertEqual(bad.state.stable_since, 0)
+        resumed = evaluate(replace(healthy, utc=t+50), bad.state)
+        self.assertEqual(resumed.state.stable_since, t+50)
+        gap = evaluate(replace(healthy, utc=t+111), resumed.state)
+        self.assertEqual(gap.state.stable_since, t+111)
+        self.assertEqual(gap.action, "NONE")
+
+    def test_all_unacknowledged_actions_hold_at_bounded_deadline(self):
+        t = 1_800_000_000
+        for phase in ("CAPTURE_PENDING", "STOP_PENDING", "ESP_RESET_PENDING",
+                      "RADIO_RESET_PENDING", "ESP_START_PENDING", "RADIO_START_PENDING"):
+            with self.subTest(phase=phase):
+                state = State(phase=phase, incident_since=t, stage_since=t,
+                              last_sample_utc=t+110)
+                result = evaluate(sample(at=t+121), state)
+                self.assertEqual(result.state.phase, "HOLD")
+                self.assertEqual(result.action, "ALERT_HUMAN")
+
+    def test_late_usb_reappearance_does_not_extend_boot_forever(self):
+        t = 1_800_000_000
+        state = State(phase="ESP_BOOT", incident_since=t, stage_since=t,
+                      last_sample_utc=t+170)
+        result = evaluate(sample(at=t+181), state)
+        self.assertEqual(result.state.phase, "HOLD")
+        self.assertEqual(result.action, "ALERT_HUMAN")
+
+    def test_outage_between_suspicions_requires_fresh_confirmation(self):
+        first = evaluate(sample())
+        later = evaluate(sample(at=1_800_000_070), first.state)
+        self.assertEqual(later.state.phase, "SUSPECT")
+        self.assertEqual(later.state.suspect_since, 1_800_000_070)
+        self.assertEqual(later.action, "NONE")
 
 
 if __name__ == "__main__":
