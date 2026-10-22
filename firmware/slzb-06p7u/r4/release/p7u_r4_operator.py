@@ -160,7 +160,13 @@ def flash_verify(private: Path, candidate: dict) -> dict:
             "FLASH_VERIFICATION_MISSING")
     verified = result.get("written_sectors")
     target, changed = verify_live_admission(private, plan)
-    require(verified == changed and BOOT in verified,
+    # Boot handoff may already be byte-identical to the target. The live
+    # all-88 SHA admission plus the writer's final all-88 parity make an
+    # unnecessary erase unsafe waste, not an acceptance requirement.
+    captured = (private / "readback-1" / "current-pass1.bin").read_bytes()
+    boot_preexisting = (BOOT not in changed and
+                        target[str(BOOT)] == sha(captured[BOOT:BOOT + 8192]))
+    require(verified == changed and (BOOT in verified or boot_preexisting),
             "FLASH_RESULT_SECTOR_MISMATCH")
     events = [json.loads(line) for line in
               (private / "flash-journal.jsonl").read_text().splitlines()]
