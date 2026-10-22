@@ -24,6 +24,10 @@ static uint32_t *pTasksEvents[]={&event0,&event1};
 static const uint8_t zstackTasksCnt=2;
 static uint8_t stackServiceId=0;
 static void stackInit(void) {}
+static int b1_sec_validate_restored(void) {return 1;}
+static void b1_evidence_dispatch(uint8_t service,uint32_t input)
+{(void)service;(void)input;}
+static void b1_evidence_dispatch_end(uint32_t returned) {(void)returned;}
 static void OsalPortTimers_registerCleanupEvent(uint8_t s,uint32_t e)
 {assert(s==0 && e==OSALPORT_CLEAN_UP_TIMERS_EVT);}
 static uint32_t OsalPort_enterCS(void) {return 0u;}
