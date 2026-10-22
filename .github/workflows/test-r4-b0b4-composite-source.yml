@@ -48,9 +48,12 @@ jobs:
           mkdir -p /tmp/r4composite-siblings
           git init -q /tmp/r4composite-repo
           git -C /tmp/r4composite-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          # Fetch all immutable donor commits in one shallow transaction.
+          # Individual depth-1 fetches rewrote .git/shallow between Git actions
+          # and intermittently failed with "shallow file has changed".
+          git -C /tmp/r4composite-repo fetch --depth 1 origin d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b
           for sha in d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
-            git -C /tmp/r4composite-repo fetch --depth 1 origin "$sha"
-            test "$(git -C /tmp/r4composite-repo rev-parse FETCH_HEAD)" = "$sha"
+            git -C /tmp/r4composite-repo cat-file -e "$sha^{commit}"
           done
           git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py
           git -C /tmp/r4composite-repo show 530a52631fbde274a2ae356c490bad71b47168a6:firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py > /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py
