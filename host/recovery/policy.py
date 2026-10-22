@@ -117,12 +117,29 @@ def evaluate(o: Observation, s: State = State()) -> Decision:
     if s.last_sample_utc and o.utc < s.last_sample_utc:
         return Decision(replace(s, phase="HOLD"), "ALERT_HUMAN", "CLOCK_REWIND")
     s = replace(s, last_sample_utc=o.utc)
+    if s.phase == "COMPLETE":
+        # Re-arm for future incidents while retaining cooldown and daily budget.
+        return Decision(replace(s, phase="MONITOR", suspect_since=0,
+                                fault_samples=0, reason=""), "NONE", "RECOVERY_CLOSED")
+    if s.phase == "HOLD":
+        return Decision(s, "NONE", "HOLD")
     gate = _prohibited(o)
     if gate:
+        if s.phase in ("MONITOR", "SUSPECT") and gate in (
+            "INDEPENDENT_CONTROL_PLANE_UNAVAILABLE", "MAINTENANCE_OR_OTA"
+        ):
+            return Decision(replace(s, phase="MONITOR", suspect_since=0,
+                                    fault_samples=0), "NONE", gate)
+        # ESP/USB disappear briefly while ESP is deliberately restarting.
+        if s.phase in ("ESP_RESET_PENDING", "ESP_BOOT",
+                       "RADIO_RESET_PENDING", "RADIO_BOOT") and gate in (
+            "INDEPENDENT_CONTROL_PLANE_UNAVAILABLE",
+            "UNKNOWN_MODE_IDENTITY_OR_USB"
+        ):
+            if o.utc - s.stage_since <= 180:
+                return Decision(s, "NONE", "AWAIT_RADIO_OR_ESP_REENUMERATION")
         return Decision(replace(s, phase="HOLD", reason=gate),
                         "ALERT_HUMAN", gate)
-    if s.phase in ("HOLD", "COMPLETE"):
-        return Decision(s, "NONE", s.phase)
     if s.phase in ("MONITOR", "SUSPECT"):
         cause = _fault(o)
         if not cause:
