@@ -12,7 +12,10 @@ hassio_api: true
 hassio_role: manager
 homeassistant_api: true
 services:
-  - mqtt:need
+  - mqtt:want
+map:
+  - type: homeassistant_config
+    read_only: true
 options:
   enabled: false
   dry_run: true
