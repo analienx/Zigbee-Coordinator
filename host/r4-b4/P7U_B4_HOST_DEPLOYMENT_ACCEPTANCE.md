@@ -66,6 +66,39 @@ once or automatically repeat failed starts.
 
 ## 4. Real F2 acceptance
 
+- The first actual hardware collector window (23-Oct-2026) established
+  one nonce-validated ABI 4 record with native sequence **1**, validity mask
+  **0x2c**, and 22 ms read latency. Two other 60-second timer firings were
+  intentionally `SKIPPED` by the existing owner admission: no radio command
+  was sent on those skips. A 225-second acceptance window consequently
+  rolled back despite valid production device traffic (33 fresh topics).
+  **Do not repeat that fixed short-window policy.** An idle Zigbee network
+  is not guaranteed at a timer instant when 100+ devices are active.
+- Keep all existing ZNP queue, Waitress, OTA and diagnostic quarantine
+  safety gates. Use an extended, passive observation horizon to collect
+  three naturally admitted F2 reads. Differentiate `SKIPPED` (no probe)
+  from `UNKNOWN/POISONED` (invalid or timed-out probe); neither should
+  trigger a forced probe or serial reset.
+- Preserve the actual `validityMask` from hardware. `0x2c` expressly
+  does **not** attest SRSP queue-depth/high-water or SRSP-enqueued counts.
+  Never report those invalid counters as zero or treat one successful
+  native read as full radio instrumentation qualification.
+- A managed Z2M host swap needs bounded original-owner release: pinned
+  herdsman 10.9.1 `Controller.stop()` calls `permitJoin(0)`,
+  `backup()` and `adapter.stop()` in sequence; the observed Supervisor
+  stop hung at `Stopping zigbee-herdsman...`. Once graceful stop has been
+  requested and given a bounded window, a **host-process-only** termination
+  can release UART ownership with no radio power-cycle or NV replay.
+  Verify original Docker process is genuinely exited before starting the
+  replacement. If rollback is needed, only re-start original when its
+  actual container is NOT running: unconditional `ha apps start` against
+  a still-running/stopping original caused an unnecessary extra restart.
+- On 23-Oct-2026, installed local diagnostic add-on
+  `local_p7u_r4_native_host` v0.1.0 passed source/image SHA checks and
+  ran as the sole actual Docker UART owner; after the sparse-sampling
+  deadline it was stopped and original `45df7312_zigbee2mqtt` resumed.
+  Preserve existing private history for follow-on comparison. Guard 0.2.3
+  remains warning-only with physical reset disabled.
 - At least **three** consecutive F2 records with `kind=VALID` in private
   `/config/zigbee2mqtt/p7u-b4-diagnostics/history.json`, followed by the
   matching durable `last-good.json`. Samples must originate from the live
