@@ -81,6 +81,18 @@ class SourceGates(unittest.TestCase):
                 profile.apply(Path(temp) / "absent-sdk", "a" * 40, path)
             self.assertEqual(path.read_text(), "sentinel")
 
+    def test_isolated_npi_wake_is_real_and_native_link_required(self):
+        code = (QUALIFICATION / 'r4_transport_only_support.c').read_text()
+        mapping = (QUALIFICATION / 'transport_profile.py').read_text()
+        self.assertIn('"b1_evidence_note_npi_wake": "r4q_note_npi_wake"', mapping)
+        self.assertIn('npi.count("r4q_note_npi_wake();") != 1', mapping)
+        self.assertIn('void r4q_note_npi_wake(void)', code)
+        self.assertIn('++r4q_npi_wakes', code)
+        self.assertIn('Task_getPri(Task_self())', code)
+        self.assertIn('#ifndef R4_TRANSPORT_HOST', code)
+        self.assertIn('r4q_note_npi_wake', native.REQUIRED_FUNCTIONS)
+        self.assertNotIn('b1_management.c', code)
+
     def test_next_trial_boot_beacon_is_diagnostic_only(self):
         body = profile.NPI_TASK_BODY
         self.assertEqual(body.count("NPITask_inititializeTask();"), 1)
@@ -184,6 +196,8 @@ class RealPinnedDonor(unittest.TestCase):
         self.assertNotIn("MT_SYS_OSAL", dispatch)
         self.assertEqual(dispatch.count("case MT_SYS_"), 2)
         self.assertNotIn("b1_management", "".join(changed.values()))
+        self.assertIn("r4q_note_npi_wake();", changed[profile.NPI])
+        self.assertNotIn("b1_evidence_note_npi_wake", changed[profile.NPI])
         self.assertNotIn("b1_startup_", changed[profile.UART])
         self.assertNotIn("params.eventCallback = b1_startup_uart_event", changed[profile.UART])
 

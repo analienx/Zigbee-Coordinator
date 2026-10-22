@@ -214,6 +214,7 @@ def transform(texts: dict[str, str], source_sha: str) -> dict[str, str]:
         '"b1_management.h"': '"r4_transport_only_support.h"',
         "b1_management_transport_failed": "r4q_transport_failed",
         "b1_management_note_npi_initialized": "r4q_note_npi_initialized",
+        "b1_evidence_note_npi_wake": "r4q_note_npi_wake",
         "b1_management_npi_initialized": "r4q_npi_initialized",
         "b1_management_transport_unavailable": "r4q_transport_unavailable",
         "b1_management_note_uart_opened": "r4q_note_uart_opened",
@@ -222,8 +223,11 @@ def transform(texts: dict[str, str], source_sha: str) -> dict[str, str]:
     for old, new in names.items():
         npi, uart = npi.replace(old, new), uart.replace(old, new)
     npi = npi.replace("B1 management supports", "R4 qualification supports")
-    if "b1_management" in npi + uart or "B1_ERROR_" in npi + uart:
+    if ("b1_management" in npi + uart or "B1_ERROR_" in npi + uart
+            or "b1_evidence_" in npi + uart):
         raise ValueError("TRANSPORT_PROFILE_UNEXPECTED_B1_RUNTIME_DEPENDENCY")
+    if npi.count("r4q_note_npi_wake();") != 1:
+        raise ValueError("TRANSPORT_PROFILE_GENUINE_NPI_WAKE_HOOK_MISSING")
     result[NPI], result[UART] = npi, uart
     for name in ("r4_transport_only_support.c", "r4_transport_only_support.h"):
         content = (HERE / name).read_text(encoding="utf-8")

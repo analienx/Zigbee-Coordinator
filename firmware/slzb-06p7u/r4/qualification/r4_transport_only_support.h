@@ -15,6 +15,8 @@ void r4q_transport_failed(uint8_t reason);
 int r4q_transport_unavailable(void);
 void r4q_note_uart_opened(void);
 void r4q_note_npi_initialized(void);
+/* Genuine NPI-owner semaphore wake, not a synthetic status counter. */
+void r4q_note_npi_wake(void);
 int r4q_npi_initialized(void);
 
 #endif
