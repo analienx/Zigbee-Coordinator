@@ -79,6 +79,7 @@ jobs:
           python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
           python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
+          python host/r4-b4/b4_v4_live_collector_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-collector-receipt.json
       - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
         run: |
           set -euo pipefail
@@ -90,6 +91,24 @@ jobs:
           rm node_modules/zigbee-herdsman
           ln -s "$B4_HERDSMAN_ROOT" node_modules/zigbee-herdsman
           pnpm exec tsc --noEmit
+      - name: Inspect real Z2M steady-state lifecycle and bounded sampler admission
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/b4-z2m-host/lib/controller.ts').read_text()
+          assert s.count('this.#b4Operational') >= 7
+          assert 'this.#startAbortController = undefined; // gc' in s
+          assert 'this.#b4Operational = true;' in s
+          assert 'this.#b4Operational = false;' in s
+          assert s.count('!this.#b4Operational') >= 2
+          assert 'P7U_B4_COLLECTOR !== "1"' in s
+          assert 'this.b4ProbeReadOnlyDiagnosticsV4(true)' in s
+          assert 'setTimeout(() => { void this.#b4Sample(); }, delay)' in s
+          assert 'this.#b4Persist(' in s
+          assert 'B4_HISTORY_CORRUPT_NO_OVERWRITE' in s
+          print('PASS: repaired steady-state lifecycle, owner-only timer, fail-closed persistence')
+          PY
+
       - name: Deny any production installation inference
         run: |
           echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
