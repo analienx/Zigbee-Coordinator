@@ -7,7 +7,6 @@ arch:
 startup: application
 boot: manual
 init: false
-watchdog: false
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:zigbee
