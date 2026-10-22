@@ -148,6 +148,8 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx version
+          docker buildx create --name p7u-r4-oci --driver docker-container --use
+          docker buildx inspect --bootstrap
           mkdir -p /tmp/p7u-r4-host-image-artifact
           docker buildx build --platform linux/arm64 \
             --file /tmp/p7u-r4-native-image/Dockerfile \
