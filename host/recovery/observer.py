@@ -59,7 +59,7 @@ class PassiveObserver:
             client.username_pw_set(username, password)
         def on_connect(_client, _userdata, _flags, reason, _properties):
             with self.mutex:
-                self.connected = int(reason) == 0
+                self.connected = getattr(reason, 'value', reason) == 0
             if self.connected:
                 client.subscribe(self.root + "/#", qos=0)
         def on_disconnect(_client, _userdata, _flags, _reason, _properties):
