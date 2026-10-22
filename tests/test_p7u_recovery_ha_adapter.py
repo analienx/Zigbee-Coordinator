@@ -127,7 +127,9 @@ class ObserverTests(unittest.TestCase):
         import observer as mod
         with patch.object(mod,"mqtt",Mod):
             obs.start("broker",1883,"","")
-        class ReasonCode:\n            value = 0\n        fake.on_connect(fake,None,None,ReasonCode(),None)
+        class ReasonCode:
+            value = 0
+        fake.on_connect(fake,None,None,ReasonCode(),None)
         def send(name,retained):
             msg=M()
             msg.topic="zigbee2mqtt/"+name
