@@ -37,6 +37,7 @@ static void b1_evidence_dispatch_end(uint32_t events) {(void)events;}
 static void stackInit(void) {++mac_calls;longjmp(boundary,1);}
 static void OsalPortTimers_registerCleanupEvent(uint8_t id,uint16_t ev) {(void)id;(void)ev;}
 static void Semaphore_pend(void *s,uint32_t timeout) {(void)s;(void)timeout;++sem_calls;}
+static void Semaphore_post(void *s) {(void)s;}
 static uint32_t OsalPort_enterCS(void) {return 0;}
 static void OsalPort_leaveCS(uint32_t key) {(void)key;}
 static uint8_t held, init_status, zgZdoDirectCB, retained_direct_cb;
@@ -102,6 +103,14 @@ BDB_PREAMBLE = r'''
 #define ZDO_INITDEV_RESTORED_NETWORK_STATE 0u
 #define ZDO_INITDEV_NEW_NETWORK_STATE 1u
 #define ZCD_NV_BDBNODEISONANETWORK 0xF5u
+#define B1_ERROR_BDB_UNEXPECTED 0x6Du
+#define B1_M_BDB_BRANCH 2u
+#define B1_M_ZDO_INIT_ENTRY 3u
+#define B1_M_ZDO_INIT_RESULT 4u
+static int b1_retained_attempt_active(void) {return 0;}
+static void b1_startup_fail(uint8_t value) {(void)value;}
+static void b1_evidence_milestone(uint8_t index,uint8_t status) {(void)index;(void)status;}
+static void b1_evidence_set_status(uint8_t slot,uint8_t status) {(void)slot;(void)status;}
 static struct {uint8_t bdbCommissioningMode,bdbNodeIsOnANetwork;} bdbAttributes;
 static struct {uint8_t bdbTCExchangeState,bdbCommissioningState;} bdbCommissioningProcedureState;
 static uint8_t bdb_initialization,bdb_TaskID;
