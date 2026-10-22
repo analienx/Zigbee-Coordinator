@@ -61,6 +61,9 @@ static uint8_t b1_startup_begin(void)
  startup_state=B1_STARTUP_RUNNING;return 1;}
 static void b1_startup_fail(uint8_t code) {(void)code;++failures;startup_state=B1_STARTUP_FAILED;}
 static void b1_management_transport_failed(uint8_t code) {(void)code;held=1;}
+static unsigned observer_priority_raises, observer_priority_restores;
+static void b1_npi_startup_observer_priority(uint8_t elevate)
+{if (elevate) ++observer_priority_raises; else ++observer_priority_restores;}
 static uint8_t b1_startup_state(void) {return startup_state;}
 static int b1_management_get_hold_active(void) {return held;}
 static void b1_startup_note_phase(uint8_t phase,uint8_t status,uint16_t idx)
@@ -96,6 +99,7 @@ static void reset_case(void)
  values[1]=0;values[2]=TRUE;values[3]=0;
  startup_state=B1_STARTUP_IDLE;bdb_calls=response_calls=reads=queued_events=0;
  security_latches=timer_starts=timer_stops=failures=phase_calls=0;response=0xff;
+ observer_priority_raises=observer_priority_restores=0;
  now_ticks=1u;b1_startup_admitted_tick=0u;}
 static void invoke(int success)
 {uint8_t request[]={2,MT_RPC_CMD_SREQ|MT_RPC_SYS_ZDO,0x40,0,0};
@@ -107,6 +111,7 @@ static void wire_eot(void)
 int main(void)
 {
  reset_case();invoke(1);assert(reads==3&&timer_starts==1&&queued_events==0&&bdb_calls==0);
+ assert(observer_priority_raises==1&&observer_priority_restores==0);
  invoke(0);assert(bdb_calls==0&&queued_events==0);
  b1_mt_zdo_retained_startup_event();assert(bdb_calls==0);
  wire_eot();assert(queued_events==1&&bdb_calls==0);
@@ -120,6 +125,7 @@ int main(void)
  held=1;assert(!b1_startup_checkpoint(B1_PHASE_BDB));
  assert(phase_calls==2&&response_calls==0);
  reset_case();timer_fail=1;invoke(0);assert(failures==1&&startup_state==B1_STARTUP_FAILED);
+ assert(observer_priority_raises==0&&observer_priority_restores==0);
  reset_case();held=1;invoke(0);assert(reads==0);
  reset_case();candidate=0;invoke(0);assert(reads==0);
  reset_case();security_valid=0;invoke(0);assert(reads==0);

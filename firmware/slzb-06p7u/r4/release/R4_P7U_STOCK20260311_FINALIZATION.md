@@ -22,6 +22,25 @@ unscoped exception. Native qualification and physical state-9 acceptance
 remain required. Keep the failed installed image's startup attempt consumed;
 preserve its newest persisted counters for any admitted upgrade.
 
+**Post-21e2053 observation correction, 2026-10-22 (source-only):** The first
+retained startup on the flashed marker-fix image returned SRSP success, but
+three B1P1 reads and a later read-only query all timed out. No post-start
+frame was received: the device's phase, configured marker and state 9 are
+**unknown**, not known to have failed at a particular NV operation. TI's
+pinned stack task runs at priority 5 while the original NPI owner runs at
+priority 4. Thus a continuously runnable stack thread can starve even the
+NPI-side RAM-only observer; calling it independent was too strong. A bounded
+correction temporarily raises the **same original NPI task** to priority 6
+only after a validated retained-startup admission and successful expiry-timer
+creation; the actual attested ZDO coordinator transition restores priority 4.
+Failed/blocked startup deliberately leaves the observer schedulable. No
+second serial owner, RTOS task, NV access, network mutation, or automatic
+startup retry is added. This fixes a proven *observability design flaw*,
+**not** the still-unlocated firmware stall: HWI-off loops, faults and broken
+UART transport remain possible. Hosted/source CI and a new native candidate
+are required; the currently flashed image is unchanged. Do not rerun
+one-use flash/startup/capture scripts or claim operational network acceptance.
+
 **Reliability candidate, 2026-10-21:** the `828b1b5` image booted and answered
 ZNP, but an automatic herdsman restore deleted NIB and left startup option 3;
 its subsequent NV HOLD was correct. This revision prevents destructive raw

@@ -91,6 +91,10 @@ __attribute__((noinline)) uint8_t b1_mt_zdo_retained_startup(uint8_t subsystem, 
     b1_startup_fail(B1_ERROR_STARTUP_TX_TIMEOUT);
     return ZFailure;
   }
+  /* The stack task runs at priority 5, while the original NPI task is 4.
+   * Keep the RAM-only observer schedulable if the stack blocks or spins;
+   * the actual ZDO state-9 transition restores the normal NPI priority. */
+  b1_npi_startup_observer_priority(TRUE);
   return ZSuccess; /* Only request admission, never a readiness claim. */
 }
 
@@ -126,7 +130,8 @@ def patch(source: str) -> str:
         "\nextern int b1_nv_runtime_hold_active(void);"
         "\nextern int b1_nv_existing_header_candidate(void);"
         "\nextern int b1_sec_restored_network_validated(void);"
-        "\nextern void b1_security_runtime_hold_latch(void);", 1
+        "\nextern void b1_security_runtime_hold_latch(void);"
+        "\nextern void b1_npi_startup_observer_priority(uint8_t);", 1
     ).replace(BEFORE, AFTER, 1).replace(STARTUP_SIGNATURE, HELPER + STARTUP_SIGNATURE, 1)
 
 
