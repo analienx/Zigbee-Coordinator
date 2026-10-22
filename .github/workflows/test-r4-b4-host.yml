@@ -109,6 +109,60 @@ jobs:
           print('PASS: repaired steady-state lifecycle, owner-only timer, fail-closed persistence')
           PY
 
+      - name: Emit exact-source compiled native-owner candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/b4-z2m-host
+          pnpm exec tsc
+          test -s dist/controller.js
+          test -s dist/extension/otaUpdate.js
+          root=/tmp/p7u-r4-native-image
+          mkdir -p "$root"
+          cp dist/controller.js "$root/z2m-controller.js"
+          cp dist/extension/otaUpdate.js "$root/z2m-otaUpdate.js"
+          cp -a "$B4_HERDSMAN_ROOT/dist" "$root/herdsman-dist"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u-z2m-native-collector.Dockerfile" "$root/Dockerfile"
+          node --check "$root/z2m-controller.js"
+          node --check "$root/z2m-otaUpdate.js"
+          node --check "$root/herdsman-dist/adapter/z-stack/adapter/zStackAdapter.js"
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root=Path('/tmp/p7u-r4-native-image')
+          doc={
+           'schema':'p7u-r4-z2m-host-image-v1',
+           'source_sha':os.environ['B4_SOURCE_SHA'],
+           'image_base_digest':'sha256:97246758dab5099113c5a46fcbc1b9a36968a0eb9fd95ce8df6e2868cc7f533f',
+           'z2m_upstream_sha':'62b02e2aa1997c574223b80c196677b63a25f4a7',
+           'herdsman_upstream_sha':os.environ['HERDSMAN_PIN'],
+           'runtime':'Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1',
+           'default_enabled':False,'hardware_verified':False,'installed':False,
+           'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in sorted(root.rglob('*')) if p.is_file()},
+          }
+          (root/'SOURCE_RECEIPT.json').write_text(json.dumps(doc,indent=2,sort_keys=True)+'\n')
+          PY
+      - name: Build reviewed arm64 host OCI on GitHub runner without startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version
+          mkdir -p /tmp/p7u-r4-host-image-artifact
+          docker buildx build --platform linux/arm64 \
+            --file /tmp/p7u-r4-native-image/Dockerfile \
+            --output type=oci,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            /tmp/p7u-r4-native-image
+          cp /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json /tmp/p7u-r4-host-image-artifact/
+          sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            > /tmp/p7u-r4-host-image-artifact/oci.sha256
+      - name: Publish candidate image for separately authorized rollout
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-r4-z2m-native-image-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-r4-host-image-artifact/
+          if-no-files-found: error
+          compression-level: 0
       - name: Deny any production installation inference
         run: |
           echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
