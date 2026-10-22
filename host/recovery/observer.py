@@ -146,7 +146,12 @@ class PassiveObserver:
                 if total > _MAX_HISTORY_BYTES:
                     raise ValueError("PROCESS_HISTORY_TOO_LARGE")
                 t = timestamp(line)
-                if t is None or t > now + 2 or not _origin(line):
+                if t is None or t > now + 2:
+                    continue
+                # Delivery/echo lines cannot create incidents, but their
+                # timestamps still prove continuous source-log coverage.
+                latest = max(latest, t)
+                if not _origin(line):
                     continue
                 if _BOOT in line:
                     if not self._epoch_known or t != self._epoch_start_at:
@@ -156,7 +161,6 @@ class PassiveObserver:
                     found = True
                 if found and t >= self._epoch_start_at:
                     self._lifecycle(line, t)
-                    latest = max(latest, t)
             if not found:
                 raise ValueError("CURRENT_PROCESS_START_NOT_FOUND")
             if expected_epoch is not None and expected_epoch != self._epoch_start_at:

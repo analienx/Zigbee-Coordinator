@@ -93,6 +93,15 @@ class RadioEvidenceTests(unittest.TestCase):
 
 
 class ProcessEvidenceTests(unittest.TestCase):
+    def test_history_tracks_delivery_line_coverage_without_counting_echo_errors(self):
+        obs = PassiveObserver(last_seen_epoch=True, admission_floor=T)
+        rows = history() + [log(T, "MQTT publish: topic 'zigbee2mqtt/bridge/response/x', payload 'SRSP - AF - dataRequest after 6000ms'")]
+        obs.seed_process_history(iter(rows), T)
+        obs.read_log(rows[-1], T)
+        self.assertFalse(obs.sample(T)["log_gap"])
+        self.assertFalse(obs.sample(T)["ota_unknown"])
+        self.assertEqual(obs.sample(T)["srsp_120s"], 0)
+
     def test_repeated_prefix_is_idempotent(self):
         obs = prepared()
         rx(obs)

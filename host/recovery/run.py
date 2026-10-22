@@ -249,8 +249,10 @@ def service_main():
         if refresh_logs:
             prefix, tail = supervisor.log_window(cfg.addon_slug)
             observer.seed_process_epoch(prefix, time.time())
-            epoch = observer.sample().get("epoch_id")
-            if getattr(observe, "history_epoch", None) != epoch:
+            before = observer.sample()
+            epoch = before.get("epoch_id")
+            if (getattr(observe, "history_epoch", None) != epoch
+                or before.get("log_gap") or before.get("ota_unknown")):
                 if seed_history(observer, prefix, time.time()):
                     observe.history_epoch = epoch
             observer.read_log(tail, time.time())
