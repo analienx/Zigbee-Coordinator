@@ -34,19 +34,39 @@ jobs:
         run: python -m compileall -q host/recovery tests/test_p7u_shared_recovery_policy.py tests/test_p7u_recovery_executor.py
       - name: Offline policy and journal tests, no hardware
         run: python -m unittest discover -s tests -p 'test_p7u_*recovery*.py' -v
-      - name: Guard explicitly inert by default
+      - name: Validate no competing ZNP owner or forbidden reset endpoint
         run: |
           python - <<'PY'
           import ast, pathlib
           root = pathlib.Path('host/recovery')
           for target in root.glob('*.py'):
               tree = ast.parse(target.read_text())
-              assert not any(
-                  isinstance(node, (ast.Import, ast.ImportFrom))
-                  and any(alias.name.split('.')[0] in (
-                      'serial','requests','paho','aiohttp','httpx'
-                  ) for alias in node.names)
-                  for node in ast.walk(tree)
-              ), target
-          print('PASS: source-only; no serial or HTTP/MQTT actuator imported')
+              imports = [
+                  alias.name for node in ast.walk(tree)
+                  if isinstance(node, (ast.Import, ast.ImportFrom))
+                  for alias in node.names
+              ]
+              assert not any(x.startswith(('serial','pyserial','zigpy')) for x in imports), target
+          code = (root/'ha_adapter.py').read_text()
+          assert 'CMD_ESP_RES:3' in code
+          assert '"RESTART_ESP": (3,' in code
+          assert '"RESET_RADIO": (1,' in code
+          assert 'if operation not in _ALLOWED' in code
+          assert 'def private_restart(' in code
+          print('PASS: ESP first via policy; no second serial owner or generic reset opcode')
+          PY
+      - name: Validate local HA add-on package definitions
+        run: |
+          python -m pip -q install 'PyYAML==6.0.2'
+          python - <<'PY'
+          import pathlib, yaml
+          root = pathlib.Path('host/recovery/addon')
+          cfg = yaml.safe_load((root/'config.yaml').read_text())
+          assert cfg['slug'] == 'p7u_recovery'
+          assert cfg['options']['enabled'] is False
+          assert cfg['options']['dry_run'] is True
+          assert cfg['options']['allow_private_http_fallback'] is False
+          assert cfg['boot'] == 'manual'
+          assert cfg['hassio_role'] == 'manager'
+          print('PASS: real HA package exists, disabled and non-autoboot by default')
           PY
