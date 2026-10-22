@@ -158,6 +158,14 @@ jobs:
           cp /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json /tmp/p7u-r4-host-image-artifact/
           sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
             > /tmp/p7u-r4-host-image-artifact/oci.sha256
+      - name: Confirm exported OCI image contains exact compiled source binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host/r4-b4/p7u_native_image_audit.py \
+            --oci /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            --source /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json \
+            --receipt /tmp/p7u-r4-host-image-artifact/OCI_SOURCE_AUDIT.json
       - name: Publish candidate image for separately authorized rollout
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
