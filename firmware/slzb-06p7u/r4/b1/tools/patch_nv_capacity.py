@@ -1,8 +1,9 @@
 """Bounded stock20260311 -> R4 NV table capacity extension.
 
-Only the three structural table tails may be created. The complete stock
-prefix and every already-present tail row must be readable before any write.
-These are physical persisted record widths, not sizeof RAM table objects.
+The complete stock prefix and every already-present tail row must be readable
+before adding the three structural tails. The actual guarded coordinator
+transition may also create its scoped, one-byte configured marker. These are
+physical persisted record widths, not sizeof RAM table objects.
 """
 
 # Pinned stock20260311 capture / TI native profile: (item, old count, new count,
@@ -14,6 +15,7 @@ INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t l
   uint32_t nvLen;
   uint16_t done;
   uint8_t status;
+  uint8_t configuredMarker;
   uint8_t verify[16];
   NVINTF_itemID_t nvId;
   b1_startup_note_nv(0x70u, 1u, id, subId, 0u);
@@ -30,15 +32,23 @@ INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t l
   if (b1_nv_runtime_hold_active()) goto failed;
   if (nvLen == len) return SUCCESS; /* Existing item: never initialize over it. */
   if (nvLen != 0u) goto failed; /* A different ABI is not an empty item. */
-  /* Retained-network init may create ONLY the three native capacity tails.
-   * Never silently commission new legacy/NIB/security records from a missing
-   * original-prefix row, or treat a NULL/default-unknown buffer as safe. */
-  if (!((id == ZCD_NV_EX_ADDRMGR && subId >= 357u && subId < 406u && len == 12u) ||
+  /* The real coordinator transition may publish its single bookkeeping
+   * marker. The scoped capability is closed for every other caller. */
+  configuredMarker = id == 0u && subId == 0x0060u && len == 1u &&
+      buf != NULL && ((const uint8_t *)buf)[0] == 0x55u &&
+      b1_znp_configured_init_authorized();
+  /* All other retained initialization remains limited to native empty tails. */
+  if (!configuredMarker && (!((id == ZCD_NV_EX_ADDRMGR && subId >= 357u && subId < 406u && len == 12u) ||
         (id == ZCD_NV_EX_BINDING_TABLE && subId >= 1u && subId < 4u && len == 14u) ||
         (id == ZCD_NV_EX_DEVICE_LIST && subId >= 51u && subId < 97u && len == 16u)) ||
-      buf == NULL) goto failed;
-  for (done = 0u; done < len; ++done)
-    if (((const uint8_t *)buf)[done] != 0xFFu) goto failed;
+      buf == NULL)) goto failed;
+  if (!configuredMarker)
+    for (done = 0u; done < len; ++done)
+      if (((const uint8_t *)buf)[done] != 0xFFu) goto failed;
+  /* A zero length alone has no status; require independent proven absence. */
+  status = pZStackCfg->nvFps.readItem(nvId, 0u, len, verify);
+  memset(verify, 0, sizeof(verify));
+  if (status != NVINTF_NOTFOUND || b1_nv_runtime_hold_active()) goto failed;
   status = pZStackCfg->nvFps.createItem(nvId, len, buf);
   b1_startup_note_nv(0x70u, 3u, id, subId, status);
   if (status != NVINTF_SUCCESS || b1_nv_runtime_hold_active() ||
@@ -177,6 +187,7 @@ def patch(source: str) -> str:
         'extern int b1_nv_runtime_hold_active(void);\n'
         'extern int b1_nv_existing_header_candidate(void);\n'
         'extern void b1_nv_runtime_hold_latch(void);\n'
+        'extern int b1_znp_configured_init_authorized(void);\n'
         'extern void b1_startup_note_nv(uint8_t stage, uint8_t op, uint16_t item,\n'
         '                                uint16_t sub, uint8_t status);',
         'checked internal NV initialization declarations')

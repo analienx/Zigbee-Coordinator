@@ -55,7 +55,10 @@ static void b1_management_latch(uint8_t flag, uint8_t stage, uint8_t reason)
     b1_network_ready_attested = 0u; /* irreversible fault revokes ready */
     b1_management_flags |= flag;
     if (b1_boot_startup_state != B1_STARTUP_IDLE)
+    {
         b1_boot_startup_state = B1_STARTUP_FAILED;
+        if (b1_startup_first_failure == 0u) b1_startup_first_failure = reason;
+    }
     B1_CS_LEAVE(key);
 }
 

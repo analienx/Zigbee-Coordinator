@@ -274,6 +274,15 @@ PUBLISH_CONFIGURED = r"""/* Koenkk's application marker is bookkeeping, never au
  * Publish it only at the actual restored coordinator transition, after the
  * full security preflight and durable NWK counter reservation have passed.
  * This permits ordinary Herdsman startup without a maintained host fork. */
+static uint8_t b1_configured_init_active;
+__attribute__((noinline))
+int b1_znp_configured_init_authorized(void)
+{
+  return b1_configured_init_active && FrameCounterUpdated &&
+         b1_nv_existing_header_candidate() &&
+         b1_sec_restored_network_validated() && !b1_nv_runtime_hold_active();
+}
+
 __attribute__((noinline))
 static uint8_t b1_znp_publish_configured(void)
 {
@@ -281,13 +290,18 @@ static uint8_t b1_znp_publish_configured(void)
   uint8_t value = 0x55u;
   uint16_t length;
   uint8_t status;
-  if (b1_nv_runtime_hold_active() || !b1_sec_restored_network_validated())
+  if (b1_nv_runtime_hold_active() || !FrameCounterUpdated ||
+      !b1_nv_existing_header_candidate() || !b1_sec_restored_network_validated())
     return FALSE;
   length = osal_nv_item_len(item);
   if (b1_nv_runtime_hold_active()) return FALSE;
   if (length == 0u)
   {
+    /* Scoped internal capability. Raw MT and other initializer callers may
+     * not create legacy records merely by choosing this ID and value. */
+    b1_configured_init_active = TRUE;
     status = osal_nv_item_init(item, sizeof(value), &value);
+    b1_configured_init_active = FALSE;
     if ((status != ZSUCCESS && status != NV_ITEM_UNINIT) ||
         b1_nv_runtime_hold_active()) goto fail;
   }

@@ -34,6 +34,7 @@ static uint16_t fault_item,fault_sub;
 int b1_nv_runtime_hold_active(void) {return held;}
 int b1_nv_existing_header_candidate(void) {return candidate;}
 void b1_nv_runtime_hold_latch(void) {held=1;}
+int b1_znp_configured_init_authorized(void) {return 0;}
 void b1_startup_note_nv(uint8_t stage,uint8_t op,uint16_t item,uint16_t sub,uint8_t status)
 {assert(stage==0x70&&op>=1&&op<=4);(void)item;(void)sub;(void)status;}
 static uint32_t item_len(NVINTF_itemID_t id)

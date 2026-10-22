@@ -4,6 +4,24 @@ Target: the single SLZB-06P7U R1.73 / CC2652P7, with the retained107-device
 network. This supersedes historical A6000/direct-ROM APP-only instructions.
 It grants no hardware access, BSL entry, flash, reset or production start.
 
+**Current incident, 2026-10-22:** installed source `e298709` returned the
+retained-startup SRSP but failed before state 9. Its independent B1P1 snapshot
+reported FAILED, phase 13 NETWORK_START, NV operation item 0/subindex 96,
+status 10. The real coordinator-transition publisher initializes legacy
+marker `0x60=0x55`, which maps to exactly that extended-NV item/subindex.
+The tails-only initializer rejected the missing marker and latched HOLD.
+
+The correction permits that exact one-byte creation only while the internal
+publisher holds a scoped capability, with retained NV, validated security and
+durable NWK counter reservation. It independently proves absence and verifies
+the created bytes; arbitrary legacy/security creation remains blocked. HOLD
+now records a nonzero first startup failure. Hosted coverage composes the
+actual publisher, legacy wrapper and extended initializer, with production B1
+state, including controls that recreate the old rejection and reject an
+unscoped exception. Native qualification and physical state-9 acceptance
+remain required. Keep the failed installed image's startup attempt consumed;
+preserve its newest persisted counters for any admitted upgrade.
+
 **Reliability candidate, 2026-10-21:** the `828b1b5` image booted and answered
 ZNP, but an automatic herdsman restore deleted NIB and left startup option 3;
 its subsequent NV HOLD was correct. This revision prevents destructive raw

@@ -18,6 +18,7 @@ REQUIRED_FUNCTIONS = (
     "b1_nv_existing_header_candidate", "ZMacDataReqSec", "ZMacSendNoData",
     "ZDApp_RestoreNwkKey", "ZDApp_RestoreNwkSecMaterial",
     "b1_mt_zdo_retained_startup", "b1_bdb_restore_failed", "b1_znp_publish_configured",
+    "b1_znp_configured_init_authorized",
 )
 NV4_REQUIRED_FUNCTIONS = tuple(
     name for name in REQUIRED_FUNCTIONS if name != "b1_nv_probe"

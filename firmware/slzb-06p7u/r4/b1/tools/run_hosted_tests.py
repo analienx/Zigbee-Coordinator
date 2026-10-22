@@ -196,6 +196,25 @@ def main():
         for scenario in scenarios:
             positive(binary, scenario)
 
+    # Exercise the real caller and callee together: the old tails-only
+    # initializer rejected the publisher's missing 0x60 marker before state 9.
+    marker_source = work / "actual_configured_marker_integration.c"
+    run([sys.executable, b1 / "tools/make_configured_marker_integration_harness.py",
+         "--sdk", sdk, "--output", marker_source], check=True)
+    marker_binary = compile_c(marker_source, "configured_marker_integration",
+                              admission=False, management=True)
+    for scenario in ("missing", "existing", "unconfigured", "bad_length",
+                     "create_error", "bad_readback", "absence_error", "unauthorized"):
+        positive(marker_binary, (scenario,))
+    mutation(marker_source,
+             "      b1_znp_configured_init_authorized();", "      0;",
+             "mutant_configured_marker_tails_only", "devState==DEV_ZB_COORD",
+             ("missing",), admission=False, management=True)
+    mutation(marker_source,
+             "      b1_znp_configured_init_authorized();", "      1;",
+             "mutant_configured_marker_unscoped", "osal_nv_item_init_ex(0,0x60,1,&value)==NV_OPER_FAILED",
+             ("unauthorized",), admission=False, management=True)
+
     # Narrow pinned-C boundary check for key-rotation refusal and nonvirgin
     # coordinator NV counter-reset protection; no device or radio involved.
     rotation_source = work / "actual_nwk_rotation_guard.c"

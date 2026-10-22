@@ -168,7 +168,9 @@ def main():
     if "b1_management_note_zdo_state" not in body:
         raise RuntimeError("B1_N30_UNLINKED_ZDO_READY_OBSERVATION")
     publisher=extract_function(source,"static uint8_t b1_znp_publish_configured(void)")
-    a.output.write_text(PREAMBLE+publisher+body+MAIN,encoding='utf-8')
+    authorizer=extract_function(source,"int b1_znp_configured_init_authorized(void)")
+    a.output.write_text(PREAMBLE+'static uint8_t b1_configured_init_active;\n'+
+                        authorizer+publisher+body+MAIN,encoding='utf-8')
     print("B1_N30_ACTUAL_ZDO_CHANGE_STATE_EXTRACTED")
 
 

@@ -511,6 +511,7 @@ def overlay(sdk, b1_dir):
             # sealed by nv4_b1_bridge.py when the NV4 scanner is linked.
             "b1_management_note_zdo_state", "b1_sec_restored_network_validated",
             "ZDApp_ChangeState", "b1_mt_nv_mutation_guard", "b1_znp_publish_configured",
+            "b1_znp_configured_init_authorized",
             *(["b1_mt_zdo_retained_startup"] if mt_zdo is not None else []),
             *(["b1_bdb_restore_failed"] if bdb is not None else [])],
         "retained_raw_mt_nv_mutations": "DENY_EXCEPT_EXACT_IDEMPOTENT_LEGACY_WRITE_WITHOUT_NV_WRITE",
