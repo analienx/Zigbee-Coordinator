@@ -54,17 +54,18 @@ class Tests(unittest.TestCase):
             (f.root/("shadow-"+"b"*32+".intent.json")).write_text("{}")
             state=State(phase="CAPTURE_PENDING",incident_id="b"*32,
                 incident_since=1800000000,stage_since=1800000000)
-            self.assertFalse(f.incident(state,Observation(utc=1800000020)))
+            self.assertFalse(f.incident(state,Observation(utc=1800000020,addon="error")))
             self.assertEqual(s.calls,0)
 
     def test_bounded_history_and_invalid_data_fail_closed(self):
         with TemporaryDirectory() as tmp:
             f=PassiveForensics(Path(tmp),FakeSupervisor(),"z2m")
             base={"epoch_id":"one","srsp_120s":0}
-            for i in range(MAX_ROWS+2):
-                f.record({**base,"utc":1800000000+i})
+            with patch("forensics.MAX_ROWS",5):
+                for i in range(7):
+                    f.record({**base,"utc":1800000000+i})
             doc=json.loads(f.history.read_text())
-            self.assertEqual(len(doc["rows"]),MAX_ROWS)
+            self.assertEqual(len(doc["rows"]),5)
             f.history.write_text("{}")
             with self.assertRaises(ValueError):
                 f.record({**base,"utc":1800009999})
