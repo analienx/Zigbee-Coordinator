@@ -150,3 +150,146 @@ current stock direct-boot and power settings rather than applying the obsolete
 
 **Verdict: `NV4_B1_TI_READONLY_INIT_PASS`; `NV4_FULL_ZNP_NATIVE_CI_PASS`;
 `FULL_STACK_PHYSICAL_STARTUP_UNTESTED`.**
+
+## 19 October source-only admission hardening (partial T3)
+
+The NV4 pre-init reader now rejects the two reserved values of TI's page
+`allActive` indicator (only `ALLACTIVE=3` and `SOMEINACTIVE=0` are legal in
+the pinned donor). It also refuses to classify a CRC-valid store containing
+only active records outside the fitted P7U's Z-Stack system-ID namespace (1)
+as an existing-network structural candidate. Such a store returns the new
+`R4_NV4_NO_ZSTACK_RECORDS` status, mapped to B1's sticky unknown-layout
+HOLD. The synthetic harness includes reserved-bit, blank, inactive-only,
+foreign-only and mixed-namespace controls.
+
+**This remains a structural preflight, not a formed-network classifier.**
+Presence of a Z-Stack record does not prove a BDB on-network flag, NIB,
+network identity, Trust Center contents, APS/NWK key material or counter
+monotonicity. In particular, factory-new P7U captures with 366 live NV
+records must not be reported as formed. The B1 later security precheck is a
+separate fail-closed gate, and full pinned-source T3/physical behavior remain
+open. These additions neither use private NV bytes nor authorize flash.
+
+## 19 October pinned-Z-Stack marker classification (partial T3 follow-up)
+
+The independent NV4 reader now distinguishes **structural validity** from
+**semantic candidacy**. A CRC-valid item store still returns structural code
+`R4_NV4_READONLY_STRUCTURE_ACCEPTED` (8), but the native B1 bridge does not
+advance to its security precheck unless the separate `semantic_state` is
+`UNCOMMISSIONED_CANDIDATE` (1) or `FORMED_CANDIDATE` (2). Every other semantic
+state is an explicit sticky HOLD, even with otherwise valid pages and CRCs.
+
+The classifier uses the immutable TI 8.33 source at SDK revision
+`3615ad5d3f4f271258d18a2f5ce1785064ff9a58`: `osal_nv.c` encodes OSAL
+legacy data in Z-Stack system namespace 1, legacy extended item 0, sub-ID
+equal to the original OSAL NV ID. The pinned `zcomdef.h` defines coordinator
+`logicalType` as sub-ID `0x87`, `bdbNodeIsOnANetwork` as `0x55`, and NIB as
+`0x21`; `zglobals.h` defines coordinator role as 0. CRC validation streams
+stored payloads through an existing bounded 64-byte transient buffer; only
+the one-byte BDB and role values are separately retained in *semantic marker*
+scratch. The NIB is checked for *presence only*: its contents, address, keys
+and counters are not decoded into markers or emitted in diagnostics/logs.
+Marker bytes are taken from the same read validated by CRC, not re-read
+afterwards; an adversarial callback test enforces this TOCTOU boundary.
+
+| Candidate | Role marker | BDB marker | Live NIB |
+|---|---|---|---|
+| Uncommissioned | present, coordinator 0 | present, false 0 | absent |
+| Formed | present, coordinator 0 | present, true 1 | present |
+| **HOLD** | missing, malformed or noncoordinator | missing, invalid or contradictory | any |
+
+The previously observed stock P7U pair fits the *uncommissioned* marker
+combination. An arbitrary CRC-valid record, an absent marker, BDB=1 without
+NIB, BDB=0 with NIB, noncoordinator role or a malformed one-byte value
+cannot substitute for it. Public tests exercise all such cases with purely
+synthetic records, plus a post-B1 genuine TI host-clone HOLD-before-init
+assertion. The prior source-only test runs pass locally; the native cloned
+tests require the exact pinned TI/overlay inputs in hosted CI.
+
+**Limit:** these are candidates, not security or physical-release proofs.
+Neither candidate validates network identity, NV key material, TC counter
+monotonicity, ABI compatibility, ZDO-ready boot, or actual RF operation.
+Both still traverse B1's separate native security gate. The main T3 finding
+and device-side validation therefore remain open; no NV write, compaction,
+flash, merge or commissioning is authorized by this classifier.
+
+## 19 October exact-TI four-page NOR power-cut matrix (partial T4)
+
+The earlier two-page N24 power-cut test did not cover the multipage TI
+`NVOCMP_compactPage()` implementation selected when `NVOCMP_NVPAGES=4`.
+`nv4_powercut_ti_host_clone.py` now extracts the **unchanged** four-page
+`NVOCMP_compactPage()`, `NVOCMP_compact()` and `NVOCMP_findSignature()` from
+the SHA-pinned TI 8.33.00.16 vendor source. Its host-only NVS simulator
+implements NOR one-way programming and sector erase in disposable RAM.
+It replays a public synthetic, uncommissioned coordinator layout and cuts
+power at **every committed-byte boundary of every NVS_write and NVS_erase**
+performed by genuine TI compaction (including zero/all bytes). No actual
+flash, device, RF, key material or private capture participates.
+
+The test first exposed a missed *settled* TI page geometry: following
+`NVOCMP_cleanPage()`, TI fully erases source sectors and then **reformats**
+them with a signed `PGNACT=0xff` page header and blank item region. A normal
+complete compaction can thus have `1 PGACT + 1 PGXDST + 2 PGNACT`, whereas
+the independent preflight previously recognized only `1 PGACT + 1 PGXDST +
+2 PGFULL`. The preflight now permits a formatted `PGNACT` only if all
+signatures and bounded header fields are sound, its compaction state is
+normal, its logical end is erased, and **every byte** of its data region
+is blank. A physically raw/unformatted page, partially damaged page header,
+stale payload or in-progress `PGXSRC`/`PGCDST` still HOLDS.
+
+Pinned-source local result for this **one synthetic compacting workload**:
+
+| Genuine TI NV4 compaction | Result |
+|---|---:|
+| Program/erase operations in uninterrupted pass | 26 |
+| Distinct interrupted-byte-boundary media images | 24,703 |
+| Independent preflight HOLD | 24,701 |
+| Settled semantic candidates | 2 |
+| Candidate cases verified by TI `NORMAL_RESUME` with no write/erase | 2 |
+| Device flash authorized | **No** |
+
+The independent scanner never invokes a write or erasure; its candidate
+cases reproduce TI native initialization in read-only mode with the same
+three CRC-authenticated live synthetic items. The test is reproducible by
+`tests/test_r4_nv4_powercut_ti_host_clone.py` and the pinned-source
+`.github/workflows/test-r4-stock-nv4-source.yml` workflow. The post-B1
+exact-source clone also exercises the newly admitted formatted-inactive
+geometry.
+
+**Limits:** byte-boundary enumeration over one source-backed synthetic
+workload is not a proof for all ring layouts, item populations, scheduler
+interleavings, controller reset physics or NV transaction histories.
+In particular it says **nothing about APS/NWK/Trust Center frame-counter
+monotonicity** across successful commits and reset/rejoin, and does not
+establish an existing formed-network migration. R4-R03/T4 and T5 remain
+open pending wider invariants and counter-durability verification. The
+physical/RF/release gates remain unchanged.
+
+## 19 October T5 persisted-reservation ordering, still partial
+
+The stock read-only inventory found **300 preallocated Trust Center rows**,
+but that count is not a native linked TC300/RAM-capacity seal. The new
+`make_t5_security_harness.py` extracts **the actual B1-patched, pinned TI
+`zd_sec_mgr.c` functions** into a deliberately synthetic 300-entry OSAL
+backend. It executes four distinct active key identities at TCLK indices
+**0, 255, 256 and 299**, on both sides of the one-byte index boundary.
+
+Each scenario asserts that a failed row write or corrupted readback latches
+HOLD, no failed/future counter is published into runtime RAM, and already
+committed earlier rows are not rolled back. A hard simulated power cut
+**after complete row storage but before return/readback/RAM publication**
+is replayed with volatile state cleared: the next complete preflight and
+reservation advances beyond the persisted floor. The same check covers an
+APS post-commit/pre-publication crash. Original synthetic seed, NWK key,
+coordinator PAN identity and Trust Center address remain unchanged. Two
+compiled malicious mutations must fail: 8-bit TCLK loop index (wrap at 256),
+and RAM counter publication before checkpoint success. See
+`tests/test_r4_t5_security_reservations.py` and the pinned-source workflow.
+
+**This models OSAL item success/failure and complete-item post-commit cuts,
+not torn NOR bytes or vendor `NVOCMP_writeItem` atomicity.** It does not
+show that the actual native linked coordinator allocates all 300 rows,
+that per-key transmission sites enforce the checkpoint floor, or that any
+physical RF frame counter is monotonic. The T5/T6 and full R4-R04/R05 gates
+remain open. The four-page NOR compaction cuts above are complementary,
+not a substitute for the missing end-to-end integration.

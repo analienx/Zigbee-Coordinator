@@ -17,6 +17,7 @@ from pathlib import Path
 
 TI_SHA="3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
 B2_SHA="d13a48f5226d42e247a17d9198d84c94a4415030"
+B2_FAILURE_SHA="530a52631fbde274a2ae356c490bad71b47168a6"
 B4_SHA="3231abb1f13210eb88afe13ff7b7f9f29709cd6b"
 ZDO="source/ti/zstack/stack/zdo/zd_app.c"
 NVO="source/ti/common/nv/nvocmp.c"
@@ -46,13 +47,13 @@ def extract(text,signature):
             if depth==0:return text[start:idx+1]
     raise ValueError("UNBALANCED_C_SOURCE "+signature)
 
-def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sha,b4sha):
+def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script,b4v4script,b2sha,b2failuresha,b4sha):
     sdk=sdk.resolve()
     if not str(sdk).startswith("/tmp/") or not (sdk/".git").exists():
         raise ValueError("ONLY_HOSTED_DISPOSABLE_TI_SOURCE")
     if subprocess.check_output(["git","-C",str(sdk),"rev-parse","HEAD"],text=True).strip()!=TI_SHA:
         raise ValueError("SDK_SHA_DRIFT")
-    if b2sha!=B2_SHA or b4sha!=B4_SHA:
+    if b2sha!=B2_SHA or b2failuresha!=B2_FAILURE_SHA or b4sha!=B4_SHA:
         raise ValueError("SIBLING_COMMIT_PIN_DRIFT")
     prior=json.loads(fusionreceipt.read_text())
     b1=json.loads(b1receipt.read_text())
@@ -64,6 +65,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
     if (getattr(b2,"SDK_SHA",None)!=TI_SHA or
         "source_is_candidate_only" not in b2script.read_text()):
         raise ValueError("B2_MTO_ACTUAL_DONOR_SCRIPT_DRIFT")
+    b2failure=load("r4_immutable_b2_failure_guard",b2failurescript)
+    if (getattr(b2failure,"SDK_SHA",None)!=TI_SHA or
+        getattr(b2failure,"ZDAPP",None)!=ZDO or
+        getattr(b2failure,"ZDAPP_BLOB",None)!="d67a7798a3e6a8681faddebf5e4b87b4b4c60421" or
+        getattr(b2failure,"FAILURE_SIGNATURE",None)!="void ZDO_ManytoOneFailureIndicationCB()" or
+        "RTG_MTORouteReq();" not in b2failure.FAILURE_AFTER or
+        "zgConcentratorEnable != TRUE" not in b2failure.FAILURE_AFTER or
+        "devState != DEV_ZB_COORD && devState != DEV_ROUTER" not in b2failure.FAILURE_AFTER):
+        raise ValueError("B2_FAILURE_GUARD_PINNED_SOURCE_DRIFT")
     current=(sdk/ZDO).read_text()
     if hashlib.sha256(current.encode()).hexdigest()!=b1.get("modified_zdapp_sha256"):
         raise ValueError("B1_B3_ZDO_PREIMAGE_HASH_DRIFT")
@@ -78,15 +88,22 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         "OsalPortTimers_stopTimer" not in new):
         raise ValueError("B2_FAIL_CLOSED_MTO_GUARDS_MISSING")
     patched=replace_once(current,old,new,"B2_MTO_FUSED_APP")
+    # Keep TI's binary RTG engine and 1000ms limiter intact. Only reject
+    # stale MTO failure callbacks while MTO is inactive or the node unformed.
+    old_failure=extract(patched,b2failure.FAILURE_SIGNATURE)
+    if old_failure!=b2failure.FAILURE_BEFORE:
+        raise ValueError("B2_MTO_FAILURE_CALLBACK_PREIMAGE_DRIFT")
+    patched=replace_once(patched,b2failure.FAILURE_BEFORE,
+                         b2failure.FAILURE_AFTER,"B2_MTO_FAILURE_GUARD")
     (sdk/ZDO).write_text(patched,encoding="utf-8",newline="")
 
-    # B4 v3's standalone script requires pristine TI NPI_TASK/UART.
-    # Those TWO inputs are legitimately B1-modified. Permit them ONLY
-    # when exact B1 overlay receipts attest their exact byte digests.
-    # All other B4 donor files still require strict pristine TI bytes.
+    # B4 v3 expects pristine TI NPI_TASK/UART/MT_SYS. These THREE
+    # files are legitimately B1-modified (the MT restore-read gate and
+    # Z-Stack identity live in MT_SYS). Permit only the exact B1 receipt
+    # fingerprints; all other B4 donor files remain pinned to pristine TI.
     bindings=b1.get("additional_source_bindings",{})
     expected={}
-    for name in (TASK,UART):
+    for name in (TASK,UART,SYS):
         keys=[key for key,val in bindings.items() if val==name]
         if len(keys)!=1:raise ValueError("B1_NPI_SOURCE_RECEIPT_AMBIGUOUS "+name)
         v=b1.get(keys[0])
@@ -104,11 +121,51 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         elif actual != pristine:
             raise ValueError("source modified before B4 overlay: " + path)'''
     v3source=replace_once(v3source,old_check,new_check,"B4_B1_VERIFIED_PREIMAGE_RULE")
+    # B1 and B4 intentionally use the SAME physical UART2 handle and EOT
+    # event. The immutable standalone B4 script rejects all previous owners.
+    # Here the B1 receipt sealed the exact already-owned preimage; allow only
+    # that owner and chain its callback AFTER B4 leaves its critical section.
+    b4_subscription_guard = (
+        '    if "params.eventCallback" in uart or "params.eventMask" in uart:\n'
+        '        raise ValueError("existing UART event subscriber: do not replace ownership")'
+    )
+    reconciled_guard = (
+        '    if (uart.count("params.eventCallback = b1_startup_uart_event;") != 1 or\n'
+        '            uart.count("params.eventMask |= UART2_EVENT_TX_FINISHED;") != 1 or\n'
+        '            uart.count("static void b1_startup_uart_event(UART2_Handle handle,") != 1 or\n'
+        '            uart.count("if (event & UART2_EVENT_TX_FINISHED) b1_startup_tx_eot();") != 1):\n'
+        '        raise ValueError("unknown UART event owner: retain fail-closed policy")'
+    )
+    v3source=replace_once(v3source,b4_subscription_guard,reconciled_guard,
+                          "B1_EXACT_UART_CALLBACK_OWNERSHIP")
+    b4_callback_tail = (
+        '        OsalPort_leaveCS(key);\n'
+        '    }\n'
+        '}\n\n'
+        '""" + callback_anchor, 1)'
+    )
+    chained_callback_tail = (
+        '        OsalPort_leaveCS(key);\n'
+        '        /* B1 startup is notified only AFTER B4 releases the UART CS. */\n'
+        '        b1_startup_uart_event(handle, event, data, userArg);\n'
+        '    }\n'
+        '}\n\n'
+        '""" + callback_anchor, 1)'
+    )
+    v3source=replace_once(v3source,b4_callback_tail,chained_callback_tail,
+                          "B4_TO_B1_SINGLE_UART_EOT_FANOUT")
     v3source="B1_NPI_PRIOR_HASHES = "+repr(expected)+"\n"+v3source
     v3local=baseline/"b4_v3_exact_b1_reconciled.py"
     v3local.write_text(v3source,encoding="utf-8")
     v3=load("r4_reviewed_b4_v3_reconciled",v3local)
     native_v3=v3.apply(sdk)
+    # Re-read the actual composed C, not the Python patch recipe. Exactly one
+    # UART2 event subscriber is active and its callback must fan out to B1.
+    combined_uart=(sdk/UART).read_text(encoding="utf-8")
+    if (combined_uart.count("params.eventCallback = B4_NpiUartTxFinishedCallback;") != 1 or
+        combined_uart.count("b1_startup_uart_event(handle, event, data, userArg);") != 1 or
+        combined_uart.count("uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);") != 1):
+        raise ValueError("B1_B4_UART_SINGLE_OWNER_FANOUT_NOT_PROVEN")
     v4=load("r4_immutable_b4_v4",b4v4script)
     native_v4=v4.apply(sdk)
 
@@ -143,11 +200,12 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         afterhash[name]=hashlib.sha256((sdk/name).read_bytes()).hexdigest()
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
-    for name in (TASK,UART):
+    for name in (TASK,UART,SYS):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
+    b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
     b1["b4_pinned_commit"]=B4_SHA
     b1receipt.write_text(json.dumps(b1,indent=2,sort_keys=True)+"\n")
     return {
@@ -155,11 +213,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
         "b0_ti_sdk_sha":TI_SHA,
         "prior_fusion_b3_sha":prior["b3_input_sha"],
         "b2_source_sha":B2_SHA,"b4_source_sha":B4_SHA,
+        "b2_mto_failure_guard_source_sha":B2_FAILURE_SHA,
         "b2_mto_nv_reads_failclosed":True,
+        "b2_mto_failure_guard":"ONLY_ACTIVE_FORMED_CONCENTRATOR",
+        "b2_added_retry_throttle":False,
         "b2_p1_capacities":"REQUIRES_SEPARATE_CC_OPTS_STAGE",
         "b4_v3_patch_evidence":native_v3,
         "b4_v4_patch_evidence":native_v4,
         "b1_f1_and_b4_f0_f2_dispatch":True,
+        "b1_b4_uart_single_owner_tx_finished_fanout":True,
         "b1_f2_hold_exception_enabled_for_disposable_composite":True,
         "source_modified_sha256":afterhash,
         "b1_prior_source_sha256":beforehash,
@@ -173,14 +235,16 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b4v3script,b4v4script,b2sh
 
 def main():
     p=argparse.ArgumentParser()
-    for name in ("sdk","baseline","b1-receipt","fusion-receipt","b2-script","b4-v3-script","b4-v4-script","receipt"):
+    for name in ("sdk","baseline","b1-receipt","fusion-receipt","b2-script","b2-failure-script","b4-v3-script","b4-v4-script","receipt"):
         p.add_argument("--"+name,required=True,type=Path)
     p.add_argument("--b2-sha",required=True)
+    p.add_argument("--b2-failure-sha",required=True)
     p.add_argument("--b4-sha",required=True)
     a=p.parse_args()
     a.baseline.mkdir(parents=True,exist_ok=True)
     result=run(a.sdk,a.baseline,a.b1_receipt,a.fusion_receipt,a.b2_script,
-               a.b4_v3_script,a.b4_v4_script,a.b2_sha,a.b4_sha)
+               a.b2_failure_script,a.b4_v3_script,a.b4_v4_script,
+               a.b2_sha,a.b2_failure_sha,a.b4_sha)
     a.receipt.write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
     print(json.dumps({"status":"COMPOSED_SOURCE_NEEDS_NATIVE_AND_PHYSICAL_PROOF",
                       "source_ready":False,"flash_authorized":False},sort_keys=True))

@@ -1,11 +1,17 @@
-name: P7U existing-network NV4 full ZNP native (NO FLASH)
+name: HISTORICAL P7U 20240716 NV4 ZNP native (AUDIT ONLY, NO FLASH)
 
 on:
   pull_request:
     paths:
       - '.github/workflows/test-r4-stock-nv4-native.yml'
       - 'firmware/slzb-06p7u/r4/qualification/nv4*'
+      - 'firmware/slzb-06p7u/r4/qualification/board_profile.py'
+      - 'firmware/slzb-06p7u/r4/qualification/vendor_stock.py'
+      - 'firmware/slzb-06p7u/r4/qualification/vendor-stock-20240716.json'
+      - 'firmware/slzb-06p7u/r4/b0/tools/**'
+      - 'firmware/slzb-06p7u/r4/b1/tools/**'
       - 'tests/test_r4_nv4_native_gate.py'
+      - 'tests/test_r4_workflow_gate_deps.py'
   workflow_dispatch:
 
 permissions:
@@ -21,7 +27,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Test independently audited image gate
-        run: python -m unittest -v tests.test_r4_nv4_native_gate
+        run: python -m unittest -v tests.test_r4_nv4_native_gate tests.test_r4_workflow_gate_deps
       - name: Restore checksum-pinned TI installers
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -96,9 +102,10 @@ jobs:
             2>&1 | tee -a /tmp/nv4out/build.log
           project=/tmp/nv4ws/znp_LP_CC1352P7_4_tirtos7_ticlang
           test -f "$project/znp.syscfg"
-          # CURRENT fitted stock after 18-Oct stock return is 20240716,
-          # direct-ROM CCFG at vector 0, NOT the superseded 20240710 DCDC
-          # setting or the old 0xAC000 resident-loader state.
+          # HISTORICAL SOURCE ONLY. The actual same-board 20260311 stock
+          # capture has IMAGE_VALID=0xAC000, resident boot at 0xAC000,
+          # and restored NV4 beginning at 0xA4000. This legacy 20240716
+          # vector-zero/A6000 build must NEVER be flashed to that device.
           python - "$project/znp.syscfg" <<'PY'
           from pathlib import Path
           import sys

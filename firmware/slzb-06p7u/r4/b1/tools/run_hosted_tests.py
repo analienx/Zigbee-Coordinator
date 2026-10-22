@@ -12,9 +12,11 @@ import subprocess
 import sys
 import urllib.request
 
-from apply_b1 import overlay, HERDSMAN_FILE
+from apply_b1 import overlay, HERDSMAN_FILE, SDK_MT_VERSION
 from patch_management import PINS, EXTRA_PINS, HERDSMAN_PIN, HERDSMAN_PATH
 from make_security_harness import SCENARIOS as SECURITY_SCENARIOS, MUTANTS as SECURITY_MUTANTS
+from make_host_api_harness import SCENARIOS as HOST_API_SCENARIOS
+from make_nwk_host_api_harness import SCENARIOS as NWK_HOST_API_SCENARIOS
 from make_management_harness import SCENARIOS as MANAGEMENT_SCENARIOS
 from make_boot_harness import SCENARIOS as BOOT_SCENARIOS
 
@@ -29,6 +31,14 @@ SOURCE_PATHS = (
     "source/ti/common/nv/crc.c",
     "source/ti/zstack/startup/zstackstartup.c",
     "source/ti/zstack/osal/osal_nv.c",
+    "source/ti/zstack/stack/api/zstacktask.c",
+    SDK_MT_VERSION,  # do not shift existing SOURCE_PATHS harness indices
+    "source/ti/zstack/mt/mt_zdo.c",
+    "source/ti/zstack/stack/bdb/bdb.c",
+    "source/ti/common/nv/nvintf.h",
+    "source/ti/zstack/mt/mt_app_config.c",
+    "source/ti/zstack/stack/zdo/zd_object.c",
+    "source/ti/zstack/zmac/f8w/zmac_cb.c",  # exact MAC confirmation blob, append only
 )
 
 
@@ -65,7 +75,27 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     sdk = work / "sdk"
     fetch_sources(sdk)
+    pristine_nv = work / "pristine-nvocmp.c"
+    pristine_nv.write_bytes((sdk / SOURCE_PATHS[0]).read_bytes())
     receipt = overlay(sdk, b1)
+    # Fail if the alternative BDB commissioning handler still bypasses
+    # guarded one-attempt retained startup; native links both MT components.
+    app_cnf = (sdk / "source/ti/zstack/mt/mt_app_config.c").read_text(encoding="utf-8")
+    if "b1_mt_zdo_retained_startup(0x6fu, cmdId)" not in app_cnf or \
+            "if (*pBuf == 0u)" not in app_cnf or \
+            "!b1_management_network_ready()" not in app_cnf:
+        raise RuntimeError("APP_CNF_BYPASSES_COMMON_RETAINED_STARTUP")
+    receipt["app_cnf_guarded_retained_entry"] = True
+    # Zigbee2MQTT/Herdsman uses extended NV for security tables and backups.
+    # TI disables these dispatch cases unless FEATURE_NVEXID is enabled.
+    mt_sys = (sdk / "source/ti/zstack/mt/mt_sys.c").read_text(encoding="utf-8")
+    flag = "#define FEATURE_NVEXID 1"
+    dispatch = "case MT_SYS_NV_LENGTH:"
+    if (mt_sys.count(flag) != 1 or mt_sys.find(flag) > mt_sys.find(dispatch) or
+            "case MT_SYS_NV_READ:" not in mt_sys or
+            "B1_RETAINED_MT_NV_GUARD" not in mt_sys):
+        raise RuntimeError("B1_EXTENDED_NV_READ_DISPATCH_MISSING_OR_UNGUARDED")
+    receipt["extended_nv_read_dispatch_enabled"] = True
     source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True).strip()
     if source_sha != os.environ["B1_SOURCE_SHA"]:
@@ -117,22 +147,45 @@ def main():
                         "intended_failure": evidence,
                         "generated_c_sha256": hashlib.sha256(mutated.read_bytes()).hexdigest()})
 
+    environment.update(R4_TI_NVOCMP_SOURCE=str(pristine_nv),
+                       R4_TI_CRC_SOURCE=str(sdk / SOURCE_PATHS[6]),
+                       R4_TI_NVINTF_SOURCE=str(sdk / "source/ti/common/nv/nvintf.h"))
+    run([sys.executable, "-m", "unittest", "-v", "tests.test_r4_nv4_startup_replay"], check=True)
+    results.append({"test":"genuine_ti_nv4_startup_append_replay", "result":"PASS",
+                    "classification":"HOSTED_SYNTHETIC_NOT_RF"})
+
     positive(compile_c(b1 / "tests/test_admission.c", "admission"))
     harnesses = (
         ("nvocmp_init", "make_nvocmp_init_harness.py", SOURCE_PATHS[0], ((),)),
         ("zmac", "make_zmac_harness.py", SOURCE_PATHS[2], ((),)),
         ("zdapp", "make_zdapp_harness.py", SOURCE_PATHS[3], tuple((name,) for name in (
-            "new_empty", "positive", "two_reboots", "generic", "missing_key", "zero_key",
+            "new_empty", "positive", "two_reboots", "generic", "duplicate_counter_floor",
+            "duplicate_after_blank", "orphan_counter", "malformed_restored_pan",
+            "missing_key", "zero_key",
             "missing_row", "overflow", "write_fail", "readback", "read_fail",
-            "wrong_generic_identity"))),
+            "wrong_generic_identity", "store_new", "store_later_match",
+            "store_duplicate", "store_full_foreign", "store_generic_floor",
+            "store_write_fail", "store_read_fail", "store_corrupt_readback",
+            "store_nonzero_blank"))),
         ("security", "make_security_harness.py", SOURCE_PATHS[4],
          tuple((name,) for name in SECURITY_SCENARIOS)),
+        ("host_aps_api", "make_host_api_harness.py", SOURCE_PATHS[9],
+         tuple((name,) for name in HOST_API_SCENARIOS)),
+        ("host_nwk_api", "make_nwk_host_api_harness.py", SOURCE_PATHS[9],
+         tuple((name,) for name in NWK_HOST_API_SCENARIOS)),
+        ("retained_mt_nv", "make_mt_nv_retained_harness.py",
+         "source/ti/zstack/mt/mt_sys.c", ((),)),
+        ("retained_mt_zdo", "make_mt_zdo_retained_harness.py",
+         "source/ti/zstack/mt/mt_zdo.c", ((),)),
         ("startup_security", "make_startup_security_harness.py", SOURCE_PATHS[7], ((),)),
         ("network_ready", "make_network_ready_harness.py", SOURCE_PATHS[3],
          tuple((name,) for name in ("healthy", "premature", "no_nv",
              "no_security", "no_counter", "no_mt", "loss_of_coordinator", "loss_then_regain",
-             "after_nv_hold", "after_security_hold", "after_transport_hold"))),
+             "after_nv_hold", "after_security_hold", "after_transport_hold",
+             "marker_missing", "marker_existing", "marker_unconfigured", "marker_length",
+             "marker_write_fail", "marker_readback"))),
         ("osal_nv", "make_osal_nv_harness.py", SOURCE_PATHS[8], ((),)),
+        ("retained_capacity", "make_nv_capacity_harness.py", SOURCE_PATHS[8], ((),)),
     )
     generated = {}
     for name, generator, relative, scenarios in harnesses:
@@ -140,10 +193,77 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              "--source", sdk / relative, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name != "security" and name != "network_ready"),
+        binary = compile_c(source, name, admission=(name not in ("security", "network_ready", "host_aps_api", "host_nwk_api", "retained_mt_nv", "retained_mt_zdo", "retained_capacity")),
                            management=(name == "network_ready"))
         for scenario in scenarios:
             positive(binary, scenario)
+
+    # Compile the exact patched TI stack task dispatcher. Reproduces the
+    # two-bit returned-event deadlock and its same-loop concurrent-post case.
+    dispatcher_source = work / "actual_stack_dispatcher.c"
+    run([sys.executable, b1 / "tools/make_dispatcher_harness.py",
+         "--source", sdk / SOURCE_PATHS[7],
+         "--output", dispatcher_source], check=True)
+    dispatcher_binary = compile_c(dispatcher_source, "stack_dispatcher",
+                                  admission=False)
+    positive(dispatcher_binary, ("returned",))
+    positive(dispatcher_binary, ("concurrent",))
+    positive(dispatcher_binary, ("unchanged",))
+    dispatcher_mutant = work / "mutant_stack_dispatcher.c"
+    run([sys.executable, b1 / "tools/make_dispatcher_harness.py",
+         "--source", sdk / SOURCE_PATHS[7], "--output", dispatcher_mutant,
+         "--mutant"], check=True)
+    mutant_binary = compile_c(dispatcher_mutant, "stack_dispatcher_mutant",
+                              admission=False)
+    mutant_run = run([mutant_binary, "returned"], capture_output=True)
+    if mutant_run.returncode == 0:
+        raise RuntimeError("DISPATCHER_NO_WAKEUP_MUTANT_SURVIVED")
+    results.append({"test": "stack_dispatch_no_repost",
+                    "result": "MUTANT_REJECTED"})
+
+    # Exercise the real caller and callee together: the old tails-only
+    # initializer rejected the publisher's missing 0x60 marker before state 9.
+    marker_source = work / "actual_configured_marker_integration.c"
+    run([sys.executable, b1 / "tools/make_configured_marker_integration_harness.py",
+         "--sdk", sdk, "--output", marker_source], check=True)
+    marker_binary = compile_c(marker_source, "configured_marker_integration",
+                              admission=False, management=True)
+    for scenario in ("missing", "existing", "unconfigured", "bad_length",
+                     "create_error", "bad_readback", "absence_error", "unauthorized"):
+        positive(marker_binary, (scenario,))
+    mutation(marker_source,
+             "      b1_znp_configured_init_authorized();", "      0;",
+             "mutant_configured_marker_tails_only", "devState==DEV_ZB_COORD",
+             ("missing",), admission=False, management=True)
+    mutation(marker_source,
+             "      b1_znp_configured_init_authorized();", "      1;",
+             "mutant_configured_marker_unscoped", "osal_nv_item_init_ex(0,0x60,1,&value)==NV_OPER_FAILED",
+             ("unauthorized",), admission=False, management=True)
+
+    # Narrow pinned-C boundary check for key-rotation refusal and nonvirgin
+    # coordinator NV counter-reset protection; no device or radio involved.
+    rotation_source = work / "actual_nwk_rotation_guard.c"
+    run([sys.executable, b1 / "tools/make_nwk_rotation_harness.py",
+         "--security", sdk / SOURCE_PATHS[4],
+         "--host", sdk / SOURCE_PATHS[9],
+         "--output", rotation_source], check=True)
+    positive(compile_c(rotation_source, "nwk_rotation_guard", admission=False))
+
+    # Recreating TI's original first-empty early exit must reset a later
+    # matching PAN's replay floor and fail the genuine C oracle.
+    mutation(generated["zdapp"],
+             "if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES) emptySlot = i;",
+             "if (emptySlot == gMAX_NWK_SEC_MATERIAL_TABLE_ENTRIES) { emptySlot = i; break; }",
+             "mutant_zdapp_store_first_blank_wins", "rows_written==0u",
+             ("store_later_match",))
+
+    # A restore that exits after its FIRST matching PAN would accept a stale
+    # replay floor and write it while a later same-PAN row has a higher floor.
+    mutation(generated["zdapp"],
+             "      found = TRUE;\n      continue;",
+             "      found = TRUE;\n      break;",
+             "mutant_zdapp_restore_first_match_wins", "ZDApp_RestoreNwkKey(TRUE)==FALSE",
+             ("duplicate_counter_floor",))
 
     for variant in ("sem", "posix"):
         name = "nvocmp_init_" + variant
@@ -327,10 +447,16 @@ def main():
              "; /* mutant permits unsafe stack initialization */", "mutant_boot_stack_hold",
              "stack_calls==", ("nv_failure",), admission=False, management=True)
     for name, (scenario, before, after) in SECURITY_MUTANTS.items():
-        evidence = {"entry_allocation": "held && ZDSecMgrEntries==NULL",
+        evidence = {"duplicate_tclk_peer_bypass": "!b1_sec_validate_restored()",
+                    "aps_same_key_counter_reset": "aps[k].key[0]==0x33u",
+                    "remove_legacy_alias": "table==ZCD_NV_EX_TCLK_TABLE",
+                    "entry_allocation": "held && ZDSecMgrEntries==NULL",
                     "early_security_attestation": "!b1_sec_restored_network_validated()",
                     "aps_publish": "ApsLinkKeyRAMEntry[0].txFrmCntr==0",
                     "checkpoint_pending": "held && pending", "counter_wrap": "result==ZSecNoKey",
+                    "unbounded_tclk_transmit": "APSME_TCLinkKeyLoad(1,&si)==ZSecNoKey",
+                    "replay_highwater_wrap": "result==ZSecOldFrmCount",
+                    "aps_key_checkpoint_bypass": "status==NV_OPER_FAILED",
                     "readback": "ApsLinkKeyRAMEntry[0].txFrmCntr==0"}[name]
         mutation(generated["security"], before, after, "mutant_security_" + name,
                  evidence, (scenario,), admission=False)

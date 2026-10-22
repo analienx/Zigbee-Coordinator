@@ -1,0 +1,94 @@
+name: R4 full P7U NV4 source and frozen-package controls (NO FLASH)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/test-r4-full-nv4-source.yml'
+      - 'firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json'
+      - 'firmware/slzb-06p7u/r4/qualification/full_nv4_profile.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_current_app_package.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.h'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/seal_native.py'
+      - 'tests/test_r4_nv4_readonly_admission.py'
+      - 'tests/test_r4_nv4_b1_bridge.py'
+      - 'tests/test_r4_nv4_native_seal.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/compare_native.py'
+      - 'tests/test_r4_b1_compare_native_nv4.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_native_gate.py'
+      - 'tests/test_r4_full_nv4_profile.py'
+      - 'tests/test_r4_full_nv4_app_only.py'
+      - 'tests/test_r4_full_nv4_link_audit.py'
+      - 'firmware/slzb-06p7u/r4/qualification/full_nv4_app_only.py'
+      - 'firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py'
+      - '.github/workflows/test-r4-final-composite-native.yml'
+      - 'tests/test_r4_nv4_current_app_package.py'
+      - 'tests/test_r4_nv4_source_overlay.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source-controls:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exactly requested source SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Compile audited source, tests and admission tools
+        run: |
+          python -m py_compile \
+            firmware/slzb-06p7u/r4/qualification/full_nv4_profile.py \
+            firmware/slzb-06p7u/r4/qualification/full_nv4_app_only.py \
+            firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py \
+            firmware/slzb-06p7u/r4/qualification/nv4_current_app_package.py \
+            firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py \
+            firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py \
+            firmware/slzb-06p7u/r4/b1/tools/seal_native.py \
+            tests/test_r4_nv4_readonly_admission.py \
+            tests/test_r4_nv4_b1_bridge.py \
+            tests/test_r4_nv4_native_seal.py \
+            firmware/slzb-06p7u/r4/b1/tools/compare_native.py \
+            tests/test_r4_b1_compare_native_nv4.py \
+            tests/test_r4_full_nv4_profile.py \
+            tests/test_r4_full_nv4_app_only.py \
+            tests/test_r4_full_nv4_link_audit.py \
+            tests/test_r4_nv4_current_app_package.py
+      - name: Run P7U exact NV4 source and frozen-bundle attack tests
+        run: |
+          python -m unittest -v \
+            tests.test_r4_full_nv4_profile \
+            tests.test_r4_full_nv4_app_only \
+            tests.test_r4_full_nv4_link_audit \
+            tests.test_r4_nv4_current_app_package \
+            tests.test_r4_nv4_readonly_admission \
+            tests.test_r4_nv4_b1_bridge \
+            tests.test_r4_nv4_native_seal \
+            tests.test_r4_b1_compare_native_nv4 \
+            tests.test_r4_nv4_source_overlay \
+            tests.test_r4_nv4_native_gate \
+            tests.test_r4_b0_sdk_build_scope
+      - name: Require full profile stays distinctly unsealed and non-flashable
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          profile = json.loads(Path('firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json').read_text())
+          assert profile['schema'] == 'p7u-r4-full-nv4-profile-v1'
+          assert profile['flash']['stock_nv4_start'] == '0xA6000'
+          assert profile['flash']['stock_nv4_end_exclusive'] == '0xAE000'
+          assert profile['flash']['nvocmp_pages'] == 4
+          assert profile['flash']['conservative_app_ceiling_exclusive'] == '0xA0000'
+          assert profile['board_power_reference'] == 'vendor-20240716'
+          assert profile['policies']['full_b0_b4_sealed'] is False
+          assert profile['policies']['physical_flash_authorized'] is False
+          print('SOURCE_ONLY_UNSEALED_NO_FLASH')
+          PY

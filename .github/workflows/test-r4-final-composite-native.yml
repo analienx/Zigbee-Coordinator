@@ -1,4 +1,4 @@
-name: R4 direct ROM boot B0-B4 dual native (NOT FLASH)
+name: HISTORICAL 20240716 R4 full NV4 dual native (AUDIT ONLY)
 
 on:
   pull_request:
@@ -10,6 +10,9 @@ env:
   B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  r4-b4-host-integration:
+    uses: ./.github/workflows/test-r4-b4-host.yml
+
   r4-b1-admission-source:
     runs-on: ubuntu-22.04
     steps:
@@ -17,8 +20,18 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Guard NV4/TC300 against all TI legacy format migrations
+        run: python -m unittest -v tests.test_r4_t6_migration_guard
+      - name: Focused final capacity, context, source-snapshot and frozen-APP regressions
+        run: python -m unittest -v tests.test_r4_t6_full_capacity tests.test_r4_m4f_asm_preprocessing tests.test_r4_final_source_snapshot tests.test_r4_full_nv4_app_only
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
+      - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
+        run: |
+          python -m unittest -v tests.test_r4_nv4_readonly_admission
+          python -m unittest -v tests.test_r4_nv4_b1_bridge
+          python -m unittest -v tests.test_r4_nv4_native_seal
+          python -m unittest -v tests.test_r4_b1_compare_native_nv4
       - name: Upload exact-source synthetic receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -309,7 +322,8 @@ jobs:
           echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
 
   r4-b0-native-build:
-    needs: r4-b1-admission-source
+    # Fail closed: a red SDK/board overlay or unverified TI donor blocks native promotion.
+    needs: [r4-b1-admission-source, r4-b0-overlay, r4-b0-upstream-inventory]
     strategy:
       fail-fast: false
       matrix:
@@ -402,6 +416,15 @@ jobs:
           (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
           find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
           test -s /tmp/b0out/sdk-libraries.txt
+          # The selected FULL profile is applied to exact pinned donor copies
+          # before CCS import. This is never the old A0000/4000 NV2 route.
+          donor=/tmp/b0src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/full_nv4_profile.py" \
+            --stage pinned-sources --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
+            --syscfg "$donor/znp.syscfg" \
+            --linker "$sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
+            --projectspec "$donor/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec" \
+            --receipt /tmp/b0out/r4-full-nv4-pinned-source.json
           echo "Apply pinned-source R4-B1 admission overlay AFTER SDK library build and BEFORE ZNP project import" | tee -a /tmp/b0out/build.log
           mkdir -p "$sdk/.b1-prerequisites"
           curl -fL --proto '=https' --tlsv1.2 --retry 3 \
@@ -453,11 +476,12 @@ jobs:
           mkdir -p /tmp/r4-composite-sources
           git init -q /tmp/r4-composite-repo
           git -C /tmp/r4-composite-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
-          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
+          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
             git -C /tmp/r4-composite-repo fetch --depth 1 origin "$sha"
             test "$(git -C /tmp/r4-composite-repo rev-parse FETCH_HEAD)" = "$sha"
           done
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4-composite-sources/b2_mto_fail_closed_overlay.py
+          git -C /tmp/r4-composite-repo show 530a52631fbde274a2ae356c490bad71b47168a6:firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py > /tmp/r4-composite-sources/b2_mto_failure_guard_overlay.py
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compile_actual_mto_nv_timer.py > /tmp/r4-composite-sources/b2_compile_actual_mto_nv_timer.py
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compose.py > /tmp/r4-composite-sources/b2_compose.py
           git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_collect_native_evidence.py > /tmp/r4-composite-sources/b2_collect_native_evidence.py
@@ -469,9 +493,11 @@ jobs:
             --b1-receipt /tmp/b0out/b1-overlay.json \
             --fusion-receipt /tmp/b0out/b1-b3-source-fusion.json \
             --b2-script /tmp/r4-composite-sources/b2_mto_fail_closed_overlay.py \
+            --b2-failure-script /tmp/r4-composite-sources/b2_mto_failure_guard_overlay.py \
             --b4-v3-script /tmp/r4-composite-sources/b4_native_patch.py \
             --b4-v4-script /tmp/r4-composite-sources/b4_v4_native_patch.py \
             --b2-sha d13a48f5226d42e247a17d9198d84c94a4415030 \
+            --b2-failure-sha 530a52631fbde274a2ae356c490bad71b47168a6 \
             --b4-sha 3231abb1f13210eb88afe13ff7b7f9f29709cd6b \
             --receipt /tmp/b0out/r4-composite-source.json
           python - <<'PY'
@@ -482,6 +508,32 @@ jobs:
           assert x["flash_authorized"] is False
           assert x["b1_f1_and_b4_f0_f2_dispatch"] is True
           PY
+          echo "Link strict B1 existing-network admission to the real four-page NV4 observer"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py" \
+            --sdk "$sdk" --b1-overlay-receipt /tmp/b0out/b1-overlay.json \
+            --receipt /tmp/b0out/r4-nv4-b1-source.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          source=json.loads(Path('/tmp/b0out/r4-nv4-b1-source.json').read_text())
+          binding=json.loads(Path('/tmp/b0out/b1-overlay.json').read_text())
+          assert source['b1_overlay_receipt_bound'] is True
+          assert source['nv_pages']==4 and source['region_base']=='0xA6000'
+          assert source['source_after_sha256']==binding['modified_nv_sha256']
+          assert binding['nv4_readonly_bridge_source']=='EXACT_PINNED_FOUR_PAGE_B1_ADMISSION'
+          assert source['flash_authorized'] is False
+          PY
+          # Only after B1/B3/B2/B4 and NV4 bridge source-pin checks:
+          # prohibit the legacy TC migration in the actual ZNP compile unit.
+          # Rebind B1's generated security receipt to this exact C source.
+          python "$GITHUB_WORKSPACE/tools/r4_t6_migration_guard.py" \
+            --sdk "$sdk" --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
+            --b1-overlay-receipt /tmp/b0out/b1-overlay.json \
+            --receipt /tmp/b0out/t6-legacy-migration-prohibition.json
+          # The final source is a reviewable patchset, not just a collection
+          # of successful overlay receipts. Include all new B1/NV4 C/H files.
+          python "$GITHUB_WORKSPACE/tools/r4_final_source_snapshot.py" \
+            --sdk "$sdk" --out-dir /tmp/b0out --source-sha "$B1_SOURCE_SHA"
           echo "Discover pinned TI compiler and SDK product in CCS" | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/b0out/build.log
           "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
@@ -493,38 +545,58 @@ jobs:
           python /tmp/r4-composite-sources/b2_compose.py \
             --opts "$project/Stack/Config/znp_cnf.opts" --profile P1 \
             --receipt /tmp/b0out/b2-p1-composite-compiler-opts.json
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
-            --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
-          # Direct ROM boot at vector 0; keep 0xA0000 NVS and resident boot bytes.
-          # Offline build only; no CCFG modification or hardware flash.
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_prepare_direct_rom_boot.py" \
+          echo "R4-R05: apply genuine TC300/APS3/direct-child96 full-profile compiler definitions"
+          python "$GITHUB_WORKSPACE/tools/r4_t6_full_capacity.py" stage-opts \
+            --opts "$project/Stack/Config/znp_cnf.opts" \
+            --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
+            --receipt /tmp/b0out/r05-full-capacity-opts.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/full_nv4_profile.py" \
+            --stage imported-board --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
             --syscfg "$project/znp.syscfg" \
-            --linker "$sdk/source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
-            --receipt /tmp/b0out/r4-direct-rom-source.json
+            --pinned-receipt /tmp/b0out/r4-full-nv4-pinned-source.json \
+            --receipt /tmp/b0out/r4-full-nv4-imported-board.json
+          # Direct-ROM vector at zero; conservative APP A0000, stock NV4 A6000.
+          # Keep stock 20240716 CCFG unchanged. B5 and flash remain OFF.
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
-            --out-dir /tmp/b0out/preflight-syscfg \
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/board_profile.py" \
+            --generated /tmp/b0out/preflight-syscfg --reference-power vendor-20240716 \
             --receipt /tmp/b0out/p7u-generated-preflight.json
           python - <<'PY'
           from pathlib import Path
-          p=Path('/tmp/b0out/preflight-syscfg/ti_drivers_config.c').read_text()
-          assert 'flashBuf0[0x4000]' in p
-          assert 'location(0xa0000)' in p and '.regionSize = 0x4000' in p
-          assert 'location(0xaa000)' not in p
-          print('R4 GENERATED SOURCE: NVS 0xA0000..0xA3FFF; resident 0xAC000 untouched')
+          src=Path('/tmp/b0out/preflight-syscfg/ti_drivers_config.c').read_text()
+          assert 'flashBuf0[0x8000]' in src
+          assert 'location(0xa6000)' in src and '.regionSize = 0x8000' in src
+          assert 'location(0xa0000)' not in src
+          print('FULL NV4 GENERATED: four preserved NVS pages A6000..ADFFF, stock 20240716 power')
           PY
           echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
           eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
           cp "$project/Stack/Config/znp_cnf.opts" /tmp/b0out/znp_cnf.opts
           echo "Collecting real linker artifacts"
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
-            --out-dir "$project/default/syscfg" \
-            --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+          # Deny changes to any captured TI source between review and link.
+          python "$GITHUB_WORKSPACE/tools/r4_final_source_snapshot.py" \
+            --sdk "$sdk" --out-dir /tmp/b0out --source-sha "$B1_SOURCE_SHA" \
+            --verify-manifest /tmp/b0out/r4-final-ti-source-manifest.json
+          echo "R4-R05: reject native TC/APS/child/routing/stack ABI or SRAM linker drift"
+          python "$GITHUB_WORKSPACE/tools/r4_t6_full_capacity.py" audit-native \
+            --opts "$project/Stack/Config/znp_cnf.opts" \
+            --profile "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json" \
+            --opts-receipt /tmp/b0out/r05-full-capacity-opts.json \
+            --artifacts /tmp/b0out \
+            --collector /tmp/r4-composite-sources/b2_collect_native_evidence.py \
+            --receipt /tmp/b0out/r05-full-capacity-native-linked.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/board_profile.py" \
+            --generated "$project/default/syscfg" \
+            --binary /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+            --reference-power vendor-20240716 \
             --receipt /tmp/b0out/p7u-generated-native.json
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --direct-rom-boot
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out --full-nv4
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/rtos_context_audit.py" \
+            --artifacts /tmp/b0out --sdk "$sdk" --clang "$TICLANG_ARMCOMPILER" \
+            --full-nv4 --receipt /tmp/b0out/rtos-context-native.json
           # Independently prove the REAL linked HEX intersects boot CCFG's
           # whole 8KiB erase sector, even if its sparse records omit NV.
           # This is a DENIAL, never a flash/erase/restore authorization.
@@ -542,41 +614,39 @@ jobs:
           assert any(x['reason']=='BOOT_CCFG_TOP_SECTOR' for x in d['protected_sector_collisions'])
           print('REAL EXACT-HEAD COMPOSITE HEX: CCFG erase-sector collision proven; FLASH DENIED')
           PY
-          # Check exact native app sectors below historical NV5/NV2 union.
-          # Does not generate a flashable image, read private NV, or authorize flash.
+          # Independent conservative APP address bound; not a flash permit.
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_flash_preflight.py" \
             --artifacts /tmp/b0out --receipt /tmp/b0out/r4-app-sector-preflight.json
-          # Direct-ROM native vector image starts at physical flash address 0.
-          # Refuse signed-container packaging: that belongs to the other boot path.
           python - <<'PY'
           import json
           from pathlib import Path
           r=json.loads(Path('/tmp/b0out/r4-app-sector-preflight.json').read_text())
+          sectors=[int(s,16) for s in r['application_sectors']]
           assert r['expected_vector_offset']=='0x0'
-          assert r['last_application_byte_exclusive'].startswith('0x')
-          assert int(r['last_application_byte_exclusive'],16)<0xA0000
-          assert len(r['application_sectors'])==23
+          assert sectors and min(sectors)==0
+          assert all(0 <= s < 0xA0000 and s%0x2000==0 for s in sectors)
+          assert int(r['last_application_byte_exclusive'],16)<=0xA0000
           assert r['flash_authorized'] is False
-          print('DIRECT ROM 0x0 LINKED / INTERNAL NVS BELOW 0xA4000; FLASH NOT AUTHORIZED')
+          print('FULL NV4 CONSERVATIVE APP BOUND, NO FLASH',len(sectors))
           PY
-          # Produce an address-safe, app-only R4 HEX that contains no CCFG,
-          # protected NV or signed-MCUboot replacement; leave release NOT FLASH.
-          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/release/r4_make_direct_app_only.py" \
-            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-direct-app-only
+          # All APP sectors FF padded; receipt orders vector sector LAST.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/full_nv4_app_only.py" \
+            --artifacts /tmp/b0out --out-dir /tmp/b0out/r4-full-nv4-app-only \
+            --manifest-sha256 "$(sha256sum /tmp/b0out/manifest.json | cut -d' ' -f1)"
           python - <<'PY'
           import json
           from pathlib import Path
-          root=Path('/tmp/b0out/r4-direct-app-only')
-          r=json.loads((root/'r4-direct-app-only-receipt.json').read_text())
-          assert r['physical_vector_address']=='0x00000000'
-          assert r['sectors_to_program']==23
-          assert r['native_ccfg_is_not_in_payload'] is True
-          assert r['erase_nv'] is False and r['erase_ccfg'] is False
-          assert r['erase_bootloader'] is False and r['flash_authorized'] is False
-          print('NATIVE APP-ONLY HEX ISOLATED: CCFG+NV excluded, no flash granted')
+          root=Path('/tmp/b0out/r4-full-nv4-app-only')
+          r=json.loads((root/'r4-full-nv4-app-only-receipt.json').read_text())
+          assert r['image_class']=='FULL_NV4_NATIVE_ENVELOPE_ONLY_UNSEALED_NOT_FLASH_READY'
+          assert r['full_b0_b4_sealed'] is False and r['flash_authorized'] is False
+          assert r['vector_last_program_order'][-1]=='0x00000'
+          assert r['sectors_to_program']==len(r['application_sectors'])
+          assert all(int(s,16)<0xA0000 for s in r['application_sectors'])
+          print('FULL NV4 APP-ONLY FF-PADDED HEX UNSEALED; NO FLASH')
           PY
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
-            --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
+            --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA" --nv4-bridge
           echo "Independently re-read ACTUAL composite ELF route table counts, not compiler-flag guesses"
           python /tmp/r4-composite-sources/b2_collect_native_evidence.py \
             --artifacts /tmp/b0out --out /tmp/b0out/b2-linked \
@@ -620,7 +690,7 @@ jobs:
           if-no-files-found: warn
 
   r4-b1-native-reproducibility:
-    needs: [r4-b0-native-build]
+    needs: [r4-b0-native-build, r4-b4-host-integration]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -639,23 +709,164 @@ jobs:
           python firmware/slzb-06p7u/r4/b1/tools/compare_native.py \
             --first /tmp/b1-replica-1/b0out --second /tmp/b1-replica-2/b0out \
             --expected-sha "$B1_SOURCE_SHA" --out /tmp/b1-native-reproducibility.json
-      - name: Require deterministic app-only HEX across native replicas
+      - name: Require deterministic FULL-NV4 FF-padded APP HEX across native replicas
         run: |
           python - <<'PY'
           import hashlib,json
           from pathlib import Path
-          a,b=(Path('/tmp/b1-replica-%d/b0out/r4-direct-app-only'%i) for i in (1,2))
-          names=[]
-          for root in (a,b):
-              report=json.loads((root/'r4-direct-app-only-receipt.json').read_text())
-              assert report['flash_authorized'] is False
-              assert report['sectors_to_program']==23
-              file=root/report['output_hex']
-              assert hashlib.sha256(file.read_bytes()).hexdigest()==report['app_hex_sha256']
-              names.append(report['app_hex_sha256'])
-          assert names[0]==names[1],names
-          print('TWO REAL NATIVE REPLICAS HAVE BYTE-IDENTICAL APP-ONLY HEX',names[0])
+          roots=[Path('/tmp/b1-replica-%d/b0out/r4-full-nv4-app-only'%i) for i in (1,2)]
+          digests=[]
+          for root in roots:
+              r=json.loads((root/'r4-full-nv4-app-only-receipt.json').read_text())
+              assert r['image_class']=='FULL_NV4_NATIVE_ENVELOPE_ONLY_UNSEALED_NOT_FLASH_READY'
+              assert r['full_b0_b4_sealed'] is False and r['flash_authorized'] is False
+              assert r['sectors_to_program']==len(r['application_sectors'])
+              assert r['vector_last_program_order'][-1]=='0x00000'
+              file=root/r['output_hex']
+              assert hashlib.sha256(file.read_bytes()).hexdigest()==r['padded_hex_sha256']
+              digests.append(r['padded_hex_sha256'])
+          assert digests[0]==digests[1],digests
+          print('TWO REAL FULL-NV4 NATIVE REPLICAS HAVE IDENTICAL FF-PADDED APP HEX',digests[0])
           PY
+      - name: Require identical final reviewed TI source patchsets from both replicas
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          receipts=[]
+          for index in (1,2):
+              root=Path(f'/tmp/b1-replica-{index}/b0out')
+              source=root/'r4-final-ti-source-manifest.json'
+              patch=root/'r4-final-ti-source.patch'
+              report=json.loads(source.read_bytes())
+              assert report['schema']=='r4-p7u-final-ti-source-snapshot-v1'
+              assert report['firmware_source_sha']==os.environ['B1_SOURCE_SHA']
+              assert report['source_changed_files_count']>=10
+              assert report['flash_authorized'] is False
+              assert hashlib.sha256(patch.read_bytes()).hexdigest()==report['patch_sha256']
+              receipts.append((source.read_bytes(),patch.read_bytes()))
+          assert receipts[0]==receipts[1], 'Native replicas used different final TI source'
+          print('FINAL PATCHSET AND MANIFEST BYTE-IDENTICAL ACROSS NATIVE REPLICAS')
+          PY
+      - name: Download the tested existing-owner host bundle from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: r4-b4-host-integration-${{ env.B1_SOURCE_SHA }}
+          path: /tmp/r4-host-integration
+      - name: Finalize one P7U engineering candidate from the successful joined gates
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          def sha(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          def load(path):
+              return json.loads(path.read_bytes())
+          source=os.environ['B1_SOURCE_SHA']
+          profile=Path('firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json')
+          profile_sha=sha(profile)
+          expected={'trust_center_devices':300,'aps_table_entries':3,
+                    'associated_devices_slots':97,'source_routes':192,
+                    'neighbors':64,'nwk_routes':128}
+          replicas=[]
+          for index in (1,2):
+              root=Path('/tmp/b1-replica-%d/b0out'%index)
+              manifest=load(root/'manifest.json')
+              image_hashes={k:manifest['files'][k]['sha256'] for k in ('elf','hex','bin','xml')}
+              for kind,digest in image_hashes.items():
+                  name=manifest['files'][kind]['file']
+                  assert Path(name).name==name and sha(root/name)==digest
+              seal=load(root/'b1-native-seal.json')
+              assert seal['source_sha']==source and seal['replica']==str(index)
+              assert seal['classification']=='HOSTED_NATIVE_LINKED_NV4_BRIDGE_UNSEALED'
+              assert seal['artifacts']==manifest['files']
+              capacity=load(root/'r05-full-capacity-native-linked.json')
+              assert capacity['profile_sha256']==profile_sha
+              assert capacity['elf_sha256']==image_hashes['elf']
+              assert capacity['xml_sha256']==image_hashes['xml']
+              assert capacity['linked_c_irq_stack_bytes']==4096
+              assert {k:v['linked_count'] for k,v in capacity['linked_capacity_symbols'].items()}==expected
+              context=load(root/'rtos-context-native.json')
+              assert context['status']=='M4F_CONTEXT_FRAME_AND_HWI_PATHS_AUDITED'
+              assert context['full_nv4'] is True
+              assert context['native_artifact_sha256']==image_hashes
+              assert context['native_manifest_sha256']==sha(root/'manifest.json')
+              app=root/'r4-full-nv4-app-only'
+              extracted=load(app/'r4-full-nv4-app-only-receipt.json')
+              assert extracted['source_native_manifest_sha256']==sha(root/'manifest.json')
+              assert extracted['source_native_artifact_sha256']==image_hashes
+              assert extracted['vector_last_program_order'][-1]=='0x00000'
+              assert all(int(s,16)<0xA0000 for s in extracted['application_sectors'])
+              assert sha(app/extracted['output_hex'])==extracted['padded_hex_sha256']
+              ti_source=load(root/'r4-final-ti-source-manifest.json')
+              assert ti_source['firmware_source_sha']==source
+              assert ti_source['ti_sdk_sha']=='3615ad5d3f4f271258d18a2f5ce1785064ff9a58'
+              assert sha(root/'r4-final-ti-source.patch')==ti_source['patch_sha256']
+              replicas.append({'replica':index,'manifest_sha256':sha(root/'manifest.json'),
+                  'artifacts':image_hashes,'app_only_sha256':extracted['padded_hex_sha256'],
+                  'capacity_receipt_sha256':sha(root/'r05-full-capacity-native-linked.json'),
+                  'context_receipt_sha256':sha(root/'rtos-context-native.json'),
+                  'final_ti_patch_sha256':ti_source['patch_sha256']})
+          assert replicas[0]['app_only_sha256']==replicas[1]['app_only_sha256']
+          assert replicas[0]['final_ti_patch_sha256']==replicas[1]['final_ti_patch_sha256']
+          repro=Path('/tmp/b1-native-reproducibility.json')
+          reproducibility=load(repro)
+          assert reproducibility['source_sha']==source
+          assert reproducibility['result']=='TWO_CLEAN_NATIVE_BUILDS_BYTE_IDENTICAL'
+          host_root=Path('/tmp/r4-host-integration')
+          host=load(host_root/'host-integration-receipt.json')
+          assert host['schema']=='r4-b4-host-integration-v1' and host['source_sha']==source
+          assert host['host_upstream_sha']=='6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88'
+          assert host['herdsman_sha']=='0968f979d558874b17396c96b66382d4236bbdcd'
+          assert host['z2m_sha']=='62b02e2aa1997c574223b80c196677b63a25f4a7'
+          assert host['firmware_b4_sha']=='3231abb1f13210eb88afe13ff7b7f9f29709cd6b'
+          assert host['status']=='HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED'
+          assert host['existing_owner_only'] is True and host['default_enabled'] is False
+          assert host['flash_authorized'] is False
+          assert all(host[k] is True for k in ('herdsman_typescript_compiled',
+              'z2m_typescript_compiled','host_runtime_tests_completed'))
+          assert Path(host['bundle_file']).name==host['bundle_file']
+          assert sha(host_root/host['bundle_file'])==host['bundle_sha256']
+          out=Path('/tmp/p7u-r1-r5-candidate');out.mkdir()
+          first=Path('/tmp/b1-replica-1/b0out')
+          extracted=load(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json')
+          shutil.copyfile(first/'r4-full-nv4-app-only'/extracted['output_hex'],out/'P7U-R4-APP-ONLY.hex')
+          shutil.copyfile(profile,out/'profile.json')
+          shutil.copyfile(repro,out/'reproducibility.json')
+          shutil.copyfile(host_root/host['bundle_file'],out/'host-bundle.tar.gz')
+          shutil.copyfile(host_root/'host-integration-receipt.json',out/'host-integration-receipt.json')
+          for name, member in host['files'].items():
+              assert Path(name).name==name and sha(host_root/name)==member['sha256']
+              if (out/name).exists():
+                  assert sha(out/name)==member['sha256']
+              else:
+                  shutil.copyfile(host_root/name,out/name)
+          for name in ('r05-full-capacity-native-linked.json','rtos-context-native.json','b1-native-seal.json'):
+              shutil.copyfile(first/name,out/name)
+          for name in ('r4-final-ti-source.patch','r4-final-ti-source-manifest.json'):
+              shutil.copyfile(first/name,out/name)
+          shutil.copyfile(first/'r4-full-nv4-app-only/r4-full-nv4-app-only-receipt.json',out/'app-only-receipt.json')
+          shutil.copyfile('firmware/slzb-06p7u/r4/release/R4_P7U_CANDIDATE_FINALIZATION.md',out/'START_HERE.md')
+          receipt={'schema':'r4-p7u-engineering-candidate-v1',
+              'candidate_class':'HISTORICAL_20240716_NOT_CURRENT_STOCK20260311',
+              'installed_stock20260311_eligible':False,
+              'source_sha':source,'github_run_id':os.environ['GITHUB_RUN_ID'],
+              'board':'SLZB-06P7U-r1.73-CC2652P7','profile_sha256':profile_sha,
+              'replicas':replicas,'host_receipt_sha256':sha(out/'host-integration-receipt.json'),
+              'final_ti_patch_sha256':replicas[0]['final_ti_patch_sha256'],
+              'native_and_host_gates':'PASS','physical_qualification':'REQUIRED',
+              'nv4_live_300_device_fit':'NOT_ESTABLISHED','network_key_rotation':'DISABLED',
+              'full_b0_b4_sealed':False,'flash_authorized':False,
+              'files':{p.name:sha(p) for p in sorted(out.iterdir())}}
+          (out/'candidate.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          print('P7U CANDIDATE FINALIZED FOR PRIVATE SAME-BOARD BINDING',source)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: historical-20240716-p7u-r1-r5-candidate-${{ env.B1_SOURCE_SHA }}
+          path: /tmp/p7u-r1-r5-candidate/
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: r4-final-reproducibility-${{ env.B1_SOURCE_SHA }}

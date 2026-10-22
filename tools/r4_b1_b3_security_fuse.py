@@ -33,7 +33,7 @@ OWNERSHIP={
     SEC:"B1_HOLD_APS_TCLK_PLUS_B3_TRNG_ONLY",
     GLO:"B1_RESTORE_VALIDATION_PLUS_B3_TRNG",
     HDR:"B3_RNG_SIGNATURE_ONLY",
-    TASK:"B3_ENTROPY_ERROR_CHECK",
+    TASK:"B1_APS_AND_NWK_HOST_KEY_GUARDS_WITH_NO_UNCHECKED_ENTROPY",
 }
 
 def git(root,*args):
@@ -96,8 +96,18 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
             raise ValueError("B3_DONOR_PIN_DRIFT "+name)
         vendor[name]=vendor_raw.decode("utf-8")
         raw[name]=path.read_text(encoding="utf-8")
-    if raw[HDR]!=vendor[HDR] or raw[TASK]!=vendor[TASK]:
-        raise ValueError("B1_MUST_NOT_HAVE_CHANGED_B3_ONLY_FILES")
+    original_b1=json.loads(b1_receipt.read_text(encoding="utf-8"))
+    if original_b1.get("schema")!="r4-b1-admission-overlay-v2":
+        raise ValueError("B1_RECEIPT_SCHEMA_DRIFT")
+    # B1 owns the three ZNP APS key GET/SET/REMOVE request handlers. B3 still
+    # owns the unrelated checked-entropy callers in the same source file.
+    # Require the exact B1 host source digest, then apply B3 atop it.
+    if (raw[HDR]!=vendor[HDR] or
+        original_b1.get("modified_host_api_sha256")!=
+            hashlib.sha256(raw[TASK].encode()).hexdigest() or
+        original_b1.get("additional_source_bindings",{}).get(
+            "modified_host_api_sha256")!=TASK):
+        raise ValueError("B1_HOST_API_PREIMAGE_NOT_BOUND")
 
     # Require the exact B1 ownership and RF denial sources. Merely having a
     # B1 marker in an unrelated comment can never substitute these bodies.
@@ -119,6 +129,26 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
                      "void ZDApp_SaveNwkKey( void )\n{\n"
                      "  if (b1_nv_runtime_hold_active()) return;",
                      "B3_SAVE_ON_HOLD")
+    # Preserve the concurrently repaired B3 NWK generic-slot ownership rule:
+    # an occupied foreign-PAN row must never be retired for this PAN.
+    save=replace_one(save,
+        "    // The generic slot also carries an independent persisted high-water.\n",
+        "    /* A populated foreign PAN is not disposable counter storage. */\n"
+        "    {\n"
+        "      uint8_t genericPanID[Z_EXTADDR_LEN];\n"
+        "      uint8_t emptyPanID[Z_EXTADDR_LEN] = {0};\n"
+        "      memset(genericPanID, 0xFF, sizeof(genericPanID));\n"
+        "      if (!OsalPort_memcmp(nwkSecMaterialDesc.extendedPanID,\n"
+        "                             genericPanID, Z_EXTADDR_LEN) &&\n"
+        "          !(nwkSecMaterialDesc.FrameCounter == 0u &&\n"
+        "            OsalPort_memcmp(nwkSecMaterialDesc.extendedPanID,\n"
+        "                               emptyPanID, Z_EXTADDR_LEN)))\n"
+        "      {\n"
+        "        goto b3_checkpoint_done;\n"
+        "      }\n"
+        "    }\n"
+        "    // The generic slot also carries an independent persisted high-water.\n",
+        "B3_FOREIGN_LAST_SLOT_PROTECTION")
     save=save.replace("goto b3_checkpoint_done;",
                       "do { b1_security_runtime_hold_latch(); "
                       "goto b3_checkpoint_done; } while (0);")
@@ -168,7 +198,18 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
         "extern uint8_t ZDSecMgrGenerateRndKey(uint8_t* pKey);",
         "B3_RNG_STATUS_HEADER")
     raw[GLO]=b3.entropy_zglobals_changes(raw[GLO])
-    raw[TASK]=b3.entropy_zstacktask_changes(raw[TASK])
+    # The immutable B3 donor owned a single unchecked NWK-host-key entropy
+    # call. B1's bounded replacement of that whole handler now REJECTS
+    # has_key=false on both B1-only and B1+B3 builds. No RNG call remains
+    # to patch; B3's old lexical anchor must not be applied to another body.
+    nwk_host=function(raw[TASK],
+                      "static bool processSecNwkKeySetReq( uint8_t srcServiceTaskId, void *pMsg )")
+    b1_nwk_rng_absent=(
+        "ZDSecMgrGenerateRndKey(" not in nwk_host and
+        "if (!pPtr->pReq->has_key)" in nwk_host and
+        "osal_nv_write(target, sizeof(proposed), &proposed)" in nwk_host)
+    if not b1_nwk_rng_absent:
+        raise ValueError("B1_NWK_HOST_UNCHECKED_ENTROPY_PATH")
 
     # Full consistency: original void RNG declaration and unchecked calls
     # anywhere in our changed source are an ABI/security bypass.
@@ -181,27 +222,27 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
         if before!=body:
             changed[name]={"before_sha256":hashlib.sha256(before.encode()).hexdigest(),
                            "after_sha256":hashlib.sha256(body.encode()).hexdigest()}
-    if set(changed)!={ZD,SEC,HDR,GLO,TASK}:
-        raise ValueError("FUSION_EXPECTED_FIVE_MODIFIED_FILES "+str(sorted(changed)))
+    if set(changed)!={ZD,SEC,HDR,GLO}:
+        raise ValueError("FUSION_EXPECTED_FOUR_MODIFIED_FILES "+str(sorted(changed)))
     # Do not disguise a changed B1 body as its old source SHA: bind the
     # final SDK hashes to B1's existing native manifest ONLY after comparing
     # each BEFORE hash to the exact B1 receipt. Separate fusion receipt still
     # discloses which phase owns each function and what remains unmerged.
-    original_b1=json.loads(b1_receipt.read_text(encoding="utf-8"))
     binding_keys={
         ZD:"modified_zdapp_sha256",
         SEC:"modified_security_sha256",
         GLO:"modified_zglobals_sha256",
+        TASK:"modified_host_api_sha256",
     }
-    if original_b1.get("schema")!="r4-b1-admission-overlay-v2":
-        raise ValueError("B1_RECEIPT_SCHEMA_DRIFT")
     for name,key in binding_keys.items():
-        if original_b1.get(key)!=changed[name]["before_sha256"]:
+        before_sha=hashlib.sha256((sdk/name).read_bytes()).hexdigest()
+        if original_b1.get(key)!=before_sha:
             raise ValueError("B1_RECEIPT_PREIMAGE_MISMATCH "+name)
     for name in changed:
         (sdk/name).write_text(raw[name],encoding="utf-8",newline="")
     for name,key in binding_keys.items():
-        original_b1[key]=changed[name]["after_sha256"]
+        if name in changed:
+            original_b1[key]=changed[name]["after_sha256"]
     original_b1["post_b1_security_fusion"]="B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS"
     original_b1["b3_source_commit"]=B3_SHA
     original_b1["unmerged_security_paths"]=[
@@ -217,6 +258,7 @@ def run(sdk,b3script,b3_git_sha,b1_receipt):
         "b1_nwk_restore_owns_floor":True,
         "b3_nwk_save_monotonic_and_B1_HOLD":True,
         "B3_entropy_error_checks_added":True,
+        "B1_NWK_host_removes_B3_unchecked_entropy_caller":b1_nwk_rng_absent,
         "B3_NVOCMP_compaction_semantic_fusion_complete":False,
         "B3_checked_seed_derivation_signature_adopted":False,
         "B2_routing_merged":False,"B4_diagnostics_merged":False,

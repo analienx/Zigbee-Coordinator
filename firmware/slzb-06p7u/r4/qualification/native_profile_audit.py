@@ -23,6 +23,7 @@ import transport_profile
 REQUIRED_FUNCTIONS = {
     "main", "r4q_transport_start", "r4q_accept_frame", "r4q_transport_failed",
     "r4q_transport_unavailable", "r4q_note_uart_opened", "r4q_note_npi_initialized",
+    "r4q_note_npi_wake",
     "r4q_npi_initialized", "NPITask_Fxn", "NPITask_createTask",
     "NPITask_inititializeTask", "NPITLUART_initializeTransport",
     "MT_ProcessIncoming", "MT_SysCommandProcessing", "MT_SysPing", "MT_SysVersion",

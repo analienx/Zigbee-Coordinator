@@ -16,6 +16,8 @@ REQUIRED=(
     "if (b1_nv_runtime_hold_active()) return;",
     "b1_security_runtime_hold_latch();",
     "if (nwkSecMaterialDesc.FrameCounter > keyItems.frameCounter)",
+    "A populated foreign PAN is not disposable counter storage",
+    "OsalPort_memcmp(nwkSecMaterialDesc.extendedPanID,",
     "osal_nv_write_ex(",
     "osal_nv_read_ex(",
     "osal_nv_write(ZCD_NV_NWKKEY",

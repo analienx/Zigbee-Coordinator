@@ -1,0 +1,71 @@
+name: P7U NV4 HOLD forensic C oracle (HOST ONLY)
+
+on:
+  push:
+    branches: [codex/p7u-nv4-hold-forensics-20261020]
+    paths:
+      - '.github/workflows/p7u-nv4-admission-oracle.yml'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_admission_host_trace.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_admission_trace_cli.c'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.*'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/b1/b1_admission.h'
+      - 'tests/test_r4_nv4_admission_host_trace.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nv4-admission-oracle:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact oracle head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Test all collapsed probe4 sites and causal trace parity mutants
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m unittest -v tests.test_r4_nv4_admission_host_trace 2>&1 | tee /tmp/nv4-oracle-tests.log
+      - name: Build frozen original and traced C observers plus exact bridge switch
+        run: |
+          set -euo pipefail
+          out=/tmp/p7u-nv4-admission-oracle
+          python firmware/slzb-06p7u/r4/qualification/nv4_admission_host_trace.py generate --out-dir "$out" --source-sha "$GITHUB_SHA"
+          gcc --version > "$out/compiler-version.txt"
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -I "$out" \
+            "$out/nv4_readonly_admission.c" "$out/nv4_admission_traced.c" \
+            "$out/nv4_bridge_reason.c" "$out/nv4_admission_trace_cli.c" \
+            -o "$out/nv4-admission-oracle-linux" 2>&1 | tee "$out/build.log"
+          cp /tmp/nv4-oracle-tests.log "$out/hosted-tests.log"
+      - name: Exercise final artifact on public fake formed network and seal binary SHA
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          from tests.test_r4_nv4_readonly_admission import stock_like_semantic
+          out = Path('/tmp/p7u-nv4-admission-oracle')
+          result = subprocess.run([str(out/'nv4-admission-oracle-linux'), '--stdin-nv4-a4000'],
+                                  input=stock_like_semantic(bdb=1, nib=True), capture_output=True,
+                                  check=True)
+          report = json.loads(result.stdout)
+          assert (report['code'], report['semantic_state'], report['bridge_probe']) == (8, 2, 7)
+          assert report['original_traced_result_equal'] and report['read_sequence_equal']
+          assert not report['flash_authorized']
+          (out/'public-fixture-receipt.json').write_text(json.dumps(report, indent=2)+'\n')
+          PY
+          python firmware/slzb-06p7u/r4/qualification/nv4_admission_host_trace.py seal --out-dir /tmp/p7u-nv4-admission-oracle
+      - name: Upload public Linux oracle source and receipts (no private input)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-nv4-admission-oracle-${{ github.sha }}
+          path: /tmp/p7u-nv4-admission-oracle/
+          if-no-files-found: error
+          retention-days: 30

@@ -5,6 +5,9 @@ on:
       - 'tools/r4_b1_b3_security_fuse.py'
       - '.github/workflows/test-r4-final-source-composite.yml'
       - 'tools/r4_b0_b4_composite_stage.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.h'
 permissions:
   contents: read
 jobs:
@@ -64,11 +67,15 @@ jobs:
           mkdir -p /tmp/r4composite-siblings
           git init -q /tmp/r4composite-repo
           git -C /tmp/r4composite-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
-          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
-            git -C /tmp/r4composite-repo fetch --depth 1 origin "$sha"
-            test "$(git -C /tmp/r4composite-repo rev-parse FETCH_HEAD)" = "$sha"
+          # Fetch all immutable donor commits in one shallow transaction.
+          # Individual depth-1 fetches rewrote .git/shallow between Git actions
+          # and intermittently failed with "shallow file has changed".
+          git -C /tmp/r4composite-repo fetch --depth 1 origin d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b
+          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
+            git -C /tmp/r4composite-repo cat-file -e "$sha^{commit}"
           done
           git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py
+          git -C /tmp/r4composite-repo show 530a52631fbde274a2ae356c490bad71b47168a6:firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py > /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py
           git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compile_actual_mto_nv_timer.py > /tmp/r4composite-siblings/b2_compile_actual_mto_nv_timer.py
           git -C /tmp/r4composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_native_patch.py > /tmp/r4composite-siblings/b4_native_patch.py
           git -C /tmp/r4composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py > /tmp/r4composite-siblings/b4_v4_native_patch.py
@@ -76,11 +83,17 @@ jobs:
             --sdk /tmp/r4fusion-sdk --baseline /tmp/r4composite-siblings \
             --b1-receipt /tmp/r4fusion-b1.json --fusion-receipt /tmp/r4fusion-receipt.json \
             --b2-script /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py \
+            --b2-failure-script /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py \
             --b4-v3-script /tmp/r4composite-siblings/b4_native_patch.py \
             --b4-v4-script /tmp/r4composite-siblings/b4_v4_native_patch.py \
             --b2-sha d13a48f5226d42e247a17d9198d84c94a4415030 \
+            --b2-failure-sha 530a52631fbde274a2ae356c490bad71b47168a6 \
             --b4-sha 3231abb1f13210eb88afe13ff7b7f9f29709cd6b \
             --receipt /tmp/r4composite-source.json
+          echo "Apply exact-source four-page NV4 admission into actual composed B1/B3/B2/B4 SDK"
+          python firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py \
+            --sdk /tmp/r4fusion-sdk --b1-overlay-receipt /tmp/r4fusion-b1.json \
+            --receipt /tmp/r4b1-nv4-source.json
           python - <<'PY'
           from pathlib import Path
           import json
@@ -88,7 +101,7 @@ jobs:
           b=json.loads(Path('/tmp/r4fusion-b1.json').read_text())
           assert d['source_ready'] is False and d['flash_authorized'] is False
           assert d['b3_nwk_save_monotonic_and_B1_HOLD'] is True
-          assert len(d['changed']) == 5
+          assert set(d['changed']) == {'source/ti/zstack/stack/sys/zglobals.c', 'source/ti/zstack/stack/zdo/zd_app.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.h'}
           c=json.loads(Path('/tmp/r4composite-source.json').read_text())
           assert c['source_ready'] is False
           assert c['b1_f1_and_b4_f0_f2_dispatch'] is True
@@ -96,6 +109,13 @@ jobs:
           seed=json.loads(Path('/tmp/r4b3-seed-composed.json').read_text())
           assert len(nv['reconciled_guards'])==3 and seed['checked_return_status'] is True
           assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
+          nvb=json.loads(Path('/tmp/r4b1-nv4-source.json').read_text())
+          assert nvb['b1_overlay_receipt_bound'] is True
+          assert nvb['nv_pages']==4 and nvb['region_base']=='0xA6000'
+          assert nvb['source_before_sha256']==c['source_modified_sha256']['source/ti/common/nv/nvocmp.c']
+          assert nvb['source_after_sha256']==b['modified_nv_sha256']
+          assert b['nv4_readonly_bridge_source']=='EXACT_PINNED_FOUR_PAGE_B1_ADMISSION'
+          assert nvb['flash_authorized'] is False
           print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
           PY
       - name: Upload only source receipts, no ELF
@@ -109,4 +129,5 @@ jobs:
             /tmp/r4composite-source.json
             /tmp/r4b3-nvocmp-composed.json
             /tmp/r4b3-seed-composed.json
+            /tmp/r4b1-nv4-source.json
           if-no-files-found: warn

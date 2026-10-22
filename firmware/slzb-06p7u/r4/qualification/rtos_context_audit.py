@@ -6,10 +6,15 @@ were evaluated. This audit inspects TI's linked disassembly, not its source.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 from pathlib import Path
 import re
+import struct
 import subprocess
+import sys
+import tempfile
 from xml.etree import ElementTree
 
 SWAP = "ti_sysbios_knl_TaskSupport_swap"
@@ -69,7 +74,38 @@ M4F_SWAP_INSTRUCTIONS = bytes.fromhex(
 M4F_SWAP_SECTION = M4F_SWAP_INSTRUCTIONS + bytes.fromhex("00bf" * 8)
 
 
-def audit_linked_swap_bytes(xml: Path, elf: Path) -> dict:
+def _full_swap_load(elf: Path, address: int, size: int) -> dict:
+    """Require the full-profile frame in one real, executable flash PT_LOAD."""
+    blob = elf.read_bytes()
+    if (len(blob) < 52 or blob[:6] != b"\x7fELF\x01\x01" or
+            struct.unpack_from("<HH", blob, 16) != (2, 40)):
+        raise ValueError("M4F_CONTEXT_INVALID_ARM_ELF32")
+    offset = struct.unpack_from("<I", blob, 28)[0]
+    stride, count = struct.unpack_from("<HH", blob, 42)
+    if (offset == 0 or stride < 32 or not 0 < count <= 32 or
+            offset + stride * count > len(blob)):
+        raise ValueError("M4F_CONTEXT_INVALID_PROGRAM_HEADERS")
+    matches = []
+    for index in range(count):
+        kind, start, run, load, file_size, memory_size, flags, _ = struct.unpack_from(
+            "<8I", blob, offset + stride * index)
+        if kind != 1:
+            continue
+        if file_size > memory_size or start + file_size > len(blob):
+            raise ValueError("M4F_CONTEXT_INVALID_LOAD_EXTENT")
+        if (flags & 1 and run == load and
+                run <= address < address + size <= run + file_size):
+            matches.append((start + address - run, run, load, file_size, flags))
+    if len(matches) != 1:
+        raise ValueError("M4F_CONTEXT_SWAP_NOT_IN_UNIQUE_EXECUTABLE_FLASH_LOAD")
+    start, run, load, file_size, flags = matches[0]
+    if blob[start:start + size] != M4F_SWAP_SECTION:
+        raise ValueError("M4F_CONTEXT_LINKED_SWAP_MACHINE_BYTES_MISMATCH")
+    return {"run_address": hex(run), "load_address": hex(load),
+            "file_bytes": file_size, "flags": flags}
+
+
+def audit_linked_swap_bytes(xml: Path, elf: Path, *, full_nv4: bool = False, stock20260311=False) -> dict:
     """Verify exact linked machine instructions using the already-bound BIN/XML."""
     components = [node for node in ElementTree.parse(xml).iter("object_component")
                   if node.findtext("name") == ".text." + SWAP]
@@ -78,7 +114,24 @@ def audit_linked_swap_bytes(xml: Path, elf: Path) -> dict:
     component = components[0]
     address = int(component.findtext("run_address"), 0)
     size = int(component.findtext("size"), 0)
-    if size != len(M4F_SWAP_SECTION) or not 0 <= address < 0x6000:
+    if size != len(M4F_SWAP_SECTION):
+        raise ValueError("M4F_CONTEXT_SWAP_SECTION_GEOMETRY")
+    full_evidence = {}
+    if full_nv4 and stock20260311:
+        raise ValueError("M4F_CONTEXT_LAYOUT_PROFILES_MUTUALLY_EXCLUSIVE")
+    if full_nv4 or stock20260311:
+        # Independent selected profile, never an APP bound inferred from ELF.
+        import full_nv4_profile as full
+        profile_path = full.STOCK_20260311_PROFILE if stock20260311 else full.DEFAULT_PROFILE
+        profile = full.validate_profile(profile_path)
+        ceiling = int(profile["flash"]["conservative_app_ceiling_exclusive"], 16)
+        if not 0 <= address < address + size <= ceiling:
+            raise ValueError("M4F_CONTEXT_SWAP_SECTION_GEOMETRY")
+        full_evidence = {
+            "profile_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+            "app_ceiling_exclusive": hex(ceiling),
+            "executable_pt_load": _full_swap_load(elf, address, size)}
+    elif not 0 <= address < 0x6000:
         raise ValueError("M4F_CONTEXT_SWAP_SECTION_GEOMETRY")
     # The parent native image-binding audit confirms this flat BIN is exactly
     # the same linked ELF and XML, not merely an unrelated bytes file.
@@ -87,7 +140,8 @@ def audit_linked_swap_bytes(xml: Path, elf: Path) -> dict:
         raise ValueError("M4F_CONTEXT_LINKED_SWAP_MACHINE_BYTES_MISMATCH")
     return {"address": hex(address), "size": size,
             "instruction_sha256": hashlib.sha256(M4F_SWAP_INSTRUCTIONS).hexdigest(),
-            "linked_section_sha256": hashlib.sha256(M4F_SWAP_SECTION).hexdigest()}
+            "linked_section_sha256": hashlib.sha256(M4F_SWAP_SECTION).hexdigest(),
+            **full_evidence}
 
 
 ARCHIVE = Path("kernel/tirtos7/packages/ti/sysbios/lib/ticlang/m4f/sysbios.a")
@@ -112,7 +166,7 @@ def audit_archive_ownership(xml: Path, sdk: Path) -> dict:
             "linked_asm_members": sorted(required)}
 
 
-def audit(elf: Path, xml: Path, sdk: Path, clang: Path) -> dict:
+def audit(elf: Path, xml: Path, sdk: Path, clang: Path, *, full_nv4: bool = False, stock20260311=False) -> dict:
     dumper = clang / "bin/tiarmobjdump"
     if not dumper.is_file():
         raise ValueError("M4F_CONTEXT_MISSING_PINNED_TI_OBJDUMP")
@@ -122,7 +176,8 @@ def audit(elf: Path, xml: Path, sdk: Path, clang: Path) -> dict:
             [str(dumper), "--disassemble-symbols=" + name, "--no-show-raw-insn",
              "--mcpu=cortex-m4", str(elf)], text=True)
     report = verify_m4f_disassembly(output)
-    report["linked_m4f_swap_machine_frame"] = audit_linked_swap_bytes(xml, elf)
+    report["linked_m4f_swap_machine_frame"] = audit_linked_swap_bytes(
+        xml, elf, full_nv4=full_nv4, stock20260311=stock20260311)
     # TI's M4F-preprocessed Hwi assembly does not define setStackLimit at all.
     # If a future SDK instead links a no-op, inspect and constrain it as well.
     optional = subprocess.run(
@@ -136,4 +191,61 @@ def audit(elf: Path, xml: Path, sdk: Path, clang: Path) -> dict:
             raise ValueError("M4F_CONTEXT_HWI_STACK_LIMIT_NOT_NOOP")
         report["armv8m_stack_limit_symbol"] = "linked_noop"
     report["linked_sysbios_archive"] = audit_archive_ownership(xml, sdk)
+    report["linked_elf_sha256"] = hashlib.sha256(elf.read_bytes()).hexdigest()
+    report["linked_xml_sha256"] = hashlib.sha256(xml.read_bytes()).hexdigest()
+    report["full_nv4"] = full_nv4
+    report["stock20260311"] = stock20260311
     return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifacts", required=True, type=Path)
+    parser.add_argument("--sdk", required=True, type=Path)
+    parser.add_argument("--clang", required=True, type=Path)
+    parser.add_argument("--full-nv4", action="store_true")
+    parser.add_argument("--stock20260311", action="store_true")
+    parser.add_argument("--receipt", required=True, type=Path)
+    args = parser.parse_args()
+    if args.full_nv4 and args.stock20260311:
+        parser.error("select one explicit layout")
+    if (args.artifacts.is_symlink() or not args.artifacts.is_dir() or
+            args.receipt.exists() or args.receipt.is_symlink()):
+        raise ValueError("M4F_CONTEXT_UNTRUSTED_INPUT_OR_RECEIPT")
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "release"))
+    sys.path.insert(0, str(root / "b0/tools"))
+    from r4_native_bundle import capture_native
+    from b0_image_audit import audit as image_audit
+    artifacts = args.artifacts.resolve()
+    manifest_path = artifacts / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("M4F_CONTEXT_NATIVE_MANIFEST_MISSING")
+    # This CLI is a linked-ABI subgate, not build-provenance authentication.
+    # Bind its inspection to one private copy of the admitted native files.
+    pin = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    with tempfile.TemporaryDirectory(prefix="r4-m4f-context-native-") as directory:
+        frozen = Path(directory)
+        manifest = capture_native(artifacts, frozen, pin)
+        status, message = image_audit(root / "b0", frozen,
+                                      direct_rom_boot=not (args.full_nv4 or args.stock20260311),
+                                      full_nv4=args.full_nv4, stock20260311=args.stock20260311)
+        if status:
+            raise ValueError("M4F_CONTEXT_NATIVE_IMAGE_BINDING_FAILED " + message)
+        members = manifest["files"]
+        elf, xml = (frozen / members[kind]["file"] for kind in ("elf", "xml"))
+        if elf.with_suffix(".bin").name != members["bin"]["file"]:
+            raise ValueError("M4F_CONTEXT_BIN_NAME_NOT_BOUND_TO_ELF")
+        report = audit(elf, xml, args.sdk, args.clang, full_nv4=args.full_nv4,
+                       stock20260311=args.stock20260311)
+        report["native_manifest_sha256"] = pin
+        report["native_artifact_sha256"] = {
+            kind: members[kind]["sha256"] for kind in ("elf", "hex", "bin", "xml")}
+        report["flash_authorized"] = False
+    args.receipt.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    print(json.dumps({"status": report["status"], "full_nv4": args.full_nv4,
+                      "flash_authorized": False}))
+
+
+if __name__ == "__main__":
+    main()

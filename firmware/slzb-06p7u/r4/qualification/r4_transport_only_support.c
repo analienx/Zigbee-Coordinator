@@ -7,6 +7,7 @@ extern void r4q_test_restore(uintptr_t key);
 #define R4Q_LEAVE(key) r4q_test_restore(key)
 #else
 #include <ti/drivers/dpl/HwiP.h>
+#include <ti/sysbios/knl/Task.h>
 #define R4Q_ENTER() HwiP_disable()
 #define R4Q_LEAVE(key) HwiP_restore(key)
 #endif
@@ -15,6 +16,9 @@ extern void r4q_test_restore(uintptr_t key);
 static volatile uint8_t r4q_error;
 static volatile uint8_t r4q_uart_opened;
 static volatile uint8_t r4q_initialized;
+/* Real NPI semaphore wakes; RAM only, with no network/NV dependency. */
+static volatile uint32_t r4q_npi_wakes;
+static volatile uint8_t r4q_npi_task_priority = 0xffu;
 
 void r4q_transport_failed(uint8_t reason)
 {
@@ -52,4 +56,15 @@ int r4q_npi_initialized(void)
     int initialized = r4q_error == 0u && r4q_initialized != 0u;
     R4Q_LEAVE(key);
     return initialized;
+}
+
+void r4q_note_npi_wake(void)
+{
+    uintptr_t key = R4Q_ENTER();
+    if (r4q_npi_wakes != UINT32_MAX) ++r4q_npi_wakes;
+#ifndef R4_TRANSPORT_HOST
+    /* Sample the actual scheduled NPI owner, never a configured constant. */
+    r4q_npi_task_priority = (uint8_t)Task_getPri(Task_self());
+#endif
+    R4Q_LEAVE(key);
 }

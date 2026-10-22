@@ -150,6 +150,20 @@ def make(sdk: Path, source_receipt: Path) -> str:
     preamble = preamble.replace('#include "b1_admission.h"', '')
     preamble = preamble.replace("b1_management_test_disable", "r4q_test_disable")
     preamble = preamble.replace("b1_management_test_restore", "r4q_test_restore")
+    # This isolated SYS_PING/VERSION profile deliberately strips the B1
+    # retained-startup UART EOT observer. No event callback is registered.
+    event_assertions = (
+        "assert(p->eventMask & UART2_EVENT_TX_FINISHED);\n"
+        "    assert(p->eventCallback != NULL);"
+    )
+    if preamble.count(event_assertions) != 1:
+        raise RuntimeError("TRANSPORT_HARNESS_UART_CALLBACK_ASSERTION_DRIFT")
+    preamble = preamble.replace(
+        event_assertions,
+        "assert(p->eventMask == 0u);\n"
+        "    assert(p->eventCallback == NULL);",
+        1,
+    )
     # The real dispatcher replaces the synthetic subsystem table entirely.
     preamble += "\nuint8_t MT_SysCommandProcessing(uint8_t*);\n"
     functions = [

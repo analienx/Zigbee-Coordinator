@@ -112,6 +112,46 @@ def patch_npi(text):
     /* HOLD has no stack/MT task registration. Its frames stay with this
      * original NPI owner and enter the gated real MT dispatcher below. */""", "NPI hold does not read unregistered MT task")
     text = once(text, "    uint8 *pReq = (uint8 *)pMsg->pBuf;", """    uint8 *pReq = (uint8 *)pMsg->pBuf;
+    /* Strict, RAM-only op3 B1E1 and op2 B1P1 share original NPI owner.
+     * Ordinary op0/op1 and all Zigbee commands preserve their stack owner. */
+    {
+        static uint8_t evidence[B1_EVIDENCE_REPLY_SIZE]; /* static: bounded NPI stack */
+        uint8_t error = 3u;
+        uint8_t action = b1_evidence_query(pReq, evidence, &error);
+        if (action != B1_MT_CONTINUE)
+        {
+            if (action == B1_MT_STATUS)
+                MT_BuildAndSendZToolResponse(0x61u, B1_STATUS_COMMAND,
+                                            B1_EVIDENCE_REPLY_SIZE, evidence);
+            else if (action == B1_MT_REJECT && (pReq[1] & 0xe0u) == 0x20u)
+            {
+                uint8_t rejected[3] = {error, pReq[1], pReq[2]};
+                MT_BuildAndSendZToolResponse(0x60u, 0u, 3u, rejected);
+            }
+            OsalPort_msgDeallocate(pMsg->pBuf);
+            OsalPort_free(pMsg);
+            return 0;
+        }
+    }
+    {
+        uint8_t reply[B1_STARTUP_REPLY_SIZE];
+        uint8_t error = 3u;
+        uint8_t action = b1_startup_query(pReq, reply, &error);
+        if (action != B1_MT_CONTINUE)
+        {
+            if (action == B1_MT_STATUS)
+                MT_BuildAndSendZToolResponse(0x61u, B1_STATUS_COMMAND,
+                                            B1_STARTUP_REPLY_SIZE, reply);
+            else if (action == B1_MT_REJECT && (pReq[1] & 0xe0u) == 0x20u)
+            {
+                uint8_t rejected[3] = {error, pReq[1], pReq[2]};
+                MT_BuildAndSendZToolResponse(0x60u, 0u, 3u, rejected);
+            }
+            OsalPort_msgDeallocate(pMsg->pBuf);
+            OsalPort_free(pMsg);
+            return 0;
+        }
+    }
     if (b1_management_get_hold_active())
     {
         MT_ProcessIncoming(pReq);
@@ -119,6 +159,10 @@ def patch_npi(text):
         OsalPort_free(pMsg);
         return 0;
     }""", "NPI hold stays in existing owner")
+    text = once(text, "        Semaphore_pend(npiSemHandle, BIOS_WAIT_FOREVER);",
+        "        Semaphore_pend(npiSemHandle, BIOS_WAIT_FOREVER);\n"
+        "        b1_evidence_note_npi_wake();",
+        "NPI owner real semaphore service evidence")
     # Stock TI flow-off RX callback spins forever when the ring buffer fills.
     # The parser cannot safely re-synchronize after losing an arbitrary byte.
     # Stop receiving/parsing; do not form an unbounded ISR busy-loop and do
@@ -214,6 +258,19 @@ def patch_npi(text):
 
 def patch_uart(text):
     text = once(text, '#include "npi_tl_uart.h"', '#include "npi_tl_uart.h"\n#include "b1_management.h"', "UART header")
+    text = once(text, '#include <ti/drivers/UART2.h>', '''#include <ti/drivers/UART2.h>
+/* TX_FINISHED is wire EOT; the ordinary write callback is FIFO acceptance. */
+static void b1_startup_uart_event(UART2_Handle handle, uint32_t event,
+                                 uint32_t data, void *userArg)
+{
+    (void)handle; (void)data; (void)userArg;
+    if (event & UART2_EVENT_TX_FINISHED) b1_startup_tx_eot();
+}
+''', "UART wire EOT callback")
+    text = once(text, "    params.writeCallback = NPITLUART_writeCallBack;",
+        "    params.writeCallback = NPITLUART_writeCallBack;\n"
+        "    params.eventCallback = b1_startup_uart_event;\n"
+        "    params.eventMask |= UART2_EVENT_TX_FINISHED;", "UART EOT subscription")
     text = once(text, "    uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);", """    uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);
     if (uartHandle == NULL)
     {
@@ -267,7 +324,8 @@ def patch_uart(text):
             b1_management_transport_failed(B1_ERROR_UART_WRITE);
         OsalPort_leaveCS(key);
         return; /* Do not claim completed host write after failure. */
-    }""", "UART TX callback completion status")
+    }
+    b1_startup_tx_result((uint16_t)size, 1);""", "UART TX callback completion status")
     text = once(text,
         """    if(UART2_write(uartHandle, TransportTxBuf, TransportTxLen, NULL) != UART2_STATUS_SUCCESS )
     {
@@ -277,10 +335,17 @@ def patch_uart(text):
     {
         TransportTxLen = 0; /* No more writes on failed transport. */
     }
-    else if (UART2_write(uartHandle, TransportTxBuf, TransportTxLen, NULL) != UART2_STATUS_SUCCESS)
+    else
     {
-        TransportTxLen = 0;
-        b1_management_transport_failed(B1_ERROR_UART_WRITE);
+        int_fast16_t b1_write_status;
+        b1_startup_tx_submit(TransportTxBuf, TransportTxLen);
+        b1_write_status = UART2_write(uartHandle, TransportTxBuf, TransportTxLen, NULL);
+        b1_startup_tx_accepted(TransportTxLen, b1_write_status == UART2_STATUS_SUCCESS);
+        if (b1_write_status != UART2_STATUS_SUCCESS)
+        {
+            TransportTxLen = 0;
+            b1_management_transport_failed(B1_ERROR_UART_WRITE);
+        }
     }""", "UART TX immediate submission status")
     return text
 

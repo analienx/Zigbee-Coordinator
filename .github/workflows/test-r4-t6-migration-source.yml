@@ -1,0 +1,26 @@
+name: R4-T6 TC300 legacy-migration prohibition (SOURCE ONLY)
+on:
+  pull_request:
+    paths:
+      - 'tools/r4_t6_migration_guard.py'
+      - 'tests/test_r4_t6_migration_guard.py'
+      - 'firmware/slzb-06p7u/r4/profiles/p7u-r4-full-nv4.json'
+      - '.github/workflows/test-r4-final-composite-native.yml'
+      - '.github/workflows/test-r4-t6-migration-source.yml'
+permissions:
+  contents: read
+jobs:
+  t6-migration-denial:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout immutable PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert immutable PR head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Pinned TI migration loop, destructive-order and preprocessor mutants
+        run: python -m unittest -v tests.test_r4_t6_migration_guard

@@ -77,6 +77,8 @@ static uint32_t mgmt_candidate;
 void b1_management_hold_nv(uint8_t reason)
 { if (mgmt_reason == 0u) mgmt_reason = reason; }
 void b1_management_note_nv_probe(uint8_t code) { mgmt_probe = code; }
+void b1_management_note_nv4(uint32_t c,uint32_t s,uint32_t r,uint32_t n,uint32_t a,uint32_t f,uint32_t flags)
+{ (void)c;(void)s;(void)r;(void)n;(void)a;(void)f;(void)flags; }
 void b1_management_note_nv_candidate(void) { ++mgmt_candidate; }
 
 #ifdef NVOCMP_POSIX_SEM

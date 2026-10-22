@@ -1,0 +1,200 @@
+name: R4 B4 pinned herdsman existing-owner compile and tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: r4-b4-host-${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  b4-herdsman-real-source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      HERDSMAN_PIN: 0968f979d558874b17396c96b66382d4236bbdcd
+      B4_HERDSMAN_ROOT: /tmp/b4-herdsman-src
+      P7U_HERDSMAN_ROOT: /tmp/b4-herdsman-src
+      B4_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact immutable PR head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Checkout actual pinned herdsman without worktree contamination
+        run: |
+          set -euo pipefail
+          git init -q "$B4_HERDSMAN_ROOT"
+          git -C "$B4_HERDSMAN_ROOT" remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C "$B4_HERDSMAN_ROOT" fetch --depth 1 origin "$HERDSMAN_PIN"
+          git -C "$B4_HERDSMAN_ROOT" checkout --detach FETCH_HEAD
+          test "$(git -C "$B4_HERDSMAN_ROOT" rev-parse HEAD)" = "$HERDSMAN_PIN"
+      - name: Stage audited existing-owner F0 source overlay only
+        run: |
+          python host/r4-b4/herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-overlay.json
+          python host/r4-b4/b4_v4_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v4-overlay.json
+          PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --composition-receipt /tmp/b4-herdsman-v4-overlay.json --receipt /tmp/p7u-startup-hold.json
+          test "$(python -c 'import json; print(json.load(open("/tmp/b4-herdsman-overlay.json"))["serial_owner"])')" = EXISTING_ZNP_ONLY
+      - name: Verify exact pinned diagnostic DEBUG payload redaction
+        run: |
+          python host/r4-b4/b4_v4_log_audit.py \
+            --checkout "$B4_HERDSMAN_ROOT" \
+            --receipt /tmp/b4-herdsman-v4-overlay.json
+      - name: Install exact herdsman package-manager version
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm --version | grep -Fx "10.33.0"
+      - name: Native pinned TypeScript build (no adapter opened)
+        working-directory: /tmp/b4-herdsman-src
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
+        run: |
+          set -euo pipefail
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
+            | tee /tmp/b4-host-runtime-tests.tap
+      - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
+        run: |
+          set -euo pipefail
+          git init -q /tmp/b4-z2m-host
+          git -C /tmp/b4-z2m-host remote add origin https://github.com/Koenkk/zigbee2mqtt.git
+          git -C /tmp/b4-z2m-host fetch --depth 1 origin 62b02e2aa1997c574223b80c196677b63a25f4a7
+          git -C /tmp/b4-z2m-host checkout --detach FETCH_HEAD
+          python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
+          python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
+          python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
+      - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@10.18.3
+          cd /tmp/b4-z2m-host
+          pnpm install --frozen-lockfile
+          test -d "$B4_HERDSMAN_ROOT/dist"
+          # Z2M sees the ACTUAL compiled pinned herdsman overlay, not a stub.
+          rm node_modules/zigbee-herdsman
+          ln -s "$B4_HERDSMAN_ROOT" node_modules/zigbee-herdsman
+          pnpm exec tsc --noEmit
+      - name: Deny any production installation inference
+        run: |
+          echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
+          test ! -e host/r4-b4/z2m-installed.ok
+      - name: Seal the tested existing-owner source bundle and integration receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import gzip
+          import hashlib
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import tarfile
+
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+
+          source_sha = git('rev-parse', 'HEAD').decode().strip()
+          if source_sha != os.environ['B4_SOURCE_SHA']:
+              raise ValueError('B4 integration source SHA changed')
+          host_pin = '6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88'
+          firmware_pin = '3231abb1f13210eb88afe13ff7b7f9f29709cd6b'
+          herdsman_pin = '0968f979d558874b17396c96b66382d4236bbdcd'
+          z2m_pin = '62b02e2aa1997c574223b80c196677b63a25f4a7'
+          upstream = json.loads(Path('host/r4-b4/UPSTREAM.json').read_bytes())
+          if (upstream['host_source_commit'] != host_pin or
+                  upstream['firmware_source_commit'] != firmware_pin or
+                  upstream['herdsman_commit'] != herdsman_pin or
+                  upstream['zigbee2mqtt_commit'] != z2m_pin):
+              raise ValueError('B4 declared immutable input pin changed')
+          for root, expected in ((os.environ['B4_HERDSMAN_ROOT'], herdsman_pin),
+                                 ('/tmp/b4-z2m-host', z2m_pin)):
+              if git('-C', root, 'rev-parse', 'HEAD').decode().strip() != expected:
+                  raise ValueError('B4 tested checkout pin changed')
+
+          paths = sorted(p.decode() for p in
+                         git('ls-files', '-z', '--', 'host/r4-b4', 'host/recovery').split(b'\0') if p)
+          if not paths:
+              raise ValueError('B4 source bundle has no tracked inputs')
+          frozen = {}
+          for name in paths:
+              path = Path(name)
+              if not name.startswith(('host/r4-b4/', 'host/recovery/')) or path.is_symlink() or not path.is_file():
+                  raise ValueError('Unsafe B4 source bundle member')
+              data = path.read_bytes()
+              if data != git('show', source_sha + ':' + name):
+                  raise ValueError('B4 source changed during compilation/tests: ' + name)
+              frozen[name] = data
+
+          output = Path('/tmp/r4-b4-host-integration')
+          output.mkdir(exist_ok=False)
+          archive = output / 'host-bundle.tar.gz'
+          with archive.open('wb') as raw:
+              with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as zipped:
+                  with tarfile.open(fileobj=zipped, mode='w') as bundle:
+                      for name, data in frozen.items():
+                          member = tarfile.TarInfo(name)
+                          member.size = len(data)
+                          member.mode = 0o644
+                          bundle.addfile(member, io.BytesIO(data))
+          for name in ('b4-herdsman-overlay.json', 'b4-herdsman-v4-overlay.json',
+                       'b4-z2m-ota-receipt.json', 'b4-v4-z2m-ota-receipt.json',
+                       'b4-host-runtime-tests.tap', 'p7u-startup-hold.json'):
+              shutil.copyfile(Path('/tmp') / name, output / name)
+          files = {}
+          for path in sorted(output.iterdir()):
+              data = path.read_bytes()
+              files[path.name] = {'sha256': hashlib.sha256(data).hexdigest(),
+                                  'bytes': len(data)}
+          receipt = {
+              'schema': 'r4-b4-host-integration-v1',
+              'source_sha': source_sha,
+              'host_upstream_sha': host_pin,
+              'firmware_b4_sha': firmware_pin,
+              'herdsman_sha': herdsman_pin,
+              'z2m_sha': z2m_pin,
+              'status': 'HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED',
+              'bundle_file': archive.name,
+              'bundle_sha256': files[archive.name]['sha256'],
+              'existing_owner_only': True,
+              'herdsman_typescript_compiled': True,
+              'z2m_typescript_compiled': True,
+              'host_runtime_tests_completed': True,
+              'retained_startup_protected': True,
+              'automatic_backup_restore': False,
+              'blank_backup_restore_supported': False,
+              'default_enabled': False,
+              'installed_host_changed': False,
+              'full_b0_b4_sealed': False,
+              'flash_authorized': False,
+              'source_files': {name: hashlib.sha256(data).hexdigest()
+                               for name, data in frozen.items()},
+              'files': files,
+          }
+          (output / 'host-integration-receipt.json').write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          PY
+      - name: Upload the source-bound host integration evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b4-host-integration-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/r4-b4-host-integration/
+          if-no-files-found: error

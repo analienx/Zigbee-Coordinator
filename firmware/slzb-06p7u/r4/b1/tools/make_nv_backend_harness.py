@@ -87,6 +87,8 @@ static unsigned corrupt_offset;
 static int read_error,write_error,erase_error;
 void b1_management_hold_nv(uint8_t reason) {(void)reason;}
 void b1_management_note_nv_probe(uint8_t code) {(void)code;}
+void b1_management_note_nv4(uint32_t c,uint32_t s,uint32_t r,uint32_t n,uint32_t a,uint32_t f,uint32_t flags)
+{ (void)c;(void)s;(void)r;(void)n;(void)a;(void)f;(void)flags; }
 void b1_management_note_nv_candidate(void) {}
 #define NVOCMP_FLASHACCESS(err) do { if (denied) (err)=NVINTF_LOWPOWER; } while(0);
 static void GateMutexPri_Params_init(GateMutexPri_Params *p) {p->unused=0;}

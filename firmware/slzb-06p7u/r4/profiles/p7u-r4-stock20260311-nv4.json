@@ -1,0 +1,52 @@
+{
+  "schema": "p7u-r4-full-nv4-profile-v1",
+  "profile_id": "P7U_R4_STOCK_20260311_NV4",
+  "board": "SLZB-06P7U-r1.73-CC2652P7",
+  "source_sdk_sha": "3615ad5d3f4f271258d18a2f5ce1785064ff9a58",
+  "boot": {
+    "mode": "FACTORY_RESIDENT_BOOT_HANDOFF_REQUIRED",
+    "vector_address": "0x00000",
+    "image_valid_conf": "0xAC000",
+    "resident_boot_start": "0xAC000",
+    "resident_boot_end_exclusive": "0xAE000",
+    "app_vector_zero_bootable": false
+  },
+  "flash": {
+    "sector_bytes": 8192,
+    "app_start": "0x00000",
+    "conservative_app_ceiling_exclusive": "0xA0000",
+    "stock_nv4_start": "0xA4000",
+    "stock_nv4_end_exclusive": "0xAC000",
+    "nvocmp_pages": 4,
+    "ccfg_sector_start": "0xAE000",
+    "chip_end_exclusive": "0xB0000",
+    "stock_20260311_ccfg_sha256": "74707d474dc5ef0d1fdcc18fcd9d930f9a30030046833bdda7c1237219ae3758"
+  },
+  "board_power_reference": "stock-20260311",
+  "uart": {
+    "owner": "TI_NPI_MT_ONLY",
+    "peripheral": "UART0",
+    "rx": "DIO12",
+    "tx": "DIO13",
+    "baud": 115200,
+    "flow_control": false
+  },
+  "capacities": {
+    "source_routes": 192,
+    "neighbors": 64,
+    "nwk_routes": 128,
+    "direct_children": 96,
+    "associated_devices_slots": 97,
+    "trust_center_devices": 300,
+    "aps_table_entries": 3,
+    "c_irq_stack_bytes": 4096
+  },
+  "policies": {
+    "b5_mto": false,
+    "network_forming_by_default": false,
+    "auto_nv_format": false,
+    "auto_flash": false,
+    "physical_flash_authorized": false,
+    "full_b0_b4_sealed": false
+  }
+}

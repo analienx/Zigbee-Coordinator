@@ -17,6 +17,8 @@ from contextlib import contextmanager
 import shlex
 from make_transport_harness import SCENARIOS
 from board_profile import REFERENCES
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "b0" / "tools"))
+from b0_provision import _matches_version
 
 EXAMPLES = "87ff5b638b632050228a7504f35cf3b95581c278"
 SDK = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
@@ -24,6 +26,17 @@ PROJECT = "znp_LP_CC1352P7_4_tirtos7_ticlang"
 CMAKE_VERSION = "3.31.6"
 REPO = Path(__file__).resolve().parents[4]
 R4 = REPO / "firmware/slzb-06p7u/r4"
+
+
+def verify_ti_versions(sysconfig_stdout: str, compiler_stdout: str) -> dict[str, str]:
+    """Apply exact TI pins and return provenance for the later ASM receipt."""
+    if not _matches_version("sysconfig", "sysconfig_cli", sysconfig_stdout):
+        raise ValueError("QUALIFICATION_SYSCONFIG_PIN_MISMATCH")
+    if not _matches_version("ti_arm_clang", "tiarmclang", compiler_stdout):
+        raise ValueError("QUALIFICATION_COMPILER_PIN_MISMATCH")
+    return {"sysconfig_version": sysconfig_stdout.strip(),
+            "tiarmclang_version": next(line.strip() for line in compiler_stdout.splitlines()
+                                       if line.startswith("TI Arm Clang Compiler "))}
 
 
 @contextmanager
@@ -87,11 +100,9 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
         sdk = examples / "cc13xx_cc26xx_sdk"
         if subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=sdk, text=True).strip() != SDK:
             raise ValueError("QUALIFICATION_SDK_PIN_MISMATCH")
-        if "1.21.1+3772" not in subprocess.check_output([str(syscfg), "--version"], text=True):
-            raise ValueError("QUALIFICATION_SYSCONFIG_PIN_MISMATCH")
-        version = subprocess.check_output([str(compiler / "bin/tiarmclang"), "--version"], text=True)
-        if "3.2.2" not in version:
-            raise ValueError("QUALIFICATION_COMPILER_PIN_MISMATCH")
+        version_provenance = verify_ti_versions(
+            subprocess.check_output([str(syscfg), "--version"], text=True),
+            subprocess.check_output([str(compiler / "bin/tiarmclang"), "--version"], text=True))
         cmake_version = subprocess.check_output(["cmake", "--version"], text=True).splitlines()[0]
         if cmake_version != "cmake version " + CMAKE_VERSION:
             raise ValueError("QUALIFICATION_CMAKE_PIN_MISMATCH: " + cmake_version)
@@ -124,7 +135,7 @@ def build(output: Path, reference: str, source_sha: str, profile: str = "transpo
         if set(m4f_asm) != expected_asm:
             raise ValueError("QUALIFICATION_M4F_ASM_NOT_COMPILED_WITH_CPP " + repr(sorted(m4f_asm)))
         (output / "native-asm-compile-commands.json").write_text(json.dumps({
-            "cmake_version": cmake_version, "tiarmclang_version": version.splitlines()[0],
+            "cmake_version": cmake_version, **version_provenance,
             "m4f_asm_compile_commands": m4f_asm}, indent=2) + "\n")
         if profile == "transport-only":
             os.environ["R4_NVOCMP_SOURCE"] = str(sdk / "source/ti/common/nv/nvocmp.c")

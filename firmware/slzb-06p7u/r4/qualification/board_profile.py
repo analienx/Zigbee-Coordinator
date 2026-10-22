@@ -100,7 +100,7 @@ def transform(source, power, *, transport_only):
     return source
 
 
-def inspect_generated(directory, power, *, transport_only, binary=None):
+def inspect_generated(directory, power, *, transport_only, binary=None, stock20260311=False):
     audit = load_module("p7u_board_audit", ROOT / "b0/tools/b0_verify_generated_board.py")
     report = audit.inspect_generated(directory, dcdc_enabled=power["dcdc_enabled"],
                                      force_vddr=power["force_vddr"])
@@ -140,9 +140,14 @@ def inspect_generated(directory, power, *, transport_only, binary=None):
         if len(raw) != 0xB0000:
             raise ValueError("P7U_BOARD_NATIVE_SPAN")
         for address, expected in ((0xAFFB4, power["mode_conf"]),
-                                  (0xAFFAC, power["mode_conf_1"]), (0xAFFEC, 0)):
+                                  (0xAFFAC, power["mode_conf_1"]),
+                                  (0xAFFEC, 0xAC000 if stock20260311 else 0)):
             if int.from_bytes(raw[address:address + 4], "little") != expected:
                 raise ValueError("P7U_BOARD_NATIVE_CCFG_MISMATCH_" + hex(address))
+        if stock20260311:
+            import full_nv4_profile as full
+            if sha(raw[0xAFFA8:0xB0000]) != full.STOCK_20260311_CCFG_SHA:
+                raise ValueError("P7U_BOARD_STOCK20260311_FULL_CCFG_MISMATCH")
         report["native_binary_sha256"] = sha(raw)
     report.update({"schema": "r4-p7u-qualification-board-v1", "power": power,
                    "transport_only": transport_only, "native_verified": binary is not None,
@@ -161,6 +166,7 @@ def main():
     group.add_argument("--current-profile", type=Path)
     parser.add_argument("--expected-profile-sha256")
     parser.add_argument("--transport-only", action="store_true")
+    parser.add_argument("--stock20260311", action="store_true")
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
     if (args.syscfg is None) == (args.generated is None) or args.receipt.exists():
@@ -179,7 +185,8 @@ def main():
         args.syscfg.write_bytes(result)
     else:
         report = inspect_generated(args.generated, power,
-                                   transport_only=args.transport_only, binary=args.binary)
+                                   transport_only=args.transport_only, binary=args.binary,
+                                   stock20260311=args.stock20260311)
     args.receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": "OFFLINE_BOARD_CONFIGURATION_ONLY", "flash_authorized": False}))
 
