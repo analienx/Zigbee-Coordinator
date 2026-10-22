@@ -88,13 +88,17 @@ METHOD = r"""
         if (!this.#b4Operational || process.env.P7U_B4_COLLECTOR !== "1" ||
             this.#b4InFlight) { return; }
         this.#b4InFlight = true;
+        const probeStarted = performance.now();
         try {
             const result = await this.b4ProbeReadOnlyDiagnosticsV4(true);
+            const elapsedMs = Math.max(0, Math.round(performance.now() - probeStarted));
             if (!this.#b4Operational) { return; }
             const utc = Date.now();
             if (!result) {
                 this.#b4Persist({schema: "p7u-b4-native-sample-v1", kind: "SKIPPED",
-                    utc, reason: "OWNER_BUSY_OTA_OR_DIAGNOSTIC_QUARANTINE",
+                    utc, probeLatencyMs: elapsedMs,
+                    monotonicReceiveNs: process.hrtime.bigint().toString(),
+                    reason: "OWNER_BUSY_OTA_OR_DIAGNOSTIC_QUARANTINE",
                     sourceAbi: 4, imageRuntimeAttested: false});
                 return;
             }
@@ -103,6 +107,8 @@ METHOD = r"""
                     .update(result.radioBootId, "utf8").digest("hex").slice(0, 24);
             this.#b4Persist({
                 schema: "p7u-b4-native-sample-v1", kind: "VALID", utc,
+                probeLatencyMs: elapsedMs,
+                monotonicReceiveNs: process.hrtime.bigint().toString(),
                 abi: result.abi, minor: result.minor,
                 sequence: result.sequence, validityMask: result.validityMask,
                 srspDepth: result.srspDepth, srspHighWater: result.srspHighWater,
