@@ -20,6 +20,7 @@ from policy import State, Observation, evaluate
 from executor import dispatch
 from ha_adapter import SupervisorClient, SmlightControl, Configuration, HAActuator
 from observer import PassiveObserver, start_failure_kind
+from alerts import HAIncidentReporter
 
 DATA = Path("/data")
 Z2M_ADDON = "45df7312_zigbee2mqtt"
@@ -102,13 +103,14 @@ def service_main():
     evidence_dir.mkdir(exist_ok=True, mode=0o700)
     journal_path = DATA / "watchdog-state.json"
 
-    # Supervisor service discovery; the MQTT credentials never reach stdout.
-    broker = supervisor.call("/services/mqtt")
-    if not isinstance(broker,dict) or broker.get("result") != "ok":
-        raise RuntimeError("MQTT_SERVICE_NOT_DISCOVERED")
-    data = broker.get("data", {})
-    observer.start(data.get("host", ""), int(data.get("port",1883)),
-                   data.get("username", ""), data.get("password", ""))
+    # No MQTT service is registered in this HA installation. Zigbee2MQTT
+    # already owns configured EMQX credentials; reuse them read-only from
+    # the HA config mount. Never copy those secrets into incident reports.
+    from mqtt_settings import load_broker_settings
+    broker = load_broker_settings(
+        Path("/homeassistant/zigbee2mqtt/configuration.yaml"))
+    observer.start(broker.host, broker.port, broker.username, broker.password)
+    reporter = HAIncidentReporter(supervisor, evidence_dir)
     actor = HAActuator(cfg, supervisor, slzb,
                        handle_action(observer, evidence_dir))
     state, receipts = load_state(journal_path)
@@ -163,8 +165,10 @@ def service_main():
                     stopped_receipt=bool(receipts.get("STOP_Z2M")),
                     radio_reset_ack=bool(receipts.get("RESET_RADIO")),
                     esp_restart_ack=bool(receipts.get("RESTART_ESP")),
-                    z2m_start_ack=bool(receipts.get("START_Z2M") or
-                                       receipts.get("START_Z2M_RADIO")),
+                    z2m_start_ack=bool(
+                        receipts.get("START_Z2M_RADIO") if
+                        state.phase in ("RADIO_START_PENDING","RADIO_VERIFY")
+                        else receipts.get("START_Z2M")),
                 )
                 decision = evaluate(o, state)
                 if not active:
@@ -183,6 +187,14 @@ def service_main():
                     # a distinct exclusive write-ahead journal in executor.
                     save_state(journal_path,decision.state,receipts)
                     state = decision.state
+                    if decision.action == "CAPTURE_EVIDENCE":
+                        # Two independent, durable, once-per-incident warnings:
+                        # the HA System Log and the bell notifications area.
+                        # A malformed or temporarily unavailable HA service
+                        # must not turn into repeated Zigbee reset attempts.
+                        result = reporter.report("DETECTED", state.incident_since,
+                                                 decision.reason)
+                        print("CONFIRMED_HANG_WARNING", result, flush=True)
                     if decision.action in (
                         "CAPTURE_EVIDENCE","STOP_Z2M","RESTART_ESP",
                         "RESET_RADIO","START_Z2M"
@@ -204,6 +216,13 @@ def service_main():
                             save_state(journal_path,state,receipts)
                     elif decision.action in ("ALERT_HUMAN","RECOVERY_SUCCEEDED"):
                         print(decision.action,decision.reason,flush=True)
+                        if state.incident_since:
+                            kind = ("RECOVERED" if
+                                    decision.action == "RECOVERY_SUCCEEDED"
+                                    else "RECOVERY_FAILED")
+                            result = reporter.report(kind, state.incident_since,
+                                                     decision.reason)
+                            print("RECOVERY_NOTIFICATION", kind, result, flush=True)
                         if decision.action=="RECOVERY_SUCCEEDED":
                             receipts = {}
                             save_state(journal_path,state,receipts)
