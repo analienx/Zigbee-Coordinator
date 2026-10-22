@@ -158,4 +158,15 @@ uint8_t b1_evidence_query(const uint8_t *frame,
                           uint8_t *error);
 int b1_retained_attempt_active(void);
 int b1_retained_start_gate(uint8_t mode, uint8_t logical_type);
+/* Per-boot genuine coordinator MODE_RESUME confirmation: no formation API. */
+enum {
+    B1_RET_CNF_NOT_ISSUED = 0, B1_RET_CNF_ISSUED = 1,
+    B1_RET_CNF_CONFIRMED = 2, B1_RET_CNF_TERMINAL_FAILED = 3
+};
+int b1_retained_boot_admitted(void);
+uint8_t b1_retained_completion_state(void);
+void b1_retained_completion_arm(void);
+int b1_retained_completion_confirm(void);
+void b1_retained_completion_fail(uint8_t reason);
+void b1_evidence_priority(uint8_t npi, uint8_t priority);
 #endif

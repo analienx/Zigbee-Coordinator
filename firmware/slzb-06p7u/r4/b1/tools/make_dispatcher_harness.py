@@ -17,7 +17,7 @@ typedef unsigned long UArg;
 #define NPI 1
 #define OSALPORT_CLEAN_UP_TIMERS_EVT 1u
 static jmp_buf verdict;
-static unsigned credits, consumed, calls, concurrency;
+static unsigned credits, consumed, calls, concurrency, unchanged;
 static unsigned event0, event1, sem_token, mutex_token;
 static void *stackSemHandle=&sem_token, *npiInitializationMutexHandle=&mutex_token;
 static uint32_t *pTasksEvents[]={&event0,&event1};
@@ -47,6 +47,7 @@ static uint32_t handler0(uint8_t id,uint32_t events)
 {
  assert(id==0u);
  ++calls;
+ if(unchanged) return events; /* unchanged handler: repeated wake, no progress */
  if(events & 1u) {
   assert(events==3u);
   if(concurrency) {event0 |= 4u;Semaphore_post(stackSemHandle);}
@@ -66,10 +67,14 @@ int main(int argc,char **argv)
 {
  assert(argc==2);
  concurrency=argv[1][0]=='c';
+ unchanged=argv[1][0]=='u';
  credits=1;event0=3u;event1=0u;consumed=calls=0u;
  int code=setjmp(verdict);
  if(code==0)stackTaskFxn(0,0);
- if(concurrency) {
+ if(unchanged) {
+  assert(code==1 && calls==3 && event0==3u && credits==1u);
+  puts("ACTUAL_TI_DISPATCH_UNCHANGED_MASK_STARVATION_RISK_OBSERVED");
+ } else if(concurrency) {
   assert(code==1 && calls==3 && event0==0u);
  } else {
   assert(code==2 && calls==2 && event0==0u);

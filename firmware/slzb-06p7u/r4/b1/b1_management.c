@@ -13,6 +13,7 @@ __attribute__((weak)) void b1_startup_post_run(void) {}
 __attribute__((weak)) void b1_startup_trace_tx_done(void) {}
 #else
 #include <ti/drivers/dpl/HwiP.h>
+#include <ti/sysbios/knl/Task.h>
 #define B1_CS_ENTER() HwiP_disable()
 #define B1_CS_LEAVE(key) HwiP_restore(key)
 #endif
@@ -44,6 +45,7 @@ static uint16_t b1_tx_length, b1_trace_expected_sequence;
 static uint8_t b1_trace_expected;
 static uint8_t b1_retained_admitted, b1_retained_network_started;
 static uint8_t b1_retained_attempt_completed;
+static uint8_t b1_retained_completion; /* NOT_ISSUED -> ISSUED -> CONFIRMED/FAILED */
 
 typedef struct {
     uint32_t mask, activity, stack_wakes, zdapp_loops, last_zdapp_input;
@@ -53,6 +55,7 @@ typedef struct {
     uint8_t order[B1_MILESTONES], first_status[B1_MILESTONES];
     uint8_t first_order_next, last_milestone, current_service;
     uint8_t bdb_branch, restore_result, dev_state, confirmation, nlme_result;
+    uint8_t status_observed, stack_priority, npi_priority;
     uint32_t *zdapp_pending;
 } b1_evidence_ram_t;
 static b1_evidence_ram_t b1_ev; /* BSS: not NV, never cleared by requests. */
@@ -99,6 +102,10 @@ void b1_evidence_dispatch(uint8_t service, uint32_t input)
     b1_ev_sat32(&b1_ev.stack_wakes);
     b1_ev_sat32(&b1_ev.dispatch_entry);
     b1_ev.current_service = service;
+#ifndef B1_MANAGEMENT_HOST
+    b1_ev.stack_priority = (uint8_t)Task_getPri(Task_self());
+    b1_ev.status_observed |= 0x40u;
+#endif
     b1_ev.last_dispatch_input = input;
     B1_CS_LEAVE(key);
 }
@@ -113,6 +120,10 @@ void b1_evidence_note_npi_wake(void)
 {
     uintptr_t key = B1_CS_ENTER();
     b1_ev_sat32(&b1_ev.npi_wakes);
+#ifndef B1_MANAGEMENT_HOST
+    b1_ev.npi_priority = (uint8_t)Task_getPri(Task_self());
+    b1_ev.status_observed |= 0x80u;
+#endif
     B1_CS_LEAVE(key);
 }
 void b1_evidence_note_zdapp_loop(uint32_t events)
@@ -125,6 +136,7 @@ void b1_evidence_note_zdapp_loop(uint32_t events)
 void b1_evidence_set_status(uint8_t slot, uint8_t value)
 {
     uintptr_t key = B1_CS_ENTER();
+    if (slot >= 1u && slot <= 5u) b1_ev.status_observed |= (uint8_t)(1u << slot);
     if (slot == 1u) b1_ev.bdb_branch = value;
     else if (slot == 2u) b1_ev.restore_result = value;
     else if (slot == 3u) b1_ev.dev_state = value;
@@ -175,9 +187,13 @@ void b1_evidence_snapshot(uint8_t out[B1_EVIDENCE_REPLY_SIZE])
     b1_ev_pack32(out+32,pending);
     b1_ev_pack32(out+36,local.npi_wakes);
     out[40]=first_error;
-    out[41]=local.bdb_branch;out[42]=local.restore_result;
-    out[43]=local.dev_state;out[44]=local.confirmation;
-    out[45]=local.nlme_result;out[46]=5u;out[47]=4u;
+    out[41]=(local.status_observed & 2u) ? local.bdb_branch : 0xffu;
+    out[42]=(local.status_observed & 4u) ? local.restore_result : 0xffu;
+    out[43]=(local.status_observed & 8u) ? local.dev_state : 0xffu;
+    out[44]=(local.status_observed & 16u) ? local.confirmation : 0xffu;
+    out[45]=(local.status_observed & 32u) ? local.nlme_result : 0xffu;
+    out[46]=(local.status_observed & 0x40u) ? local.stack_priority : 0xffu;
+    out[47]=(local.status_observed & 0x80u) ? local.npi_priority : 0xffu;
     for (j=0u;j<7u;++j) b1_ev_pack16(out+48+2*j,local.counts[j]);
     out[62]=local.last_milestone;out[63]=local.current_service;
     for (j=0u;j<B1_MILESTONES;++j)
@@ -206,6 +222,56 @@ uint8_t b1_evidence_query(const uint8_t *frame,
         return B1_MT_REJECT;
     b1_evidence_snapshot(out);
     return B1_MT_STATUS;
+}
+void b1_evidence_priority(uint8_t npi, uint8_t priority)
+{
+    uintptr_t key = B1_CS_ENTER();
+    if (npi) { b1_ev.npi_priority = priority; b1_ev.status_observed |= 0x80u; }
+    else { b1_ev.stack_priority = priority; b1_ev.status_observed |= 0x40u; }
+    B1_CS_LEAVE(key);
+}
+int b1_retained_boot_admitted(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int admitted = b1_retained_admitted != 0u;
+    B1_CS_LEAVE(key);
+    return admitted;
+}
+uint8_t b1_retained_completion_state(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    uint8_t state = b1_retained_completion;
+    B1_CS_LEAVE(key);
+    return state;
+}
+void b1_retained_completion_arm(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int invalid = (!b1_retained_admitted || !b1_retained_network_started ||
+                   b1_retained_completion != B1_RET_CNF_NOT_ISSUED ||
+                   b1_boot_startup_state != B1_STARTUP_RUNNING);
+    if (!invalid) b1_retained_completion = B1_RET_CNF_ISSUED;
+    B1_CS_LEAVE(key);
+    if (invalid) b1_startup_fail(B1_ERROR_RESUME_MODE);
+}
+int b1_retained_completion_confirm(void)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int accepted = b1_retained_admitted &&
+        b1_retained_completion == B1_RET_CNF_ISSUED &&
+        b1_boot_startup_state == B1_STARTUP_RUNNING;
+    if (accepted) b1_retained_completion = B1_RET_CNF_CONFIRMED;
+    B1_CS_LEAVE(key);
+    return accepted;
+}
+void b1_retained_completion_fail(uint8_t reason)
+{
+    uintptr_t key = B1_CS_ENTER();
+    int allowed = b1_retained_admitted && !b1_retained_attempt_completed &&
+        b1_retained_completion != B1_RET_CNF_TERMINAL_FAILED;
+    if (allowed) b1_retained_completion = B1_RET_CNF_TERMINAL_FAILED;
+    B1_CS_LEAVE(key);
+    if (allowed) b1_startup_fail(reason);
 }
 int b1_retained_attempt_active(void)
 {

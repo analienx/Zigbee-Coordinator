@@ -207,6 +207,7 @@ def main():
                                   admission=False)
     positive(dispatcher_binary, ("returned",))
     positive(dispatcher_binary, ("concurrent",))
+    positive(dispatcher_binary, ("unchanged",))
     dispatcher_mutant = work / "mutant_stack_dispatcher.c"
     run([sys.executable, b1 / "tools/make_dispatcher_harness.py",
          "--source", sdk / SOURCE_PATHS[7], "--output", dispatcher_mutant,

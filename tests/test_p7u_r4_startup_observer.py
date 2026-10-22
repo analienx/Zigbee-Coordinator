@@ -19,7 +19,7 @@ def mkframe(payload,sub=1,cmd=241):
 def evidence():
     raw=bytearray(128);raw[:4]=b"B1E1";raw[4]=1;raw[5]=128
     raw[6]=4;raw[7]=7;raw[8:12]=bytes.fromhex(SOURCE[:8])
-    required=(0,1,2,3,4,5,6,7,8,9,10,11,12,14,15,16,17,18,19,20,21,22)
+    required=(0,1,2,3,4,5,6,7,8,9,10,11,12,13,15,16,17,18,19,20,21,22)
     mask=sum(1<<i for i in required)
     raw[12:16]=mask.to_bytes(4,"little")
     raw[40]=0;raw[42]=1;raw[43]=9;raw[44]=0;raw[45]=0
@@ -66,8 +66,8 @@ class ObserverTests(unittest.TestCase):
 
     def test_missing_confirmation_milestone_rejected(self):
         s=terminal();e=bytearray.fromhex(s["B1E1"])
-        e[12:16]=(int.from_bytes(e[12:16],"little")&~(1<<14)).to_bytes(4,"little")
-        e[64+14]=0;e[88+14]=255
+        e[12:16]=(int.from_bytes(e[12:16],"little")&~(1<<13)).to_bytes(4,"little")
+        e[64+13]=0;e[88+13]=255
         s["B1E1"]=e.hex()
         with self.assertRaises(EvidenceError):
             verify_success_frames(s,SOURCE)

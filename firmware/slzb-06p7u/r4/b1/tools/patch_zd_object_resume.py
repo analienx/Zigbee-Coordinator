@@ -32,6 +32,7 @@ def patch(source: str) -> str:
         "        b1_evidence_count(B1_C_RESUME);\n"
         "        b1_evidence_milestone(B1_M_RESUME_ENTRY, 0u);\n"
         "      }\n"
+        "      if (b1_retained_attempt_active()) b1_retained_completion_arm();\n"
         "      ret = NLME_StartRouterRequest( beaconOrder, beaconOrder, false );\n"
         "      if (b1_retained_attempt_active())\n"
         "      {\n"
@@ -43,7 +44,7 @@ def patch(source: str) -> str:
         "    OsalPortTimers_startTimer(ZDAppTaskID, ZDO_NETWORK_INIT, NWK_RETRY_DELAY );",
         "  if ( ret != ZSuccess )\n  {\n"
         "    if (b1_retained_attempt_active())\n"
-        "    { b1_startup_fail(B1_ERROR_RESUME_REJECTED); return; }\n"
+        "    { b1_retained_completion_fail(B1_ERROR_RESUME_REJECTED); return; }\n"
         "    OsalPortTimers_startTimer(ZDAppTaskID, ZDO_NETWORK_INIT, NWK_RETRY_DELAY );",
         "no TI auto-retry on retained resume rejection")
     return replace_once(source, original, changed, "genuine native resume guard")

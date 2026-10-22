@@ -213,46 +213,54 @@ def patch_startup_restore(source: str) -> str:
         "retained network confirmation and no retries")
     source = replace_once(source, body, body_new, "retained start callback evidence")
 
-    # Formation confirmation is forbidden during retained coordinator resume.
+    # TI routes coordinator MODE_RESUME through a formation-named callback.
+    # The callback's name does NOT indicate NLME_NetworkFormationRequest was used.
     signature = "void ZDO_NetworkFormationConfirmCB( ZStatus_t Status )"
     body = extract_function(source, signature)
     body_new = replace_once(body, signature + "\n{",
         signature + "\n{\n"
-        "  if (b1_retained_attempt_active())\n"
+        "  if (b1_retained_boot_admitted())\n"
         "  {\n"
         "    b1_evidence_milestone(B1_M_FORMATION_CNF, Status);\n"
-        "    b1_startup_fail(B1_ERROR_BDB_UNEXPECTED);\n"
-        "    return;\n"
-        "  }", "no formation callback for retained network")
-    source = replace_once(source, body, body_new,
-                          "retained formation confirmation rejected")
-
-    # TI MODE_RESUME coordinator calls NLME_StartRouterRequest. Its genuine
-    # confirmation normally only posts ZDO_ROUTER_START (router-only handler).
-    # Route this admitted coordinator callback to the original coordinator
-    # ZDO_NETWORK_START dispatcher instead, with its true NLME status.
-    signature = "void ZDO_StartRouterConfirmCB( ZStatus_t Status )"
-    body = extract_function(source, signature)
-    body_new = replace_once(body, "  nwkStatus = (byte)Status;",
-        "  nwkStatus = (byte)Status;\n"
-        "  if (b1_retained_attempt_active())\n"
-        "  {\n"
-        "    b1_evidence_milestone(B1_M_ROUTER_CNF, Status);\n"
+        "    if (b1_retained_completion_state() != B1_RET_CNF_ISSUED) return;\n"
         "    b1_evidence_count(B1_C_CONFIRM);\n"
         "    b1_evidence_set_status(4u, Status);\n"
-        "    if (b1_startup_state() == B1_STARTUP_FAILED) return;\n"
+        "    if (ZDO_Config_Node_Descriptor.LogicalType != NODETYPE_COORDINATOR ||\n"
+        "        devState != DEV_COORD_STARTING ||\n"
+        "        !b1_sec_restored_network_validated() || b1_nv_runtime_hold_active())\n"
+        "    { b1_retained_completion_fail(B1_ERROR_BDB_UNEXPECTED); return; }\n"
         "    if (Status != ZSUCCESS)\n"
-        "    { b1_startup_fail(B1_ERROR_CONFIRMATION); return; }\n"
-        "    if (devState != DEV_COORD_STARTING)\n"
-        "    { b1_startup_fail(B1_ERROR_BDB_UNEXPECTED); return; }\n"
+        "    { b1_retained_completion_fail(B1_ERROR_CONFIRMATION); return; }\n"
+        "    if (!b1_retained_completion_confirm()) return;\n"
+        "    nwkStatus = (byte)Status;\n"
         "    b1_evidence_count(B1_C_START_POST);\n"
         "    b1_evidence_milestone(B1_M_START_POST, 0u);\n"
         "    uint8_t b1_post_result = OsalPort_setEvent(ZDAppTaskID, ZDO_NETWORK_START);\n"
         "    b1_evidence_milestone(B1_M_START_POST_RESULT, b1_post_result);\n"
-        "    if (b1_post_result != SUCCESS) b1_startup_fail(B1_ERROR_EVENT_POST);\n"
+        "    if (b1_post_result != SUCCESS) b1_retained_completion_fail(B1_ERROR_EVENT_POST);\n"
         "    return;\n"
-        "  }",
-        "real resume confirmation posts coordinator start, no forged callback")
+        "  }", "genuine coordinator resume confirmation, no native formation side effects")
+    source = replace_once(source, body, body_new,
+                          "retained formation confirmation rejected")
+
+    # Router completion is NOT the coordinator MODE_RESUME callback.
+    # Any router callback during this boot's admitted coordinator transaction
+    # is unexpected; never bridge it into coordinator NETWORK_START.
+    signature = "void ZDO_StartRouterConfirmCB( ZStatus_t Status )"
+    body = extract_function(source, signature)
+    body_new = replace_once(body, "  nwkStatus = (byte)Status;",
+        "  if (b1_retained_boot_admitted())\n"
+        "  {\n"
+        "    b1_evidence_milestone(B1_M_ROUTER_CNF, Status);\n"
+        "    b1_evidence_count(B1_C_CONFIRM);\n"
+        "    b1_evidence_set_status(4u, Status);\n"
+        "    if (b1_retained_completion_state() != B1_RET_CNF_CONFIRMED &&\n"
+        "        b1_retained_completion_state() != B1_RET_CNF_TERMINAL_FAILED)\n"
+        "      b1_retained_completion_fail(B1_ERROR_BDB_UNEXPECTED);\n"
+        "    return; /* No router-to-coordinator bridge, even after READY. */\n"
+        "  }\n"
+        "  nwkStatus = (byte)Status;",
+        "unexpected coordinator router route, preserve stock others")
     source = replace_once(source, body, body_new,
                           "retained coordinator router callback bridge")
     return source
