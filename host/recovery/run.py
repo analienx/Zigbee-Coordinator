@@ -115,6 +115,11 @@ def service_main():
                        handle_action(observer, evidence_dir))
     state, receipts = load_state(journal_path)
     active = bool(opts["enabled"]) and not bool(opts["dry_run"])
+    if active and not (
+        (cfg.esp_restart_entity and cfg.zigbee_restart_entity) or
+        cfg.allow_private_http_fallback
+    ):
+        raise RuntimeError("ACTIVE_RECOVERY_REQUIRES_BOTH_VERIFIED_RESET_CONTROLS")
     print("P7U_WATCHDOG_STARTED",
           "MODE="+("ENABLED" if active else "DRY_RUN"),
           "FIRST=ESP32",flush=True)
