@@ -28,65 +28,72 @@ METHOD = r"""
         this.#b4Timer = setTimeout(() => { void this.#b4Sample(); }, delay);
     }
 
-    #b4SaveAtomic(target: string, value: object): void {
-        const root = b4Data.getPath();
-        const dir = b4Path.join(root, "p7u-b4-diagnostics");
-        b4Fs.mkdirSync(dir, {recursive: true, mode: 0o700});
-        if ((b4Fs.statSync(dir).mode & 0o077) !== 0) {
-            throw new Error("B4_PRIVATE_STORAGE_PERMISSIONS");
-        }
-        const path = b4Path.join(dir, target);
-        const tmp = b4Path.join(dir, ".pending-" + randomBytes(12).toString("hex"));
-        const fd = b4Fs.openSync(tmp, "wx", 0o600);
-        try {
-            b4Fs.writeFileSync(fd, JSON.stringify(value) + "\n", "utf8");
-            b4Fs.fsyncSync(fd);
-        } finally {
-            b4Fs.closeSync(fd);
-        }
-        try {
-            b4Fs.renameSync(tmp, path);
-            const dfd = b4Fs.openSync(dir, "r");
-            try { b4Fs.fsyncSync(dfd); } finally { b4Fs.closeSync(dfd); }
-        } finally {
-            if (b4Fs.existsSync(tmp)) { b4Fs.unlinkSync(tmp); }
-        }
+    /** F3 durable evidence writer runs in a separate NO-SERIAL worker.
+     * IPC admission is bounded; main loop never calls sync read/fsync/rename.
+     * ACK is durable manifest receipt only; no re-send on missing ACK.
+     */
+    #b4StartWorker(): void {
+        if (this.#b4Worker || process.env.P7U_B4_COLLECTOR !== "1") { return; }
+        const hostRun = randomUUID();
+        this.#b4HostRunId = hostRun;
+        this.#b4OwnerGeneration = randomUUID();
+        const path = b4Path.join(__dirname, "p7u_diagnostic_worker.cjs");
+        const root = b4Path.join(b4Data.getPath(), "p7u-b4-diagnostics");
+        const worker = new Worker(path, {workerData: {
+            schema: "p7u-f2-worker-v2", root,
+        }});
+        this.#b4Worker = worker;
+        worker.on("message", (message: {type?: string; id?: number; reason?: string}) => {
+            if (message.type === "ready") {
+                this.#b4WorkerReady = true;
+            } else if (message.type === "committed" && typeof message.id === "number") {
+                this.#b4PendingIds.delete(message.id);
+            } else if (message.type === "fatal") {
+                this.#b4SamplerDisabled = true;
+                this.#b4WorkerReady = false;
+                logger.error("P7U B4 optional evidence writer halted: " + String(message.reason).slice(0, 120));
+            }
+        });
+        worker.on("error", () => {
+            this.#b4SamplerDisabled = true;
+            this.#b4WorkerReady = false;
+            logger.error("P7U B4 optional evidence worker error (radio untouched)");
+        });
+        worker.on("exit", () => {
+            this.#b4WorkerReady = false;
+            this.#b4SamplerDisabled = true;
+            this.#b4PendingIds.clear();
+        });
     }
 
     #b4Persist(sample: Record<string, unknown>): void {
-        const dir = b4Path.join(b4Data.getPath(), "p7u-b4-diagnostics");
-        const historyPath = b4Path.join(dir, "history.json");
-        let history: Array<Record<string, unknown>> = [];
-        if (b4Fs.existsSync(historyPath)) {
-            const size = b4Fs.statSync(historyPath).size;
-            if (size > 16 * 1024 * 1024) { throw new Error("B4_HISTORY_OVERSIZED"); }
-            const decoded: unknown = JSON.parse(b4Fs.readFileSync(historyPath, "utf8"));
-            if (!decoded || typeof decoded !== "object" ||
-                (decoded as {schema?: string}).schema !== "p7u-b4-native-history-v1" ||
-                !Array.isArray((decoded as {rows?: unknown}).rows)) {
-                throw new Error("B4_HISTORY_CORRUPT_NO_OVERWRITE");
-            }
-            history = (decoded as {rows: Array<Record<string, unknown>>}).rows;
+        if (!this.#b4Worker || !this.#b4WorkerReady ||
+            this.#b4SamplerDisabled || this.#b4PendingIds.size >= 4) {
+            // Never queue unbounded diagnostics behind slow fsync; disable
+            // optional collection without touching normal Zigbee traffic.
+            this.#b4SamplerDisabled = true;
+            throw new Error("B4_EVIDENCE_WORKER_UNAVAILABLE_OR_BACKPRESSURE");
         }
-        const now = sample.utc as number;
-        const rows = history.filter((x) => typeof x.utc === "number" &&
-            x.utc <= now && x.utc >= now - 86_400_000).slice(-2047);
-        rows.push(sample);
-        // Commit the newest sample WITH the retained suffix, atomically.
-        while (rows.length > 1 &&
-               Buffer.byteLength(JSON.stringify(rows), "utf8") > 15 * 1024 * 1024) {
-            rows.shift();
-        }
-        this.#b4SaveAtomic("history.json",
-            {schema: "p7u-b4-native-history-v1", rows});
-        if (sample.kind === "VALID") {
-            this.#b4SaveAtomic("last-good.json", sample);
+        const id = ++this.#b4RecordId;
+        this.#b4PendingIds.add(id);
+        const record = {
+            ...sample,
+            hostRunId: this.#b4HostRunId,
+            ownerGeneration: this.#b4OwnerGeneration,
+            processUptimeMs: Math.round(process.uptime() * 1000),
+        };
+        try {
+            this.#b4Worker.postMessage({type: "append", id, record});
+        } catch {
+            this.#b4PendingIds.delete(id);
+            this.#b4SamplerDisabled = true;
+            throw new Error("B4_EVIDENCE_IPC_SEND_FAILED");
         }
     }
 
     async #b4Sample(): Promise<void> {
         if (!this.#b4Operational || process.env.P7U_B4_COLLECTOR !== "1" ||
-            this.#b4InFlight) { return; }
+            this.#b4InFlight || !this.#b4WorkerReady || this.#b4SamplerDisabled) { return; }
         this.#b4InFlight = true;
         const probeStarted = performance.now();
         try {
@@ -166,9 +173,9 @@ def plan(root: Path):
         src = src.replace(old, new)
     src = once(src, 'import bind from "bind-decorator";',
         '''import bind from "bind-decorator";
-import * as b4Fs from "node:fs";
 import * as b4Path from "node:path";
-import {createHmac, randomBytes} from "node:crypto";
+import {createHmac, randomBytes, randomUUID} from "node:crypto";
+import {Worker} from "node:worker_threads";
 import b4Data from "./util/data";''')
     src = once(src, "    #startAbortController: AbortController | undefined;",
         """    #startAbortController: AbortController | undefined;
@@ -176,13 +183,20 @@ import b4Data from "./util/data";''')
     #b4Timer: NodeJS.Timeout | undefined;
     #b4InFlight = false;
     #b4SamplerDisabled = false;
-    readonly #b4EpochKey = randomBytes(32);""")
+    readonly #b4EpochKey = randomBytes(32);
+    #b4Worker: Worker | undefined;
+    #b4WorkerReady = false;
+    #b4HostRunId = "";
+    #b4OwnerGeneration = "";
+    #b4RecordId = 0;
+    readonly #b4PendingIds = new Set<number>();""")
     src = once(src, "        this.#startAbortController = new AbortController();",
         "        this.#b4Operational = false;\n        this.#startAbortController = new AbortController();")
     src = once(src, "        settings.setOnboarding(false);",
         """        settings.setOnboarding(false);
         // Only at steady state: startup AbortController is about to be GC'd.
         this.#b4Operational = true;
+        this.#b4StartWorker();
         this.#b4Schedule();""")
     src = once(src, '''        logger.info(`Stopping Zigbee2MQTT (restart=${restart}, code=${code}, signal=${signal})`);''',
         '''        this.#b4Operational = false;
