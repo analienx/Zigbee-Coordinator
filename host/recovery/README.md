@@ -49,3 +49,44 @@ Deploy all Python modules, including `persistence.py`, with the matching Dockerf
 Live acceptance requires at least ten minutes of valid observation, advancing timestamps from three devices, one labelled synthetic warning in both HA destinations and a guard-only restart proving ledger persistence. Source CI does not prove automatic hardware recovery or long-term radio reliability.
 
 The separate [R4 F0/F2 collector #144](https://github.com/analienx/Zigbee-Coordinator/issues/144) must use the existing herdsman serial owner. [Stock deployment #145](https://github.com/analienx/Zigbee-Coordinator/issues/145) needs independent security/layout qualification. Neither is performed by this guard.
+
+
+## Native SMLIGHT management in USB mode (24 October 2026)
+
+The user's current P7U runs **Zigbee over Raspberry Pi USB**, **ESP32 management
+over wired Ethernet at 192.168.50.59**, and **Wi-Fi/AP off**. Home Assistant
+2026.9.4 now has the SMLIGHT SLZB integration for this *same* coordinator.
+Two enabled entities are available:
+
+- ESP32: `button.slzb_06p7u_core_restart`
+- CC2652P7: `button.slzb_06p7u_zigbee_restart`
+
+Official HA action: `button.press`, scoped to the single exact entity ID.
+These controls work independently of Z2M transport. Neither "Ethernet mode"
+nor Wi-Fi association is required if wired management remains reachable.
+
+**Shortest manual recovery:** confirm Z2M is not running or owning serial;
+press **Core restart once**; inspect USB by-id enumeration, start the
+**original** Z2M once, verify real nonretained MQTT RX and devices. Only if
+the resulting attempt has a *new* adapter-specific failure, press **Zigbee
+restart once**, then one further Z2M start. If health cannot be independently
+verified, HOLD + alert. Never issue hard reset, factory reset, firmware flash,
+NV restore, pairing or power cycling under this procedure.
+
+**Guard configuration:** `esp_restart_entity` and `zigbee_restart_entity`
+must be populated with those exact IDs after registry-MAC, integration host
+and device-owner verification. `allow_private_http_fallback` remains
+`false`. The vendor script SHA is **not** an activation dependency for
+native HA button control. The read-only identity, exclusive Z2M owner,
+SRSP + real-RX evidence, cooldown, at-most-once attempt journal, maintenance
+and firmware-flash inhibitors are still essential and must not be removed.
+
+Use versioned `host/recovery/bind_native_controls.py plan` then
+`apply --expected-plan-hash` to bind the two buttons without arming
+physical recovery. Source presence/green tests is not live deployment.
+Keep `enabled=false`, `dry_run=true`, `serial_owner_approved=false`
+until a separately authorized physical acceptance and healthy Z2M baseline.
+HA registry builds with singular `device.config_entry_id` (2026.9)
+and legacy `device.config_entries` are both supported and require
+an exact matching SMLIGHT MAC/config entry. Do not reset the *old* ignored
+SMLIGHT entry with another MAC or switch USB/Ethernet Zigbee mode to recover.
