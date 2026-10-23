@@ -109,7 +109,6 @@ def plan(sha):
     if b'BUILD_VERSION=0.2.4' not in gh("host/recovery/addon/Dockerfile",sha):
         raise RuntimeError("WRONG_BUILD_VERSION")
     p={"operation":"deploy_native_guard_024_only","source_sha":sha,
-       "helper_sha256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
        "guard_old_version":now["version"],"guard_old_options_hash":
          hashlib.sha256(json.dumps(now["guard_options"],sort_keys=True).encode()).hexdigest(),
        "z2m_state":now["z2m_state"],"z2m_version":now["z2m_version"],
@@ -190,6 +189,8 @@ def main():
         raise RuntimeError("PLAN_HASH_NOT_EXACT")
     # Preserve the entire current options object across guard-only rebuild.
     p["old_options"]=preflight()["guard_options"]
+    if hashlib.sha256(json.dumps(p["old_options"],sort_keys=True).encode()).hexdigest()!=p["guard_old_options_hash"]:
+        raise RuntimeError("OPTIONS_CHANGED_AFTER_PLAN")
     deploy(p)
 
 
