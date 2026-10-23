@@ -18,9 +18,10 @@ DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 CONTROLLER = "src/controller/controller.ts"
+DATABASE = "src/controller/database.ts"
 ZNP = "src/adapter/z-stack/znp/znp.ts"
 MARKER = "P7U_P0_NONDESTRUCTIVE_STARTUP_HOLD"
-FILES = (PATH, DEFINITION, PARAM, BUFFALO, CONTROLLER, ZNP)
+FILES = (PATH, DEFINITION, PARAM, BUFFALO, CONTROLLER, ZNP, DATABASE)
 
 
 def once(source, old, new):
@@ -372,7 +373,22 @@ def plan(checkout, composition_receipt=None):
 
 """
     znp = znp[:first] + safe_method + znp[end:]
-    return {ZNP: (originals[ZNP], znp),
+    # H3: after atomic db rename, fsync its *parent directory* to make
+    # replacement of the directory entry durable on supported POSIX FS.
+    # A failure raises and the host cannot claim a successfully saved DB.
+    database = once(originals[DATABASE],
+        'import fs from "node:fs";',
+        'import fs from "node:fs";\nimport * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC')
+    database = once(database,
+        "        fs.renameSync(tmpPath, this.path);",
+        """        fs.renameSync(tmpPath, this.path);
+        // P7U_DB_DIRECTORY_FSYNC: file fsync without directory fsync does
+        // not alone guarantee the renamed entry survives sudden power loss.
+        const parentFd = fs.openSync(path.dirname(this.path), "r");
+        try { fs.fsyncSync(parentFd); }
+        finally { fs.closeSync(parentFd); }""")
+    return {DATABASE: (originals[DATABASE], database),
+            ZNP: (originals[ZNP], znp),
             CONTROLLER: (originals[CONTROLLER], controller),
             PATH: (originals[PATH], manager),
             DEFINITION: (originals[DEFINITION], definition),
