@@ -88,3 +88,8 @@ both required capabilities, and `docker-default` AppArmor confinement. The
 two one-shot helper configurations now explicitly declare `apparmor: false`
 for their cross-profile host FD scan. Host-wide AppArmor remains enabled,
 owner add-on confinement is unchanged, and inaccessible FDs still HOLD.
+
+Startup admission now observes one Supervisor start for up to 90 seconds
+instead of treating its HTTP ACK as UART readiness. The first running
+container generation is pinned; a replacement, unexpected image, competing
+container or foreign UART holder causes HOLD. No second start is sent.

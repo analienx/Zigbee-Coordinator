@@ -138,6 +138,67 @@ class Tests(unittest.TestCase):
         with core.Journal(self.root) as j:
             self.assertEqual(j.phase, "HOLD")
 
+    def test_start_ack_precedes_uart_open_without_retry(self):
+        original=self.port.tty_holders
+        checks=[]
+        def delayed_uart():
+            if self.port.owner['diagnostic'] is not None:
+                checks.append(True)
+                if len(checks)<4:return frozenset()
+            return original()
+        self.port.tty_holders=delayed_uart
+        self.assertEqual(self.switch(),'COMMITTED')
+        self.assertGreaterEqual(len(checks),4)
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_lost_start_ack_delayed_container_creation_observed_without_retry(self):
+        original=self.port.inspect
+        pending=[]
+        def start(slot,**kwargs):
+            self.port.events.append(('start',slot));pending.append(0);return False
+        def delayed(slot):
+            if pending and slot=='diagnostic':
+                pending[0]+=1
+                if pending[0]==3:self.port.owner[slot]=NEW
+            return original(slot)
+        self.port.start=start;self.port.inspect=delayed
+        self.assertEqual(self.switch(),'COMMITTED')
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+        self.assertIn('START_ACK_UNKNOWN',(self.root/'events.jsonl').read_text())
+
+    def test_target_generation_change_before_uart_open_is_hold(self):
+        original=self.port.inspect
+        checks=[]
+        def changing(slot):
+            if slot=='diagnostic' and self.port.owner[slot] is not None:
+                checks.append(True)
+                if len(checks)==2:
+                    self.port.owner[slot]=core.Owner('c'*64,2222,NEW.started_at,NEW.image_digest)
+            return original(slot)
+        self.port.inspect=changing
+        self.port.tty_holders=lambda: frozenset({OLD.pid}) if self.port.owner['official'] else frozenset()
+        with self.assertRaisesRegex(core.LifecycleHold,'OWNER_IDENTITY_CHANGED'):self.switch()
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_target_never_opens_uart_holds_after_bounded_observation(self):
+        checks=[]
+        def no_uart():
+            if self.port.owner['official']:return frozenset({OLD.pid})
+            if self.port.owner['diagnostic']:checks.append(True)
+            return frozenset()
+        self.port.tty_holders=no_uart
+        with self.assertRaisesRegex(core.LifecycleHold,'TARGET_OWNER_NOT_READY'):self.switch()
+        self.assertEqual(len(checks),91)
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_foreign_uart_holder_during_start_is_never_accepted(self):
+        original=self.port.start
+        def start(slot,**kwargs):
+            result=original(slot,**kwargs);self.port.extra_holder=True;return result
+        self.port.start=start
+        with self.assertRaisesRegex(core.LifecycleHold,'FOREIGN_UART_OWNER'):self.switch()
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
     def test_stale_reused_container_identity_fails_closed(self):
         self.port.stuck = True
         self.port.changed = True

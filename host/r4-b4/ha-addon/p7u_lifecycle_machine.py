@@ -54,6 +54,39 @@ def zero_tty_three_times(port: Port) -> None:
         guard(type(holders) is frozenset and len(holders) == 0, "TTY_HOLDERS_" + str(i))
 
 
+def await_target_owner(port: Port, target_slot: str, image: str) -> Owner:
+    """Observe one start job; its HTTP ACK does not prove UART readiness.
+
+    Pin the first running generation and allow bounded normal startup time.
+    Never repeat a start or accept a replacement/foreign owner while waiting.
+    """
+    pinned = None
+    for attempt in range(91):
+        for slot in ("official", "diagnostic", "fallback"):
+            if slot != target_slot:
+                require_absent(port.inspect(slot), slot)
+        observed = port.inspect(target_slot)
+        holders = port.tty_holders()
+        guard(type(holders) is frozenset, "TARGET_SERIAL_OWNER_UNCERTAIN")
+        if observed.running:
+            new = require_running(observed, target_slot)
+            guard(new.image_digest.removeprefix("sha256:") == image,
+                  "TARGET_UNEXPECTED_IMAGE")
+            if pinned is None:
+                pinned = new
+            pinned.require_same_generation(new)
+            if holders:
+                port.prove_owner_holders(new, holders)
+                return new
+        else:
+            require_absent(observed, target_slot)
+            guard(pinned is None, "TARGET_EXITED_DURING_START")
+            guard(not holders, "START_FOREIGN_UART_OWNER")
+        if attempt < 90:
+            time.sleep(1)
+    raise LifecycleHold("P7U_HOLD_TARGET_OWNER_NOT_READY")
+
+
 class Manager:
     def __init__(self, journal: Journal, port: Port, capabilities: dict[str, Any]):
         self.journal = journal
@@ -148,14 +181,7 @@ class Manager:
         if not started_ack:
             self.journal.append("START_ACK_UNKNOWN", {"one_request_only": True})
         try:
-            new = require_running(self.port.inspect(target_slot), target_slot)
-            require_absent(self.port.inspect(original_slot), original_slot)
-            guard(new.image_digest.removeprefix("sha256:") == image,
-                  "TARGET_UNEXPECTED_IMAGE")
-            holders = self.port.tty_holders()
-            guard(type(holders) is frozenset and holders,
-                  "TARGET_SERIAL_OWNER_UNCERTAIN")
-            self.port.prove_owner_holders(new, holders)
+            new = await_target_owner(self.port, target_slot, image)
             serving = self.port.serving_evidence(target_slot, max_seconds=180)
             guard(type(serving) is dict and serving.get("fresh_devices") >= 3 and
                   serving.get("mqtt_messages_fresh") is True and
