@@ -14,6 +14,9 @@ import tarfile
 from pathlib import PurePosixPath, Path
 
 TARGETS = {
+    # H1 startup admission and save-first shutdown MUST be audited too.
+    "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/controller/controller.js":
+        "herdsman-dist/controller/controller.js",
     "app/dist/controller.js": "z2m-controller.js",
     "app/dist/extension/otaUpdate.js": "z2m-otaUpdate.js",
     "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/adapter/z-stack/adapter/zStackAdapter.js":
