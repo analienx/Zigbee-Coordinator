@@ -417,7 +417,7 @@ test("REVIEW-P1: direct queued F0 cannot bypass normal outstanding Waitress", as
     );
     await assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 25),
-        /B4 DIAG_NOT_SUBMITTED_BUSY/
+        /owner unavailable or poisoned inside ZNP mutex/
     );
     assert.deepEqual(recorded, []);
     znp.waitress.remove(prior.ID);
