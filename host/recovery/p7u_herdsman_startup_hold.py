@@ -324,6 +324,21 @@ def plan(checkout, composition_receipt=None):
         DB_ADMISSION_METHOD +
         "    public async start(abortSignal?: AbortSignal): Promise<AdapterTsType.StartResult> {\n"
         "        this.p7uRequireApprovedDatabase();")
+    # A retained network must never be silently re-formed, switched channel
+    # or assigned a replacement coordinator identity by Controller.start().
+    controller = once(controller,
+        '        this.adapterDisconnected = false;\n\n        abortSignal?.throwIfAborted();',
+        '        this.adapterDisconnected = false;\n'
+        '        if (startResult !== "resumed") {\n'
+        '            throw new Error("P7U HOLD_EXISTING_NV: non-resumed adapter startup denied");\n'
+        '        }\n\n        abortSignal?.throwIfAborted();')
+    controller = once(controller,
+        "            if (configuredChannel !== adapterChannel) {",
+        '            if (configuredChannel !== adapterChannel) {\n'
+        '                throw new Error("P7U HOLD_EXISTING_NV: channel mismatch; automatic migration disabled");')
+    controller = once(controller,
+        '            databaseCoordinator.changeIeeeAddress(coordinatorIEEE);',
+        '            throw new Error("P7U HOLD_EXISTING_NV: coordinator IEEE mismatch; no host repair");')
     controller = once(controller,
         """        clearInterval(this.databaseSaveTimer);
 
