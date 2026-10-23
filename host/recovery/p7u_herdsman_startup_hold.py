@@ -78,7 +78,8 @@ DB_ADMISSION_METHOD = r'''
         if (!approvalPath || !approvalPath.startsWith("/config/zigbee2mqtt/") ||
             !dbPath.startsWith("/config/zigbee2mqtt/") ||
             !dbPath.endsWith("/database.db") ||
-            fs.existsSync(dbPath + ".tmp")) {
+            fs.existsSync(dbPath + ".tmp") ||
+            fs.existsSync(approvalPath + ".pending")) {
             fail("missing approval, invalid data path or unresolved temporary DB");
         }
         let raw: Buffer = Buffer.alloc(0);
