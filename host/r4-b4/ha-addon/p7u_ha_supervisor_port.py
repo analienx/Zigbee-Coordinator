@@ -12,6 +12,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from p7u_host_integrity import verify_committed
+from p7u_db_quiesced import inventory_baseline, seal_quiesced
 import re
 from typing import Any, Callable
 from urllib.request import Request, urlopen
