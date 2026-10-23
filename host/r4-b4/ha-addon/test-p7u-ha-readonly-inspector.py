@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -103,6 +104,24 @@ class Tests(unittest.TestCase):
             m.tty_holders("/dev/ttyUSB0; reboot")
         with self.assertRaisesRegex(LifecycleHold, "DOCKER_TOP_INVALID_ID"):
             m.docker_top_pids("foo && reboot")
+
+    def test_absent_container_accepts_actual_lowercase_and_uppercase_docker_errors(self):
+        for error in (
+            "error: no such object: app_local_p7u_r4_native_host\n",
+            "Error response from daemon: No such object: app_local_p7u_r4_native_host\n",
+            "error: no such container: app_local_p7u_r4_native_host\n",
+            "Error response from daemon: No such container: app_local_p7u_r4_native_host\n",
+        ):
+            with self.subTest(error=error), patch.object(m,"run_argv",
+                    return_value=SimpleNamespace(returncode=1,stdout="",stderr=error)):
+                self.assertIsNone(m.inspect_docker("diagnostic"))
+
+    def test_other_docker_inspection_failure_is_never_owner_absence(self):
+        for error in ("permission denied", "Cannot connect to the Docker daemon", "context deadline exceeded"):
+            with self.subTest(error=error), patch.object(m,"run_argv",
+                    return_value=SimpleNamespace(returncode=1,stdout="",stderr=error)):
+                with self.assertRaisesRegex(LifecycleHold,"DOCKER_INSPECT_UNAVAILABLE"):
+                    m.inspect_docker("diagnostic")
 
     def test_supervisor_options_never_exposed(self):
         from types import SimpleNamespace

@@ -40,7 +40,8 @@ def inspect_docker(slot: str) -> dict | None:
     guard(slot in SLUGS and slot != "guard", "UNRECOGNIZED_SLOT")
     p = run_argv(["docker", "inspect", "app_" + SLUGS[slot]])
     if p.returncode:
-        if "No such object" in p.stderr or "No such container" in p.stderr:
+        error = p.stderr.casefold()
+        if "no such object" in error or "no such container" in error:
             return None
         raise LifecycleHold("P7U_HOLD_DOCKER_INSPECT_UNAVAILABLE")
     try:
