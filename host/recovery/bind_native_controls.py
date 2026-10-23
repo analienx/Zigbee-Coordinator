@@ -23,7 +23,7 @@ LAN = "http://192.168.50.59"
 REMOTE = r'''
 import hashlib,json,os,pathlib,sys,urllib.request
 mode=sys.argv[1]
-expected=sys.argv[2]
+expected=sys.argv[2] if len(sys.argv)>2 else ''
 slug="local_p7u_recovery"
 core="button.slzb_06p7u_core_restart"
 radio="button.slzb_06p7u_zigbee_restart"
