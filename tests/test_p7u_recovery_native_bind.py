@@ -17,7 +17,7 @@ class NativeBinderTests(unittest.TestCase):
         self.assertIn('new["zigbee_restart_entity"]=radio', mod.REMOTE)
         self.assertIn('old.get("enabled") is not False', mod.REMOTE)
         self.assertIn('old.get("dry_run") is not True', mod.REMOTE)
-        self.assertIn('"core/api/states/"', mod.REMOTE)
+        self.assertIn('"/core/api/states/"', mod.REMOTE)
         self.assertIn('"/addons/"+slug+"/options"', mod.REMOTE)
         self.assertNotIn('"/core/api/services/button/press"', mod.REMOTE)
         self.assertNotIn('"/api2?action=4"', mod.REMOTE)
