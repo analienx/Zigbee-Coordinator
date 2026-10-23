@@ -46,7 +46,7 @@ def registry(name,key):
 guard=api("/addons/"+slug+"/info")["data"]
 z2m=api("/addons/45df7312_zigbee2mqtt/info")["data"]
 old=dict(guard["options"])
-if guard.get("version")!="0.2.3" or guard.get("state")!="started":
+if guard.get("version") not in ("0.2.3","0.2.4") or guard.get("state")!="started":
     raise RuntimeError("GUARD_VERSION_OR_STATE_CHANGED")
 if guard.get("watchdog") is not False or guard.get("boot")!="manual":
     raise RuntimeError("GUARD_WATCHDOG_OR_BOOT_CHANGED")
@@ -100,7 +100,7 @@ new=dict(old)
 new["esp_restart_entity"]=core
 new["zigbee_restart_entity"]=radio
 plan={"operation":"bind_native_smlight_buttons_warning_only",
-      "guard_version":"0.2.3","guard_enabled":False,
+      "guard_version":guard["version"],"guard_enabled":False,
       "guard_dry_run":True,"private_fallback":False,
       "entry_id":entry,"slzb_model":"SLZB-06p7U",
       "old_core":old["esp_restart_entity"],"old_zigbee":old["zigbee_restart_entity"],
