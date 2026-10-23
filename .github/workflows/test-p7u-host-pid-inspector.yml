@@ -1,0 +1,71 @@
+name: P7U host PID inspector ARM64 (NO LIVE ACTION)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/ha-lifecycle-inspector/**'
+      - 'host/r4-b4/ha-addon/p7u_ha_readonly_inspector.py'
+      - '.github/workflows/test-p7u-host-pid-inspector.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p7u-pid-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  inspector:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Exercise real host PID membership and foreign FD negative controls
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SHA"
+          python host/r4-b4/ha-addon/test-p7u-ha-readonly-inspector.py -v
+          python -m py_compile host/r4-b4/ha-lifecycle-inspector/p7u_owner_inspector_main.py
+      - name: Build exact ARM64 one-shot inspector, no running container
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-inspector /tmp/p7u-inspector-evidence
+          cp host/r4-b4/ha-lifecycle-inspector/{Dockerfile,p7u_owner_inspector_main.py} /tmp/p7u-inspector/
+          cp host/r4-b4/ha-addon/{p7u_ha_readonly_inspector.py,p7u_lifecycle_core.py} /tmp/p7u-inspector/
+          cp host/r4-b4/ha-lifecycle-inspector/config.yaml /tmp/p7u-inspector-evidence/
+          docker buildx create --driver docker-container --name p7u-pid-build --use
+          docker buildx inspect --bootstrap
+          docker buildx build --platform linux/arm64 --tag "p7u-pid:${SHA:0:12}" --output type=docker,dest=/tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar /tmp/p7u-inspector
+          docker load -i /tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar
+          test "$(docker image inspect "p7u-pid:${SHA:0:12}" --format '{{.Os}}/{{.Architecture}}')" = linux/arm64
+      - name: Verify code bytes in actual ARM64 tar layers
+        run: |
+          python - <<'PY'
+          import hashlib,json,tarfile,os
+          from pathlib import Path
+          arc=Path('/tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar')
+          expected={'opt/p7u/'+f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in Path('/tmp/p7u-inspector').glob('*.py')}
+          got={}
+          with tarfile.open(arc) as t:
+              layers=json.load(t.extractfile('manifest.json'))[0]['Layers']
+              for layer in layers:
+                  with tarfile.open(fileobj=t.extractfile(layer)) as f:
+                      for item in f:
+                          name=item.name.lstrip('./')
+                          if name in expected and item.isfile():
+                              got[name]=hashlib.sha256(f.extractfile(item).read()).hexdigest()
+          assert got==expected
+          receipt={'source_sha':os.environ['SHA'],'sha256':hashlib.sha256(arc.read_bytes()).hexdigest(),'code_files':len(got),'installed':False,'radio_opened':False}
+          Path('/tmp/p7u-inspector-evidence/RECEIPT.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-host-pid-inspector-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-inspector-evidence/
+          if-no-files-found: error
+          compression-level: 0
