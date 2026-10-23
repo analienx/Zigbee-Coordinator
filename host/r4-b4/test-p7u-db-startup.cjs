@@ -46,7 +46,12 @@ function hold(fragment) {
     });
 }
 function fresh() {
-    fs.rmSync(base, {recursive: true, force: true});
+    // /config belongs to root on hosted Linux; only mutate test fixture
+    // files within the runner-owned zigbee2mqtt subdirectory.
+    fs.mkdirSync(base, {recursive: true});
+    for (const file of [db, approval, db + ".tmp"]) {
+        fs.rmSync(file, {force: true});
+    }
     seal();
 }
 test("actual compiled start controller guard allows exact fresh approval", () => {
