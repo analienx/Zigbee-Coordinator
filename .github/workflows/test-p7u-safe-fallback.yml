@@ -47,7 +47,7 @@ jobs:
           python - <<'PY'
           import json
           r=json.load(open('/tmp/fallback-patch.json'))
-          assert r['retained_only'] and not r['installed'] and len(r['files'])==6
+          assert r['retained_only'] and not r['installed'] and len(r['files'])==7
           PY
           npm install --global pnpm@10.33.0
           cd "$B4_HERDSMAN_ROOT"
@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d -o "$USER" -g "$USER" /config/zigbee2mqtt
-          node --test host/r4-b4/test-p7u-db-startup.cjs
+          node --test host/r4-b4/test-p7u-db-startup.cjs host/r4-b4/test-p7u-db-durability.cjs
           node --test host/recovery/test-p7u-herdsman-hold.cjs
           node - <<'JS'
           const fs=require('fs'),path=require('path');
@@ -88,7 +88,7 @@ jobs:
           import tarfile,hashlib,json,os
           from pathlib import Path
           root=Path('/tmp/fallback-image/herdsman-dist')
-          names=['controller/controller.js','adapter/z-stack/znp/znp.js','adapter/z-stack/adapter/manager.js','adapter/z-stack/znp/definition.js','adapter/z-stack/znp/parameterType.js','adapter/z-stack/znp/buffaloZnp.js']
+          names=['controller/controller.js','adapter/z-stack/znp/znp.js','adapter/z-stack/adapter/manager.js','adapter/z-stack/znp/definition.js','adapter/z-stack/znp/parameterType.js','adapter/z-stack/znp/buffaloZnp.js','controller/database.js']
           expected={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in names}
           artifact=Path('/tmp/fallback-receipts/p7u-arm64.docker.tar')
           got={}
