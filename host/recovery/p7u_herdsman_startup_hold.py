@@ -18,8 +18,9 @@ DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 CONTROLLER = "src/controller/controller.ts"
+ZNP = "src/adapter/z-stack/znp/znp.ts"
 MARKER = "P7U_P0_NONDESTRUCTIVE_STARTUP_HOLD"
-FILES = (PATH, DEFINITION, PARAM, BUFFALO, CONTROLLER)
+FILES = (PATH, DEFINITION, PARAM, BUFFALO, CONTROLLER, ZNP)
 
 
 def once(source, old, new):
@@ -334,7 +335,30 @@ def plan(checkout, composition_receipt=None):
         // aborts graceful stop rather than pretending it was durable.
         if (!this.adapterDisconnected) { this.databaseSave(); }
         if (this.adapterDisconnected) {""")
-    return {CONTROLLER: (originals[CONTROLLER], controller),
+    # H1: pinned upstream skipBootloader uses a 0xEF magic byte and
+    # serialPort.asyncSet DTR/RTS after a failed ping. Neither is allowed on
+    # the sole retained-network P7U. Unexpected source drift holds.
+    znp = originals[ZNP]
+    first = znp.index("    private async skipBootloader(): Promise<void> {")
+    end = znp.index("    public async close(): Promise<void> {", first)
+    original_method = znp[first:end]
+    if "Buffer.from([0xef])" not in original_method or "asyncSet({dtr: false, rts:" not in original_method:
+        raise ValueError("pinned source skipBootloader implementation drift")
+    safe_method = """    /** P7U_SAFE_PING_NO_BOOTLOADER_SIGNALS: retained owner only.
+     * No 0xEF magic, RTS/DTR fallback, or automatic reset; failure is HOLD.
+     */
+    private async skipBootloader(): Promise<void> {
+        try {
+            await this.request(Subsystem.SYS, "ping", {capabilities: 1}, undefined, 1500);
+        } catch {
+            throw new Error("P7U HOLD_EXISTING_NV: ping unavailable; no bootloader magic or line toggles");
+        }
+    }
+
+"""
+    znp = znp[:first] + safe_method + znp[end:]
+    return {ZNP: (originals[ZNP], znp),
+            CONTROLLER: (originals[CONTROLLER], controller),
             PATH: (originals[PATH], manager),
             DEFINITION: (originals[DEFINITION], definition),
             PARAM: (originals[PARAM], params),
