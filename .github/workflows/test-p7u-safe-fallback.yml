@@ -20,6 +20,7 @@ jobs:
     env:
       HERDSMAN_PIN: 0968f979d558874b17396c96b66382d4236bbdcd
       B4_HERDSMAN_ROOT: /tmp/p7u-fallback-herdsman
+      P7U_HERDSMAN_ROOT: /tmp/p7u-fallback-herdsman
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
