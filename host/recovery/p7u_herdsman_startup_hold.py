@@ -252,7 +252,7 @@ def plan(checkout, composition_receipt=None):
     originals = {}
     for name in FILES:
         raw = read_source_bytes(checkout, name)
-        if name == PATH or receipt is None:
+        if name in (PATH, DATABASE) or receipt is None:
             if raw != git("show", f"{PIN}:{name}"):
                 raise ValueError("dirty or substituted upstream source: " + name)
         elif hashlib.sha256(raw).hexdigest() != receipt.get("files", {}).get(name, {}).get("sha256_after"):
