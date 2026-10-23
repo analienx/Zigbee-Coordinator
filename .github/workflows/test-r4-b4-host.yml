@@ -205,6 +205,7 @@ jobs:
           tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
           docker load --input /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar
           docker image inspect "$tag" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
+          docker image inspect "$tag" --format '{{.Id}}' > /tmp/p7u-r4-host-image-artifact/PINNED_IMAGE_ID.txt
           docker image inspect "$tag" --format '{{.Config.Image}}' >/dev/null || true
           echo "PASS: exact-source arm64 Docker archive loads; container was not started"
       - name: Assemble Supervisor app with tested binaries, no HA compilation
