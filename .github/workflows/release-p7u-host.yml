@@ -168,4 +168,4 @@ jobs:
           name: p7u-deployable-host-release-${{ github.event.pull_request.head.sha || github.sha }}
           path: /tmp/p7u-release/published/
           if-no-files-found: error
-          compression-level: 0
+          compression-level: 6

@@ -19,6 +19,9 @@ unattended recovery guard or authorize a factory reset/radio flash.
   Journal the receipt before requesting a start.
 - Check the actual passive guardian options and manual boot/watchdog policy
   for every possible owner; reject a competing third add-on.
+- Exclude the legacy HA boot/recovery automations as independent service
+  starters. Both exact automations must be off before every stop/start, with
+  pending boot retries cancelled by the operator before the handover.
 - Qualify the installed prebuilt image even when Supervisor has removed its
   stopped container. Pin the new container ID, image ID and process generation
   after startup, including the Node child that actually holds the UART.

@@ -35,6 +35,35 @@ IMAGE_REPOSITORIES = {
     "diagnostic": "localhost:50144/p7u-r4-diagnostic",
     "fallback": "localhost:50144/p7u-r4-fallback",
 }
+LEGACY_OWNER_AUTOMATIONS = frozenset({
+    "automation.boot_deterministic_emqx_then_zigbee2mqtt",
+    "automation.zigbee2mqtt_mesh_communication_outage_alert",
+})
+
+
+def read_automation_policy() -> dict[str, str]:
+    """Read only the two known Core automations that can restart an owner."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    guard(len(token) >= 20 and not any(c.isspace() for c in token),
+          "AUTOMATION_POLICY_TOKEN_MISSING")
+    states: dict[str, str] = {}
+    for entity in sorted(LEGACY_OWNER_AUTOMATIONS):
+        request = Request("http://supervisor/core/api/states/" + entity,
+                          method="GET", headers={"Authorization": "Bearer " + token})
+        try:
+            with urlopen(request, timeout=7) as response:
+                raw = response.read(32 * 1024 + 1)
+        except OSError as exc:
+            raise LifecycleHold("P7U_HOLD_AUTOMATION_POLICY_UNAVAILABLE") from exc
+        guard(len(raw) <= 32 * 1024, "AUTOMATION_POLICY_SIZE")
+        try:
+            state = json.loads(raw)
+        except ValueError as exc:
+            raise LifecycleHold("P7U_HOLD_AUTOMATION_POLICY_JSON") from exc
+        guard(type(state) is dict and state.get("entity_id") == entity and
+              type(state.get("state")) is str, "AUTOMATION_POLICY_ENTITY")
+        states[entity] = state["state"]
+    return states
 
 
 class Supervisor:
@@ -93,6 +122,7 @@ class HaSupervisorPort:
     def __init__(self, serial_path: str, *,
                  database: Path | None = None,
                  image_references: dict[str, str] | None = None,
+                 automation_probe: Callable[[], dict[str, str]] | None = None,
                  client: Supervisor | None = None,
                  serving_probe: Callable[[str, int], dict] | None = None):
         check_host_namespace()
@@ -101,6 +131,7 @@ class HaSupervisorPort:
         self.serving_probe = serving_probe
         self.database = database
         self.image_references = dict(image_references or {})
+        self.automation_probe = automation_probe or read_automation_policy
         self.database_receipt: dict[str, Any] | None = None
         self.pinned: dict[str, Owner] = {}
         self.events: list[str] = []
@@ -124,6 +155,10 @@ class HaSupervisorPort:
 
     def _require_manual_profiles(self) -> None:
         self._require_passive_guard()
+        policy = self.automation_probe()
+        guard(type(policy) is dict and set(policy) == LEGACY_OWNER_AUTOMATIONS and
+              all(state == "off" for state in policy.values()),
+              "LEGACY_OWNER_AUTOMATION_NOT_DISABLED")
         for slot in ALLOWED_SLOTS:
             info = self.client.call(method="GET", slot=slot, action="info").get("data")
             guard(type(info) is dict and info.get("boot") == "manual" and

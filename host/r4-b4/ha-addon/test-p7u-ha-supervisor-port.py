@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import unittest
 import tempfile
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -50,6 +51,7 @@ class Tests(unittest.TestCase):
                                      image_references={
                                          "diagnostic":"localhost:50144/p7u-r4-diagnostic:0.1.0",
                                          "fallback":"localhost:50144/p7u-r4-fallback:0.1.0"},
+                                     automation_probe=lambda:{entity:"off" for entity in m.LEGACY_OWNER_AUTOMATIONS},
                                      client=self.client,
                                      serving_probe=lambda slot,sec:{
                                          "fresh_devices":3,"mqtt_messages_fresh":True,
@@ -168,6 +170,52 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(LifecycleHold,"AUTOMATIC_OWNER_RESTART_ENABLED"):
             self.port.validate_profiles(original_slot="official",target_slot="diagnostic")
         self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
+
+    def test_legacy_owner_automation_requires_both_exact_entities_off(self):
+        for entity in m.LEGACY_OWNER_AUTOMATIONS:
+            for state in ("on","unknown","unavailable","OFF",""):
+                with self.subTest(entity=entity,state=state):
+                    policy={name:"off" for name in m.LEGACY_OWNER_AUTOMATIONS}
+                    policy[entity]=state
+                    self.port.automation_probe=lambda:policy
+                    with self.assertRaisesRegex(LifecycleHold,"LEGACY_OWNER_AUTOMATION_NOT_DISABLED"):
+                        self.port.validate_profiles(original_slot="official",target_slot="diagnostic")
+        self.port.automation_probe=lambda:{next(iter(m.LEGACY_OWNER_AUTOMATIONS)):"off"}
+        with self.assertRaisesRegex(LifecycleHold,"LEGACY_OWNER_AUTOMATION_NOT_DISABLED"):
+            self.port.validate_profiles(original_slot="official",target_slot="diagnostic")
+        self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
+
+    def test_automation_policy_is_rechecked_immediately_before_start_and_stop(self):
+        policy={entity:"off" for entity in m.LEGACY_OWNER_AUTOMATIONS}
+        self.port.automation_probe=lambda:policy
+        with patch.object(self.port,"inspect",return_value=Presence(False,None)):
+            self.port.validate_profiles(original_slot="official",target_slot="diagnostic")
+        policy["automation.boot_deterministic_emqx_then_zigbee2mqtt"]="on"
+        with self.assertRaisesRegex(LifecycleHold,"LEGACY_OWNER_AUTOMATION_NOT_DISABLED"):
+            self.port.start("diagnostic",expected_image_sha=NEW_SHA)
+        self.port.pinned["official"]=OLD
+        with patch.object(self.port,"inspect",return_value=Presence(True,OLD)), \
+             patch.object(self.port,"tty_holders",return_value=frozenset({1042})), \
+             patch.object(self.port,"prove_owner_holders"):
+            with self.assertRaisesRegex(LifecycleHold,"LEGACY_OWNER_AUTOMATION_NOT_DISABLED"):
+                self.port.stop("official",timeout_seconds=60)
+        self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
+
+    def test_real_automation_reader_only_gets_two_pinned_entity_states(self):
+        requests=[]
+        def response(request, *, timeout):
+            entity=request.full_url.rsplit("/",1)[1]
+            self.assertIn(entity,m.LEGACY_OWNER_AUTOMATIONS)
+            requests.append((request.get_method(),request.full_url,timeout))
+            raw=json.dumps({"entity_id":entity,"state":"off",
+                            "attributes":{"private_value":"never returned"}}).encode()
+            return nullcontext(SimpleNamespace(read=lambda limit:raw))
+        with patch.dict(m.os.environ,{"SUPERVISOR_TOKEN":"synthetic-policy-token-123456789"}), \
+             patch.object(m,"urlopen",side_effect=response):
+            result=m.read_automation_policy()
+        self.assertEqual(result,{entity:"off" for entity in m.LEGACY_OWNER_AUTOMATIONS})
+        self.assertEqual(requests,[("GET","http://supervisor/core/api/states/"+entity,7)
+                                  for entity in sorted(m.LEGACY_OWNER_AUTOMATIONS)])
 
     def test_quiesced_gate_checks_release_before_sealing(self):
         baseline={"inventory_sha256":"a"*64}
