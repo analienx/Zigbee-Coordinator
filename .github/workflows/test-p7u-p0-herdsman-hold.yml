@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - 'host/recovery/**'
+      - 'host/r4-b4/**'
       - '.github/workflows/test-p7u-p0-herdsman-hold.yml'
   workflow_dispatch:
 

@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from p7u_host_integrity import verify_committed
+from p7u_host_integrity import verify_committed, AdmissionHold
 from p7u_db_quiesced import inventory_baseline, seal_quiesced
 import re
 from typing import Any, Callable
@@ -22,14 +22,19 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
 from p7u_lifecycle_core import LifecycleHold, Owner, guard, SHA
-from p7u_lifecycle_machine import Presence
+from p7u_lifecycle_machine import Presence, zero_tty_three_times
 from p7u_ha_readonly_inspector import (
     SLUGS, inspect_docker, tty_holders, prove_container, bind_tty_to_owner,
     inspect_addon, check_host_namespace,
+    run_argv,
 )
 
 ALLOWED_ACTIONS = frozenset({"start", "stop"})
 ALLOWED_SLOTS = frozenset({"official", "diagnostic", "fallback"})
+IMAGE_REPOSITORIES = {
+    "diagnostic": "localhost:50144/p7u-r4-diagnostic",
+    "fallback": "localhost:50144/p7u-r4-fallback",
+}
 
 
 class Supervisor:
@@ -86,12 +91,17 @@ class HaSupervisorPort:
     """
 
     def __init__(self, serial_path: str, *,
+                 database: Path | None = None,
+                 image_references: dict[str, str] | None = None,
                  client: Supervisor | None = None,
                  serving_probe: Callable[[str, int], dict] | None = None):
         check_host_namespace()
         self.serial_path = serial_path
         self.client = client or Supervisor()
         self.serving_probe = serving_probe
+        self.database = database
+        self.image_references = dict(image_references or {})
+        self.database_receipt: dict[str, Any] | None = None
         self.pinned: dict[str, Owner] = {}
         self.events: list[str] = []
 
@@ -105,6 +115,88 @@ class HaSupervisorPort:
 
     def tty_holders(self) -> frozenset[int]:
         return tty_holders(self.serial_path)
+
+    @staticmethod
+    def _require_passive_guard() -> None:
+        guardian = inspect_addon("guard")
+        guard(guardian.get("state") in ("started", "running") and
+              guardian.get("passive") is True, "GUARD_NOT_PASSIVE")
+
+    def _require_manual_profiles(self) -> None:
+        self._require_passive_guard()
+        for slot in ALLOWED_SLOTS:
+            info = self.client.call(method="GET", slot=slot, action="info").get("data")
+            guard(type(info) is dict and info.get("boot") == "manual" and
+                  info.get("watchdog") is False, "AUTOMATIC_OWNER_RESTART_ENABLED")
+
+    def validate_profiles(self, *, original_slot: str, target_slot: str) -> None:
+        guard(original_slot in ALLOWED_SLOTS and target_slot in ("diagnostic", "fallback") and
+              original_slot != target_slot, "SLOT_INVALID")
+        self._require_manual_profiles()
+        for slot in ALLOWED_SLOTS - {original_slot}:
+            guard(not self.inspect(slot).running, "PREFLIGHT_COMPETING_CONTAINER")
+
+    def _database_path(self) -> Path:
+        guard(isinstance(self.database, Path), "DATABASE_PATH_MISSING")
+        database = self.database
+        guard(database.is_absolute() and database.name == "database.db" and
+              database.parent.name == "zigbee2mqtt" and not database.parent.is_symlink(),
+              "DATABASE_PATH_UNQUALIFIED")
+        return database
+
+    def preflight_database(self) -> dict[str, Any]:
+        database = self._database_path()
+        for name in (".p7u-approved.json.pending", "database.db.tmp"):
+            path = database.with_name(name)
+            guard(not path.exists() and not path.is_symlink(), "DATABASE_UNRECONCILED_RECEIPT_OR_TEMP")
+        baseline = inventory_baseline(database)
+        manifest = database.with_name(".p7u-approved.json")
+        guard(not manifest.is_symlink(), "DATABASE_APPROVAL_SYMLINK")
+        if manifest.exists():
+            # A later protected switch may reuse a receipt only while it is
+            # still CURRENT. Never silently reseal a stale live generation.
+            approved = verify_committed(database, manifest)
+            guard(approved.database_sha256 == baseline["database_sha256"],
+                  "DATABASE_CHANGED_DURING_PREFLIGHT")
+            baseline["existing_approval"] = {
+                "generation": approved.approval_generation,
+                "database_sha256": approved.database_sha256,
+            }
+        return baseline
+
+    def approve_quiesced_database(self, baseline: dict[str, Any]) -> dict[str, Any]:
+        self._require_manual_profiles()
+        guard(all(not self.inspect(slot).running for slot in ALLOWED_SLOTS),
+              "DB_APPROVAL_COMPETING_CONTAINER")
+        zero_tty_three_times(self)
+        database = self._database_path()
+        existing = baseline.get("existing_approval")
+        if existing is None:
+            receipt = seal_quiesced(database=database, baseline=baseline,
+                                   all_slots_stopped=True, no_tty_holders=True)
+        else:
+            guard(type(existing) is dict, "DATABASE_EXISTING_APPROVAL_SHAPE")
+            pending = database.with_name(".p7u-approved.json.pending")
+            guard(not pending.exists() and not pending.is_symlink(), "DATABASE_APPROVAL_PENDING")
+            approved = verify_committed(database, database.with_name(".p7u-approved.json"))
+            guard(approved.approval_generation == existing.get("generation"),
+                  "DATABASE_APPROVAL_GENERATION_CHANGED")
+            current = inventory_baseline(database)
+            guard(all(current[key] == baseline.get(key) for key in
+                      ("inventory_sha256", "devices", "rows", "groups")) and
+                  current["database_sha256"] == approved.database_sha256,
+                  "DATABASE_CHANGED_SINCE_PRESTOP")
+            receipt = {"schema": "p7u-quiesced-approval-v1",
+                       "database_sha256": approved.database_sha256,
+                       "inventory_sha256": approved.inventory_sha256,
+                       "approved_rows": approved.rows, "approved_devices": approved.devices,
+                       "generation": approved.approval_generation, "reused": True}
+        # Another host could have started while the receipt was written.
+        # Do not authorize start from a receipt issued during that race.
+        guard(all(not self.inspect(slot).running for slot in ALLOWED_SLOTS) and
+              not self.tty_holders(), "DB_APPROVAL_OWNER_RETURNED")
+        self.database_receipt = receipt
+        return receipt
 
     def prove_owner_holders(self, owner: Owner, holders: frozenset[int]) -> None:
         candidates = []
@@ -129,9 +221,7 @@ class HaSupervisorPort:
         self.prove_owner_holders(expected, self.tty_holders())
         # A protected start/stop requires the guardian to be passive, not
         # carrying any independent Zigbee radio owner or reset capability.
-        guardian = inspect_addon("guard")
-        guard(guardian.get("state") in ("started", "running"),
-              "PASSIVE_GUARD_NOT_RUNNING")
+        self._require_manual_profiles()
         return expected
 
     def stop(self, slot: str, *, timeout_seconds: int) -> bool:
@@ -149,26 +239,57 @@ class HaSupervisorPort:
                                     timeout_seconds=timeout_seconds)
         return response.get("result") == "ok"
 
+    def qualify_image(self, slot: str, *, expected_image_sha: str) -> dict:
+        guard(slot in IMAGE_REPOSITORIES and isinstance(expected_image_sha, str) and
+              SHA.fullmatch(expected_image_sha) is not None, "IMAGE_SCOPE_UNQUALIFIED")
+        reference = self.image_references.get(slot)
+        repository = IMAGE_REPOSITORIES[slot]
+        guard(isinstance(reference, str) and reference.startswith(repository + ":"),
+              "TARGET_IMAGE_REFERENCE_UNQUALIFIED")
+        version = reference[len(repository) + 1:]
+        guard(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}", version) is not None,
+              "TARGET_IMAGE_VERSION_UNQUALIFIED")
+        data = self.client.call(method="GET", slot=slot, action="info").get("data")
+        guard(type(data) is dict and data.get("version") == version and
+              data.get("build") is False and data.get("boot") == "manual" and
+              data.get("watchdog") is False, "TARGET_SUPERVISOR_PROFILE_UNQUALIFIED")
+        # Supervisor removes stopped add-on containers. Qualify the exact
+        # source-pinned registry image used by the installed add-on metadata.
+        inspected = run_argv(["docker", "image", "inspect", reference])
+        guard(inspected.returncode == 0, "TARGET_INSTALLED_IMAGE_MISSING")
+        try:
+            images = json.loads(inspected.stdout)
+        except ValueError as exc:
+            raise LifecycleHold("P7U_HOLD_TARGET_INSTALLED_IMAGE_INVALID") from exc
+        guard(type(images) is list and len(images) == 1 and type(images[0]) is dict and
+              images[0].get("Id") == "sha256:" + expected_image_sha,
+              "TARGET_STAGED_IMAGE_UNVERIFIED")
+        return data
+
     def start(self, slot: str, *, expected_image_sha: str) -> bool:
         guard(slot in ("diagnostic", "fallback") and
               type(expected_image_sha) is str and
               SHA.fullmatch(expected_image_sha) is not None,
               "START_NOT_APPROVED")
+        self._require_manual_profiles()
+        guard(self.database_receipt is not None, "START_WITHOUT_QUIESCED_DATABASE")
+        database = self._database_path()
+        try:
+            approved = verify_committed(database, database.with_name(".p7u-approved.json"))
+        except AdmissionHold as exc:
+            raise LifecycleHold("P7U_HOLD_START_DATABASE_CHANGED") from exc
+        guard(approved.database_sha256 == self.database_receipt["database_sha256"] and
+              approved.approval_generation == self.database_receipt["generation"],
+              "START_DATABASE_RECEIPT_CHANGED")
         guard(len(self.tty_holders()) == 0, "START_SERIAL_HOLDER_PRESENT")
         guard(all(not self.inspect(name).running for name in ALLOWED_SLOTS),
               "START_COMPETING_CONTAINER")
+        data = self.qualify_image(slot, expected_image_sha=expected_image_sha)
+        guard(data.get("state") in ("stopped", "error"), "TARGET_SUPERVISOR_NOT_STOPPED")
         raw = inspect_docker(slot)
-        # Require an existing stopped Docker container with the *exact*
-        # image; an uninstalled target is NOT magically qualified by an
-        # old build artifact or free-form supplied image string.
-        guard(raw is not None and raw.get("State", {}).get("Running") is False and
-              raw.get("Image", "").removeprefix("sha256:") == expected_image_sha,
-              "TARGET_STAGED_IMAGE_UNVERIFIED")
-        info = self.client.call(method="GET", slot=slot, action="info")
-        data = info.get("data")
-        guard(type(data) is dict and data.get("state") in ("stopped", "error") and
-              data.get("boot") == "manual" and data.get("watchdog") is False,
-              "TARGET_SUPERVISOR_PROFILE_UNQUALIFIED")
+        guard(raw is None or (raw.get("State", {}).get("Running") is False and
+              raw.get("Image", "").removeprefix("sha256:") == expected_image_sha),
+              "TARGET_STOPPED_CONTAINER_IMAGE_UNVERIFIED")
         self.events.append("START_SENT")
         response = self.client.call(method="POST", slot=slot, action="start",
                                     timeout_seconds=90)

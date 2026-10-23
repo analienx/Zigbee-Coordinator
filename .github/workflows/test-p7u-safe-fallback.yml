@@ -2,10 +2,12 @@ name: P7U protected fallback - source and image (NOT INSTALLED)
 on:
   pull_request:
     paths:
+      - 'host/r4-b4/**'
       - 'host/recovery/p7u_herdsman_startup_hold.py'
       - 'host/r4-b4/test-p7u-db-startup.cjs'
       - 'host/r4-b4/p7u_host_integrity.py'
       - 'host/r4-b4/ha-addon/**'
+      - 'host/r4-b4/ha-fallback/**'
       - '.github/workflows/test-p7u-safe-fallback.yml'
   workflow_dispatch:
 permissions:
@@ -72,22 +74,21 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/fallback-image/herdsman-dist /tmp/fallback-receipts
           cp -a "$B4_HERDSMAN_ROOT/dist/." /tmp/fallback-image/herdsman-dist/
-          cat > /tmp/fallback-image/Dockerfile <<'EOF'
-          FROM ghcr.io/zigbee2mqtt/zigbee2mqtt-aarch64@sha256:97246758dab5099113c5a46fcbc1b9a36968a0eb9fd95ce8df6e2868cc7f533f
-          LABEL org.opencontainers.image.description="P7U retained-only F2-absent fallback, source-only"
-          COPY herdsman-dist/ /app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/
-          EOF
+          cp host/r4-b4/ha-fallback/{Dockerfile,config.yaml} /tmp/fallback-image/
           docker buildx create --name p7u-safe-fallback --driver docker-container --use
           docker buildx inspect --bootstrap
           docker buildx build --platform linux/arm64 --tag "p7u-fallback:${SOURCE_SHA:0:12}" --output type=docker,dest=/tmp/fallback-receipts/p7u-arm64.docker.tar /tmp/fallback-image
           docker load --input /tmp/fallback-receipts/p7u-arm64.docker.tar
           docker image inspect "p7u-fallback:${SOURCE_SHA:0:12}" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
+          docker image inspect "p7u-fallback:${SOURCE_SHA:0:12}" --format '{{.Id}}' > /tmp/fallback-receipts/PINNED_IMAGE_ID.txt
+          mv /tmp/fallback-image /tmp/p7u-staged-fallback
+          tar -C /tmp -czf /tmp/fallback-receipts/p7u-staged-fallback.tar.gz p7u-staged-fallback
       - name: Attest six actual compiled modules in Docker export
         run: |
           python - <<'PY'
           import tarfile,hashlib,json,os
           from pathlib import Path
-          root=Path('/tmp/fallback-image/herdsman-dist')
+          root=Path('/tmp/p7u-staged-fallback/herdsman-dist')
           names=['controller/controller.js','adapter/z-stack/znp/znp.js','adapter/z-stack/adapter/manager.js','adapter/z-stack/znp/definition.js','adapter/z-stack/znp/parameterType.js','adapter/z-stack/znp/buffaloZnp.js','controller/database.js']
           expected={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in names}
           artifact=Path('/tmp/fallback-receipts/p7u-arm64.docker.tar')
@@ -103,6 +104,13 @@ jobs:
           assert got==expected, {'missing':sorted(set(expected)-set(got)), 'changed':sorted(k for k in got if got[k]!=expected.get(k))}
           result={'schema':'p7u-fallback-hosted-v1','source_sha':os.environ['SOURCE_SHA'],'verified_modules':len(got),'docker_sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'installed':False,'f2_capable':False,'manager_qualified':False}
           Path('/tmp/fallback-receipts/ATTESTATION.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          stage=root.parent
+          bundle=Path('/tmp/fallback-receipts/p7u-staged-fallback.tar.gz')
+          package={'schema':'p7u-staged-addon-v1','source_sha':os.environ['SOURCE_SHA'],
+            'archive_sha256':hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            'files':{str(p.relative_to(stage)):hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sorted(stage.rglob('*')) if p.is_file()},'installed':False}
+          (bundle.parent/'ADDON_BUNDLE_RECEIPT.json').write_text(json.dumps(package,indent=2,sort_keys=True)+'\n')
           print('PASS: source-qualified F2-absent fallback Docker export',len(got))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

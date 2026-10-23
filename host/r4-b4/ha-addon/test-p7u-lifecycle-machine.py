@@ -28,6 +28,8 @@ class Port:
         self.bad_image = False
         self.extra_holder = False
         self.serving = True
+        self.db_events = []
+        self.db_failure = False
     def inspect(self, slot):
         owner = self.owner[slot]
         if self.changed and slot == "official":
@@ -41,6 +43,20 @@ class Port:
         # docker top + cgroup + stable Linux /proc start time, not main PID.
         from p7u_lifecycle_core import guard
         guard(holders == frozenset({owner.pid}), "FOREIGN_UART_OWNER")
+    def validate_profiles(self, *, original_slot, target_slot):
+        core.guard(all(v is None for k,v in self.owner.items() if k != original_slot),
+                   "PREFLIGHT_COMPETING_CONTAINER")
+    def preflight_database(self):
+        core.guard(self.owner["official"] is not None, "BASELINE_TOO_LATE")
+        self.db_events.append("baseline")
+        return {"inventory_sha256":"c"*64,"devices":3,"rows":3,"groups":0}
+    def approve_quiesced_database(self, baseline):
+        core.guard(not any(self.owner.values()) and not self.tty_holders(), "DB_OWNER_PRESENT")
+        core.guard(not self.db_failure, "DB_CHANGED_SINCE_PRESTOP")
+        self.db_events.append("quiesced")
+        return {"schema":"p7u-quiesced-approval-v1","database_sha256":"e"*64,
+                "inventory_sha256":baseline["inventory_sha256"],"approved_rows":3,
+                "approved_devices":3,"generation":"owner-quiesced-test"}
     def stop(self, slot, *, timeout_seconds):
         self.events.append(("stop", slot, timeout_seconds))
         if not self.stuck:
@@ -80,6 +96,11 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.port.owner["diagnostic"], NEW)
         self.assertEqual([e[0] for e in self.port.events].count("start"), 1)
         self.assertEqual([e[0] for e in self.port.events].count("stop"), 1)
+        self.assertEqual(self.port.db_events,["baseline","quiesced"])
+        records=[json.loads(line) for line in (self.root/"events.jsonl").read_text().splitlines()]
+        phases=[record["phase"] for record in records]
+        self.assertLess(phases.index("OWNER_ABSENT"),phases.index("DB_APPROVED"))
+        self.assertLess(phases.index("DB_APPROVED"),phases.index("START_INTENT"))
         with core.Journal(self.root) as j:
             self.assertEqual(j.phase, "COMMITTED")
 
@@ -89,6 +110,25 @@ class Tests(unittest.TestCase):
         self.assertEqual([e[0] for e in self.port.events].count("stop"), 1)
         history = (self.root / "events.jsonl").read_text()
         self.assertIn("STOP_ACK_UNKNOWN", history)
+
+    def test_timed_out_stop_is_observed_until_same_owner_exits_without_retry(self):
+        state={"stop_sent":False,"checks":0}
+        inspect=self.port.inspect
+        def delayed_inspect(slot):
+            if state["stop_sent"] and slot=="official":
+                state["checks"]+=1
+                if state["checks"]>=3:
+                    self.port.owner[slot]=None
+            return inspect(slot)
+        def stop(slot, *, timeout_seconds):
+            self.port.events.append(("stop",slot,timeout_seconds))
+            state["stop_sent"]=True
+            return False
+        self.port.inspect=delayed_inspect
+        self.port.stop=stop
+        self.assertEqual(self.switch(),"COMMITTED")
+        self.assertEqual(len([x for x in self.port.events if x[0]=="stop"]),1)
+        self.assertEqual(len([x for x in self.port.events if x[0]=="start"]),1)
 
     def test_hanging_stop_no_force_and_no_start(self):
         self.port.stuck = True
@@ -130,6 +170,19 @@ class Tests(unittest.TestCase):
         self.assertIsNotNone(self.port.owner["diagnostic"])
         self.assertIsNone(self.port.owner["official"])
 
+    def test_competitor_appearing_during_serving_never_commits(self):
+        serving=self.port.serving_evidence
+        def competing(slot, *, max_seconds):
+            result=serving(slot,max_seconds=max_seconds)
+            self.port.owner["fallback"]=core.Owner("f"*64,3003,NEW.started_at,"sha256:"+"f"*64)
+            return result
+        self.port.serving_evidence=competing
+        with self.assertRaisesRegex(core.LifecycleHold,"fallback_NOT_ABSENT"):
+            self.switch()
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase,"HOLD")
+        self.assertEqual(len([e for e in self.port.events if e[0]=="stop"]),1)
+
     def test_actual_node_child_uart_holder_can_be_proven_without_container_init_fd(self):
         orig=self.port.prove_owner_holders
         def descendants(owner, holders):
@@ -146,6 +199,24 @@ class Tests(unittest.TestCase):
                     original_slot="official", target_slot="diagnostic",
                     database_approved=False, guard_passive=True)
         self.assertEqual(self.port.events, [])
+
+    def test_quiesced_database_failure_never_starts_or_restores_original(self):
+        self.port.db_failure=True
+        with self.assertRaisesRegex(core.LifecycleHold,"DB_CHANGED_SINCE_PRESTOP"):
+            self.switch()
+        self.assertEqual([x[0] for x in self.port.events],["stop"])
+        self.assertFalse(any(self.port.owner.values()))
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase,"HOLD")
+
+    def test_third_slot_is_rejected_before_stop(self):
+        self.port.owner["fallback"]=core.Owner("f"*64,3003,NEW.started_at,"sha256:"+"f"*64)
+        # Model a second container not yet holding the UART, which the
+        # original holder check alone cannot catch.
+        self.port.tty_holders=lambda:frozenset({OLD.pid})
+        with self.assertRaisesRegex(core.LifecycleHold,"PREFLIGHT_COMPETING_CONTAINER"):
+            self.switch()
+        self.assertEqual(self.port.events,[])
 
     def test_missing_independent_fallback_is_veto(self):
         cap={**CAP, "fallback_profile_sha": CAP["diagnostic_profile_sha"]}

@@ -113,8 +113,24 @@ class Tests(unittest.TestCase):
                                                        stdout=json.dumps(payload),stderr="")):
             self.assertEqual(m.inspect_addon("guard"), {
                 "state": "started", "boot": None,
-                "watchdog": None, "version": "1"
+                "watchdog": None, "version": "1", "passive": False
             })
+
+    def test_guard_passive_requires_all_four_exact_policy_values(self):
+        from types import SimpleNamespace
+        policy={"enabled":False,"dry_run":True,"serial_owner_approved":False,
+                "allow_private_http_fallback":False,"private_token":"secret"}
+        def inspect(options):
+            payload={"result":"ok","data":{"state":"started","options":options}}
+            with patch.dict(m.os.environ,{},clear=True), patch.object(m,"run_argv",
+                    return_value=SimpleNamespace(returncode=0,stdout=json.dumps(payload),stderr="")):
+                return m.inspect_addon("guard")
+        result=inspect(policy)
+        self.assertTrue(result["passive"])
+        self.assertNotIn("secret",json.dumps(result))
+        for key in policy:
+            if key != "private_token":
+                self.assertFalse(inspect({**policy,key:not policy[key]})["passive"])
 
 if __name__ == "__main__":
     unittest.main()

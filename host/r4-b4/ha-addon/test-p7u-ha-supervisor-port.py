@@ -1,8 +1,11 @@
 """Adversarial mock Supervisor-port tests; zero HA/serial/Docker mutations."""
 import json
+import hashlib
 from pathlib import Path
 import sys
 import unittest
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -29,7 +32,8 @@ class FakeSupervisor:
         if action=="info":
             return {"result":"ok","data":{
                 "state":"started" if "zigbee2mqtt" in slug else "stopped",
-                "boot":"manual", "watchdog":False}}
+                "boot":"manual", "watchdog":False,"repository":"local",
+                "build":False,"version":"0.1.0"}}
         if self.unknown_ack:
             raise TimeoutError("synthetic lost ACK")
         return {"result":"ok","data":{}}
@@ -42,10 +46,26 @@ class Tests(unittest.TestCase):
         self.host.start()
         self.addCleanup(self.host.stop)
         self.port=m.HaSupervisorPort("/dev/serial/by-id/P7U",
+                                     database=Path("/config/zigbee2mqtt/database.db"),
+                                     image_references={
+                                         "diagnostic":"localhost:50144/p7u-r4-diagnostic:0.1.0",
+                                         "fallback":"localhost:50144/p7u-r4-fallback:0.1.0"},
                                      client=self.client,
                                      serving_probe=lambda slot,sec:{
                                          "fresh_devices":3,"mqtt_messages_fresh":True,
                                          "non_actuating_read":True})
+        self.port.database_receipt={"database_sha256":"e"*64,"generation":"owner-quiesced-test"}
+        self.guard_patch=patch.object(m,"inspect_addon",return_value={"state":"started","passive":True})
+        self.guard_patch.start()
+        self.addCleanup(self.guard_patch.stop)
+        self.db_patch=patch.object(m,"verify_committed",return_value=SimpleNamespace(
+            database_sha256="e"*64,approval_generation="owner-quiesced-test"))
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+        self.image_patch=patch.object(m,"run_argv",return_value=SimpleNamespace(
+            returncode=0,stdout=json.dumps([{"Id":"sha256:"+NEW_SHA}]),stderr=""))
+        self.image_command=self.image_patch.start()
+        self.addCleanup(self.image_patch.stop)
 
     def test_ha_supervisor_api_has_exact_verb_slug_and_narrow_endpoint(self):
         r=self.client.call(method="GET",slot="official",action="info")
@@ -64,11 +84,11 @@ class Tests(unittest.TestCase):
         with patch.object(self.port,"inspect",return_value=Presence(True,OLD)), \
              patch.object(self.port,"tty_holders",return_value=frozenset({1042})), \
              patch.object(self.port,"prove_owner_holders") as proof, \
-             patch.object(m,"inspect_addon",return_value={"state":"started"}):
+             patch.object(m,"inspect_addon",return_value={"state":"started","passive":True}):
             self.port.pinned["official"]=OLD
             self.assertTrue(self.port.stop("official",timeout_seconds=60))
         proof.assert_called_once_with(OLD,frozenset({1042}))
-        self.assertEqual([x[2] for x in self.s.requests],["info","stop"])
+        self.assertEqual([x[2] for x in self.s.requests if x[0]=="POST"],["stop"])
 
     def test_container_reused_before_stop_has_no_mutation(self):
         changed=Owner("e"*64,1001,OLD.started_at,OLD.image_digest)
@@ -88,11 +108,11 @@ class Tests(unittest.TestCase):
         with patch.object(self.port,"inspect",return_value=Presence(True,OLD)), \
              patch.object(self.port,"tty_holders",return_value=frozenset({1042})), \
              patch.object(self.port,"prove_owner_holders"), \
-             patch.object(m,"inspect_addon",return_value={"state":"started"}):
+             patch.object(m,"inspect_addon",return_value={"state":"started","passive":True}):
             self.port.pinned["official"]=OLD
             with self.assertRaisesRegex(TimeoutError,"lost ACK"):
                 self.port.stop("official",timeout_seconds=60)
-        self.assertEqual([x[2] for x in self.s.requests],["info","stop"])
+        self.assertEqual([x[2] for x in self.s.requests if x[0]=="POST"],["stop"])
 
     def test_start_requires_image_staged_and_fully_free_serial(self):
         candidate=Owner("d"*64,2002,"2026-10-23T08:15:00.000Z","sha256:"+NEW_SHA)
@@ -100,22 +120,151 @@ class Tests(unittest.TestCase):
              patch.object(self.port,"inspect",return_value=Presence(False,None)), \
              patch.object(m,"inspect_docker",return_value=raw(candidate,False)):
             self.assertTrue(self.port.start("diagnostic",expected_image_sha=NEW_SHA))
-        self.assertEqual([x[2] for x in self.s.requests],["info","start"])
+        self.assertEqual([x[2] for x in self.s.requests if x[0]=="POST"],["start"])
+        self.image_command.assert_called_once_with([
+            "docker","image","inspect","localhost:50144/p7u-r4-diagnostic:0.1.0"])
+
+    def test_first_start_qualifies_installed_image_without_container(self):
+        with patch.object(self.port,"tty_holders",return_value=frozenset()), \
+             patch.object(self.port,"inspect",return_value=Presence(False,None)), \
+             patch.object(m,"inspect_docker",return_value=None):
+            self.assertTrue(self.port.start("diagnostic",expected_image_sha=NEW_SHA))
+        self.assertEqual([x[2] for x in self.s.requests if x[0]=="POST"],["start"])
 
     def test_start_fails_on_competing_owner_without_supervisor_calls(self):
         with patch.object(self.port,"tty_holders",return_value=frozenset({1042})):
             with self.assertRaisesRegex(LifecycleHold,"START_SERIAL_HOLDER_PRESENT"):
                 self.port.start("diagnostic",expected_image_sha=NEW_SHA)
-        self.assertEqual(self.s.requests,[])
+        self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
 
     def test_start_fails_on_unstaged_image_before_supervisor_calls(self):
         candidate=Owner("d"*64,2002,"2026-10-23T08:15:00.000Z","sha256:"+"c"*64)
         with patch.object(self.port,"tty_holders",return_value=frozenset()), \
              patch.object(self.port,"inspect",return_value=Presence(False,None)), \
+             patch.object(m,"run_argv",return_value=SimpleNamespace(returncode=0,
+                          stdout=json.dumps([{"Id":"sha256:"+"c"*64}]),stderr="")), \
              patch.object(m,"inspect_docker",return_value=raw(candidate,False)):
             with self.assertRaisesRegex(LifecycleHold,"TARGET_STAGED_IMAGE_UNVERIFIED"):
                 self.port.start("diagnostic",expected_image_sha=NEW_SHA)
-        self.assertEqual(self.s.requests,[])
+        self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
+
+    def test_start_without_quiesced_receipt_never_mutates(self):
+        self.port.database_receipt=None
+        with self.assertRaisesRegex(LifecycleHold,"START_WITHOUT_QUIESCED_DATABASE"):
+            self.port.start("diagnostic",expected_image_sha=NEW_SHA)
+        self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
+
+    def test_armed_guard_or_automatic_original_blocks_stop(self):
+        with patch.object(m,"inspect_addon",return_value={"state":"started","passive":False}):
+            with self.assertRaisesRegex(LifecycleHold,"GUARD_NOT_PASSIVE"):
+                self.port.validate_profiles(original_slot="official",target_slot="diagnostic")
+        original=self.s.transport
+        def automatic(method,slug,action,timeout):
+            result=original(method,slug,action,timeout)
+            if action=="info" and slug==m.SLUGS["official"]:
+                result["data"]["boot"]="auto"
+            return result
+        self.client.transport=automatic
+        with self.assertRaisesRegex(LifecycleHold,"AUTOMATIC_OWNER_RESTART_ENABLED"):
+            self.port.validate_profiles(original_slot="official",target_slot="diagnostic")
+        self.assertFalse(any(x[0]=="POST" for x in self.s.requests))
+
+    def test_quiesced_gate_checks_release_before_sealing(self):
+        baseline={"inventory_sha256":"a"*64}
+        with patch.object(self.port,"inspect",return_value=Presence(True,OLD)), \
+             patch.object(m,"seal_quiesced") as seal:
+            with self.assertRaisesRegex(LifecycleHold,"DB_APPROVAL_COMPETING_CONTAINER"):
+                self.port.approve_quiesced_database(baseline)
+            seal.assert_not_called()
+
+    def test_quiesced_gate_rechecks_no_owner_after_sealing(self):
+        baseline={"inventory_sha256":"a"*64}
+        receipt={"schema":"p7u-quiesced-approval-v1","database_sha256":"e"*64,
+                 "generation":"owner-quiesced-test"}
+        self.port.database_receipt=None
+        with patch.object(self.port,"inspect",side_effect=[Presence(False,None)]*3+
+                          [Presence(True,OLD)]), \
+             patch.object(self.port,"tty_holders",return_value=frozenset()), \
+             patch.object(m,"zero_tty_three_times") as tty, \
+             patch.object(m,"seal_quiesced",return_value=receipt) as seal:
+            with self.assertRaisesRegex(LifecycleHold,"DB_APPROVAL_OWNER_RETURNED"):
+                self.port.approve_quiesced_database(baseline)
+            tty.assert_called_once_with(self.port)
+            seal.assert_called_once()
+        self.assertIsNone(self.port.database_receipt)
+
+    def test_current_existing_receipt_is_reused_without_overwriting(self):
+        from p7u_host_integrity import verify_committed as real_verify
+        temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory=Path(temporary.name)/"zigbee2mqtt"
+        directory.mkdir()
+        database=directory/"database.db"
+        database.write_text(json.dumps({"id":1,"type":"Coordinator",
+                                       "ieeeAddr":"0x00124b0000000001"}))
+        first=m.inventory_baseline(database)
+        m.seal_quiesced(database=database,baseline=first,
+                       all_slots_stopped=True,no_tty_holders=True)
+        manifest=directory/".p7u-approved.json"
+        saved=manifest.read_bytes()
+        self.port.database=database
+        with patch.object(m,"verify_committed",side_effect=real_verify), \
+             patch.object(self.port,"inspect",return_value=Presence(False,None)), \
+             patch.object(self.port,"tty_holders",return_value=frozenset()), \
+             patch.object(m,"zero_tty_three_times"), \
+             patch.object(m,"seal_quiesced") as seal:
+            baseline=self.port.preflight_database()
+            self.assertIn("existing_approval",baseline)
+            receipt=self.port.approve_quiesced_database(baseline)
+            self.assertTrue(receipt["reused"])
+            seal.assert_not_called()
+        self.assertEqual(manifest.read_bytes(),saved)
+
+    def test_existing_receipt_generation_change_is_hold_without_reseal(self):
+        baseline={"existing_approval":{"generation":"owner-quiesced-old",
+                                        "database_sha256":"e"*64}}
+        with patch.object(self.port,"inspect",return_value=Presence(False,None)), \
+             patch.object(m,"zero_tty_three_times"), \
+             patch.object(m,"seal_quiesced") as seal:
+            with self.assertRaisesRegex(LifecycleHold,"DATABASE_APPROVAL_GENERATION_CHANGED"):
+                self.port.approve_quiesced_database(baseline)
+            seal.assert_not_called()
+
+    def test_protected_autosave_current_receipt_can_advance_hash_same_generation(self):
+        from p7u_host_integrity import verify_committed as real_verify, AdmissionHold
+        temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory=Path(temporary.name)/"zigbee2mqtt"
+        directory.mkdir()
+        database=directory/"database.db"
+        row={"id":1,"type":"Coordinator","ieeeAddr":"0x00124b0000000001"}
+        database.write_text(json.dumps(row))
+        m.seal_quiesced(database=database,baseline=m.inventory_baseline(database),
+                       all_slots_stopped=True,no_tty_holders=True)
+        manifest=directory/".p7u-approved.json"
+        self.port.database=database
+        self.port.database_receipt=None
+        with patch.object(m,"verify_committed",side_effect=real_verify), \
+             patch.object(self.port,"inspect",return_value=Presence(False,None)), \
+             patch.object(self.port,"tty_holders",return_value=frozenset()), \
+             patch.object(m,"zero_tty_three_times"), \
+             patch.object(m,"seal_quiesced") as seal:
+            baseline=self.port.preflight_database()
+            row["lastSeen"]=1792700000
+            database.write_text(json.dumps(row))
+            # A DB/receipt gap is never auto-repaired by the cutover manager.
+            with self.assertRaisesRegex(AdmissionHold,"COMMITTED_DATABASE_CHANGED"):
+                self.port.approve_quiesced_database(baseline)
+            self.assertIsNone(self.port.database_receipt)
+            receipt=json.loads(manifest.read_bytes())
+            receipt["database_sha256"]=hashlib.sha256(database.read_bytes()).hexdigest()
+            manifest.write_text(json.dumps(receipt))
+            saved=manifest.read_bytes()
+            approved=self.port.approve_quiesced_database(baseline)
+            self.assertTrue(approved["reused"])
+            self.assertNotEqual(approved["database_sha256"],baseline["database_sha256"])
+            self.assertEqual(manifest.read_bytes(),saved)
+            seal.assert_not_called()
 
     def test_prove_owner_holders_accepts_child_node_not_docker_init(self):
         owner=OLD

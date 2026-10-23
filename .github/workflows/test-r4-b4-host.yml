@@ -39,6 +39,7 @@ jobs:
       - name: Fail-closed host database admission negative controls
         run: |
           set -euo pipefail
+          python -m pip install paho-mqtt==2.1.0
           python host/r4-b4/test-p7u-host-integrity.py -v
           python host/r4-b4/test-p7u-f2-acceptance.py -v
           python host/r4-b4/test-p7u-passive-incidents.py -v
@@ -49,6 +50,7 @@ jobs:
           python host/r4-b4/ha-addon/test-p7u-ha-supervisor-port.py -v
           python host/r4-b4/ha-addon/test-p7u-serving-mqtt.py -v
           python host/r4-b4/ha-addon/test-p7u-db-quiesced.py -v
+          python host/r4-b4/ha-lifecycle-manager/test-p7u-lifecycle-main.py -v
           python -m py_compile host/r4-b4/ha-addon/p7u_lifecycle_core.py
       - name: Checkout actual pinned herdsman without worktree contamination
         run: |
@@ -219,6 +221,17 @@ jobs:
           grep -q 'P7U_APPROVED_DB_MANIFEST:' /tmp/p7u-staged-addon/config.yaml
           grep -q 'COPY p7u_diagnostic_worker.cjs' /tmp/p7u-staged-addon/Dockerfile
           tar -C /tmp -czf /tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz p7u-staged-addon
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path('/tmp/p7u-staged-addon')
+          archive=Path('/tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz')
+          receipt={'schema':'p7u-staged-addon-v1','source_sha':os.environ['B4_SOURCE_SHA'],
+            'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
+            'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sorted(root.rglob('*')) if p.is_file()},'installed':False}
+          (archive.parent/'ADDON_BUNDLE_RECEIPT.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          PY
       - name: Publish candidate image for separately authorized rollout
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

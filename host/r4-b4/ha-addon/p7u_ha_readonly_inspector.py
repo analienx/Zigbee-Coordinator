@@ -75,8 +75,17 @@ def inspect_addon(slot: str) -> dict:
         raise LifecycleHold("P7U_HOLD_SUPERVISOR_INFO_INVALID") from exc
     guard(data.get("result") == "ok" and type(data.get("data")) is dict,
           "SUPERVISOR_INFO_SHAPE")
-    return {k: data["data"].get(k) for k in
-            ("state", "boot", "watchdog", "version")}
+    result = {k: data["data"].get(k) for k in
+              ("state", "boot", "watchdog", "version")}
+    if slot == "guard":
+        # Reduce the policy to one attestation. Never emit the options,
+        # which may contain credentials and private recovery configuration.
+        options = data["data"].get("options")
+        result["passive"] = (type(options) is dict and
+            options.get("enabled") is False and options.get("dry_run") is True and
+            options.get("serial_owner_approved") is False and
+            options.get("allow_private_http_fallback") is False)
+    return result
 
 
 def check_host_namespace():

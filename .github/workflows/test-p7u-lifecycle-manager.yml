@@ -1,0 +1,91 @@
+name: P7U one-shot lifecycle manager ARM64 (NO LIVE ACTION)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/**'
+      - 'host/r4-b4/ha-lifecycle-manager/**'
+      - 'host/r4-b4/ha-addon/**'
+      - 'host/r4-b4/p7u_host_integrity.py'
+      - '.github/workflows/test-p7u-lifecycle-manager.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p7u-manager-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  manager:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Exact-source mock-only one-shot operation checks
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          python -m pip install paho-mqtt==2.1.0
+          python host/r4-b4/ha-addon/test-p7u-lifecycle-core.py -v
+          python host/r4-b4/ha-addon/test-p7u-lifecycle-machine.py -v
+          python host/r4-b4/ha-addon/test-p7u-ha-supervisor-port.py -v
+          python host/r4-b4/ha-addon/test-p7u-serving-mqtt.py -v
+          python host/r4-b4/ha-addon/test-p7u-db-quiesced.py -v
+          python host/r4-b4/ha-lifecycle-manager/test-p7u-lifecycle-main.py -v
+      - name: Build exact ARM64 one-shot manager; never start a container
+        run: |
+          set -euo pipefail
+          root=/tmp/p7u-staged-manager
+          mkdir -p "$root" /tmp/p7u-manager-evidence
+          cp host/r4-b4/ha-lifecycle-manager/{Dockerfile,config.yaml,p7u_lifecycle_main.py} "$root/"
+          cp host/r4-b4/ha-addon/{p7u_lifecycle_core.py,p7u_lifecycle_machine.py,p7u_ha_supervisor_port.py,p7u_ha_readonly_inspector.py,p7u_db_quiesced.py,p7u_serving_mqtt.py} "$root/"
+          cp host/r4-b4/p7u_host_integrity.py "$root/"
+          printf '%s\n' "$SOURCE_SHA" > "$root/SOURCE_SHA"
+          docker buildx create --driver docker-container --name p7u-manager-build --use
+          docker buildx inspect --bootstrap
+          docker buildx build --platform linux/arm64 --tag "p7u-manager:${SOURCE_SHA:0:12}" --output type=docker,dest=/tmp/p7u-manager-evidence/p7u-manager-arm64.docker.tar "$root"
+          docker load -i /tmp/p7u-manager-evidence/p7u-manager-arm64.docker.tar
+          test "$(docker image inspect "p7u-manager:${SOURCE_SHA:0:12}" --format '{{.Os}}/{{.Architecture}}')" = linux/arm64
+          docker image inspect "p7u-manager:${SOURCE_SHA:0:12}" --format '{{.Id}}' > /tmp/p7u-manager-evidence/PINNED_IMAGE_ID.txt
+          tar -C /tmp -czf /tmp/p7u-manager-evidence/p7u-staged-manager.tar.gz p7u-staged-manager
+      - name: Attest complete manager source bytes and staged package
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,tarfile
+          from pathlib import Path
+          root=Path('/tmp/p7u-staged-manager')
+          output=Path('/tmp/p7u-manager-evidence')
+          image=output/'p7u-manager-arm64.docker.tar'
+          expected={'opt/p7u/'+p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in root.iterdir() if p.suffix=='.py' or p.name=='SOURCE_SHA'}
+          got={}
+          with tarfile.open(image) as archive:
+              layers=json.load(archive.extractfile('manifest.json'))[0]['Layers']
+              for layer in layers:
+                  with tarfile.open(fileobj=archive.extractfile(layer)) as contents:
+                      for member in contents:
+                          name=member.name.lstrip('./')
+                          if name in expected and member.isfile():
+                              got[name]=hashlib.sha256(contents.extractfile(member).read()).hexdigest()
+          assert got==expected
+          bundle=output/'p7u-staged-manager.tar.gz'
+          receipt={'schema':'p7u-staged-addon-v1','source_sha':os.environ['SOURCE_SHA'],
+            'archive_sha256':hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            'image_archive_sha256':hashlib.sha256(image.read_bytes()).hexdigest(),
+            'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sorted(root.rglob('*')) if p.is_file()},
+            'verified_runtime_files':len(got),'installed':False,'serial_opened':False}
+          (output/'ADDON_BUNDLE_RECEIPT.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-lifecycle-manager-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-manager-evidence/
+          if-no-files-found: error
+          compression-level: 0

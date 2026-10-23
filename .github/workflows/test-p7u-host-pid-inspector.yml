@@ -2,6 +2,7 @@ name: P7U host PID inspector ARM64 (NO LIVE ACTION)
 on:
   pull_request:
     paths:
+      - 'host/r4-b4/**'
       - 'host/r4-b4/ha-lifecycle-inspector/**'
       - 'host/r4-b4/ha-addon/p7u_ha_readonly_inspector.py'
       - '.github/workflows/test-p7u-host-pid-inspector.yml'
@@ -34,22 +35,24 @@ jobs:
       - name: Build exact ARM64 one-shot inspector, no running container
         run: |
           set -euo pipefail
-          mkdir -p /tmp/p7u-inspector /tmp/p7u-inspector-evidence
-          cp host/r4-b4/ha-lifecycle-inspector/{Dockerfile,p7u_owner_inspector_main.py} /tmp/p7u-inspector/
-          cp host/r4-b4/ha-addon/{p7u_ha_readonly_inspector.py,p7u_lifecycle_core.py} /tmp/p7u-inspector/
+          mkdir -p /tmp/p7u-staged-inspector /tmp/p7u-inspector-evidence
+          cp host/r4-b4/ha-lifecycle-inspector/{Dockerfile,p7u_owner_inspector_main.py,config.yaml} /tmp/p7u-staged-inspector/
+          cp host/r4-b4/ha-addon/{p7u_ha_readonly_inspector.py,p7u_lifecycle_core.py} /tmp/p7u-staged-inspector/
           cp host/r4-b4/ha-lifecycle-inspector/config.yaml /tmp/p7u-inspector-evidence/
           docker buildx create --driver docker-container --name p7u-pid-build --use
           docker buildx inspect --bootstrap
-          docker buildx build --platform linux/arm64 --tag "p7u-pid:${SHA:0:12}" --output type=docker,dest=/tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar /tmp/p7u-inspector
+          docker buildx build --platform linux/arm64 --tag "p7u-pid:${SHA:0:12}" --output type=docker,dest=/tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar /tmp/p7u-staged-inspector
           docker load -i /tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar
           test "$(docker image inspect "p7u-pid:${SHA:0:12}" --format '{{.Os}}/{{.Architecture}}')" = linux/arm64
+          docker image inspect "p7u-pid:${SHA:0:12}" --format '{{.Id}}' > /tmp/p7u-inspector-evidence/PINNED_IMAGE_ID.txt
+          tar -C /tmp -czf /tmp/p7u-inspector-evidence/p7u-staged-inspector.tar.gz p7u-staged-inspector
       - name: Verify code bytes in actual ARM64 tar layers
         run: |
           python - <<'PY'
           import hashlib,json,tarfile,os
           from pathlib import Path
           arc=Path('/tmp/p7u-inspector-evidence/p7u-host-pid-arm64.tar')
-          expected={'opt/p7u/'+f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in Path('/tmp/p7u-inspector').glob('*.py')}
+          expected={'opt/p7u/'+f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in Path('/tmp/p7u-staged-inspector').glob('*.py')}
           got={}
           with tarfile.open(arc) as t:
               layers=json.load(t.extractfile('manifest.json'))[0]['Layers']
@@ -62,6 +65,13 @@ jobs:
           assert got==expected
           receipt={'source_sha':os.environ['SHA'],'sha256':hashlib.sha256(arc.read_bytes()).hexdigest(),'code_files':len(got),'installed':False,'radio_opened':False}
           Path('/tmp/p7u-inspector-evidence/RECEIPT.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          root=Path('/tmp/p7u-staged-inspector')
+          bundle=Path('/tmp/p7u-inspector-evidence/p7u-staged-inspector.tar.gz')
+          package={'schema':'p7u-staged-addon-v1','source_sha':os.environ['SHA'],
+            'archive_sha256':hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sorted(root.rglob('*')) if p.is_file()},'installed':False}
+          (bundle.parent/'ADDON_BUNDLE_RECEIPT.json').write_text(json.dumps(package,indent=2,sort_keys=True)+'\n')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

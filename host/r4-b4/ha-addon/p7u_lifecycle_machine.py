@@ -22,6 +22,9 @@ class Port(Protocol):
     def inspect(self, slot: str) -> Presence: ...
     def tty_holders(self) -> frozenset[int]: ...
     def prove_owner_holders(self, owner: Owner, holders: frozenset[int]) -> None: ...
+    def validate_profiles(self, *, original_slot: str, target_slot: str) -> None: ...
+    def preflight_database(self) -> dict[str, Any]: ...
+    def approve_quiesced_database(self, baseline: dict[str, Any]) -> dict[str, Any]: ...
     def stop(self, slot: str, *, timeout_seconds: int) -> bool: ...
     def start(self, slot: str, *, expected_image_sha: str) -> bool: ...
     def serving_evidence(self, slot: str, *, max_seconds: int) -> dict[str, Any]: ...
@@ -57,6 +60,7 @@ class Manager:
         self.port = port
         require_host_capabilities(capabilities)
         self.cap = capabilities
+        self.database_baseline: dict[str, Any] | None = None
 
     def preflight(self, *, original_slot: str, target_slot: str,
                   database_approved: bool, guard_passive: bool) -> Owner:
@@ -74,6 +78,13 @@ class Manager:
         guard(type(holders) is frozenset and holders,
               "UNEXPECTED_SERIAL_OWNER")
         self.port.prove_owner_holders(pinned, holders)
+        self.port.validate_profiles(original_slot=original_slot, target_slot=target_slot)
+        baseline = self.port.preflight_database()
+        guard(type(baseline) is dict, "DATABASE_BASELINE_MISSING")
+        # Recheck identity after reading the still-live DB; no stop is issued
+        # if the original generation or passive policy changed during preflight.
+        pinned.require_same_generation(require_running(self.port.inspect(original_slot), original_slot))
+        self.database_baseline = baseline
         self.journal.append("PREFLIGHT", {
             "original": original_slot, "target": target_slot,
             "original_container_id": pinned.container_id,
@@ -81,6 +92,7 @@ class Manager:
             "target_profile_sha": self.cap["diagnostic_profile_sha"]
                 if target_slot == "diagnostic" else self.cap["fallback_profile_sha"],
             "database_approved": True,
+            "database_baseline": baseline,
         })
         return pinned
 
@@ -98,6 +110,15 @@ class Manager:
             self.journal.append("STOP_ACK_UNKNOWN", {"one_request_only": True})
         # Never repeat stop just because the Supervisor returned no ACK.
         observed = self.port.inspect(original_slot)
+        # A timed-out HTTP request does not cancel Supervisor's stop job.
+        # Observe that same pinned generation for at most another minute;
+        # never send a second stop while the first may still be completing.
+        for _ in range(60):
+            if not observed.running:
+                break
+            guard(observed.owner == old, "ORIGINAL_REPLACED_DURING_STOP")
+            time.sleep(1)
+            observed = self.port.inspect(original_slot)
         if observed.running:
             guard(observed.owner == old, "ORIGINAL_REPLACED_DURING_STOP")
             self.journal.append("HOLD", {"reason": "original still running; no forced stop"})
@@ -108,6 +129,15 @@ class Manager:
         self.journal.append("OWNER_ABSENT", {
             "old_container_id": old.container_id, "holder_free_checks": 3
         })
+        try:
+            guard(self.database_baseline is not None, "DATABASE_BASELINE_MISSING")
+            receipt = self.port.approve_quiesced_database(self.database_baseline)
+            guard(type(receipt) is dict and receipt.get("schema") == "p7u-quiesced-approval-v1",
+                  "QUIESCED_DATABASE_RECEIPT_MISSING")
+            self.journal.append("DB_APPROVED", receipt)
+        except Exception:
+            self.journal.append("HOLD", {"reason": "quiesced database admission failed; no start"})
+            raise
         image = (self.cap["diagnostic_profile_sha"]
                  if target_slot == "diagnostic" else self.cap["fallback_profile_sha"])
         self.journal.append("START_INTENT", {"slot": target_slot, "profile_sha": image})
@@ -131,6 +161,12 @@ class Manager:
                   serving.get("mqtt_messages_fresh") is True and
                   serving.get("non_actuating_read") is True, "SERVING_UNVERIFIED")
             guard(self.port.inspect(target_slot).owner == new, "TARGET_CHANGED_DURING_SERVING")
+            for slot in ("official", "diagnostic", "fallback"):
+                if slot != target_slot:
+                    require_absent(self.port.inspect(slot), slot)
+            # The observation window is long enough for a competing service
+            # to appear. Reprove current holders before committing ownership.
+            self.port.prove_owner_holders(new, self.port.tty_holders())
             self.journal.append("OWNER_SERVING", {
                 "target_container_id": new.container_id,
                 "target_pid": new.pid, "fresh_devices": serving["fresh_devices"],

@@ -25,6 +25,14 @@ TARGETS = {
         "herdsman-dist/adapter/z-stack/adapter/zStackAdapter.js",
     "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/adapter/z-stack/znp/znp.js":
         "herdsman-dist/adapter/z-stack/znp/znp.js",
+    "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/adapter/z-stack/adapter/manager.js":
+        "herdsman-dist/adapter/z-stack/adapter/manager.js",
+    "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/adapter/z-stack/znp/definition.js":
+        "herdsman-dist/adapter/z-stack/znp/definition.js",
+    "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/adapter/z-stack/znp/parameterType.js":
+        "herdsman-dist/adapter/z-stack/znp/parameterType.js",
+    "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/adapter/z-stack/znp/buffaloZnp.js":
+        "herdsman-dist/adapter/z-stack/znp/buffaloZnp.js",
 }
 
 

@@ -137,6 +137,50 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceHold, "MISSING"):
             m.read_verified_history(self.root)
 
+    def pointed(self):
+        self.rows([valid(1), valid(2), valid(3)])
+        name = "generation-8e2cdca6-17b6-4a4c-a951-a78742ad89e1"
+        directory = self.root / name
+        directory.mkdir()
+        for filename in ("events-v2.jsonl", "manifest-v2.json"):
+            (self.root / filename).rename(directory / filename)
+        (self.root / "current-v2.json").write_text(json.dumps({
+            "schema": "p7u-f2-pointer-v1", "active": name, "previous": None,
+        }))
+        return directory
+
+    def test_pointer_selects_generation_without_reading_legacy_v1(self):
+        self.pointed()
+        (self.root / "history.json").write_text("unrelated preserved v1 evidence")
+        self.assertEqual(m.evaluate(m.read_verified_history(self.root)).protocol, "PASS")
+
+    def test_pending_pointer_or_orphan_generation_never_becomes_evidence(self):
+        self.pointed()
+        pending = self.root / ".current-v2.pending"
+        pending.write_text("uncommitted pointer")
+        with self.assertRaisesRegex(m.EvidenceHold, "ORPHANED_POINTER"):
+            m.read_verified_history(self.root)
+        pending.unlink()
+        (self.root / "generation-3492d844-8d6b-454e-8e2c-45925f3d5641").mkdir()
+        with self.assertRaisesRegex(m.EvidenceHold, "ORPHANED_GENERATION"):
+            m.read_verified_history(self.root)
+
+    def test_pointer_cannot_escape_or_select_a_symlinked_directory(self):
+        selected = self.pointed()
+        pointer = self.root / "current-v2.json"
+        document = json.loads(pointer.read_text())
+        document["active"] = "../outside"
+        pointer.write_text(json.dumps(document))
+        with self.assertRaisesRegex(m.EvidenceHold, "POINTER_SCHEMA"):
+            m.read_verified_history(self.root)
+        document["active"] = selected.name
+        pointer.write_text(json.dumps(document))
+        moved = self.root / "elsewhere"
+        selected.rename(moved)
+        selected.symlink_to(moved, target_is_directory=True)
+        with self.assertRaisesRegex(m.EvidenceHold, "ACTIVE_DIRECTORY"):
+            m.read_verified_history(self.root)
+
 
 if __name__ == "__main__":
     unittest.main()

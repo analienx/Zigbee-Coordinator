@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import math
 import os
 import re
 import threading
@@ -70,10 +71,27 @@ class FreshMqttEvidence:
         config.validate()
         self.config=config
         self.started_monotonic=time.monotonic()
+        self.started_utc_seconds=time.time()
         self._seen: dict[str, float]={}
         self._lock=threading.Lock()
         self._done=threading.Event()
         self.connected=False
+
+    @staticmethod
+    def _last_seen_seconds(value) -> float | None:
+        try:
+            if type(value) is int:
+                seconds = value / 1000 if value >= 100_000_000_000 else float(value)
+            elif isinstance(value, str):
+                timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if timestamp.tzinfo is None:
+                    return None
+                seconds = timestamp.timestamp()
+            else:
+                return None
+        except (ValueError, OverflowError, OSError):
+            return None
+        return seconds if math.isfinite(seconds) else None
 
     def observe(self, *, topic: str, payload: bytes, retained: bool, now: float) -> None:
         if retained or not topic.startswith("zigbee2mqtt/") or len(payload)>16*1024:
@@ -86,6 +104,13 @@ class FreshMqttEvidence:
         except (UnicodeError,ValueError):
             return
         if type(data) is not dict or not data or set(data)=={"availability"}:
+            return
+        # Z2M can republish persistent cached states as new nonretained MQTT
+        # messages. Only the device's actual last Zigbee message timestamp
+        # can distinguish those startup payloads from post-cutover RF traffic.
+        last_seen = self._last_seen_seconds(data.get("last_seen"))
+        observed_utc = self.started_utc_seconds + (now - self.started_monotonic)
+        if last_seen is None or not self.started_utc_seconds <= last_seen <= observed_utc + 5:
             return
         with self._lock:
             self._seen[name]=now
@@ -115,7 +140,7 @@ class FreshMqttEvidence:
             if self.config.username:
                 client.username_pw_set(self.config.username,self.config.password)
             def on_connect(c, userdata, flags, reason_code, properties):
-                if int(reason_code)!=0:
+                if reason_code != 0:
                     return
                 self.connected=True
                 for name in self.config.expected_topics:

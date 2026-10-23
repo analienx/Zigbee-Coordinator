@@ -6,6 +6,7 @@ qualification. This NEVER starts/stops HA apps, opens UART or repairs log.
 from __future__ import annotations
 import hashlib
 import json
+import re
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -42,10 +43,43 @@ class F2Verdict:
 
 
 def read_verified_history(directory: Path) -> list[dict]:
+    require(directory.is_dir() and not directory.is_symlink(), "HISTORY_DIRECTORY")
+    pending = directory / ".current-v2.pending"
+    require(not pending.exists() and not pending.is_symlink(), "ORPHANED_POINTER")
+    pointer = directory / "current-v2.json"
+    if pointer.exists() or pointer.is_symlink():
+        require(pointer.is_file() and not pointer.is_symlink() and
+                pointer.stat().st_size <= 4096, "POINTER_FILE")
+        try:
+            selected = json.loads(pointer.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_POINTER_JSON") from exc
+        active = selected.get("active") if type(selected) is dict else None
+        previous = selected.get("previous") if type(selected) is dict else None
+        require(type(selected) is dict and selected.get("schema") == "p7u-f2-pointer-v1" and
+                "previous" in selected and
+                isinstance(active, str) and
+                re.fullmatch(r"generation-[a-f0-9-]{36}", active) is not None and
+                (previous is None or previous == "legacy-root-v2" or
+                 (isinstance(previous, str) and
+                  re.fullmatch(r"generation-[a-f0-9-]{36}", previous) is not None)) and
+                previous != active, "POINTER_SCHEMA")
+        require(not any(p.name.startswith("generation-") and
+                        p.name not in (active, previous) for p in directory.iterdir()),
+                "ORPHANED_GENERATION")
+        directory = directory / active
+        require(directory.is_dir() and not directory.is_symlink(), "ACTIVE_DIRECTORY")
+    else:
+        require(not any(p.name.startswith("generation-") for p in directory.iterdir()),
+                "ORPHANED_GENERATION")
     mpath = directory / "manifest-v2.json"
     logpath = directory / "events-v2.jsonl"
     require(mpath.is_file() and logpath.is_file() and
             not mpath.is_symlink() and not logpath.is_symlink(), "MISSING_OR_SYMLINK")
+    require(mpath.stat().st_size <= 4096 and logpath.stat().st_size <= MAX_LOG,
+            "HISTORY_SIZE")
+    require(not any(p.name.startswith(".manifest-") for p in directory.iterdir()),
+            "ORPHANED_MANIFEST")
     raw = logpath.read_bytes()
     require(len(raw) <= MAX_LOG and (not raw or raw.endswith(b"\n")), "TAIL")
     m = json.loads(mpath.read_text(encoding="utf-8"))

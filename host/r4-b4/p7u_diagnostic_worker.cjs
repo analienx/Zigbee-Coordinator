@@ -12,6 +12,10 @@ const {parentPort, workerData, isMainThread} = require("node:worker_threads");
 const SCHEMA = "p7u-f2-worker-v2";
 const LIMIT = 4 * 1024 * 1024;
 const RECORD_LIMIT = 3072;
+const COUNT_LIMIT = 4096;
+const RETENTION_MS = 24 * 60 * 60 * 1000;
+const GENERATION = /^generation-[a-f0-9-]{36}$/;
+const POINTER = "current-v2.json";
 const allowed = new Set([
     "schema", "kind", "utc", "probeLatencyMs", "monotonicReceiveNs", "reason",
     "sourceAbi", "imageRuntimeAttested", "abi", "minor", "sequence", "validityMask",
@@ -25,6 +29,10 @@ const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
 const fail = (reason) => {throw Error("P7U_F2_WRITER_HOLD_" + reason);};
 function hold(check, reason) {if (!check) fail(reason);}
+function exists(file) {
+    try {fs.lstatSync(file); return true;}
+    catch (error) {if (error.code === "ENOENT") return false; throw error;}
+}
 function sameRecord(entry) {
     hold(entry && typeof entry === "object" && !Array.isArray(entry), "RECORD_SHAPE");
     hold(Object.keys(entry).every(k => allowed.has(k)), "RECORD_FIELD");
@@ -77,10 +85,12 @@ function atomicManifest(dir, next) {
     syncDir(dir);
 }
 function recover(dir) {
+    hold(!fs.readdirSync(dir).some(name => name.startsWith(".manifest-")),
+        "ORPHANED_MANIFEST");
     const md = path.join(dir, "manifest-v2.json");
     const log = path.join(dir, "events-v2.jsonl");
-    hold(fs.existsSync(md) === fs.existsSync(log), "PARTIAL_INITIALIZATION");
-    if (!fs.existsSync(md)) {
+    hold(exists(md) === exists(log), "PARTIAL_INITIALIZATION");
+    if (!exists(md)) {
         const fd = fs.openSync(log, "wx", 0o600);
         try {fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
         syncDir(dir);
@@ -90,6 +100,8 @@ function recover(dir) {
     }
     hold(!fs.lstatSync(md).isSymbolicLink() && !fs.lstatSync(log).isSymbolicLink(),
         "SYMLINK");
+    hold(fs.statSync(md).isFile() && fs.statSync(md).size <= 4096 &&
+        fs.statSync(log).isFile(), "HISTORY_FILES");
     const m = JSON.parse(fs.readFileSync(md, "utf8"));
     validateManifest(m);
     const stat = fs.statSync(log);
@@ -122,7 +134,81 @@ function recover(dir) {
         "REPLAY_MANIFEST_MISMATCH");
     return m;
 }
-function open(root) {
+function recordsAt(dir) {
+    return fs.readFileSync(path.join(dir, "events-v2.jsonl"), "utf8")
+        .split("\n").filter(Boolean).map(line => JSON.parse(line).data);
+}
+function cleanupPrevious(root, previous) {
+    if (!previous) return;
+    hold(previous === "legacy-root-v2" || GENERATION.test(previous), "PREVIOUS_PATH");
+    const dir = previous === "legacy-root-v2" ? root : path.join(root, previous);
+    if (!exists(dir)) return;
+    hold(fs.lstatSync(dir).isDirectory() && !fs.lstatSync(dir).isSymbolicLink(),
+        "PREVIOUS_DIRECTORY");
+    if (dir !== root) {
+        hold(fs.readdirSync(dir).every(name =>
+            ["events-v2.jsonl", "manifest-v2.json"].includes(name)), "PREVIOUS_EXTRA_FILE");
+    }
+    for (const name of ["events-v2.jsonl", "manifest-v2.json"]) {
+        const file = path.join(dir, name);
+        if (exists(file)) {
+            hold(fs.lstatSync(file).isFile() && !fs.lstatSync(file).isSymbolicLink(),
+                "PREVIOUS_FILE");
+            fs.unlinkSync(file);
+        }
+    }
+    if (dir !== root) fs.rmdirSync(dir);
+    syncDir(root);
+}
+function rotate(state, records) {
+    let next, bytes;
+    records = records.slice(-COUNT_LIMIT);
+    // Rotation rebases only the storage hash-chain sequence. Native F2
+    // sequences and host owner IDs remain untouched in every record.
+    do {
+        next = manifestInit();
+        const frames = [];
+        for (const data of records) {
+            const frame = {seq: ++next.sequence, previous: next.head, data};
+            next.head = sha(Buffer.from(JSON.stringify(frame)));
+            frames.push(encode({...frame, sha: next.head}));
+            if (data.kind === "VALID") {
+                next.lastValidSeq = next.sequence;
+                next.lastValidHostRun = data.hostRunId;
+            }
+        }
+        bytes = Buffer.concat(frames);
+        if (bytes.length > LIMIT) records.shift();
+    } while (bytes.length > LIMIT);
+    next.committedBytes = bytes.length;
+    const name = "generation-" + next.generation;
+    const dir = path.join(state.baseRoot, name);
+    fs.mkdirSync(dir, {mode: 0o700});
+    const logFd = fs.openSync(path.join(dir, "events-v2.jsonl"), "wx", 0o600);
+    try {
+        fs.writeFileSync(logFd, bytes);
+        fs.fsyncSync(logFd);
+    } finally {fs.closeSync(logFd);}
+    atomicManifest(dir, next);
+    syncDir(state.baseRoot);
+    const previous = state.root === state.baseRoot ? "legacy-root-v2" : path.basename(state.root);
+    const pending = path.join(state.baseRoot, ".current-v2.pending");
+    const pointerFd = fs.openSync(pending, "wx", 0o600);
+    try {
+        fs.writeFileSync(pointerFd, encode({schema: "p7u-f2-pointer-v1", active: name, previous}));
+        fs.fsyncSync(pointerFd);
+    } finally {fs.closeSync(pointerFd);}
+    // Complete immutable generation first; one pointer rename publishes it.
+    // A crash before this rename never promotes an orphaned generation.
+    fs.renameSync(pending, path.join(state.baseRoot, POINTER));
+    syncDir(state.baseRoot);
+    state.root = dir;
+    state.manifest = next;
+    state.records = records;
+    cleanupPrevious(state.baseRoot, previous);
+    return {sequence: next.sequence, sha256: next.head, committedBytes: next.committedBytes};
+}
+function open(root, now = Date.now()) {
     hold(typeof root === "string" && path.isAbsolute(root) &&
         root.endsWith(path.sep + "p7u-b4-diagnostics"), "ROOT_PATH");
     fs.mkdirSync(root, {recursive: true, mode: 0o700});
@@ -135,16 +221,58 @@ function open(root) {
     // the old history. A foreign-owned directory is never changed.
     if ((st.mode & 0o777) !== 0o700) fs.chmodSync(root, 0o700);
     hold((fs.lstatSync(root).mode & 0o777) === 0o700, "PRIVATE_DIRECTORY");
-    return {root, manifest: recover(root)};
+    hold(!exists(path.join(root, ".current-v2.pending")), "ORPHANED_POINTER");
+    const pointerPath = path.join(root, POINTER);
+    let active = root;
+    if (exists(pointerPath)) {
+        hold(fs.lstatSync(pointerPath).isFile() && !fs.lstatSync(pointerPath).isSymbolicLink() &&
+            fs.statSync(pointerPath).size <= 4096, "POINTER_FILE");
+        const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf8"));
+        hold(pointer.schema === "p7u-f2-pointer-v1" && GENERATION.test(pointer.active) &&
+            (pointer.previous === null || pointer.previous === "legacy-root-v2" ||
+             (typeof pointer.previous === "string" && GENERATION.test(pointer.previous))) &&
+            pointer.previous !== pointer.active, "POINTER_SCHEMA");
+        active = path.join(root, pointer.active);
+        hold(fs.lstatSync(active).isDirectory() && !fs.lstatSync(active).isSymbolicLink(),
+            "ACTIVE_DIRECTORY");
+        hold(exists(path.join(active, "manifest-v2.json")) &&
+            exists(path.join(active, "events-v2.jsonl")), "ACTIVE_HISTORY_MISSING");
+        // Validate the selected generation before removing a specifically
+        // recorded retired generation. Unknown directories remain HOLD.
+        recover(active);
+        cleanupPrevious(root, pointer.previous);
+        hold(!fs.readdirSync(root).some(name => name.startsWith("generation-") &&
+            name !== pointer.active), "ORPHANED_GENERATION");
+        hold(!exists(path.join(root, "manifest-v2.json")) &&
+            !exists(path.join(root, "events-v2.jsonl")), "UNSELECTED_LEGACY_LOG");
+    } else {
+        hold(!fs.readdirSync(root).some(name => name.startsWith("generation-")),
+            "ORPHANED_GENERATION");
+    }
+    const state = {baseRoot: root, root: active, manifest: recover(active), records: recordsAt(active)};
+    const retained = state.records.filter(record => record.utc >= now - RETENTION_MS);
+    if (active === root || retained.length !== state.records.length || retained.length > COUNT_LIMIT) {
+        rotate(state, retained);
+    }
+    return state;
 }
-function commit(state, data) {
-    const record = sameRecord(data);
+function expire(state, now = Date.now()) {
+    const retained = state.records.filter(record => record.utc >= now - RETENTION_MS);
+    if (retained.length !== state.records.length) rotate(state, retained);
+}
+function commit(state, data, now = Date.now()) {
+    sameRecord(data);
+    hold(data.utc >= now - RETENTION_MS && data.utc <= now + 60_000, "RECORD_TIME");
+    const retained = state.records.filter(record => record.utc >= now - RETENTION_MS);
     const current = state.manifest;
     const seq = current.sequence + 1;
     const frame = {seq, previous: current.head, data};
     const frameHash = sha(Buffer.from(JSON.stringify(frame)));
     const bytes = encode({...frame, sha: frameHash});
-    hold(bytes.length < LIMIT - current.committedBytes, "CAPACITY");
+    if (retained.length !== state.records.length || retained.length >= COUNT_LIMIT ||
+        bytes.length > LIMIT - current.committedBytes) {
+        return rotate(state, [...retained, data]);
+    }
     const log = path.join(state.root, "events-v2.jsonl");
     const fd = fs.openSync(log, "a");
     try {
@@ -163,13 +291,35 @@ function commit(state, data) {
     // last-good file. ACK is emitted only after rename + directory fsync.
     atomicManifest(state.root, next);
     state.manifest = next;
+    state.records.push(data);
     return {sequence: seq, sha256: frameHash, committedBytes: next.committedBytes};
 }
 if (!isMainThread) {
     let state;
+    let expiryTimer;
+    const fatal = reason => {
+        clearTimeout(expiryTimer);
+        parentPort.postMessage({type: "fatal", reason});
+        parentPort.removeAllListeners("message");
+        process.exitCode = 3;
+        parentPort.close();
+    };
+    const scheduleExpiry = () => {
+        clearTimeout(expiryTimer);
+        if (state.records.length === 0) return;
+        const oldest = Math.min(...state.records.map(record => record.utc));
+        // Exact expiry deadline, with a <=60s wall-clock recheck for clock
+        // adjustments. Housekeeping continues if sampling is quarantined.
+        expiryTimer = setTimeout(() => {
+            try {expire(state); scheduleExpiry();}
+            catch (e) {fatal(e.message);}
+        }, Math.max(1, Math.min(60_000, oldest + RETENTION_MS + 1 - Date.now())));
+        expiryTimer.unref();
+    };
     try {
         hold(workerData && workerData.schema === SCHEMA, "INIT_SCHEMA");
         state = open(workerData.root);
+        scheduleExpiry();
         parentPort.postMessage({type: "ready", generation: state.manifest.generation,
             sequence: state.manifest.sequence});
     } catch (e) {
@@ -182,16 +332,14 @@ if (!isMainThread) {
                 hold(message && message.type === "append" &&
                     Number.isSafeInteger(message.id), "IPC_SCHEMA");
                 const receipt = commit(state, message.record);
+                scheduleExpiry();
                 parentPort.postMessage({type: "committed", id: message.id, receipt});
             } catch (e) {
-                parentPort.postMessage({type: "fatal", reason: e.message});
-                parentPort.removeAllListeners("message");
-                process.exitCode = 3;
-                parentPort.close();
+                fatal(e.message);
             }
         });
     } else {
         parentPort.close();
     }
 }
-module.exports = {open, commit, sameRecord, recover, SCHEMA};
+module.exports = {open, commit, expire, sameRecord, recover, SCHEMA, LIMIT, COUNT_LIMIT, RETENTION_MS};

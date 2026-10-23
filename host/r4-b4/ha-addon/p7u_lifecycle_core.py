@@ -165,6 +165,8 @@ class Journal:
         transitions = {
             "STOP_INTENT": ("STOP_ACK_UNKNOWN", "OWNER_ABSENT", "HOLD"),
             "STOP_ACK_UNKNOWN": ("OWNER_ABSENT", "HOLD"),
+            "OWNER_ABSENT": ("DB_APPROVED", "HOLD"),
+            "DB_APPROVED": ("START_INTENT", "HOLD"),
             "START_INTENT": ("START_ACK_UNKNOWN", "OWNER_SERVING", "HOLD"),
             "START_ACK_UNKNOWN": ("OWNER_SERVING", "HOLD"),
             "HOLD": ("HOLD",),

@@ -106,11 +106,20 @@ class JournalTests(unittest.TestCase):
             j.append("PREFLIGHT", {})
             j.append("STOP_INTENT", {})
             j.append("OWNER_ABSENT", {"verified_by": "three tty holder checks"})
+            j.append("DB_APPROVED", {"verified_by": "quiesced retained DB receipt"})
             j.append("START_INTENT", {"owner_image": "sha256:" + "d" * 64})
             j.append("OWNER_SERVING", {"mqtt": True})
             j.append("COMMITTED", {"evidence": "valid"})
         with lib.Journal(self.root) as j:
-            self.assertEqual((j.seq, j.phase), (6, "COMMITTED"))
+            self.assertEqual((j.seq, j.phase), (7, "COMMITTED"))
+
+    def test_owner_absence_cannot_skip_database_admission(self):
+        with lib.Journal(self.root) as j:
+            j.append("PREFLIGHT",{})
+            j.append("STOP_INTENT",{})
+            j.append("OWNER_ABSENT",{})
+            with self.assertRaisesRegex(lib.LifecycleHold,"AMBIGUOUS_PREVIOUS_INTENT"):
+                j.append("START_INTENT",{})
 
     def test_torn_tail_forces_hold_no_automatic_truncate(self):
         with lib.Journal(self.root) as j:
