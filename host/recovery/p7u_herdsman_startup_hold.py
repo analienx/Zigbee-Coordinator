@@ -72,14 +72,14 @@ DB_ADMISSION_METHOD = r'''
             throw new Error("P7U HOLD_EXISTING_DB: " + reason);
         };
         const dbPath = this.options.databasePath;
-        const approvalPath = process.env.P7U_APPROVED_DB_MANIFEST;
+        const approvalPath = process.env.P7U_APPROVED_DB_MANIFEST ?? "";
         if (!approvalPath || !approvalPath.startsWith("/config/zigbee2mqtt/") ||
             !dbPath.startsWith("/config/zigbee2mqtt/") ||
             !dbPath.endsWith("/database.db") ||
             fs.existsSync(dbPath + ".tmp")) {
             fail("missing approval, invalid data path or unresolved temporary DB");
         }
-        let raw: Buffer;
+        let raw: Buffer = Buffer.alloc(0);
         let approval: unknown;
         try {
             const dbStatBefore = fs.lstatSync(dbPath);
@@ -114,7 +114,7 @@ DB_ADMISSION_METHOD = r'''
         const devices = new Set<string>();
         let coordinators = 0;
         for (const line of lines) {
-            let row: Record<string, unknown>;
+            let row: Record<string, unknown> = {};
             try { row = JSON.parse(line); } catch { fail("corrupt JSONL row"); }
             if (!row || typeof row !== "object" || Array.isArray(row) ||
                 !Number.isSafeInteger(row.id) || (row.id as number) < 0 ||
@@ -140,10 +140,10 @@ DB_ADMISSION_METHOD = r'''
                 }
                 if (ieee !== undefined) {
                     if (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee) ||
-                        devices.has(ieee.toLowerCase())) {
+                        devices.has((ieee as string).toLowerCase())) {
                         fail("duplicate or invalid IEEE");
                     }
-                    devices.add(ieee.toLowerCase());
+                    devices.add((ieee as string).toLowerCase());
                 }
             }
         }
