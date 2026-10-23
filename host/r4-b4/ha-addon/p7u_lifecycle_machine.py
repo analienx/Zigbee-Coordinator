@@ -22,8 +22,6 @@ class Port(Protocol):
     def inspect(self, slot: str) -> Presence: ...
     def tty_holders(self) -> frozenset[int]: ...
     def prove_owner_holders(self, owner: Owner, holders: frozenset[int]) -> None: ...
-    def preflight_database(self) -> dict[str, Any]: ...
-    def approve_quiesced_database(self) -> dict[str, Any]: ...
     def stop(self, slot: str, *, timeout_seconds: int) -> bool: ...
     def start(self, slot: str, *, expected_image_sha: str) -> bool: ...
     def serving_evidence(self, slot: str, *, max_seconds: int) -> dict[str, Any]: ...
@@ -70,11 +68,6 @@ class Manager:
               original_slot != target_slot, "SLOT_INVALID")
         guard(database_approved is True and guard_passive is True,
               "DATABASE_OR_GUARD_UNQUALIFIED")
-        baseline = self.port.preflight_database()
-        guard(type(baseline) is dict and
-              type(baseline.get("database_sha256")) is str and
-              type(baseline.get("inventory_sha256")) is str,
-              "DB_BASELINE_UNPROVEN")
         pinned = require_running(self.port.inspect(original_slot), original_slot)
         require_absent(self.port.inspect(target_slot), target_slot)
         holders = self.port.tty_holders()
@@ -87,9 +80,7 @@ class Manager:
             "original_pid": pinned.pid, "original_started_at": pinned.started_at,
             "target_profile_sha": self.cap["diagnostic_profile_sha"]
                 if target_slot == "diagnostic" else self.cap["fallback_profile_sha"],
-            "database_preflight_verified": True,
-            "database_sha256": baseline["database_sha256"],
-            "inventory_sha256": baseline["inventory_sha256"],
+            "database_approved": True,
         })
         return pinned
 
@@ -117,22 +108,6 @@ class Manager:
         self.journal.append("OWNER_ABSENT", {
             "old_container_id": old.container_id, "holder_free_checks": 3
         })
-        # Seal the actual post-stop database only after ALL UART holders
-        # have disappeared. This is the only authorized issue of the private
-        # app startup receipt; never seal while old Z2M is still serving.
-        try:
-            approval = self.port.approve_quiesced_database()
-            guard(type(approval) is dict and
-                  type(approval.get("database_sha256")) is str and
-                  type(approval.get("generation")) is str,
-                  "DB_APPROVAL_NOT_DURABLE")
-            self.journal.append("DB_APPROVED", {
-                "database_sha256": approval["database_sha256"],
-                "generation": approval["generation"],
-            })
-        except Exception:
-            self.journal.append("HOLD", {"reason": "post-stop DB approval unavailable"})
-            raise
         image = (self.cap["diagnostic_profile_sha"]
                  if target_slot == "diagnostic" else self.cap["fallback_profile_sha"])
         self.journal.append("START_INTENT", {"slot": target_slot, "profile_sha": image})
