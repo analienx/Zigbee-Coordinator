@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import p7u_lifecycle_core as core
@@ -35,6 +36,11 @@ class Port:
     def tty_holders(self):
         pids = frozenset(x.pid for x in self.owner.values() if x is not None)
         return pids | (frozenset({5151}) if self.extra_holder else frozenset())
+    def prove_owner_holders(self, owner, holders):
+        # Synthetic source fixture: in real HA a Node child is proven by
+        # docker top + cgroup + stable Linux /proc start time, not main PID.
+        from p7u_lifecycle_core import guard
+        guard(holders == frozenset({owner.pid}), "FOREIGN_UART_OWNER")
     def stop(self, slot, *, timeout_seconds):
         self.events.append(("stop", slot, timeout_seconds))
         if not self.stuck:
@@ -58,6 +64,9 @@ class Tests(unittest.TestCase):
         self.root = Path(self.tmp.name)/"private"
         self.root.mkdir(mode=0o700)
         self.port = Port()
+        self.sleep_patch = patch.object(machine.time, "sleep", return_value=None)
+        self.sleep_patch.start()
+        self.addCleanup(self.sleep_patch.stop)
 
     def switch(self, cap=CAP, **kwargs):
         with core.Journal(self.root) as j:
@@ -120,6 +129,15 @@ class Tests(unittest.TestCase):
         self.assertEqual(len([e for e in self.port.events if e[0] == "start"]), 1)
         self.assertIsNotNone(self.port.owner["diagnostic"])
         self.assertIsNone(self.port.owner["official"])
+
+    def test_actual_node_child_uart_holder_can_be_proven_without_container_init_fd(self):
+        orig=self.port.prove_owner_holders
+        def descendants(owner, holders):
+            self.assertEqual(holders, frozenset({owner.pid+32}))
+        self.port.tty_holders=lambda: frozenset(
+            {x.pid+32 for x in self.port.owner.values() if x is not None})
+        self.port.prove_owner_holders=descendants
+        self.assertEqual(self.switch(), "COMMITTED")
 
     def test_missing_db_approval_never_stops_or_starts(self):
         with core.Journal(self.root) as j:
