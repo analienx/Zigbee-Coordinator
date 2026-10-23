@@ -73,5 +73,5 @@ jobs:
           assert receipt['retained_only'] is True
           assert receipt['mandatory_readonly_f1'] is True
           assert receipt['healthy_missing_marker_resume'] is True
-          assert len(receipt['files']) == 6  # manager, F1 ABI, controller DB/HOLD and ZNP no-bootloader
+          assert len(receipt['files']) == 7  # manager, F1 ABI, controller DB/HOLD and ZNP no-bootloader
           PY
