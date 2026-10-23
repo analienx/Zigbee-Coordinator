@@ -207,6 +207,17 @@ jobs:
           docker image inspect "$tag" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
           docker image inspect "$tag" --format '{{.Config.Image}}' >/dev/null || true
           echo "PASS: exact-source arm64 Docker archive loads; container was not started"
+      - name: Assemble Supervisor app with tested binaries, no HA compilation
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-staged-addon/herdsman-dist
+          cp host/r4-b4/ha-addon/{Dockerfile,config.yaml} /tmp/p7u-staged-addon/
+          cp /tmp/p7u-r4-native-image/{z2m-controller.js,z2m-otaUpdate.js,p7u_diagnostic_worker.cjs} /tmp/p7u-staged-addon/
+          cp -a /tmp/p7u-r4-native-image/herdsman-dist/. /tmp/p7u-staged-addon/herdsman-dist/
+          test -s /tmp/p7u-staged-addon/p7u_diagnostic_worker.cjs
+          grep -q 'P7U_APPROVED_DB_MANIFEST:' /tmp/p7u-staged-addon/config.yaml
+          grep -q 'COPY p7u_diagnostic_worker.cjs' /tmp/p7u-staged-addon/Dockerfile
+          tar -C /tmp -czf /tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz p7u-staged-addon
       - name: Publish candidate image for separately authorized rollout
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
