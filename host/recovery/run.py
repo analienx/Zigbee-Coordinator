@@ -386,7 +386,7 @@ def service_main():
                 reporter.retry_pending()
                 atomic_json(DATA / "status.json", {
                     "schema": "p7u-recovery-status-v2", "utc": observation.utc,
-                    "version": "0.2.3", "resets_enabled": active, "phase": result.phase,
+                    "version": "0.2.4", "resets_enabled": active, "phase": result.phase,
                     **{k: sample.get(k) for k in (
                         "epoch_id", "epoch_start_utc", "observation_valid", "rx_valid",
                         "mqtt_reachable", "fresh_device_topics_120s", "srsp_120s",
