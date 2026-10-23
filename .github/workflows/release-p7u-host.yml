@@ -68,11 +68,14 @@ jobs:
               subprocess.run(['gh','run','download',str(run['id']),'--repo',repo,'--name',prefix+sha,'--dir',str(destination)],check=True)
               selected[slot]={'run_id':run['id'],'url':run['html_url'],'head_sha':sha}
           # The protected-startup and Python lanes must also pass at this SHA.
-          for workflow in ('test-p7u-p0-herdsman-hold.yml','test-p10-r2-reset.yml'):
+          for qualification,workflow in (
+              ('protected_startup','test-p7u-p0-herdsman-hold.yml'),
+              ('python','test-p10-r2-reset.yml')):
               candidates=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
               assert candidates, 'missing validation '+workflow
               run=max(candidates,key=lambda r:r['id'])
               assert run['status']=='completed' and run['conclusion']=='success', 'validation not green '+workflow
+              selected[qualification]={'run_id':run['id'],'url':run['html_url'],'head_sha':sha}
           (out/'source-runs.json').write_text(json.dumps(selected,sort_keys=True,indent=2)+'\n')
           PY
       - name: Prepare reviewed add-on contexts and manual-only registry configurations
@@ -118,26 +121,39 @@ jobs:
                   'config_sha256':hashlib.sha256((destination/'config.yaml').read_bytes()).hexdigest()}
           (root/'configurations.json').write_text(json.dumps(configurations,sort_keys=True,indent=2)+'\n')
           PY
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
-        with:
-          platforms: arm64
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - name: Build and export exact staged packages on the hosted runner
+      - name: Retag the qualified images without rebuilding any layer
         run: |
           python - <<'PY'
           import hashlib,json,os,subprocess
           from pathlib import Path
           root=Path('/tmp/p7u-release');sha=os.environ['SOURCE_SHA']
           configs=json.loads((root/'configurations.json').read_text())
+          source_names={'diagnostic':'p7u-r4-z2m-arm64.docker.tar',
+              'fallback':'p7u-arm64.docker.tar','inspector':'p7u-host-pid-arm64.tar',
+              'manager':'p7u-manager-arm64.docker.tar'}
           for slot,c in configs.items():
+              qualified=root/slot/source_names[slot]
+              with qualified.open('rb') as stream:
+                  source_hash=hashlib.file_digest(stream,'sha256').hexdigest()
+              if slot=='diagnostic':
+                  expected=(root/slot/'docker.sha256').read_text().split()[0]
+              else:
+                  file,key={'fallback':('ATTESTATION.json','docker_sha256'),
+                      'inspector':('RECEIPT.json','sha256'),
+                      'manager':('ADDON_BUNDLE_RECEIPT.json','image_archive_sha256')}[slot]
+                  attestation=json.loads((root/slot/file).read_text())
+                  assert attestation['source_sha']==sha
+                  expected=attestation[key]
+              assert source_hash==expected
+              pinned=(root/slot/'PINNED_IMAGE_ID.txt').read_text().strip()
+              assert pinned.startswith('sha256:') and len(pinned)==71
+              subprocess.run(['docker','load','--input',str(qualified)],check=True)
               tag=c['image']+':'+c['version']
-              subprocess.run(['docker','buildx','build','--platform','linux/arm64','--load',
-                  '--label','org.opencontainers.image.revision='+sha,
-                  '--label','org.opencontainers.image.source=https://github.com/'+os.environ['GITHUB_REPOSITORY'],
-                  '--label','io.hass.version='+c['version'],'--tag',tag,c['context']],check=True)
+              subprocess.run(['docker','tag',pinned,tag],check=True)
               meta=json.loads(subprocess.check_output(['docker','image','inspect',tag]))[0]
-              assert meta['Architecture']=='arm64' and meta['Os']=='linux'
+              assert meta['Id']==pinned and meta['Architecture']=='arm64' and meta['Os']=='linux'
               c['image_id']=meta['Id']
+              c['source_image_archive_sha256']=source_hash
               archive=root/'published'/c['slug'].removeprefix('local_')/'image.docker.tar'
               subprocess.run(['docker','save','--output',str(archive),tag],check=True)
               c['image_archive_sha256']=hashlib.file_digest(archive.open('rb'),'sha256').hexdigest()
