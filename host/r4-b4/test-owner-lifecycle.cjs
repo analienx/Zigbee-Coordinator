@@ -145,3 +145,40 @@ test("T7 owner close cancels active F2; queued F2 and normal requests settle", a
     assert.equal(znp.queue.isIdle(), true);
     assert.equal(znp.b4DiagPoisoned, true);
 });
+
+
+test("F1 optional diagnostic admits atomically: never waits in production mutex queue", async () => {
+    const mutex = new AsyncMutex();
+    let release;
+    const owner = mutex.run(() => new Promise(resolve => {release = resolve;}));
+    assert.equal(mutex.isIdle(), false);
+    let called = 0;
+    const optional = mutex.tryRunIfIdle(async () => {called++;});
+    assert.equal(optional, undefined);
+    assert.equal(mutex.count, 0, "diagnostic must not be queued");
+    assert.equal(called, 0);
+    release();
+    await owner;
+    assert.equal(mutex.isIdle(), true);
+    const result = mutex.tryRunIfIdle(async () => {called++; return 17;});
+    assert.equal(await result, 17);
+    assert.equal(called, 1);
+});
+
+test("F1 F2 request while AF owner busy: NOT_SUBMITTED and no UART write", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    let release;
+    let writes = 0;
+    znp.unpiWriter.writeFrame = () => {writes++;};
+    const owner = znp.queue.run(() => new Promise(resolve => {release = resolve;}));
+    const nonce = Buffer.from("0102030405060708", "hex");
+    assert.throws(
+        () => znp.request(Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 1200),
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
+    );
+    assert.equal(writes, 0);
+    assert.equal(znp.queue.count, 0);
+    release();
+    await owner;
+});
