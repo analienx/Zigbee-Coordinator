@@ -329,7 +329,7 @@ def plan(checkout, composition_receipt=None):
     controller = once(controller,
         '        this.adapterDisconnected = false;\n\n        abortSignal?.throwIfAborted();',
         '        this.adapterDisconnected = false;\n'
-        '        if (startResult !== "resumed") {\n'
+        '        if (String(startResult) !== "resumed") {\n'
         '            throw new Error("P7U HOLD_EXISTING_NV: non-resumed adapter startup denied");\n'
         '        }\n\n        abortSignal?.throwIfAborted();')
     controller = once(controller,
