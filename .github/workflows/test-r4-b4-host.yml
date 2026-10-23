@@ -36,6 +36,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
+      - name: Fail-closed host database admission negative controls
+        run: |
+          set -euo pipefail
+          python host/r4-b4/test-p7u-host-integrity.py -v
+          python -m py_compile host/r4-b4/p7u_host_integrity.py
       - name: Checkout actual pinned herdsman without worktree contamination
         run: |
           set -euo pipefail
