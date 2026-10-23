@@ -43,11 +43,11 @@ V4_ADAPTER_METHOD = r"""
         sequence: number; radioBootId: string | null; resetReason: number | null;
         buildImageDigest: null; radioEpochHardwareVerified: false;
     } | undefined> {
-        this.b4V4Attempt++;
+        this.b4V4Attempt = (this.b4V4Attempt ?? 0) + 1;
         this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
-            reason: this.znp.b4IsDiagPoisoned() ? "DIAGNOSTIC_QUARANTINED" : "OUTER_ADMISSION_GATED",
+            reason: this.znp.b4IsDiagPoisoned?.() === true ? "DIAGNOSTIC_QUARANTINED" : "OUTER_ADMISSION_GATED",
             submissionState: "NONE"};
-        if (this.znp.b4IsDiagPoisoned()) {
+        if (this.znp.b4IsDiagPoisoned?.() === true) {
             this.b4V4Outcome.kind = "QUARANTINED";
             return undefined;
         }
