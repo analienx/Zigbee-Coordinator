@@ -50,7 +50,7 @@ function fresh() {
     // /config belongs to root on hosted Linux; only mutate test fixture
     // files within the runner-owned zigbee2mqtt subdirectory.
     fs.mkdirSync(base, {recursive: true});
-    for (const file of [db, approval, db + ".tmp"]) {
+    for (const file of [db, approval, db + ".tmp", approval + ".pending"]) {
         fs.rmSync(file, {force: true});
     }
     seal();
@@ -94,6 +94,13 @@ test("unresolved database.db.tmp holds without promotion", () => {
     fs.writeFileSync(db + ".tmp", "untrusted");
     hold(/unresolved temporary DB/);
     assert.equal(fs.readFileSync(db + ".tmp", "utf8"), "untrusted");
+});
+test("orphaned private receipt holds before serial, no auto-promote", () => {
+    fresh();
+    fs.writeFileSync(approval + ".pending", "uncertain prior commit");
+    hold(/unresolved temporary DB/);
+    assert.equal(fs.readFileSync(approval + ".pending", "utf8"), "uncertain prior commit");
+    fs.rmSync(approval + ".pending", {force: true});
 });
 test("missing coordinator holds even if approval matches", () => {
     fresh();
