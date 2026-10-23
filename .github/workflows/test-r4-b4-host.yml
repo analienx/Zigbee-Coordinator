@@ -69,6 +69,11 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
+      - name: Verify protected startup using real compiled herdsman (before serial)
+        run: |
+          set -euo pipefail
+          sudo install -d -o "$USER" -g "$USER" /config/zigbee2mqtt
+          node --test host/r4-b4/test-p7u-db-startup.cjs
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
