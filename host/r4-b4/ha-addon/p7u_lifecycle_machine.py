@@ -61,7 +61,10 @@ def await_target_owner(port: Port, target_slot: str, image: str) -> Owner:
     Never repeat a start or accept a replacement/foreign owner while waiting.
     """
     pinned = None
+    deadline = time.monotonic() + 90
     for attempt in range(91):
+        if attempt and time.monotonic() >= deadline:
+            break
         for slot in ("official", "diagnostic", "fallback"):
             if slot != target_slot:
                 require_absent(port.inspect(slot), slot)
@@ -171,6 +174,41 @@ class Manager:
         except Exception:
             self.journal.append("HOLD", {"reason": "quiesced database admission failed; no start"})
             raise
+        return self.start_and_verify(target_slot)
+
+    def start_quiescent_once(self, *, target_slot: str, reconciliation: dict) -> str:
+        """Start-only continuation; the privileged caller validates prior HOLD.
+
+        It must preserve the predecessor journal and claim its exclusive
+        continuation intent before invoking this method. No owner stop here.
+        """
+        guard(self.journal.fd is not None and self.journal.lock_fd is not None
+              and self.journal.phase is None, "RECONCILIATION_JOURNAL_NOT_FRESH")
+        guard(target_slot in ("diagnostic", "fallback") and type(reconciliation) is dict
+              and reconciliation.get("prior_hold_verified") is True,
+              "RECONCILIATION_UNQUALIFIED")
+        self.port.validate_profiles(original_slot="official", target_slot=target_slot)
+        for slot in ("official", "diagnostic", "fallback"):
+            require_absent(self.port.inspect(slot), slot)
+        baseline = self.port.preflight_database()
+        guard(type(baseline) is dict and type(baseline.get("existing_approval")) is dict,
+              "RECONCILIATION_CURRENT_APPROVAL_REQUIRED")
+        self.journal.append("PREFLIGHT", reconciliation)
+        zero_tty_three_times(self.port)
+        self.journal.append("OWNER_ABSENT", {"holder_free_checks": 3, "reconciled": True})
+        try:
+            receipt = self.port.approve_quiesced_database(baseline)
+            guard(type(receipt) is dict and receipt.get("reused") is True,
+                  "RECONCILIATION_APPROVAL_MUST_BE_REUSED")
+            self.journal.append("DB_APPROVED", receipt)
+            return self.start_and_verify(target_slot)
+        except Exception:
+            if self.journal.phase != "HOLD":
+                self.journal.append("HOLD", {"reason": "reconciled start incomplete; no automatic retry"})
+            raise
+
+    def start_and_verify(self, target_slot: str) -> str:
+        guard(self.journal.phase == "DB_APPROVED", "START_WITHOUT_JOURNALED_APPROVAL")
         image = (self.cap["diagnostic_profile_sha"]
                  if target_slot == "diagnostic" else self.cap["fallback_profile_sha"])
         self.journal.append("START_INTENT", {"slot": target_slot, "profile_sha": image})

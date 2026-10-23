@@ -99,3 +99,13 @@ pre-UART database-approval gate, as intended. Their upstream entrypoint also
 logged forbidden Supervisor metadata reads. Both owner configurations now
 declare the default read-only Supervisor API role used for timezone and
 MQTT discovery; they do not receive a service-manager role.
+
+The first controlled operation at source `3921b79` released the old owner,
+saved a cold host backup and sealed the database, then the candidate refused
+startup because the pre-existing coordinator ping failure persisted. Its
+terminal HOLD and all stopped ownership evidence are retained. An explicit
+start-only continuation now binds that exact failed operation, stopped
+candidate and original cold backup to the existing executor's one-shot ESP
+restart receipt. It preserves the old active pointer/journal, refreshes all
+quiescence and DB gates, and allows one further start without a repeated
+stop or an automatic recovery loop. Physical success remains unproven.

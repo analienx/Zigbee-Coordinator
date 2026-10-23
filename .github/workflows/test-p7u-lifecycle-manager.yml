@@ -38,12 +38,13 @@ jobs:
           python host/r4-b4/ha-addon/test-p7u-serving-mqtt.py -v
           python host/r4-b4/ha-addon/test-p7u-db-quiesced.py -v
           python host/r4-b4/ha-lifecycle-manager/test-p7u-lifecycle-main.py -v
+          python host/r4-b4/ha-lifecycle-manager/test-p7u-reconciled-start.py -v
       - name: Build exact ARM64 one-shot manager; never start a container
         run: |
           set -euo pipefail
           root=/tmp/p7u-staged-manager
           mkdir -p "$root" /tmp/p7u-manager-evidence
-          cp host/r4-b4/ha-lifecycle-manager/{Dockerfile,config.yaml,p7u_lifecycle_main.py} "$root/"
+          cp host/r4-b4/ha-lifecycle-manager/{Dockerfile,config.yaml,p7u_lifecycle_main.py,p7u_reconciled_start.py} "$root/"
           cp host/r4-b4/ha-addon/{p7u_lifecycle_core.py,p7u_lifecycle_machine.py,p7u_ha_supervisor_port.py,p7u_ha_readonly_inspector.py,p7u_db_quiesced.py,p7u_serving_mqtt.py} "$root/"
           cp host/r4-b4/p7u_host_integrity.py "$root/"
           printf '%s\n' "$SOURCE_SHA" > "$root/SOURCE_SHA"

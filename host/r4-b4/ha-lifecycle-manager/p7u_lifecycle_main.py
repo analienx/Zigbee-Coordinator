@@ -88,7 +88,7 @@ def load_plan(path: Path, expected_sha: str) -> dict:
         plan = json.loads(raw)
     except ValueError as exc:
         raise LifecycleHold("P7U_HOLD_PLAN_JSON") from exc
-    guard(type(plan) is dict and set(plan) == PLAN_FIELDS and
+    guard(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"reconciliation"}) and
           plan.get("schema") == "p7u-one-shot-plan-v1", "PLAN_SCHEMA")
     source = SOURCE.read_text().strip()
     guard(re.fullmatch(r"[a-f0-9]{40}", source) is not None and
@@ -266,6 +266,10 @@ def validate_live_plan(port: HaSupervisorPort, plan: dict) -> None:
     guard(actual == Owner(**plan["original_owner"]), "PLAN_ORIGINAL_EPOCH_CHANGED")
     port.validate_profiles(original_slot=original, target_slot=plan["target_slot"])
     port.prove_owner_holders(actual, port.tty_holders())
+    validate_service_bundle(port, plan)
+
+
+def validate_service_bundle(port: HaSupervisorPort, plan: dict) -> None:
     # The fixed profile and exact same service options are checked separately
     # from image identity. Passwords and network keys never enter the receipt.
     options = []
@@ -302,6 +306,9 @@ def run(options: dict) -> dict:
     port = PreservingPort(plan["serial_by_id"], database=DATABASE,
                           serving_probe=probe, artifact_directory=plan_path.parent,
                           image_references=plan["image_references"])
+    if "reconciliation" in plan:
+        from p7u_reconciled_start import run_reconciled
+        return run_reconciled(options, plan, port)
     validate_live_plan(port, plan)
     result = {"schema": "p7u-one-shot-result-v1", "source_sha": plan["source_sha"],
               "operation_id": plan["operation_id"], "plan_sha256": options["plan_sha256"],

@@ -85,3 +85,21 @@ its durable history and does not trigger an automatic restart. An ambiguous
 stop, failed start, or incomplete serving evidence causes HOLD and preserves
 the journal. This image never resets the radio, forces container termination,
 restores NV/counters, or automatically starts another owner.
+
+An explicit post-ping-failure continuation adds a `reconciliation` object to
+the private plan. It keeps the original operation UUID and active pointer,
+and binds the prior plan and terminal HOLD journal hashes, exact exited
+failed container, preserved ping-failure log, and the existing recovery
+executor's attempt/result files for one ESP restart in that same incident.
+The reset acknowledgement must follow the failed container's exit and be
+no more than ten minutes old. The manager performs no reset itself.
+
+All owners must still be stopped with three fresh host FD proofs, the
+original cold backup intact, and the same approved database generation and
+inventory. The new images must pass the normal exact-source qualification.
+Preflight changes no services. Execution creates an exclusive continuation
+intent in the original operation directory, cleans only the proven exited
+candidate through Supervisor, reuses the current DB approval after a new
+cold backup, and sends one start. The old journal/pointer remain intact.
+A failed or interrupted continuation cannot be replayed or bypassed with
+a new operation ID. It does not arm unattended recovery.

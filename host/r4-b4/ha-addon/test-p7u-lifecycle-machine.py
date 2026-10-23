@@ -151,6 +151,33 @@ class Tests(unittest.TestCase):
         self.assertGreaterEqual(len(checks),4)
         self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
 
+    def test_start_owner_wait_uses_elapsed_time_including_inspection_cost(self):
+        self.port.owner={'official':None,'diagnostic':NEW,'fallback':None}
+        self.port.tty_holders=lambda:frozenset()
+        with patch.object(machine.time,'monotonic',side_effect=[0,91]):
+            with self.assertRaisesRegex(core.LifecycleHold,'TARGET_OWNER_NOT_READY'):
+                machine.await_target_owner(self.port,'diagnostic','d'*64)
+
+    def test_explicit_quiescent_continuation_sends_one_start_and_no_stop(self):
+        self.port.owner={slot:None for slot in self.port.owner}
+        self.port.preflight_database=lambda:{'existing_approval':{'generation':'retained'}}
+        approve=self.port.approve_quiesced_database
+        self.port.approve_quiesced_database=lambda baseline:{**approve({'inventory_sha256':'c'*64}),'reused':True}
+        with core.Journal(self.root) as j:
+            result=machine.Manager(j,self.port,CAP).start_quiescent_once(
+                target_slot='diagnostic',reconciliation={'prior_hold_verified':True})
+        self.assertEqual(result,'COMMITTED')
+        self.assertEqual([e[0] for e in self.port.events],['start','serve'])
+
+    def test_quiescent_continuation_cannot_reseal_unapproved_database(self):
+        self.port.owner={slot:None for slot in self.port.owner}
+        self.port.preflight_database=lambda:{}
+        with core.Journal(self.root) as j:
+            with self.assertRaisesRegex(core.LifecycleHold,'CURRENT_APPROVAL_REQUIRED'):
+                machine.Manager(j,self.port,CAP).start_quiescent_once(
+                    target_slot='diagnostic',reconciliation={'prior_hold_verified':True})
+        self.assertEqual(self.port.events,[])
+
     def test_lost_start_ack_delayed_container_creation_observed_without_retry(self):
         original=self.port.inspect
         pending=[]
