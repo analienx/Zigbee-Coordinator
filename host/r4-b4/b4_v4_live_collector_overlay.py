@@ -97,16 +97,31 @@ METHOD = r"""
         this.#b4InFlight = true;
         const probeStarted = performance.now();
         try {
+            const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();
             const result = await this.b4ProbeReadOnlyDiagnosticsV4(true);
+            const outcomeAfter = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();
+            const freshOutcome = outcomeAfter && outcomeBefore &&
+                outcomeAfter.attempt > outcomeBefore.attempt ? outcomeAfter : null;
             const elapsedMs = Math.max(0, Math.round(performance.now() - probeStarted));
             if (!this.#b4Operational) { return; }
             const utc = Date.now();
             if (!result) {
-                this.#b4Persist({schema: "p7u-b4-native-sample-v1", kind: "SKIPPED",
+                const outcome = freshOutcome;
+                const kind = outcome?.kind === "FAILED" ? "FAILED"
+                    : outcome?.kind === "QUARANTINED" ? "QUARANTINED" : "SKIPPED";
+                this.#b4Persist({schema: "p7u-b4-native-sample-v1", kind,
                     utc, probeLatencyMs: elapsedMs,
                     monotonicReceiveNs: process.hrtime.bigint().toString(),
-                    reason: "OWNER_BUSY_OTA_OR_DIAGNOSTIC_QUARANTINE",
+                    reason: outcome?.reason ?? "HOST_OR_OTA_ADMISSION_SKIPPED",
+                    failureClass: kind === "FAILED" ? outcome?.reason : undefined,
+                    submissionState: outcome?.submissionState ?? "NONE",
+                    timingQuality: kind === "FAILED" ? "HOST_TIMING_UNCERTAIN" : "NOT_PROBED",
                     sourceAbi: 4, imageRuntimeAttested: false});
+                // A sent, uncorrelated or malformed F2 permanently quarantines
+                // only optional diagnostics; never reset or re-open the radio.
+                if (kind === "FAILED" || kind === "QUARANTINED") {
+                    this.#b4SamplerDisabled = true;
+                }
                 return;
             }
             const epochTag = result.radioBootId === null ? null :
