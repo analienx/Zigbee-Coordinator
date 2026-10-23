@@ -14,6 +14,7 @@ import tarfile
 from pathlib import PurePosixPath, Path
 
 TARGETS = {
+    "app/dist/p7u_diagnostic_worker.cjs": "p7u_diagnostic_worker.cjs",
     # H1 startup admission and save-first shutdown MUST be audited too.
     "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/controller/controller.js":
         "herdsman-dist/controller/controller.js",
@@ -67,13 +68,13 @@ def audit(oci_path: Path, source_receipt: Path) -> dict:
     seen: dict[str, str] = {}
     with tarfile.open(oci_path, "r:*") as archive:
         manifest = image_manifest(archive)
-        if len(manifest["layers"]) < 3:
+        if len(manifest["layers"]) < 4:
             raise ValueError("OCI_IMAGE_MISSING_LAYERS")
-        # The audited Dockerfile contains exactly three COPY statements,
+        # The audited Dockerfile contains exactly four COPY statements,
         # each adding one final patch layer. Vendor base layers are already
         # digest pinned and may retain a distinct compression format (zstd);
         # re-decoding them is both unnecessary and expensive.
-        for item in manifest["layers"][-3:]:
+        for item in manifest["layers"][-4:]:
             media = item.get("mediaType", "")
             blob = digest_blob(archive, item["digest"])
             if media.endswith("+gzip"):
