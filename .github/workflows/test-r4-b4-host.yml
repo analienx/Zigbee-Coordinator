@@ -43,6 +43,7 @@ jobs:
           python host/r4-b4/test-p7u-f2-acceptance.py -v
           python -m py_compile host/r4-b4/p7u_host_integrity.py
           python host/r4-b4/ha-addon/test-p7u-lifecycle-core.py -v
+          python host/r4-b4/ha-addon/test-p7u-lifecycle-machine.py -v
           python -m py_compile host/r4-b4/ha-addon/p7u_lifecycle_core.py
       - name: Checkout actual pinned herdsman without worktree contamination
         run: |
