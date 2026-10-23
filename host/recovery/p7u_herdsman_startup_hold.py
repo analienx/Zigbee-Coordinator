@@ -17,8 +17,9 @@ PATH = "src/adapter/z-stack/adapter/manager.ts"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
+CONTROLLER = "src/controller/controller.ts"
 MARKER = "P7U_P0_NONDESTRUCTIVE_STARTUP_HOLD"
-FILES = (PATH, DEFINITION, PARAM, BUFFALO)
+FILES = (PATH, DEFINITION, PARAM, BUFFALO, CONTROLLER)
 
 
 def once(source, old, new):
@@ -54,6 +55,112 @@ STATUS_METHOD = r'''
             data.subarray(12, 16).every((byte) => byte === 0) ||
             !data.subarray(16).every((byte) => byte === 0)) {
             throw new Error("P7U HOLD_EXISTING_NV: R4 NV/security status is held or incompatible");
+        }
+    }
+
+'''
+
+
+DB_ADMISSION_METHOD = r'''
+    /** P7U_DB_ADMISSION_V1: validate committed DB BEFORE Adapter.create()
+     * and before any serial transport opens. No files are repaired/promoted.
+     * The private approval file is created only by a separately authorized
+     * quiescent snapshot/journal transaction, never by application startup.
+     */
+    private p7uRequireApprovedDatabase(): void {
+        const fail = (reason: string): never => {
+            throw new Error("P7U HOLD_EXISTING_DB: " + reason);
+        };
+        const dbPath = this.options.databasePath;
+        const approvalPath = process.env.P7U_APPROVED_DB_MANIFEST;
+        if (!approvalPath || !approvalPath.startsWith("/config/zigbee2mqtt/") ||
+            !dbPath.startsWith("/config/zigbee2mqtt/") ||
+            !dbPath.endsWith("/database.db") ||
+            fs.existsSync(dbPath + ".tmp")) {
+            fail("missing approval, invalid data path or unresolved temporary DB");
+        }
+        let raw: Buffer;
+        let approval: unknown;
+        try {
+            const dbStatBefore = fs.lstatSync(dbPath);
+            const approvalStat = fs.lstatSync(approvalPath);
+            if (!dbStatBefore.isFile() || dbStatBefore.isSymbolicLink() ||
+                dbStatBefore.size < 1 || dbStatBefore.size > 64 * 1024 * 1024 ||
+                !approvalStat.isFile() || approvalStat.isSymbolicLink() ||
+                approvalStat.size < 1 || approvalStat.size > 16 * 1024) {
+                fail("database or approval type/size");
+            }
+            raw = fs.readFileSync(dbPath);
+            approval = JSON.parse(fs.readFileSync(approvalPath, "utf8"));
+            const after = fs.lstatSync(dbPath);
+            if (after.ino !== dbStatBefore.ino || after.dev !== dbStatBefore.dev ||
+                after.size !== dbStatBefore.size || after.mtimeMs !== dbStatBefore.mtimeMs ||
+                raw.length !== dbStatBefore.size) {
+                fail("database changed during admission");
+            }
+        } catch {
+            fail("database or approval unreadable");
+        }
+        const text = raw.toString("utf8");
+        if (!Buffer.from(text, "utf8").equals(raw) || text.includes("\u0000")) {
+            fail("database encoding");
+        }
+        const lines = text.split(/\r?\n/);
+        if (lines.at(-1) === "") { lines.pop(); }
+        if (lines.length === 0 || lines.some((line) => !line.trim())) {
+            fail("empty or blank-line database");
+        }
+        const IDs = new Set<number>();
+        const devices = new Set<string>();
+        let coordinators = 0;
+        for (const line of lines) {
+            let row: Record<string, unknown>;
+            try { row = JSON.parse(line); } catch { fail("corrupt JSONL row"); }
+            if (!row || typeof row !== "object" || Array.isArray(row) ||
+                !Number.isSafeInteger(row.id) || (row.id as number) < 0 ||
+                IDs.has(row.id as number)) {
+                fail("invalid or duplicate entity id");
+            }
+            IDs.add(row.id as number);
+            if (!["Coordinator", "Router", "EndDevice", "Unknown", "GreenPower", "Group"]
+                .includes(row.type as string)) {
+                fail("invalid entity type");
+            }
+            if (row.type === "Group") {
+                if (!Number.isSafeInteger(row.groupID) ||
+                    (row.groupID as number) < 0 || (row.groupID as number) > 65535) {
+                    fail("invalid group id");
+                }
+            } else {
+                if (row.type === "Coordinator") { coordinators++; }
+                const ieee = row.ieeeAddr;
+                if (row.type !== "GreenPower" && (typeof ieee !== "string" ||
+                    !/^0x[0-9a-f]{16}$/i.test(ieee))) {
+                    fail("missing device IEEE");
+                }
+                if (ieee !== undefined) {
+                    if (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee) ||
+                        devices.has(ieee.toLowerCase())) {
+                        fail("duplicate or invalid IEEE");
+                    }
+                    devices.add(ieee.toLowerCase());
+                }
+            }
+        }
+        if (coordinators !== 1) { fail("coordinator count"); }
+        if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+            fail("approval schema");
+        }
+        const seal = approval as Record<string, unknown>;
+        const digest = createHash("sha256").update(raw).digest("hex");
+        const inventory = createHash("sha256").update(
+            [...devices].sort().join("\n") + "\n", "ascii").digest("hex");
+        if (seal.schema !== "p7u-db-admission-v1" ||
+            seal.database_sha256 !== digest || seal.inventory_sha256 !== inventory ||
+            seal.rows !== lines.length || seal.devices !== devices.size ||
+            typeof seal.generation !== "string" ||
+            !/^[a-zA-Z0-9_-]{12,100}$/.test(seal.generation)) {
+            fail("approval does not match latest committed DB");
         }
     }
 
@@ -208,7 +315,27 @@ def plan(checkout, composition_receipt=None):
                 }
                 return this.readBuffer(24);
             }""")
-    return {PATH: (originals[PATH], manager),
+    controller = once(originals[CONTROLLER],
+        'import fs from "node:fs";',
+        'import fs from "node:fs";\nimport {createHash} from "node:crypto"; // P7U_DB_ADMISSION_V1')
+    controller = once(controller,
+        "    public async start(abortSignal?: AbortSignal): Promise<AdapterTsType.StartResult> {",
+        DB_ADMISSION_METHOD +
+        "    public async start(abortSignal?: AbortSignal): Promise<AdapterTsType.StartResult> {\n"
+        "        this.p7uRequireApprovedDatabase();")
+    controller = once(controller,
+        """        clearInterval(this.databaseSaveTimer);
+
+        if (this.adapterDisconnected) {""",
+        """        clearInterval(this.databaseSaveTimer);
+
+        // P7U_DB_ADMISSION_V1: database/models saved before the first
+        // potentially stalled radio/permitJoin/adapter await. A failed save
+        // aborts graceful stop rather than pretending it was durable.
+        if (!this.adapterDisconnected) { this.databaseSave(); }
+        if (this.adapterDisconnected) {""")
+    return {CONTROLLER: (originals[CONTROLLER], controller),
+            PATH: (originals[PATH], manager),
             DEFINITION: (originals[DEFINITION], definition),
             PARAM: (originals[PARAM], params),
             BUFFALO: (originals[BUFFALO], buffalo)}
