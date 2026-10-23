@@ -4,7 +4,7 @@ slug: p7u_r4_owner_inspector
 description: On-demand, read-only true host PID/cgroup/tty ownership proof; no radio access
 arch:
   - aarch64
-startup: services
+startup: once
 boot: manual_only
 init: false
 host_pid: true
