@@ -309,6 +309,30 @@ def plan(root):
         return !this.#locked && this.#queue.length === 0;
     }""",
     )
+    # An optional diagnostic must not enter production request's mutex queue.
+    # Acquire the same owner synchronously or SKIP without any frame/side effect.
+    changes[MUTEX] = replace_once(
+        changes[MUTEX],
+        """    isIdle(): boolean {
+        return !this.#locked && this.#queue.length === 0;
+    }""",
+        """    isIdle(): boolean {
+        return !this.#locked && this.#queue.length === 0;
+    }
+
+    tryRunIfIdle<T>(fn: () => Promise<T>): Promise<T> | undefined {
+        if (!this.isIdle()) { return undefined; }
+        this.#locked = true; // reserve synchronously before any await
+        return (async (): Promise<T> => {
+            try { return await fn(); }
+            finally {
+                const next = this.#queue.shift();
+                if (next) { next.resume(); }
+                else { this.#locked = false; }
+            }
+        })();
+    }""",
+    )
     # B4: bounded in-process timeout metadata, entirely free of device IDs,
     # IEEE addresses, raw frames, payloads, serial paths and disk access.
     # A mutex can become idle while Waitress still retains a pending or
@@ -543,6 +567,32 @@ def plan(root):
                 throw error;
             });""",
     )
+    # Use the exactly same ZNP request owner with synchronous admission.
+    # F0/F2 must NEVER await AsyncMutex behind AF/ZDO/OTA, even briefly.
+    changes[ZNP] = replace_once(changes[ZNP],
+        "        return this.queue.run<ZpiObject | undefined>(async () => {",
+        """        const b4Optional = object.type === Type.SREQ &&
+            object.subsystem === Subsystem.SYS &&
+            (object.command.name === "r4DiagReadOnly" ||
+             object.command.name === "r4DiagReadOnlyV4");
+        const operation = async (): Promise<ZpiObject | undefined> => {""")
+    changes[ZNP] = replace_once(changes[ZNP],
+        """        });
+    }
+
+    public requestZdo(""",
+        """        };
+        const result = b4Optional
+            ? this.queue.tryRunIfIdle(operation)
+            : this.queue.run(operation);
+        if (result === undefined) {
+            // No waiter registered, no writer invoked and no queued work.
+            throw new Error("B4 DIAG_NOT_SUBMITTED_BUSY");
+        }
+        return result;
+    }
+
+    public requestZdo(""")
     return {k: (originals[k], changes[k]) for k in changes}
 
 def apply(root):
