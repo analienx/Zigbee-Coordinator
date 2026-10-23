@@ -9,3 +9,6 @@ COPY z2m-otaUpdate.js /app/dist/extension/otaUpdate.js
 # Copy the compiled pinned herdsman tree to the REAL pnpm target, not to
 # /app/node_modules/zigbee-herdsman (which is a symlink).
 COPY herdsman-dist/ /app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/
+
+# Diagnostic history writer is no-serial and runs exclusively off the Z2M event loop.
+COPY p7u_diagnostic_worker.cjs /app/dist/p7u_diagnostic_worker.cjs
