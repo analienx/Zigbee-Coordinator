@@ -164,6 +164,8 @@ DB_ADMISSION_METHOD = r'''
             !/^[a-zA-Z0-9_-]{12,100}$/.test(seal.generation)) {
             fail("approval does not match latest committed DB");
         }
+        Database.p7uArmApproval(dbPath, approvalPath, seal.generation as string,
+            createHash("sha256").update(fs.readFileSync(approvalPath)).digest("hex"));
     }
 
 '''
@@ -380,6 +382,80 @@ def plan(checkout, composition_receipt=None):
         'import fs from "node:fs";',
         'import fs from "node:fs";\nimport * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC')
     database = once(database,
+        'import * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC',
+        'import * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC\n'
+        'import {createHash} from "node:crypto";')
+    database = once(database,
+        '    public static open(path: string): Database {',
+        """    /** Live DB changes are sealed only AFTER a trusted startup approval.
+     *  The caller must prove the latest committed snapshot first.
+     */
+    private static p7uSeal: {db: string; manifest: string;
+        generation: string; digest: string} | null = null;
+
+    public static p7uArmApproval(db: string, manifest: string,
+                                generation: string, digest: string): void {
+        if (!db.endsWith("/database.db") ||
+            !manifest.startsWith("/config/zigbee2mqtt/") ||
+            !/^[A-Za-z0-9_-]{12,100}$/.test(generation) ||
+            !/^[a-f0-9]{64}$/.test(digest)) {
+            throw new Error("P7U DB approval arm invalid");
+        }
+        if (Database.p7uSeal !== null && (Database.p7uSeal.db !== db ||
+            Database.p7uSeal.manifest !== manifest ||
+            Database.p7uSeal.generation !== generation)) {
+            throw new Error("P7U DB approval already bound to a different owner");
+        }
+        Database.p7uSeal = {db, manifest, generation, digest};
+    }
+
+    /** Calculate the next private commit receipt from trusted model state.
+     *  Never "approve" arbitrary disk bytes or rehydrate a .tmp.
+     */
+    private p7uNextReceipt(raw: string): {payload: string;
+        seal: NonNullable<typeof Database.p7uSeal>} {
+        const seal = Database.p7uSeal;
+        if (seal === null || seal.db !== this.path) {
+            throw new Error("P7U HOLD_EXISTING_DB: unarmed commit receipt");
+        }
+        const existing = fs.readFileSync(seal.manifest);
+        if (createHash("sha256").update(existing).digest("hex") !== seal.digest) {
+            throw new Error("P7U HOLD_EXISTING_DB: committed receipt externally changed");
+        }
+        const devices = new Set<string>();
+        let coordinators = 0;
+        for (const entry of this.entries.values()) {
+            if (entry.type === "Group") { continue; }
+            if (entry.type === "Coordinator") { coordinators++; }
+            const ieee: unknown = entry.ieeeAddr;
+            if (entry.type !== "GreenPower" &&
+                (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee))) {
+                throw new Error("P7U HOLD_EXISTING_DB: missing model IEEE");
+            }
+            if (ieee !== undefined) {
+                if (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee) ||
+                    devices.has(ieee.toLowerCase())) {
+                    throw new Error("P7U HOLD_EXISTING_DB: duplicate model IEEE");
+                }
+                devices.add(ieee.toLowerCase());
+            }
+        }
+        if (coordinators !== 1) {
+            throw new Error("P7U HOLD_EXISTING_DB: coordinator identity changed");
+        }
+        const receipt = {
+            schema: "p7u-db-admission-v1",
+            database_sha256: createHash("sha256").update(raw, "utf8").digest("hex"),
+            inventory_sha256: createHash("sha256").update(
+                [...devices].sort().join("\\n") + "\\n", "ascii").digest("hex"),
+            rows: this.entries.size, devices: devices.size,
+            generation: seal.generation,
+        };
+        return {payload: JSON.stringify(receipt) + "\\n", seal};
+    }
+
+    public static open(path: string): Database {""")
+    database = once(database,
         "        fs.renameSync(tmpPath, this.path);",
         """        fs.renameSync(tmpPath, this.path);
         // P7U_DB_DIRECTORY_FSYNC: file fsync without directory fsync does
@@ -387,6 +463,28 @@ def plan(checkout, composition_receipt=None):
         const parentFd = fs.openSync(path.dirname(this.path), "r");
         try { fs.fsyncSync(parentFd); }
         finally { fs.closeSync(parentFd); }""")
+
+    # Extend the protected DB write: the authorization receipt follows the
+    # DB's directory-fsynced rename, with its OWN fsync+rename+dirfsync.
+    # A crash between the two commits yields HOLD on the next start.
+    database = once(database,
+        """        const tmpPath = \`\${this.path}.tmp\`;""",
+        """        const approved = this.p7uNextReceipt(lines.slice(0, -1));
+        const tmpPath = \`\${this.path}.tmp\`;""")
+    database = once(database,
+        """        finally { fs.closeSync(parentFd); }""",
+        """        finally { fs.closeSync(parentFd); }
+        const approvalPending = approved.seal.manifest + ".pending";
+        const receiptFd = fs.openSync(approvalPending, "wx", 0o600);
+        try {
+            fs.writeFileSync(receiptFd, approved.payload, "utf8");
+            fs.fsyncSync(receiptFd);
+        } finally { fs.closeSync(receiptFd); }
+        fs.renameSync(approvalPending, approved.seal.manifest);
+        const approvalDirFd = fs.openSync(path.dirname(approved.seal.manifest), "r");
+        try { fs.fsyncSync(approvalDirFd); }
+        finally { fs.closeSync(approvalDirFd); }
+        approved.seal.digest = createHash("sha256").update(approved.payload, "utf8").digest("hex");""")
     return {DATABASE: (originals[DATABASE], database),
             ZNP: (originals[ZNP], znp),
             CONTROLLER: (originals[CONTROLLER], controller),
