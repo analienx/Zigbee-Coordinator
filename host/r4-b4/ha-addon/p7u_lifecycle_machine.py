@@ -7,7 +7,7 @@ or implicit fallback exists in this module. Synthetic hosted tests only.
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, Any
-from .p7u_lifecycle_core import Journal, Owner, LifecycleHold, guard, require_host_capabilities
+from p7u_lifecycle_core import Journal, Owner, LifecycleHold, guard, require_host_capabilities
 
 
 @dataclass(frozen=True)
@@ -115,6 +115,8 @@ class Manager:
         try:
             new = require_running(self.port.inspect(target_slot), target_slot)
             require_absent(self.port.inspect(original_slot), original_slot)
+            guard(new.image_digest.removeprefix("sha256:") == image,
+                  "TARGET_UNEXPECTED_IMAGE")
             holders = self.port.tty_holders()
             guard(holders == frozenset([new.pid]), "TARGET_SERIAL_OWNER_UNCERTAIN")
             serving = self.port.serving_evidence(target_slot, max_seconds=180)
