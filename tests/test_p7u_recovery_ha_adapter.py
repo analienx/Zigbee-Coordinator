@@ -21,11 +21,16 @@ CFG = Configuration(expected_mac=MAC,
                     expected_js_sha256=hashlib.sha256(JS.encode()).hexdigest())
 
 
-def write_registries(directory, unique_id=None, platform="smlight", mac=MAC):
+def write_registries(directory, unique_id=None, platform="smlight", mac=MAC,
+                     modern=True, owner="entry"):
     entity = {"entity_id": "button.slzb_core_restart", "platform": platform,
               "unique_id": unique_id or MAC + "-core_restart", "device_id": "board",
               "config_entry_id": "entry", "disabled_by": None}
-    device = {"id": "board", "connections": [["mac", mac]], "config_entries": ["entry"]}
+    device = {"id": "board", "connections": [["mac", mac]]}
+    if modern:
+        device["config_entry_id"] = owner
+    else:
+        device["config_entries"] = [owner]
     for name, key, value in (("core.entity_registry", "entities", entity),
                              ("core.device_registry", "devices", device)):
         (Path(directory) / name).write_text(json.dumps({"data": {key: [value]}}))
@@ -188,6 +193,23 @@ class AdapterTests(unittest.TestCase):
                 write_registries(temp,**args)
                 with self.assertRaises(ControlError):
                     verify_native_binding(cfg,"RESTART_ESP","button.slzb_core_restart")
+
+    def test_current_ha_singular_and_legacy_device_owners(self):
+        with TemporaryDirectory() as temp:
+            cfg = replace(CFG, registry_directory=temp)
+            for modern in (True, False):
+                with self.subTest(modern=modern):
+                    write_registries(temp, modern=modern)
+                    verify_native_binding(cfg, "RESTART_ESP", "button.slzb_core_restart")
+
+    def test_current_ha_wrong_owner_fails_closed(self):
+        with TemporaryDirectory() as temp:
+            cfg = replace(CFG, registry_directory=temp)
+            for modern in (True, False):
+                with self.subTest(modern=modern):
+                    write_registries(temp, modern=modern, owner="other")
+                    with self.assertRaisesRegex(ControlError, "DEVICE_BINDING"):
+                        verify_native_binding(cfg, "RESTART_ESP", "button.slzb_core_restart")
 
     def test_native_ambiguous_button_does_not_fall_back(self):
         with TemporaryDirectory() as temp:
