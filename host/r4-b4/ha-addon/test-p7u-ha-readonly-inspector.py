@@ -44,6 +44,7 @@ class Tests(unittest.TestCase):
         # The full lifecycle admission must additionally reject 2 active
         # owners, even when both are individually known.
         self.assertTrue(data["only_known_owners_hold_serial"])
+        self.assertFalse(data["exclusive_owner_verified"])
 
     def test_disallow_shell_or_arbitrary_addon_slot(self):
         with self.assertRaisesRegex(LifecycleHold,"UNRECOGNIZED_SLOT"):
