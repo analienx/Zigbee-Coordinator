@@ -20,7 +20,7 @@ MAX_JOURNAL = 4 * 1024 * 1024
 PHASES = frozenset({
     "PREFLIGHT", "STOP_INTENT", "STOP_ACK_UNKNOWN", "OWNER_ABSENT",
     "START_INTENT", "START_ACK_UNKNOWN", "OWNER_SERVING",
-    "HOLD", "COMMITTED",
+    "DB_APPROVED", "HOLD", "COMMITTED",
 })
 SHA = re.compile(r"^[0-9a-f]{64}$")
 DOCKER_ID = re.compile(r"^[a-f0-9]{64}$")
