@@ -28,6 +28,11 @@ V4_ADAPTER_METHOD = r"""
      * Uses the same existing ZNP owner and an unpredictable nonce to bind
      * each response to its request. A boot token is NOT a hardware attestation.
      */
+    /** Sanitized outcome of latest optional F2 attempt; no nonce or device IDs. */
+    public b4GetV4Outcome(): {attempt: number; kind: "VALID" | "SKIPPED" | "FAILED" | "QUARANTINED"; reason: string; submissionState: string} {
+        return {...this.b4V4Outcome};
+    }
+
     public async b4ReadOnlyDiagnosticsV4(input: {
         enabled: boolean; hostIdle: boolean; otaActive: boolean;
         stillAllowed: () => boolean;
@@ -38,6 +43,14 @@ V4_ADAPTER_METHOD = r"""
         sequence: number; radioBootId: string | null; resetReason: number | null;
         buildImageDigest: null; radioEpochHardwareVerified: false;
     } | undefined> {
+        this.b4V4Attempt++;
+        this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
+            reason: this.znp.b4IsDiagPoisoned() ? "DIAGNOSTIC_QUARANTINED" : "OUTER_ADMISSION_GATED",
+            submissionState: "NONE"};
+        if (this.znp.b4IsDiagPoisoned()) {
+            this.b4V4Outcome.kind = "QUARANTINED";
+            return undefined;
+        }
         if (input?.enabled !== true || input?.hostIdle !== true ||
             input?.otaActive !== false || typeof input.stillAllowed !== "function" ||
             !input.stillAllowed() || this.closing || !this.queue ||
@@ -47,6 +60,7 @@ V4_ADAPTER_METHOD = r"""
         }
         const now = performance.now();
         if (this.b4DiagInFlight || now < this.b4NextAllowedMs) {
+            this.b4V4Outcome.reason = "COOLDOWN_OR_ALREADY_IN_FLIGHT";
             return undefined;
         }
         // Uses Node cryptographic random bytes, NOT radio/IEEE or a secret.
@@ -56,6 +70,8 @@ V4_ADAPTER_METHOD = r"""
         this.b4NextAllowedMs = now + 30_000;
         this.znp.b4SetProbeGuard(input.stillAllowed);
         try {
+            this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                reason: "SUBMISSION_OR_REPLY_UNCERTAIN", submissionState: "UNCERTAIN"};
             const response = await this.znp.requestWithReply(
                 Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 1200);
             const data = response.payload.diagnostic;
@@ -69,6 +85,8 @@ V4_ADAPTER_METHOD = r"""
                 !data.subarray(140, 156).equals(Buffer.alloc(16)) ||
                 data.readUInt32LE(24) !== 0 || data.readUInt32LE(28) === 0) {
                 this.znp.b4PoisonDiagSession();
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: "INVALID_NATIVE_RESPONSE", submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
             const validity = data.readUInt32LE(12);
@@ -79,6 +97,8 @@ V4_ADAPTER_METHOD = r"""
                 (validity === 0x3F && data.readUInt32LE(32) > data.readUInt32LE(36)) ||
                 data.readUInt32LE(40) > data.readUInt32LE(44)) {
                 this.znp.b4PoisonDiagSession();
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: "INVALID_NATIVE_RESPONSE", submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
             const caps = data.readUInt32LE(8);
@@ -88,6 +108,8 @@ V4_ADAPTER_METHOD = r"""
                 (data[158] === 0 && data[156] !== 0xFF) ||
                 (data[158] === 1 && data[156] === 0xFF)) {
                 this.znp.b4PoisonDiagSession();
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: "INVALID_NATIVE_RESPONSE", submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
             const seq = data.readUInt32LE(28);
@@ -96,10 +118,14 @@ V4_ADAPTER_METHOD = r"""
             if (this.b4V4LastBoot === rawBoot &&
                 this.b4V4LastSeq !== undefined && seq <= this.b4V4LastSeq) {
                 this.znp.b4PoisonDiagSession();
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: "INVALID_NATIVE_RESPONSE", submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
             this.b4V4LastBoot = rawBoot;
             this.b4V4LastSeq = seq;
+            this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "VALID",
+                reason: "NATIVE_NONCE_MATCHED", submissionState: "RECEIVED"};
             return {
                 abi: 4, minor: 1, validityMask: validity,
                 srspDepth: validity & 1 ? data.readUInt32LE(32) : null,
@@ -115,12 +141,20 @@ V4_ADAPTER_METHOD = r"""
                 radioEpochHardwareVerified: false,
             };
         } catch (error: unknown) {
-            if (error instanceof Error && error.message === "B4 F2 runtime admission vetoed") {
+            if (error instanceof Error &&
+                (error.message === "B4 F2 runtime admission vetoed" ||
+                 error.message === "B4 DIAG_NOT_SUBMITTED_BUSY")) {
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
+                    reason: "OWNER_OR_OTA_BUSY", submissionState: "NONE"};
                 return undefined;
             }
             // A failed v4 waiter can consume a late frame; disable further
             // experimental probes, ordinary AF/ZDO/SYS remain unchanged.
             this.znp.b4PoisonDiagSession();
+            this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                reason: error instanceof Error && /after 1200ms/.test(error.message)
+                    ? "HOST_TIMING_UNCERTAIN_TIMEOUT" : "TRANSPORT_OR_WAIT_FAILURE",
+                submissionState: "UNCERTAIN"};
             return undefined;
         } finally {
             this.znp.b4SetProbeGuard(undefined);
@@ -206,7 +240,9 @@ def plan(root):
     adapter = once(adapter, "    private b4LastDiagSequence: number | undefined;",
         "    private b4LastDiagSequence: number | undefined;\n"
         "    private b4V4LastBoot: bigint | undefined;\n"
-        "    private b4V4LastSeq: number | undefined;")
+        "    private b4V4LastSeq: number | undefined;\n"
+        "    private b4V4Attempt = 0;\n"
+        '    private b4V4Outcome: {attempt: number; kind: "VALID" | "SKIPPED" | "FAILED" | "QUARANTINED"; reason: string; submissionState: string} = {attempt: 0, kind: "SKIPPED", reason: "NOT_ATTEMPTED", submissionState: "NONE"};')
     adapter = once(adapter, '    /** B4 source-only opt-in; no disk I/O, ZNP request, MQTT, or serial open. */',
         V4_ADAPTER_METHOD + '    /** B4 source-only opt-in; no disk I/O, ZNP request, MQTT, or serial open. */')
     controller = once(original[CONTROLLER],
@@ -226,8 +262,19 @@ def plan(root):
         return await this.adapter.b4ReadOnlyDiagnosticsV4(input);
     }
 
+    /** Read numeric-only F2 outcome from original live ZStack owner. */
+    public b4V4ReadOutcomeFromExistingOwner() {
+        return this.adapter instanceof ZStackAdapter ? this.adapter.b4GetV4Outcome() : null;
+    }
+
     public isStopping(): boolean {""")
     znp = original[ZNP]
+    znp = once(znp, "    public b4PoisonDiagSession(): void {",
+        """    public b4IsDiagPoisoned(): boolean {
+        return this.b4DiagPoisoned;
+    }
+
+    public b4PoisonDiagSession(): void {""")
     # Both transport checks must also apply to F2, but ONLY the optional
     # diagnostic opcodes. All ordinary command handling remains unmodified.
     # The pinned v3 overlay inserts exactly TWO pre-write optional-only
