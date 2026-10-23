@@ -10,6 +10,7 @@ const crypto = require("node:crypto");
 const root = process.env.B4_HERDSMAN_ROOT;
 assert.ok(root && root.startsWith("/tmp/"));
 const {Controller} = require(path.join(root, "dist/controller/controller.js"));
+const {Znp} = require(path.join(root, "dist/adapter/z-stack/znp/znp.js"));
 const check = Controller.prototype.p7uRequireApprovedDatabase;
 assert.equal(typeof check, "function", "actual production controller must be guarded");
 const base = "/config/zigbee2mqtt";
@@ -111,6 +112,19 @@ test("guard is never a data mutation or a serial opener", () => {
     const before = fs.readFileSync(db);
     admit();
     assert.deepEqual(fs.readFileSync(db), before);
+});
+test("failed initial ping holds without bootloader magic, RTS/DTR or radio reset", async () => {
+    const znp = new Znp("/dev/never-opened", 115200, false);
+    let writes = 0;
+    let toggles = 0;
+    znp.request = async () => { throw new Error("synthetic ping timeout"); };
+    znp.unpiWriter.writeBuffer = () => { writes++; };
+    znp.serialPort = {asyncSet: async () => { toggles++; }};
+    await assert.rejects(znp.skipBootloader(), /P7U HOLD_EXISTING_NV: ping unavailable/);
+    assert.equal(writes, 0);
+    assert.equal(toggles, 0);
+    const fn = Znp.prototype.skipBootloader.toString();
+    assert.doesNotMatch(fn, /writeBuffer|asyncSet/);
 });
 process.on("exit", () => {
     if (oldEnv === undefined) delete process.env.P7U_APPROVED_DB_MANIFEST;
