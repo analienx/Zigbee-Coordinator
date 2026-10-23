@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d -o "$USER" -g "$USER" /config/zigbee2mqtt
-          node --test host/r4-b4/test-p7u-db-startup.cjs
+          node --test host/r4-b4/test-p7u-db-startup.cjs host/r4-b4/test-p7u-db-durability.cjs
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
