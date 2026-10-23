@@ -101,13 +101,13 @@ class Tests(unittest.TestCase):
     def test_stale_reused_container_identity_fails_closed(self):
         self.port.stuck = True
         self.port.changed = True
-        with self.assertRaisesRegex(core.LifecycleHold, "UNEXPECTED_SERIAL_OWNER|ORIGINAL_REPLACED"):
+        with self.assertRaisesRegex(core.LifecycleHold, "FOREIGN_UART_OWNER|ORIGINAL_REPLACED"):
             self.switch()
         self.assertFalse(any(a[0] == "start" for a in self.port.events))
 
     def test_unexpected_tty_holder_blocks_all_effects(self):
         self.port.extra_holder = True
-        with self.assertRaisesRegex(core.LifecycleHold, "UNEXPECTED_SERIAL_OWNER"):
+        with self.assertRaisesRegex(core.LifecycleHold, "FOREIGN_UART_OWNER"):
             self.switch()
         self.assertEqual(self.port.events, [])
 
