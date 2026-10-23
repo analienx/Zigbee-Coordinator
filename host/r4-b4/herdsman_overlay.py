@@ -376,7 +376,7 @@ def plan(root):
         "    private waitress: Waitress<ZpiObject, WaitressMatcher>;",
         """    private waitress: Waitress<ZpiObject, WaitressMatcher>;
     private b4HostForensicsEnabled = false;
-    private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}> = [];
+    private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"}> = [];
     private b4HostDropped = 0;
     private b4DiagPoisoned = false;
     private b4ProbeGuard: (() => boolean) | undefined;""",
@@ -395,7 +395,7 @@ def plan(root):
 
     public b4ReadPassiveForensics(): {
         schema: "r4-b4-inprocess-host-sreq-v1";
-        recent_events: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}>;
+        recent_events: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"}>;
         dropped: number;
         radio_epoch: "UNKNOWN";
     } {
@@ -420,7 +420,8 @@ def plan(root):
         }
         const kind = subsystem === Subsystem.AF ? "AF_SREQ_TIMEOUT"
             : subsystem === Subsystem.ZDO ? "ZDO_SREQ_TIMEOUT"
-            : subsystem === Subsystem.SYS ? "SYS_SREQ_TIMEOUT" : null;
+            : subsystem === Subsystem.SYS ? "SYS_SREQ_TIMEOUT"
+            : subsystem === Subsystem.UTIL ? "UTIL_SREQ_TIMEOUT" : null;
         if (kind === null) {
             return;
         }
