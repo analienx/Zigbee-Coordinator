@@ -55,6 +55,15 @@ PID/cgroup/tty ownership, both installed image IDs, passive guard policy,
 service options, backup hash, and retained DB; it makes no service changes.
 All three owner add-ons must have manual boot and watchdog disabled.
 
+The two one-shot helpers declare `host_pid`, `SYS_PTRACE`, `DAC_READ_SEARCH`
+and `apparmor: false`. Protection mode must be off for those helpers. A
+host-wide FD scan must inspect processes confined under other AppArmor
+profiles, so Docker's default profile is insufficient even when the Linux
+capabilities are present. This exemption applies only to the two manual
+one-shot helpers; it does not alter host AppArmor or the owner add-ons.
+Neither helper uses `full_access`. Any inaccessible FD still causes HOLD;
+incomplete enumeration must never be interpreted as an unowned UART.
+
 For the authorized one-shot execution set `execute=true` and start the
 manager once. A global lock excludes other managers using different plans.
 The durable `active-operation.json` pointer and per-operation

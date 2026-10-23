@@ -81,3 +81,10 @@ The first installed inspector correctly stopped at a lifecycle gate, but its
 entrypoint reported only the exception class. Fixed public HOLD codes are now
 retained in its output; arbitrary exception text is still withheld. This
 diagnostic change requires fresh hosted qualification before installation.
+
+The installed manager's nonmutating preflight then identified the precise
+gate as `P7U_HOLD_FD_ACCESS_DENIED`. Docker metadata confirmed host PID mode,
+both required capabilities, and `docker-default` AppArmor confinement. The
+two one-shot helper configurations now explicitly declare `apparmor: false`
+for their cross-profile host FD scan. Host-wide AppArmor remains enabled,
+owner add-on confinement is unchanged, and inaccessible FDs still HOLD.

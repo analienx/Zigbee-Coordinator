@@ -8,6 +8,10 @@ startup: once
 boot: manual_only
 init: false
 host_pid: true
+# The same global /proc/*/fd proof as the read-only inspector is mandatory.
+# docker-default blocks cross-profile FD stat despite the explicit capabilities.
+# Only this manual one-shot manager is exempted; no full_access is granted.
+apparmor: false
 uart: true
 udev: true
 docker_api: true
