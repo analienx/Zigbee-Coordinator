@@ -123,6 +123,8 @@ def inspect(serial_path: str) -> dict:
         "schema": "p7u-readonly-host-inspection-v1",
         "slots": slots, "tty_holders_pids": sorted(holders),
         "only_known_owners_hold_serial": holders == expected,
+        "exclusive_owner_verified": holders == expected and
+            sum(v["running"] for v in slots.values()) <= 1,
         "guard": inspect_addon("guard"),
         "mutation_authorized": False, "serial_opened": False,
     }
@@ -135,7 +137,7 @@ def main():
     try:
         result=inspect(args.serial_by_id)
         print(json.dumps(result, sort_keys=True, indent=2))
-        if not result["only_known_owners_hold_serial"]:
+        if not result["exclusive_owner_verified"]:
             raise SystemExit(2)
     except LifecycleHold as exc:
         print("HOLD", exc)
