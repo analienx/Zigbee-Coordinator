@@ -1,11 +1,11 @@
 name: P7U R4 native F2 collector (diagnostic)
-version: "0.1.0"
+version: "0.2.0"
 slug: p7u_r4_native_host
 description: Versioned, one-owner Zigbee2MQTT 2.14.0 host candidate; never run beside official add-on
 arch:
   - aarch64
 startup: application
-boot: manual
+boot: manual_only
 init: false
 ingress: true
 ingress_port: 8099
