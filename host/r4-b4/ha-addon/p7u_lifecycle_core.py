@@ -159,9 +159,18 @@ class Journal:
         guard(phase in PHASES, "UNKNOWN_PHASE")
         guard(type(evidence) is dict, "INVALID_EVIDENCE")
         # A prior interrupted stop/start cannot be replayed as a new intent.
-        if self.phase in ("STOP_INTENT", "STOP_ACK_UNKNOWN", "START_INTENT",
-                          "START_ACK_UNKNOWN", "HOLD"):
-            guard(phase in ("HOLD", "OWNER_ABSENT", "OWNER_SERVING"), "AMBIGUOUS_PREVIOUS_INTENT")
+        # A lost Supervisor response is an evidence state, NEVER a reason
+        # to repeat the operation. Only observed owner/holder evidence may
+        # advance the journal past the original intent.
+        transitions = {
+            "STOP_INTENT": ("STOP_ACK_UNKNOWN", "OWNER_ABSENT", "HOLD"),
+            "STOP_ACK_UNKNOWN": ("OWNER_ABSENT", "HOLD"),
+            "START_INTENT": ("START_ACK_UNKNOWN", "OWNER_SERVING", "HOLD"),
+            "START_ACK_UNKNOWN": ("OWNER_SERVING", "HOLD"),
+            "HOLD": ("HOLD",),
+        }
+        if self.phase in transitions:
+            guard(phase in transitions[self.phase], "AMBIGUOUS_PREVIOUS_INTENT")
         seq = self.seq + 1
         header = {"seq": seq, "prev": self.head, "phase": phase, "evidence": evidence}
         record = {**header, "hash": signature(header)}
