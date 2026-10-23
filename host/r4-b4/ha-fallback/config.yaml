@@ -1,0 +1,39 @@
+name: P7U R4 retained-network fallback
+version: "0.2.0"
+slug: p7u_r4_fallback
+description: Protected F2-free original-owner host
+arch:
+  - aarch64
+startup: application
+boot: manual_only
+init: false
+ingress: false
+uart: true
+udev: true
+services:
+  - mqtt:want
+map:
+  - type: homeassistant_config
+    path: /config
+    read_only: false
+environment:
+  P7U_B4_COLLECTOR: "0"
+  P7U_APPROVED_DB_MANIFEST: /config/zigbee2mqtt/.p7u-approved.json
+options:
+  data_path: /config/zigbee2mqtt
+  socat:
+    enabled: false
+  mqtt: {}
+  serial: {}
+schema:
+  data_path: str
+  socat:
+    enabled: bool?
+  mqtt:
+    server: str?
+    user: str?
+    password: password?
+  serial:
+    port: str?
+    adapter: str?
+    baudrate: int?
