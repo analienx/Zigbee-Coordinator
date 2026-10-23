@@ -6,6 +6,7 @@ or implicit fallback exists in this module. Synthetic hosted tests only.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+import time
 from typing import Protocol, Any
 from p7u_lifecycle_core import Journal, Owner, LifecycleHold, guard, require_host_capabilities
 
@@ -20,6 +21,7 @@ class Port(Protocol):
     """Trusted single-owner host adapter, NEVER a generic command executor."""
     def inspect(self, slot: str) -> Presence: ...
     def tty_holders(self) -> frozenset[int]: ...
+    def prove_owner_holders(self, owner: Owner, holders: frozenset[int]) -> None: ...
     def stop(self, slot: str, *, timeout_seconds: int) -> bool: ...
     def start(self, slot: str, *, expected_image_sha: str) -> bool: ...
     def serving_evidence(self, slot: str, *, max_seconds: int) -> dict[str, Any]: ...
@@ -43,6 +45,8 @@ def zero_tty_three_times(port: Port) -> None:
     The narrow port MUST collect fresh /proc holder data on every call.
     """
     for i in range(3):
+        if i:
+            time.sleep(0.5)  # genuinely spaced /proc holder inspections
         holders = port.tty_holders()
         guard(type(holders) is frozenset and len(holders) == 0, "TTY_HOLDERS_" + str(i))
 
@@ -67,8 +71,9 @@ class Manager:
         pinned = require_running(self.port.inspect(original_slot), original_slot)
         require_absent(self.port.inspect(target_slot), target_slot)
         holders = self.port.tty_holders()
-        guard(type(holders) is frozenset and holders == frozenset([pinned.pid]),
+        guard(type(holders) is frozenset and holders,
               "UNEXPECTED_SERIAL_OWNER")
+        self.port.prove_owner_holders(pinned, holders)
         self.journal.append("PREFLIGHT", {
             "original": original_slot, "target": target_slot,
             "original_container_id": pinned.container_id,
@@ -118,7 +123,9 @@ class Manager:
             guard(new.image_digest.removeprefix("sha256:") == image,
                   "TARGET_UNEXPECTED_IMAGE")
             holders = self.port.tty_holders()
-            guard(holders == frozenset([new.pid]), "TARGET_SERIAL_OWNER_UNCERTAIN")
+            guard(type(holders) is frozenset and holders,
+                  "TARGET_SERIAL_OWNER_UNCERTAIN")
+            self.port.prove_owner_holders(new, holders)
             serving = self.port.serving_evidence(target_slot, max_seconds=180)
             guard(type(serving) is dict and serving.get("fresh_devices") >= 3 and
                   serving.get("mqtt_messages_fresh") is True and
