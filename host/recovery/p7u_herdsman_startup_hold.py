@@ -468,9 +468,9 @@ def plan(checkout, composition_receipt=None):
     # DB's directory-fsynced rename, with its OWN fsync+rename+dirfsync.
     # A crash between the two commits yields HOLD on the next start.
     database = once(database,
-        """        const tmpPath = \`\${this.path}.tmp\`;""",
+        """        const tmpPath = `${this.path}.tmp`;""",
         """        const approved = this.p7uNextReceipt(lines.slice(0, -1));
-        const tmpPath = \`\${this.path}.tmp\`;""")
+        const tmpPath = `${this.path}.tmp`;""")
     database = once(database,
         """        finally { fs.closeSync(parentFd); }""",
         """        finally { fs.closeSync(parentFd); }
