@@ -93,3 +93,9 @@ Startup admission now observes one Supervisor start for up to 90 seconds
 instead of treating its HTTP ACK as UART readiness. The first running
 container generation is pinned; a replacement, unexpected image, competing
 container or foreign UART holder causes HOLD. No second start is sent.
+
+The manually attempted diagnostic/fallback starts were both rejected by the
+pre-UART database-approval gate, as intended. Their upstream entrypoint also
+logged forbidden Supervisor metadata reads. Both owner configurations now
+declare the default read-only Supervisor API role used for timezone and
+MQTT discovery; they do not receive a service-manager role.

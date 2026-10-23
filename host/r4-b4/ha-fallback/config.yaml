@@ -7,6 +7,9 @@ arch:
 startup: application
 boot: manual_only
 init: false
+# Match the upstream entrypoint's read-only Supervisor metadata requirement.
+hassio_api: true
+hassio_role: default
 ingress: false
 uart: true
 udev: true
