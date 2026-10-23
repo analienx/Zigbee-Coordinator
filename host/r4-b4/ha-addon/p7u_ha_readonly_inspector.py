@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from p7u_lifecycle_core import LifecycleHold, Owner, guard
 
@@ -52,10 +53,24 @@ def inspect_docker(slot: str) -> dict | None:
 
 def inspect_addon(slot: str) -> dict:
     guard(slot in SLUGS, "UNRECOGNIZED_SLOT")
-    p = run_argv(["ha", "apps", "info", SLUGS[slot], "--raw-json"], 20)
-    guard(p.returncode == 0, "SUPERVISOR_INFO_UNAVAILABLE")
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if token:
+        guard(len(token) >= 20 and not any(c.isspace() for c in token),
+              "SUPERVISOR_TOKEN_INVALID")
+        request = Request("http://supervisor/addons/" + SLUGS[slot] + "/info",
+                          method="GET", headers={"Authorization":"Bearer "+token})
+        try:
+            with urlopen(request, timeout=12) as stream:
+                raw = stream.read(65537)
+        except OSError as exc:
+            raise LifecycleHold("P7U_HOLD_SUPERVISOR_INFO_UNAVAILABLE") from exc
+        guard(len(raw) <= 65536, "SUPERVISOR_INFO_SIZE")
+    else:
+        p = run_argv(["ha", "apps", "info", SLUGS[slot], "--raw-json"], 20)
+        guard(p.returncode == 0, "SUPERVISOR_INFO_UNAVAILABLE")
+        raw = p.stdout
     try:
-        data = json.loads(p.stdout)
+        data = json.loads(raw)
     except ValueError as exc:
         raise LifecycleHold("P7U_HOLD_SUPERVISOR_INFO_INVALID") from exc
     guard(data.get("result") == "ok" and type(data.get("data")) is dict,
