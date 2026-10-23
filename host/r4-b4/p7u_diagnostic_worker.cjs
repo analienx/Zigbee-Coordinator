@@ -127,8 +127,14 @@ function open(root) {
         root.endsWith(path.sep + "p7u-b4-diagnostics"), "ROOT_PATH");
     fs.mkdirSync(root, {recursive: true, mode: 0o700});
     const st = fs.lstatSync(root);
-    hold(st.isDirectory() && !st.isSymbolicLink() && (st.mode & 0o077) === 0,
+    hold(st.isDirectory() && !st.isSymbolicLink() &&
+        (typeof process.getuid !== "function" || st.uid === process.getuid()),
         "PRIVATE_DIRECTORY");
+    // The retired v1 collector created this same directory with the default
+    // umask (often 0755). Narrow its permissions without deleting or opening
+    // the old history. A foreign-owned directory is never changed.
+    if ((st.mode & 0o777) !== 0o700) fs.chmodSync(root, 0o700);
+    hold((fs.lstatSync(root).mode & 0o777) === 0o700, "PRIVATE_DIRECTORY");
     return {root, manifest: recover(root)};
 }
 function commit(state, data) {

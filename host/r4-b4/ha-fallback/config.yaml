@@ -16,6 +16,12 @@ map:
   - type: homeassistant_config
     path: /config
     read_only: false
+  - type: app_config
+    path: /addon_config
+    read_only: false
+  - type: share
+    path: /share
+    read_only: false
 environment:
   P7U_B4_COLLECTOR: "0"
   P7U_APPROVED_DB_MANIFEST: /config/zigbee2mqtt/.p7u-approved.json
@@ -29,11 +35,22 @@ schema:
   data_path: str
   socat:
     enabled: bool?
+    master: str?
+    slave: str?
+    options: str?
+    log: bool?
   mqtt:
     server: str?
+    ca: str?
+    key: str?
+    cert: str?
     user: str?
     password: password?
+    base_topic: str?
   serial:
     port: str?
     adapter: str?
     baudrate: int?
+    rtscts: bool?
+  watchdog: str?
+  force_onboarding: bool?

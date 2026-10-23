@@ -1,8 +1,9 @@
 # Exact installed production image digest, read-only attested 2026-10-22.
 # Compile on GitHub-hosted runners only, never modify the live official image.
 FROM ghcr.io/zigbee2mqtt/zigbee2mqtt-aarch64@sha256:97246758dab5099113c5a46fcbc1b9a36968a0eb9fd95ce8df6e2868cc7f533f
-LABEL org.opencontainers.image.title="P7U R4 original-owner native F2 diagnostic candidate"
-LABEL org.opencontainers.image.description="Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1; opt-in native diagnostics; exact installed base"
+LABEL io.hass.version="0.2.0" \
+      io.hass.type="app" \
+      io.hass.arch="aarch64"
 # Preserve vendor entrypoint, port, volume, user and all existing package files.
 COPY z2m-controller.js /app/dist/controller.js
 COPY z2m-otaUpdate.js /app/dist/extension/otaUpdate.js

@@ -80,6 +80,24 @@ class Tests(unittest.TestCase):
         verdict = m.evaluate(self.rows([valid(1), valid(2), valid(3, host=another)]))
         self.assertEqual(verdict.protocol, "INSUFFICIENT")
 
+    def test_busy_skips_between_native_reads_and_after_last_do_not_erase_acceptance(self):
+        rows = [valid(1), valid(2, kind="SKIPPED"), valid(3),
+                valid(4, kind="SKIPPED"), valid(5), valid(6, kind="SKIPPED")]
+        verdict = m.evaluate(self.rows(rows))
+        self.assertEqual(verdict.protocol, "PASS")
+        self.assertEqual(verdict.native_sequences, (1, 3, 5))
+
+    def test_failed_quarantined_or_closed_after_valid_reads_invalidates_acceptance(self):
+        for kind in ("FAILED", "QUARANTINED", "OWNER_CLOSED"):
+            with self.subTest(kind=kind):
+                rows = [valid(1), valid(2), valid(3), valid(4, kind=kind)]
+                self.assertEqual(m.evaluate(self.rows(rows)).protocol, "INSUFFICIENT")
+
+    def test_new_owner_skip_cannot_reuse_previous_owner_valid_reads(self):
+        another = "3492d844-8d6b-454e-8e2c-45925f3d5641"
+        rows = [valid(1), valid(2), valid(3), valid(4, kind="SKIPPED", host=another)]
+        self.assertEqual(m.evaluate(self.rows(rows)).protocol, "INSUFFICIENT")
+
     def test_native_seq_or_monotonic_time_not_advancing_refused(self):
         a = valid(1); b = valid(2); c = valid(3)
         c["sequence"] = 2

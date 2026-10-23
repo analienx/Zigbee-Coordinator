@@ -48,6 +48,8 @@ METHOD = r"""
                 this.#b4WorkerReady = true;
             } else if (message.type === "committed" && typeof message.id === "number") {
                 this.#b4PendingIds.delete(message.id);
+                clearTimeout(this.#b4AckTimers.get(message.id));
+                this.#b4AckTimers.delete(message.id);
             } else if (message.type === "fatal") {
                 this.#b4SamplerDisabled = true;
                 this.#b4WorkerReady = false;
@@ -63,6 +65,8 @@ METHOD = r"""
             this.#b4WorkerReady = false;
             this.#b4SamplerDisabled = true;
             this.#b4PendingIds.clear();
+            for (const timer of this.#b4AckTimers.values()) { clearTimeout(timer); }
+            this.#b4AckTimers.clear();
         });
     }
 
@@ -76,6 +80,15 @@ METHOD = r"""
         }
         const id = ++this.#b4RecordId;
         this.#b4PendingIds.add(id);
+        const timer = setTimeout(() => {
+            this.#b4AckTimers.delete(id);
+            this.#b4PendingIds.delete(id);
+            this.#b4SamplerDisabled = true;
+            this.#b4WorkerReady = false;
+            logger.error("P7U B4 optional evidence ACK timed out; sampling halted (radio untouched)");
+        }, 15_000);
+        timer.unref();
+        this.#b4AckTimers.set(id, timer);
         const record = {
             ...sample,
             hostRunId: this.#b4HostRunId,
@@ -86,6 +99,8 @@ METHOD = r"""
             this.#b4Worker.postMessage({type: "append", id, record});
         } catch {
             this.#b4PendingIds.delete(id);
+            clearTimeout(this.#b4AckTimers.get(id));
+            this.#b4AckTimers.delete(id);
             this.#b4SamplerDisabled = true;
             throw new Error("B4_EVIDENCE_IPC_SEND_FAILED");
         }
@@ -204,7 +219,8 @@ import b4Data from "./util/data";''')
     #b4HostRunId = "";
     #b4OwnerGeneration = "";
     #b4RecordId = 0;
-    readonly #b4PendingIds = new Set<number>();""")
+    readonly #b4PendingIds = new Set<number>();
+    readonly #b4AckTimers = new Map<number, NodeJS.Timeout>();""")
     src = once(src, "        this.#startAbortController = new AbortController();",
         "        this.#b4Operational = false;\n        this.#startAbortController = new AbortController();")
     src = once(src, "        settings.setOnboarding(false);",
@@ -216,6 +232,8 @@ import b4Data from "./util/data";''')
     src = once(src, '''        logger.info(`Stopping Zigbee2MQTT (restart=${restart}, code=${code}, signal=${signal})`);''',
         '''        this.#b4Operational = false;
         if (this.#b4Timer) { clearTimeout(this.#b4Timer); this.#b4Timer = undefined; }
+        for (const timer of this.#b4AckTimers.values()) { clearTimeout(timer); }
+        this.#b4AckTimers.clear();
         logger.info(`Stopping Zigbee2MQTT (restart=${restart}, code=${code}, signal=${signal})`);''')
     src = once(src, "    async start(): Promise<void> {", METHOD + "    async start(): Promise<void> {")
     if src.count(MARKER) != 2:

@@ -81,9 +81,31 @@ test("private directory and records reject secrets and oversized events", () => 
             /RECORD_FIELD/);
         assert.throws(() => workerModule.commit(state,
             {...fixture(), reason:"r".repeat(8192)}), /RECORD_SIZE/);
-        fs.chmodSync(x.root, 0o755);
-        assert.throws(() => workerModule.open(x.root), /PRIVATE_DIRECTORY/);
     } finally {x.cleanup();}
+});
+
+test("owned legacy directory becomes private while preserving v1 history", () => {
+    const x = dir();
+    try {
+        fs.mkdirSync(x.root, {mode: 0o755});
+        fs.chmodSync(x.root, 0o755);
+        const old = Buffer.from('{"schema":"p7u-b4-native-history-v1","rows":[]}\n');
+        fs.writeFileSync(path.join(x.root, "history.json"), old);
+        workerModule.open(x.root);
+        assert.equal(fs.statSync(x.root).mode & 0o777, 0o700);
+        assert.deepEqual(fs.readFileSync(path.join(x.root, "history.json")), old);
+    } finally {x.cleanup();}
+});
+
+test("a diagnostic directory symlink is rejected without changing its target", () => {
+    const x = dir();
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), "p7u-untrusted-"));
+    try {
+        fs.chmodSync(target, 0o755);
+        fs.symlinkSync(target, x.root);
+        assert.throws(() => workerModule.open(x.root), /PRIVATE_DIRECTORY/);
+        assert.equal(fs.statSync(target).mode & 0o777, 0o755);
+    } finally {x.cleanup(); fs.rmSync(target, {recursive: true, force: true});}
 });
 test("actual worker thread delivers ACK only after read-back committed manifest", async () => {
     const x=dir();

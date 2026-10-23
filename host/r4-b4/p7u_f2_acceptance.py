@@ -88,10 +88,24 @@ def evaluate(rows: list[dict], *, serving: str = "UNKNOWN") -> F2Verdict:
     """
     require(serving in ("PASS", "FAIL", "UNKNOWN"), "SERVING")
     valid_count = sum(r.get("kind") == "VALID" for r in rows)
-    last = rows[-3:]
-    if len(last) != 3 or any(r.get("kind") != "VALID" for r in last):
+    # A busy owner can skip many timer instants without sending a probe.
+    # Gather genuine reads in the current uninterrupted owner session;
+    # failed/poisoned/closed records are hard boundaries, SKIPPED is not.
+    accepted = []
+    current = ((rows[-1].get("hostRunId"), rows[-1].get("ownerGeneration"))
+               if rows else (None, None))
+    for row in reversed(rows):
+        if ((row.get("hostRunId"), row.get("ownerGeneration")) != current or
+                row.get("kind") in ("FAILED", "QUARANTINED", "OWNER_CLOSED")):
+            break
+        if row.get("kind") == "VALID":
+            accepted.append(row)
+            if len(accepted) == 3:
+                break
+    last = list(reversed(accepted))
+    if len(last) != 3:
         return F2Verdict("INSUFFICIENT", "UNKNOWN", serving, None, None, (),
-                         valid_count, "three consecutive durable VALID records missing")
+                         valid_count, "three durable VALID reads within the current owner session missing")
     owner = {r.get("ownerGeneration") for r in last}
     host = {r.get("hostRunId") for r in last}
     seq = [r.get("sequence") for r in last]

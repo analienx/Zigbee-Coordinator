@@ -376,6 +376,15 @@ def plan(checkout, composition_receipt=None):
 
 """
     znp = znp[:first] + safe_method + znp[end:]
+    # A retained-only manager is not the sole caller of Znp.request():
+    # Controller.reset()/Adapter.reset() can also submit SYS/SAPI resets.
+    # Enforce the no-radio-reset contract at the transport boundary too.
+    znp = once(znp,
+        "        const object = ZpiObject.createRequest(subsystem, command, payload);",
+        """        const object = ZpiObject.createRequest(subsystem, command, payload);
+        if (object.isResetCommand()) {
+            throw new Error("P7U HOLD_EXISTING_NV: runtime radio reset disabled for retained R4");
+        }""")
     # H3: after atomic db rename, fsync its *parent directory* to make
     # replacement of the directory entry durable on supported POSIX FS.
     # A failure raises and the host cannot claim a successfully saved DB.

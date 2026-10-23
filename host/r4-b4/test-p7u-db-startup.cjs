@@ -133,6 +133,60 @@ test("failed initial ping holds without bootloader magic, RTS/DTR or radio reset
     const fn = Znp.prototype.skipBootloader.toString();
     assert.doesNotMatch(fn, /writeBuffer|asyncSet/);
 });
+
+test("all retained-owner runtime SYS/SAPI resets hold before queue or UART", () => {
+    const znp = new Znp("/dev/never-opened", 115200, false);
+    znp.initialized = true;
+    let queued = 0;
+    let writes = 0;
+    znp.queue = {run() {queued++; throw Error("unexpected queue use");}};
+    znp.unpiWriter.writeFrame = () => {writes++;};
+    for (const [subsystem, command, payload] of [
+        [1, "resetReq", {type: 0}],
+        [1, "resetReq", {type: 1}],
+        [6, "systemReset", {}],
+    ]) {
+        assert.throws(() => znp.request(subsystem, command, payload),
+            /P7U HOLD_EXISTING_NV: runtime radio reset disabled/);
+    }
+    assert.equal(queued, 0);
+    assert.equal(writes, 0);
+});
+
+function stoppingController(events) {
+    const controller = new Controller({
+        network: {channelList: [11], panID: 0x1234},
+        serialPort: {}, adapter: {}, databasePath: db,
+    });
+    controller.adapter = {removeAllListeners() {},
+        async stop() {events.push("adapter-stop");}};
+    controller.adapterDisconnected = false;
+    controller.databaseSave = () => {events.push("db-save");};
+    controller.backup = async () => {events.push("backup");};
+    return controller;
+}
+
+test("protected shutdown saves before a stalled radio await", async () => {
+    const events = [];
+    const controller = stoppingController(events);
+    let release;
+    const radio = new Promise(resolve => {release = resolve;});
+    controller.permitJoin = async () => {events.push("permit-join"); await radio;};
+    const stopping = controller.stop();
+    assert.deepEqual(events, ["db-save", "permit-join"]);
+    release();
+    await stopping;
+    assert.deepEqual(events, ["db-save", "permit-join", "backup", "adapter-stop"]);
+});
+
+test("a failed protected shutdown save stops before any radio await", async () => {
+    const events = [];
+    const controller = stoppingController(events);
+    controller.databaseSave = () => {throw Error("synthetic durable DB failure");};
+    controller.permitJoin = async () => {events.push("permit-join");};
+    await assert.rejects(controller.stop(), /synthetic durable DB failure/);
+    assert.deepEqual(events, []);
+});
 process.on("exit", () => {
     if (oldEnv === undefined) delete process.env.P7U_APPROVED_DB_MANIFEST;
     else process.env.P7U_APPROVED_DB_MANIFEST = oldEnv;
