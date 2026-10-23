@@ -1,5 +1,8 @@
 """Hosted mock-only tests for immutable host cgroup + Docker top holder proof."""
 import json
+import contextlib
+import importlib.util
+import io
 from pathlib import Path
 import sys
 import unittest
@@ -29,6 +32,26 @@ def proof():
 
 
 class Tests(unittest.TestCase):
+    def test_entrypoint_reports_fixed_hold_code_but_redacts_arbitrary_exception_text(self):
+        path=Path(__file__).parent.parent/'ha-lifecycle-inspector'/'p7u_owner_inspector_main.py'
+        spec=importlib.util.spec_from_file_location('inspector_entrypoint',path)
+        entry=importlib.util.module_from_spec(spec);spec.loader.exec_module(entry)
+        for error,expected in (
+            (LifecycleHold('P7U_HOLD_HOST_CGROUP_NOT_PINNED_TO_CONTAINER'),
+             'P7U_HOLD_HOST_CGROUP_NOT_PINNED_TO_CONTAINER'),
+            (LifecycleHold('P7U_HOLD_bad secret-token'), 'LifecycleHold'),
+            (OSError('password=secret-token'), 'OSError'),
+        ):
+            output=io.StringIO()
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(entry.Path,'read_text',return_value=json.dumps({'serial_by_id':'/dev/serial/by-id/usb-P7U'})), \
+                 patch.object(entry,'inspect',side_effect=error),contextlib.redirect_stdout(output):
+                self.assertEqual(entry.main(),2)
+            result=json.loads(output.getvalue())
+            self.assertEqual(result['reason'],expected)
+            self.assertFalse(result['exclusive_owner_verified'])
+            self.assertNotIn('secret-token',output.getvalue())
+
     def mock_proof(self, holders=frozenset({1042}), official=raw(), diagnostic=None,
                    fallback=None):
         return (

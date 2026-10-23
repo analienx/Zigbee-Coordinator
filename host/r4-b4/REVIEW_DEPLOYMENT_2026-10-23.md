@@ -41,7 +41,7 @@ unattended recovery guard or authorize a factory reset/radio flash.
 
 `.github/workflows/release-p7u-host.yml` waits for successful source workflows
 at the exact candidate SHA, verifies staged-bundle hashes and file inventories,
-then builds ARM64 add-on images on a GitHub-hosted runner. Its artifact includes
+then retags the qualified ARM64 images without rebuilding their layers. Its artifact includes
 Docker archives, generated manual-only configurations and `RELEASE.json` with
 the actual image IDs. No radio or HA host is accessed by this workflow.
 
@@ -76,3 +76,8 @@ observations found repeated SRSP timeouts and a loss of fresh traffic. The
 complete current host and guard evidence was frozen privately before any
 owner stop/start. This incident must not be attributed to an uninstalled
 candidate or erased by an unapproved radio reset.
+
+The first installed inspector correctly stopped at a lifecycle gate, but its
+entrypoint reported only the exception class. Fixed public HOLD codes are now
+retained in its output; arbitrary exception text is still withheld. This
+diagnostic change requires fresh hosted qualification before installation.
