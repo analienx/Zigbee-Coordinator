@@ -289,8 +289,15 @@ def verify_native_binding(cfg: Configuration, operation: str, entity_id: str) ->
         raise ControlError("NATIVE_DEVICE_REGISTRY_MISSING_OR_DUPLICATE")
     device = devices[0]
     connections = device.get("connections", [])
-    if (not entity.get("config_entry_id") or
-            entity["config_entry_id"] not in device.get("config_entries", []) or
+    # HA 2026.9 device registry uses singular config_entry_id; older records
+    # use config_entries. Require an explicit matching owner for both schemas.
+    registered_entries = device.get("config_entries")
+    if registered_entries is None:
+        entry = device.get("config_entry_id")
+        registered_entries = [entry] if isinstance(entry, str) else []
+    if (not isinstance(registered_entries, list) or
+            not entity.get("config_entry_id") or
+            entity["config_entry_id"] not in registered_entries or
             ["mac", expected] not in connections):
         raise ControlError("NATIVE_BUTTON_DEVICE_BINDING_MISMATCH")
 
