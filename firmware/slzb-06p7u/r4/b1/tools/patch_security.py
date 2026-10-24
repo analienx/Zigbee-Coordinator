@@ -99,7 +99,9 @@ int b1_sec_validate_restored(void)
   uint8_t zeroKey[SEC_KEY_LEN] = {0};
   uint8_t seed[SEC_KEY_LEN] = {0};
   uint8_t trustCenter[Z_EXTADDR_LEN] = {0};
+  uint8_t coordinatorExt[Z_EXTADDR_LEN] = {0};
   uint8_t zeroAddr[Z_EXTADDR_LEN] = {0};
+  uint8_t ffAddr[Z_EXTADDR_LEN];
   nwkActiveKeyItems nwk = {0};
   nwkKeyDesc active = {0};
   nvDeviceListHdr_t hdr = {0};
@@ -121,6 +123,17 @@ int b1_sec_validate_restored(void)
     return FALSE;
   }
   if (!onNetwork) return TRUE; /* Verified new NIB; APS may be empty. */
+  memset(ffAddr, 0xFF, sizeof(ffAddr));
+  /* A verified restored coordinator must have a valid local EUI64. This
+   * constrains the stock persisted TC=zero representation to its own IEEE. */
+  if (osal_nv_read(ZCD_NV_EXTADDR, 0, sizeof(coordinatorExt),
+                   coordinatorExt) != SUCCESS ||
+      OsalPort_memcmp(coordinatorExt, zeroAddr, sizeof(coordinatorExt)) ||
+      OsalPort_memcmp(coordinatorExt, ffAddr, sizeof(coordinatorExt)))
+  {
+    b1_security_runtime_hold_latch();
+    return FALSE;
+  }
   /* Do not publish restored-network validation until ALL APS/TCLK checks
    * finish. The ZDO readiness hook must not see a partial preflight. */
   if (osal_nv_read(ZCD_NV_NWKKEY, 0, sizeof(nwk), &nwk) != SUCCESS ||
@@ -131,7 +144,11 @@ int b1_sec_validate_restored(void)
       osal_nv_read(ZCD_NV_TCLK_SEED, 0, sizeof(seed), seed) != SUCCESS ||
       OsalPort_memcmp(seed, zeroKey, SEC_KEY_LEN) ||
       osal_nv_read(ZCD_NV_TRUSTCENTER_ADDR, 0, sizeof(trustCenter), trustCenter) != SUCCESS ||
-      OsalPort_memcmp(trustCenter, zeroAddr, sizeof(trustCenter)) ||
+      /* Stock restored coordinator may persist TC=zero. Runtime APS TC is
+       * assigned from NLME_GetExtAddr() in TI ZDSecMgrInit(). Never accept
+       * an unrelated nonzero TC, and never rewrite persistent TC here. */
+      (!OsalPort_memcmp(trustCenter, zeroAddr, sizeof(trustCenter)) &&
+       !OsalPort_memcmp(trustCenter, coordinatorExt, sizeof(trustCenter))) ||
       osal_nv_read(ZCD_NV_APS_LINK_KEY_TABLE, 0, sizeof(hdr), &hdr) != SUCCESS ||
       hdr.numRecs > gZDSECMGR_ENTRY_MAX)
   {
@@ -141,6 +158,7 @@ int b1_sec_validate_restored(void)
   memset(&active, 0, sizeof(active));
   memset(seed, 0, sizeof(seed));
   memset(trustCenter, 0, sizeof(trustCenter));
+  memset(coordinatorExt, 0, sizeof(coordinatorExt));
   /* numRecs == 0 is a legitimate optional empty APS table. Unreferenced
    * APS data rows are not required and are not created on restoration. */
   if (okay && hdr.numRecs != 0)

@@ -259,7 +259,11 @@ def inspect_state(records: dict, abi: dict) -> dict:
             "NIB_SECURITY_OR_CHANNEL_SEMANTICS_INVALID")
     ext = get(records, 0, 1, 8)
     tc = get(records, 0, 0x71, 8)
-    require(real(ext) and tc == ext, "COORDINATOR_TRUST_CENTER_IDENTITY_MISMATCH")
+    # Pinned TI coordinator restoration accepts zero persisted TC, and later
+    # sets the live APS Trust Center from NLME_GetExtAddr(). Reject any
+    # nonzero foreign TC. This does not authorize writes to this NV record.
+    require(real(ext) and tc in (ext, bytes(8)),
+            "COORDINATOR_TRUST_CENTER_IDENTITY_MISMATCH")
     # 2. The legacy NWKKEY active descriptor must equal ACTIVE_KEY_INFO.
     active = get(records, 0, 0x3a, abi["structs"]["nwkKeyDesc"]["size"])
     # Alternate keys live in ALT_KEY_INFO, not the deprecated NIB spare fields.

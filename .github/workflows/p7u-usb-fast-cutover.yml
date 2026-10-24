@@ -6,6 +6,7 @@ on:
     branches:
       - codex/p7u-usb-fast-cutover-20261024
       - codex/p7u-f2-safety-takeover-20261023
+      - codex/p7u-tc-compat-20261024
     paths:
       - '.github/workflows/p7u-usb-fast-cutover.yml'
       - 'firmware/slzb-06p7u/r4/release/rom_writer/p7u_usb_*'
@@ -13,6 +14,8 @@ on:
       - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_usb_security_model.py'
       - 'firmware/slzb-06p7u/r4/release/test_p7u_usb_security_model.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_usb_current_owner_gate.py'
+      - 'firmware/slzb-06p7u/r4/release/test_p7u_usb_current_owner_gate.py'
   pull_request:
     paths:
       - '.github/workflows/p7u-usb-fast-cutover.yml'
@@ -21,6 +24,8 @@ on:
       - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_usb_security_model.py'
       - 'firmware/slzb-06p7u/r4/release/test_p7u_usb_security_model.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_usb_current_owner_gate.py'
+      - 'firmware/slzb-06p7u/r4/release/test_p7u_usb_current_owner_gate.py'
 
 permissions:
   contents: read
@@ -48,6 +53,12 @@ jobs:
           python -m unittest discover \
             -s firmware/slzb-06p7u/r4/release \
             -p 'test_p7u_usb_security_model.py' -v
+      - name: Current-stock 106/107 non-destructive owner gate (synthetic only)
+        shell: bash
+        run: |
+          python -m unittest discover \
+            -s firmware/slzb-06p7u/r4/release \
+            -p 'test_p7u_usb_current_owner_gate.py' -v
       - name: Sparse transition, no-retry, NV protection and legacy SHA parity
         shell: bash
         run: |
