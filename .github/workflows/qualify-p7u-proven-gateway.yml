@@ -4,6 +4,8 @@ on:
     paths:
       - 'host/r4-b4/p7u_proven_flash_gateway.py'
       - 'host/r4-b4/test-p7u-proven-flash-gateway.py'
+      - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
+      - 'tests/test_r4_stock20260311_transition.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_r4_operator.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_r4_startup_transport.py'
@@ -31,7 +33,7 @@ jobs:
           python host/r4-b4/test-p7u-proven-flash-gateway.py -v
           python host/r4-b4/test-p7u-web-flash-trial.py -v
           python -m py_compile host/r4-b4/p7u_proven_flash_gateway.py
-          python -m unittest -v tests.test_p7u_r4_operator tests.test_p7u_r4_startup_observer tests.test_p7u_r4_adapter_provision
+          python -m unittest -v tests.test_p7u_r4_operator tests.test_p7u_r4_startup_observer tests.test_p7u_r4_adapter_provision tests.test_r4_stock20260311_transition
       - name: Seal gateway
         run: |
           mkdir /tmp/proven-gateway
