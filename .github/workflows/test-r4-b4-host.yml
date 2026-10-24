@@ -220,7 +220,7 @@ jobs:
           cp -a /tmp/p7u-r4-native-image/herdsman-dist/. /tmp/p7u-staged-addon/herdsman-dist/
           test -s /tmp/p7u-staged-addon/p7u_diagnostic_worker.cjs
           test -s /tmp/p7u-staged-addon/p7u_host_timeout_sink.cjs
-          grep -q 'COPY p7u_host_timeout_sink.cjs' /tmp/p7u-staged-addon/Dockerfile
+          grep -Fq 'COPY p7u_diagnostic_worker.cjs p7u_host_timeout_sink.cjs /app/dist/' /tmp/p7u-staged-addon/Dockerfile
           grep -q 'P7U_APPROVED_DB_MANIFEST:' /tmp/p7u-staged-addon/config.yaml
           grep -q 'COPY p7u_diagnostic_worker.cjs' /tmp/p7u-staged-addon/Dockerfile
           tar -C /tmp -czf /tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz p7u-staged-addon
