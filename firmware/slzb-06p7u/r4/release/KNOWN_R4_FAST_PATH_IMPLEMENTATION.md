@@ -21,6 +21,7 @@ Postflight: all-88-sector ROM byte/SHA verification. Never describe preflight as
 - tools/p7u_build_flash.py: starts the source-to-service clock before tests and compilation; ONE clean APP build, exact artifacts, source checks, package admission. Offline by default.
 - tools/p7u_prepared_deps.py: SHA-verified dependency cache identity; reused libraries only, never APP objects.
 - tools/p7u_provision_ha_deps.py: hash-verified offline HA serial dependencies.
+- tools/p7u_ha_fast_preflight.py: live host-readiness report only; never opens UART or mutates Z2M; explicit blockers include missing approved TI layer, known-working R4 startup receipt and qualified mutating operator.
 - .github/workflows/p7u-ha-arm64-reader.yml and tools/p7u_ha_reader_parity.py: native ARM64 TI reader and same private-fixture Win64 parity.
 - release/rom_writer/p7u_usb_sparse_capture.py: one live protected read with CRC/status + one-use session witness.
 - release/r4_stock20260311_transition.py: known-R4 security/source admission, original write guards, full final SHA.

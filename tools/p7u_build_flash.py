@@ -32,6 +32,7 @@ REQUIRED_SOURCE_TESTS = [
      "tests/test_p7u_known_r4_fastpath.py",
      "tests/test_p7u_subfive_controller.py",
      "tests/test_p7u_single_candidate_packager.py",
+     "tests/test_p7u_ha_fast_preflight.py",
      "tests/test_r4_stock20260311_transition.py",
      "tests/test_p7u_usb_sparse_transition.py",
      "tests/test_p7u_stock20260311_rom_adapter.py",
