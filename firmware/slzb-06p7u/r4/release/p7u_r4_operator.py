@@ -265,7 +265,11 @@ def run_through(private: Path, folder: Path, source: str, target: str,
             approval = read_json(private / "owner-request.json")
             require(approval.get("reviewed_firmware_source") == source and
                     approval.get("plan_sha256") == read_json(private / "frozen-plan.json")["plan_sha256"] and
-                    approval.get("scope") == "EXACT_R4_TO_R4_APP_AND_MATCHING_AC000_PRESERVE_NV_AND_CCFG",
+                    approval.get("scope") == (
+                        "EXACT_STOCK_TO_R4_APP_AND_MATCHING_AC000_PRESERVE_NV_AND_CCFG"
+                        if read_json(private / "frozen-plan.json").get("plan_kind") ==
+                        "INSTALL_CURRENT_APP_AND_COMPILED_HANDOFF" else
+                        "EXACT_R4_TO_R4_APP_AND_MATCHING_AC000_PRESERVE_NV_AND_CCFG"),
                     "FROZEN_OWNER_SOURCE_PLAN_OR_SCOPE_MISMATCH")
         if step == "startup":
             require(allow_boot, "EXPLICIT_BOOT_AND_ONE_START_APPROVAL_REQUIRED")

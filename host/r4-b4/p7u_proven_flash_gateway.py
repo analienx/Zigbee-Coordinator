@@ -117,11 +117,11 @@ def quiesce(expected):
  return result
 
 def phase_plan(action):
+ need(action in ['ethernet','bsl-capture','bsl-program','boot','usb','start-debug'],'PHASE')
  r=json.loads(regular(ROOT/'quiesce.result.json'));need(r['status']=='QUIESCED_WAITING_PROVEN_ROM_WRITER','NOT_QUIESCED')
  need(not (ROOT/(action+'.intent.json')).exists(),'PROVEN_ACTION_CONSUMED')
  inactive();need(sha(regular(t.DATA/'database.db'))==r['database_sha256'],'QUIESCED_DB_CHANGED')
- board(2 if action=='ethernet' else 0)
- need(action in ['ethernet','bsl-capture','bsl-program','boot','usb','start-debug'],'PHASE')
+ board(2 if action in ['ethernet','start-debug'] else 0)
  if action!='ethernet':need((ROOT/'ethernet.result.json').is_file(),'ETHERNET_NOT_APPLIED')
  if action=='bsl-program':need((ROOT/'capture-accepted.json').is_file(),'CAPTURE_RECEIPT_REQUIRED')
  if action=='boot':need((ROOT/'flash-accepted.json').is_file(),'FLASH_PARITY_REQUIRED')
@@ -132,11 +132,11 @@ def phase_plan(action):
 
 def phase(action,expected):
  p=phase_plan(action);need(sha(canonical(p))==expected,'STALE_PHASE_PLAN')
- need(action!='start-debug','START_REQUIRES_ACCEPTED_DEPLOYMENT_SIDECAR')
  proofs=t.zero_holders();unique(ROOT/(action+'.owner-proofs.json'),canonical(proofs))
  t.intent(action,{'plan_sha256':expected})
  try:
-  result=fixed_vendor(action)
+  if action=='start-debug':result=start_debug()
+  else:result=fixed_vendor(action)
   if action in ['ethernet','usb']:
    deadline=time.monotonic()+90
    while time.monotonic()<deadline:
@@ -147,12 +147,45 @@ def phase(action,expected):
  except Exception as e:result={'status':'AMBIGUOUS_NO_RETRY','action':action,'error_class':type(e).__name__,'utc':time.time()}
  unique(ROOT/(action+'.result.json'),canonical(result));return result
 
+def start_debug():
+ original=json.loads(regular(ROOT/'plan.json'))
+ need(sha(regular(MANIFEST))==original['existing_manifest_sha256'],'PREVIOUS_APPROVAL_CHANGED')
+ a=t.addon(TARGET);need(a['version']=='0.2.1-9d13e8ce6419','DEBUG_VERSION_CHANGED')
+ c=t.inspect('app_'+TARGET);need(c and c['Image']==IMAGE and not c['State']['Running'],'DEBUG_IMAGE_CHANGED')
+ unique(ROOT/'previous-debug-container.private.json',canonical(c))
+ p=subprocess.run(['docker','logs','--tail','500',c['Id']],capture_output=True,timeout=20)
+ unique(ROOT/'previous-debug.private.log',(p.stdout+p.stderr)[-2*1024*1024:])
+ unique(ROOT/'previous-debug-approval.json',regular(MANIFEST))
+ r=json.loads(regular(ROOT/'quiesce.result.json'));raw=regular(t.DATA/'database.db');inv=t.inventory(raw)
+ need(sha(raw)==r['database_sha256'] and inv==r['inventory'],'DEBUG_DATABASE_CHANGED')
+ approval={'schema':'p7u-db-admission-v1','database_sha256':sha(raw),'inventory_sha256':inv['inventory_sha256'],
+   'rows':inv['rows'],'devices':inv['devices'],'generation':'proven_reflash_20261024_323949a_9d13e8ce6419'}
+ pending=MANIFEST.with_name(MANIFEST.name+'.proven-reflash-pending');unique(pending,canonical(approval))
+ os.replace(pending,MANIFEST)
+ fd=os.open(MANIFEST.parent,os.O_RDONLY|os.O_DIRECTORY)
+ try:os.fsync(fd)
+ finally:os.close(fd)
+ # The earlier manifest is archived above; no old lifecycle journal changes.
+ try:control('/addons/'+TARGET+'/start',{});ack=True
+ except Exception:ack=False
+ return {'start_acknowledged':ack,'status_detail':'START_REQUEST_CONSUMED_VERIFY_EXISTING_CONTAINER_ONLY','image_id':IMAGE}
+
+def accept_startup(evidence):
+ need(type(evidence) is dict and set(evidence)=={'source','status','post_state','attempts','startup_receipt_sha256','flash_receipt_sha256','capture_sha256','plan_sha256'} and
+      evidence['source']==t.RADIO_SOURCE and evidence['status']=='COORDINATOR_STATE9_MARKER_PASS' and
+      evidence['post_state']==9 and evidence['attempts']==1 and
+      all(t.re.fullmatch('[a-f0-9]{64}',evidence[k]) for k in ['startup_receipt_sha256','flash_receipt_sha256','capture_sha256','plan_sha256']),
+      'PHYSICAL_OPERATOR_RECEIPT_REQUIRED')
+ inactive();board(0);need((ROOT/'ethernet.result.json').is_file(),'ETHERNET_REQUIRED')
+ unique(ROOT/'startup-accepted.json',canonical(evidence))
+ return {'status':'QUALIFIED_OPERATOR_STARTUP_RECEIPT_SEALED','source':t.RADIO_SOURCE}
+
 def remote(payload):
  import fcntl
  fd=os.open('/share/p7u-lifecycle/private/exclusive-manager.lock',os.O_RDWR|os.O_NOFOLLOW)
  try:
   fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
-  need(set(payload)=={'mode','expected','action'},'PROVEN_PAYLOAD')
+  need(set(payload)=={'mode','expected','action','evidence'},'PROVEN_PAYLOAD')
   mode=payload['mode']
   if mode=='plan':
    p=preflight();return {'status':'PLAN_NO_MUTATION','plan_hash':sha(canonical(p)),'plan':p}
@@ -160,11 +193,12 @@ def remote(payload):
   if mode=='phase-plan':
    p=phase_plan(payload['action']);return {'status':'PHASE_PLAN_NO_MUTATION','plan_hash':sha(canonical(p)),'plan':p}
   if mode=='phase':return phase(payload['action'],payload['expected'])
+  if mode=='seal-startup':return accept_startup(payload['evidence'])
   need(mode=='report','MODE');return json.loads(regular(ROOT/'quiesce.result.json'))
  finally:os.close(fd)
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','quiesce','phase-plan','phase','report']);p.add_argument('--release',type=Path,required=True)
+ p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','quiesce','phase-plan','phase','report','seal-startup']);p.add_argument('--release',type=Path,required=True)
  p.add_argument('--action',choices=['ethernet','bsl-capture','bsl-program','boot','usb','start-debug'],default='ethernet');p.add_argument('--expected-plan-hash',default='');a=p.parse_args()
  need(a.release.resolve(strict=True).is_relative_to(Path('C:/Workspace/artifacts').resolve()),'RELEASE_PATH')
  receipt=json.loads((a.release/'PROVEN_GATEWAY_RELEASE.json').read_text())
@@ -173,7 +207,19 @@ def main():
  need(sha(Path(__file__).read_bytes())==receipt['files'][files[0]],'HELPER_SOURCE')
  checks=json.loads(subprocess.check_output(['gh','api','repos/analienx/Zigbee-Coordinator/commits/'+receipt['source_sha']+'/check-runs?per_page=100']))['check_runs']
  need(any(c['name']=='proven-gateway-boundaries' and c['conclusion']=='success' for c in checks),'HOSTED_QUALIFICATION')
- payload={'mode':a.mode,'expected':a.expected_plan_hash,'action':a.action}
+ evidence=None
+ if a.mode=='seal-startup':
+  # Receipt production is the existing qualified operator, not caller JSON.
+  sys.path.insert(0,str(a.release));import p7u_r4_operator as op
+  for name in ['p7u_r4_operator.py','p7u_r4_startup_observer.py','p7u_r4_adapter_provision.py']:
+   need(sha((a.release/name).read_bytes())==receipt['files'][name],'OPERATOR_SOURCE_BINDING')
+  private=Path('C:/Workspace/.analienx/zigbee-private/p7u-r4-323949a-stock-return-20261024')
+  candidate=op.candidate_verify(Path('C:/Workspace/artifacts/p7u-r4-release-323949a'),t.RADIO_SOURCE)
+  startup=op.startup_verify(private,candidate)
+  evidence={k:startup[k] for k in ['source','status','post_state','attempts']}
+  evidence.update(startup_receipt_sha256=sha((private/'startup-result.json').read_bytes()),flash_receipt_sha256=sha((private/'flash-result.json').read_bytes()),
+   capture_sha256=op.capture_verify(private)['pass1_sha256'],plan_sha256=op.prepare_verify(private,candidate)['plan_sha256'])
+ payload={'mode':a.mode,'expected':a.expected_plan_hash,'action':a.action,'evidence':evidence}
  script='import sys,types,base64\nm=types.ModuleType("p7u_web_flash_trial");sys.modules[m.__name__]=m\n'
  script+='exec(base64.b64decode('+repr(base64.b64encode((a.release/files[1]).read_bytes()).decode())+'),m.__dict__)\n'
  script+='exec(base64.b64decode('+repr(base64.b64encode((a.release/files[0]).read_bytes()).decode())+'),{"__name__":"remote_proven","PAYLOAD":'+repr(payload)+'})\n'
