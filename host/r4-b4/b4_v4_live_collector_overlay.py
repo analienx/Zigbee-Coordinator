@@ -55,7 +55,7 @@ METHOD = r"""
                         this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(
                             createHostTimeoutSink((record) => this.#b4Persist(record),
                                 () => this.#b4Operational && this.#b4WorkerReady &&
-                                    !this.#b4SamplerDisabled && process.env.P7U_B4_COLLECTOR === "1"));
+                                    process.env.P7U_B4_COLLECTOR === "1"));
                     } catch {
                         this.#b4SamplerDisabled = true;
                         this.#b4WorkerReady = false;
@@ -86,9 +86,11 @@ METHOD = r"""
         });
     }
 
+    // Optional F2 quarantine is NOT a persistence/worker quarantine. Healthy
+    // owner-bound passive SRSP timeouts continue using this same worker.
     #b4Persist(sample: Record<string, unknown>): void {
         if (!this.#b4Worker || !this.#b4WorkerReady ||
-            this.#b4SamplerDisabled || this.#b4PendingIds.size >= 4) {
+            this.#b4PendingIds.size >= 4) {
             // Never queue unbounded diagnostics behind slow fsync; disable
             // optional collection without touching normal Zigbee traffic.
             this.#b4SamplerDisabled = true;
