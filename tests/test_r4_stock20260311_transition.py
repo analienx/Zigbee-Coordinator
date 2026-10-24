@@ -152,6 +152,31 @@ class FakeROM:
 
 
 class CurrentTransitionTests(unittest.TestCase):
+    def test_packet_status_elision_only_for_exact_verified_rom_implementation(self):
+        sys.path.insert(0, str(ROOT / "release" / "rom_writer"))
+        from p7u_stock20260311_rom_adapter import Stock20260311ROM
+        self.assertTrue(m._verified_wire_status_embedded(Stock20260311ROM()))
+        self.assertFalse(m._verified_wire_status_embedded(FakeROM(inputs()["pass1"])))
+
+    def test_unqualified_fast_adapter_keeps_independent_packet_status_gate(self):
+        async def scenario():
+            plan = m.prepare(**inputs())
+            rom, args = FakeROM(plan.snapshot), capture_args(plan)
+            admission = await m.admit(rom, plan, **args, seal_same_session=True)
+            original_status = rom.status
+            async def fail_after_one_packet():
+                if any(x[0] == "packet" for x in rom.trace):
+                    return False
+                return await original_status()
+            rom.status = fail_after_one_packet
+            async def journal(event): return True
+            with self.assertRaisesRegex(ValueError, "UNCERTAIN_SEND_DATA"):
+                await m.execute(rom, plan, admission, **args,
+                    expected_admission_sha256=admission["admission_sha256"],
+                    journal=journal, same_session_fast=True)
+            self.assertEqual(len([x for x in rom.trace if x[0] == "packet"]), 1)
+        asyncio.run(scenario())
+
     def test_fast_session_preserves_complete_parity_and_avoids_duplicate_full_reads(self):
         async def scenario():
             plan = m.prepare(**inputs())
