@@ -82,10 +82,15 @@ def inspect_addon(slot: str) -> dict:
         # Reduce the policy to one attestation. Never emit the options,
         # which may contain credentials and private recovery configuration.
         options = data["data"].get("options")
+        visible = type(options) is dict and all(key in options for key in (
+            "enabled", "dry_run", "serial_owner_approved", "allow_private_http_fallback"))
+        result["policy_visible"] = visible
+        # Supervisor's default-role token hides other add-ons' private options.
+        # Unknown policy is never an attestation of either active or passive.
         result["passive"] = (type(options) is dict and
             options.get("enabled") is False and options.get("dry_run") is True and
             options.get("serial_owner_approved") is False and
-            options.get("allow_private_http_fallback") is False)
+            options.get("allow_private_http_fallback") is False) if visible else None
     return result
 
 

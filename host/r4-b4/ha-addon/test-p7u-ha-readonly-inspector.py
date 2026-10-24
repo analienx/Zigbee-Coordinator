@@ -155,7 +155,7 @@ class Tests(unittest.TestCase):
                                                        stdout=json.dumps(payload),stderr="")):
             self.assertEqual(m.inspect_addon("guard"), {
                 "state": "started", "boot": None,
-                "watchdog": None, "version": "1", "passive": False
+                "watchdog": None, "version": "1", "passive": None, "policy_visible": False
             })
 
     def test_guard_passive_requires_all_four_exact_policy_values(self):
@@ -169,6 +169,11 @@ class Tests(unittest.TestCase):
                 return m.inspect_addon("guard")
         result=inspect(policy)
         self.assertTrue(result["passive"])
+        self.assertTrue(result["policy_visible"])
+        for options in (None, {}, {"enabled": False}):
+            result = inspect(options)
+            self.assertIsNone(result["passive"])
+            self.assertFalse(result["policy_visible"])
         self.assertNotIn("secret",json.dumps(result))
         for key in policy:
             if key != "private_token":

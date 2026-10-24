@@ -47,14 +47,20 @@ METHOD = r"""
             if (message.type === "ready") {
                 this.#b4WorkerReady = true;
                 if (this.#b4Operational && process.env.P7U_B4_COLLECTOR === "1") {
-                    const {createHostTimeoutSink} = require("./p7u_host_timeout_sink.cjs") as {
-                        createHostTimeoutSink: (persist: (record: Record<string, unknown>) => void,
-                            enabled: () => boolean) => (event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void;
-                    };
-                    this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(
-                        createHostTimeoutSink((record) => this.#b4Persist(record),
-                            () => this.#b4Operational && this.#b4WorkerReady &&
-                                !this.#b4SamplerDisabled && process.env.P7U_B4_COLLECTOR === "1"));
+                    try {
+                        const {createHostTimeoutSink} = require("./p7u_host_timeout_sink.cjs") as {
+                            createHostTimeoutSink: (persist: (record: Record<string, unknown>) => void,
+                                enabled: () => boolean) => (event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void;
+                        };
+                        this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(
+                            createHostTimeoutSink((record) => this.#b4Persist(record),
+                                () => this.#b4Operational && this.#b4WorkerReady &&
+                                    !this.#b4SamplerDisabled && process.env.P7U_B4_COLLECTOR === "1"));
+                    } catch {
+                        this.#b4SamplerDisabled = true;
+                        this.#b4WorkerReady = false;
+                        logger.error("P7U B4 passive timeout evidence unavailable (radio untouched)");
+                    }
                 }
             } else if (message.type === "committed" && typeof message.id === "number") {
                 this.#b4PendingIds.delete(message.id);
@@ -237,7 +243,11 @@ import b4Data from "./util/data";''')
         """        settings.setOnboarding(false);
         // Only at steady state: startup AbortController is about to be GC'd.
         this.#b4Operational = true;
-        this.#b4StartWorker();
+        try { this.#b4StartWorker(); }
+        catch {
+            this.#b4SamplerDisabled = true;
+            logger.error("P7U B4 optional evidence worker could not start (radio untouched)");
+        }
         this.#b4Schedule();""")
     src = once(src, '''        logger.info(`Stopping Zigbee2MQTT (restart=${restart}, code=${code}, signal=${signal})`);''',
         '''        this.#b4Operational = false;
