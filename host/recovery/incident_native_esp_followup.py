@@ -291,6 +291,13 @@ def remote_main(mode, stage, expected, source):
         os.close(lock)
 
 
+def qualified_source(worktree, committed):
+    # Git may check out LF source as CRLF on Windows. Permit only that checkout
+    # representation, then transmit the COMMITTED bytes, never rewritten source.
+    require(worktree.replace(b"\r\n", b"\n") == committed.replace(b"\r\n", b"\n"), "HELPER_NOT_EXACT_SOURCE")
+    return committed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("plan", "apply"))
@@ -305,7 +312,7 @@ def main():
     raw = Path(__file__).read_bytes()
     relative = "host/recovery/incident_native_esp_followup.py"
     pinned = subprocess.check_output(["git", "show", args.source_sha + ":" + relative])
-    require(hashlib.sha256(raw).digest() == hashlib.sha256(pinned).digest(), "HELPER_NOT_EXACT_SOURCE")
+    raw = qualified_source(raw, pinned)
     checks = json.loads(subprocess.check_output(["gh", "api", "repos/analienx/Zigbee-Coordinator/commits/" + args.source_sha + "/check-runs?per_page=100"]))["check_runs"]
     for name in ("unittest", "Policy and one-shot journal regressions", "release"):
         matches = [c for c in checks if c["name"] == name]

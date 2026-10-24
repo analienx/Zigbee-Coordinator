@@ -211,3 +211,13 @@ class HostNamespaceProof(unittest.TestCase):
         with patch.object(m.time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "HOST_OWNERSHIP_NOT_PROVEN"):
                 b.host_proof()
+
+
+class CommittedSource(unittest.TestCase):
+    def test_windows_checkout_sends_exact_committed_bytes(self):
+        committed = b"print('synthetic')\n"
+        self.assertEqual(m.qualified_source(committed.replace(b"\n", b"\r\n"), committed), committed)
+
+    def test_any_code_change_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "HELPER_NOT_EXACT_SOURCE"):
+            m.qualified_source(b"changed()\r\n", b"original()\n")
