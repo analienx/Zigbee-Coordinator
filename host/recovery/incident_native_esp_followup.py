@@ -37,9 +37,14 @@ def get_reg(name,key):
     return json.loads(path.read_text())["data"][key]
 if not ROOT.is_dir() or ROOT.is_symlink():raise RuntimeError("OLD_INCIDENT_NOT_PRESENT")
 for name in ("native-radio-fallback.intent.json","native-original-final-start.intent.json",
-             "manual-esp-restart.intent.json","native-final-warning.intent.json"):
+             "manual-esp-restart.intent.json"):
     data=json.loads((ROOT/name).read_text())
     if data.get("incident_id")!=INCIDENT:raise RuntimeError("HISTORY_INCIDENT_MISMATCH")
+prior_warning=json.loads((ROOT/"native-final-warning.intent.json").read_text())
+if (prior_warning.get("operation")!="report_recovery_exhausted" or
+    prior_warning.get("reason")!="RADIO_FALLBACK_FAILED_NO_MORE_RESTARTS" or
+    prior_warning.get("physical_action") is not False):
+    raise RuntimeError("PRIOR_HOLD_REPORT_NOT_MATCHED")
 if RECEIPT.exists() or RECEIPT.is_symlink():
     raise RuntimeError("POST_RADIO_ESP_INTENT_ALREADY_EXISTS_NO_REPLAY")
 owner=inspect("/addons/45df7312_zigbee2mqtt/info")["data"]
