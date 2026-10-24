@@ -106,6 +106,21 @@ class RetainedSecurityTests(unittest.TestCase):
         self.assertEqual(self.now, before)
         self.assertNotIn("status", result)  # pure fixture never becomes private proof
 
+    def test_zero_persisted_tc_on_formed_coordinator_is_stock_compatible(self):
+        self.before[1, 0, 0x71] = self.now[1, 0, 0x71] = bytes(8)
+        before = copy.deepcopy(self.now)
+        result = self.outcome()
+        self.assertTrue(result["semantic_checks_passed"], result["reason_codes"])
+        self.assertEqual(self.now, before)
+        self.assertNotIn("flash_authorized", result)
+
+    def test_nonzero_foreign_persisted_tc_remains_blocked(self):
+        self.now[1, 0, 0x71] = b"F" * 8
+        self.hold("COORDINATOR_TRUST_CENTER_IDENTITY_MISMATCH")
+        self.now = copy.deepcopy(self.before)
+        self.now[1, 0, 1] = bytes(8)
+        self.hold("COORDINATOR_TRUST_CENTER_IDENTITY_MISMATCH")
+
     def test_legacy_counter_may_lag_selected_material_but_must_not_exceed_it(self):
         self.assertTrue(self.outcome()["semantic_checks_passed"])
         active = self.now[1, 0, 0x3a]

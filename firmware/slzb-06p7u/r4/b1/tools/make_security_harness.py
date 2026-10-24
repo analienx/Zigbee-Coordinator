@@ -36,6 +36,7 @@ PREAMBLE = r'''
 #define ZCD_NV_TCLK_SEED 4u
 #define ZCD_NV_APS_LINK_KEY_TABLE 5u
 #define ZCD_NV_TRUSTCENTER_ADDR 6u
+#define ZCD_NV_EXTADDR 13u /* synthetic ID; fixture BDB already uses 1 */
 #define ZCD_NV_NIB 20u
 #define ZCD_NV_LOGICAL_TYPE 21u
 #define ZG_DEVICETYPE_COORDINATOR 0u
@@ -95,7 +96,7 @@ static uint32_t reads, writes, legacy_writes, creates, events, erases;
 static uint16_t missing_singleton, missing_table, missing_index;
 static uint8_t write_fail, readback_corrupt, legacy_readback_corrupt, search_found = TRUE;
 static uint16_t search_index;
-static uint8_t on_network = TRUE, trustcenter[8] = {0x51}, seed[16] = {0x22};
+static uint8_t on_network = TRUE, trustcenter[8] = {0x51}, local_ext[8] = {0x51}, seed[16] = {0x22};
 static uint8_t defaultTCLinkKey[SEC_KEY_LEN] = {0x5A};
 static nwkActiveKeyItems nwk;
 static nwkKeyDesc active;
@@ -132,6 +133,7 @@ static uint8_t osal_nv_read(uint16_t id, uint16_t off, uint16_t len, void *dst)
     case ZCD_NV_NWK_ACTIVE_KEY_INFO: src=&active; total=sizeof(active); break;
     case ZCD_NV_TCLK_SEED: src=seed; total=sizeof(seed); break;
     case ZCD_NV_TRUSTCENTER_ADDR: src=trustcenter; total=sizeof(trustcenter); break;
+    case ZCD_NV_EXTADDR: src=local_ext; total=sizeof(local_ext); break;
     case ZCD_NV_NIB: src=&nib; total=sizeof(nib); break;
     case ZCD_NV_LOGICAL_TYPE: src=&logical_type; total=sizeof(logical_type); break;
     case ZCD_NV_APS_LINK_KEY_TABLE:
@@ -389,6 +391,14 @@ int main(int argc,char **argv)
     assert(!held && creates==0 && writes==2);
     assert(TCLinkKeyRAMEntry[0].txFrmCntr==211 && tc[0].txFrmCntr==211);
     assert(ApsLinkKeyRAMEntry[0].txFrmCntr==111 && aps[0].txFrmCntr==111);
+  } else if(!strcmp(s,"zero_tc")) {
+    memset(trustcenter,0,sizeof(trustcenter));
+    assert(b1_sec_validate_restored() && !held && writes==0 && creates==0);
+    assert(b1_sec_restored_network_validated());
+    /* Stored zero remains zero after validation and APS restoration; the
+     * coordinator's live APS TC comes from TI ZDSecMgrInit separately. */
+    ZDSecMgrRestoreFromNV();
+    assert(!held && memcmp(trustcenter, (uint8_t[8]){0},8)==0 && writes==1);
   } else if(!strcmp(s,"empty_optional_aps")) {
     hdr.numRecs=0; missing_table=ZCD_NV_EX_APS_KEY_DATA_TABLE;
     assert(b1_sec_validate_restored()); ZDSecMgrRestoreFromNV();
@@ -413,7 +423,8 @@ int main(int argc,char **argv)
     ZDSecMgrEntryInit(ZDO_INITDEV_NEW_NETWORK_STATE);
     assert(reads==0 && !held && writes==0);
   } else if(!strcmp(s,"missing_nwk") || !strcmp(s,"missing_seed") || !strcmp(s,"missing_bdb") ||
-            !strcmp(s,"missing_tc") || !strcmp(s,"zero_tc") ||
+            !strcmp(s,"missing_tc") || !strcmp(s,"foreign_tc") ||
+            !strcmp(s,"missing_ext") || !strcmp(s,"zero_ext") || !strcmp(s,"ff_ext") ||
             !strcmp(s,"wrong_generation") || !strcmp(s,"missing_aps") || !strcmp(s,"missing_tclk") ||
             !strcmp(s,"bad_aps_index") || !strcmp(s,"aps_overflow") || !strcmp(s,"tclk_overflow") ||
             !strcmp(s,"bad_header_count") || !strcmp(s,"bad_seed_shift") ||
@@ -426,7 +437,10 @@ int main(int argc,char **argv)
     if(!strcmp(s,"missing_seed")) missing_singleton=ZCD_NV_TCLK_SEED;
     if(!strcmp(s,"missing_bdb")) missing_singleton=ZCD_NV_BDBNODEISONANETWORK;
     if(!strcmp(s,"missing_tc")) missing_singleton=ZCD_NV_TRUSTCENTER_ADDR;
-    if(!strcmp(s,"zero_tc")) memset(trustcenter,0,sizeof(trustcenter));
+    if(!strcmp(s,"foreign_tc")) trustcenter[0]^=0x81;
+    if(!strcmp(s,"missing_ext")) missing_singleton=ZCD_NV_EXTADDR;
+    if(!strcmp(s,"zero_ext")) memset(local_ext,0,sizeof(local_ext));
+    if(!strcmp(s,"ff_ext")) memset(local_ext,0xff,sizeof(local_ext));
     if(!strcmp(s,"wrong_generation")) active.keySeqNum++;
     if(!strcmp(s,"missing_aps")) missing_table=ZCD_NV_EX_APS_KEY_DATA_TABLE;
     if(!strcmp(s,"missing_tclk")) missing_table=ZCD_NV_EX_TCLK_TABLE;
@@ -680,7 +694,8 @@ SIGNATURES = (
 
 SCENARIOS = (
     'positive', 'preflight_publication', 'tclk_hash_collision_unique', 'entry_allocation_fail', 'entry_allocation_ok', 'empty_optional_aps', 'configured_new', 'configured_new_no_nib', 'authorized_blank',
-    'missing_nwk', 'missing_seed', 'missing_bdb', 'missing_tc', 'zero_tc', 'wrong_generation',
+    'missing_nwk', 'missing_seed', 'missing_bdb', 'missing_tc', 'zero_tc',
+    'foreign_tc', 'missing_ext', 'zero_ext', 'ff_ext', 'wrong_generation',
     'missing_aps', 'missing_tclk', 'bad_aps_index', 'aps_overflow',
     'tclk_overflow', 'duplicate_tclk_peer', 'tclk_broadcast_peer', 'bad_header_count', 'bad_seed_shift',
     'missing_nib', 'nib_length', 'nib_bdb_mismatch', 'nib_pan', 'nib_channel',
