@@ -39,6 +39,19 @@ class CurrentOwnerTests(unittest.TestCase):
         self.old["devices"][-1]["is_child"] = True
         self.assertIn("HISTORICAL_MISSING_KEYED_OR_CHILD_PEER",self.assess()["reason_codes"])
 
+    def test_two_missing_keyless_nonchildren_exceed_bounded_exception(self):
+        self.old["devices"][-2]["link_key"] = None
+        self.old["devices"][-2]["is_child"] = False
+        self.new = copy.deepcopy(self.old)
+        del self.new["devices"][-2:]
+        self.live = live_from(self.new)
+        self.live["trust_center_raw"] = bytes(8)
+        result = self.assess()
+        self.assertEqual(result["historical_only"], 2)
+        self.assertEqual(result["status"], "HOLD")
+        self.assertIn("HISTORICAL_MISSING_PEER_LIMIT_EXCEEDED", result["reason_codes"])
+        self.assertFalse(result["flash_authorized"])
+
     def test_zero_tc_only_or_exact_current_coordinator(self):
         self.assertEqual(self.assess()["reason_codes"],[])
         self.live["trust_center_raw"] = self.live["coordinator"][::-1]
