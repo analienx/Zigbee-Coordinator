@@ -38,14 +38,14 @@ jobs:
           cp host/r4-b4/{p7u_proven_flash_gateway.py,p7u_web_flash_trial.py} /tmp/proven-gateway/
           cp firmware/slzb-06p7u/r4/release/{p7u_r4_operator.py,p7u_r4_startup_observer.py,p7u_r4_startup_transport.py,p7u_r4_adapter_provision.py} /tmp/proven-gateway/
           # Test the actual deployment archive, not only repository imports.
-          (cd /tmp/proven-gateway && python -m py_compile *.py)
-          (cd /tmp/proven-gateway && python p7u_r4_operator.py --help > /dev/null)
+          (cd /tmp/proven-gateway && PYTHONPYCACHEPREFIX=/tmp/p7u-gateway-pycache python -m py_compile *.py)
+          (cd /tmp/proven-gateway && PYTHONPYCACHEPREFIX=/tmp/p7u-gateway-pycache python p7u_r4_operator.py --help > /dev/null)
           python - <<'PY'
           import hashlib,json,os
           from pathlib import Path
           d=Path('/tmp/proven-gateway')
           r={'schema':'p7u-proven-gateway-release-v1','source_sha':os.environ['SOURCE'],
-             'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in d.iterdir()},'live_action_performed':False}
+             'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in d.iterdir() if p.is_file()},'live_action_performed':False}
           (d/'PROVEN_GATEWAY_RELEASE.json').write_text(json.dumps(r,sort_keys=True,indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
