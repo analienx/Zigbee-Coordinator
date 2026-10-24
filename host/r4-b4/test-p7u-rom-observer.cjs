@@ -84,10 +84,8 @@ test("real compiled SerialPort binding on PTY sends exact nonmutating transcript
         const js=`const {SerialPort}=require(process.env.B4_HERDSMAN_ROOT+'/dist/adapter/serialPort.js');
 const {run}=require(${JSON.stringify(path.resolve(__dirname,"p7u_rom_observer.cjs"))});
 run({root:${JSON.stringify(x.root)},source:${JSON.stringify(x.source)},checkData:false,
-factory:()=>{const p=new SerialPort({path:process.env.P7U_TEST_PTY,baudRate:115200,rtscts:false,hupcl:false,autoOpen:false});
-for(const name of ['write','drain','asyncOpen','asyncClose']){const original=p[name].bind(p);p[name]=(...args)=>{console.error('PTY_CALL',name,Buffer.isBuffer(args[0])?args[0].toString('hex'):'');return original(...args);};}
-return p;}})
-.then(r=>{console.log(JSON.stringify(r));process.exit(r.status==='ROM_PROTOCOL_OBSERVED'&&r.serial_closed&&r.hupcl_disabled?0:2);}).catch(e=>{console.error(e);process.exit(3);});`;
+factory:()=>new SerialPort({path:process.env.P7U_TEST_PTY,baudRate:115200,rtscts:false,hupcl:false,autoOpen:false})})
+.then(r=>process.exit(r.status==='ROM_PROTOCOL_OBSERVED'&&r.serial_closed&&r.hupcl_disabled?0:2)).catch(()=>process.exit(3));`;
         const py=`import os,pty,termios,subprocess,sys,select,time
 master,slave=pty.openpty();a=termios.tcgetattr(slave);a[2]|=termios.HUPCL;termios.tcsetattr(slave,termios.TCSANOW,a)
 p=subprocess.Popen([sys.argv[1],'-e',sys.argv[2]],env=dict(os.environ,P7U_TEST_PTY=os.ttyname(slave)),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -101,10 +99,8 @@ while i<len(expected) and time.monotonic()<deadline:
   if frame==bytes.fromhex('032020'):os.write(master,bytes.fromhex('00cc'))
   if frame==bytes.fromhex('032323'):os.write(master,bytes.fromhex('00cc034040'))
   if frame==bytes.fromhex('032828'):os.write(master,bytes.fromhex('00cc063400003202'))
-try:out,err=p.communicate(timeout=16)
-except subprocess.TimeoutExpired:
- p.kill();out,err=p.communicate();raise AssertionError(('child did not terminate',i,pending.hex(),out,err))
-assert p.returncode==0,(i,pending.hex(),out,err)
+out,err=p.communicate(timeout=12)
+assert p.returncode==0,(out,err)
 assert i==len(expected) and not pending,i
 assert not select.select([master],[],[],.1)[0]
 assert termios.tcgetattr(slave)[2]&termios.HUPCL==0
