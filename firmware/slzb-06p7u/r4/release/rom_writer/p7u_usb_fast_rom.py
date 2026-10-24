@@ -18,6 +18,7 @@ duplicate capture and write readback gates.
 """
 from __future__ import annotations
 import re
+import time
 from p7u_stock20260311_rom_adapter import (
     Stock20260311ROM, MAX_READ_WORDS, FLASH, MEMORY_READ, GET_STATUS, _deny,
 )
@@ -33,6 +34,12 @@ class SafeFastUsbRom(Stock20260311ROM):
         self.read_packets = 0
         self.read_status_checks = 0
         self.fast_read_enabled = False
+        self.read_payload_bytes = 0
+        self.rom_crc_calls = 0
+        self.rom_crc_elapsed_seconds = 0.
+        self.fast_read_elapsed_seconds = 0.
+        self.mutation_payload_bytes = 0
+        self.erase_sector_calls = 0
 
     async def open(self, device: str, baud: int = 115200):
         """Direct HA /dev/serial/by-id avoids Windows->TCP->socat packet RTT.
@@ -70,6 +77,7 @@ class SafeFastUsbRom(Stock20260311ROM):
         if self._faulted or self._download_remaining:
             _deny("FAST_READ_BLOCKED_BY_FAULT_OR_DOWNLOAD")
         result = bytearray()
+        t0 = time.monotonic()
         try:
             for start in range(0, length, MAX_READ_WORDS * 4):
                 count = min(MAX_READ_WORDS, (length - start) // 4)
@@ -80,6 +88,7 @@ class SafeFastUsbRom(Stock20260311ROM):
                     raise RomWireError("FAST_READ_INVALID_RESPONSE_LENGTH")
                 result.extend(chunk)
                 self.read_packets += 1
+                self.read_payload_bytes += len(chunk)
                 # Catch ROM-reported problems no later than 32 read packets,
                 # while leaving mutation and independent CRC check unchanged.
                 if self.read_packets % STATUS_INTERVAL == 0:
@@ -89,6 +98,8 @@ class SafeFastUsbRom(Stock20260311ROM):
         except BaseException:
             self._faulted = True
             raise
+        finally:
+            self.fast_read_elapsed_seconds += time.monotonic() - t0
         return bytes(result)
 
     async def assert_read_status(self) -> None:
@@ -102,3 +113,45 @@ class SafeFastUsbRom(Stock20260311ROM):
             self._faulted = True
             raise
         self.read_status_checks += 1
+
+
+    async def crc32(self, address, length):
+        started=time.monotonic()
+        try:
+            value=await super().crc32(address,length)
+        except BaseException:
+            self._faulted=True
+            raise
+        finally:
+            self.rom_crc_elapsed_seconds += time.monotonic()-started
+            self.rom_crc_calls += 1
+        return value
+
+    async def erase_sector(self,address):
+        result=await super().erase_sector(address)
+        self.erase_sector_calls += 1
+        return result
+
+    async def send_data(self,data):
+        result=await super().send_data(data)
+        if result is True:
+            self.mutation_payload_bytes += len(data)
+        return result
+
+    def performance_receipt(self):
+        """Pure statistics. Never exposes key bytes or grants flash approval."""
+        return {
+            "schema":"p7u-usb-fast-rom-performance-v1",
+            "baud":115200,
+            "fast_read_enabled":self.fast_read_enabled,
+            "fast_read_packets":self.read_packets,
+            "fast_read_payload_bytes":self.read_payload_bytes,
+            "read_status_checks":self.read_status_checks,
+            "fast_read_elapsed_seconds":round(self.fast_read_elapsed_seconds,3),
+            "rom_crc_calls":self.rom_crc_calls,
+            "rom_crc_elapsed_seconds":round(self.rom_crc_elapsed_seconds,3),
+            "mutation_payload_bytes":self.mutation_payload_bytes,
+            "erase_sector_calls":self.erase_sector_calls,
+            "faulted":self._faulted,
+            "flash_authorized":False,
+        }

@@ -89,8 +89,9 @@ def _frozen(plan, expected_plan_sha256):
 def _prepare_common(*, candidate: dict, expected_candidate_sha256: str,
             app_hex: bytes, handoff: bytes, pass1: bytes, pass2: bytes,
             expected_capture_sha256: str, board_identity_sha256: str,
-            security_receipt: dict, expected_security_receipt_sha256: str) -> Transition:
-    """Freeze externally pinned public bytes and two private same-unit captures.
+            security_receipt: dict, expected_security_receipt_sha256: str,
+            known_capture=None) -> Transition:
+    """Freeze externally pinned public bytes and an explicitly classified capture.
 
     Pins must come from the selected exact-head hosted candidate and the owner
     baseline, not from blindly hashing arbitrary files supplied by an adapter.
@@ -109,9 +110,25 @@ def _prepare_common(*, candidate: dict, expected_candidate_sha256: str,
         deny('APP_BINDING')
     if type(handoff) is not bytes or len(handoff) != SECTOR or sha(handoff) != candidate['handoff_sha256']:
         deny('HANDOFF_BINDING')
-    if (type(pass1) is not bytes or type(pass2) is not bytes or len(pass1) != FLASH
-            or pass1 != pass2 or sha(pass1) != pin(expected_capture_sha256)):
-        deny('DUPLICATE_CURRENT_CAPTURE')
+    if known_capture is None:
+        if (type(pass1) is not bytes or type(pass2) is not bytes or len(pass1) != FLASH
+                or pass1 != pass2 or sha(pass1) != pin(expected_capture_sha256)):
+            deny('DUPLICATE_CURRENT_CAPTURE')
+    else:
+        # Distinct known-R4 live capture; no fictitious second complete image.
+        from p7u_usb_sparse_capture import (KnownR4Capture,KNOWN_R4_PROFILE,
+                                             require_known_witness)
+        if (type(known_capture) is not KnownR4Capture or pass2 is not None
+                or type(pass1) is not bytes or len(pass1) != FLASH
+                or known_capture.snapshot != pass1
+                or sha(pass1) != pin(expected_capture_sha256)):
+            deny('KNOWN_R4_CAPTURE_NOT_LIVE')
+        witness = known_capture.witness
+        live_rom = witness._rom()
+        if live_rom is None:
+            deny('KNOWN_R4_CAPTURE_SESSION_GONE')
+        require_known_witness(live_rom,witness,known_capture.receipt,
+                              pass1,known_capture.receipt['installed_verified_sha256'])
     pin(board_identity_sha256)
     if (sha(canonical(security)) != pin(expected_security_receipt_sha256)
             or security.get('schema') != 'p7u-stock20260311-security-preflight-v1'
@@ -162,6 +179,11 @@ def _prepare_common(*, candidate: dict, expected_candidate_sha256: str,
         'separate_boot_sector_approval_required': True,
         'interruption_atomic': False, 'automatic_rollback': False,
         'flash_authorized': False, 'flash_performed': False}
+    if known_capture is not None:
+        manifest.update(capture_mode=KNOWN_R4_PROFILE,
+                        fresh_protected_receipt_sha256=sha(canonical(known_capture.receipt)),
+                        installed_verified_image_sha256=
+                            known_capture.receipt['installed_verified_sha256'])
     manifest['plan_sha256'] = sha(canonical(manifest))
     return _frozen(Transition(manifest, pass1, sectors), manifest['plan_sha256'])
 
@@ -184,7 +206,8 @@ def prepare_upgrade(*, installed_plan: Transition, expected_installed_plan_sha25
                     installed_candidate: dict, expected_installed_candidate_sha256: str,
                     installed_app_hex: bytes, installed_handoff: bytes,
                     installed_result: dict, expected_installed_result_sha256: str,
-                    handoff_receipt: bytes, **current) -> Transition:
+                    handoff_receipt: bytes, verified_known_capture=None,
+                    **current) -> Transition:
     """Explicit known-R4 upgrade, from a fresh duplicate same-unit capture.
 
     The previous private frozen plan and successful write receipt bind the
@@ -230,6 +253,26 @@ def prepare_upgrade(*, installed_plan: Transition, expected_installed_plan_sha25
             any(result.get(k) is not False for k in ('nv_touched', 'ccfg_touched',
                                                     'reset_issued', 'automatic_rollback'))):
         deny('INSTALLED_SUCCESS_RECEIPT')
+    if verified_known_capture is not None:
+        from p7u_usb_sparse_capture import KnownR4Capture,require_known_witness
+        installed_image = bytearray(old.snapshot)
+        for address,payload in old.sectors.items():
+            installed_image[address:address + SECTOR] = payload
+        installed_image=bytes(installed_image)
+        if (type(verified_known_capture) is not KnownR4Capture or
+                verified_known_capture.receipt.get('installed_verified_sha256') !=
+                    sha(installed_image)):
+            deny('KNOWN_INSTALLED_SUCCESS_IMAGE_NOT_PROVEN')
+        raw=verified_known_capture.witness._rom()
+        if raw is None:
+            deny('KNOWN_CAPTURE_OWNER_GONE')
+        require_known_witness(raw, verified_known_capture.witness,
+            verified_known_capture.receipt,verified_known_capture.snapshot,
+            sha(installed_image))
+        if (current.get('pass1') != verified_known_capture.snapshot or
+                current.get('pass2') is not None):
+            deny('KNOWN_CAPTURE_MUST_NOT_FAKE_DUPLICATE')
+        current['known_capture'] = verified_known_capture
     plan = _prepare_common(**current)
     if (plan.manifest['board_identity_sha256'] != old.manifest['board_identity_sha256'] or
             plan.manifest['profile_sha256'] != old.manifest['profile_sha256'] or
@@ -454,11 +497,83 @@ async def admit(rom, plan: Transition, *, expected_plan_sha256: str,
     return result
 
 
+KNOWN_R4_MODE = 'KNOWN_R4_FRESH_PROTECTED_FULL_FINAL_SHA'
+
+async def admit_known_r4(rom, plan: Transition, *, expected_plan_sha256: str,
+                         known_capture, expected_live_identity_sha256: str,
+                         security_receipt: dict, expected_security_receipt_sha256: str,
+                         operation_timeout=10.0, session_timeout=600.0):
+    """Distinct known-R4 admission, before mutation, same capture/session only.
+
+    Provenance checked by prepare_upgrade; security must be genuine TI/native.
+    This does not claim two full captures. Every static sector is live ROM CRC
+    checked, protected data captured twice, complete final byte-SHA still required.
+    """
+    from p7u_usb_sparse_capture import (KnownR4Capture,KNOWN_R4_PROFILE,
+                                         require_known_witness)
+    frozen=_frozen(plan,expected_plan_sha256)
+    raw,reader,writer=_transport_session(rom)
+    if (type(known_capture) is not KnownR4Capture or
+            frozen.manifest.get('capture_mode') != KNOWN_R4_MODE or
+            frozen.manifest.get('fresh_protected_receipt_sha256') !=
+                sha(canonical(known_capture.receipt)) or
+            frozen.manifest.get('installed_verified_image_sha256') !=
+                known_capture.receipt.get('installed_verified_sha256') or
+            frozen.snapshot != known_capture.snapshot or
+            known_capture.receipt.get('expected_identity_sha256') !=
+                pin(expected_live_identity_sha256)):
+        deny('KNOWN_R4_CAPTURE_PROVENANCE')
+    sec=copy.deepcopy(security_receipt)
+    if (sha(canonical(sec)) != pin(expected_security_receipt_sha256) or
+            expected_security_receipt_sha256 != frozen.manifest['security_receipt_sha256'] or
+            sec.get('schema') != 'p7u-stock20260311-security-preflight-v1' or
+            sec.get('status') != 'PASS_RETAINED_SECURITY_OFFLINE_ONLY' or
+            sec.get('capture_sha256') != sha(frozen.snapshot) or
+            sec.get('baseline_capture_sha256') is None or
+            sec.get('flash_authorized') is not False or
+            any(sec.get(k) != 0 for k in
+                ('write_attempts','erase_attempts','compaction_attempts'))):
+        deny('KNOWN_R4_NATIVE_SECURITY_NOT_ADMITTED')
+    require_known_witness(raw,known_capture.witness,known_capture.receipt,
+                          frozen.snapshot,
+                          frozen.manifest['installed_verified_image_sha256'])
+    bounded=_bounded(rom,operation_timeout,session_timeout)
+    crc={a:binascii.crc32(frozen.snapshot[a:a+SECTOR]) & 0xffffffff
+         for a in range(0,FLASH,SECTOR)}
+    await _crc_tripwire_all(bounded,crc,expected_live_identity_sha256,
+                           'KNOWN_R4_LIVE_CRC_DRIFT')
+    if not callable(getattr(raw,'assert_read_status',None)):
+        deny('KNOWN_R4_READ_STATUS_FENCE_REQUIRED')
+    await raw.assert_read_status()
+    require_known_witness(raw,known_capture.witness,known_capture.receipt,
+                          frozen.snapshot,
+                          frozen.manifest['installed_verified_image_sha256'],consume=True)
+    observed={a:sha(frozen.snapshot[a:a+SECTOR]) for a in range(0,FLASH,SECTOR)}
+    result={'schema':'p7u-known-r4-admission-v1',
+            'mode':KNOWN_R4_MODE,
+            'plan_sha256':expected_plan_sha256,
+            'capture_receipt_sha256':sha(canonical(known_capture.receipt)),
+            'live_identity_sha256':expected_live_identity_sha256,
+            'observed_sector_sha256':observed,
+            'evidence':'PROVEN_INSTALLED_IMAGE_PLUS_ROM_CRC_ALL88_PLUS_SINGLE_LIVE_CRC_VERIFIED_56K_PROTECTED',
+            'final_verification_required':'ALL88_ROM_SHA',
+            'flash_authorized':False,'flash_performed':False}
+    result['admission_sha256']=sha(canonical(result))
+    _SAME_SESSION_ADMISSIONS[raw]={
+       'reader':reader,'writer':writer,'plan_sha256':expected_plan_sha256,
+       'capture_sha256':result['capture_receipt_sha256'],
+       'identity_sha256':expected_live_identity_sha256,
+       'admission':copy.deepcopy(result),'admitted_monotonic':time.monotonic(),
+       'mode':KNOWN_R4_MODE}
+    return result
+
+
 async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha256: str,
                   expected_admission_sha256: str, capture_receipt: dict,
                   expected_capture_receipt_sha256: str, expected_live_identity_sha256: str,
                   journal, operation_timeout=10.0, session_timeout=600.0,
-                  same_session_fast=False, same_session_sparse=False) -> dict:
+                  same_session_fast=False, same_session_sparse=False,
+                  same_session_known=False) -> dict:
     """One explicit operator operation. Persist journal before each erase.
 
     journal(event) must durably record private events and return True; failures
@@ -466,8 +581,8 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     """
     plan, admission = _frozen(plan, expected_plan_sha256), copy.deepcopy(admission)
     rom = _bounded(rom, operation_timeout, session_timeout)
-    if same_session_fast and same_session_sparse:
-        deny('SHA_AND_SPARSE_MODES_MUTUALLY_EXCLUSIVE')
+    if sum(bool(x) for x in (same_session_fast,same_session_sparse,same_session_known)) > 1:
+        deny('ADMISSION_MODES_MUTUALLY_EXCLUSIVE')
     if same_session_sparse and (
             sha(canonical(capture_receipt)) != pin(expected_capture_receipt_sha256)
             or capture_receipt.get('status') !=
@@ -475,7 +590,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
             or capture_receipt.get('nv_bytes_read') != 0xC000
             or capture_receipt.get('rom_crc32_sector_checks') != FLASH // SECTOR):
         deny('SPARSE_RECEIPT_CHANGED_BEFORE_EXECUTION')
-    if same_session_fast or same_session_sparse:
+    if same_session_fast or same_session_sparse or same_session_known:
         raw, reader, writer = _transport_session(rom)
         witness = _SAME_SESSION_ADMISSIONS.pop(raw, None)  # one-time, no replay
         if (witness is None or witness['reader'] is not reader
@@ -490,7 +605,13 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                      or admission.get('mode') != SPARSE_MODE
                      or admission.get('evidence') !=
                      'ROM_CRC32_ALL88_PLUS_FRESH_48K_NV_NOT_SHA_FULL_CAPTURE'))
-                or (same_session_fast and witness.get('mode') is not None)):
+                or (same_session_fast and witness.get('mode') is not None)
+                or (same_session_known and
+                    (witness.get('mode') != KNOWN_R4_MODE or
+                     admission.get('mode') != KNOWN_R4_MODE or
+                     admission.get('final_verification_required') != 'ALL88_ROM_SHA'
+                     or admission.get('evidence') !=
+                       'PROVEN_INSTALLED_IMAGE_PLUS_ROM_CRC_ALL88_PLUS_SINGLE_LIVE_CRC_VERIFIED_56K_PROTECTED'))):
             deny('SAME_TRANSPORT_SHA_ADMISSION_REQUIRED' if same_session_fast
                  else 'SAME_TRANSPORT_SPARSE_ADMISSION_REQUIRED')
         current = copy.deepcopy(witness['admission'])
@@ -505,8 +626,8 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     expected = dict(current['observed_sector_sha256'])
     expected_crc = {addr: binascii.crc32(plan.snapshot[addr:addr + SECTOR]) & 0xffffffff
                     for addr in range(0, FLASH, SECTOR)}
-    if same_session_fast or same_session_sparse:
-        # SHA for full baseline; known-image CRC + freshly parsed NV for sparse.
+    if same_session_fast or same_session_sparse or same_session_known:
+        # SHA for full baseline; known-image CRC + fresh protected bytes for known.
         await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                'STATE_CHANGED_AFTER_SHA_ADMISSION' if same_session_fast
                                else 'STATE_CHANGED_AFTER_SPARSE_ADMISSION')
@@ -518,14 +639,14 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     # In the exact audited ROM adapter, SEND_DATA already validates GET_STATUS
     # before returning True. Avoid the additional round trip per 252-byte packet.
     # All other adapters and the historical profile retain the second query.
-    embedded_packet_status = (same_session_fast or same_session_sparse) and _verified_wire_status_embedded(raw)
+    embedded_packet_status = (same_session_fast or same_session_sparse or same_session_known) and _verified_wire_status_embedded(raw)
     completed = []
     for address in plan.manifest['program_order']:
         # The whole reserved/NV/boot/CCFG range and next target are re-read
         # before every erase. Only our verified writes may change their pins.
         await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT:
-            if same_session_fast or same_session_sparse:
+            if same_session_fast or same_session_sparse or same_session_known:
                 await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                        'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
             elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -542,7 +663,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         # first irreversible adapter call, rather than trusting stale reads.
         await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT:
-            if same_session_fast or same_session_sparse:
+            if same_session_fast or same_session_sparse or same_session_known:
                 await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                        'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
             elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -560,14 +681,14 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                     deny('BOOT_TAIL_NOT_VERIFIED')
                 expected[BOOT] = sha(partial)
                 expected_crc[BOOT] = binascii.crc32(partial) & 0xffffffff
-                if same_session_fast or same_session_sparse:
+                if same_session_fast or same_session_sparse or same_session_known:
                     await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                            'STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 elif await _observe(rom, expected_live_identity_sha256) != expected:
                     deny('STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 await _journal(rom, journal, {'event': 'BEFORE_BOOT_VECTOR_COMMIT',
                     'address': BOOT, 'plan_sha256': expected_plan_sha256})
-                if same_session_fast or same_session_sparse:
+                if same_session_fast or same_session_sparse or same_session_known:
                     await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                            'STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -595,10 +716,18 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                                'FINAL_ALL88_SPARSE_CRC_PARITY')
     elif await _observe(rom, expected_live_identity_sha256) != expected:
         deny('FINAL_ALL88_PARITY')
+    if same_session_known:
+        raw, _, _ = _transport_session(rom)
+        if not callable(getattr(raw,'assert_read_status',None)):
+            deny('FINAL_READ_STATUS_FENCE_MISSING')
+        await raw.assert_read_status()
     return {'status': ('APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL' if same_session_sparse
                        else 'APP_AND_AC000_VERIFIED_STILL_IN_BSL'),
             'verification_scope': ('WRITTEN_SHA_PLUS_ALL88_ROM_CRC' if same_session_sparse
                                    else 'ALL88_ROM_SHA'),
+            'preflight_scope': (KNOWN_R4_MODE if same_session_known
+                                else SPARSE_MODE if same_session_sparse
+                                else 'FULL_DUPLICATE_CAPTURE'),
             'written_sectors': completed,
             'nv_touched': False, 'ccfg_touched': False, 'reset_issued': False,
             'automatic_rollback': False, 'physical_boot_qualified': False}

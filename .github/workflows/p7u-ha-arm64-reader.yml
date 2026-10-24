@@ -1,0 +1,78 @@
+name: P7U HA ARM64 native security reader (NO RADIO)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/**'
+      - 'firmware/slzb-06p7u/r4/b1/include/**'
+      - '.github/workflows/p7u-ha-arm64-reader.yml'
+      - 'tools/p7u_provision_ha_deps.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  arm64-native-reader:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Exact SHA checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch precise TI donor (no CCS needed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-arm64-reader && cd /tmp/p7u-arm64-reader
+          git init -q examples
+          git -C examples remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git
+          git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples checkout --detach 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples submodule update --init --depth 1 cc13xx_cc26xx_sdk
+          test "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      - name: Build independent ARM64 security readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sdk=/tmp/p7u-arm64-reader/examples/cc13xx_cc26xx_sdk
+          mkdir -p /tmp/p7u-arm64-reader/out
+          python firmware/slzb-06p7u/r4/qualification/stock20260311_security_preflight.py \
+            generate-reader --nvocmp-source "$sdk/source/ti/common/nv/nvocmp.c" \
+            --crc-source "$sdk/source/ti/common/nv/crc.c" \
+            --output /tmp/p7u-arm64-reader/out/security-reader.c
+          gcc -std=c11 -O1 -Wall -Wextra -Werror \
+            -Wno-unused-function -Wno-unused-variable \
+            -Wno-unused-parameter -Wno-sign-compare \
+            -I firmware/slzb-06p7u/r4/b1 \
+            -I firmware/slzb-06p7u/r4/b1/include \
+            /tmp/p7u-arm64-reader/out/security-reader.c \
+            -o /tmp/p7u-arm64-reader/out/security-reader-arm64
+          readelf -h /tmp/p7u-arm64-reader/out/security-reader-arm64 | grep -F 'AArch64'
+          sha256sum /tmp/p7u-arm64-reader/out/security-reader*
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          out=pathlib.Path('/tmp/p7u-arm64-reader/out')
+          digest=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          receipt={'schema':'p7u-native-arm64-reader-v1',
+              'source_sha':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip(),
+              'sdk_sha':'3615ad5d3f4f271258d18a2f5ce1785064ff9a58',
+              'ti_examples_sha':'87ff5b638b632050228a7504f35cf3b95581c278',
+              'platform':'linux-aarch64',
+              'reader_source_sha256':digest(out/'security-reader.c'),
+              'binary_sha256':digest(out/'security-reader-arm64'),
+              'single_pinned_native_build':True,
+              'private_fixture_parity':'NOT_TESTED_ON_HOSTED_RUNNER',
+              'security_preflight_qualified':False,
+              'flash_authorized':False}
+          (out/'reader-arm64-public-receipt.json').write_text(
+              json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Export architecture-specific binary and honest provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-security-reader-linux-arm64
+          path: |
+            /tmp/p7u-arm64-reader/out/security-reader-arm64
+            /tmp/p7u-arm64-reader/out/reader-arm64-public-receipt.json
+          if-no-files-found: error

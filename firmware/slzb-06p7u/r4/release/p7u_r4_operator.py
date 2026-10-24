@@ -359,3 +359,53 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def candidate_verify_fast_single(folder: Path, expected_source: str,
+                                 built_hashes: dict,
+                                 expected_prepared_identity: str) -> dict:
+    """Routine known-R4 fast candidate: ONE actual clean APP build.
+
+    Keep candidate_verify() unchanged for conservative dual-native releases.
+    This proof describes its true compilation count instead of duplicating
+    one artifact in a fake two-replica candidate.
+    """
+    require(folder.is_dir() and digest_ok(expected_prepared_identity),
+            "FAST_SINGLE_PACKAGE_OR_PIN")
+    c=read_json(folder/"candidate.json")
+    require(re.fullmatch("[0-9a-f]{40}",expected_source) and
+            c.get("source_sha")==expected_source and
+            c.get("schema")=="p7u-stock20260311-candidate-v1" and
+            c.get("build_mode")=="SINGLE_CLEAN_APP_PINNED_DEPENDENCIES" and
+            c.get("build_count")==1 and
+            c.get("prepared_identity_sha256")==expected_prepared_identity and
+            c.get("board")=="SLZB-06P7U-r1.73-CC2652P7" and
+            c.get("boot_contract")=="APP0_REQUIRES_SEPARATE_AC000_HANDOFF" and
+            c.get("private_current_capture_and_security_preflight_required") is True and
+            c.get("flash_authorized") is False and
+            c.get("hardware_boot_qualified") is False,
+            "SINGLE_BUILD_CONTRACT_CHANGED")
+    require(type(c.get("replicas")) is list and len(c["replicas"])==1 and
+            c["replicas"][0].get("worker")=="build-1" and
+            c["replicas"][0].get("clean_app_build") is True and
+            c["replicas"][0].get("reused_app_objects") is False,
+            "SINGLE_BUILD_NOT_ACTUALLY_CLEAN")
+    report=c["replicas"][0]
+    require(report.get("source_sha")==expected_source and
+            report.get("dependency_identity")==expected_prepared_identity and
+            report.get("artifact_hashes")==built_hashes and
+            built_hashes.get("app")==c.get("app_hex_sha256") and
+            built_hashes.get("handoff")==c.get("handoff_sha256"),
+            "SINGLE_BUILD_ARTIFACT_BINDING")
+    files=c.get("files")
+    require(type(files) is dict and files and
+            c.get("app_hex_sha256") in files.values() and
+            c.get("handoff_sha256") in files.values() and
+            all(digest_ok(h) for h in files.values()),
+            "SINGLE_BUILD_PACKAGE_FILE_MANIFEST")
+    for name,digest in files.items():
+        p=(folder/name).resolve()
+        require(p.is_relative_to(folder.resolve()) and p.is_file() and
+                sha(p.read_bytes())==digest,
+                "SINGLE_BUILD_FILE_HASH_MISMATCH")
+    return c
