@@ -16,11 +16,17 @@ function createHostTimeoutSink(persist, enabled) {
         if (seen.has(event.kind)) return;
         // Consume before IPC: ambiguous worker delivery must never be replayed.
         seen.add(event.kind);
-        persist({schema: "p7u-b4-native-sample-v1", kind: "FAILED", utc: Date.now(),
-            monotonicReceiveNs: process.hrtime.bigint().toString(), reason: "PASSIVE_HOST_SREQ_TIMEOUT",
-            failureClass: event.kind, submissionState: "NO_DIAGNOSTIC_REQUEST",
-            timingQuality: "HOST_MONOTONIC_TIMEOUT_OBSERVED", sourceAbi: 4, imageRuntimeAttested: false,
-            hostTimeoutKind: event.kind, hostTimeoutAtMs: event.at_ms, hostTimeoutDropped: event.dropped});
+        // Optional evidence must never throw into production SRSP handling.
+        // First delivery consumes this subsystem; ambiguous IPC is not replayed.
+        try {
+            persist({schema: "p7u-b4-native-sample-v1", kind: "FAILED", utc: Date.now(),
+                monotonicReceiveNs: process.hrtime.bigint().toString(), reason: "PASSIVE_HOST_SREQ_TIMEOUT",
+                failureClass: event.kind, submissionState: "NO_DIAGNOSTIC_REQUEST",
+                timingQuality: "HOST_MONOTONIC_TIMEOUT_OBSERVED", sourceAbi: 4, imageRuntimeAttested: false,
+                hostTimeoutKind: event.kind, hostTimeoutAtMs: event.at_ms, hostTimeoutDropped: event.dropped});
+        } catch {
+            return; // worker/IPC problem; do not change the radio or host owner
+        }
     };
 }
 module.exports = {createHostTimeoutSink};

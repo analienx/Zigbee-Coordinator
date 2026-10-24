@@ -1,0 +1,38 @@
+name: P7U B4 passive timeout survives F2 quarantine (NO RADIO)
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/p7u-usb-fast-cutover-20261024
+    paths:
+      - '.github/workflows/p7u-b4-passive-timeout.yml'
+      - 'host/r4-b4/b4_v4_live_collector_overlay.py'
+      - 'host/r4-b4/p7u_host_timeout_sink.cjs'
+      - 'tests/test_p7u_b4_passive_timeout_after_f2.py'
+  pull_request:
+    paths:
+      - '.github/workflows/p7u-b4-passive-timeout.yml'
+      - 'host/r4-b4/b4_v4_live_collector_overlay.py'
+      - 'host/r4-b4/p7u_host_timeout_sink.cjs'
+      - 'tests/test_p7u_b4_passive_timeout_after_f2.py'
+
+permissions:
+  contents: read
+
+jobs:
+  source-only-passive-timeout:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Node 20 for real sink execution
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+      - name: F2-quarantine passive timeout and IPC poison source-only tests
+        run: python -m unittest discover -s tests -p 'test_p7u_b4_passive_timeout_after_f2.py' -v
