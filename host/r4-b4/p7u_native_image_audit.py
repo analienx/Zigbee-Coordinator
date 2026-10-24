@@ -17,7 +17,6 @@ TARGETS = {
     "app/dist/p7u_diagnostic_worker.cjs": "p7u_diagnostic_worker.cjs",
     "app/dist/p7u_host_timeout_sink.cjs": "p7u_host_timeout_sink.cjs",
     "app/dist/p7u_preservation_probe.cjs": "p7u_preservation_probe.cjs",
-    "app/dist/p7u_rom_observer.cjs": "p7u_rom_observer.cjs",
     "app/dist/P7U_SOURCE_SHA.txt": "P7U_SOURCE_SHA.txt",
     "app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/controller/database.js": "herdsman-dist/controller/database.js",
     # H1 startup admission and save-first shutdown MUST be audited too.

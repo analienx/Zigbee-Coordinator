@@ -29,22 +29,6 @@ ORIGINAL_ID='f22d7a3dbf786cb30537a918bf470857ffac085aa973f315c6f303a33e60889b'
 HOLDS={'source-3921b7923025':'b44213ae2b18e7246fe4326635eb83e82ce76aa86b15f85378ba39fa4a228354',
        'source-a5ce68b3b6a4':'f589697ed9f05af5bb607f3646a6da4f7c414f4d63c3f0fa1425aa49fcba4319'}
 ENTRY=['node','/app/dist/p7u_preservation_probe.cjs']
-ROM=False
-REGISTRY_PORT='127.0.0.1:50148:5000'
-COMMAND='SYS_F1_B1Q1_OP0_ONCE'
-
-
-def select_role(receipt):
-    """Two fixed read-only roles, neither admits reset or bootloader entry."""
-    global ROM,ROOT,SLUG,REGISTRY,ENTRY,REGISTRY_PORT,COMMAND
-    need(receipt.get('schema') in ['p7u-preservation-release-v1','p7u-rom-observe-release-v1'],'RELEASE_SCHEMA')
-    ROM=receipt['schema']=='p7u-rom-observe-release-v1'
-    ROOT=Path('/share/p7u-lifecycle/private')/('rom-observe' if ROM else 'preservation-f1')
-    SLUG='local_p7u_rom_observer' if ROM else 'local_p7u_preservation_probe'
-    REGISTRY='p7u_rom_observe_registry' if ROM else 'p7u_preservation_registry'
-    REGISTRY_PORT='127.0.0.1:50149:5000' if ROM else '127.0.0.1:50148:5000'
-    ENTRY=['node','/app/dist/'+('p7u_rom_observer.cjs' if ROM else 'p7u_preservation_probe.cjs')]
-    COMMAND='TI_ROM_PING_CHIPID_NO_ENTRY_OR_RESET' if ROM else 'SYS_F1_B1Q1_OP0_ONCE'
 
 
 def need(value,reason):
@@ -109,13 +93,12 @@ def addon(slug):return api('/addons/'+slug+'/info')
 
 def validate(receipt,config):
     source=receipt['source_sha']
-    need(receipt['schema']==('p7u-rom-observe-release-v1' if ROM else 'p7u-preservation-release-v1') and re.fullmatch('[a-f0-9]{40}',source),'RELEASE_SCHEMA')
-    need(receipt['image_reference']==('localhost:50149/p7u-rom-observe:' if ROM else 'localhost:50148/p7u-preservation:')+'0.1.0-'+source[:12] and
+    need(receipt['schema']=='p7u-preservation-release-v1' and re.fullmatch('[a-f0-9]{40}',source),'RELEASE_SCHEMA')
+    need(receipt['image_reference']=='localhost:50148/p7u-preservation:0.1.0-'+source[:12] and
          receipt['version']=='0.1.0-'+source[:12] and re.fullmatch('sha256:[a-f0-9]{64}',receipt['image_id']), 'SOURCE_IMAGE')
     need(receipt['entrypoint']==ENTRY and sha(config)==receipt['config_sha256'],'CONFIG_OR_ENTRYPOINT')
     need(receipt['radio_reset'] is False and receipt['network_startup'] is False and receipt['nv_write'] is False and
          receipt['audited_filesystem_matches'] is True and receipt['stty_arm64_verified'] is True,'SCOPE')
-    if ROM:need(receipt.get('bootloader_entry') is False,'ROM_ENTRY_FORBIDDEN')
 
 
 def snapshot(allow_probe=False):
@@ -142,16 +125,6 @@ def snapshot(allow_probe=False):
     installed={a['slug'] for a in api('/addons')['addons']}
     if not allow_probe:need(SLUG not in installed and inspect('app_'+SLUG) is None,'PROBE_ALREADY_EXISTS')
     histories={}
-    if ROM:
-        prior=addon('local_p7u_preservation_probe');c=inspect('app_local_p7u_preservation_probe')
-        need(prior['state']=='error' and prior['boot']=='manual' and prior['watchdog'] is False and c and
-             c['Id']=='470d1dad8d171608303d57e6537c11629c08f3cb6f820f3354860b15cd2bf755' and
-             c['Image']=='sha256:f4e235ed927b4c26a7c3b6632523d1de77d028e172ace23baed9b41e9b628ed1' and
-             c['State']['Running'] is False and c['State']['ExitCode']==2,'PRIOR_F1_EPOCH')
-        p=ROOT.parent/'preservation-f1'
-        for name,digest in [('probe.result.json','83b532971cce037fb5eeec6f5e4c6afae57345f19a039dccd918240a89a495eb'),
-                            ('gateway.result.json','469deaf80e57728777fa135ad74a86b1dc6d0d1d0a5c6b78f22fa84d9269a162')]:
-            need(sha(private(p/name))==digest,'PRIOR_F1_EVIDENCE_CHANGED');histories['f1-'+name]=digest
     for folder,expected in HOLDS.items():
         raw=private(ROOT.parent/folder/'journal/events.jsonl')
         need(sha(raw)==expected and json.loads(raw.splitlines()[-1])['phase']=='HOLD','OLD_HOLD_CHANGED');histories[folder]=expected
@@ -198,13 +171,13 @@ def zero_holders():
 
 
 def planned(receipt,evidence):
-    return {'schema':'p7u-rom-observe-plan-v1' if ROM else 'p7u-preservation-f1-plan-v1','source_sha':receipt['source_sha'],'operation_id':OPERATION,
-            'command':COMMAND,'serial_by_id':PORT,'image_id':receipt['image_id'],'original_container_id':ORIGINAL_ID,**evidence}
+    return {'schema':'p7u-preservation-f1-plan-v1','source_sha':receipt['source_sha'],'operation_id':OPERATION,
+            'command':'SYS_F1_B1Q1_OP0_ONCE','serial_by_id':PORT,'image_id':receipt['image_id'],'original_container_id':ORIGINAL_ID,**evidence}
 
 
 def remote(payload):
     need(set(payload)=={'mode','release','config_b64','expected_plan_hash'} and payload['mode'] in ['plan','stage','execute'],'PAYLOAD_SCHEMA')
-    receipt=payload['release'];select_role(receipt);config=base64.b64decode(payload['config_b64'],validate=True);validate(receipt,config)
+    receipt=payload['release'];config=base64.b64decode(payload['config_b64'],validate=True);validate(receipt,config)
     with lock():
         if payload['mode'] in ['plan','stage']:
             need(not ROOT.exists() and not ROOT.is_symlink(),'PROBE_DIRECTORY_EXISTS_NO_REPLAY')
@@ -225,7 +198,7 @@ def remote(payload):
         need(inspect(REGISTRY) is None,'REGISTRY_EXISTS_NO_REPLAY')
         unique(ROOT/'install.intent.json',canonical({'plan_sha256':ph,'utc':time.time()}))
         command(['docker','pull',REGISTRY_IMAGE])
-        command(['docker','run','--detach','--name',REGISTRY,'--restart=no','--publish',REGISTRY_PORT,
+        command(['docker','run','--detach','--name',REGISTRY,'--restart=no','--publish','127.0.0.1:50148:5000',
                  '--log-driver','json-file','--log-opt','max-size=2m','--log-opt','max-file=2',REGISTRY_IMAGE])
         registry=inspect(REGISTRY)
         try:
@@ -233,7 +206,7 @@ def remote(payload):
             image=json.loads(command(['docker','image','inspect',receipt['image_reference']]))[0]
             need(image['Id']==receipt['image_id'] and image['Architecture']=='arm64' and image['Config']['Entrypoint']==ENTRY and not image['Config'].get('Cmd'),'IMAGE_ROLE_CHANGED')
             command(['docker','push',receipt['image_reference']])
-            destination=Path('/addons/local')/SLUG.removeprefix('local_');need(not destination.exists() and not destination.is_symlink(),'SOURCE_DIRECTORY_EXISTS')
+            destination=Path('/addons/local/p7u_preservation_probe');need(not destination.exists() and not destination.is_symlink(),'SOURCE_DIRECTORY_EXISTS')
             destination.mkdir(mode=0o755);unique(destination/'config.yaml',config)
             api('/store/reload',{});api('/addons/'+SLUG+'/install',{})
             info=addon(SLUG);need(info['version']==receipt['version'] and info['boot']=='manual' and info['watchdog'] is False and info['build'] is False and info['state']=='stopped','PROBE_PROFILE_NOT_MANUAL')
@@ -264,28 +237,24 @@ def remote(payload):
                 log_result=subprocess.run(['docker','logs',c['Id']],capture_output=True,timeout=15)
                 need(log_result.returncode==0,'PROBE_LOG_UNAVAILABLE');logs=log_result.stdout+log_result.stderr
             if logs:unique(ROOT/'probe.private.log',logs)
-            post_proofs=zero_holders()
+            zero_holders()
             need(json.loads(raw)==planned(receipt,snapshot(allow_probe=True)),'ORIGINAL_HOSTS_OR_DATA_CHANGED')
             result=json.loads(private(ROOT/'probe.result.json')) if (ROOT/'probe.result.json').exists() else {'status':'RESULT_MISSING_STATE_UNKNOWN'}
             report={'schema':'p7u-preservation-gateway-result-v1','source_sha':receipt['source_sha'],'operation_id':OPERATION,
-                    'plan_sha256':ph,'start_ack':start_status,'result':result,'old_hosts_preserved':True,'post_probe_zero_holders':True,
-                    'post_probe_host_proofs':post_proofs,'probe_container_id':c['Id'] if c else None}
+                    'plan_sha256':ph,'start_ack':start_status,'result':result,'old_hosts_preserved':True,'post_probe_zero_holders':True}
             unique(ROOT/'gateway.result.json',canonical(report));return report
         finally:
             if inspect(REGISTRY) is not None and inspect(REGISTRY)['Id']==registry['Id']:command(['docker','stop',REGISTRY],timeout=30)
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','apply']);p.add_argument('--release',type=Path,required=True);p.add_argument('--expected-plan-hash',default='');p.add_argument('--rom-observe',action='store_true')
+    p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','apply']);p.add_argument('--release',type=Path,required=True);p.add_argument('--expected-plan-hash',default='')
     a=p.parse_args();directory=a.release.resolve(strict=True)
     need(directory.is_relative_to(Path('C:/Workspace/artifacts').resolve()),'ARTIFACT_LOCATION')
-    receipt=json.loads((directory/('ROM_OBSERVE_RELEASE.json' if a.rom_observe else 'PRESERVATION_RELEASE.json')).read_text());select_role(receipt)
-    need(ROM is a.rom_observe,'CLI_ROLE_MISMATCH')
-    config=(directory/('rom-observe-config.yaml' if ROM else 'preservation-config.yaml')).read_bytes()
+    receipt=json.loads((directory/'PRESERVATION_RELEASE.json').read_text());config=(directory/'preservation-config.yaml').read_bytes()
     validate(receipt,config)
     need(sha(Path(__file__).read_bytes())==receipt['gateway_sha256'],'GATEWAY_NOT_QUALIFIED')
-    archive=directory/('p7u-rom-observe-arm64.docker.tar' if ROM else 'p7u-preservation-arm64.docker.tar')
-    with archive.open('rb') as stream:need(hashlib.file_digest(stream,'sha256').hexdigest()==receipt['archive_sha256'],'ARTIFACT_CHANGED')
+    with (directory/'p7u-preservation-arm64.docker.tar').open('rb') as stream:need(hashlib.file_digest(stream,'sha256').hexdigest()==receipt['archive_sha256'],'ARTIFACT_CHANGED')
     checks=json.loads(subprocess.check_output(['gh','api','repos/analienx/Zigbee-Coordinator/commits/'+receipt['source_sha']+'/check-runs?per_page=100']))['check_runs']
     for label in ['unittest','exact-herdsman-hold','b4-herdsman-real-source']:
         found=[c for c in checks if c['name'].endswith(label)]
@@ -302,7 +271,7 @@ def main():
     if a.mode=='plan':return
     need(a.expected_plan_hash==plan['plan_hash'],'PLAN_NOT_EXACT')
     invoke('stage',a.expected_plan_hash)
-    subprocess.run(['scp','-o','BatchMode=yes',str(archive),'ha:'+str(ROOT/'image.docker.tar')],check=True,timeout=120)
+    subprocess.run(['scp','-o','BatchMode=yes',str(directory/'p7u-preservation-arm64.docker.tar'),'ha:'+str(ROOT/'image.docker.tar')],check=True,timeout=120)
     invoke('execute',a.expected_plan_hash)
 
 

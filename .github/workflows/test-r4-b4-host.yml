@@ -93,7 +93,7 @@ jobs:
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Adversarial no-serial worker durability tests (offline GH-hosted)
         run: |
-          node --test host/r4-b4/test-p7u-diagnostic-worker.cjs host/r4-b4/test-p7u-host-timeout-sink.cjs host/r4-b4/test-p7u-preservation.cjs host/r4-b4/test-p7u-rom-observer.cjs
+          node --test host/r4-b4/test-p7u-diagnostic-worker.cjs host/r4-b4/test-p7u-host-timeout-sink.cjs host/r4-b4/test-p7u-preservation.cjs
           python host/r4-b4/test-p7u-preservation-gateway.py -v
       - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
         run: |
@@ -152,7 +152,6 @@ jobs:
           cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_diagnostic_worker.cjs" "$root/p7u_diagnostic_worker.cjs"
           cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_host_timeout_sink.cjs" "$root/p7u_host_timeout_sink.cjs"
           cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_preservation_probe.cjs" "$root/p7u_preservation_probe.cjs"
-          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_rom_observer.cjs" "$root/p7u_rom_observer.cjs"
           cp dist/extension/otaUpdate.js "$root/z2m-otaUpdate.js"
           cp -a "$B4_HERDSMAN_ROOT/dist" "$root/herdsman-dist"
           cp "$GITHUB_WORKSPACE/host/r4-b4/p7u-z2m-native-collector.Dockerfile" "$root/Dockerfile"
@@ -221,11 +220,11 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/p7u-staged-addon/herdsman-dist
           cp host/r4-b4/ha-addon/{Dockerfile,config.yaml} /tmp/p7u-staged-addon/
-          cp /tmp/p7u-r4-native-image/{z2m-controller.js,z2m-otaUpdate.js,p7u_diagnostic_worker.cjs,p7u_host_timeout_sink.cjs,p7u_preservation_probe.cjs,p7u_rom_observer.cjs,P7U_SOURCE_SHA.txt} /tmp/p7u-staged-addon/
+          cp /tmp/p7u-r4-native-image/{z2m-controller.js,z2m-otaUpdate.js,p7u_diagnostic_worker.cjs,p7u_host_timeout_sink.cjs,p7u_preservation_probe.cjs,P7U_SOURCE_SHA.txt} /tmp/p7u-staged-addon/
           cp -a /tmp/p7u-r4-native-image/herdsman-dist/. /tmp/p7u-staged-addon/herdsman-dist/
           test -s /tmp/p7u-staged-addon/p7u_diagnostic_worker.cjs
           test -s /tmp/p7u-staged-addon/p7u_host_timeout_sink.cjs
-          grep -Fq 'COPY p7u_diagnostic_worker.cjs p7u_host_timeout_sink.cjs p7u_preservation_probe.cjs p7u_rom_observer.cjs P7U_SOURCE_SHA.txt /app/dist/' /tmp/p7u-staged-addon/Dockerfile
+          grep -Fq 'COPY p7u_diagnostic_worker.cjs p7u_host_timeout_sink.cjs p7u_preservation_probe.cjs P7U_SOURCE_SHA.txt /app/dist/' /tmp/p7u-staged-addon/Dockerfile
           grep -q 'P7U_APPROVED_DB_MANIFEST:' /tmp/p7u-staged-addon/config.yaml
           grep -q 'COPY p7u_diagnostic_worker.cjs' /tmp/p7u-staged-addon/Dockerfile
           tar -C /tmp -czf /tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz p7u-staged-addon
@@ -281,33 +280,6 @@ jobs:
             'entrypoint':meta['Config']['Entrypoint'],'archive_sha256':archive,'config_sha256':hashlib.sha256((root/'preservation-config.yaml').read_bytes()).hexdigest(),
             'gateway_sha256':hashlib.sha256((root/'p7u_preservation_gateway.py').read_bytes()).hexdigest(),'audited_filesystem_matches':True,'stty_arm64_verified':True,'radio_reset':False,'network_startup':False,'nv_write':False}
           (root/'PRESERVATION_RELEASE.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
-          PY
-      - name: Seal fixed ROM observation role without entering BSL or resetting
-        run: |
-          set -euo pipefail
-          tag="localhost:50149/p7u-rom-observe:0.1.0-${B4_SOURCE_SHA:0:12}"
-          root=/tmp/p7u-r4-host-image-artifact
-          docker buildx build --platform linux/arm64 --target rom-observe --tag "$tag" --file /tmp/p7u-r4-native-image/Dockerfile --output type=docker,dest="$root/p7u-rom-observe-arm64.docker.tar" /tmp/p7u-r4-native-image
-          docker load --input "$root/p7u-rom-observe-arm64.docker.tar"
-          python - <<'PY'
-          import hashlib,json,os,subprocess
-          from pathlib import Path
-          import yaml
-          root=Path('/tmp/p7u-r4-host-image-artifact');source=os.environ['B4_SOURCE_SHA'];version='0.1.0-'+source[:12]
-          ref='localhost:50149/p7u-rom-observe:'+version
-          meta=json.loads(subprocess.check_output(['docker','image','inspect',ref]))[0]
-          normal=json.loads(subprocess.check_output(['docker','image','inspect','p7u-r4-collector:sha-'+source[:12]]))[0]
-          assert meta['Architecture']=='arm64' and meta['Config']['Entrypoint']==['node','/app/dist/p7u_rom_observer.cjs'] and not meta['Config'].get('Cmd')
-          assert meta['RootFS']['Layers']==normal['RootFS']['Layers']
-          config=yaml.safe_load((root/'preservation-config.yaml').read_text())
-          config.update(name='P7U ROM observation (no reset)',slug='p7u_rom_observer',image='localhost:50149/p7u-rom-observe',
-            description='One fixed ROM ping/identity observation. No BSL entry, reset, flash, NV or network startup.')
-          config_raw=yaml.safe_dump(config,sort_keys=False).encode();(root/'rom-observe-config.yaml').write_bytes(config_raw)
-          r=json.loads((root/'PRESERVATION_RELEASE.json').read_text())
-          with (root/'p7u-rom-observe-arm64.docker.tar').open('rb') as f:archive=hashlib.file_digest(f,'sha256').hexdigest()
-          r.update(schema='p7u-rom-observe-release-v1',image_reference=ref,image_id=meta['Id'],entrypoint=meta['Config']['Entrypoint'],
-            archive_sha256=archive,config_sha256=hashlib.sha256(config_raw).hexdigest(),bootloader_entry=False)
-          (root/'ROM_OBSERVE_RELEASE.json').write_text(json.dumps(r,sort_keys=True,indent=2)+'\n')
           PY
       - name: Publish candidate image for separately authorized rollout
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

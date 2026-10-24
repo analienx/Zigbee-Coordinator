@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 spec=importlib.util.spec_from_file_location('preservation_gateway',Path(__file__).with_name('p7u_preservation_gateway.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-SELECT_ROLE=m.select_role
 
 
 def payload(mode='plan'):
@@ -22,11 +21,6 @@ def payload(mode='plan'):
 
 
 class Tests(unittest.TestCase):
-    def setUp(self):
-        SELECT_ROLE(payload()['release'])
-        selected=patch.object(m,'select_role',lambda receipt:None)
-        selected.start();self.addCleanup(selected.stop)
-
     def test_original_lifecycle_buttons_flash_and_arbitrary_posts_are_rejected(self):
         for path in ['/addons/45df7312_zigbee2mqtt/start','/addons/local_p7u_r4_native_host/start','/core/api/services/button/press',
                      '/addons/'+m.SLUG+'/security','/addons/foreign/start']:
@@ -67,26 +61,6 @@ class Tests(unittest.TestCase):
             (m.ROOT/'sentinel').write_text('unchanged')
             with self.assertRaisesRegex(RuntimeError,'DIRECTORY_EXISTS_NO_REPLAY'):m.remote(payload())
             read.assert_not_called();self.assertEqual((m.ROOT/'sentinel').read_text(),'unchanged')
-
-    def test_rom_role_is_fixed_and_never_admits_bootloader_entry(self):
-        p=payload();r=p['release'];r.update(schema='p7u-rom-observe-release-v1',
-            image_reference='localhost:50149/p7u-rom-observe:0.1.0-'+'a'*12,
-            entrypoint=['node','/app/dist/p7u_rom_observer.cjs'],bootloader_entry=False)
-        SELECT_ROLE(r);m.validate(r,base64.b64decode(p['config_b64']))
-        self.assertEqual(m.SLUG,'local_p7u_rom_observer')
-        self.assertEqual(str(m.ROOT),'/share/p7u-lifecycle/private/rom-observe')
-        self.assertEqual(m.planned(r,{})['command'],'TI_ROM_PING_CHIPID_NO_ENTRY_OR_RESET')
-        for field in ['bootloader_entry','radio_reset','network_startup','nv_write']:
-            bad=dict(r);bad[field]=True
-            with self.subTest(field=field),self.assertRaises(RuntimeError):m.validate(bad,base64.b64decode(p['config_b64']))
-
-    def test_rom_role_cannot_post_to_native_buttons_or_the_previous_f1_app(self):
-        r=payload()['release'];r['schema']='p7u-rom-observe-release-v1';SELECT_ROLE(r)
-        for endpoint in ['/core/api/services/button/press','/addons/local_p7u_preservation_probe/start',
-                         '/addons/45df7312_zigbee2mqtt/start']:
-            with self.subTest(endpoint=endpoint),patch.object(m,'build_opener') as http:
-                with self.assertRaisesRegex(RuntimeError,'UNAPPROVED_HTTP_MUTATION'):m.api(endpoint,{})
-                http.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

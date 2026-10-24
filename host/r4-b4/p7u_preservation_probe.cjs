@@ -27,9 +27,7 @@ function unique(file, value) {
     const dir = fs.openSync(path.dirname(file), "r");
     try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}
 }
-function admission(root, source, checkData = true, role = "f1") {
-    requireSafe(role === "f1" || role === "rom-observe", "ROLE");
-    const rom = role === "rom-observe";
+function admission(root, source, checkData = true) {
     const st = fs.lstatSync(root);
     requireSafe(st.isDirectory() && !st.isSymbolicLink() && (st.mode & 0o077) === 0 &&
         (typeof process.getuid !== "function" || st.uid === process.getuid()), "PRIVATE_DIRECTORY");
@@ -38,9 +36,9 @@ function admission(root, source, checkData = true, role = "f1") {
     requireSafe(/^[a-f0-9]{64}$/.test(pin) && hash(raw) === pin, "PLAN_HASH");
     const plan = JSON.parse(raw);
     requireSafe(Object.keys(plan).sort().join() === [...FIELDS].sort().join() &&
-        plan.schema === (rom ? "p7u-rom-observe-plan-v1" : "p7u-preservation-f1-plan-v1") && plan.operation_id === OPERATION &&
+        plan.schema === "p7u-preservation-f1-plan-v1" && plan.operation_id === OPERATION &&
         /^[a-f0-9]{40}$/.test(source) && plan.source_sha === source && plan.serial_by_id === PORT &&
-        plan.command === (rom ? "TI_ROM_PING_CHIPID_NO_ENTRY_OR_RESET" : "SYS_F1_B1Q1_OP0_ONCE") && /^sha256:[a-f0-9]{64}$/.test(plan.image_id) &&
+        plan.command === "SYS_F1_B1Q1_OP0_ONCE" && /^sha256:[a-f0-9]{64}$/.test(plan.image_id) &&
         /^[a-f0-9]{64}$/.test(plan.original_container_id) &&
         [plan.database_sha256,plan.backup_sha256].every(v => /^[a-f0-9]{64}$/.test(v)), "PLAN_SCHEMA");
     for (const key of ["history_sha256","prior_result_sha256"]) {
