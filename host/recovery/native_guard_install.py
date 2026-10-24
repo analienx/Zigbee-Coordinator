@@ -4,6 +4,7 @@ The qualified deployer supplies a fixed hash-bound payload, never shell text.
 An interrupted deployment retains its global intent and requires reconciliation.
 """
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -17,6 +18,10 @@ GUARD='local_p7u_recovery'
 OWNERS=('45df7312_zigbee2mqtt','local_p7u_r4_native_host','local_p7u_r4_fallback')
 ROOT=Path('/share/p7u-native-guard-024')
 REGISTRY='p7u_native_guard_registry'
+PREVIOUS_SOURCE='06bc5964a82c484d4a073a43b1dc5afe77f47cad'
+PREVIOUS_IMAGE='sha256:9a61186a57af776a39c17321aece53973cee6b472a69461c931e5af8c2915b4d'
+PREVIOUS_PLAN='7bb7ba05ecf158b527465337952522662e5e584a1baaf7dc780058f27d7a8ff1'
+UPGRADE_REGISTRY='p7u_native_guard_registry_v2'
 REGISTRY_IMAGE='registry@sha256:01cd312e67026f06f5d89c3e133a4a9adc7cb9eeb9b1194e0b2954dfd770efd2'
 
 
@@ -50,9 +55,9 @@ def inspect(name):
     return {'id':c['Id'],'image':c['Image'],'running':s['Running'],'pid':s['Pid'],'started_at':s['StartedAt']}
 
 
-def snapshot():
+def snapshot(previous=None):
     info=api('/addons/'+GUARD+'/info');opts=info['options']
-    assert info['state']=='started' and info['version']=='0.2.3' and info['boot']=='manual' and info['watchdog'] is False
+    assert info['state']=='started' and info['version']==('0.2.4-'+PREVIOUS_SOURCE[:12] if previous else '0.2.3') and info['boot']=='manual' and info['watchdog'] is False
     assert opts['enabled'] is False and opts['dry_run'] is True and opts['serial_owner_approved'] is False
     assert opts['allow_private_http_fallback'] is False and opts['notify_on_confirmed_hang'] is True
     assert opts['esp_restart_entity']=='button.slzb_06p7u_core_restart' and opts['zigbee_restart_entity']=='button.slzb_06p7u_zigbee_restart'
@@ -62,11 +67,13 @@ def snapshot():
         assert data['watchdog'] is False and data['boot']=='manual' and data['state'] in ['started','error','stopped']
         owners[slug]={'state':data['state'],'version':data['version'],'options_hash':digest(data['options']),'container':inspect('app_'+slug)}
     guard=inspect('app_'+GUARD);assert guard and guard['running']
+    if previous:assert guard['image']==PREVIOUS_IMAGE and guard['id']==previous['guard_container_id']
     return {'guard':guard,'guard_version':info['version'],'options_hash':digest(opts),'owners':owners}
 
 
 def validate_payload(payload):
-    assert set(payload)=={'mode','release','config_b64','expected_plan_hash'} and payload['mode'] in ['plan','apply']
+    assert set(payload) in ({'mode','release','config_b64','expected_plan_hash'},{'mode','release','config_b64','expected_plan_hash','reconcile_previous'}) and payload['mode'] in ['plan','apply']
+    if 'reconcile_previous' in payload:assert payload['reconcile_previous']==PREVIOUS_SOURCE
     receipt=payload['release'];sha=receipt['source_sha']
     assert re.fullmatch('[a-f0-9]{40}',sha) and receipt['schema']=='p7u-native-guard-release-v1'
     assert receipt['version']=='0.2.4-'+sha[:12] and receipt['image_reference']=='localhost:50146/p7u-native-guard:'+receipt['version']
@@ -93,21 +100,52 @@ print(json.dumps({str(f.relative_to(p)):hashlib.sha256(f.read_bytes()).hexdigest
     return json.loads(command(['docker','exec','app_'+GUARD,'python','-c',code]))
 
 
+@contextmanager
+def deployment_lock():
+    import fcntl
+    fd=os.open('/share/p7u-lifecycle/private/exclusive-manager.lock',os.O_RDWR|os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        yield
+    finally:os.close(fd)
+
+
+def verified_previous():
+    intent=ROOT/'active-deployment.json';receipt=ROOT/PREVIOUS_SOURCE/'receipt.json'
+    assert (ROOT/PREVIOUS_SOURCE).is_dir() and not (ROOT/PREVIOUS_SOURCE).is_symlink()
+    for p in [intent,receipt]:assert p.is_file() and not p.is_symlink() and p.stat().st_size<65536
+    iraw=intent.read_bytes();rraw=receipt.read_bytes();i=json.loads(iraw);r=json.loads(rraw)
+    assert i['plan_hash']==PREVIOUS_PLAN and i['plan']['source_sha']==PREVIOUS_SOURCE and i['plan']['image_id']==PREVIOUS_IMAGE
+    assert r['status']=='GUARD_PREBUILT_DEPLOYED_UNARMED' and r['plan_hash']==PREVIOUS_PLAN and r['source_sha']==PREVIOUS_SOURCE
+    assert r['image_id']==PREVIOUS_IMAGE and r['version']=='0.2.4-'+PREVIOUS_SOURCE[:12]
+    assert all(r[k] is True for k in ['options_preserved','ledger_preserved','zigbee_hosts_unchanged']) and r['resets_enabled'] is False
+    return {'source_sha':PREVIOUS_SOURCE,'guard_container_id':r['container_id'],'intent_sha256':hashlib.sha256(iraw).hexdigest(),'receipt_sha256':hashlib.sha256(rraw).hexdigest()}
+
+
 def install(payload):
+    with deployment_lock():return _install_locked(payload)
+
+
+def _install_locked(payload):
     receipt,config=validate_payload(payload)
     assert not ROOT.is_symlink()
     if ROOT.exists():assert ROOT.is_dir() and ROOT.stat().st_mode&0o077==0
-    assert not (ROOT/'active-deployment.json').exists() and not (ROOT/'active-deployment.json').is_symlink()
-    before=snapshot()
+    upgrading='reconcile_previous' in payload
+    previous=verified_previous() if upgrading else None
+    intent=ROOT/('active-upgrade-from-'+PREVIOUS_SOURCE[:12]+'.json' if upgrading else 'active-deployment.json')
+    assert not intent.exists() and not intent.is_symlink()
+    registry_name=UPGRADE_REGISTRY if upgrading else REGISTRY
+    if upgrading:assert receipt['source_sha']!=PREVIOUS_SOURCE
+    before=snapshot(previous)
     plan={'operation':'install_prebuilt_native_guard_only','source_sha':receipt['source_sha'],
-          'image_id':receipt['image_id'],'config_sha256':receipt['files']['config.yaml'],'before':before}
+          'image_id':receipt['image_id'],'config_sha256':receipt['files']['config.yaml'],'before':before,'reconciled_previous':previous}
     ph=digest(plan)
     if payload['mode']=='plan':return {'status':'GUARD_ONLY_PLAN','plan_hash':ph,'plan':plan}
     if payload['expected_plan_hash']!=ph:raise RuntimeError('STALE_PLAN_HASH')
     directory=ROOT/receipt['source_sha'];archive=directory/'image.docker.tar'
     assert directory.is_dir() and directory.stat().st_mode&0o077==0 and not directory.is_symlink() and not archive.is_symlink()
     with archive.open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==receipt['files']['image.docker.tar']
-    unique(ROOT/'active-deployment.json',(json.dumps({'plan_hash':ph,'plan':plan},sort_keys=True)+'\n').encode())
+    unique(intent,(json.dumps({'plan_hash':ph,'plan':plan},sort_keys=True)+'\n').encode())
     old_options=api('/addons/'+GUARD+'/info')['options'];assert digest(old_options)==before['options_hash']
     unique(directory/'options.private.json',(json.dumps(old_options,sort_keys=True)+'\n').encode())
     ledger=protected_ledger();unique(directory/'ledger-before.json',json.dumps(ledger,sort_keys=True).encode())
@@ -115,20 +153,20 @@ def install(payload):
     assert 0<len(backup)<64*1024*1024;unique(directory/'guard-data-before.private.tar',backup)
     src=Path('/addons/local/p7u_recovery');assert src.is_dir() and not src.is_symlink() and not (src/'config.yaml').is_symlink()
     shutil.copytree(src,directory/'sources-before')
-    if inspect(REGISTRY) is not None:raise RuntimeError('REGISTRY_ALREADY_EXISTS; RECONCILE_BEFORE_RETRY')
+    if inspect(registry_name) is not None:raise RuntimeError('REGISTRY_ALREADY_EXISTS; RECONCILE_BEFORE_RETRY')
     command(['docker','pull',REGISTRY_IMAGE])
-    command(['docker','run','--detach','--name',REGISTRY,'--label','p7u.issue=143','--restart=no',
+    command(['docker','run','--detach','--name',registry_name,'--label','p7u.issue=143','--restart=no',
              '--publish','127.0.0.1:50146:5000','--log-driver','json-file','--log-opt','max-size=2m','--log-opt','max-file=2',REGISTRY_IMAGE])
-    registry=inspect(REGISTRY)
+    registry=inspect(registry_name)
     try:
         command(['docker','load','--input',str(archive)])
         image=json.loads(command(['docker','image','inspect',receipt['image_reference']]))[0]
         assert image['Id']==receipt['image_id'] and image['Architecture']=='arm64' and image['Config']['Labels']['org.opencontainers.image.revision']==receipt['source_sha']
         command(['docker','push',receipt['image_reference']])
-        assert snapshot()==before
+        assert snapshot(previous)==before
         temporary=src/'config.yaml.p7u-new';unique(temporary,config);os.replace(temporary,src/'config.yaml')
         api('/store/reload',{})
-        assert snapshot()==before
+        assert snapshot(previous)==before
         api('/addons/'+GUARD+'/stop',{})
         api('/addons/'+GUARD+'/update',{})
         info=api('/addons/'+GUARD+'/info')
@@ -149,7 +187,7 @@ def install(payload):
         unique(directory/'receipt.json',(json.dumps(result,sort_keys=True)+'\n').encode())
         return result
     finally:
-        if inspect(REGISTRY)==registry:command(['docker','stop',REGISTRY],timeout=30)
+        if inspect(registry_name)==registry:command(['docker','stop',registry_name],timeout=30)
 
 
 if __name__=='__main__':print(json.dumps(install(PAYLOAD),sort_keys=True),flush=True)

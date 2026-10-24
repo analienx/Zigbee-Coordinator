@@ -43,9 +43,10 @@ def verify_release(directory):
     return directory,receipt
 
 
-def remote(directory,receipt,mode,expected=''):
+def remote(directory,receipt,mode,expected='',previous=None):
     payload={'mode':mode,'release':receipt,'config_b64':base64.b64encode((directory/'config.yaml').read_bytes()).decode(),
              'expected_plan_hash':expected}
+    if previous is not None:payload['reconcile_previous']=previous
     source='PAYLOAD = '+repr(payload)+'\n'+(directory/'native_guard_install.py').read_text()
     p=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8','ha','python3','-'],
                      input=source,capture_output=True,text=True,timeout=650)
@@ -57,15 +58,16 @@ def remote(directory,receipt,mode,expected=''):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['plan','apply'])
     parser.add_argument('--release',type=Path,required=True);parser.add_argument('--expected-plan-hash',default='')
+    parser.add_argument('--reconcile-previous',choices=['06bc5964a82c484d4a073a43b1dc5afe77f47cad'])
     args=parser.parse_args();directory,receipt=verify_release(args.release)
-    if args.mode=='plan':remote(directory,receipt,'plan');return
-    current=remote(directory,receipt,'plan')
+    if args.mode=='plan':remote(directory,receipt,'plan',previous=args.reconcile_previous);return
+    current=remote(directory,receipt,'plan',previous=args.reconcile_previous)
     if args.expected_plan_hash!=current['plan_hash']:raise RuntimeError('PLAN_HASH_NOT_EXACT')
     target='/share/p7u-native-guard-024/'+receipt['source_sha']
     setup='from pathlib import Path\np=Path('+repr(target)+')\nr=p.parent\nassert not r.is_symlink()\nr.mkdir(mode=0o700,exist_ok=True)\nassert r.stat().st_mode&0o077==0\nassert not p.exists()\np.mkdir(mode=0o700)\n'
     subprocess.run(['ssh','-o','BatchMode=yes','ha','python3','-'],input=setup,text=True,check=True,timeout=20)
     subprocess.run(['scp','-o','BatchMode=yes',str(directory/'image.docker.tar'),'ha:'+target+'/image.docker.tar'],check=True,timeout=120)
-    remote(directory,receipt,'apply',args.expected_plan_hash)
+    remote(directory,receipt,'apply',args.expected_plan_hash,previous=args.reconcile_previous)
 
 
 if __name__=='__main__':main()

@@ -1,5 +1,6 @@
 """Hosted-only adversarial controls; no live HA, registry or radio operations."""
 import base64
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -26,6 +27,10 @@ def payload():
 
 
 class Tests(unittest.TestCase):
+    def setUp(self):
+        p=patch.object(r,'deployment_lock',side_effect=lambda:nullcontext())
+        p.start();self.addCleanup(p.stop)
+
     def test_only_known_guard_mutations_accepted_before_any_http(self):
         for target in ['/addons/45df7312_zigbee2mqtt/start','/addons/local_p7u_r4_native_host/start',
                        '/core/api/services/button/press','/addons/local_p7u_recovery/security','/api2']:
@@ -93,6 +98,47 @@ class Tests(unittest.TestCase):
                 self.assertEqual(m.verify_release(directory)[1]['source_sha'],'a'*40)
                 (directory/'image.docker.tar').write_bytes(b'tampered')
                 with self.assertRaisesRegex(RuntimeError,'ARTIFACT_HASH_CHANGED'):m.verify_release(directory)
+
+    def previous(self, directory):
+        previous=directory/r.PREVIOUS_SOURCE;previous.mkdir()
+        intent={'plan_hash':r.PREVIOUS_PLAN,'plan':{'source_sha':r.PREVIOUS_SOURCE,'image_id':r.PREVIOUS_IMAGE}}
+        result={'status':'GUARD_PREBUILT_DEPLOYED_UNARMED','source_sha':r.PREVIOUS_SOURCE,
+            'image_id':r.PREVIOUS_IMAGE,'version':'0.2.4-'+r.PREVIOUS_SOURCE[:12],'plan_hash':r.PREVIOUS_PLAN,
+            'options_preserved':True,'ledger_preserved':True,'zigbee_hosts_unchanged':True,'resets_enabled':False,
+            'container_id':'qualified-old-container'}
+        (directory/'active-deployment.json').write_text(json.dumps(intent))
+        (previous/'receipt.json').write_text(json.dumps(result))
+        return previous
+
+    def test_only_exact_completed_predecessor_is_admitted(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(r,'ROOT',Path(temporary)):
+            path=self.previous(Path(temporary))
+            result=r.verified_previous()
+            self.assertEqual(result['guard_container_id'],'qualified-old-container')
+            p=path/'receipt.json';d=json.loads(p.read_text());d['status']='HOLD';p.write_text(json.dumps(d))
+            with self.assertRaises(AssertionError):r.verified_previous()
+
+    def test_explicit_upgrade_keeps_old_intent_and_hash_binds_its_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(r,'ROOT',Path(temporary)), \
+             patch.object(r,'snapshot',return_value={'guard':'known-current','options_hash':'c'*64}), \
+             patch.object(r,'command') as command,patch.object(r,'unique') as write:
+            path=self.previous(Path(temporary));old=(Path(temporary)/'active-deployment.json').read_bytes()
+            p=payload();p['reconcile_previous']=r.PREVIOUS_SOURCE
+            result=r.install(p)
+            self.assertEqual(result['plan']['reconciled_previous']['source_sha'],r.PREVIOUS_SOURCE)
+            self.assertEqual((Path(temporary)/'active-deployment.json').read_bytes(),old)
+            (Path(temporary)/('active-upgrade-from-'+r.PREVIOUS_SOURCE[:12]+'.json')).write_text('{}')
+            with self.assertRaises(AssertionError):r.install(p)
+            command.assert_not_called();write.assert_not_called()
+
+    def test_unknown_predecessor_or_wrong_running_image_is_not_an_upgrade(self):
+        p=payload();p['reconcile_previous']='f'*40
+        with self.assertRaises(AssertionError):r.validate_payload(p)
+        p['reconcile_previous']=r.PREVIOUS_SOURCE
+        with tempfile.TemporaryDirectory() as temporary,patch.object(r,'ROOT',Path(temporary)):
+            self.previous(Path(temporary));q=Path(temporary)/r.PREVIOUS_SOURCE/'receipt.json'
+            d=json.loads(q.read_text());d['image_id']='sha256:'+'0'*64;q.write_text(json.dumps(d))
+            with self.assertRaises(AssertionError):r.verified_previous()
 
 
 if __name__=='__main__':unittest.main()
