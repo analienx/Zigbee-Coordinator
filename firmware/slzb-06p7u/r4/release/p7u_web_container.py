@@ -27,6 +27,7 @@ PINS={
  'P7U-STOCK20260311-APP-ONLY.hex':'32e11655aae84eb928c8eeadb3a77fb4fca6bd1d5c3fc58711d051b2218d8df5',
  'P7U-STOCK20260311-AC000-HANDOFF.bin':'200b6faab974bbb722463509a5e04bcfb8e1ef8050a248415a7f3af21f985506',
  'native/znp_LP_CC1352P7_4_tirtos7_ticlang.bin':'8c641b0d47e16ea84e20ca6be950b85dd98a39beec7e895d2a75a2d4d5946d6e',
+ 'native/znp_LP_CC1352P7_4_tirtos7_ticlang.hex':'088722f479e7ee77879eeb80b68fb3e7196f699b0e8e562a89c436fa174562f6',
 }
 SECTOR=8192
 FLASH=0xB0000
@@ -69,6 +70,18 @@ def stock_control(raw):
  return {'url':STOCK_URL,'sha256':STOCK_SHA,'all_segment_crcs_valid':True,
          'regions':[{'start':hex(a),'end_exclusive':hex(a+len(b)),'size':len(b)} for a,b in rows]}
 
+def native_app_parity(app,native_hex,native_bin):
+ # objcopy's raw BIN zero-fills unallocated holes. The qualified APP-only
+ # package instead uses erased-flash FF there. Bind every compiled byte and
+ # permit that one padding conversion only, never changes to linked content.
+ need(all(a in native_hex for a in range(8)),'NATIVE_VECTOR_MISSING')
+ need(len(native_bin)>=len(app),'NATIVE_BIN_SIZE')
+ need(all(app[a]==v and native_bin[a]==v for a,v in native_hex.items() if a<len(app)),'NATIVE_COMPILED_BYTE_PARITY')
+ need(all(v==255 for a,v in enumerate(app) if a not in native_hex),'APP_UNALLOCATED_PADDING')
+ changed=[a for a,v in enumerate(app) if native_bin[a]!=v]
+ need(all(a not in native_hex and native_bin[a]==0 and app[a]==255 for a in changed),'NATIVE_PADDING_POLICY')
+ return len(changed)
+
 def build(candidate,stock):
  raw={}
  for name,pin in PINS.items():
@@ -85,7 +98,9 @@ def build(candidate,stock):
  need(set(payload)==set(range(APP_END)),'EXACT_PADDED_APP_RANGE')
  app=bytes(payload[a] for a in range(APP_END))
  native=raw['native/znp_LP_CC1352P7_4_tirtos7_ticlang.bin']
- need(len(native)==FLASH and native[:APP_END]==app,'NATIVE_APP_PARITY')
+ p=candidate/'native/znp_LP_CC1352P7_4_tirtos7_ticlang.hex';native_hex,error=_parse_intel_hex(p)
+ need(error is None and sha(p.read_bytes())==PINS['native/'+p.name] and len(native)==FLASH,'PINNED_NATIVE_HEX')
+ padding_changes=native_app_parity(app,native_hex,native)
  for a in range(0,APP_END,SECTOR):
   need(receipt['sector_crc32_ff_padded'][f'0x{a:05X}']==f'{binascii.crc32(app[a:a+SECTOR])&0xffffffff:08x}','APP_SECTOR_CRC')
  handoff=raw['P7U-STOCK20260311-AC000-HANDOFF.bin']
@@ -95,6 +110,7 @@ def build(candidate,stock):
   'regions':[{'start':'0x0','end_exclusive':hex(APP_END),'size':len(app),'sha256':sha(app)},
              {'start':hex(BOOT),'end_exclusive':hex(TOP),'size':len(handoff),'sha256':sha(handoff)}],
   'nv4_bytes_in_file':0,'ccfg_or_top_bytes_in_file':0,'reserved_gap_bytes_in_file':0,
+  'native_compiled_app_bytes_match':True,'native_unallocated_zero_to_ff_padding_bytes':padding_changes,
   'format_basis':'INFERRED_FROM_PINNED_OFFICIAL_STOCK_CONTAINER',
   'backend_erase_scope_proven':False,'backend_vectors_last_proven':False,'device_boot_layout_verified_after_owner_stock_flash':False,
   'physical_web_upload_verified':False,'flash_authorized':False,'status':'FORMAT_VERIFIED_BACKEND_UNQUALIFIED',

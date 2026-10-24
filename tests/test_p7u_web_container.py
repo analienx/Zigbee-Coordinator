@@ -29,5 +29,10 @@ class Tests(unittest.TestCase):
    with self.subTest(address=address),self.assertRaises(ValueError):m.decode(bytes(raw))
  def test_arbitrary_public_control_cannot_qualify_format(self):
   with self.assertRaisesRegex(ValueError,'OFFICIAL_STOCK_PIN'):m.stock_control(m.encode_custom(self.fixture()))
+ def test_objcopy_zero_padding_is_normalized_without_changing_any_compiled_byte(self):
+  code=bytes(range(8));app=code+b'\xff'*8;native=code+b'\x00'*8;hex_payload=dict(enumerate(code))
+  self.assertEqual(m.native_app_parity(app,hex_payload,native),8)
+  for bad_app,bad_native in [(bytes([99])+app[1:],native),(app[:10]+b'\x00'+app[11:],native),(app,native[:10]+b'\x01'+native[11:])]:
+   with self.subTest(app=bad_app.hex(),native=bad_native.hex()),self.assertRaises(ValueError):m.native_app_parity(bad_app,hex_payload,bad_native)
 
 if __name__=='__main__':unittest.main()
