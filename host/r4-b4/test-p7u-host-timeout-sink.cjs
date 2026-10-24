@@ -47,8 +47,11 @@ test("reject raw error, unknown fields, unknown subsystem and invalid monotonic 
 test("ambiguous IPC is never retried for the same subsystem", () => {
     let calls = 0;
     const sink = createHostTimeoutSink(() => {calls++;throw Error("synthetic missing ACK");}, () => true);
-    assert.throws(() => sink(event), /missing ACK/);
-    sink(event);assert.equal(calls, 1);
+    // Passive evidence is best-effort: IPC failure must not replace the
+    // original Zigbee/SRSP timeout. Ambiguous delivery is consumed once.
+    assert.doesNotThrow(() => sink(event));
+    assert.doesNotThrow(() => sink(event));
+    assert.equal(calls, 1);
 });
 
 test("actual compiled ZNP observes genuine Waitress timeout; callback failures preserve production error", async () => {
