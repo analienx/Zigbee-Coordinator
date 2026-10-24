@@ -59,7 +59,8 @@ plan, stage binaries and HA Python interpreter dependencies outside Git.
 2. ESP keeps USB mode 2 and web management; enter TI BSL once.
 3. Run one Python ROM writer directly on HA's exact
    `/dev/serial/by-id/usb-SMLIGHT_...` path, not Windows->TCP->socat.
-   No restart/DTR reset or baud change.
+   No explicit radio reset or baud change; CDC driver control-line behavior
+   remains subject to hardware qualification.
 4. For the *known-good installed image only*, compute 88 ROM per-sector CRCs,
    verify original APP/boot/CCFG unchanged, read all six 8KiB sectors in
    `0xA0000..0xABFFF` freshly and byte/ROM-CRC check each.
@@ -94,6 +95,9 @@ plan, stage binaries and HA Python interpreter dependencies outside Git.
 measured bytes-per-second, erase and ROM CRC costs, **per-sector byte readback**,
 fresh protected NV read, stop/boot/start and an explicit safety margin.
 - Measure **real** throughput through HA USB, not theoretical UART rate.
+  The conservative model includes repeated protected guards and boot-vector
+  tripwires: a 25-sector replacement can require **1,152 ROM CRC checks**,
+  not the superficially estimated 176. This is material to the SLA.
 - Pre-admit only if estimated total fits 60 seconds, leaving margin.
 - A large 25-sector replacement likely misses the SLA at 115200; a small
   source-localized delta may fit. Different images have different dirty sectors.

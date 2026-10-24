@@ -102,6 +102,21 @@ class SparseTransitionTests(unittest.IsolatedAsyncioTestCase):
             await m.admit_sparse(rom,plan,**args)
         self.assertFalse(rom.trace)
 
+    async def test_tampered_sparse_receipt_is_rejected_before_erase(self):
+        rom,plan,args=await scenario()
+        admission=await m.admit_sparse(rom,plan,**args)
+        altered=dict(args["sparse_receipt"],baseline_nv_changed_sectors=123)
+        async def journal(event):self.fail("no irreversible action allowed")
+        with self.assertRaisesRegex(ValueError,"SPARSE_RECEIPT_CHANGED_BEFORE_EXECUTION"):
+            await m.execute(rom,plan,admission,
+               expected_plan_sha256=args["expected_plan_sha256"],
+               expected_admission_sha256=admission["admission_sha256"],
+               capture_receipt=altered,
+               expected_capture_receipt_sha256=args["expected_sparse_receipt_sha256"],
+               expected_live_identity_sha256=LIVE,
+               journal=journal,same_session_sparse=True)
+        self.assertFalse(rom.trace)
+
     async def test_wrong_mode_mixing_never_erases(self):
         rom,plan,args=await scenario()
         admission=await m.admit_sparse(rom,plan,**args)

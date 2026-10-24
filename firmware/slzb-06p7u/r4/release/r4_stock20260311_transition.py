@@ -468,6 +468,13 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     rom = _bounded(rom, operation_timeout, session_timeout)
     if same_session_fast and same_session_sparse:
         deny('SHA_AND_SPARSE_MODES_MUTUALLY_EXCLUSIVE')
+    if same_session_sparse and (
+            sha(canonical(capture_receipt)) != pin(expected_capture_receipt_sha256)
+            or capture_receipt.get('status') !=
+            'SPARSE_ROM_CRC_WITH_FRESH_NV_READ_ONLY_NOT_FLASH_ADMISSION'
+            or capture_receipt.get('nv_bytes_read') != 0xC000
+            or capture_receipt.get('rom_crc32_sector_checks') != FLASH // SECTOR):
+        deny('SPARSE_RECEIPT_CHANGED_BEFORE_EXECUTION')
     if same_session_fast or same_session_sparse:
         raw, reader, writer = _transport_session(rom)
         witness = _SAME_SESSION_ADMISSIONS.pop(raw, None)  # one-time, no replay

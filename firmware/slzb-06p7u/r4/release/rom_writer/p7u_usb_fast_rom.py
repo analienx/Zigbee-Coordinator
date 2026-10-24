@@ -38,9 +38,9 @@ class SafeFastUsbRom(Stock20260311ROM):
         """Direct HA /dev/serial/by-id avoids Windows->TCP->socat packet RTT.
 
         The radio identity must still be independently pinned by the operator.
-        No USB auto-discovery, GPIO toggling, DTR/RTS reset, BSL entry or
-        management API is performed here. 115200 only until a hardware
-        rate-and-bridge qualification exists.
+        No USB auto-discovery, explicit GPIO/DTR/RTS reset, BSL entry or
+        management API is performed here. CDC driver control-line behavior
+        still requires hardware qualification. 115200 only until proven safe.
         """
         if (type(device) is str and
                 re.fullmatch(

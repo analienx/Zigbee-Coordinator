@@ -29,6 +29,8 @@ class CutoverBudgetTests(unittest.TestCase):
         p=inspect_delta(self.base,t,protected_live_read_bytes=0xC000,
                           measurements=measured(read=7500,write=7500))
         self.assertEqual(len(p.changed_sectors),25)
+        self.assertEqual(p.rom_crc_calls,1152)
+        self.assertEqual(p.identity_checks,59)
         self.assertFalse(p.fits_sixty_seconds)
         self.assertGreater(p.predicted_seconds,60)
 

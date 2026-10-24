@@ -71,6 +71,25 @@ class SparseTests(unittest.IsolatedAsyncioTestCase):
             await capture_sparse(rom,prior_full_verified=self.base,
                       expected_identity_sha256=IDENTITY)
 
+    async def test_readonly_deadline_invalid_fails_before_uart_access(self):
+        rom=FakeROM(self.base)
+        for invalid in (0,float("inf"),61,-1):
+            with self.assertRaisesRegex(ValueError,"INVALID_READONLY_DEADLINE"):
+                await capture_sparse(rom,prior_full_verified=self.base,
+                       expected_identity_sha256=IDENTITY,total_timeout_seconds=invalid)
+        self.assertEqual(rom.calls,[])
+
+    async def test_readonly_timeout_never_mutates(self):
+        rom=FakeROM(self.base)
+        async def stalled_crc(address,length):
+            await asyncio.sleep(0.10)
+            return 0
+        rom.crc32=stalled_crc
+        with self.assertRaises(asyncio.TimeoutError):
+            await capture_sparse(rom,prior_full_verified=self.base,
+                expected_identity_sha256=IDENTITY,total_timeout_seconds=0.01)
+        self.assertFalse(any(x[0]!="CRC" for x in rom.calls))
+
     async def test_device_identity_mismatch_blocks(self):
         rom=FakeROM(self.base)
         rom.identity="b"*64

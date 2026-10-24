@@ -18,8 +18,10 @@ authorization, or byte readback of any sectors programmed afterward.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import binascii
 import hashlib
+import math
 from typing import Protocol
 
 FLASH=0xB0000
@@ -56,8 +58,8 @@ class SparseSnapshot:
     snapshot: bytes
     receipt: SparseReceipt
 
-async def capture_sparse(rom: ReadROM, *, prior_full_verified: bytes,
-                         expected_identity_sha256: str) -> SparseSnapshot:
+async def _capture_sparse_body(rom: ReadROM, *, prior_full_verified: bytes,
+                               expected_identity_sha256: str) -> SparseSnapshot:
     _check(type(prior_full_verified) is bytes and len(prior_full_verified)==FLASH,
            "SOURCE_BASELINE_REQUIRED")
     _check(type(expected_identity_sha256) is str
@@ -95,3 +97,19 @@ async def capture_sparse(rom: ReadROM, *, prior_full_verified: bytes,
         nv_bytes_read=NV_END-NV_START,
         baseline_nv_changed_sectors=changed,
         rom_crc32_sector_checks=checks))
+
+async def capture_sparse(rom: ReadROM, *, prior_full_verified: bytes,
+                         expected_identity_sha256: str,
+                         total_timeout_seconds: float = 25.0) -> SparseSnapshot:
+    """Time-bound the entire read-only qualification before any erase/write.
+
+    Caller MUST treat timeout as a HOLD; do not blindly retry BSL entry,
+    reuse a partially collected NV snapshot or proceed with mutation.
+    """
+    _check(type(total_timeout_seconds) in (int,float)
+           and math.isfinite(total_timeout_seconds)
+           and 0 < total_timeout_seconds <= 60, 'INVALID_READONLY_DEADLINE')
+    return await asyncio.wait_for(
+        _capture_sparse_body(rom, prior_full_verified=prior_full_verified,
+                             expected_identity_sha256=expected_identity_sha256),
+        timeout=total_timeout_seconds)

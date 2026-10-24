@@ -32,7 +32,9 @@ class MeasuredLink:
 
     write_bytes_per_second must account for the ROM's per-packet ACK+status.
     read_bytes_per_second reflects verified counted MEMORY_READ frames.
-    command_seconds captures erase command response and CRC round trips.
+    crc_seconds captures each native ROM CRC command and response; identity_seconds
+    measures live chip/FCFG/CCFG identity checks. Use measured timings, not
+    nominal UART bit rate.
     """
     read_bytes_per_second: float
     write_bytes_per_second: float
@@ -42,6 +44,7 @@ class MeasuredLink:
     bsl_entry_seconds: float
     security_seconds: float
     margin_seconds: float = 6.0
+    identity_seconds: float = 0.1
 
     def validate(self):
         values=vars(self)
@@ -58,6 +61,8 @@ class CutoverEstimate:
     write_bytes: int
     verify_bytes: int
     fresh_security_bytes: int
+    rom_crc_calls: int
+    identity_checks: int
     predicted_seconds: float
     fits_sixty_seconds: bool
     radio_budget_seconds: float
@@ -92,12 +97,26 @@ def inspect_delta(current: bytes, targets: dict[int, bytes], *,
     verify_bytes=write_bytes
     fixed=(measurements.stop_start_seconds + measurements.bsl_entry_seconds +
            measurements.security_seconds + measurements.margin_seconds)
+    # Mirrors the exact transaction: sparse capture/admit, prewrite, and
+    # final CRC parity; per-plan reserved-range guards; plus boot commit sweeps.
+    # A naive two-full-CRC-sweep model massively undercounts commands.
+    guard_size = lambda a: 8 + int(a < APP_LIMIT)
+    guard_calls = sum(guard_size(a) for a in targets)
+    guard_calls += sum(guard_size(a) for a in changed)
+    boot_present = BOOT in targets
+    boot_written = BOOT in changed
+    full_sweeps = 4 + int(boot_present) + (3 if boot_written else 0)
+    crc_calls = full_sweeps*88 + guard_calls
+    identity_checks = 2 + full_sweeps - 1 + len(targets) + len(changed)
     radio=(write_bytes/measurements.write_bytes_per_second +
            (verify_bytes+protected_live_read_bytes)/measurements.read_bytes_per_second +
-           len(changed)*measurements.erase_seconds + 2*88*measurements.crc_seconds)
+           len(changed)*measurements.erase_seconds +
+           crc_calls*measurements.crc_seconds +
+           identity_checks*measurements.identity_seconds)
     total=fixed+radio
     # Source binding of the *estimate only*: not flash authorization.
     hash_input=(str(changed)+":" + ":".join(_digest(targets[a]) for a in sorted(targets)))
     return CutoverEstimate(changed,write_bytes,verify_bytes,protected_live_read_bytes,
-                           round(total,2),total <= TARGET_SECONDS,
-                           round(radio,2),_digest(hash_input.encode()))
+                           crc_calls,identity_checks,round(total,2),
+                           total <= TARGET_SECONDS,round(radio,2),
+                           _digest(hash_input.encode()))
