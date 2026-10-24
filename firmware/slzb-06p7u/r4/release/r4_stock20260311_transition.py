@@ -202,11 +202,52 @@ def prepare(*, candidate: dict, expected_candidate_sha256: str,
     return plan
 
 
+def _verify_known_installed_runtime(receipt, expected_sha, *, installed_source,
+                                     installed_image_sha, silicon_identity):
+    """An installed flash SHA is NOT evidence of a bootable running network.
+    R4 already failed once after a perfect 25-sector write. Never qualify a
+    known-install speed profile on a write-only result.
+    """
+    if (type(receipt) is not dict or
+            sha(canonical(receipt)) != pin(expected_sha) or
+            receipt.get('schema') != 'p7u-r4-native-live-acceptance-v1' or
+            receipt.get('status') != 'R4_STATE9_AND_FRESH_DEVICE_TRAFFIC_VERIFIED' or
+            receipt.get('source_sha') != installed_source or
+            receipt.get('installed_image_sha256') != installed_image_sha or
+            receipt.get('silicon_identity_sha256') != silicon_identity or
+            receipt.get('original_z2m_owner') is not True or
+            receipt.get('network_state') != 9 or
+            receipt.get('observed_seconds', 0) < 10 or
+            type(receipt.get('fresh_nonretained_device_reports')) is not int or
+            receipt['fresh_nonretained_device_reports'] < 1 or
+            receipt.get('startup_errors') != 0 or
+            receipt.get('boot_attempts') != 1 or
+            receipt.get('source_bound_observer_status') != 'PASS_REAL_NATIVE_COMPLETION' or
+            receipt.get('flash_verify_status') != 'ALL88_ROM_SHA_PASS' or
+            receipt.get('nv_touched') is not False or
+            receipt.get('ccfg_touched') is not False):
+        deny('KNOWN_INSTALLED_R4_NEVER_PROVEN_SERVING')
+    # A self-asserted 'state=9' Boolean is insufficient. The prior R4
+    # installation must provide genuine source-bound B1 native completion,
+    # post-state and single-shot host evidence from the original session.
+    frames=receipt.get('startup_frames')
+    if type(frames) is not dict:
+        deny('KNOWN_INSTALLED_NATIVE_STARTUP_FRAMES_REQUIRED')
+    try:
+        from p7u_r4_startup_observer import verify_success_frames
+        verify_success_frames(frames,installed_source)
+    except (ValueError, KeyError, TypeError) as error:
+        deny('KNOWN_INSTALLED_NATIVE_STARTUP_NOT_VERIFIED')
+    return True
+
+
 def prepare_upgrade(*, installed_plan: Transition, expected_installed_plan_sha256: str,
                     installed_candidate: dict, expected_installed_candidate_sha256: str,
                     installed_app_hex: bytes, installed_handoff: bytes,
                     installed_result: dict, expected_installed_result_sha256: str,
                     handoff_receipt: bytes, verified_known_capture=None,
+                    installed_runtime_receipt=None,
+                    expected_installed_runtime_receipt_sha256=None,
                     **current) -> Transition:
     """Explicit known-R4 upgrade, from a fresh duplicate same-unit capture.
 
@@ -259,6 +300,13 @@ def prepare_upgrade(*, installed_plan: Transition, expected_installed_plan_sha25
         for address,payload in old.sectors.items():
             installed_image[address:address + SECTOR] = payload
         installed_image=bytes(installed_image)
+        _verify_known_installed_runtime(
+            installed_runtime_receipt, expected_installed_runtime_receipt_sha256,
+            installed_source=installed_candidate['source_sha'],
+            installed_image_sha=sha(installed_image),
+            silicon_identity=verified_known_capture.receipt.get(
+                'expected_identity_sha256') if
+                type(verified_known_capture) is KnownR4Capture else None)
         if (type(verified_known_capture) is not KnownR4Capture or
                 verified_known_capture.receipt.get('installed_verified_sha256') !=
                     sha(installed_image)):
@@ -442,6 +490,29 @@ async def _guard(rom, address, expected, live_identity, expected_crc=None):
             deny('CRC32_GUARD_CHANGED_BEFORE_ERASE')
 
 
+
+async def _known_target_guard(rom, address, expected_crc, live_identity):
+    """Known-install, single-owner ROM: check exact sector immediately before
+    each erase; it is impossible to transmit any authorized NV/CCFG write.
+    """
+    if not _envelope(address) or address >= TOP:
+        deny('KNOWN_TARGET_NOT_APP_OR_BOOT')
+    if await rom.identity_sha256() != live_identity:
+        deny('LIVE_IDENTITY_CHANGED')
+    if await rom.crc32(address, SECTOR) != expected_crc[address]:
+        deny('KNOWN_TARGET_CHANGED_BEFORE_ERASE')
+
+
+async def _known_protected_guard(rom, expected_crc, live_identity):
+    """Independently cover *every* non-APP area at critical phase boundaries;
+    never substitute this for final full-88 byte SHA.
+    """
+    if await rom.identity_sha256() != live_identity:
+        deny('LIVE_IDENTITY_CHANGED')
+    for address in range(APP_LIMIT,FLASH,SECTOR):
+        if await rom.crc32(address, SECTOR) != expected_crc[address]:
+            deny('KNOWN_PROTECTED_CHANGED')
+
 async def _journal(rom, callback, event):
     # The journal must use cooperative async I/O, like the injected adapter.
     # It shares the same total deadline rather than extending the window.
@@ -507,7 +578,8 @@ async def admit_known_r4(rom, plan: Transition, *, expected_plan_sha256: str,
 
     Provenance checked by prepare_upgrade; security must be genuine TI/native.
     This does not claim two full captures. Every static sector is live ROM CRC
-    checked, protected data captured twice, complete final byte-SHA still required.
+    checked, protected data independently CRC-verified once, complete final
+    byte-SHA remains required.
     """
     from p7u_usb_sparse_capture import (KnownR4Capture,KNOWN_R4_PROFILE,
                                          require_known_witness)
@@ -626,8 +698,12 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     expected = dict(current['observed_sector_sha256'])
     expected_crc = {addr: binascii.crc32(plan.snapshot[addr:addr + SECTOR]) & 0xffffffff
                     for addr in range(0, FLASH, SECTOR)}
-    if same_session_fast or same_session_sparse or same_session_known:
-        # SHA for full baseline; known-image CRC + fresh protected bytes for known.
+    if same_session_known:
+        # Admit already CRC-verified all 88 sectors in this exact live session.
+        # A second immediate full sweep is redundant; guard all 12 reserved
+        # sectors at the start, then every requested target before every erase.
+        await _known_protected_guard(rom,expected_crc,expected_live_identity_sha256)
+    elif same_session_fast or same_session_sparse:
         await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                'STATE_CHANGED_AFTER_SHA_ADMISSION' if same_session_fast
                                else 'STATE_CHANGED_AFTER_SPARSE_ADMISSION')
@@ -644,9 +720,17 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     for address in plan.manifest['program_order']:
         # The whole reserved/NV/boot/CCFG range and next target are re-read
         # before every erase. Only our verified writes may change their pins.
-        await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
+        if same_session_known:
+            await _known_target_guard(rom,address,expected_crc,expected_live_identity_sha256)
+        else:
+            await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT:
-            if same_session_fast or same_session_sparse or same_session_known:
+            if same_session_known:
+                # One all-sector checkpoint after all APP sectors have been
+                # byte-readback verified, before touching the boot handoff.
+                await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                                       'KNOWN_APP_CHANGED_BEFORE_BOOT')
+            elif same_session_fast or same_session_sparse:
                 await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                        'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
             elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -661,9 +745,14 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         await _journal(rom, journal, event)
         # A journal callback yields control. Revalidate after it, before the
         # first irreversible adapter call, rather than trusting stale reads.
-        await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
+        if same_session_known:
+            await _known_target_guard(rom,address,expected_crc,expected_live_identity_sha256)
+        else:
+            await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT:
-            if same_session_fast or same_session_sparse or same_session_known:
+            if same_session_known:
+                await _known_protected_guard(rom,expected_crc,expected_live_identity_sha256)
+            elif same_session_fast or same_session_sparse:
                 await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                        'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
             elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -681,14 +770,18 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                     deny('BOOT_TAIL_NOT_VERIFIED')
                 expected[BOOT] = sha(partial)
                 expected_crc[BOOT] = binascii.crc32(partial) & 0xffffffff
-                if same_session_fast or same_session_sparse or same_session_known:
+                if same_session_known:
+                    await _known_protected_guard(rom, expected_crc, expected_live_identity_sha256)
+                elif same_session_fast or same_session_sparse:
                     await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                            'STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 elif await _observe(rom, expected_live_identity_sha256) != expected:
                     deny('STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 await _journal(rom, journal, {'event': 'BEFORE_BOOT_VECTOR_COMMIT',
                     'address': BOOT, 'plan_sha256': expected_plan_sha256})
-                if same_session_fast or same_session_sparse or same_session_known:
+                if same_session_known:
+                    await _known_protected_guard(rom, expected_crc, expected_live_identity_sha256)
+                elif same_session_fast or same_session_sparse:
                     await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                            'STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 elif await _observe(rom, expected_live_identity_sha256) != expected:

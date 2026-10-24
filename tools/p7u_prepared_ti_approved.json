@@ -1,0 +1,5 @@
+{
+  "schema": "p7u-reviewed-ti-prepared-root-v1",
+  "approved": [],
+  "note": "No prepared SDK image qualified. Approvals require separate source + license + SHA audit and a reviewed commit."
+}

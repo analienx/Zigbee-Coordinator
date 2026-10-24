@@ -1,6 +1,6 @@
 # P7U R4 — routine upgrade fast path
 
-**Scope:** known previously installed, fully verified R4 only. Not a stock-to-R4 migration or recovery procedure.
+**Scope:** known previously installed, **fully byte-verified AND physically boot-qualified (native source-bound completion, Z2M state 9 and fresh device traffic)** R4 only. A verified flash that has never successfully served the network is **not** a valid fast-upgrade baseline. This is not a stock-to-R4 migration or recovery procedure.
 
 ## Deliberate simplification
 
@@ -29,6 +29,6 @@ Postflight: all-88-sector ROM byte/SHA verification. Never describe preflight as
 
 ## Qualification still outstanding
 
-The prepared TI toolchain/SDK container and clean APP builder are not provisioned or measured. The native ARM64 security reader must build in GH, then pass same-private-fixture parity. The new single-source build package and HA-local operator are not yet end-to-end proven on hardware. The fast USB read and first normal-owner handoff have not been timed. The sole production coordinator is not used for repetitive optimization trials.
+The prepared TI toolchain/SDK container and clean APP builder are not provisioned or measured. The externally reviewed prepared-dependency trust list is intentionally empty: normal builds fail closed until a concrete SDK image is audited and pinned. The native ARM64 TI security reader **has** built successfully in GH and passed private byte-for-byte record parity against the Win64 reader on two historical captures. The new single-source build package and HA-local operator are not yet end-to-end proven on hardware. The fast USB read and first normal-owner handoff have not been timed. The sole production coordinator is not used for repetitive optimization trials.
 
 The 290-second source-to-fresh-service target is an engineering target, not a qualified SLA. Once programming has begun, exceeding the time budget never permits skipping full verification or forcing a restart.

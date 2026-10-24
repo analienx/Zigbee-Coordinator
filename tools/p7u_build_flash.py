@@ -25,6 +25,21 @@ BUDGET = {"build":60., "stage":5., "owner_bsl":8., "protected":14.,
           "security":3., "write":55., "final_read":75.,
           "startup_handoff":45., "traffic":10., "margin":15.}
 TARGET_SECONDS = sum(BUDGET.values())
+# CI source tests are mandatory for every clean build; runtime config must
+# not turn acceptance into a no-op Python command.
+REQUIRED_SOURCE_TESTS = [
+    ["python","-m","pytest","-q",
+     "tests/test_p7u_known_r4_fastpath.py",
+     "tests/test_p7u_subfive_controller.py",
+     "tests/test_p7u_single_candidate_packager.py",
+     "tests/test_r4_stock20260311_transition.py",
+     "tests/test_p7u_usb_sparse_transition.py",
+     "tests/test_p7u_stock20260311_rom_adapter.py",
+     "tests/test_p7u_r4_startup_observer.py",
+     "tests/test_p7u_r4_operator.py",
+     "tests/test_p7u_strict_sector_writer.py"],
+]
+
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -44,6 +59,16 @@ def sha(path):
 
 def canonical(obj):
     return json.dumps(obj,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
+
+
+def argv_value(argv, flag):
+    """Return exactly one nonempty value; no last-argument IndexError."""
+    if type(argv) is not list or argv.count(flag)!=1:
+        return None
+    index=argv.index(flag)
+    if index+1>=len(argv) or type(argv[index+1]) is not str:
+        return None
+    return argv[index+1] or None
 
 
 def resolve_within(parent, name):
@@ -78,6 +103,16 @@ def validate_worker(worker, source):
     receipt = verify_manifest(manifest_path)
     require(worker.get("prepared_identity_sha256") == receipt["identity_sha256"],
             "DEPENDENCY_PIN_CHANGED")
+    # Hashes controlled by the runtime configuration are NOT independent
+    # trust anchors. Only roots explicitly pinned in a reviewed repository
+    # revision may reach compilation or flashing.
+    approval=json.loads((ROOT/"tools/p7u_prepared_ti_approved.json").read_bytes())
+    require(approval.get("schema")=="p7u-reviewed-ti-prepared-root-v1" and
+            type(approval.get("approved")) is list and
+            receipt["identity_sha256"] in approval["approved"] and
+            all(type(x) is str and HEX64.fullmatch(x)
+                for x in approval["approved"]),
+            "DEPENDENCY_ROOT_NOT_EXTERNALLY_APPROVED")
     writable=Path(worker["out_dir"]).resolve()
     require(writable.is_dir() and
             str(writable)!=str(manifest_path.parent.resolve()) and
@@ -94,8 +129,10 @@ def run_worker(worker, source, deadline):
          "P7U_CLEAN_APP_REQUIRED":"1",
          "P7U_PREPARED_MANIFEST":str(Path(worker["prepared_manifest"]).resolve())}
     command=worker["command"]
+    remaining=deadline-started
+    require(remaining>0, "CLEAN_BUILD_DEADLINE_EXCEEDED")
     result=run_command(command,cwd=worker["cwd"],
-                       seconds=max(1,deadline-started),env=env)
+                       seconds=remaining,env=env)
     out=Path(worker["out_dir"])
     artifact=worker["artifacts"]
     a={name:sha(resolve_within(out,rel)) for name,rel in artifact.items()}
@@ -110,10 +147,15 @@ def run_worker(worker, source, deadline):
             report.get("worker")==worker["worker"] and
             all(report.get("hashes",{}).get(k)==v for k,v in a.items()),
             "CLEAN_BUILD_RECEIPT_OR_ARTIFACT_HASH")
-    return {"worker":worker["worker"],"origin":"PREPARED_LOCAL_LINUX_NOT_GITHUB_RUN",
+    attestation={"worker":worker["worker"],"origin":"PREPARED_LOCAL_LINUX_NOT_GITHUB_RUN",
             "source_sha":source,"dependency_identity":prepared["identity_sha256"],
             "artifact_hashes":a,"compile_time":result["elapsed"],
             "clean_app_build":True,"reused_app_objects":False}
+    receipt_path=out/"single-clean-build-attestation.json"
+    require(not receipt_path.exists(), "BUILD_ATTESTATION_ALREADY_EXISTS")
+    with receipt_path.open("xb") as f:
+        f.write(canonical(attestation));f.flush();os.fsync(f.fileno())
+    return attestation
 
 
 def check_clean_build(report):
@@ -153,6 +195,8 @@ def run(config, *, execute=False, clock=time.monotonic):
     stage="verify"
     timings={}
     config=dict(config)
+    if execute:
+        raise Hold("HA_HARDWARE_EXECUTOR_NOT_YET_QUALIFIED")
     source=config.get("source_sha")
     require(isinstance(source,str) and HEX40.fullmatch(source),
             "EXACT_SOURCE_REQUIRED")
@@ -165,56 +209,50 @@ def run(config, *, execute=False, clock=time.monotonic):
     require(config.get("scope")==SCOPE and
             type(config.get("worker")) is dict, "PROFILE_OR_WORKER_NOT_READY")
     start=clock()
-    tests=config.get("required_tests",[])
-    require(type(tests) is list and bool(tests),"SOURCE_TESTS_REQUIRED")
+    tests=REQUIRED_SOURCE_TESTS
+    require("required_tests" not in config or
+            config["required_tests"]==REQUIRED_SOURCE_TESTS,
+            "REQUIRED_SOURCE_TESTS_CANNOT_BE_REPLACED")
     with concurrent.futures.ThreadPoolExecutor(max_workers=1+len(tests)) as pool:
-        work=pool.submit(run_worker,config["worker"],source,t0+TARGET_SECONDS)
+        work=pool.submit(run_worker,config["worker"],source,t0+BUDGET["build"])
         test_futures=[pool.submit(run_command,argv,cwd=ROOT,seconds=180.) for argv in tests]
         report=work.result()
         [f.result() for f in test_futures]
     hashes=check_clean_build(report)
     timings["build"] = round(clock()-start,3)
+    require(timings["build"]<=BUDGET["build"], "BUILD_BUDGET_EXCEEDED")
     elapsed=clock()-t0
     print(json.dumps({"phase":"SOURCE_QUALIFIED","elapsed":round(elapsed,3),
                       "source":source,"scope":SCOPE,"hashes":hashes},sort_keys=True),flush=True)
     # Bundle and candidate validation run inside T0-T1. The dispatcher is
     # separate and cannot be triggered by a build-only request.
-    require("package_command" in config, "NEW_BUILD_PACKAGING_COMMAND_REQUIRED")
+    package_cmd=config.get("package_command")
+    accepted_script=str((ROOT/"tools/p7u_single_candidate_packager.py").resolve())
+    require(type(package_cmd) is list and len(package_cmd)>=12 and
+            package_cmd[0] in ("python","python3") and
+            str(Path(package_cmd[1]).resolve())==accepted_script and
+            argv_value(package_cmd,"--source")==source and
+            argv_value(package_cmd,"--dependency-identity")==report["dependency_identity"] and
+            argv_value(package_cmd,"--build-receipt") is not None and
+            Path(argv_value(package_cmd,"--build-receipt")).resolve() ==
+                (Path(config["worker"]["out_dir"])/"single-clean-build-attestation.json").resolve() and
+            argv_value(package_cmd,"--out") is not None and
+            Path(argv_value(package_cmd,"--out")).resolve() ==
+                Path(config["candidate_bundle"]).resolve(),
+            "PACKAGE_COMMAND_NOT_SINGLE_CLEAN_PINNED_BUILDER")
     package_start=clock()
-    run_command(config["package_command"],cwd=ROOT,seconds=90.)
+    run_command(package_cmd,cwd=ROOT,seconds=BUDGET["stage"])
     bundle=Path(config["candidate_bundle"])
     sys.path.insert(0,str(R4/"release"))
     from p7u_r4_operator import candidate_verify_fast_single
     candidate_verify_fast_single(bundle,source,hashes,
                                  report["dependency_identity"])
     timings["stage"]=round(clock()-t0-elapsed,3)
+    require(timings["stage"]<=BUDGET["stage"],"STAGING_BUDGET_EXCEEDED")
     if not execute:
         return {"status":"OFFLINE_ONE_CLEAN_BUILD_QUALIFIED_NO_FLASH",
                 "source_sha":source,"timings":timings,"t0_to_stage":round(clock()-t0,3),
                 "under_5_minute_hardware_qualified":False}
-    # Before any HA outage, check the measured remaining deadline.
-    require(clock()-t0 < TARGET_SECONDS-BUDGET["owner_bsl"]-
-            BUDGET["protected"]-BUDGET["security"]-BUDGET["write"]-
-            BUDGET["final_read"]-BUDGET["startup_handoff"]-
-            BUDGET["traffic"],"BUILD_OR_STAGE_BUDGET_EXCEEDED_BEFORE_OUTAGE")
-    require(config.get("explicit_live_operation") == "APP_AND_BOOT_ONCE",
-            "LIVE_OPERATION_NOT_EXPLICIT")
-    cmd=config["ha_executor_argv"]
-    require(type(cmd) is list and len(cmd)>=2 and
-            cmd[0] == "ssh" and "-o" in cmd and
-            cmd[-1].startswith("python3 "), "HA_EXECUTOR_MUST_BE_EXPLICIT_SSH_PYTHON")
-    live_start=clock()
-    run_command(cmd,cwd=ROOT,seconds=900.)
-    receipt_path=Path(config["live_receipt_path"])
-    require(receipt_path.is_file(),"MISSING_FINAL_HA_OPERATION_RECEIPT")
-    live=json.loads(receipt_path.read_bytes())
-    verify_operation_result(live,source)
-    timings["device_to_serving"]=round(clock()-live_start,3)
-    total=round(clock()-t0,3)
-    result={"schema":"p7u-sub5-measurement-v1","status":"PASS" if total<300 else "DEADLINE_MISSED_VERIFIED",
-            "total_seconds":total,"timings":timings,"scope":SCOPE,"source_sha":source,
-            "qualification":"ONE_COMPLETE_OBSERVED_RUN" if total<300 else "VERIFIED_BUT_NOT_SUB5"}
-    return result
 
 
 def main(argv=None):

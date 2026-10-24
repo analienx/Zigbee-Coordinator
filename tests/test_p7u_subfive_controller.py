@@ -34,6 +34,20 @@ class FakeSerial:
 
 
 class SubfiveContractTests(unittest.TestCase):
+    def test_source_tests_cannot_be_runtime_noop(self):
+        self.assertEqual(len(b.REQUIRED_SOURCE_TESTS),1)
+        self.assertGreaterEqual(len(b.REQUIRED_SOURCE_TESTS[0]),12)
+        self.assertIn("tests/test_p7u_known_r4_fastpath.py",b.REQUIRED_SOURCE_TESTS[0])
+
+    def test_execute_stops_before_any_build_or_hardware_operation(self):
+        with self.assertRaisesRegex(b.Hold,"HA_HARDWARE_EXECUTOR_NOT_YET_QUALIFIED"):
+            b.run({},execute=True)
+
+    def test_arg_value_requires_single_value_and_out_path(self):
+        self.assertIsNone(b.argv_value(["python","--source"],"--source"))
+        self.assertIsNone(b.argv_value(["python","--source","x","--source","y"],"--source"))
+        self.assertEqual(b.argv_value(["python","--source","abc"],"--source"),"abc")
+
     def test_real_budget_includes_build_boot_traffic_and_margin(self):
         self.assertEqual(sum(b.BUDGET.values()),290.)
         self.assertEqual(b.TARGET_SECONDS,290.)

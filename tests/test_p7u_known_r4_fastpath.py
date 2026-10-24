@@ -9,6 +9,7 @@ R4=ROOT/"firmware/slzb-06p7u/r4"
 for item in (ROOT/"tests", R4/"release", R4/"release/rom_writer"):
     sys.path.insert(0,str(item))
 from test_r4_stock20260311_transition import (m,FakeROM,upgrade_inputs,LIVE)
+from test_p7u_r4_startup_observer import terminal
 from p7u_usb_sparse_capture import (capture_known_installed,KNOWN_R4_PROFILE,
                                      KnownR4FreshProtectedWitness)
 
@@ -36,6 +37,25 @@ def known_current(up,cap):
     p=dict(up)
     p["pass2"]=None
     p["verified_known_capture"]=cap
+    frames=terminal()
+    for key,start in (("B1S1",12),("B1P1",12),("B1E1",8)):
+        raw=bytearray.fromhex(frames[key])
+        raw[start:start+4]=bytes.fromhex(p["installed_candidate"]["source_sha"][:8])
+        frames[key]=bytes(raw).hex()
+    accepted={"schema":"p7u-r4-native-live-acceptance-v1",
+        "status":"R4_STATE9_AND_FRESH_DEVICE_TRAFFIC_VERIFIED",
+        "source_sha":p["installed_candidate"]["source_sha"],
+        "installed_image_sha256":m.sha(installed_image(up)),
+        "silicon_identity_sha256":LIVE,
+        "original_z2m_owner":True,"network_state":9,
+        "observed_seconds":12,"fresh_nonretained_device_reports":3,
+        "startup_errors":0,"boot_attempts":1,
+        "source_bound_observer_status":"PASS_REAL_NATIVE_COMPLETION",
+        "flash_verify_status":"ALL88_ROM_SHA_PASS",
+        "nv_touched":False,"ccfg_touched":False,
+        "startup_frames":frames}
+    p["installed_runtime_receipt"]=accepted
+    p["expected_installed_runtime_receipt_sha256"]=m.sha(m.canonical(accepted))
     p["pass1"]=cap.snapshot
     p["expected_capture_sha256"]=m.sha(cap.snapshot)
     sec=dict(p["security_receipt"],capture_sha256=m.sha(cap.snapshot))
@@ -52,6 +72,20 @@ class KnownR4FastPathTests(unittest.IsolatedAsyncioTestCase):
         kw=known_current(up,cap)
         plan=m.prepare_upgrade(**kw)
         return up,rom,cap,kw,plan
+
+    async def test_unbooted_previous_r4_can_never_be_known_fast_baseline(self):
+        up,rom,cap,kw,plan=await self.make()
+        denied=dict(kw,installed_runtime_receipt=None,
+                    expected_installed_runtime_receipt_sha256=None)
+        with self.assertRaisesRegex(ValueError,"KNOWN_INSTALLED_R4_NEVER_PROVEN_SERVING"):
+            m.prepare_upgrade(**denied)
+        failed=dict(kw["installed_runtime_receipt"],network_state=8,
+                    source_bound_observer_status="HOLD")
+        denied=dict(kw,installed_runtime_receipt=failed,
+                    expected_installed_runtime_receipt_sha256=m.sha(m.canonical(failed)))
+        with self.assertRaisesRegex(ValueError,"KNOWN_INSTALLED_R4_NEVER_PROVEN_SERVING"):
+            m.prepare_upgrade(**denied)
+        self.assertFalse(rom.trace)
 
     async def test_single_live_protected_with_rom_crc_and_84_static_crc(self):
         up,rom,cap,_,plan=await self.make()
