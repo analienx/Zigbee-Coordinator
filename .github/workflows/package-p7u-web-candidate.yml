@@ -1,0 +1,49 @@
+name: P7U segmented web BIN analysis (NO LIVE FLASH)
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/release/p7u_web_container.py'
+      - 'tests/test_p7u_web_container.py'
+      - '.github/workflows/package-p7u-web-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package-analysis:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Verify exact packaging source and hostile container cases
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          python -m unittest discover -s tests -p test_p7u_web_container.py -v
+      - name: Download the already qualified exact radio candidate
+        run: |
+          set -euo pipefail
+          gh api repos/analienx/Zigbee-Coordinator/actions/runs/39801711808 > /tmp/radio-run.json
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/radio-run.json'))
+          assert r['head_sha']=='323949a95c9a07901c4ffc3d026fca414982c148' and r['status']=='completed' and r['conclusion']=='success'
+          PY
+          gh run download 39801711808 --repo analienx/Zigbee-Coordinator --name p7u-stock20260311-candidate-323949a95c9a07901c4ffc3d026fca414982c148 --dir /tmp/radio-candidate
+      - name: Verify official stock format and package only public APP plus AC000
+        run: |
+          python firmware/slzb-06p7u/r4/release/p7u_web_container.py --candidate /tmp/radio-candidate --output /tmp/p7u-web-analysis
+          printf '%s\n' "$SOURCE" > /tmp/p7u-web-analysis/PACKAGER_SOURCE_SHA.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-web-container-analysis-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-web-analysis/
+          if-no-files-found: error
