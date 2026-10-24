@@ -69,10 +69,16 @@ plan, stage binaries and HA Python interpreter dependencies outside Git.
    against current keys, counter floors, APS and **all 107 historic identities**.
    The current 106/107 and persisted TC mismatch from 24-Oct still BLOCK this
    step. **Do not skip or auto-repair NV.**
-6. A **new, reviewed sparse-admission transition contract is still required**.
-   Only after that code and independent negative tests are approved may the
-   prepared delta be admitted; do not feed a sparse receipt into an API that
-   requires full dual-capture proof. Recheck sector CRC before every mutation.
+6. The **separate sparse transaction code is source-implemented** as
+   `bind_sparse_plan`, `admit_sparse` and `execute(..., same_session_sparse=True)`
+   in `r4_stock20260311_transition.py`; it accepts only a source-bound
+   SPARSE receipt, prior full-image SHA, freshly reconstructed flash SHA
+   and native TI security PASS. In-process transport proof expires after
+   60 seconds and is one-use. Tests cover final ROM-CRC parity, per-written-
+   sector SHA byte readbacks, expired/reopened ports and post-admission drift.
+   This still needs independent review, HA-local orchestration and physical
+   qualification before production use; it is NOT an implicit permission to
+   bypass the old full dual-capture route.
 7. Erase/write only differing planned APP/AC000 sectors, keep boot vector
    last, journal/fsync before erase, retain all per-written-sector byte readbacks
    and final full-device CRC parity. Full 88-sector SHA admission is retained
@@ -108,14 +114,18 @@ fresh protected NV read, stop/boot/start and an explicit safety margin.
 - `p7u_usb_cutover_budget.py`: fail-closed predictive release budget.
 - `r4_stock20260311_transition.py`: exact-type whitelist for retaining the
   audited per-packet GET_STATUS after SEND_DATA on this new subclass;
-  all other injected ROM types keep conservative status behavior.
+  all other injected ROM types keep conservative status behavior. Also
+  introduces a distinct `SPARSE_CRC_WITH_FRESH_NV_AND_PRIOR_VERIFIED_IMAGE`
+  admission mode and final CRC+written-byte verification status, never
+  mislabeled as an all-88-sector SHA readback.
 - HA source-only staged under `/share/p7u-usb-flasher-runtime/` with
   `pyserial==3.5`, `pyserial-asyncio==0.6`; runtime imported correctly.
   **No radio port was opened in this new development pass.**
 - Hosted GH Actions test job verifies source, ROM framing, negative write,
   capture and timing constraints. No public flash secrets or raw device dumps.
 
-**Do not call this an operational sub-minute flasher** before sparse
-security-admission is integrated, the HA single-owner operator exists and
-real live one-minute results pass. The original Zigbee network stays online
-during these changes.
+**Do not call this an operational sub-minute flasher** before the
+native security preflight is wired to a complete HA single-owner operator,
+the current retained-network admission HOLD is resolved, and real timed
+hardware evidence passes. The original Zigbee network stays online during
+these changes.

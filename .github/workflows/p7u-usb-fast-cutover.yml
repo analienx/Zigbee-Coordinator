@@ -38,6 +38,11 @@ jobs:
           python -m unittest discover \
             -s firmware/slzb-06p7u/r4/release/rom_writer \
             -p 'test_p7u_usb_*.py' -v
+      - name: Sparse transition, no-retry, NV protection and legacy SHA parity
+        shell: bash
+        run: |
+          python -m unittest discover -s tests -p 'test_p7u_usb_sparse_transition.py' -v
+          python -m unittest discover -s tests -p 'test_r4_stock20260311_transition.py' -v
       - name: Preserve original strict stock ROM protocol
         shell: bash
         run: python -m unittest discover -s tests -p 'test_p7u_stock20260311_rom_adapter.py' -v

@@ -218,8 +218,14 @@ def prepare_upgrade(*, installed_plan: Transition, expected_installed_plan_sha25
     result = copy.deepcopy(installed_result)
     expected_writes = [a for a in old.manifest['program_order']
                        if old.sectors[a] != old.snapshot[a:a + SECTOR]]
+    verified_full = result.get('status') == 'APP_AND_AC000_VERIFIED_STILL_IN_BSL'
+    verified_sparse = (
+        result.get('status') == 'APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL'
+        and result.get('verification_scope') == 'WRITTEN_SHA_PLUS_ALL88_ROM_CRC'
+        and old.manifest.get('capture_mode') == SPARSE_MODE
+    )
     if (sha(canonical(result)) != pin(expected_installed_result_sha256) or
-            result.get('status') != 'APP_AND_AC000_VERIFIED_STILL_IN_BSL' or
+            not (verified_full or verified_sparse) or
             result.get('written_sectors') != expected_writes or
             any(result.get(k) is not False for k in ('nv_touched', 'ccfg_touched',
                                                     'reset_issued', 'automatic_rollback'))):
@@ -452,7 +458,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                   expected_admission_sha256: str, capture_receipt: dict,
                   expected_capture_receipt_sha256: str, expected_live_identity_sha256: str,
                   journal, operation_timeout=10.0, session_timeout=600.0,
-                  same_session_fast=False) -> dict:
+                  same_session_fast=False, same_session_sparse=False) -> dict:
     """One explicit operator operation. Persist journal before each erase.
 
     journal(event) must durably record private events and return True; failures
@@ -460,7 +466,9 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     """
     plan, admission = _frozen(plan, expected_plan_sha256), copy.deepcopy(admission)
     rom = _bounded(rom, operation_timeout, session_timeout)
-    if same_session_fast:
+    if same_session_fast and same_session_sparse:
+        deny('SHA_AND_SPARSE_MODES_MUTUALLY_EXCLUSIVE')
+    if same_session_fast or same_session_sparse:
         raw, reader, writer = _transport_session(rom)
         witness = _SAME_SESSION_ADMISSIONS.pop(raw, None)  # one-time, no replay
         if (witness is None or witness['reader'] is not reader
@@ -469,8 +477,15 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                 or witness['plan_sha256'] != expected_plan_sha256
                 or witness['capture_sha256'] != expected_capture_receipt_sha256
                 or witness['identity_sha256'] != expected_live_identity_sha256
-                or witness['admission'] != admission):
-            deny('SAME_TRANSPORT_SHA_ADMISSION_REQUIRED')
+                or witness['admission'] != admission
+                or (same_session_sparse and
+                    (witness.get('mode') != SPARSE_MODE
+                     or admission.get('mode') != SPARSE_MODE
+                     or admission.get('evidence') !=
+                     'ROM_CRC32_ALL88_PLUS_FRESH_48K_NV_NOT_SHA_FULL_CAPTURE'))
+                or (same_session_fast and witness.get('mode') is not None)):
+            deny('SAME_TRANSPORT_SHA_ADMISSION_REQUIRED' if same_session_fast
+                 else 'SAME_TRANSPORT_SPARSE_ADMISSION_REQUIRED')
         current = copy.deepcopy(witness['admission'])
     else:
         # The proven conservative route independently SHA-reads all 88 sectors.
@@ -483,10 +498,11 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     expected = dict(current['observed_sector_sha256'])
     expected_crc = {addr: binascii.crc32(plan.snapshot[addr:addr + SECTOR]) & 0xffffffff
                     for addr in range(0, FLASH, SECTOR)}
-    if same_session_fast:
-        # Fresh change detection against the SHA-bound live capture, before erase.
+    if same_session_fast or same_session_sparse:
+        # SHA for full baseline; known-image CRC + freshly parsed NV for sparse.
         await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
-                               'STATE_CHANGED_AFTER_SHA_ADMISSION')
+                               'STATE_CHANGED_AFTER_SHA_ADMISSION' if same_session_fast
+                               else 'STATE_CHANGED_AFTER_SPARSE_ADMISSION')
     else:
         # Unmodified conservative profile retains its four CRC baselines.
         for probe in (0, 0xA4000, BOOT, TOP):
@@ -495,14 +511,14 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     # In the exact audited ROM adapter, SEND_DATA already validates GET_STATUS
     # before returning True. Avoid the additional round trip per 252-byte packet.
     # All other adapters and the historical profile retain the second query.
-    embedded_packet_status = same_session_fast and _verified_wire_status_embedded(raw)
+    embedded_packet_status = (same_session_fast or same_session_sparse) and _verified_wire_status_embedded(raw)
     completed = []
     for address in plan.manifest['program_order']:
         # The whole reserved/NV/boot/CCFG range and next target are re-read
         # before every erase. Only our verified writes may change their pins.
         await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT:
-            if same_session_fast:
+            if same_session_fast or same_session_sparse:
                 await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                        'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
             elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -519,7 +535,7 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         # first irreversible adapter call, rather than trusting stale reads.
         await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
         if address == BOOT:
-            if same_session_fast:
+            if same_session_fast or same_session_sparse:
                 await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                        'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
             elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -537,14 +553,14 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                     deny('BOOT_TAIL_NOT_VERIFIED')
                 expected[BOOT] = sha(partial)
                 expected_crc[BOOT] = binascii.crc32(partial) & 0xffffffff
-                if same_session_fast:
+                if same_session_fast or same_session_sparse:
                     await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                            'STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 elif await _observe(rom, expected_live_identity_sha256) != expected:
                     deny('STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 await _journal(rom, journal, {'event': 'BEFORE_BOOT_VECTOR_COMMIT',
                     'address': BOOT, 'plan_sha256': expected_plan_sha256})
-                if same_session_fast:
+                if same_session_fast or same_session_sparse:
                     await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
                                            'STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 elif await _observe(rom, expected_live_identity_sha256) != expected:
@@ -564,8 +580,122 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         completed.append(address)
         await _journal(rom, journal, {'event': 'SECTOR_VERIFIED', 'address': address,
                                     'sha256': expected[address]})
-    if await _observe(rom, expected_live_identity_sha256) != expected:
+    if same_session_sparse:
+        # The sparse lane documents the lower verification level accurately.
+        # All written sectors already have exact SHA readback above; all other
+        # sectors are checked against the previously verified snapshot by ROM CRC.
+        await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                               'FINAL_ALL88_SPARSE_CRC_PARITY')
+    elif await _observe(rom, expected_live_identity_sha256) != expected:
         deny('FINAL_ALL88_PARITY')
-    return {'status': 'APP_AND_AC000_VERIFIED_STILL_IN_BSL', 'written_sectors': completed,
+    return {'status': ('APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL' if same_session_sparse
+                       else 'APP_AND_AC000_VERIFIED_STILL_IN_BSL'),
+            'verification_scope': ('WRITTEN_SHA_PLUS_ALL88_ROM_CRC' if same_session_sparse
+                                   else 'ALL88_ROM_SHA'),
+            'written_sectors': completed,
             'nv_touched': False, 'ccfg_touched': False, 'reset_issued': False,
             'automatic_rollback': False, 'physical_boot_qualified': False}
+
+SPARSE_MODE = 'SPARSE_CRC_WITH_FRESH_NV_AND_PRIOR_VERIFIED_IMAGE'
+
+
+def bind_sparse_plan(plan: Transition, *, expected_plan_sha256: str,
+                     previous_verified_image: bytes, sparse_receipt: dict,
+                     expected_sparse_receipt_sha256: str) -> Transition:
+    """Convert a source/security-prepared plan to a distinctly marked sparse plan.
+
+    No ROM I/O and no authorization. Operator MUST obtain sparse_receipt from
+    the actual device in the same active ROM session and separately run genuine
+    native TI semantic NV security checks against reconstructed plan.snapshot.
+    A full 704-KiB capture cannot be fabricated by this function.
+    """
+    frozen = _frozen(plan, expected_plan_sha256)
+    receipt = copy.deepcopy(sparse_receipt)
+    if (type(previous_verified_image) is not bytes
+            or len(previous_verified_image) != FLASH
+            or sha(canonical(receipt)) != pin(expected_sparse_receipt_sha256)
+            or receipt.get('status') !=
+              'SPARSE_ROM_CRC_WITH_FRESH_NV_READ_ONLY_NOT_FLASH_ADMISSION'
+            or receipt.get('source_baseline_sha256') != sha(previous_verified_image)
+            or receipt.get('live_reconstructed_sha256') != sha(frozen.snapshot)
+            or receipt.get('nv_bytes_read') != 0xC000
+            or receipt.get('rom_crc32_sector_checks') != FLASH // SECTOR
+            or receipt.get('expected_identity_sha256') is None):
+        deny('SPARSE_PROVENANCE_INVALID')
+    if any(frozen.snapshot[a:a+SECTOR] != previous_verified_image[a:a+SECTOR]
+           for a in range(0,FLASH,SECTOR) if not 0xA0000 <= a < BOOT):
+        deny('SPARSE_NON_NV_IMAGE_CHANGED')
+    nv_changed = sum(frozen.snapshot[a:a+SECTOR] !=
+                     previous_verified_image[a:a+SECTOR]
+                     for a in range(0xA0000,BOOT,SECTOR))
+    if receipt.get('baseline_nv_changed_sectors') != nv_changed:
+        deny('SPARSE_NV_CHANGED_COUNT_MISMATCH')
+    manifest = copy.deepcopy(frozen.manifest)
+    manifest.pop('plan_sha256')
+    if manifest.get('capture_mode') is not None:
+        deny('SPARSE_ALREADY_BOUND')
+    manifest.update(capture_mode=SPARSE_MODE,
+                    sparse_receipt_sha256=expected_sparse_receipt_sha256,
+                    sparse_previous_sha256=sha(previous_verified_image))
+    manifest['plan_sha256'] = sha(canonical(manifest))
+    return _frozen(Transition(manifest,frozen.snapshot,frozen.sectors),
+                   manifest['plan_sha256'])
+
+
+async def admit_sparse(rom, plan: Transition, *, expected_plan_sha256: str,
+                       sparse_receipt: dict, expected_sparse_receipt_sha256: str,
+                       security_receipt: dict, expected_security_receipt_sha256: str,
+                       expected_live_identity_sha256: str, operation_timeout=10.0,
+                       session_timeout=600.0) -> dict:
+    """Read-only fast admission, NEVER grants flash authorization by itself.
+
+    Unlike admit(), no claim of 88-sector SHA readback is made. Reconstructs
+    SHA from the prior cryptographically verified installed image plus freshly
+    read/ROM-CRC-checked live NV, then independently checks all 88 live CRCs.
+    """
+    plan = _frozen(plan,expected_plan_sha256)
+    proof = copy.deepcopy(sparse_receipt)
+    sec = copy.deepcopy(security_receipt)
+    live = pin(expected_live_identity_sha256)
+    if (plan.manifest.get('capture_mode') != SPARSE_MODE
+            or sha(canonical(proof)) != pin(expected_sparse_receipt_sha256)
+            or plan.manifest.get('sparse_receipt_sha256') != expected_sparse_receipt_sha256
+            or proof.get('source_baseline_sha256') != plan.manifest.get('sparse_previous_sha256')
+            or proof.get('expected_identity_sha256') != live
+            or proof.get('live_reconstructed_sha256') != sha(plan.snapshot)
+            or proof.get('status') !=
+              'SPARSE_ROM_CRC_WITH_FRESH_NV_READ_ONLY_NOT_FLASH_ADMISSION'
+            or proof.get('rom_crc32_sector_checks') != FLASH // SECTOR
+            or proof.get('nv_bytes_read') != 0xC000
+            or live == plan.manifest['board_identity_sha256']):
+        deny('SPARSE_LIVE_CAPTURE_EVIDENCE_INVALID')
+    if (sha(canonical(sec)) != pin(expected_security_receipt_sha256)
+            or expected_security_receipt_sha256 != plan.manifest['security_receipt_sha256']
+            or sec.get('schema') != 'p7u-stock20260311-security-preflight-v1'
+            or sec.get('status') != 'PASS_RETAINED_SECURITY_OFFLINE_ONLY'
+            or sec.get('capture_sha256') != sha(plan.snapshot)
+            or any(sec.get(k) != 0 for k in
+                   ('write_attempts','erase_attempts','compaction_attempts'))
+            or sec.get('flash_authorized') is not False):
+        deny('SPARSE_NATIVE_SECURITY_NOT_VERIFIED')
+    rom = _bounded(rom,operation_timeout,session_timeout)
+    expected_crc = {a: binascii.crc32(plan.snapshot[a:a+SECTOR]) & 0xffffffff
+                    for a in range(0,FLASH,SECTOR)}
+    await _crc_tripwire_all(rom,expected_crc,live,'SPARSE_BASELINE_DRIFT')
+    observed = {a:sha(plan.snapshot[a:a+SECTOR]) for a in range(0,FLASH,SECTOR)}
+    result = {'schema':'p7u-stock20260311-sparse-admission-v1',
+              'mode':SPARSE_MODE,
+              'plan_sha256':expected_plan_sha256,
+              'capture_receipt_sha256':expected_sparse_receipt_sha256,
+              'live_identity_sha256':live,
+              'observed_sector_sha256':observed,
+              'evidence':'ROM_CRC32_ALL88_PLUS_FRESH_48K_NV_NOT_SHA_FULL_CAPTURE',
+              'flash_authorized':False,'flash_performed':False}
+    result['admission_sha256']=sha(canonical(result))
+    raw,reader,writer=_transport_session(rom)
+    _SAME_SESSION_ADMISSIONS[raw]={
+      'reader':reader,'writer':writer,'plan_sha256':expected_plan_sha256,
+      'capture_sha256':expected_sparse_receipt_sha256,'identity_sha256':live,
+      'admission':copy.deepcopy(result),'admitted_monotonic':time.monotonic(),
+      'mode':SPARSE_MODE}
+    return result
