@@ -20,6 +20,7 @@ import struct
 import sys
 import tempfile
 import time
+import weakref
 from typing import NamedTuple
 
 from r4_app_sector_transaction import _bounded, _sector
@@ -30,6 +31,11 @@ from b0_image_audit import _parse_intel_hex
 FLASH, SECTOR, APP_LIMIT, BOOT, TOP = 0xB0000, 0x2000, 0xA0000, 0xAC000, 0xAE000
 FACTORY_CCFG_SHA = '74707d474dc5ef0d1fdcc18fcd9d930f9a30030046833bdda7c1237219ae3758'
 PACKET = 252
+
+# Private in-process evidence only: cannot be serialized, replayed or used
+# after a different TCP/COM open. The default conservative path is unchanged.
+_SAME_SESSION_ADMISSIONS = weakref.WeakKeyDictionary()
+FAST_ADMISSION_MAX_AGE_SECONDS = 60.0
 
 
 class Transition(NamedTuple):
@@ -324,6 +330,41 @@ async def _observe(rom, live_identity):
     return {a: sha(await _sector(rom, a)) for a in range(0, FLASH, SECTOR)}
 
 
+async def _crc_tripwire_all(rom, expected_crc, live_identity, reason):
+    """All-88 ROM CRC tripwire after a full SHA admission, not a SHA substitute."""
+    if await rom.identity_sha256() != live_identity:
+        deny('LIVE_IDENTITY_CHANGED')
+    for address in range(0, FLASH, SECTOR):
+        if await rom.crc32(address, SECTOR) != expected_crc[address]:
+            deny(reason)
+
+
+def _transport_session(rom):
+    raw = rom._adapter if hasattr(rom, '_adapter') else rom
+    reader, writer = getattr(raw, 'reader', None), getattr(raw, 'writer', None)
+    if reader is None or writer is None or getattr(raw, '_faulted', False):
+        deny('FAST_TRANSPORT_NOT_LIVE')
+    if getattr(writer, 'is_closing', lambda: False)():
+        deny('FAST_TRANSPORT_CLOSING')
+    return raw, reader, writer
+
+
+def _verified_wire_status_embedded(raw):
+    """Only the existing qualified TI ROM adapter may omit a second status.
+
+    RomSerial._call() already gets/validates GET_STATUS after every SEND_DATA.
+    A different injected adapter always uses the historical extra status read.
+    """
+    if (type(raw).__module__ != 'p7u_stock20260311_rom_adapter'
+            or type(raw).__name__ != 'Stock20260311ROM'):
+        return False
+    try:
+        from p7u_rom_lowlevel import RomSerial
+    except ImportError:
+        return False
+    return type(raw)._call is RomSerial._call
+
+
 async def _guard(rom, address, expected, live_identity, expected_crc=None):
     """Check every protected sector and the target before irreversible I/O.
 
@@ -359,7 +400,8 @@ async def _journal(rom, callback, event):
 
 async def admit(rom, plan: Transition, *, expected_plan_sha256: str,
                 capture_receipt: dict, expected_capture_receipt_sha256: str,
-                expected_live_identity_sha256: str, operation_timeout=10.0, session_timeout=600.0) -> dict:
+                expected_live_identity_sha256: str, operation_timeout=10.0, session_timeout=600.0,
+                seal_same_session=False) -> dict:
     """Read-only: all88 sectors must match the approved duplicate capture."""
     plan = _frozen(plan, expected_plan_sha256)
     capture = copy.deepcopy(capture_receipt)
@@ -385,13 +427,22 @@ async def admit(rom, plan: Transition, *, expected_plan_sha256: str,
               'live_identity_sha256': live, 'observed_sector_sha256': observed,
               'flash_authorized': False, 'flash_performed': False}
     result['admission_sha256'] = sha(canonical(result))
+    if seal_same_session:
+        raw, reader, writer = _transport_session(rom)
+        _SAME_SESSION_ADMISSIONS[raw] = {
+            'reader': reader, 'writer': writer, 'plan_sha256': expected_plan_sha256,
+            'capture_sha256': expected_capture_receipt_sha256,
+            'identity_sha256': live, 'admission': copy.deepcopy(result),
+            'admitted_monotonic': time.monotonic(),
+        }
     return result
 
 
 async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha256: str,
                   expected_admission_sha256: str, capture_receipt: dict,
                   expected_capture_receipt_sha256: str, expected_live_identity_sha256: str,
-                  journal, operation_timeout=10.0, session_timeout=600.0) -> dict:
+                  journal, operation_timeout=10.0, session_timeout=600.0,
+                  same_session_fast=False) -> dict:
     """One explicit operator operation. Persist journal before each erase.
 
     journal(event) must durably record private events and return True; failures
@@ -399,27 +450,53 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
     """
     plan, admission = _frozen(plan, expected_plan_sha256), copy.deepcopy(admission)
     rom = _bounded(rom, operation_timeout, session_timeout)
-    current = await admit(rom, plan, expected_plan_sha256=expected_plan_sha256,
-        capture_receipt=copy.deepcopy(capture_receipt),
-        expected_capture_receipt_sha256=expected_capture_receipt_sha256,
-        expected_live_identity_sha256=expected_live_identity_sha256)
+    if same_session_fast:
+        raw, reader, writer = _transport_session(rom)
+        witness = _SAME_SESSION_ADMISSIONS.pop(raw, None)  # one-time, no replay
+        if (witness is None or witness['reader'] is not reader
+                or witness['writer'] is not writer
+                or time.monotonic() - witness['admitted_monotonic'] > FAST_ADMISSION_MAX_AGE_SECONDS
+                or witness['plan_sha256'] != expected_plan_sha256
+                or witness['capture_sha256'] != expected_capture_receipt_sha256
+                or witness['identity_sha256'] != expected_live_identity_sha256
+                or witness['admission'] != admission):
+            deny('SAME_TRANSPORT_SHA_ADMISSION_REQUIRED')
+        current = copy.deepcopy(witness['admission'])
+    else:
+        # The proven conservative route independently SHA-reads all 88 sectors.
+        current = await admit(rom, plan, expected_plan_sha256=expected_plan_sha256,
+            capture_receipt=copy.deepcopy(capture_receipt),
+            expected_capture_receipt_sha256=expected_capture_receipt_sha256,
+            expected_live_identity_sha256=expected_live_identity_sha256)
     if current != admission or current['admission_sha256'] != pin(expected_admission_sha256):
         deny('STALE_ADMISSION')
     expected = dict(current['observed_sector_sha256'])
     expected_crc = {addr: binascii.crc32(plan.snapshot[addr:addr + SECTOR]) & 0xffffffff
                     for addr in range(0, FLASH, SECTOR)}
-    # Verify genuine TI ROM CRC agrees with SHA-bound capture on four regions
-    # before first erase. No CRC is ever used as final acceptance evidence.
-    for probe in (0, 0xA4000, BOOT, TOP):
-        if await rom.crc32(probe, SECTOR) != expected_crc[probe]:
-            deny('ROM_CRC32_NOT_EQUIVALENT_TO_ADMITTED_CAPTURE')
+    if same_session_fast:
+        # Fresh change detection against the SHA-bound live capture, before erase.
+        await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                               'STATE_CHANGED_AFTER_SHA_ADMISSION')
+    else:
+        # Unmodified conservative profile retains its four CRC baselines.
+        for probe in (0, 0xA4000, BOOT, TOP):
+            if await rom.crc32(probe, SECTOR) != expected_crc[probe]:
+                deny('ROM_CRC32_NOT_EQUIVALENT_TO_ADMITTED_CAPTURE')
+    # In the exact audited ROM adapter, SEND_DATA already validates GET_STATUS
+    # before returning True. Avoid the additional round trip per 252-byte packet.
+    # All other adapters and the historical profile retain the second query.
+    embedded_packet_status = same_session_fast and _verified_wire_status_embedded(raw)
     completed = []
     for address in plan.manifest['program_order']:
         # The whole reserved/NV/boot/CCFG range and next target are re-read
         # before every erase. Only our verified writes may change their pins.
         await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
-        if address == BOOT and await _observe(rom, expected_live_identity_sha256) != expected:
-            deny('APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
+        if address == BOOT:
+            if same_session_fast:
+                await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                                       'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
+            elif await _observe(rom, expected_live_identity_sha256) != expected:
+                deny('APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
         payload = plan.sectors[address]
         if sha(payload) == expected[address]:
             continue
@@ -431,8 +508,12 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         # A journal callback yields control. Revalidate after it, before the
         # first irreversible adapter call, rather than trusting stale reads.
         await _guard(rom, address, expected, expected_live_identity_sha256, expected_crc)
-        if address == BOOT and await _observe(rom, expected_live_identity_sha256) != expected:
-            deny('APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
+        if address == BOOT:
+            if same_session_fast:
+                await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                                       'APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
+            elif await _observe(rom, expected_live_identity_sha256) != expected:
+                deny('APP_NOT_VERIFIED_BEFORE_BOOT_COMMIT')
         if await rom.erase_sector(address) is not True or await rom.status() is not True:
             deny('UNCERTAIN_ERASE_SECTOR')
         # The new reset vector is the boot sector's final write. Until then
@@ -446,17 +527,25 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                     deny('BOOT_TAIL_NOT_VERIFIED')
                 expected[BOOT] = sha(partial)
                 expected_crc[BOOT] = binascii.crc32(partial) & 0xffffffff
-                if await _observe(rom, expected_live_identity_sha256) != expected:
+                if same_session_fast:
+                    await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                                           'STATE_CHANGED_BEFORE_BOOT_VECTOR')
+                elif await _observe(rom, expected_live_identity_sha256) != expected:
                     deny('STATE_CHANGED_BEFORE_BOOT_VECTOR')
                 await _journal(rom, journal, {'event': 'BEFORE_BOOT_VECTOR_COMMIT',
                     'address': BOOT, 'plan_sha256': expected_plan_sha256})
-                if await _observe(rom, expected_live_identity_sha256) != expected:
+                if same_session_fast:
+                    await _crc_tripwire_all(rom, expected_crc, expected_live_identity_sha256,
+                                           'STATE_CHANGED_BEFORE_BOOT_VECTOR')
+                elif await _observe(rom, expected_live_identity_sha256) != expected:
                     deny('STATE_CHANGED_BEFORE_BOOT_VECTOR')
             if await rom.begin_download(address + start, length) is not True or await rom.status() is not True:
                 deny('UNCERTAIN_BEGIN_DOWNLOAD')
             for offset in range(start, start + length, PACKET):
                 packet = payload[offset:min(offset + PACKET, start + length)]
-                if await rom.send_data(packet) is not True or await rom.status() is not True:
+                if await rom.send_data(packet) is not True:
+                    deny('UNCERTAIN_SEND_DATA')
+                if not embedded_packet_status and await rom.status() is not True:
                     deny('UNCERTAIN_SEND_DATA')
         if await _sector(rom, address) != payload:
             deny('SECTOR_READBACK')

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-owner P7U native collector cutover; run INSIDE authorized HA SSH.
+"""RETIRED legacy P7U cutover (read-only inspection only).
 
 Default is read-only preflight. --execute changes HA add-on ownership ONCE.
 Never opens UART, flashes firmware, restores counters, restarts hardware, or
@@ -146,6 +146,14 @@ def main():
     args = parser.parse_args()
     assert 10 <= args.grace_seconds <= 120
     assert 180 <= args.observe_seconds <= 3600
+    # RV-P1-03/04/05: the legacy implementation can kill a reused Docker
+    # name, lacks a durable owner journal and strict committed-DB admission,
+    # and treats absent F2 as a reason to restart a healthy serving host.
+    # It is NOT an executable rollout mechanism, including under python -O.
+    # Replace it only after the separate identity-pinned lifecycle manager
+    # passes exact-SHA GitHub Actions, a guarded dry-run, and review.
+    if args.execute:
+        raise RuntimeError("P7U_HOLD_LEGACY_CUTOVER_RETIRED_NO_HOST_ACTION")
     preflight()
     if not args.execute:
         print("PREFLIGHT_ONLY_NO_CHANGE", flush=True)

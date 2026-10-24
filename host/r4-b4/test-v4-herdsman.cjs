@@ -156,7 +156,7 @@ test("V4 real compiled Znp mutex vetoes F2 after OTA begins while queued",async(
     const pending=assert.rejects(
         znp.requestWithReply(Subsystem.SYS,"r4DiagReadOnlyV4",
             {nonce:Buffer.from("0102030405060708","hex")},undefined,500),
-        /runtime admission vetoed/
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
     );
     idle=false; release();
     await normal; await pending;

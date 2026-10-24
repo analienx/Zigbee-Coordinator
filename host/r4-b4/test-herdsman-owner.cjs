@@ -185,10 +185,9 @@ test("D01/D03/D04: real Znp.request/Waitress routes ping and SYS F0 over the one
         const body = request.commandID === 1 ? Buffer.from([0x01, 0x00]) : frame();
         queueMicrotask(() => znp.onUnpiParsed(new Frame(Type.SRSP, Subsystem.SYS, request.commandID, body)));
     };
-    const [ping, f0] = await Promise.all([
-        znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 300),
-        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 300),
-    ]);
+    // F2/F0 is optional: it is now forbidden from queuing behind ping.
+    const ping = await znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 300);
+    const f0 = await znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 300);
     assert.deepEqual(commands, [1, 240]);
     assert.equal(ping.payload.capabilities, 1);
     assert.equal(f0.payload.diagnostic.length, 132);
@@ -397,7 +396,7 @@ test("REVIEW-P0: F0 queued before first timeout cannot escape the mutex after qu
     // timeout, or this F0 would be wrongly transmitted later.
     const second = assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 100),
-        /poisoned inside ZNP mutex/
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
     );
     await Promise.all([first, second]);
     assert.deepEqual(writes, [240]);
@@ -441,7 +440,7 @@ test("REVIEW-P0: a queued F0 never writes after the existing owner is disconnect
     assert.equal(typeof releasePing, "function"); // mutex occupied by normal ping
     const diagnostic = assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 500),
-        /owner unavailable or poisoned inside ZNP mutex/
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
     );
     // Simulates the real pinned onPortClose setting initialized=false while
     // the diagnostic request is already in the mutex's pending queue.
@@ -506,7 +505,7 @@ test("B4 OTA admission: genuine source-compiled ZNP mutex veto wins after initia
     znp.b4SetProbeGuard(() => otaIdle);
     const offer = assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnly", {}, undefined, 500),
-        /B4 F0 runtime admission vetoed/
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
     );
     otaIdle = false;  // OTA starts after request accepted, before writer.
     finishPing();

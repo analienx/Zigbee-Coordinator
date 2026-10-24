@@ -1,0 +1,57 @@
+name: P7U proven writer control-plane boundaries (NO LIVE ACTION)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/p7u_proven_flash_gateway.py'
+      - 'host/r4-b4/test-p7u-proven-flash-gateway.py'
+      - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
+      - 'tests/test_r4_stock20260311_transition.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_r4_operator.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_r4_startup_transport.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_r4_adapter_provision.py'
+      - '.github/workflows/qualify-p7u-proven-gateway.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proven-gateway-boundaries:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    env:
+      SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Test named controls without hardware
+        run: |
+          python host/r4-b4/test-p7u-proven-flash-gateway.py -v
+          python host/r4-b4/test-p7u-web-flash-trial.py -v
+          python -m py_compile host/r4-b4/p7u_proven_flash_gateway.py
+          python -m unittest -v tests.test_p7u_r4_operator tests.test_p7u_r4_startup_observer tests.test_p7u_r4_adapter_provision tests.test_r4_stock20260311_transition
+      - name: Seal gateway
+        run: |
+          mkdir /tmp/proven-gateway
+          cp host/r4-b4/{p7u_proven_flash_gateway.py,p7u_web_flash_trial.py} /tmp/proven-gateway/
+          cp firmware/slzb-06p7u/r4/release/{p7u_r4_operator.py,p7u_r4_startup_observer.py,p7u_r4_startup_transport.py,p7u_r4_adapter_provision.py} /tmp/proven-gateway/
+          # Test the actual deployment archive, not only repository imports.
+          (cd /tmp/proven-gateway && PYTHONPYCACHEPREFIX=/tmp/p7u-gateway-pycache python -m py_compile *.py)
+          (cd /tmp/proven-gateway && PYTHONPYCACHEPREFIX=/tmp/p7u-gateway-pycache python p7u_r4_operator.py --help > /dev/null)
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          d=Path('/tmp/proven-gateway')
+          r={'schema':'p7u-proven-gateway-release-v1','source_sha':os.environ['SOURCE'],
+             'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in d.iterdir() if p.is_file()},'live_action_performed':False}
+          (d/'PROVEN_GATEWAY_RELEASE.json').write_text(json.dumps(r,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-proven-gateway-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/proven-gateway/
+          if-no-files-found: error

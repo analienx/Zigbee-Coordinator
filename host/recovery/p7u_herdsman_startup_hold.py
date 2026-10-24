@@ -17,8 +17,11 @@ PATH = "src/adapter/z-stack/adapter/manager.ts"
 DEFINITION = "src/adapter/z-stack/znp/definition.ts"
 PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
+CONTROLLER = "src/controller/controller.ts"
+DATABASE = "src/controller/database.ts"
+ZNP = "src/adapter/z-stack/znp/znp.ts"
 MARKER = "P7U_P0_NONDESTRUCTIVE_STARTUP_HOLD"
-FILES = (PATH, DEFINITION, PARAM, BUFFALO)
+FILES = (PATH, DEFINITION, PARAM, BUFFALO, CONTROLLER, ZNP, DATABASE)
 
 
 def once(source, old, new):
@@ -55,6 +58,115 @@ STATUS_METHOD = r'''
             !data.subarray(16).every((byte) => byte === 0)) {
             throw new Error("P7U HOLD_EXISTING_NV: R4 NV/security status is held or incompatible");
         }
+    }
+
+'''
+
+
+DB_ADMISSION_METHOD = r'''
+    /** P7U_DB_ADMISSION_V1: validate committed DB BEFORE Adapter.create()
+     * and before any serial transport opens. No files are repaired/promoted.
+     * The private approval file is created only by a separately authorized
+     * quiescent snapshot/journal transaction, never by application startup.
+     */
+    private p7uRequireApprovedDatabase(): void {
+        const fail = (reason: string): never => {
+            throw new Error("P7U HOLD_EXISTING_DB: " + reason);
+        };
+        const dbPath = this.options.databasePath;
+        const approvalPath = process.env.P7U_APPROVED_DB_MANIFEST ?? "";
+        if (!approvalPath || !approvalPath.startsWith("/config/zigbee2mqtt/") ||
+            !dbPath.startsWith("/config/zigbee2mqtt/") ||
+            !dbPath.endsWith("/database.db") ||
+            fs.existsSync(dbPath + ".tmp") ||
+            fs.existsSync(approvalPath + ".pending")) {
+            fail("missing approval, invalid data path or unresolved temporary DB");
+        }
+        let raw: Buffer = Buffer.alloc(0);
+        let approval: unknown;
+        try {
+            const dbStatBefore = fs.lstatSync(dbPath);
+            const approvalStat = fs.lstatSync(approvalPath);
+            if (!dbStatBefore.isFile() || dbStatBefore.isSymbolicLink() ||
+                dbStatBefore.size < 1 || dbStatBefore.size > 64 * 1024 * 1024 ||
+                !approvalStat.isFile() || approvalStat.isSymbolicLink() ||
+                approvalStat.size < 1 || approvalStat.size > 16 * 1024) {
+                fail("database or approval type/size");
+            }
+            raw = fs.readFileSync(dbPath);
+            approval = JSON.parse(fs.readFileSync(approvalPath, "utf8"));
+            const after = fs.lstatSync(dbPath);
+            if (after.ino !== dbStatBefore.ino || after.dev !== dbStatBefore.dev ||
+                after.size !== dbStatBefore.size || after.mtimeMs !== dbStatBefore.mtimeMs ||
+                raw.length !== dbStatBefore.size) {
+                fail("database changed during admission");
+            }
+        } catch {
+            fail("database or approval unreadable");
+        }
+        const text = raw.toString("utf8");
+        if (!Buffer.from(text, "utf8").equals(raw) || text.includes("\u0000")) {
+            fail("database encoding");
+        }
+        const lines = text.split(/\r?\n/);
+        if (lines.at(-1) === "") { lines.pop(); }
+        if (lines.length === 0 || lines.some((line) => !line.trim())) {
+            fail("empty or blank-line database");
+        }
+        const IDs = new Set<number>();
+        const devices = new Set<string>();
+        let coordinators = 0;
+        for (const line of lines) {
+            let row: Record<string, unknown> = {};
+            try { row = JSON.parse(line); } catch { fail("corrupt JSONL row"); }
+            if (!row || typeof row !== "object" || Array.isArray(row) ||
+                !Number.isSafeInteger(row.id) || (row.id as number) < 0 ||
+                IDs.has(row.id as number)) {
+                fail("invalid or duplicate entity id");
+            }
+            IDs.add(row.id as number);
+            if (!["Coordinator", "Router", "EndDevice", "Unknown", "GreenPower", "Group"]
+                .includes(row.type as string)) {
+                fail("invalid entity type");
+            }
+            if (row.type === "Group") {
+                if (!Number.isSafeInteger(row.groupID) ||
+                    (row.groupID as number) < 0 || (row.groupID as number) > 65535) {
+                    fail("invalid group id");
+                }
+            } else {
+                if (row.type === "Coordinator") { coordinators++; }
+                const ieee = row.ieeeAddr;
+                if (row.type !== "GreenPower" && (typeof ieee !== "string" ||
+                    !/^0x[0-9a-f]{16}$/i.test(ieee))) {
+                    fail("missing device IEEE");
+                }
+                if (ieee !== undefined) {
+                    if (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee) ||
+                        devices.has((ieee as string).toLowerCase())) {
+                        fail("duplicate or invalid IEEE");
+                    }
+                    devices.add((ieee as string).toLowerCase());
+                }
+            }
+        }
+        if (coordinators !== 1) { fail("coordinator count"); }
+        if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+            fail("approval schema");
+        }
+        const seal = approval as Record<string, unknown>;
+        const digest = createHash("sha256").update(raw).digest("hex");
+        const inventory = createHash("sha256").update(
+            [...devices].sort().join("\n") + "\n", "ascii").digest("hex");
+        if (seal.schema !== "p7u-db-admission-v1" ||
+            seal.database_sha256 !== digest || seal.inventory_sha256 !== inventory ||
+            seal.rows !== lines.length || seal.devices !== devices.size ||
+            typeof seal.generation !== "string" ||
+            !/^[a-zA-Z0-9_-]{12,100}$/.test(seal.generation)) {
+            fail("approval does not match latest committed DB");
+        }
+        Database.p7uArmApproval(dbPath, approvalPath, seal.generation as string,
+            createHash("sha256").update(fs.readFileSync(approvalPath)).digest("hex"));
     }
 
 '''
@@ -143,7 +255,7 @@ def plan(checkout, composition_receipt=None):
     originals = {}
     for name in FILES:
         raw = read_source_bytes(checkout, name)
-        if name == PATH or receipt is None:
+        if name in (PATH, DATABASE) or receipt is None:
             if raw != git("show", f"{PIN}:{name}"):
                 raise ValueError("dirty or substituted upstream source: " + name)
         elif hashlib.sha256(raw).hexdigest() != receipt.get("files", {}).get(name, {}).get("sha256_after"):
@@ -208,7 +320,185 @@ def plan(checkout, composition_receipt=None):
                 }
                 return this.readBuffer(24);
             }""")
-    return {PATH: (originals[PATH], manager),
+    controller = once(originals[CONTROLLER],
+        'import fs from "node:fs";',
+        'import fs from "node:fs";\nimport {createHash} from "node:crypto"; // P7U_DB_ADMISSION_V1')
+    controller = once(controller,
+        "    public async start(abortSignal?: AbortSignal): Promise<AdapterTsType.StartResult> {",
+        DB_ADMISSION_METHOD +
+        "    public async start(abortSignal?: AbortSignal): Promise<AdapterTsType.StartResult> {\n"
+        "        this.p7uRequireApprovedDatabase();")
+    # A retained network must never be silently re-formed, switched channel
+    # or assigned a replacement coordinator identity by Controller.start().
+    controller = once(controller,
+        '        this.adapterDisconnected = false;\n\n        abortSignal?.throwIfAborted();',
+        '        this.adapterDisconnected = false;\n'
+        '        if (String(startResult) !== "resumed") {\n'
+        '            throw new Error("P7U HOLD_EXISTING_NV: non-resumed adapter startup denied");\n'
+        '        }\n\n        abortSignal?.throwIfAborted();')
+    controller = once(controller,
+        "            if (configuredChannel !== adapterChannel) {",
+        '            if (configuredChannel !== adapterChannel) {\n'
+        '                throw new Error("P7U HOLD_EXISTING_NV: channel mismatch; automatic migration disabled");')
+    controller = once(controller,
+        '            databaseCoordinator.changeIeeeAddress(coordinatorIEEE);',
+        '            throw new Error("P7U HOLD_EXISTING_NV: coordinator IEEE mismatch; no host repair");')
+    controller = once(controller,
+        """        clearInterval(this.databaseSaveTimer);
+
+        if (this.adapterDisconnected) {""",
+        """        clearInterval(this.databaseSaveTimer);
+
+        // P7U_DB_ADMISSION_V1: database/models saved before the first
+        // potentially stalled radio/permitJoin/adapter await. A failed save
+        // aborts graceful stop rather than pretending it was durable.
+        if (!this.adapterDisconnected) { this.databaseSave(); }
+        if (this.adapterDisconnected) {""")
+    # H1: pinned upstream skipBootloader uses a 0xEF magic byte and
+    # serialPort.asyncSet DTR/RTS after a failed ping. Neither is allowed on
+    # the sole retained-network P7U. Unexpected source drift holds.
+    znp = originals[ZNP]
+    first = znp.index("    private async skipBootloader(): Promise<void> {")
+    end = znp.index("    public async close(): Promise<void> {", first)
+    original_method = znp[first:end]
+    if "Buffer.from([0xef])" not in original_method or "asyncSet({dtr: false, rts:" not in original_method:
+        raise ValueError("pinned source skipBootloader implementation drift")
+    safe_method = """    /** P7U_SAFE_PING_NO_BOOTLOADER_SIGNALS: retained owner only.
+     * No 0xEF magic, RTS/DTR fallback, or automatic reset; failure is HOLD.
+     */
+    private async skipBootloader(): Promise<void> {
+        try {
+            await this.request(Subsystem.SYS, "ping", {capabilities: 1}, undefined, 1500);
+        } catch {
+            throw new Error("P7U HOLD_EXISTING_NV: ping unavailable; no bootloader magic or line toggles");
+        }
+    }
+
+"""
+    znp = znp[:first] + safe_method + znp[end:]
+    # A retained-only manager is not the sole caller of Znp.request():
+    # Controller.reset()/Adapter.reset() can also submit SYS/SAPI resets.
+    # Enforce the no-radio-reset contract at the transport boundary too.
+    znp = once(znp,
+        "        const object = ZpiObject.createRequest(subsystem, command, payload);",
+        """        const object = ZpiObject.createRequest(subsystem, command, payload);
+        if (object.isResetCommand()) {
+            throw new Error("P7U HOLD_EXISTING_NV: runtime radio reset disabled for retained R4");
+        }""")
+    # H3: after atomic db rename, fsync its *parent directory* to make
+    # replacement of the directory entry durable on supported POSIX FS.
+    # A failure raises and the host cannot claim a successfully saved DB.
+    database = once(originals[DATABASE],
+        'import fs from "node:fs";',
+        'import fs from "node:fs";\nimport * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC')
+    database = once(database,
+        'import * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC',
+        'import * as path from "node:path"; // P7U_DB_DIRECTORY_FSYNC\n'
+        'import {createHash} from "node:crypto";')
+    database = once(database,
+        '    public static open(path: string): Database {',
+        """    /** Live DB changes are sealed only AFTER a trusted startup approval.
+     *  The caller must prove the latest committed snapshot first.
+     */
+    private static p7uSeal: {db: string; manifest: string;
+        generation: string; digest: string} | null = null;
+
+    public static p7uArmApproval(db: string, manifest: string,
+                                generation: string, digest: string): void {
+        if (!db.endsWith("/database.db") ||
+            !manifest.startsWith("/config/zigbee2mqtt/") ||
+            !/^[A-Za-z0-9_-]{12,100}$/.test(generation) ||
+            !/^[a-f0-9]{64}$/.test(digest)) {
+            throw new Error("P7U DB approval arm invalid");
+        }
+        if (Database.p7uSeal !== null && (Database.p7uSeal.db !== db ||
+            Database.p7uSeal.manifest !== manifest ||
+            Database.p7uSeal.generation !== generation)) {
+            throw new Error("P7U DB approval already bound to a different owner");
+        }
+        Database.p7uSeal = {db, manifest, generation, digest};
+    }
+
+    /** Calculate the next private commit receipt from trusted model state.
+     *  Never "approve" arbitrary disk bytes or rehydrate a .tmp.
+     */
+    private p7uNextReceipt(raw: string): {payload: string;
+        seal: NonNullable<typeof Database.p7uSeal>} {
+        const seal = Database.p7uSeal;
+        if (seal === null || seal.db !== this.path) {
+            throw new Error("P7U HOLD_EXISTING_DB: unarmed commit receipt");
+        }
+        const existing = fs.readFileSync(seal.manifest);
+        if (createHash("sha256").update(existing).digest("hex") !== seal.digest) {
+            throw new Error("P7U HOLD_EXISTING_DB: committed receipt externally changed");
+        }
+        const devices = new Set<string>();
+        let coordinators = 0;
+        for (const entry of this.entries.values()) {
+            if (entry.type === "Group") { continue; }
+            if (entry.type === "Coordinator") { coordinators++; }
+            const ieee: unknown = entry.ieeeAddr;
+            if (entry.type !== "GreenPower" &&
+                (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee))) {
+                throw new Error("P7U HOLD_EXISTING_DB: missing model IEEE");
+            }
+            if (ieee !== undefined) {
+                if (typeof ieee !== "string" || !/^0x[0-9a-f]{16}$/i.test(ieee) ||
+                    devices.has(ieee.toLowerCase())) {
+                    throw new Error("P7U HOLD_EXISTING_DB: duplicate model IEEE");
+                }
+                devices.add(ieee.toLowerCase());
+            }
+        }
+        if (coordinators !== 1) {
+            throw new Error("P7U HOLD_EXISTING_DB: coordinator identity changed");
+        }
+        const receipt = {
+            schema: "p7u-db-admission-v1",
+            database_sha256: createHash("sha256").update(raw, "utf8").digest("hex"),
+            inventory_sha256: createHash("sha256").update(
+                [...devices].sort().join("\\n") + "\\n", "ascii").digest("hex"),
+            rows: this.entries.size, devices: devices.size,
+            generation: seal.generation,
+        };
+        return {payload: JSON.stringify(receipt) + "\\n", seal};
+    }
+
+    public static open(path: string): Database {""")
+    database = once(database,
+        "        fs.renameSync(tmpPath, this.path);",
+        """        fs.renameSync(tmpPath, this.path);
+        // P7U_DB_DIRECTORY_FSYNC: file fsync without directory fsync does
+        // not alone guarantee the renamed entry survives sudden power loss.
+        const parentFd = fs.openSync(path.dirname(this.path), "r");
+        try { fs.fsyncSync(parentFd); }
+        finally { fs.closeSync(parentFd); }""")
+
+    # Extend the protected DB write: the authorization receipt follows the
+    # DB's directory-fsynced rename, with its OWN fsync+rename+dirfsync.
+    # A crash between the two commits yields HOLD on the next start.
+    database = once(database,
+        """        const tmpPath = `${this.path}.tmp`;""",
+        """        const approved = this.p7uNextReceipt(lines.slice(0, -1));
+        const tmpPath = `${this.path}.tmp`;""")
+    database = once(database,
+        """        finally { fs.closeSync(parentFd); }""",
+        """        finally { fs.closeSync(parentFd); }
+        const approvalPending = approved.seal.manifest + ".pending";
+        const receiptFd = fs.openSync(approvalPending, "wx", 0o600);
+        try {
+            fs.writeFileSync(receiptFd, approved.payload, "utf8");
+            fs.fsyncSync(receiptFd);
+        } finally { fs.closeSync(receiptFd); }
+        fs.renameSync(approvalPending, approved.seal.manifest);
+        const approvalDirFd = fs.openSync(path.dirname(approved.seal.manifest), "r");
+        try { fs.fsyncSync(approvalDirFd); }
+        finally { fs.closeSync(approvalDirFd); }
+        approved.seal.digest = createHash("sha256").update(approved.payload, "utf8").digest("hex");""")
+    return {DATABASE: (originals[DATABASE], database),
+            ZNP: (originals[ZNP], znp),
+            CONTROLLER: (originals[CONTROLLER], controller),
+            PATH: (originals[PATH], manager),
             DEFINITION: (originals[DEFINITION], definition),
             PARAM: (originals[PARAM], params),
             BUFFALO: (originals[BUFFALO], buffalo)}

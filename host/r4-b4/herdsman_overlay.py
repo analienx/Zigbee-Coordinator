@@ -135,6 +135,10 @@ ADAPTER_METHOD = r"""
         this.znp.b4EnablePassiveForensics(enabled);
     }
 
+    public b4SetHostTimeoutSink(sink: Parameters<Znp["b4SetHostTimeoutSink"]>[0]): void {
+        this.znp.b4SetHostTimeoutSink(sink);
+    }
+
     /** Read only sanitized numeric monotonic host events; no waiter IDs. */
     public b4GetPassiveHostForensics(): ReturnType<Znp["b4ReadPassiveForensics"]> {
         return this.znp.b4ReadPassiveForensics();
@@ -309,6 +313,30 @@ def plan(root):
         return !this.#locked && this.#queue.length === 0;
     }""",
     )
+    # An optional diagnostic must not enter production request's mutex queue.
+    # Acquire the same owner synchronously or SKIP without any frame/side effect.
+    changes[MUTEX] = replace_once(
+        changes[MUTEX],
+        """    isIdle(): boolean {
+        return !this.#locked && this.#queue.length === 0;
+    }""",
+        """    isIdle(): boolean {
+        return !this.#locked && this.#queue.length === 0;
+    }
+
+    tryRunIfIdle<T>(fn: () => Promise<T>): Promise<T> | undefined {
+        if (!this.isIdle()) { return undefined; }
+        this.#locked = true; // reserve synchronously before any await
+        return (async (): Promise<T> => {
+            try { return await fn(); }
+            finally {
+                const next = this.#queue.shift();
+                if (next) { next.resume(); }
+                else { this.#locked = false; }
+            }
+        })();
+    }""",
+    )
     # B4: bounded in-process timeout metadata, entirely free of device IDs,
     # IEEE addresses, raw frames, payloads, serial paths and disk access.
     # A mutex can become idle while Waitress still retains a pending or
@@ -352,7 +380,8 @@ def plan(root):
         "    private waitress: Waitress<ZpiObject, WaitressMatcher>;",
         """    private waitress: Waitress<ZpiObject, WaitressMatcher>;
     private b4HostForensicsEnabled = false;
-    private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}> = [];
+    private b4HostTimeoutSink: ((event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void) | undefined;
+    private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"}> = [];
     private b4HostDropped = 0;
     private b4DiagPoisoned = false;
     private b4ProbeGuard: (() => boolean) | undefined;""",
@@ -369,9 +398,14 @@ def plan(root):
         }
     }
 
+    public b4SetHostTimeoutSink(sink: ((event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void) | undefined): void {
+        this.b4HostTimeoutSink = sink;
+        this.b4EnablePassiveForensics(typeof sink === "function");
+    }
+
     public b4ReadPassiveForensics(): {
         schema: "r4-b4-inprocess-host-sreq-v1";
-        recent_events: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT"}>;
+        recent_events: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"}>;
         dropped: number;
         radio_epoch: "UNKNOWN";
     } {
@@ -396,7 +430,8 @@ def plan(root):
         }
         const kind = subsystem === Subsystem.AF ? "AF_SREQ_TIMEOUT"
             : subsystem === Subsystem.ZDO ? "ZDO_SREQ_TIMEOUT"
-            : subsystem === Subsystem.SYS ? "SYS_SREQ_TIMEOUT" : null;
+            : subsystem === Subsystem.SYS ? "SYS_SREQ_TIMEOUT"
+            : subsystem === Subsystem.UTIL ? "UTIL_SREQ_TIMEOUT" : null;
         if (kind === null) {
             return;
         }
@@ -410,6 +445,10 @@ def plan(root):
             this.b4HostDropped = Math.min(Number.MAX_SAFE_INTEGER, this.b4HostDropped + 1);
         }
         this.b4HostTimeouts.push({at_ms, kind});
+        // Passive notification only, never request diagnostics inside a failed
+        // production transaction. Optional IPC failure cannot change its error.
+        try { this.b4HostTimeoutSink?.({at_ms, kind, dropped: this.b4HostDropped}); }
+        catch { /* Normal ZNP request must retain its original outcome. */ }
     }
 
     public isInitialized(): boolean {""",
@@ -543,6 +582,32 @@ def plan(root):
                 throw error;
             });""",
     )
+    # Use the exactly same ZNP request owner with synchronous admission.
+    # F0/F2 must NEVER await AsyncMutex behind AF/ZDO/OTA, even briefly.
+    changes[ZNP] = replace_once(changes[ZNP],
+        "        return this.queue.run<ZpiObject | undefined>(async () => {",
+        """        const b4Optional = object.type === Type.SREQ &&
+            object.subsystem === Subsystem.SYS &&
+            (object.command.name === "r4DiagReadOnly" ||
+             object.command.name === "r4DiagReadOnlyV4");
+        const operation = async (): Promise<ZpiObject | undefined> => {""")
+    changes[ZNP] = replace_once(changes[ZNP],
+        """        });
+    }
+
+    public requestZdo(""",
+        """        };
+        const result = b4Optional
+            ? this.queue.tryRunIfIdle(operation)
+            : this.queue.run(operation);
+        if (result === undefined) {
+            // No waiter registered, no writer invoked and no queued work.
+            throw new Error("B4 DIAG_NOT_SUBMITTED_BUSY");
+        }
+        return result;
+    }
+
+    public requestZdo(""")
     return {k: (originals[k], changes[k]) for k in changes}
 
 def apply(root):

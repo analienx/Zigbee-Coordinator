@@ -1,0 +1,125 @@
+name: P7U protected fallback - source and image (NOT INSTALLED)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/**'
+      - 'host/recovery/p7u_herdsman_startup_hold.py'
+      - 'host/r4-b4/test-p7u-db-startup.cjs'
+      - 'host/r4-b4/p7u_host_integrity.py'
+      - 'host/r4-b4/ha-addon/**'
+      - 'host/r4-b4/ha-fallback/**'
+      - '.github/workflows/test-p7u-safe-fallback.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p7u-fallback-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  protected-fallback:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      HERDSMAN_PIN: 0968f979d558874b17396c96b66382d4236bbdcd
+      B4_HERDSMAN_ROOT: /tmp/p7u-fallback-herdsman
+      P7U_HERDSMAN_ROOT: /tmp/p7u-fallback-herdsman
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Source SHA must match
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Build source-qualified diagnostic-OFF herdsman
+        run: |
+          set -euo pipefail
+          git init -q "$B4_HERDSMAN_ROOT"
+          git -C "$B4_HERDSMAN_ROOT" remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C "$B4_HERDSMAN_ROOT" fetch --depth 1 origin "$HERDSMAN_PIN"
+          git -C "$B4_HERDSMAN_ROOT" checkout --detach FETCH_HEAD
+          test "$(git -C "$B4_HERDSMAN_ROOT" rev-parse HEAD)" = "$HERDSMAN_PIN"
+          PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/fallback-patch.json
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/fallback-patch.json'))
+          assert r['retained_only'] and not r['installed'] and len(r['files'])==7
+          PY
+          npm install --global pnpm@10.33.0
+          cd "$B4_HERDSMAN_ROOT"
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Test actual compiled fallback startup; prove F2 absent
+        run: |
+          set -euo pipefail
+          sudo install -d -o "$USER" -g "$USER" /config/zigbee2mqtt
+          node --test host/r4-b4/test-p7u-db-startup.cjs host/r4-b4/test-p7u-db-durability.cjs
+          node --test host/recovery/test-p7u-herdsman-hold.cjs
+          node - <<'JS'
+          const fs=require('fs'),path=require('path');
+          const root=process.env.B4_HERDSMAN_ROOT;
+          const ctl=fs.readFileSync(path.join(root,'dist/controller/controller.js'),'utf8');
+          const znp=fs.readFileSync(path.join(root,'dist/adapter/z-stack/znp/znp.js'),'utf8');
+          if (!ctl.includes('P7U_DB_ADMISSION_V1') || !znp.includes('P7U_SAFE_PING_NO_BOOTLOADER_SIGNALS')) throw Error('missing H1 compiled guard');
+          if (znp.includes('r4DiagReadOnlyV4') || ctl.includes('B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE')) throw Error('fallback contains F2 experiment');
+          JS
+      - name: Build ARM64 fallback image from exact installed vendor base, NO container start
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fallback-image/herdsman-dist /tmp/fallback-receipts
+          cp -a "$B4_HERDSMAN_ROOT/dist/." /tmp/fallback-image/herdsman-dist/
+          cp host/r4-b4/ha-fallback/{Dockerfile,config.yaml} /tmp/fallback-image/
+          docker buildx create --name p7u-safe-fallback --driver docker-container --use
+          docker buildx inspect --bootstrap
+          docker buildx build --platform linux/arm64 --tag "p7u-fallback:${SOURCE_SHA:0:12}" --output type=docker,dest=/tmp/fallback-receipts/p7u-arm64.docker.tar /tmp/fallback-image
+          docker load --input /tmp/fallback-receipts/p7u-arm64.docker.tar
+          docker image inspect "p7u-fallback:${SOURCE_SHA:0:12}" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
+          docker image inspect "p7u-fallback:${SOURCE_SHA:0:12}" --format '{{.Id}}' > /tmp/fallback-receipts/PINNED_IMAGE_ID.txt
+          mv /tmp/fallback-image /tmp/p7u-staged-fallback
+          tar -C /tmp -czf /tmp/fallback-receipts/p7u-staged-fallback.tar.gz p7u-staged-fallback
+      - name: Attest six actual compiled modules in Docker export
+        run: |
+          python - <<'PY'
+          import tarfile,hashlib,json,os
+          from pathlib import Path
+          root=Path('/tmp/p7u-staged-fallback/herdsman-dist')
+          names=['controller/controller.js','adapter/z-stack/znp/znp.js','adapter/z-stack/adapter/manager.js','adapter/z-stack/znp/definition.js','adapter/z-stack/znp/parameterType.js','adapter/z-stack/znp/buffaloZnp.js','controller/database.js']
+          expected={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in names}
+          artifact=Path('/tmp/fallback-receipts/p7u-arm64.docker.tar')
+          got={}
+          with tarfile.open(artifact) as archive:
+              m=json.load(archive.extractfile('manifest.json'))[0]
+              with tarfile.open(fileobj=archive.extractfile(m['Layers'][-1])) as layer:
+                  for entry in layer:
+                      k=entry.name.lstrip('./')
+                      prefix='app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/'
+                      if k.startswith(prefix) and k[len(prefix):] in expected and entry.isfile():
+                          got[k[len(prefix):]]=hashlib.sha256(layer.extractfile(entry).read()).hexdigest()
+          assert got==expected, {'missing':sorted(set(expected)-set(got)), 'changed':sorted(k for k in got if got[k]!=expected.get(k))}
+          result={'schema':'p7u-fallback-hosted-v1','source_sha':os.environ['SOURCE_SHA'],'verified_modules':len(got),'docker_sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'installed':False,'f2_capable':False,'manager_qualified':False}
+          Path('/tmp/fallback-receipts/ATTESTATION.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          stage=root.parent
+          bundle=Path('/tmp/fallback-receipts/p7u-staged-fallback.tar.gz')
+          package={'schema':'p7u-staged-addon-v1','source_sha':os.environ['SOURCE_SHA'],
+            'archive_sha256':hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            'files':{str(p.relative_to(stage)):hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sorted(stage.rglob('*')) if p.is_file()},'installed':False}
+          (bundle.parent/'ADDON_BUNDLE_RECEIPT.json').write_text(json.dumps(package,indent=2,sort_keys=True)+'\n')
+          print('PASS: source-qualified F2-absent fallback Docker export',len(got))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-protected-fallback-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/fallback-receipts/
+          compression-level: 0
+          if-no-files-found: error
+      - name: Do not infer live installation
+        run: |
+          echo "HOSTED_FALLBACK_BUILT_NOT_DEPLOYED; manager & tty-owner gate still pending"
+          test ! -e host/r4-b4/z2m-installed.ok

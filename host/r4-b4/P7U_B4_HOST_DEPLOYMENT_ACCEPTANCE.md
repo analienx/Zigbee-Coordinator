@@ -99,11 +99,24 @@ once or automatically repeat failed starts.
   deadline it was stopped and original `45df7312_zigbee2mqtt` resumed.
   Preserve existing private history for follow-on comparison. Guard 0.2.3
   remains warning-only with physical reset disabled.
-- At least **three** consecutive F2 records with `kind=VALID` in private
-  `/config/zigbee2mqtt/p7u-b4-diagnostics/history.json`, followed by the
-  matching durable `last-good.json`. Samples must originate from the live
+- At least **three** naturally admitted F2 reads with `kind=VALID` in the
+  private `/config/zigbee2mqtt/p7u-b4-diagnostics` worker-v2 journal. Resolve
+  `current-v2.json` to its selected generation's `events-v2.jsonl` and
+  `manifest-v2.json` with `p7u_f2_acceptance.py`; never select an orphaned
+  generation. `SKIPPED` records may occur between valid reads, while a
+  failed/quarantined/closed diagnostic session or a new host owner prevents
+  reusing earlier reads. Samples must originate from the live
   *original* serial owner, with measured host receive times and valid
-  monotonically advancing native sequence under one boot identity.
+  monotonically advancing native sequence under one host owner. Radio-epoch
+  continuity remains UNKNOWN without separate hardware proof.
+- Worker-v2 retains at most 24 hours, 4096 records and 4 MiB of active data.
+  It publishes retention/capacity rotation through one fsynced atomic
+  generation-pointer rename, then removes the specifically retired
+  generation. Expiry runs independently from sampler IPC, with a wall-clock
+  recheck at least every 60 seconds. A crash leaving an unselected pending
+  generation or unresolved append is HOLD, never automatic promotion.
+  Retired v1 `history.json` and `last-good.json` are preserved as prior
+  evidence and are excluded from current acceptance.
 - Verify real nonce echo, exact frame size/version, OTA/queue/owner gates,
   native counter validity, no unexpected reboot, no raw nonce or raw boot
   token in logs, bounded storage, and no serial command by a second process.

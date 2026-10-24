@@ -1,0 +1,323 @@
+"""Adversarial, offline injected-port lifecycle machine tests. No HA calls."""
+import tempfile
+import json
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parent))
+import p7u_lifecycle_core as core
+import p7u_lifecycle_machine as machine
+
+CAP = {
+    "diagnostic_profile_sha": "d"*64, "fallback_profile_sha": "f"*64,
+    "identity_inspection": True, "tty_fd_inspection": True,
+    "source_database_gate": True, "save_before_adapter_close": True,
+}
+OLD = core.Owner("a"*64, 1001, "2026-10-23T08:00:00.000Z", "sha256:" + "a"*64)
+NEW = core.Owner("b"*64, 2002, "2026-10-23T08:05:00.000Z", "sha256:" + "d"*64)
+
+class Port:
+    def __init__(self):
+        self.owner = {"official": OLD, "diagnostic": None, "fallback": None}
+        self.events = []
+        self.stuck = False
+        self.lost_ack = False
+        self.changed = False
+        self.bad_image = False
+        self.extra_holder = False
+        self.serving = True
+        self.db_events = []
+        self.db_failure = False
+    def inspect(self, slot):
+        owner = self.owner[slot]
+        if self.changed and slot == "official":
+            owner = core.Owner("c"*64, 1099, OLD.started_at, OLD.image_digest)
+        return machine.Presence(owner is not None, owner)
+    def tty_holders(self):
+        pids = frozenset(x.pid for x in self.owner.values() if x is not None)
+        return pids | (frozenset({5151}) if self.extra_holder else frozenset())
+    def prove_owner_holders(self, owner, holders):
+        # Synthetic source fixture: in real HA a Node child is proven by
+        # docker top + cgroup + stable Linux /proc start time, not main PID.
+        from p7u_lifecycle_core import guard
+        guard(holders == frozenset({owner.pid}), "FOREIGN_UART_OWNER")
+    def validate_profiles(self, *, original_slot, target_slot):
+        core.guard(all(v is None for k,v in self.owner.items() if k != original_slot),
+                   "PREFLIGHT_COMPETING_CONTAINER")
+    def preflight_database(self):
+        core.guard(self.owner["official"] is not None, "BASELINE_TOO_LATE")
+        self.db_events.append("baseline")
+        return {"inventory_sha256":"c"*64,"devices":3,"rows":3,"groups":0}
+    def approve_quiesced_database(self, baseline):
+        core.guard(not any(self.owner.values()) and not self.tty_holders(), "DB_OWNER_PRESENT")
+        core.guard(not self.db_failure, "DB_CHANGED_SINCE_PRESTOP")
+        self.db_events.append("quiesced")
+        return {"schema":"p7u-quiesced-approval-v1","database_sha256":"e"*64,
+                "inventory_sha256":baseline["inventory_sha256"],"approved_rows":3,
+                "approved_devices":3,"generation":"owner-quiesced-test"}
+    def stop(self, slot, *, timeout_seconds):
+        self.events.append(("stop", slot, timeout_seconds))
+        if not self.stuck:
+            self.owner[slot] = None
+        return not self.lost_ack
+    def start(self, slot, *, expected_image_sha):
+        self.events.append(("start", slot, expected_image_sha))
+        self.owner[slot] = (core.Owner(NEW.container_id, NEW.pid, NEW.started_at, "sha256:"+"e"*64)
+                            if self.bad_image else NEW)
+        return True
+    def serving_evidence(self, slot, *, max_seconds):
+        self.events.append(("serve", slot, max_seconds))
+        return {"fresh_devices": 3 if self.serving else 0,
+                "mqtt_messages_fresh": self.serving,
+                "non_actuating_read": self.serving}
+
+class Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)/"private"
+        self.root.mkdir(mode=0o700)
+        self.port = Port()
+        self.sleep_patch = patch.object(machine.time, "sleep", return_value=None)
+        self.sleep_patch.start()
+        self.addCleanup(self.sleep_patch.stop)
+
+    def switch(self, cap=CAP, **kwargs):
+        with core.Journal(self.root) as j:
+            return machine.Manager(j, self.port, cap).switch_once(
+                original_slot="official", target_slot="diagnostic",
+                database_approved=True, guard_passive=True, **kwargs)
+
+    def test_one_owner_success_and_serving_gate(self):
+        self.assertEqual(self.switch(), "COMMITTED")
+        self.assertEqual(self.port.owner["official"], None)
+        self.assertEqual(self.port.owner["diagnostic"], NEW)
+        self.assertEqual([e[0] for e in self.port.events].count("start"), 1)
+        self.assertEqual([e[0] for e in self.port.events].count("stop"), 1)
+        self.assertEqual(self.port.db_events,["baseline","quiesced"])
+        records=[json.loads(line) for line in (self.root/"events.jsonl").read_text().splitlines()]
+        phases=[record["phase"] for record in records]
+        self.assertLess(phases.index("OWNER_ABSENT"),phases.index("DB_APPROVED"))
+        self.assertLess(phases.index("DB_APPROVED"),phases.index("START_INTENT"))
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase, "COMMITTED")
+
+    def test_lost_supervisor_stop_ack_reconciles_without_retry(self):
+        self.port.lost_ack = True
+        self.assertEqual(self.switch(), "COMMITTED")
+        self.assertEqual([e[0] for e in self.port.events].count("stop"), 1)
+        history = (self.root / "events.jsonl").read_text()
+        self.assertIn("STOP_ACK_UNKNOWN", history)
+
+    def test_timed_out_stop_is_observed_until_same_owner_exits_without_retry(self):
+        state={"stop_sent":False,"checks":0}
+        inspect=self.port.inspect
+        def delayed_inspect(slot):
+            if state["stop_sent"] and slot=="official":
+                state["checks"]+=1
+                if state["checks"]>=3:
+                    self.port.owner[slot]=None
+            return inspect(slot)
+        def stop(slot, *, timeout_seconds):
+            self.port.events.append(("stop",slot,timeout_seconds))
+            state["stop_sent"]=True
+            return False
+        self.port.inspect=delayed_inspect
+        self.port.stop=stop
+        self.assertEqual(self.switch(),"COMMITTED")
+        self.assertEqual(len([x for x in self.port.events if x[0]=="stop"]),1)
+        self.assertEqual(len([x for x in self.port.events if x[0]=="start"]),1)
+
+    def test_hanging_stop_no_force_and_no_start(self):
+        self.port.stuck = True
+        with self.assertRaisesRegex(core.LifecycleHold, "STOP_NOT_VERIFIED"):
+            self.switch()
+        self.assertEqual([e[0] for e in self.port.events], ["stop"])
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase, "HOLD")
+
+    def test_start_ack_precedes_uart_open_without_retry(self):
+        original=self.port.tty_holders
+        checks=[]
+        def delayed_uart():
+            if self.port.owner['diagnostic'] is not None:
+                checks.append(True)
+                if len(checks)<4:return frozenset()
+            return original()
+        self.port.tty_holders=delayed_uart
+        self.assertEqual(self.switch(),'COMMITTED')
+        self.assertGreaterEqual(len(checks),4)
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_start_owner_wait_uses_elapsed_time_including_inspection_cost(self):
+        self.port.owner={'official':None,'diagnostic':NEW,'fallback':None}
+        self.port.tty_holders=lambda:frozenset()
+        with patch.object(machine.time,'monotonic',side_effect=[0,91]):
+            with self.assertRaisesRegex(core.LifecycleHold,'TARGET_OWNER_NOT_READY'):
+                machine.await_target_owner(self.port,'diagnostic','d'*64)
+
+    def test_explicit_quiescent_continuation_sends_one_start_and_no_stop(self):
+        self.port.owner={slot:None for slot in self.port.owner}
+        self.port.preflight_database=lambda:{'existing_approval':{'generation':'retained'}}
+        approve=self.port.approve_quiesced_database
+        self.port.approve_quiesced_database=lambda baseline:{**approve({'inventory_sha256':'c'*64}),'reused':True}
+        with core.Journal(self.root) as j:
+            result=machine.Manager(j,self.port,CAP).start_quiescent_once(
+                target_slot='diagnostic',reconciliation={'prior_hold_verified':True})
+        self.assertEqual(result,'COMMITTED')
+        self.assertEqual([e[0] for e in self.port.events],['start','serve'])
+
+    def test_quiescent_continuation_cannot_reseal_unapproved_database(self):
+        self.port.owner={slot:None for slot in self.port.owner}
+        self.port.preflight_database=lambda:{}
+        with core.Journal(self.root) as j:
+            with self.assertRaisesRegex(core.LifecycleHold,'CURRENT_APPROVAL_REQUIRED'):
+                machine.Manager(j,self.port,CAP).start_quiescent_once(
+                    target_slot='diagnostic',reconciliation={'prior_hold_verified':True})
+        self.assertEqual(self.port.events,[])
+
+    def test_lost_start_ack_delayed_container_creation_observed_without_retry(self):
+        original=self.port.inspect
+        pending=[]
+        def start(slot,**kwargs):
+            self.port.events.append(('start',slot));pending.append(0);return False
+        def delayed(slot):
+            if pending and slot=='diagnostic':
+                pending[0]+=1
+                if pending[0]==3:self.port.owner[slot]=NEW
+            return original(slot)
+        self.port.start=start;self.port.inspect=delayed
+        self.assertEqual(self.switch(),'COMMITTED')
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+        self.assertIn('START_ACK_UNKNOWN',(self.root/'events.jsonl').read_text())
+
+    def test_target_generation_change_before_uart_open_is_hold(self):
+        original=self.port.inspect
+        checks=[]
+        def changing(slot):
+            if slot=='diagnostic' and self.port.owner[slot] is not None:
+                checks.append(True)
+                if len(checks)==2:
+                    self.port.owner[slot]=core.Owner('c'*64,2222,NEW.started_at,NEW.image_digest)
+            return original(slot)
+        self.port.inspect=changing
+        self.port.tty_holders=lambda: frozenset({OLD.pid}) if self.port.owner['official'] else frozenset()
+        with self.assertRaisesRegex(core.LifecycleHold,'OWNER_IDENTITY_CHANGED'):self.switch()
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_target_never_opens_uart_holds_after_bounded_observation(self):
+        checks=[]
+        def no_uart():
+            if self.port.owner['official']:return frozenset({OLD.pid})
+            if self.port.owner['diagnostic']:checks.append(True)
+            return frozenset()
+        self.port.tty_holders=no_uart
+        with self.assertRaisesRegex(core.LifecycleHold,'TARGET_OWNER_NOT_READY'):self.switch()
+        self.assertEqual(len(checks),91)
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_foreign_uart_holder_during_start_is_never_accepted(self):
+        original=self.port.start
+        def start(slot,**kwargs):
+            result=original(slot,**kwargs);self.port.extra_holder=True;return result
+        self.port.start=start
+        with self.assertRaisesRegex(core.LifecycleHold,'FOREIGN_UART_OWNER'):self.switch()
+        self.assertEqual(len([x for x in self.port.events if x[0]=='start']),1)
+
+    def test_stale_reused_container_identity_fails_closed(self):
+        self.port.stuck = True
+        self.port.changed = True
+        with self.assertRaisesRegex(core.LifecycleHold, "FOREIGN_UART_OWNER|ORIGINAL_REPLACED"):
+            self.switch()
+        self.assertFalse(any(a[0] == "start" for a in self.port.events))
+
+    def test_unexpected_tty_holder_blocks_all_effects(self):
+        self.port.extra_holder = True
+        with self.assertRaisesRegex(core.LifecycleHold, "FOREIGN_UART_OWNER"):
+            self.switch()
+        self.assertEqual(self.port.events, [])
+
+    def test_mismatched_expected_new_image_holds_without_restarting_original(self):
+        self.port.bad_image = True
+        with self.assertRaisesRegex(core.LifecycleHold, "TARGET_UNEXPECTED_IMAGE"):
+            self.switch()
+        self.assertIsNone(self.port.owner["official"])
+        self.assertIsNotNone(self.port.owner["diagnostic"])
+        self.assertEqual([e[0] for e in self.port.events].count("stop"), 1)
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase, "HOLD")
+
+    def test_insufficient_live_traffic_is_hold_not_host_restart(self):
+        self.port.serving = False
+        with self.assertRaisesRegex(core.LifecycleHold, "SERVING_UNVERIFIED"):
+            self.switch()
+        self.assertEqual(len([e for e in self.port.events if e[0] == "stop"]), 1)
+        self.assertEqual(len([e for e in self.port.events if e[0] == "start"]), 1)
+        self.assertIsNotNone(self.port.owner["diagnostic"])
+        self.assertIsNone(self.port.owner["official"])
+
+    def test_competitor_appearing_during_serving_never_commits(self):
+        serving=self.port.serving_evidence
+        def competing(slot, *, max_seconds):
+            result=serving(slot,max_seconds=max_seconds)
+            self.port.owner["fallback"]=core.Owner("f"*64,3003,NEW.started_at,"sha256:"+"f"*64)
+            return result
+        self.port.serving_evidence=competing
+        with self.assertRaisesRegex(core.LifecycleHold,"fallback_NOT_ABSENT"):
+            self.switch()
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase,"HOLD")
+        self.assertEqual(len([e for e in self.port.events if e[0]=="stop"]),1)
+
+    def test_actual_node_child_uart_holder_can_be_proven_without_container_init_fd(self):
+        orig=self.port.prove_owner_holders
+        def descendants(owner, holders):
+            self.assertEqual(holders, frozenset({owner.pid+32}))
+        self.port.tty_holders=lambda: frozenset(
+            {x.pid+32 for x in self.port.owner.values() if x is not None})
+        self.port.prove_owner_holders=descendants
+        self.assertEqual(self.switch(), "COMMITTED")
+
+    def test_missing_db_approval_never_stops_or_starts(self):
+        with core.Journal(self.root) as j:
+            with self.assertRaisesRegex(core.LifecycleHold, "DATABASE_OR_GUARD"):
+                machine.Manager(j, self.port, CAP).switch_once(
+                    original_slot="official", target_slot="diagnostic",
+                    database_approved=False, guard_passive=True)
+        self.assertEqual(self.port.events, [])
+
+    def test_quiesced_database_failure_never_starts_or_restores_original(self):
+        self.port.db_failure=True
+        with self.assertRaisesRegex(core.LifecycleHold,"DB_CHANGED_SINCE_PRESTOP"):
+            self.switch()
+        self.assertEqual([x[0] for x in self.port.events],["stop"])
+        self.assertFalse(any(self.port.owner.values()))
+        with core.Journal(self.root) as j:
+            self.assertEqual(j.phase,"HOLD")
+
+    def test_third_slot_is_rejected_before_stop(self):
+        self.port.owner["fallback"]=core.Owner("f"*64,3003,NEW.started_at,"sha256:"+"f"*64)
+        # Model a second container not yet holding the UART, which the
+        # original holder check alone cannot catch.
+        self.port.tty_holders=lambda:frozenset({OLD.pid})
+        with self.assertRaisesRegex(core.LifecycleHold,"PREFLIGHT_COMPETING_CONTAINER"):
+            self.switch()
+        self.assertEqual(self.port.events,[])
+
+    def test_missing_independent_fallback_is_veto(self):
+        cap={**CAP, "fallback_profile_sha": CAP["diagnostic_profile_sha"]}
+        with self.assertRaisesRegex(core.LifecycleHold, "FALLBACK_NOT_INDEPENDENT"):
+            self.switch(cap)
+
+    def test_crashed_journal_after_stop_intent_never_repeats(self):
+        with core.Journal(self.root) as j:
+            j.append("PREFLIGHT", {})
+            j.append("STOP_INTENT", {})
+        with self.assertRaisesRegex(core.LifecycleHold, "UNRECONCILED_JOURNAL"):
+            self.switch()
+        self.assertEqual(self.port.events, [])
+
+if __name__ == "__main__":
+    unittest.main()
