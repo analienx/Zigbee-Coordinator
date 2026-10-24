@@ -355,12 +355,22 @@ def _verified_wire_status_embedded(raw):
     RomSerial._call() already gets/validates GET_STATUS after every SEND_DATA.
     A different injected adapter always uses the historical extra status read.
     """
-    if (type(raw).__module__ != 'p7u_stock20260311_rom_adapter'
-            or type(raw).__name__ != 'Stock20260311ROM'):
+    # Both exact source-audited subclasses inherit the same unmodified
+    # RomSerial._call for ALL irreversible opcodes. FastUsbRom changes only
+    # read-only memory transfer; no broad isinstance/duck-typing relaxation.
+    exact = (type(raw).__module__, type(raw).__name__)
+    if exact not in {
+        ('p7u_stock20260311_rom_adapter', 'Stock20260311ROM'),
+        ('p7u_usb_fast_rom', 'SafeFastUsbRom'),
+    }:
         return False
     try:
         from p7u_rom_lowlevel import RomSerial
+        from p7u_stock20260311_rom_adapter import Stock20260311ROM
+        from p7u_usb_fast_rom import SafeFastUsbRom
     except ImportError:
+        return False
+    if type(raw) not in (Stock20260311ROM, SafeFastUsbRom):
         return False
     return type(raw)._call is RomSerial._call
 

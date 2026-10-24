@@ -1,0 +1,43 @@
+name: P7U USB fast cutover source-only contracts (NO HARDWARE)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/p7u-usb-fast-cutover-20261024
+      - codex/p7u-f2-safety-takeover-20261023
+    paths:
+      - '.github/workflows/p7u-usb-fast-cutover.yml'
+      - 'firmware/slzb-06p7u/r4/release/rom_writer/p7u_usb_*'
+      - 'firmware/slzb-06p7u/r4/release/rom_writer/test_p7u_usb_*'
+      - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
+  pull_request:
+    paths:
+      - '.github/workflows/p7u-usb-fast-cutover.yml'
+      - 'firmware/slzb-06p7u/r4/release/rom_writer/p7u_usb_*'
+      - 'firmware/slzb-06p7u/r4/release/rom_writer/test_p7u_usb_*'
+      - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
+
+permissions:
+  contents: read
+
+jobs:
+  no-hardware-fast-usb-protocol:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact proposed SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Fast read + sparse NV + timing negative controls
+        shell: bash
+        run: |
+          python -m unittest discover \
+            -s firmware/slzb-06p7u/r4/release/rom_writer \
+            -p 'test_p7u_usb_*.py' -v
+      - name: Preserve original strict stock ROM protocol
+        shell: bash
+        run: python -m unittest discover -s tests -p 'test_p7u_stock20260311_rom_adapter.py' -v
