@@ -77,6 +77,99 @@ def _logs(supervisor, slug: str) -> dict:
         return {"unavailable":type(exc).__name__}
 
 
+NATIVE_ROOT = Path("/homeassistant/zigbee2mqtt/p7u-b4-diagnostics")
+_NATIVE_COUNTERS = ("srspDepth", "srspHighWater", "asyncDepth", "asyncHighWater", "srspEnqueued", "uartTxFinishedEvents")
+_TIMEOUT_KINDS = frozenset(("AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "SYS_SREQ_TIMEOUT", "UTIL_SREQ_TIMEOUT"))
+
+
+def _native_require(ok, reason):
+    if not ok:
+        raise ValueError("NATIVE_V2_" + reason)
+
+
+def _native_bytes(path, limit):
+    _native_require(path.is_file() and not path.is_symlink() and path.stat().st_size <= limit, "FILE_UNSAFE")
+    raw = path.read_bytes()
+    _native_require(len(raw) <= limit, "FILE_OVERSIZED")
+    return raw
+
+
+def committed_native_summary(root: Path, observed: dict, now: int) -> dict:
+    """Read-only bounded freeze; legacy v1 last-good is never current evidence.
+
+    The pointer and manifest must stay byte-identical across this read. A live
+    append or rotation race is UNAVAILABLE, never an excuse to select an orphan.
+    Native source/boot identity are advisory, never hardware attestation.
+    """
+    try:
+        _native_require(root.is_dir() and not root.is_symlink(), "NO_COMMITTED_WORKER_V2")
+        pending = root / ".current-v2.pending"
+        _native_require(not pending.exists() and not pending.is_symlink(), "UNCOMMITTED_POINTER")
+        pointer = root / "current-v2.json"
+        before = None
+        active = root
+        if pointer.exists() or pointer.is_symlink():
+            before = _native_bytes(pointer, 4096)
+            selected = json.loads(before)
+            name = selected.get("active")
+            _native_require(selected.get("schema") == "p7u-f2-pointer-v1" and isinstance(name, str) and
+                            re.fullmatch(r"generation-[a-f0-9-]{36}", name) is not None, "POINTER_INVALID")
+            active = root / name
+            _native_require(active.is_dir() and not active.is_symlink(), "GENERATION_UNSAFE")
+        md = active / "manifest-v2.json"
+        manifest_raw = _native_bytes(md, 4096)
+        manifest = json.loads(manifest_raw)
+        raw = _native_bytes(active / "events-v2.jsonl", 4 * 1024 * 1024)
+        _native_require(manifest.get("schema") == "p7u-f2-worker-v2" and
+                        manifest.get("committedBytes") == len(raw) and (not raw or raw.endswith(b"\n")), "UNCOMMITTED_LOG")
+        previous = "0" * 64
+        rows = []
+        for number, line in enumerate(raw.splitlines(), 1):
+            frame = json.loads(line)
+            data = frame.get("data")
+            _native_require(type(data) is dict and frame.get("seq") == number and frame.get("previous") == previous,
+                            "CHAIN_INVALID")
+            body = {"seq": number, "previous": previous, "data": data}
+            current = hashlib.sha256(json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+            _native_require(frame.get("sha") == current, "HASH_INVALID")
+            rows.append(data)
+            previous = current
+        _native_require(len(rows) <= 4096 and manifest.get("sequence") == len(rows) and manifest.get("head") == previous,
+                        "MANIFEST_INVALID")
+        last_valid = next((i for i in range(len(rows), 0, -1) if rows[i-1].get("kind") == "VALID"), None)
+        _native_require(manifest.get("lastValidSeq") == last_valid and manifest.get("lastValidHostRun") ==
+                        (rows[last_valid-1].get("hostRunId") if last_valid else None), "LAST_GOOD_POINTER_INVALID")
+        _native_require(_native_bytes(md, 4096) == manifest_raw and
+                        ((before is None and not pointer.exists() and not pointer.is_symlink()) or
+                         (before is not None and _native_bytes(pointer, 4096) == before)) and
+                        not pending.exists() and not pending.is_symlink(), "CHANGED_DURING_READ")
+        owner = ((rows[-1].get("hostRunId"), rows[-1].get("ownerGeneration")) if rows else (None, None))
+        current_rows = [r for r in rows if (r.get("hostRunId"), r.get("ownerGeneration")) == owner]
+        good = next((r for r in reversed(current_rows) if r.get("kind") == "VALID" and
+                     type(r.get("utc")) is int and now * 1000 - HISTORY_SECONDS * 1000 <= r["utc"] <= now * 1000 + 2000), None)
+        last_good = None
+        if good is not None:
+            mask = good.get("validityMask")
+            _native_require(type(mask) is int and mask in (0x2c, 0x3f) and good.get("abi") == 4, "COUNTER_SCHEMA_INVALID")
+            last_good = {k: good.get(k) for k in ("utc", "abi", "sequence", "validityMask", "hostRunId", "ownerGeneration")}
+            for bit, key in enumerate(_NATIVE_COUNTERS):
+                value = good.get(key)
+                last_good[key] = value if mask & (1 << bit) and type(value) is int and 0 <= value <= 0xffffffff else None
+            last_good["age_ms"] = max(0, now * 1000 - good["utc"])
+            epoch = observed.get("epoch_start_utc")
+            last_good["matches_observed_process_start"] = good["utc"] >= epoch * 1000 if type(epoch) in (int, float) and epoch > 0 else None
+        failures = []
+        for row in current_rows:
+            if row.get("kind") == "FAILED" and row.get("hostTimeoutKind") in _TIMEOUT_KINDS:
+                failures.append({k: row.get(k) for k in ("utc", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped")})
+        return {"schema": "p7u-frozen-worker-v2-advisory-v1", "status": "VERIFIED_COMMITTED_HISTORY",
+                "history_head": previous, "history_records": len(rows), "last_good": last_good,
+                "host_timeouts": failures[-4:], "radio_epoch": "UNKNOWN", "hardware_source_attestation": "UNPROVEN"}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        reason = str(exc) if type(exc) is ValueError and str(exc).startswith("NATIVE_V2_") else "NATIVE_V2_UNAVAILABLE_OR_INVALID"
+        return {"status": "UNAVAILABLE", "reason": reason, "radio_epoch": "UNKNOWN"}
+
+
 class PassiveForensics:
     def __init__(self, data: Path, supervisor, slug: str):
         self.root = data / "passive-forensics"
@@ -125,27 +218,15 @@ class PassiveForensics:
         if not _intent_once(self.root,name):
             return False
         redacted = {k:summary.get(k) for k in SAFE_FIELDS}
-        # Advisory only: no raw native frame, boot token or key is captured.
-        native = Path("/homeassistant/zigbee2mqtt/p7u-b4-diagnostics/last-good.json")
-        native_summary = None
-        if native.is_file() and not native.is_symlink() and native.stat().st_size <= 4096:
-            try:
-                candidate = json.loads(native.read_text(encoding="utf-8"))
-                if (candidate.get("schema") != "p7u-b4-native-sample-v1"
-                    or candidate.get("kind") != "VALID"
-                    or type(candidate.get("utc")) is not int):
-                    raise ValueError("INVALID_NATIVE_SUMMARY")
-                native_summary = {k:candidate.get(k) for k in (
-                    "utc","abi","sequence","validityMask",
-                    "srspDepth","srspHighWater","uartTxFinishedEvents",
-                    "radioEpochTag","imageRuntimeAttested")}
-            except (ValueError,OSError):
-                native_summary = None
+        # Freeze only verified worker-v2 data, never the preserved retired v1
+        # last-good.json. No reader opens serial or promotes an orphaned log.
+        native_summary = committed_native_summary(NATIVE_ROOT, summary, int(time.time()))
         atomic_json(self.root/(name+".json"),{
             "schema":"p7u-passive-evidence-v1",
             "created_utc":int(time.time()),
             "summary":redacted, "host":_logs(self.supervisor,self.slug),
-            "native_last_good_advisory":native_summary})
+            "native_last_good_advisory":None,
+            "native_worker_v2_advisory":native_summary})
         # Only first-error captures are retired; retain exclusive intent
         # markers to prevent crash/restart duplicate captures.
         if name.startswith("first-error-"):
