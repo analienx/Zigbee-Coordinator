@@ -47,7 +47,14 @@ class CompletionSourceTests(unittest.TestCase):
         self.assertNotIn("NLME_NetworkFormationRequest(",formation)
         router=f[b:f.index("    return source",b)]
         self.assertIn("B1_ERROR_BDB_UNEXPECTED",router)
-        self.assertNotIn('OsalPort_setEvent(ZDAppTaskID, ZDO_NETWORK_START)',router)
+        self.assertIn("B1_RET_CNF_ISSUED",router)
+        self.assertIn("NODETYPE_COORDINATOR",router)
+        self.assertIn("DEV_COORD_STARTING",router)
+        self.assertIn("b1_sec_restored_network_validated()",router)
+        self.assertIn("b1_retained_completion_confirm()",router)
+        self.assertIn("ZDO_NETWORK_START",router)
+        self.assertNotIn("NLME_NetworkFormationRequest(",router)
+        self.assertNotIn("NLME_StartRouterRequest(",router)
 
     def test_resume_token_armed_before_genuine_native_router_request(self):
         f=(ROOT/"firmware/slzb-06p7u/r4/b1/tools/patch_zd_object_resume.py").read_text()
