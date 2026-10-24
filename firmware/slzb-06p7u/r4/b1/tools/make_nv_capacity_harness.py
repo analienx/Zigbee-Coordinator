@@ -23,11 +23,14 @@ PREAMBLE = r'''
 #define ZCD_NV_EX_ADDRMGR 1u
 #define ZCD_NV_EX_BINDING_TABLE 2u
 #define ZCD_NV_EX_DEVICE_LIST 3u
+#define ZCD_NV_EX_GROUP_TABLE 8u
 #define NWK_MAX_ADDRESSES 406u
 typedef struct {uint8_t systemID;uint16_t itemID,subID;} NVINTF_itemID_t;
+typedef struct {uint8_t endpoint;struct {uint16_t ID;uint8_t name[16];}group;} apsGroupNVItem_t;
 static uint16_t gNWK_MAX_DEVICE_LIST=97,gNWK_MAX_BINDING_ENTRIES=4,gBIND_REC_SIZE=14;
-static uint8_t data[4][406][32], saved[4][406][32];
-static uint16_t lengths[4][406];
+static uint8_t gAPS_MAX_GROUPS=16;
+static uint8_t data[9][406][32], saved[9][406][32];
+static uint16_t lengths[9][406];
 static unsigned creates,attempts,readbacks,fail_after;
 static uint8_t held,candidate=1,create_status,read_status,corrupt_readback,length_fault;
 static uint16_t fault_item,fault_sub;
@@ -38,11 +41,11 @@ int b1_znp_configured_init_authorized(void) {return 0;}
 void b1_startup_note_nv(uint8_t stage,uint8_t op,uint16_t item,uint16_t sub,uint8_t status)
 {assert(stage==0x70&&op>=1&&op<=4);(void)item;(void)sub;(void)status;}
 static uint32_t item_len(NVINTF_itemID_t id)
-{assert(id.systemID==1&&id.itemID<=3&&id.subID<406);
+{assert(id.systemID==1&&id.itemID<=8&&id.subID<406);
  if(length_fault&&id.itemID==fault_item&&id.subID==fault_sub)return 0;
  return lengths[id.itemID][id.subID];}
 static uint8_t read_item(NVINTF_itemID_t id,uint16_t off,uint16_t len,void *out)
-{assert(id.systemID==1&&id.itemID<=3&&id.subID<406);++readbacks;
+{assert(id.systemID==1&&id.itemID<=8&&id.subID<406);++readbacks;
  if(read_status&&id.itemID==fault_item&&id.subID==fault_sub)return read_status;
  if(lengths[id.itemID][id.subID]==0)return NVINTF_NOTFOUND;
  if(off>lengths[id.itemID][id.subID]||len>lengths[id.itemID][id.subID]-off)return NVINTF_BADLENGTH;
@@ -50,7 +53,7 @@ static uint8_t read_item(NVINTF_itemID_t id,uint16_t off,uint16_t len,void *out)
  if(corrupt_readback&&creates&&id.itemID==fault_item&&id.subID==fault_sub)((uint8_t*)out)[0]^=1;
  return NVINTF_SUCCESS;}
 static uint8_t create_item(NVINTF_itemID_t id,uint32_t len,void *value)
-{++attempts;assert(id.systemID==1&&id.itemID<=3&&id.subID<406&&len<=32);
+{++attempts;assert(id.systemID==1&&id.itemID<=8&&id.subID<406&&len<=32);
  if(create_status)return create_status;
  if(fail_after&&creates>=fail_after)return NVINTF_LOWPOWER;
  assert(lengths[id.itemID][id.subID]==0);lengths[id.itemID][id.subID]=(uint16_t)len;
@@ -70,11 +73,13 @@ static void stock(void)
  for(unsigned i=0;i<357;i++)lengths[1][i]=12;
  lengths[2][0]=14;
  for(unsigned i=0;i<51;i++)lengths[3][i]=16;
+ lengths[8][0]=20;
  /* Real occupied prefixes must survive, irrespective of their contents. */
  memset(data[1][106],0x31,12);memset(data[2][0],0x42,14);memset(data[3][7],0x53,16);
+ memset(data[8][0],0x64,20);
  memcpy(saved,data,sizeof(data));held=0;candidate=1;creates=attempts=readbacks=0;
  fail_after=0;create_status=read_status=corrupt_readback=length_fault=0;
- fault_item=1;fault_sub=357;gNWK_MAX_DEVICE_LIST=97;gNWK_MAX_BINDING_ENTRIES=4;gBIND_REC_SIZE=14;
+ fault_item=1;fault_sub=357;gNWK_MAX_DEVICE_LIST=97;gNWK_MAX_BINDING_ENTRIES=4;gBIND_REC_SIZE=14;gAPS_MAX_GROUPS=16;
  pZStackCfg=&cfg;cfg.nvFps.getItemLen=item_len;cfg.nvFps.createItem=create_item;cfg.nvFps.readItem=read_item;
 }
 static void original_preserved(void)
@@ -82,18 +87,26 @@ static void original_preserved(void)
  for(unsigned i=0;i<357;i++)assert(memcmp(data[1][i],saved[1][i],12)==0);
  assert(memcmp(data[2][0],saved[2][0],14)==0);
  for(unsigned i=0;i<51;i++)assert(memcmp(data[3][i],saved[3][i],16)==0);
+ assert(memcmp(data[8][0],saved[8][0],20)==0);
 }
 int main(void)
 {
- stock();assert(b1_nv_prepare_retained_capacity()&&!held&&creates==98);original_preserved();
+ stock();assert(b1_nv_prepare_retained_capacity()&&!held&&creates==113);original_preserved();
  for(unsigned i=357;i<406;i++)assert(lengths[1][i]==12);
  for(unsigned i=1;i<4;i++)assert(lengths[2][i]==14);
  for(unsigned i=51;i<97;i++)assert(lengths[3][i]==16);
- memcpy(saved,data,sizeof(data));assert(b1_nv_prepare_retained_capacity()&&creates==98);
+ for(unsigned i=1;i<16;i++)assert(lengths[8][i]==20);
+ memcpy(saved,data,sizeof(data));assert(b1_nv_prepare_retained_capacity()&&creates==113);
  assert(memcmp(saved,data,sizeof(data))==0);
  /* A used tail can come from an earlier boot/upgrade; do not zero it. */
  stock();lengths[1][380]=12;memset(data[1][380],0x61,12);
- assert(b1_nv_prepare_retained_capacity()&&creates==97&&data[1][380][0]==0x61);
+ assert(b1_nv_prepare_retained_capacity()&&creates==112&&data[1][380][0]==0x61);
+ stock();lengths[8][7]=20;memset(data[8][7],0x71,20);
+ assert(b1_nv_prepare_retained_capacity()&&creates==112&&data[8][7][0]==0x71);
+ stock();lengths[8][0]=0;assert(!b1_nv_prepare_retained_capacity()&&held&&creates==0);
+ stock();lengths[8][4]=19;assert(!b1_nv_prepare_retained_capacity()&&held&&creates==0);
+ stock();fault_item=8;fault_sub=1;read_status=NVINTF_CORRUPT;
+ assert(!b1_nv_prepare_retained_capacity()&&held&&creates==0);
  stock();lengths[1][17]=0;assert(!b1_nv_prepare_retained_capacity()&&held&&creates==0);
  stock();lengths[2][0]=13;assert(!b1_nv_prepare_retained_capacity()&&held&&creates==0);
  stock();lengths[3][96]=15;assert(!b1_nv_prepare_retained_capacity()&&held&&creates==0);
@@ -111,11 +124,12 @@ int main(void)
  /* Interrupted completed appends are retained; restart adds only the remainder. */
  stock();fail_after=5;assert(!b1_nv_prepare_retained_capacity()&&held&&creates==5);
  original_preserved();held=0;fail_after=0;
- assert(b1_nv_prepare_retained_capacity()&&!held&&creates==98);original_preserved();
+ assert(b1_nv_prepare_retained_capacity()&&!held&&creates==113);original_preserved();
  stock();candidate=0;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
  stock();held=1;assert(!b1_nv_prepare_retained_capacity()&&attempts==0);
  stock();gNWK_MAX_DEVICE_LIST=51;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
  stock();gBIND_REC_SIZE=12;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
+ stock();gAPS_MAX_GROUPS=10;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
  stock();cfg.nvFps.getItemLen=NULL;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
  stock();cfg.nvFps.readItem=NULL;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
  stock();cfg.nvFps.createItem=NULL;assert(!b1_nv_prepare_retained_capacity()&&held&&attempts==0);
@@ -128,7 +142,20 @@ int main(void)
  assert(osal_nv_item_init_ex(3,51,16,value)==SUCCESS&&creates==1);
  assert(osal_nv_item_init_ex(3,51,15,value)==NV_OPER_FAILED&&held&&creates==1);
  stock();pZStackCfg=NULL;assert(osal_nv_item_init_ex(3,51,16,value)==NV_OPER_FAILED&&held);
- puts("PINNED_TI_RETAINED_CAPACITY_PASS tails=98 idempotent=1 all_create_errors=255 original_bytes_preserved=1 partial_restart=1");
+ /* Exact native groups initializer: preserve row 0, create only empty tails. */
+ stock();memset(value,0xFF,sizeof(value));
+ for(unsigned i=0;i<16;i++)assert(osal_nv_item_init_ex(8,i,20,value)==(i?NV_ITEM_UNINIT:SUCCESS));
+ assert(creates==15&&!held);original_preserved();
+ for(unsigned s=1;s<256;s++) {
+   stock();create_status=(uint8_t)s;
+   assert(osal_nv_item_init_ex(8,1,20,value)==NV_OPER_FAILED&&held&&creates==0&&attempts==1);
+ }
+ stock();fault_item=8;fault_sub=1;corrupt_readback=1;
+ assert(osal_nv_item_init_ex(8,1,20,value)==NV_OPER_FAILED&&held&&creates==1);
+ stock();assert(osal_nv_item_init_ex(8,16,20,value)==NV_OPER_FAILED&&held&&creates==0);
+ stock();assert(osal_nv_item_init_ex(8,1,19,value)==NV_OPER_FAILED&&held&&creates==0);
+ stock();value[19]=0;assert(osal_nv_item_init_ex(8,1,20,value)==NV_OPER_FAILED&&held&&creates==0);
+ puts("PINNED_TI_RETAINED_CAPACITY_PASS tails=113 group_tails=15 idempotent=1 all_create_errors=255 original_bytes_preserved=1 partial_restart=1");
  return 0;
 }
 '''

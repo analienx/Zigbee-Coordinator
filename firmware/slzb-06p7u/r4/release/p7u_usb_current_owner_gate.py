@@ -44,6 +44,7 @@ def reconcile_current(*, historical: dict, fresh: dict, records: dict, abi: dict
                       live_aps_associations=len(live["aps"]))
         # Do not normalize unknown or keyed historical devices away.
         check(len(old_ids) == 107, "HISTORICAL_REFERENCE_INVALID")
+        check(len(missing) <= 1, "HISTORICAL_MISSING_PEER_LIMIT_EXCEEDED")
         check(not extra, "CURRENT_UNEXPECTED_PEER")
         check(now_ids == chip_ids, "CURRENT_SILICON_PEER_INVENTORY_MISMATCH")
         for ieee in missing:

@@ -11,7 +11,7 @@ import time
 Q0 = b"B1Q1\x01\x08\x00\x00"
 Q2 = b"B1Q1\x01\x08\x02\x00"
 Q3 = b"B1Q1\x01\x08\x03\x00"
-TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,13,15,16,17,18,19,20,21,22)
+TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
 class EvidenceError(RuntimeError):
     pass
@@ -83,6 +83,16 @@ def verify_success_frames(frames: dict, source: str) -> dict:
     mask=info["milestones"]
     require(all(mask & (1 << n) for n in TERMINAL_REQUIRE),
             "RETAINED_TRANSACTION_MILESTONES_INCOMPLETE")
+    # Pinned native MODE_RESUME uses NLME_StartRouterRequest. The genuine
+    # completion may arrive at formation-named (13) or router-named (14)
+    # ZDO callback. Require one successful, causally preceding START_POST;
+    # never invent or backfill missing native confirmations.
+    confirmations = [n for n in (13,14) if mask & (1 << n)]
+    require(bool(confirmations), "COORDINATOR_NATIVE_CONFIRMATION_ABSENT")
+    first_confirm = min(confirmations,key=lambda n: info["first_order"][n])
+    require(info["first_status"][first_confirm]==0 and
+            info["first_order"][11] < info["first_order"][first_confirm] <
+            info["first_order"][15], "COORDINATOR_CONFIRMATION_UNVERIFIED")
     require(info["first_status"][11]==0 and
             info["first_status"][21]==0 and
             info["nlme"]==0 and info["confirmation"]==0,

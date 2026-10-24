@@ -16,6 +16,8 @@ BOUNDARY = r'''
 #define ZCD_NV_EX_ADDRMGR 1u
 #define ZCD_NV_EX_BINDING_TABLE 2u
 #define ZCD_NV_EX_DEVICE_LIST 3u
+#define ZCD_NV_EX_GROUP_TABLE 8u
+static uint8_t gAPS_MAX_GROUPS=16;
 typedef struct {uint8_t systemID;uint16_t itemID,subID;} NVINTF_itemID_t;
 static uint8_t absence_error;
 static uint32_t get_len(NVINTF_itemID_t id)

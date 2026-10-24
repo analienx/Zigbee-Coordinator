@@ -1,14 +1,15 @@
 """Bounded stock20260311 -> R4 NV table capacity extension.
 
 The complete stock prefix and every already-present tail row must be readable
-before adding the three structural tails. The actual guarded coordinator
+before adding the four structural tails. The actual guarded coordinator
 transition may also create its scoped, one-byte configured marker. These are
 physical persisted record widths, not sizeof RAM table objects.
 """
 
 # Pinned stock20260311 capture / TI native profile: (item, old count, new count,
 # persisted bytes). Preserve indices; never rebuild or compact a logical table.
-CAPACITY_ROWS = ((1, 357, 406, 12), (2, 1, 4, 14), (3, 51, 97, 16))
+CAPACITY_ROWS = ((1, 357, 406, 12), (2, 1, 4, 14), (3, 51, 97, 16),
+                 (8, 1, 16, 20))
 
 INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t len, void *buf )
 {
@@ -16,7 +17,7 @@ INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t l
   uint16_t done;
   uint8_t status;
   uint8_t configuredMarker;
-  uint8_t verify[16];
+  uint8_t verify[20];
   NVINTF_itemID_t nvId;
   b1_startup_note_nv(0x70u, 1u, id, subId, 0u);
   if (b1_nv_runtime_hold_active() || len == 0u || pZStackCfg == NULL ||
@@ -40,7 +41,9 @@ INIT = r'''uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t l
   /* All other retained initialization remains limited to native empty tails. */
   if (!configuredMarker && (!((id == ZCD_NV_EX_ADDRMGR && subId >= 357u && subId < 406u && len == 12u) ||
         (id == ZCD_NV_EX_BINDING_TABLE && subId >= 1u && subId < 4u && len == 14u) ||
-        (id == ZCD_NV_EX_DEVICE_LIST && subId >= 51u && subId < 97u && len == 16u)) ||
+        (id == ZCD_NV_EX_DEVICE_LIST && subId >= 51u && subId < 97u && len == 16u) ||
+        (id == ZCD_NV_EX_GROUP_TABLE && subId >= 1u && subId < 16u && len == 20u &&
+         gAPS_MAX_GROUPS == 16u)) ||
       buf == NULL)) goto failed;
   if (!configuredMarker)
     for (done = 0u; done < len; ++done)
@@ -78,8 +81,9 @@ failed:
 
 SUPPORT = r'''
 /* B1_RETAINED_CAPACITY_V1. Linked native constants bind the allowlist to the
- * full R4 profile: 97 associated + 4 reflector + (5 + 300 TC) = 406 addresses.
- * Existing capture prefixes have 357 / 1 / 51 rows respectively. All existing
+ * full R4 profile: 97 associated + 4 reflector + (5 + 300 TC) = 406 addresses,
+ * plus 16 native APS group slots. The native group initializer uses 20 FF bytes.
+ * Existing capture prefixes have 357 / 1 / 51 / 1 rows respectively. All existing
  * bytes remain authoritative, including a used row in a previously added tail.
  */
 static uint8_t b1_nv_capacity_row(uint16_t item, uint16_t sub,
@@ -87,7 +91,7 @@ static uint8_t b1_nv_capacity_row(uint16_t item, uint16_t sub,
 {
   NVINTF_itemID_t id;
   uint32_t present;
-  uint8_t value[16];
+  uint8_t value[20];
   uint8_t status;
   id.systemID = NVINTF_SYSID_ZSTACK;
   id.itemID = item;
@@ -119,15 +123,17 @@ int b1_nv_prepare_retained_capacity(void)
   static const struct { uint16_t item, prefix, count, length; } tables[] = {
     {ZCD_NV_EX_ADDRMGR, 357u, 406u, 12u},
     {ZCD_NV_EX_BINDING_TABLE, 1u, 4u, 14u},
-    {ZCD_NV_EX_DEVICE_LIST, 51u, 97u, 16u}
+    {ZCD_NV_EX_DEVICE_LIST, 51u, 97u, 16u},
+    {ZCD_NV_EX_GROUP_TABLE, 1u, 16u, 20u}
   };
   uint16_t table, sub;
-  uint8_t erased[16];
+  uint8_t erased[20];
   if (b1_nv_runtime_hold_active() || !b1_nv_existing_header_candidate() ||
       pZStackCfg == NULL || pZStackCfg->nvFps.getItemLen == NULL ||
       pZStackCfg->nvFps.readItem == NULL || pZStackCfg->nvFps.createItem == NULL ||
       gNWK_MAX_DEVICE_LIST != 97u || gNWK_MAX_BINDING_ENTRIES != 4u ||
-      NWK_MAX_ADDRESSES != 406u || gBIND_REC_SIZE != 14u)
+      NWK_MAX_ADDRESSES != 406u || gBIND_REC_SIZE != 14u ||
+      gAPS_MAX_GROUPS != 16u || sizeof(apsGroupNVItem_t) != 20u)
   {
     b1_nv_runtime_hold_latch();
     return FALSE;
@@ -145,7 +151,7 @@ int b1_nv_prepare_retained_capacity(void)
       uint16_t length = tables[table].length;
       NVINTF_itemID_t id;
       uint32_t present;
-      uint8_t verify[16];
+      uint8_t verify[20];
       uint8_t status;
       id.systemID = NVINTF_SYSID_ZSTACK;
       id.itemID = tables[table].item;
@@ -183,7 +189,7 @@ def patch(source: str) -> str:
         raise RuntimeError('B1_NV_CAPACITY_ALREADY_APPLIED')
     signature = 'uint8_t osal_nv_item_init_ex( uint16_t id, uint16_t subId, uint16_t len, void *buf )'
     source = replace_once(source, '#include "zstackconfig.h"',
-        '#include "zstackconfig.h"\n#include <string.h>\n'
+        '#include "zstackconfig.h"\n#include "aps_groups.h"\n#include <string.h>\n'
         'extern int b1_nv_runtime_hold_active(void);\n'
         'extern int b1_nv_existing_header_candidate(void);\n'
         'extern void b1_nv_runtime_hold_latch(void);\n'

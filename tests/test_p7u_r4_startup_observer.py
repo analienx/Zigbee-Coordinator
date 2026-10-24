@@ -72,6 +72,27 @@ class ObserverTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             verify_success_frames(s,SOURCE)
 
+    def test_genuine_router_named_coordinator_confirmation_accepted(self):
+        s=terminal()
+        e=bytearray.fromhex(s["B1E1"])
+        mask=int.from_bytes(e[12:16],"little")
+        e[12:16]=((mask & ~(1<<13)) | (1<<14)).to_bytes(4,"little")
+        e[64+14]=e[64+13];e[64+13]=0
+        e[88+14]=0;e[88+13]=255
+        s["B1E1"]=e.hex()
+        self.assertEqual(verify_success_frames(s,SOURCE)["confirmation"],0)
+
+    def test_router_confirm_after_start_post_is_not_ready(self):
+        s=terminal()
+        e=bytearray.fromhex(s["B1E1"])
+        mask=int.from_bytes(e[12:16],"little")
+        e[12:16]=((mask & ~(1<<13)) | (1<<14)).to_bytes(4,"little")
+        e[64+14]=e[64+15];e[64+15]=e[64+13]
+        e[64+13]=0;e[88+14]=0;e[88+13]=255
+        s["B1E1"]=e.hex()
+        with self.assertRaises(EvidenceError):
+            verify_success_frames(s,SOURCE)
+
     def test_fake_ready_with_no_frames_rejected(self):
         with self.assertRaisesRegex(EvidenceError,"NO_RECORDED_TERMINAL_FRAMES"):
             verify_success_frames(None,SOURCE)
