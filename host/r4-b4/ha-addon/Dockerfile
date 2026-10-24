@@ -11,3 +11,5 @@ COPY z2m-controller.js /app/dist/controller.js
 COPY z2m-otaUpdate.js /app/dist/extension/otaUpdate.js
 COPY herdsman-dist/ /app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/zigbee-herdsman/dist/
 COPY p7u_diagnostic_worker.cjs /app/dist/p7u_diagnostic_worker.cjs
+
+COPY p7u_host_timeout_sink.cjs /app/dist/p7u_host_timeout_sink.cjs

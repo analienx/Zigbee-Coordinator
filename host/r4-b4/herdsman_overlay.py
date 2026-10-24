@@ -135,6 +135,10 @@ ADAPTER_METHOD = r"""
         this.znp.b4EnablePassiveForensics(enabled);
     }
 
+    public b4SetHostTimeoutSink(sink: Parameters<Znp["b4SetHostTimeoutSink"]>[0]): void {
+        this.znp.b4SetHostTimeoutSink(sink);
+    }
+
     /** Read only sanitized numeric monotonic host events; no waiter IDs. */
     public b4GetPassiveHostForensics(): ReturnType<Znp["b4ReadPassiveForensics"]> {
         return this.znp.b4ReadPassiveForensics();
@@ -376,6 +380,7 @@ def plan(root):
         "    private waitress: Waitress<ZpiObject, WaitressMatcher>;",
         """    private waitress: Waitress<ZpiObject, WaitressMatcher>;
     private b4HostForensicsEnabled = false;
+    private b4HostTimeoutSink: ((event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void) | undefined;
     private b4HostTimeouts: Array<{at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"}> = [];
     private b4HostDropped = 0;
     private b4DiagPoisoned = false;
@@ -391,6 +396,11 @@ def plan(root):
             this.b4HostTimeouts.length = 0;
             this.b4HostDropped = 0;
         }
+    }
+
+    public b4SetHostTimeoutSink(sink: ((event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void) | undefined): void {
+        this.b4HostTimeoutSink = sink;
+        this.b4EnablePassiveForensics(typeof sink === "function");
     }
 
     public b4ReadPassiveForensics(): {
@@ -435,6 +445,10 @@ def plan(root):
             this.b4HostDropped = Math.min(Number.MAX_SAFE_INTEGER, this.b4HostDropped + 1);
         }
         this.b4HostTimeouts.push({at_ms, kind});
+        // Passive notification only, never request diagnostics inside a failed
+        // production transaction. Optional IPC failure cannot change its error.
+        try { this.b4HostTimeoutSink?.({at_ms, kind, dropped: this.b4HostDropped}); }
+        catch { /* Normal ZNP request must retain its original outcome. */ }
     }
 
     public isInitialized(): boolean {""",

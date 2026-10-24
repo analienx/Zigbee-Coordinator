@@ -13,3 +13,5 @@ COPY herdsman-dist/ /app/node_modules/.pnpm/zigbee-herdsman@10.9.1/node_modules/
 
 # Diagnostic history writer is no-serial and runs exclusively off the Z2M event loop.
 COPY p7u_diagnostic_worker.cjs /app/dist/p7u_diagnostic_worker.cjs
+
+COPY p7u_host_timeout_sink.cjs /app/dist/p7u_host_timeout_sink.cjs

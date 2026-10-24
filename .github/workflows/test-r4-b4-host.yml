@@ -92,7 +92,7 @@ jobs:
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Adversarial no-serial worker durability tests (offline GH-hosted)
         run: |
-          node --test host/r4-b4/test-p7u-diagnostic-worker.cjs
+          node --test host/r4-b4/test-p7u-diagnostic-worker.cjs host/r4-b4/test-p7u-host-timeout-sink.cjs
       - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
         run: |
           set -euo pipefail
@@ -148,6 +148,7 @@ jobs:
           mkdir -p "$root"
           cp dist/controller.js "$root/z2m-controller.js"
           cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_diagnostic_worker.cjs" "$root/p7u_diagnostic_worker.cjs"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_host_timeout_sink.cjs" "$root/p7u_host_timeout_sink.cjs"
           cp dist/extension/otaUpdate.js "$root/z2m-otaUpdate.js"
           cp -a "$B4_HERDSMAN_ROOT/dist" "$root/herdsman-dist"
           cp "$GITHUB_WORKSPACE/host/r4-b4/p7u-z2m-native-collector.Dockerfile" "$root/Dockerfile"
@@ -215,9 +216,11 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/p7u-staged-addon/herdsman-dist
           cp host/r4-b4/ha-addon/{Dockerfile,config.yaml} /tmp/p7u-staged-addon/
-          cp /tmp/p7u-r4-native-image/{z2m-controller.js,z2m-otaUpdate.js,p7u_diagnostic_worker.cjs} /tmp/p7u-staged-addon/
+          cp /tmp/p7u-r4-native-image/{z2m-controller.js,z2m-otaUpdate.js,p7u_diagnostic_worker.cjs,p7u_host_timeout_sink.cjs} /tmp/p7u-staged-addon/
           cp -a /tmp/p7u-r4-native-image/herdsman-dist/. /tmp/p7u-staged-addon/herdsman-dist/
           test -s /tmp/p7u-staged-addon/p7u_diagnostic_worker.cjs
+          test -s /tmp/p7u-staged-addon/p7u_host_timeout_sink.cjs
+          grep -q 'COPY p7u_host_timeout_sink.cjs' /tmp/p7u-staged-addon/Dockerfile
           grep -q 'P7U_APPROVED_DB_MANIFEST:' /tmp/p7u-staged-addon/config.yaml
           grep -q 'COPY p7u_diagnostic_worker.cjs' /tmp/p7u-staged-addon/Dockerfile
           tar -C /tmp -czf /tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz p7u-staged-addon

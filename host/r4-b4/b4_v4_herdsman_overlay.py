@@ -262,6 +262,13 @@ def plan(root):
         return await this.adapter.b4ReadOnlyDiagnosticsV4(input);
     }
 
+    /** No wire access: subscribe only to sanitized original-owner timeouts. */
+    public b4SetHostTimeoutSinkFromExistingOwner(sink: Parameters<ZStackAdapter["b4SetHostTimeoutSink"]>[0]): void {
+        if (this.adapter instanceof ZStackAdapter) {
+            this.adapter.b4SetHostTimeoutSink(sink);
+        }
+    }
+
     /** Read numeric-only F2 outcome from original live ZStack owner. */
     public b4V4ReadOutcomeFromExistingOwner() {
         return this.adapter instanceof ZStackAdapter ? this.adapter.b4GetV4Outcome() : null;

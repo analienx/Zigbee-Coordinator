@@ -23,7 +23,7 @@ const allowed = new Set([
     "uartTxFinishedEvents", "radioEpochTag", "radioEpochHardwareVerified",
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
-    "processUptimeMs"
+    "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped"
 ]);
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
@@ -49,6 +49,13 @@ function sameRecord(entry) {
             entry.sequence > 0, "VALID_SEQUENCE");
         hold(Number.isSafeInteger(entry.validityMask) &&
             entry.validityMask >= 0, "VALID_MASK");
+    }
+    if (["hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped"].some(k => k in entry)) {
+        hold(entry.kind === "FAILED" &&
+            ["AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "SYS_SREQ_TIMEOUT", "UTIL_SREQ_TIMEOUT"].includes(entry.hostTimeoutKind) &&
+            Number.isSafeInteger(entry.hostTimeoutAtMs) && entry.hostTimeoutAtMs >= 0 &&
+            Number.isSafeInteger(entry.hostTimeoutDropped) && entry.hostTimeoutDropped >= 0 &&
+            entry.submissionState === "NO_DIAGNOSTIC_REQUEST", "HOST_TIMEOUT_RECORD");
     }
     const data = encode(entry);
     hold(data.length <= RECORD_LIMIT, "RECORD_SIZE");

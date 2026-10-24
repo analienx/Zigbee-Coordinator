@@ -46,6 +46,16 @@ METHOD = r"""
         worker.on("message", (message: {type?: string; id?: number; reason?: string}) => {
             if (message.type === "ready") {
                 this.#b4WorkerReady = true;
+                if (this.#b4Operational && process.env.P7U_B4_COLLECTOR === "1") {
+                    const {createHostTimeoutSink} = require("./p7u_host_timeout_sink.cjs") as {
+                        createHostTimeoutSink: (persist: (record: Record<string, unknown>) => void,
+                            enabled: () => boolean) => (event: {at_ms: number; kind: "AF_SREQ_TIMEOUT" | "ZDO_SREQ_TIMEOUT" | "SYS_SREQ_TIMEOUT" | "UTIL_SREQ_TIMEOUT"; dropped: number}) => void;
+                    };
+                    this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(
+                        createHostTimeoutSink((record) => this.#b4Persist(record),
+                            () => this.#b4Operational && this.#b4WorkerReady &&
+                                !this.#b4SamplerDisabled && process.env.P7U_B4_COLLECTOR === "1"));
+                }
             } else if (message.type === "committed" && typeof message.id === "number") {
                 this.#b4PendingIds.delete(message.id);
                 clearTimeout(this.#b4AckTimers.get(message.id));
@@ -231,6 +241,7 @@ import b4Data from "./util/data";''')
         this.#b4Schedule();""")
     src = once(src, '''        logger.info(`Stopping Zigbee2MQTT (restart=${restart}, code=${code}, signal=${signal})`);''',
         '''        this.#b4Operational = false;
+        this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(undefined);
         if (this.#b4Timer) { clearTimeout(this.#b4Timer); this.#b4Timer = undefined; }
         for (const timer of this.#b4AckTimers.values()) { clearTimeout(timer); }
         this.#b4AckTimers.clear();
