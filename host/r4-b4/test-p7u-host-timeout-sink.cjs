@@ -12,6 +12,8 @@ const root = process.env.B4_HERDSMAN_ROOT;
 assert.ok(root && root.startsWith("/tmp/"), "GitHub-hosted real compiled pinned herdsman required");
 const {Znp} = require(path.join(root, "dist/adapter/z-stack/znp/znp.js"));
 const {Subsystem} = require(path.join(root, "dist/adapter/z-stack/unpi/constants.js"));
+const {ZStackAdapter} = require(path.join(root, "dist/adapter/z-stack/adapter/zStackAdapter.js"));
+const {Controller} = require(path.join(root, "dist/controller/controller.js"));
 const hostRunId = "8e2cdca6-17b6-4a4c-a951-a78742ad89e1";
 const ownerGeneration = "28ca5f87-b319-4c93-93d3-23d0f46a316d";
 const event = {at_ms: 10, kind: "AF_SREQ_TIMEOUT", dropped: 0};
@@ -96,7 +98,11 @@ test("real owner timeout -> sink -> actual worker fsync -> verified history: old
         znp.initialized = true;
         const writes = [];
         znp.unpiWriter.writeFrame = frame => writes.push(frame.commandID);
-        znp.b4SetHostTimeoutSink(createHostTimeoutSink(record => worker.postMessage({type: "append", id: 1,
+        const adapter = Object.create(ZStackAdapter.prototype);
+        adapter.znp = znp;
+        const controller = Object.create(Controller.prototype);
+        controller.adapter = adapter;
+        controller.b4SetHostTimeoutSinkFromExistingOwner(createHostTimeoutSink(record => worker.postMessage({type: "append", id: 1,
             record: {...record, hostRunId, ownerGeneration}}), () => true));
         await assert.rejects(znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 15), /SRSP - SYS - ping after 15ms/);
         assert.equal((await ack).receipt.sequence, 4);
