@@ -349,6 +349,22 @@ def _transport_session(rom):
     return raw, reader, writer
 
 
+def _verified_wire_status_embedded(raw):
+    """Only the existing qualified TI ROM adapter may omit a second status.
+
+    RomSerial._call() already gets/validates GET_STATUS after every SEND_DATA.
+    A different injected adapter always uses the historical extra status read.
+    """
+    if (type(raw).__module__ != 'p7u_stock20260311_rom_adapter'
+            or type(raw).__name__ != 'Stock20260311ROM'):
+        return False
+    try:
+        from p7u_rom_lowlevel import RomSerial
+    except ImportError:
+        return False
+    return type(raw)._call is RomSerial._call
+
+
 async def _guard(rom, address, expected, live_identity, expected_crc=None):
     """Check every protected sector and the target before irreversible I/O.
 
@@ -466,6 +482,10 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
         for probe in (0, 0xA4000, BOOT, TOP):
             if await rom.crc32(probe, SECTOR) != expected_crc[probe]:
                 deny('ROM_CRC32_NOT_EQUIVALENT_TO_ADMITTED_CAPTURE')
+    # In the exact audited ROM adapter, SEND_DATA already validates GET_STATUS
+    # before returning True. Avoid the additional round trip per 252-byte packet.
+    # All other adapters and the historical profile retain the second query.
+    embedded_packet_status = same_session_fast and _verified_wire_status_embedded(raw)
     completed = []
     for address in plan.manifest['program_order']:
         # The whole reserved/NV/boot/CCFG range and next target are re-read
@@ -523,7 +543,9 @@ async def execute(rom, plan: Transition, admission: dict, *, expected_plan_sha25
                 deny('UNCERTAIN_BEGIN_DOWNLOAD')
             for offset in range(start, start + length, PACKET):
                 packet = payload[offset:min(offset + PACKET, start + length)]
-                if await rom.send_data(packet) is not True or await rom.status() is not True:
+                if await rom.send_data(packet) is not True:
+                    deny('UNCERTAIN_SEND_DATA')
+                if not embedded_packet_status and await rom.status() is not True:
                     deny('UNCERTAIN_SEND_DATA')
         if await _sector(rom, address) != payload:
             deny('SECTOR_READBACK')
