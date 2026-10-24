@@ -112,14 +112,19 @@ class FakeROM:
         self.trace = []
         self.fail_packet = False
         self.cursor = self.end = None
+        self.reader, self.writer = object(), object()
+        self.read_calls = 0
+        self.crc_calls = 0
 
     async def identity_sha256(self):
         return self.identity
 
     async def read(self, address, length):
+        self.read_calls += 1
         return bytes(self.image[address:address+length])
 
     async def crc32(self, address, length):
+        self.crc_calls += 1
         return binascii.crc32(self.image[address:address+length]) & 0xFFFFFFFF
 
     async def erase_sector(self, address):
@@ -147,6 +152,82 @@ class FakeROM:
 
 
 class CurrentTransitionTests(unittest.TestCase):
+    def test_fast_session_preserves_complete_parity_and_avoids_duplicate_full_reads(self):
+        async def scenario():
+            plan = m.prepare(**inputs())
+            rom, args = FakeROM(plan.snapshot), capture_args(plan)
+            admission = await m.admit(rom, plan, **args, seal_same_session=True)
+            after_admission = rom.read_calls
+            self.assertEqual(after_admission, m.FLASH // m.SECTOR)
+            async def journal(event): return True
+            result = await m.execute(rom, plan, admission, **args,
+                expected_admission_sha256=admission["admission_sha256"],
+                journal=journal, same_session_fast=True)
+            self.assertEqual(result["status"], "APP_AND_AC000_VERIFIED_STILL_IN_BSL")
+            self.assertEqual(result["written_sectors"], [m.SECTOR, 0, m.BOOT])
+            # Final all-88 SHA parity and sector readbacks remain. Neither
+            # a repeated full admission nor any boot-stage full scan remains.
+            self.assertLess(rom.read_calls - after_admission, 105)
+            self.assertGreater(rom.crc_calls, 100)
+            self.assertEqual(rom.image[m.TOP:], plan.snapshot[m.TOP:])
+            with self.assertRaisesRegex(ValueError, "SAME_TRANSPORT_SHA_ADMISSION_REQUIRED"):
+                await m.execute(rom, plan, admission, **args,
+                    expected_admission_sha256=admission["admission_sha256"],
+                    journal=journal, same_session_fast=True)
+        asyncio.run(scenario())
+
+    def test_fast_session_rejects_reopen_and_expiry_without_any_erase(self):
+        async def scenario():
+            for mutation in ("reopen", "expired", "unsealed"):
+                plan = m.prepare(**inputs())
+                rom, args = FakeROM(plan.snapshot), capture_args(plan)
+                admission = await m.admit(rom, plan, **args, seal_same_session=(mutation != "unsealed"))
+                if mutation == "reopen":
+                    rom.writer = object()  # a new network/serial connection
+                elif mutation == "expired":
+                    m._SAME_SESSION_ADMISSIONS[rom]["admitted_monotonic"] -= 120
+                async def journal(event): self.fail("no journal for stale fast admission")
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError,
+                        "SAME_TRANSPORT_SHA_ADMISSION_REQUIRED"):
+                    await m.execute(rom, plan, admission, **args,
+                        expected_admission_sha256=admission["admission_sha256"],
+                        journal=journal, same_session_fast=True)
+                self.assertEqual([x for x in rom.trace if x[0] == "erase"], [])
+        asyncio.run(scenario())
+
+    def test_fast_session_detects_current_app_and_nv_drift_before_first_erase(self):
+        async def scenario():
+            for changed in (m.SECTOR + 32, 0xA4000, m.TOP):
+                plan = m.prepare(**inputs())
+                rom, args = FakeROM(plan.snapshot), capture_args(plan)
+                admission = await m.admit(rom, plan, **args, seal_same_session=True)
+                rom.image[changed] ^= 1
+                async def journal(event): self.fail("no journal on changed baseline")
+                with self.subTest(changed=hex(changed)), self.assertRaisesRegex(ValueError,
+                        "STATE_CHANGED_AFTER_SHA_ADMISSION"):
+                    await m.execute(rom, plan, admission, **args,
+                        expected_admission_sha256=admission["admission_sha256"],
+                        journal=journal, same_session_fast=True)
+                self.assertEqual([x for x in rom.trace if x[0] == "erase"], [])
+        asyncio.run(scenario())
+
+    def test_fast_session_rejects_boot_vector_interruption(self):
+        async def scenario():
+            plan = m.prepare(**inputs())
+            rom, args = FakeROM(plan.snapshot), capture_args(plan)
+            admission = await m.admit(rom, plan, **args, seal_same_session=True)
+            async def journal(event):
+                if event["event"] == "BEFORE_BOOT_VECTOR_COMMIT":
+                    rom.image[m.TOP] ^= 1
+                return True
+            with self.assertRaisesRegex(ValueError, "STATE_CHANGED_BEFORE_BOOT_VECTOR"):
+                await m.execute(rom, plan, admission, **args,
+                    expected_admission_sha256=admission["admission_sha256"],
+                    journal=journal, same_session_fast=True)
+            self.assertEqual(rom.image[m.BOOT:m.BOOT+8], bytes([255])*8)
+            self.assertNotIn(("download", m.BOOT, 8), rom.trace)
+        asyncio.run(scenario())
+
     def test_known_r4_upgrade_uses_fresh_nv_and_retires_only_old_owned_app(self):
         data = upgrade_inputs(shrink=True)
         plan = m.prepare_upgrade(**data)
