@@ -218,13 +218,14 @@ def flash_events(ready,finished,out):
  except Exception:out.append({'event':'SSE_OBSERVATION_LOST','utc':time.time()})
  finally:ready.set()
 
-def after_backup(plan,blob,result):
- intent('stop-original',{'container_id':CONTAINER});api('/addons/'+ORIGINAL+'/stop',{})
- c=inspect('app_'+ORIGINAL);need(c and c['Id']==CONTAINER and not c['State']['Running'],'ORIGINAL_STOP_UNCONFIRMED')
+def after_stop(plan,blob,result):
+ c=inspect('app_'+ORIGINAL);need(c is None or (c['Id']==CONTAINER and not c['State']['Running']),'ORIGINAL_STOP_UNCONFIRMED')
  for slug in SLOTS:need(addon(slug)['state'] in ['stopped','error'],'HOST_STILL_ACTIVE')
  db=regular(DATA/'database.db');need(inventory(db)==plan['inventory'] and not (DATA/'database.db.tmp').exists(),'QUIESCED_INVENTORY_CHANGED')
  result['post_stop_archive']=archive('quiesced-stock.tar.gz');result['quiesced_database_sha256']=sha(db)
- unique(ROOT/'stock-container.json',canonical(c));unique(ROOT/'stock.private.log',command(['docker','logs','--tail','200',CONTAINER]))
+ unique(ROOT/'stock-container.json',canonical(c if c else {'removed_after_requested_stop':True,'prior_container_id':CONTAINER}))
+ if c:unique(ROOT/'stock.private.log',command(['docker','logs','--tail','200',CONTAINER]))
+ unique(ROOT/'quiesced-owner-coordinator-backup.json',regular(DATA/'coordinator_backup.json'))
  proofs=zero_holders();unique(ROOT/'pre-flash-owner-proofs.json',canonical(proofs));need(time.time()-proofs[0]['utc']<20,'STALE_OWNER_PROOF')
  need(board()['zb_version']==20260311,'STOCK_CHANGED_BEFORE_UPLOAD')
  body,content_type=multipart(blob);intent('upload')
@@ -245,6 +246,10 @@ def after_backup(plan,blob,result):
  result['events']=[e['event'] for e in events];result['post_flash_owner_proofs']=zero_holders()
  need(inventory(regular(DATA/'database.db'))==plan['inventory'],'HOST_DB_CHANGED')
  result['host_inventory_preserved']=True;result['radio_nv_preservation_verified']=False
+
+def after_backup(plan,blob,result):
+ intent('stop-original',{'container_id':CONTAINER});api('/addons/'+ORIGINAL+'/stop',{})
+ after_stop(plan,blob,result)
 
 def apply(plan_hash,blob):
  image(blob);need(not ROOT.exists() and not ROOT.is_symlink(),'TRIAL_ALREADY_EXISTS_NO_REPLAY')
@@ -293,13 +298,52 @@ def continue_trial(expected,blob):
  except Exception as e:result['error_class']=str(e) if str(e).startswith('WEB_TRIAL_HOLD_') else type(e).__name__
  finally:result['utc']=time.time();unique(ROOT/'continuation.result.json',canonical(result))
  return result
+
+def stopped_plan():
+ need(ROOT.is_dir() and not ROOT.is_symlink(),'NO_EXISTING_TRIAL')
+ for name in ['upload.intent.json','flash.intent.json','stop-reconcile.intent.json','stop-reconcile.result.json']:
+  p=ROOT/name;need(not p.exists() and not p.is_symlink(),'UPLOAD_OR_FLASH_ALREADY_ATTEMPTED')
+ prior=regular(ROOT/'continuation.result.json');r=json.loads(prior)
+ need(r['status']=='HOLD' and r.get('error_class')=='TimeoutError','UNRELATED_STOP_HOLD')
+ stop=json.loads(regular(ROOT/'stop-original.intent.json'));need(stop['container_id']==CONTAINER,'STOP_INTENT_EPOCH')
+ plan=json.loads(regular(ROOT/'plan.json'));need(sha(canonical(plan))==r['plan_sha256'],'ORIGINAL_PLAN_CHANGED')
+ need(board()['zb_version']==20260311,'STOCK_CHANGED')
+ opts=passive();need(opts['maintenance'] is True and opts['firmware_flash_active'] is True,'MAINTENANCE_LOST')
+ for slug in SLOTS:
+  a=addon(slug);c=inspect('app_'+slug)
+  need(a['state'] in ['stopped','error'] and a['boot']=='manual' and a['watchdog'] is False and a['auto_update'] is False,'HOST_ACTIVE_OR_AUTO')
+  need(sha(canonical(a['options']))==plan['slots'][slug]['options_sha256'],'HOST_OPTIONS_CHANGED')
+  if slug==ORIGINAL:need(c is None or (c['Id']==CONTAINER and not c['State']['Running']),'ORIGINAL_REPLACED_OR_ACTIVE')
+  else:need((c['Id'] if c else None)==plan['slots'][slug]['container_id'] and (not c or not c['State']['Running']),'OTHER_HOST_EPOCH_CHANGED')
+ need(inventory(regular(DATA/'database.db'))==plan['inventory'] and not (DATA/'database.db.tmp').exists(),'QUIESCED_INVENTORY')
+ before=json.loads(regular(ROOT/'fresh-owner-coordinator-backup.json'));raw=regular(DATA/'coordinator_backup.json');after=json.loads(raw)
+ for key in ['coordinator_ieee','pan_id','extended_pan_id','channel']:need(after[key]==before[key],'QUIESCED_BACKUP_IDENTITY')
+ need(after['network_key']['key']==before['network_key']['key'] and after['network_key']['frame_counter']>=before['network_key']['frame_counter'],'QUIESCED_BACKUP_KEY_OR_COUNTER')
+ return {'schema':'p7u-web-trial-stop-reconciliation-v1','original_plan_sha256':r['plan_sha256'],
+         'continuation_result_sha256':sha(prior),'quiesced_backup_sha256':sha(raw),'image_sha256':IMAGE_SHA,
+         'stop_request_reissued':False,'original_container_absent':inspect('app_'+ORIGINAL) is None}
+
+def reconcile_stop(expected,blob):
+ image(blob);p=stopped_plan();need(sha(canonical(p))==expected,'STALE_STOP_RECONCILIATION')
+ intent('stop-reconcile',{'plan_sha256':expected});unique(ROOT/'stop-reconcile-plan.json',canonical(p))
+ result={'schema':'p7u-web-flash-trial-result-v1','status':'HOLD','image_sha256':IMAGE_SHA,
+         'plan_sha256':p['original_plan_sha256'],'stop_reconcile_plan_sha256':expected,'normal_hosts_started':False,'stop_request_reissued':False}
+ try:after_stop(json.loads(regular(ROOT/'plan.json')),blob,result)
+ except Exception as e:result['error_class']=str(e) if str(e).startswith('WEB_TRIAL_HOLD_') else type(e).__name__
+ finally:result['utc']=time.time();unique(ROOT/'stop-reconcile.result.json',canonical(result))
+ return result
 def remote(payload):
  import fcntl
  fd=os.open('/share/p7u-lifecycle/private/exclusive-manager.lock',os.O_RDWR|os.O_NOFOLLOW)
  try:
   fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
   need(set(payload)=={'mode','expected_plan_hash','image_b64'},'PAYLOAD')
-  if payload['mode']=='report':return json.loads(regular(ROOT/('continuation.result.json' if (ROOT/'continuation.result.json').exists() else 'result.json')))
+  if payload['mode']=='report':
+   name=next(n for n in ['stop-reconcile.result.json','continuation.result.json','result.json'] if (ROOT/n).exists())
+   return json.loads(regular(ROOT/name))
+  if payload['mode']=='stop-plan':
+   p=stopped_plan();return {'status':'STOP_RECONCILIATION_PLAN_NO_MUTATION','plan_hash':sha(canonical(p)),'plan':p}
+  if payload['mode']=='reconcile-stop':return reconcile_stop(payload['expected_plan_hash'],base64.b64decode(payload['image_b64'],validate=True))
   if payload['mode']=='continue-plan':
    p=continuation_plan();return {'status':'CONTINUATION_PLAN_NO_MUTATION','plan_hash':sha(canonical(p)),'plan':p}
   if payload['mode']=='continue':return continue_trial(payload['expected_plan_hash'],base64.b64decode(payload['image_b64'],validate=True))
@@ -309,13 +353,13 @@ def remote(payload):
   return apply(payload['expected_plan_hash'],base64.b64decode(payload['image_b64'],validate=True))
  finally:os.close(fd)
 def main():
- p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','apply','report','continue-plan','continue']);p.add_argument('--release',type=Path,required=True);p.add_argument('--expected-plan-hash',default='')
+ p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','apply','report','continue-plan','continue','stop-plan','reconcile-stop']);p.add_argument('--release',type=Path,required=True);p.add_argument('--expected-plan-hash',default='')
  a=p.parse_args();d=a.release.resolve(strict=True);need(d.is_relative_to(Path('C:/Workspace/artifacts').resolve()),'ARTIFACT_PATH')
  receipt=json.loads((d/'WEB_TRIAL_RELEASE.json').read_text());need(sha(Path(__file__).read_bytes())==receipt['helper_sha256'],'HELPER_NOT_QUALIFIED')
  checks=json.loads(subprocess.check_output(['gh','api','repos/analienx/Zigbee-Coordinator/commits/'+receipt['source_sha']+'/check-runs?per_page=100']))['check_runs']
  need(any(c['name']=='trial-boundaries' and c['conclusion']=='success' for c in checks),'HOSTED_QUALIFICATION')
  blob=(d/'image.bin').read_bytes();image(blob)
- payload={'mode':a.mode,'expected_plan_hash':a.expected_plan_hash,'image_b64':base64.b64encode(blob).decode() if a.mode in ['apply','continue'] else ''}
+ payload={'mode':a.mode,'expected_plan_hash':a.expected_plan_hash,'image_b64':base64.b64encode(blob).decode() if a.mode in ['apply','continue','reconcile-stop'] else ''}
  source=Path(__file__).read_text()
  run=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8','ha','python3','-'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
  run.stdin.write('PAYLOAD='+repr(payload)+'\n'+source);run.stdin.close()

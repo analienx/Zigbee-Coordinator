@@ -47,5 +47,15 @@ class Tests(unittest.TestCase):
   with patch.object(m,'image'),patch.object(m,'continuation_plan',return_value={'fresh_backup':'a'*64}),patch.object(m,'intent') as act,patch.object(m,'after_backup') as flash,patch.object(m,'fresh_backup') as backup:
    with self.assertRaisesRegex(RuntimeError,'STALE_CONTINUATION_PLAN'):m.continue_trial('0'*64,b'image')
    act.assert_not_called();flash.assert_not_called();backup.assert_not_called()
+ def test_stopped_reconciliation_never_allows_a_second_upload_or_flash(self):
+  for name in ['upload.intent.json','flash.intent.json','stop-reconcile.intent.json','stop-reconcile.result.json']:
+   with TemporaryDirectory() as d,patch.object(m,'ROOT',Path(d)),patch.object(m,'board') as read:
+    (Path(d)/name).write_text('{}')
+    with self.assertRaisesRegex(RuntimeError,'UPLOAD_OR_FLASH_ALREADY_ATTEMPTED'):m.stopped_plan()
+    read.assert_not_called()
+ def test_changed_stop_plan_cannot_repeat_a_stop_or_reach_upload(self):
+  with patch.object(m,'image'),patch.object(m,'stopped_plan',return_value={'stop':'done'}),patch.object(m,'intent') as write,patch.object(m,'api') as api,patch.object(m,'after_stop') as flash:
+   with self.assertRaisesRegex(RuntimeError,'STALE_STOP_RECONCILIATION'):m.reconcile_stop('0'*64,b'image')
+   write.assert_not_called();api.assert_not_called();flash.assert_not_called()
 
 if __name__=='__main__':unittest.main()
