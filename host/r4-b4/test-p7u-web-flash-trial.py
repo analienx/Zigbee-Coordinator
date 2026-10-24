@@ -37,5 +37,15 @@ class Tests(unittest.TestCase):
    read.assert_not_called()
  def test_redirects_are_never_followed(self):
   with self.assertRaisesRegex(RuntimeError,'REDIRECT_DENIED'):m.NoRedirect().redirect_request(None,None,None,None,None,None)
+ def test_continuation_rejects_any_previous_stop_upload_flash_or_consumed_continuation(self):
+  for name in ['stop-original.intent.json','upload.intent.json','flash.intent.json','continue.intent.json','continuation.result.json']:
+   with TemporaryDirectory() as d,patch.object(m,'ROOT',Path(d)),patch.object(m,'snapshot') as read:
+    (Path(d)/name).write_text('{}')
+    with self.assertRaisesRegex(RuntimeError,'PHYSICAL_PHASE_OR_CONTINUATION_ALREADY_CONSUMED'):m.continuation_plan()
+    read.assert_not_called()
+ def test_stale_continuation_plan_has_no_side_effects_or_backup_reissue(self):
+  with patch.object(m,'image'),patch.object(m,'continuation_plan',return_value={'fresh_backup':'a'*64}),patch.object(m,'intent') as act,patch.object(m,'after_backup') as flash,patch.object(m,'fresh_backup') as backup:
+   with self.assertRaisesRegex(RuntimeError,'STALE_CONTINUATION_PLAN'):m.continue_trial('0'*64,b'image')
+   act.assert_not_called();flash.assert_not_called();backup.assert_not_called()
 
 if __name__=='__main__':unittest.main()

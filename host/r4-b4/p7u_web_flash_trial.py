@@ -90,7 +90,7 @@ def passive():
       c['Image']=='sha256:ffc989d9669e671d9a0199282b9b9074cb899dfdda9acd050f5907177aca7bb9','GUARD_EPOCH')
  for k,v in [('enabled',False),('dry_run',True),('serial_owner_approved',False),('allow_private_http_fallback',False)]:need(o[k] is v,'GUARD_NOT_PASSIVE')
  return o
-def snapshot():
+def snapshot(in_maintenance=False):
  b=board();need(b['zb_version']==20260311,'STOCK_BASELINE')
  for route,pin in [('/js/functions.js',UI_SHA),('/js/httpApi.js',API_SHA)]:
   raw=request('slzb',route)
@@ -106,13 +106,18 @@ def snapshot():
   slots[slug]={'container_id':c['Id'] if c else None,'options_sha256':sha(canonical(a['options']))}
  for entity in ['automation.boot_deterministic_emqx_then_zigbee2mqtt','automation.zigbee2mqtt_mesh_communication_outage_alert']:
   s=api('/core/api/states/'+entity);need(s['state']=='off' and s['attributes']['current']==0,'COMPETING_STARTER')
- guard=passive();need(not guard['maintenance'] and not guard['firmware_flash_active'],'EXISTING_MAINTENANCE')
+ guard=passive();need(guard['maintenance'] is in_maintenance and guard['firmware_flash_active'] is in_maintenance,'EXISTING_MAINTENANCE')
  status=json.loads(command(['docker','exec','app_'+GUARD,'python','-c',"from pathlib import Path;print(Path('/data/status.json').read_text())"]))
- need(0<=time.time()-status['utc']<65 and status['ota_active'] is False and status['ota_unknown'] is False and status['resets_enabled'] is False,'OTA_OR_GUARD_STATUS')
+ need(status['resets_enabled'] is False,'GUARD_RESETS_ENABLED')
+ if not in_maintenance:need(0<=time.time()-status['utc']<65 and status['ota_active'] is False and status['ota_unknown'] is False,'OTA_OR_GUARD_STATUS')
+ # A large standard backup response can overflow the guard's bounded log
+ # window. The continuation below is restricted to this exact pre-flash HOLD,
+ # with both maintenance inhibitors still set and no physical action begun.
+ normalized_guard=dict(guard);normalized_guard.update(maintenance=False,firmware_flash_active=False)
  need(Path(PORT).exists() and not (DATA/'database.db.tmp').exists(),'USB_OR_DB_TEMP')
  return {'schema':'p7u-web-flash-trial-plan-v1','radio_source_sha':RADIO_SOURCE,'image_sha256':IMAGE_SHA,
   'container_id':CONTAINER,'board_mac':'70:af:09:a5:dc:30','os_version':'v3.4.3.dev1','stock_version':20260311,
-  'serial_by_id':PORT,'slots':slots,'guard_options_sha256':sha(canonical(guard)),
+  'serial_by_id':PORT,'slots':slots,'guard_options_sha256':sha(canonical(normalized_guard)),
   'inventory':inventory(regular(DATA/'database.db')),'flash_route':FLASH_ROUTE,'erase_nvm':False,
   'trial_of_unqualified_backend_explicitly_authorized':True,'authorization':'Direct user chat: Go and try it'}
 def archive(name):
@@ -213,6 +218,34 @@ def flash_events(ready,finished,out):
  except Exception:out.append({'event':'SSE_OBSERVATION_LOST','utc':time.time()})
  finally:ready.set()
 
+def after_backup(plan,blob,result):
+ intent('stop-original',{'container_id':CONTAINER});api('/addons/'+ORIGINAL+'/stop',{})
+ c=inspect('app_'+ORIGINAL);need(c and c['Id']==CONTAINER and not c['State']['Running'],'ORIGINAL_STOP_UNCONFIRMED')
+ for slug in SLOTS:need(addon(slug)['state'] in ['stopped','error'],'HOST_STILL_ACTIVE')
+ db=regular(DATA/'database.db');need(inventory(db)==plan['inventory'] and not (DATA/'database.db.tmp').exists(),'QUIESCED_INVENTORY_CHANGED')
+ result['post_stop_archive']=archive('quiesced-stock.tar.gz');result['quiesced_database_sha256']=sha(db)
+ unique(ROOT/'stock-container.json',canonical(c));unique(ROOT/'stock.private.log',command(['docker','logs','--tail','200',CONTAINER]))
+ proofs=zero_holders();unique(ROOT/'pre-flash-owner-proofs.json',canonical(proofs));need(time.time()-proofs[0]['utc']<20,'STALE_OWNER_PROOF')
+ need(board()['zb_version']==20260311,'STOCK_CHANGED_BEFORE_UPLOAD')
+ body,content_type=multipart(blob);intent('upload')
+ response=request('slzb','/fileUpload?customName=/fw.bin',method='POST',data=body,content_type=content_type,timeout=30)
+ unique(ROOT/'upload.response',response)
+ time.sleep(1.1)
+ staged=request('slzb','/api2?action=14&param=1&dir=%2Ffw.bin',limit=300000)
+ need(staged==blob,'STAGED_FILE_HASH_MISMATCH')
+ unique(ROOT/'staged-image.result.json',canonical({'sha256':sha(staged),'bytes':len(staged)}))
+ ready=threading.Event();done=threading.Event();events=[]
+ reader=threading.Thread(target=flash_events,args=(ready,done,events),daemon=True);reader.start();need(ready.wait(12) and reader.is_alive(),'SSE_NOT_CONNECTED')
+ need(all(addon(s)['state'] in ['stopped','error'] for s in SLOTS),'OWNER_RESTARTED')
+ zero_holders();intent('flash',{'route':FLASH_ROUTE,'erase_nvm':False})
+ try:response=request('slzb',FLASH_ROUTE,timeout=30);unique(ROOT/'flash.response',response);result['flash_request']='ACKNOWLEDGED'
+ except Exception:result['flash_request']='AMBIGUOUS_NO_RETRY'
+ done.wait(330);unique(ROOT/'flash-events.private.json',canonical(events))
+ result['status']='VENDOR_DONE_NOT_YET_ACCEPTED' if any(e['event']=='ZB_FW_done' for e in events) else 'VENDOR_ERROR' if any(e['event']=='ZB_FW_err' for e in events) else 'FLASH_STATE_UNKNOWN_NO_RETRY'
+ result['events']=[e['event'] for e in events];result['post_flash_owner_proofs']=zero_holders()
+ need(inventory(regular(DATA/'database.db'))==plan['inventory'],'HOST_DB_CHANGED')
+ result['host_inventory_preserved']=True;result['radio_nv_preservation_verified']=False
+
 def apply(plan_hash,blob):
  image(blob);need(not ROOT.exists() and not ROOT.is_symlink(),'TRIAL_ALREADY_EXISTS_NO_REPLAY')
  plan=snapshot();need(sha(canonical(plan))==plan_hash,'STALE_PLAN')
@@ -223,35 +256,42 @@ def apply(plan_hash,blob):
   options=passive();options.update(maintenance=True,firmware_flash_active=True)
   intent('maintenance');api('/addons/'+GUARD+'/options',{'options':options})
   result['network_backup']=fresh_backup();unique(ROOT/'network-backup.result.json',canonical(result['network_backup']))
-  intent('stop-original',{'container_id':CONTAINER});api('/addons/'+ORIGINAL+'/stop',{})
-  c=inspect('app_'+ORIGINAL);need(c and c['Id']==CONTAINER and not c['State']['Running'],'ORIGINAL_STOP_UNCONFIRMED')
-  for slug in SLOTS:need(addon(slug)['state'] in ['stopped','error'],'HOST_STILL_ACTIVE')
-  db=regular(DATA/'database.db');need(inventory(db)==plan['inventory'] and not (DATA/'database.db.tmp').exists(),'QUIESCED_INVENTORY_CHANGED')
-  result['post_stop_archive']=archive('quiesced-stock.tar.gz');result['quiesced_database_sha256']=sha(db)
-  unique(ROOT/'stock-container.json',canonical(c));unique(ROOT/'stock.private.log',command(['docker','logs',CONTAINER]))
-  proofs=zero_holders();unique(ROOT/'pre-flash-owner-proofs.json',canonical(proofs));need(time.time()-proofs[0]['utc']<20,'STALE_OWNER_PROOF')
-  need(board()['zb_version']==20260311,'STOCK_CHANGED_BEFORE_UPLOAD')
-  body,content_type=multipart(blob);intent('upload')
-  response=request('slzb','/fileUpload?customName=/fw.bin',method='POST',data=body,content_type=content_type,timeout=30)
-  unique(ROOT/'upload.response',response)
-  time.sleep(1.1)
-  staged=request('slzb','/api2?action=14&param=1&dir=%2Ffw.bin',limit=300000)
-  need(staged==blob,'STAGED_FILE_HASH_MISMATCH')
-  unique(ROOT/'staged-image.result.json',canonical({'sha256':sha(staged),'bytes':len(staged)}))
-  ready=threading.Event();done=threading.Event();events=[]
-  reader=threading.Thread(target=flash_events,args=(ready,done,events),daemon=True);reader.start();need(ready.wait(12) and reader.is_alive(),'SSE_NOT_CONNECTED')
-  need(all(addon(s)['state'] in ['stopped','error'] for s in SLOTS),'OWNER_RESTARTED')
-  zero_holders();intent('flash',{'route':FLASH_ROUTE,'erase_nvm':False})
-  try:response=request('slzb',FLASH_ROUTE,timeout=30);unique(ROOT/'flash.response',response);result['flash_request']='ACKNOWLEDGED'
-  except Exception:result['flash_request']='AMBIGUOUS_NO_RETRY'
-  done.wait(330);unique(ROOT/'flash-events.private.json',canonical(events))
-  result['status']='VENDOR_DONE_NOT_YET_ACCEPTED' if any(e['event']=='ZB_FW_done' for e in events) else 'VENDOR_ERROR' if any(e['event']=='ZB_FW_err' for e in events) else 'FLASH_STATE_UNKNOWN_NO_RETRY'
-  result['events']=[e['event'] for e in events];result['post_flash_owner_proofs']=zero_holders()
-  need(inventory(regular(DATA/'database.db'))==plan['inventory'],'HOST_DB_CHANGED')
-  result['host_inventory_preserved']=True;result['radio_nv_preservation_verified']=False
+  after_backup(plan,blob,result)
  except Exception as e:result['error_class']=str(e) if str(e).startswith('WEB_TRIAL_HOLD_') else type(e).__name__
  finally:
   result['utc']=time.time();unique(ROOT/'result.json',canonical(result))
+ return result
+
+def continuation_plan():
+ need(ROOT.is_dir() and not ROOT.is_symlink(),'NO_EXISTING_TRIAL')
+ for name in ['stop-original.intent.json','upload.intent.json','flash.intent.json','continue.intent.json','continuation.result.json']:
+  p=ROOT/name;need(not p.exists() and not p.is_symlink(),'PHYSICAL_PHASE_OR_CONTINUATION_ALREADY_CONSUMED')
+ old_result=regular(ROOT/'result.json');r=json.loads(old_result)
+ need(r['status']=='HOLD' and r['error_class']=='WEB_TRIAL_HOLD_NETWORK_BACKUP_UNCONFIRMED','UNRELATED_HOLD')
+ raw_plan=regular(ROOT/'plan.json');plan=json.loads(raw_plan)
+ need(sha(raw_plan)==r['plan_sha256'] and plan==snapshot(in_maintenance=True),'ORIGINAL_TRIAL_STATE_CHANGED')
+ image(regular(ROOT/'image.bin'));requested=json.loads(regular(ROOT/'network-backup.intent.json'))['utc']
+ p=DATA/'coordinator_backup.json';raw=regular(p);now=json.loads(raw)
+ need(p.stat().st_mtime>=requested and now['metadata']['format']=='zigpy/open-coordinator-backup','PERSISTED_BACKUP_NOT_FRESH')
+ with tarfile.open(ROOT/'before-backup.tar.gz') as t:before=json.load(t.extractfile('coordinator_backup.json'))
+ for k in ['coordinator_ieee','pan_id','extended_pan_id','channel']:need(now[k]==before[k],'PERSISTED_BACKUP_IDENTITY')
+ need(now['network_key']['key']==before['network_key']['key'] and now['network_key']['frame_counter']>=before['network_key']['frame_counter'],'PERSISTED_BACKUP_KEY_OR_COUNTER')
+ need(regular(p)==raw,'BACKUP_CHANGED_WHILE_VALIDATING')
+ return {'schema':'p7u-web-trial-persisted-backup-continuation-v1','original_plan_sha256':sha(raw_plan),
+         'prior_result_sha256':sha(old_result),'fresh_backup_sha256':sha(raw),'image_sha256':IMAGE_SHA,
+         'source_of_backup':'CURRENT_OWNER_PERSISTED_BACKUP_AFTER_EXACT_REQUEST_NO_REISSUE'}
+
+def continue_trial(expected,blob):
+ image(blob);p=continuation_plan();need(sha(canonical(p))==expected,'STALE_CONTINUATION_PLAN')
+ intent('continue',{'continuation_plan_sha256':expected});unique(ROOT/'continuation-plan.json',canonical(p))
+ raw=regular(DATA/'coordinator_backup.json');need(sha(raw)==p['fresh_backup_sha256'],'FRESH_BACKUP_CHANGED')
+ unique(ROOT/'fresh-owner-coordinator-backup.json',raw)
+ result={'schema':'p7u-web-flash-trial-result-v1','plan_sha256':p['original_plan_sha256'],
+  'continuation_plan_sha256':expected,'image_sha256':IMAGE_SHA,'status':'HOLD','normal_hosts_started':False,
+  'network_backup':{'sha256':sha(raw),'identity_matches':True,'key_matches':True,'counter_monotonic':True,'reissued':False}}
+ try:after_backup(json.loads(regular(ROOT/'plan.json')),blob,result)
+ except Exception as e:result['error_class']=str(e) if str(e).startswith('WEB_TRIAL_HOLD_') else type(e).__name__
+ finally:result['utc']=time.time();unique(ROOT/'continuation.result.json',canonical(result))
  return result
 def remote(payload):
  import fcntl
@@ -259,20 +299,23 @@ def remote(payload):
  try:
   fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
   need(set(payload)=={'mode','expected_plan_hash','image_b64'},'PAYLOAD')
-  if payload['mode']=='report':return json.loads(regular(ROOT/'result.json'))
+  if payload['mode']=='report':return json.loads(regular(ROOT/('continuation.result.json' if (ROOT/'continuation.result.json').exists() else 'result.json')))
+  if payload['mode']=='continue-plan':
+   p=continuation_plan();return {'status':'CONTINUATION_PLAN_NO_MUTATION','plan_hash':sha(canonical(p)),'plan':p}
+  if payload['mode']=='continue':return continue_trial(payload['expected_plan_hash'],base64.b64decode(payload['image_b64'],validate=True))
   need(payload['mode'] in ['plan','apply'] and not ROOT.exists(),'MODE_OR_CONSUMED')
   if payload['mode']=='plan':
    p=snapshot();return {'status':'PLAN_NO_MUTATION','plan_hash':sha(canonical(p)),'plan':p}
   return apply(payload['expected_plan_hash'],base64.b64decode(payload['image_b64'],validate=True))
  finally:os.close(fd)
 def main():
- p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','apply','report']);p.add_argument('--release',type=Path,required=True);p.add_argument('--expected-plan-hash',default='')
+ p=argparse.ArgumentParser();p.add_argument('mode',choices=['plan','apply','report','continue-plan','continue']);p.add_argument('--release',type=Path,required=True);p.add_argument('--expected-plan-hash',default='')
  a=p.parse_args();d=a.release.resolve(strict=True);need(d.is_relative_to(Path('C:/Workspace/artifacts').resolve()),'ARTIFACT_PATH')
  receipt=json.loads((d/'WEB_TRIAL_RELEASE.json').read_text());need(sha(Path(__file__).read_bytes())==receipt['helper_sha256'],'HELPER_NOT_QUALIFIED')
  checks=json.loads(subprocess.check_output(['gh','api','repos/analienx/Zigbee-Coordinator/commits/'+receipt['source_sha']+'/check-runs?per_page=100']))['check_runs']
  need(any(c['name']=='trial-boundaries' and c['conclusion']=='success' for c in checks),'HOSTED_QUALIFICATION')
  blob=(d/'image.bin').read_bytes();image(blob)
- payload={'mode':a.mode,'expected_plan_hash':a.expected_plan_hash,'image_b64':base64.b64encode(blob).decode() if a.mode=='apply' else ''}
+ payload={'mode':a.mode,'expected_plan_hash':a.expected_plan_hash,'image_b64':base64.b64encode(blob).decode() if a.mode in ['apply','continue'] else ''}
  source=Path(__file__).read_text()
  run=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8','ha','python3','-'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
  run.stdin.write('PAYLOAD='+repr(payload)+'\n'+source);run.stdin.close()
