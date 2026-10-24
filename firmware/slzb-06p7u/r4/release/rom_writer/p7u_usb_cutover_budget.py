@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import math
 
 FLASH_BYTES=0xB0000
@@ -45,6 +46,11 @@ class MeasuredLink:
     security_seconds: float
     margin_seconds: float = 6.0
     identity_seconds: float = 0.1
+    # Measured end-to-end costs; do not silently treat journaling and physical
+    # serial/status fences as free just because they are not payload bytes.
+    journal_seconds: float = 0.0
+    serial_lifecycle_seconds: float = 0.0
+    status_fence_seconds: float = 0.0
 
     def validate(self):
         values=vars(self)
@@ -67,6 +73,9 @@ class CutoverEstimate:
     fits_sixty_seconds: bool
     radio_budget_seconds: float
     immutable_hash: str
+    # Includes the pre-vector 8-KiB boot-tail read, not just final readbacks.
+    boot_tail_read_bytes: int = 0
+    total_rom_read_bytes: int = 0
 
 
 def inspect_delta(current: bytes, targets: dict[int, bytes], *,
@@ -96,7 +105,9 @@ def inspect_delta(current: bytes, targets: dict[int, bytes], *,
     write_bytes=len(changed)*SECTOR_BYTES
     verify_bytes=write_bytes
     fixed=(measurements.stop_start_seconds + measurements.bsl_entry_seconds +
-           measurements.security_seconds + measurements.margin_seconds)
+           measurements.security_seconds + measurements.margin_seconds +
+           measurements.journal_seconds + measurements.serial_lifecycle_seconds +
+           measurements.status_fence_seconds)
     # Mirrors the exact transaction: sparse capture/admit, prewrite, and
     # final CRC parity; per-plan reserved-range guards; plus boot commit sweeps.
     # A naive two-full-CRC-sweep model massively undercounts commands.
@@ -106,17 +117,29 @@ def inspect_delta(current: bytes, targets: dict[int, bytes], *,
     boot_present = BOOT in targets
     boot_written = BOOT in changed
     full_sweeps = 4 + int(boot_present) + (3 if boot_written else 0)
-    crc_calls = full_sweeps*88 + guard_calls
+    # _sector(rom,address) independently performs a CRC on every final 8-KiB
+    # readback; the boot-tail pre-vector _sector additionally does a CRC.
+    # Those calls were absent from the older model and surfaced in a real
+    # instrumented transaction: 3 changed including boot -> 760; 25 -> 1178.
+    crc_calls = full_sweeps*88 + guard_calls + len(changed) + int(boot_written)
+    boot_tail_read_bytes = SECTOR_BYTES if boot_written else 0
+    read_bytes = verify_bytes + protected_live_read_bytes + boot_tail_read_bytes
     identity_checks = 2 + full_sweeps - 1 + len(targets) + len(changed)
     radio=(write_bytes/measurements.write_bytes_per_second +
-           (verify_bytes+protected_live_read_bytes)/measurements.read_bytes_per_second +
+           read_bytes/measurements.read_bytes_per_second +
            len(changed)*measurements.erase_seconds +
            crc_calls*measurements.crc_seconds +
            identity_checks*measurements.identity_seconds)
     total=fixed+radio
     # Source binding of the *estimate only*: not flash authorization.
-    hash_input=(str(changed)+":" + ":".join(_digest(targets[a]) for a in sorted(targets)))
+    hash_input=json.dumps({"schema":"p7u-budget-source-bound-v2",
+        "current_sha256":_digest(current),
+        "targets_sha256":{str(a):_digest(targets[a]) for a in sorted(targets)},
+        "changed":changed,"protected_live_read_bytes":protected_live_read_bytes,
+        "measurements":vars(measurements),"crc_calls":crc_calls,
+        "identity_checks":identity_checks,"boot_tail_read_bytes":boot_tail_read_bytes},
+        sort_keys=True,separators=(',',':')).encode()
     return CutoverEstimate(changed,write_bytes,verify_bytes,protected_live_read_bytes,
                            crc_calls,identity_checks,round(total,2),
                            total <= TARGET_SECONDS,round(radio,2),
-                           _digest(hash_input.encode()))
+                           _digest(hash_input),boot_tail_read_bytes,read_bytes)

@@ -11,12 +11,16 @@ on:
       - 'firmware/slzb-06p7u/r4/release/rom_writer/p7u_usb_*'
       - 'firmware/slzb-06p7u/r4/release/rom_writer/test_p7u_usb_*'
       - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_usb_security_model.py'
+      - 'firmware/slzb-06p7u/r4/release/test_p7u_usb_security_model.py'
   pull_request:
     paths:
       - '.github/workflows/p7u-usb-fast-cutover.yml'
       - 'firmware/slzb-06p7u/r4/release/rom_writer/p7u_usb_*'
       - 'firmware/slzb-06p7u/r4/release/rom_writer/test_p7u_usb_*'
       - 'firmware/slzb-06p7u/r4/release/r4_stock20260311_transition.py'
+      - 'firmware/slzb-06p7u/r4/release/p7u_usb_security_model.py'
+      - 'firmware/slzb-06p7u/r4/release/test_p7u_usb_security_model.py'
 
 permissions:
   contents: read
@@ -38,6 +42,12 @@ jobs:
           python -m unittest discover \
             -s firmware/slzb-06p7u/r4/release/rom_writer \
             -p 'test_p7u_usb_*.py' -v
+      - name: Independent owner-to-silicon security negative controls (synthetic only)
+        shell: bash
+        run: |
+          python -m unittest discover \
+            -s firmware/slzb-06p7u/r4/release \
+            -p 'test_p7u_usb_security_model.py' -v
       - name: Sparse transition, no-retry, NV protection and legacy SHA parity
         shell: bash
         run: |
