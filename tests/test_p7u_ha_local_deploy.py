@@ -187,4 +187,61 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         self.rom.close.assert_awaited_once()
 
 
+class Boot(Execution):
+    def evidence(self):
+        snapshot = bytes(0xB0000)
+        frozen = {'source_sha': op.SOURCE, 'capture_sha256': op.sha(snapshot), 'program_order': [0, 0xAC000],
+                  'sector_sha256': {'0': op.sha(b'a'*8192), str(0xAC000): op.sha(b'b'*8192)}}
+        digest = op.sha(op.canonical(frozen)); frozen['plan_sha256'] = digest
+        op.durable(self.private, 'frozen-plan.json', frozen)
+        op.durable(self.private, 'fresh-sparse-snapshot.bin', snapshot)
+        events = [{'event': 'SECTOR_VERIFIED', 'address': a, 'sha256': frozen['sector_sha256'][str(a)]}
+                  for a in frozen['program_order']]
+        (self.private/'mutation-journal.jsonl').write_bytes(b''.join(op.canonical(v)+b'\n' for v in events))
+        result = {'status': 'APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL',
+                  'verification_scope': 'WRITTEN_SHA_PLUS_ALL88_ROM_CRC', 'written_sectors': [0, 0xAC000],
+                  'nv_touched': False, 'ccfg_touched': False, 'reset_issued': False, 'automatic_rollback': False}
+        op.durable(self.private, 'verified-write.json', {'operation_plan_sha256': 'pin',
+            'frozen_plan_sha256': digest, 'journal_sha256': op.sha(op.read(self.private/'mutation-journal.jsonl')),
+            'result': result})
+        self.ha.boot_binding.return_value = 'button.slzb_06p7u_zigbee_restart'
+        self.ha.inspect.return_value = {'id': 'two', 'image': op.IMAGE, 'running': True}
+        p = patch.object(op.time, 'sleep', Mock()); p.start(); self.addCleanup(p.stop)
+        p = patch.object(Path, 'is_char_device', Mock(return_value=True)); p.start(); self.addCleanup(p.stop)
+
+    def test_no_result_never_boots(self):
+        with self.assertRaises(FileNotFoundError): op.boot(self.package, 'pin', self.ha)
+        self.ha.restart_radio.assert_not_called()
+
+    def test_changed_journal_never_boots(self):
+        self.evidence(); (self.private/'mutation-journal.jsonl').write_bytes(b'{}\n')
+        with self.assertRaisesRegex(op.Hold, 'WRITE_RECEIPT_PIN'): op.boot(self.package, 'pin', self.ha)
+        self.ha.restart_radio.assert_not_called()
+
+    def test_hold_after_write_never_boots(self):
+        self.evidence(); op.durable(self.private, 'hold.json', {})
+        with self.assertRaisesRegex(op.Hold, 'WRITE_NOT_VERIFIED'): op.boot(self.package, 'pin', self.ha)
+        self.ha.restart_radio.assert_not_called()
+
+    def test_unknown_boot_ack_is_never_repeated(self):
+        self.evidence(); self.ha.restart_radio.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError): op.boot(self.package, 'pin', self.ha)
+        self.ha.owner_action.assert_not_called(); self.assertTrue((self.private/'boot-intent.json').exists())
+        with self.assertRaisesRegex(op.Hold, 'BOOT_CONSUMED'): op.boot(self.package, 'pin', self.ha)
+        self.ha.restart_radio.assert_called_once()
+
+    def test_unknown_start_ack_is_never_repeated(self):
+        self.evidence(); self.ha.owner_action.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError): op.boot(self.package, 'pin', self.ha)
+        self.assertTrue((self.private/'start-intent.json').exists())
+        with self.assertRaisesRegex(op.Hold, 'BOOT_CONSUMED'): op.boot(self.package, 'pin', self.ha)
+        self.ha.owner_action.assert_called_once_with('start')
+
+    def test_verified_boot_starts_only_pinned_owner_once(self):
+        self.evidence(); result = op.boot(self.package, 'pin', self.ha)
+        self.assertEqual(result['status'], 'FLASH_VERIFIED_HOST_STARTED_PENDING_SERVING')
+        self.ha.restart_radio.assert_called_once(); self.ha.owner_action.assert_called_once_with('start')
+        self.assertTrue((self.private/'started-pending-serving.json').exists())
+
+
 if __name__ == '__main__': unittest.main()
