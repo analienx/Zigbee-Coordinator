@@ -318,3 +318,38 @@ test("actual worker thread delivers ACK only after read-back committed manifest"
         x.cleanup();
     }
 });
+
+function sampleHostEvidence() {
+    const stat = () => ({ok:1,timeout:0,maxLatencyMs:25,lastLatencyMs:25});
+    return {initialized:true,mutexIdle:true,mutexQueued:0,waitressPending:0,
+        diagnosticQuarantined:false,scope:"HOST_OWNER_LIFETIME_ONLY",
+        adapterQueuePending:0,adapterClosing:false,interpanLocked:false,
+        srsp:{AF:stat(),ZDO:stat(),SYS:stat(),UTIL:stat()}};
+}
+test("passive host SRSP and gate evidence is durable and rejects nested identifiers", () => {
+    const x=dir();
+    try {
+        const state=workerModule.open(x.root);
+        const skipped=fixture("SKIPPED");
+        delete skipped.abi;delete skipped.sequence;delete skipped.validityMask;
+        skipped.reason="ZNP_WAITRESS_PENDING";
+        skipped.hostEvidence=sampleHostEvidence();
+        workerModule.commit(state,skipped);
+        const valid={...fixture(),sequence:2,hostEvidence:sampleHostEvidence()};
+        workerModule.commit(state,valid);
+        const recovered=workerModule.open(x.root);
+        assert.equal(recovered.records.length,2);
+        assert.equal(recovered.records[0].hostEvidence.srsp.AF.ok,1);
+        assert.equal(recovered.records[1].hostEvidence.waitressPending,0);
+        const bad={...fixture(),hostEvidence:{...sampleHostEvidence(),ieeeAddr:"0xDEADBEEF"}};
+        assert.throws(()=>workerModule.commit(state,bad),/HOST_EVIDENCE_FIELDS/);
+        const huge={...fixture(),hostEvidence:{...sampleHostEvidence(),srsp:{
+            ...sampleHostEvidence().srsp,AF:{...sampleHostEvidence().srsp.AF,
+                lastLatencyMs:NaN}}}};
+        assert.throws(()=>workerModule.commit(state,huge),/HOST_EVIDENCE_STATS/);
+        const unknown={...fixture(),hostEvidence:{...sampleHostEvidence(),srsp:{
+            ...sampleHostEvidence().srsp,SYS:{...sampleHostEvidence().srsp.SYS,
+                command:"NV_READ"}}}};
+        assert.throws(()=>workerModule.commit(state,unknown),/HOST_EVIDENCE_STATS/);
+    } finally {x.cleanup();}
+});

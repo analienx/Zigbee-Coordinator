@@ -39,6 +39,11 @@ function ownerWithResponse(chooser) {
         disabled: false,
         requests: 0,
         b4CanProbe() {return !this.disabled;},
+        b4GetPassiveOwnerMetrics() {
+            return {initialized:true, mutexIdle:true, mutexQueued:0,
+                waitressPending:0, diagnosticQuarantined:this.disabled,
+                srsp:{}, scope:"HOST_OWNER_LIFETIME_ONLY"};
+        },
         b4F2ReadAdmissionReason() {return null;},
         b4F2AcceptReply() {},
         b4IsDiagPoisoned() {return this.disabled;},

@@ -137,6 +137,9 @@ METHOD = r"""
             const freshOutcome = outcomeAfter && outcomeBefore &&
                 outcomeAfter.attempt > outcomeBefore.attempt ? outcomeAfter : null;
             const elapsedMs = Math.max(0, Math.round(performance.now() - probeStarted));
+            // Passive numeric-only evidence, even if F2 was not admitted.
+            // This accessor MUST NOT attempt another ZNP request.
+            const hostEvidence = this.zigbee.zhController?.b4NoWireOwnerSnapshotFromExistingOwner() ?? null;
             if (!this.#b4Operational) { return; }
             const utc = Date.now();
             if (!result) {
@@ -146,11 +149,11 @@ METHOD = r"""
                 this.#b4Persist({schema: "p7u-b4-native-sample-v1", kind,
                     utc, probeLatencyMs: elapsedMs,
                     monotonicReceiveNs: process.hrtime.bigint().toString(),
-                    reason: outcome?.reason ?? "HOST_OR_OTA_ADMISSION_SKIPPED",
+                    reason: outcome?.reason ?? this.#b4BridgeGateReason,
                     failureClass: kind === "FAILED" ? outcome?.reason : undefined,
                     submissionState: outcome?.submissionState ?? "NONE",
                     timingQuality: kind === "FAILED" ? "HOST_TIMING_UNCERTAIN" : "NOT_PROBED",
-                    sourceAbi: 4, imageRuntimeAttested: false});
+                    sourceAbi: 4, imageRuntimeAttested: false, hostEvidence});
                 // Znp owns nonce correlation, cooldown/progress admission and
                 // hard quarantine. Keep recording its no-wire status even in
                 // quarantine; worker/storage failure alone halts this timer.
@@ -169,6 +172,7 @@ METHOD = r"""
                 asyncDepth: result.asyncDepth, asyncHighWater: result.asyncHighWater,
                 srspEnqueued: result.srspEnqueued,
                 uartTxFinishedEvents: result.uartTxFinishedEvents,
+                hostEvidence,
                 radioEpochTag: epochTag, radioEpochHardwareVerified: false,
                 resetReason: result.resetReason,
                 imageRuntimeAttested: false,
@@ -219,6 +223,41 @@ def plan(root: Path):
         if src.count(old) != 2:
             raise ValueError("lifecycle check count drift: " + old)
         src = src.replace(old, new)
+    # The v4 bridge is pinned before this overlay; preserve its actual
+    # lifecycle rules but report WHY a no-wire probe was not admitted.
+    # Scope only to F2: the predecessor F0 bridge deliberately has
+    # identical !ota/stillAllowed syntax and MUST remain byte-identical.
+    begin = src.index("    public async b4ProbeReadOnlyDiagnosticsV4(enabled = false)")
+    end = src.index("    public async b4ProbeReadOnlyDiagnostics(enabled = false)", begin)
+    v4bridge = src[begin:end]
+    v4bridge = once(v4bridge, '''        if (enabled !== true || !this.#b4Operational ||
+            !herdsman || herdsman.isStopping() || herdsman.isAdapterDisconnected()) {
+            return undefined;
+        }''', '''        const outerGate = enabled !== true ? "COLLECTOR_NOT_ENABLED"
+            : !this.#b4Operational ? "HOST_NOT_OPERATIONAL"
+            : !herdsman ? "HERDSMAN_UNAVAILABLE"
+            : herdsman.isStopping() ? "HERDSMAN_STOPPING"
+            : herdsman.isAdapterDisconnected() ? "ADAPTER_DISCONNECTED" : null;
+        if (outerGate !== null) {
+            this.#b4BridgeGateReason = outerGate;
+            return undefined;
+        }''')
+    v4bridge = once(v4bridge, '''        if (!ota) {
+            return undefined;
+        }''', '''        if (!ota) {
+            this.#b4BridgeGateReason = "OTA_EXTENSION_UNAVAILABLE";
+            return undefined;
+        }''')
+    v4bridge = once(v4bridge, '''        if (!stillAllowed()) {
+            return undefined;
+        }
+        return await herdsman.b4ReadOnlyDiagnosticsV4FromExistingOwner({''', '''        if (!stillAllowed()) {
+            this.#b4BridgeGateReason = "OTA_OR_HOST_GUARD_BLOCKED";
+            return undefined;
+        }
+        this.#b4BridgeGateReason = "ADAPTER_EVALUATING";
+        return await herdsman.b4ReadOnlyDiagnosticsV4FromExistingOwner({''')
+    src = src[:begin] + v4bridge + src[end:]
     src = once(src, 'import bind from "bind-decorator";',
         '''import bind from "bind-decorator";
 import * as b4Path from "node:path";
@@ -231,6 +270,7 @@ import b4Data from "./util/data";''')
     #b4Timer: NodeJS.Timeout | undefined;
     #b4InFlight = false;
     #b4SamplerDisabled = false;
+    #b4BridgeGateReason = "NOT_ATTEMPTED";
     readonly #b4EpochKey = randomBytes(32);
     #b4Worker: Worker | undefined;
     #b4WorkerReady = false;

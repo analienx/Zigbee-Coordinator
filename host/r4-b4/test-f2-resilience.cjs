@@ -200,3 +200,60 @@ test("seeded 1000-cycle soak: loss, late/out-of-order replies and ordinary traff
     assert.equal(h.sent.filter(f => f.commandID === 1 && f.subsystem === Subsystem.AF).length, 500);
     assert.deepEqual(h.passive, []);
 });
+
+test("busy ZNP mutex has a precise admission reason; no additional diagnostic frame", async t => {
+    const h = setup(t);
+    let release;
+    const busy = h.znp.queue.run(() => new Promise(resolve => {release = resolve;}));
+    assert.equal(h.znp.b4GetPassiveOwnerMetrics().mutexIdle, false);
+    const count = h.sent.length;
+    assert.equal(await h.offer(), undefined);
+    assert.equal(h.adapter.b4GetV4Outcome().reason, "ZNP_MUTEX_BUSY");
+    assert.equal(h.sent.length, count, "no F2 wire request may follow busy admission");
+    release();
+    await busy;
+});
+test("pending Waitress gate distinct from mutex and never writes an F2", async t => {
+    const h = setup(t);
+    const waiter = h.znp.waitress.waitFor({type:Type.SRSP,subsystem:Subsystem.SYS,command:"ping"},10000);
+    const count = h.sent.length;
+    assert.equal(await h.offer(), undefined);
+    assert.equal(h.adapter.b4GetV4Outcome().reason, "ZNP_WAITRESS_PENDING");
+    assert.equal(h.znp.b4GetPassiveOwnerMetrics().waitressPending, 1);
+    assert.equal(h.sent.length, count);
+    h.znp.waitress.remove(waiter.ID);
+});
+test("no-wire passive ack/timeout accounting distinguishes AF from SYS and F2", async t => {
+    const h = setup(t);
+    const before = h.znp.b4GetPassiveOwnerMetrics();
+    assert.deepEqual(before.srsp.AF, {ok:0,timeout:0,maxLatencyMs:0,lastLatencyMs:null});
+    await h.progressAF();
+    const p = h.znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 6000);
+    const rejected = assert.rejects(p, /SRSP - SYS - ping after 6000ms/);
+    await h.advance(6000); await rejected;
+    const after = h.znp.b4GetPassiveOwnerMetrics();
+    assert.equal(after.srsp.AF.ok,1);
+    assert.equal(after.srsp.SYS.timeout,1);
+    assert.equal(after.srsp.SYS.ok,0);
+    assert.equal(after.srsp.AF.timeout,0);
+    const f2 = h.offer();await h.advance(6000);await f2;
+    const afterF2 = h.znp.b4GetPassiveOwnerMetrics();
+    assert.equal(afterF2.srsp.SYS.timeout,1,"F2 timeout must not inflate production SYS statistics");
+    assert.equal(afterF2.srsp.AF.ok,1);
+    assert.equal(afterF2.scope,"HOST_OWNER_LIFETIME_ONLY");
+});
+test("gating across adapter owner/OTA and outer pending queue has no extra ZNP submissions", async t => {
+    const h = setup(t);
+    for (const [input,expected] of [
+        [{...allowed,hostIdle:false},"HOST_NOT_IDLE"],
+        [{...allowed,otaActive:true},"OTA_ACTIVE_OR_UNKNOWN"],
+        [{...allowed,stillAllowed:()=>false},"OWNER_OR_OTA_GUARD_REVOKED"],
+    ]) {
+        assert.equal(await h.adapter.b4ReadOnlyDiagnosticsV4(input),undefined);
+        assert.equal(h.adapter.b4GetV4Outcome().reason,expected);
+    }
+    h.adapter.queue={count:()=>2};
+    assert.equal(await h.offer(),undefined);
+    assert.equal(h.adapter.b4GetV4Outcome().reason,"ADAPTER_QUEUE_PENDING");
+    assert.equal(h.sent.length,0);
+});

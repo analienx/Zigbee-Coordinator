@@ -33,6 +33,13 @@ V4_ADAPTER_METHOD = r"""
         return {...this.b4V4Outcome};
     }
 
+    /** Passive in-process metrics ONLY. No UART or Zigbee SREQ. */
+    public b4GetNoWireEvidence() {
+        return {...this.znp.b4GetPassiveOwnerMetrics(),
+            adapterQueuePending: this.queue?.count() ?? null,
+            adapterClosing: this.closing, interpanLocked: !!this.interpanLock};
+    }
+
     public async b4ReadOnlyDiagnosticsV4(input: {
         enabled: boolean; hostIdle: boolean; otaActive: boolean;
         stillAllowed: () => boolean;
@@ -56,11 +63,25 @@ V4_ADAPTER_METHOD = r"""
             this.b4V4Outcome.reason = recoveryGate;
             return undefined;
         }
-        if (input?.enabled !== true || input?.hostIdle !== true ||
-            input?.otaActive !== false || typeof input.stillAllowed !== "function" ||
-            !input.stillAllowed() || this.closing || !this.queue ||
-            this.queue.count() !== 0 || this.interpanLock ||
-            !this.znp.b4CanProbe()) {
+        // One deterministic, privacy-safe reason for EACH no-wire admission
+        // veto. Never attempt a diagnostic while the production owner is busy.
+        const local = this.znp.b4GetPassiveOwnerMetrics();
+        const gate = input?.enabled !== true ? "PROBE_NOT_ENABLED"
+            : input?.hostIdle !== true ? "HOST_NOT_IDLE"
+            : input?.otaActive !== false ? "OTA_ACTIVE_OR_UNKNOWN"
+            : typeof input.stillAllowed !== "function" ? "OWNER_GUARD_UNAVAILABLE"
+            : !input.stillAllowed() ? "OWNER_OR_OTA_GUARD_REVOKED"
+            : this.closing ? "ADAPTER_CLOSING"
+            : !this.queue ? "ADAPTER_QUEUE_UNAVAILABLE"
+            : this.queue.count() !== 0 ? "ADAPTER_QUEUE_PENDING"
+            : this.interpanLock ? "INTERPAN_LOCK"
+            : !local.initialized ? "ZNP_NOT_INITIALIZED"
+            : !local.mutexIdle ? "ZNP_MUTEX_BUSY"
+            : local.waitressPending !== 0 ? "ZNP_WAITRESS_PENDING"
+            : !this.znp.b4CanProbe() ? "ZNP_OTHER_ADMISSION"
+            : null;
+        if (gate !== null) {
+            this.b4V4Outcome.reason = gate;
             return undefined;
         }
         const now = performance.now();
@@ -288,6 +309,11 @@ def plan(root):
         return this.adapter instanceof ZStackAdapter ? this.adapter.b4GetV4Outcome() : null;
     }
 
+    /** No UART: snapshot adapter admission and host SRSP aggregates. */
+    public b4NoWireOwnerSnapshotFromExistingOwner() {
+        return this.adapter instanceof ZStackAdapter ? this.adapter.b4GetNoWireEvidence() : null;
+    }
+
     public isStopping(): boolean {""")
     znp = original[ZNP]
     znp = once(znp, "    public b4PoisonDiagSession(): void {",
@@ -328,10 +354,61 @@ def plan(root):
     znp = once(znp, "    state?: number;", "    state?: number;\n    b4F2Nonce?: Buffer;")
     znp = once(znp, "    private b4DiagPoisoned = false;", """    private b4DiagPoisoned = false;
     private b4F2ConsecutiveTimeouts = 0;
+    private readonly b4PassiveSrspStats: Record<"AF" | "ZDO" | "SYS" | "UTIL",
+        {ok: number; timeout: number; maxLatencyMs: number; lastLatencyMs: number | null}> = {
+        AF: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+        ZDO: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+        SYS: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+        UTIL: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+    };
     private b4F2NextAllowedMs = 0;
     private b4F2OwnerProgress = 0;
     private b4F2ProgressAtTimeout = 0;""")
-    znp = once(znp, "    public b4IsDiagPoisoned(): boolean {", """    /** Read-only nonce-bound F2 policy, never a reset or port reopen. */
+    znp = once(znp, "    public b4IsDiagPoisoned(): boolean {", """    /** In-process, bounded, identity-free SRSP metrics. No extra requests,
+     *  no wall-clock assumptions, no radio-epoch claim. */
+    private b4PassiveSrspKey(subsystem: Subsystem): "AF" | "ZDO" | "SYS" | "UTIL" | null {
+        return subsystem === Subsystem.AF ? "AF"
+            : subsystem === Subsystem.ZDO ? "ZDO"
+            : subsystem === Subsystem.SYS ? "SYS"
+            : subsystem === Subsystem.UTIL ? "UTIL" : null;
+    }
+
+    private b4PassiveNoteAck(subsystem: Subsystem, elapsedMs: number): void {
+        const key = this.b4PassiveSrspKey(subsystem);
+        if (key === null || !Number.isFinite(elapsedMs) || elapsedMs < 0) { return; }
+        const stats = this.b4PassiveSrspStats[key];
+        const latency = Math.min(3600000, Math.floor(elapsedMs));
+        stats.ok = Math.min(Number.MAX_SAFE_INTEGER, stats.ok + 1);
+        stats.maxLatencyMs = Math.max(stats.maxLatencyMs, latency);
+        stats.lastLatencyMs = latency;
+    }
+
+    private b4PassiveNoteTimeout(subsystem: Subsystem): void {
+        const key = this.b4PassiveSrspKey(subsystem);
+        if (key !== null) {
+            const stats = this.b4PassiveSrspStats[key];
+            stats.timeout = Math.min(Number.MAX_SAFE_INTEGER, stats.timeout + 1);
+        }
+    }
+
+    public b4GetPassiveOwnerMetrics() {
+        return {
+            initialized: this.initialized,
+            mutexIdle: this.queue.isIdle(),
+            mutexQueued: this.queue.count,
+            waitressPending: this.waitress.waiters.size,
+            diagnosticQuarantined: this.b4DiagPoisoned,
+            srsp: {
+                AF: {...this.b4PassiveSrspStats.AF},
+                ZDO: {...this.b4PassiveSrspStats.ZDO},
+                SYS: {...this.b4PassiveSrspStats.SYS},
+                UTIL: {...this.b4PassiveSrspStats.UTIL},
+            },
+            scope: "HOST_OWNER_LIFETIME_ONLY",
+        };
+    }
+
+    /** Read-only nonce-bound F2 policy, never a reset or port reopen. */
     public b4F2ReadAdmissionReason(): string | null {
         if (this.b4F2ConsecutiveTimeouts >= 3) { return "F2_TIMEOUT_BUDGET_EXHAUSTED"; }
         if (this.b4F2ConsecutiveTimeouts > 0) {
@@ -397,6 +474,26 @@ def plan(root):
                         this.b4PoisonDiagSession();
                     }
                     throw error;""")
+    znp = once(znp,
+        "        const at_ms = Math.floor(performance.now());",
+        """        this.b4PassiveNoteTimeout(subsystem);
+        const at_ms = Math.floor(performance.now());""")
+    znp = once(znp,
+        "                const result = await waiter.start().promise.catch((error: unknown) => {",
+        """                const b4NormalAckStart = performance.now();
+                const result = await waiter.start().promise.then((response) => {
+                    if (!isB4Diag) {
+                        this.b4PassiveNoteAck(object.subsystem, performance.now() - b4NormalAckStart);
+                    }
+                    return response;
+                }).catch((error: unknown) => {""")
+    znp = once(znp,
+        "            const result = await waiter.start().promise.catch((error: unknown) => {",
+        """            const b4ZdoAckStart = performance.now();
+            const result = await waiter.start().promise.then((response) => {
+                this.b4PassiveNoteAck(Subsystem.ZDO, performance.now() - b4ZdoAckStart);
+                return response;
+            }).catch((error: unknown) => {""")
     # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
     znp = once(znp,
         "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",

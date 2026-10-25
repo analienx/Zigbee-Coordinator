@@ -23,7 +23,8 @@ const allowed = new Set([
     "uartTxFinishedEvents", "radioEpochTag", "radioEpochHardwareVerified",
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
-    "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped"
+    "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
+    "hostEvidence"
 ]);
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
@@ -49,6 +50,37 @@ function sameRecord(entry) {
             entry.sequence > 0, "VALID_SEQUENCE");
         hold(Number.isSafeInteger(entry.validityMask) &&
             entry.validityMask >= 0, "VALID_MASK");
+    }
+    if ("hostEvidence" in entry && entry.hostEvidence !== null) {
+        const e = entry.hostEvidence;
+        const obj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+        const exact = (v, keys) => obj(v) &&
+            Object.keys(v).length === keys.length &&
+            Object.keys(v).every(k => keys.includes(k));
+        const num = v => Number.isSafeInteger(v) && v >= 0;
+        hold(exact(e, ["initialized", "mutexIdle", "mutexQueued", "waitressPending",
+            "diagnosticQuarantined", "srsp", "scope", "adapterQueuePending",
+            "adapterClosing", "interpanLocked"]), "HOST_EVIDENCE_FIELDS");
+        hold(typeof e.initialized === "boolean" &&
+            typeof e.mutexIdle === "boolean" &&
+            num(e.mutexQueued) && num(e.waitressPending) &&
+            typeof e.diagnosticQuarantined === "boolean" &&
+            e.scope === "HOST_OWNER_LIFETIME_ONLY" &&
+            (e.adapterQueuePending === null || num(e.adapterQueuePending)) &&
+            typeof e.adapterClosing === "boolean" &&
+            typeof e.interpanLocked === "boolean", "HOST_EVIDENCE_STATE");
+        const subsystemNames = ["AF", "ZDO", "SYS", "UTIL"];
+        hold(exact(e.srsp, subsystemNames), "HOST_EVIDENCE_SUBSYSTEMS");
+        for (const subsystem of subsystemNames) {
+            const stats = e.srsp[subsystem];
+            hold(exact(stats, ["ok", "timeout", "maxLatencyMs", "lastLatencyMs"]) &&
+                num(stats.ok) && num(stats.timeout) &&
+                num(stats.maxLatencyMs) && stats.maxLatencyMs <= 3600000 &&
+                (stats.lastLatencyMs === null ||
+                    (num(stats.lastLatencyMs) &&
+                        stats.lastLatencyMs <= stats.maxLatencyMs)),
+                "HOST_EVIDENCE_STATS");
+        }
     }
     if (["hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped"].some(k => k in entry)) {
         hold(entry.kind === "FAILED" &&
