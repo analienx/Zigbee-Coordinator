@@ -22,15 +22,20 @@ typedef uint8_t byte;
 #define MT_RPC_POS_LEN 0u
 #define CMD_SERIAL_MSG 0x37u
 #define OsalPort_SUCCESS 0u
-#define OsalPort_INVALID_TASK 1u
+#define OsalPort_FAILURE 1u
+#define OsalPort_INVALID_MSG_POINTER 2u
+#define OsalPort_INVALID_TASK 3u
+#define OsalPort_SYS_EVENT_MSG 0x8000u
 
 typedef struct {uint8_t event;} Header;
 typedef struct {Header hdr; uint8_t *msg;} mtOSALSerialData_t;
 typedef struct {uint8_t msgType; uint16_t pBufSize; uint8_t *pBuf;} NPIMSG_msg_t;
 static uint8_t MTServiceTaskID=2u;
+typedef struct {uint8_t taskId; uint8_t *qHandle;} TaskRecord;
+static TaskRecord taskTbl[1]={{2u,NULL}};
+static uint8_t taskCnt=1;
 
 static unsigned allocated, live_alloc, freed, fail_at, send_calls;
-static int send_failed;
 static mtOSALSerialData_t *delivered;
 static int depth;
 static unsigned intercepted_b1;
@@ -63,12 +68,18 @@ static void OsalPort_free(void *p) {
 static uint8_t OsalPort_msgDeallocate(uint8_t *p) {
     OsalPort_free(p);return OsalPort_SUCCESS;
 }
-static uint8_t OsalPort_msgSend(uint8_t task,byte *msg) {
-    assert(task==MTServiceTaskID);
-    assert(msg!=NULL);++send_calls;
-    if(send_failed) return OsalPort_INVALID_TASK;
-    delivered=(mtOSALSerialData_t *)msg;
-    return OsalPort_SUCCESS;
+static uint32_t OsalPort_enterCS(void) {
+    assert(depth==0);depth=1;return 7;
+}
+static void OsalPort_leaveCS(uint32_t key) {
+    assert(depth==1 && key==7);depth=0;
+}
+static void OsalPort_msgEnqueue(uint8_t **queue,uint8_t *msg) {
+    assert(depth==1 && queue==&taskTbl[0].qHandle && *queue==NULL);
+    *queue=msg;delivered=(mtOSALSerialData_t *)msg;
+}
+static void OsalPort_setEvent(uint8_t task,uint16_t event) {
+    assert(depth==1 && task==MTServiceTaskID && event==OsalPort_SYS_EVENT_MSG);
 }
 static NPIMSG_msg_t *request(void) {
     NPIMSG_msg_t *p=(NPIMSG_msg_t *)OsalPort_malloc(sizeof(*p));
@@ -89,7 +100,7 @@ int main(int argc,char **argv) {
     NPIMSG_msg_t *in=request();
     if (strcmp(argv[1],"wrapper_oom")==0) fail_at=allocated+1;
     else if (strcmp(argv[1],"payload_oom")==0) fail_at=allocated+2;
-    else if (strcmp(argv[1],"send_failed")==0) send_failed=1;
+    else if (strcmp(argv[1],"send_failed")==0) taskCnt=0;
     else if (strcmp(argv[1],"healthy")!=0) return 2;
     uint8_t status=NPITask_sendBufToStack(in);
     assert(intercepted_b1==0); /* These cases must exercise MT handoff. */
@@ -103,7 +114,7 @@ int main(int argc,char **argv) {
         assert(live_alloc==0);
         puts("B1_REAL_NPI_MT_HEALTHY_OWNERSHIP_PASS");
     } else {
-        assert(status!=OsalPort_SUCCESS || send_calls==0);
+        assert(status==(strcmp(argv[1],"send_failed")==0 ? OsalPort_INVALID_TASK : OsalPort_FAILURE));
         assert(b1_management_transport_unavailable());
         assert(b1_management_get_hold_active());
         assert(live_alloc==0 && delivered==NULL);
@@ -118,6 +129,7 @@ int main(int argc,char **argv) {
 def main():
  p=argparse.ArgumentParser()
  p.add_argument("--source",type=Path,required=True)
+ p.add_argument("--osal-source",type=Path,required=True)
  p.add_argument("--output",type=Path,required=True)
  a=p.parse_args()
  body=extract_function(a.source.read_text(encoding="utf8"),
@@ -127,6 +139,14 @@ def main():
          "OsalPort_msgDeallocate((uint8_t *)pOsalMsg)")
  if not all(s in body for s in needed):
   raise RuntimeError("PINNED_NPI_TO_MT_HANDOFF_NOT_SAFE")
- a.output.write_text(PREAMBLE+body+MAIN,encoding="utf8")
- print("B1_REAL_TI_NPI_MT_HANDOFF_SOURCE_EXTRACTED")
+ provider=extract_function(a.osal_source.read_text(encoding="utf8"),
+                          "uint8_t OsalPort_msgSend( uint8_t destinationTask, uint8_t *pMsg )")
+ counted=r'''
+static uint8_t counted_msgSend(uint8_t task,uint8_t *msg) {
+    ++send_calls;return OsalPort_msgSend(task,msg);
+}
+#define OsalPort_msgSend counted_msgSend
+'''
+ a.output.write_text(PREAMBLE+provider+counted+body+MAIN,encoding="utf8")
+ print("B1_REAL_TI_NPI_MT_AND_OSAL_PROVIDER_SOURCE_EXTRACTED")
 if __name__=="__main__":main()

@@ -288,14 +288,19 @@ def main():
          ("healthy", "wrapper_oom", "payload_oom", "send_failed")),
         ("npi_tx_idle", "make_npi_tx_idle_harness.py", "--source",
          sdk / "source/ti/zstack/npi/npi_task.c",
-         ("busy", "tx_done", "idle", "hold")),
+         ("busy", "tx_done", "idle", "hold", "driver_error", "short_write", "fragment")),
         ("uart_rearm", "make_uart_rearm_harness.py", "--source",
          sdk / "source/ti/zstack/npi/npi_tl_uart.c",
          ("healthy", "overflow", "preheld", "driver_error", "driver_error_zero")),
     ):
         source = work / f"actual_{name}.c"
+        extra = (["--osal-source", sdk / "source/ti/ti154stack/common/osal_port/osal_port_posix/osal_port.c"]
+                 if name == "npi_mt_handoff" else
+                 ["--transport-source", sdk / "source/ti/zstack/npi/npi_tl.c",
+                  "--uart-source", sdk / "source/ti/zstack/npi/npi_tl_uart.c"]
+                 if name == "npi_tx_idle" else [])
         run([sys.executable, b1 / "tools" / generator,
-             flag, input_path, "--output", source], check=True)
+             flag, input_path, *extra, "--output", source], check=True)
         generated[name] = source
         binary = compile_c(source, name, admission=(name == "management"), management=(name != "npi_tx_idle"))
         for scenario in scenarios:
@@ -309,6 +314,20 @@ def main():
              "mutant_npi_uart_busy_semaphore_spin",
              "posts==0 && transmitted==0 && pending==2",
              ("busy",), admission=False, management=False)
+    mutation(generated["npi_tx_idle"],
+             "    TX_DONE_ISR_EVENT_FLAG = NPITASK_TRANSPORT_TX_DONE_EVENT;\n    Semaphore_post(npiSemHandle);",
+             "    TX_DONE_ISR_EVENT_FLAG = NPITASK_TRANSPORT_TX_DONE_EVENT;",
+             "mutant_npi_completion_missing_wake",
+             "!npiTxActive && posts==1 && TX_DONE_ISR_EVENT_FLAG",
+             ("tx_done",), admission=False, management=False)
+    mutation(generated["npi_mt_handoff"],
+             "uint8_t msgStatus = 0x01u;", "uint8_t msgStatus = 0;",
+             "mutant_npi_oom_false_success", "status==",
+             ("payload_oom",), admission=False, management=True)
+    mutation(generated["npi_mt_handoff"],
+             "OsalPort_free(pOsalMsg->msg);", "/* leaked payload */",
+             "mutant_npi_mt_payload_leak", "live_alloc==0 && delivered==NULL",
+             ("send_failed",), admission=False, management=True)
 
     # Real TI ZDO callback -> the same original NPI/MT/SYS F1 transport
     # functions in one host binary. Tests READY, role loss and no regrant.

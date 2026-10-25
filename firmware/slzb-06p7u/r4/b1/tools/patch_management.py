@@ -163,6 +163,9 @@ def patch_npi(text):
     # rejects its queue. TI's native NPI code leaked both the wrapper and the
     # separately owned payload in those branches, then silently lost SREQs.
     # This is SOURCE-CORRECTNESS, not proof a live AF timeout was caused by OOM.
+    text = once(text, "    uint8_t msgStatus = 0;",
+        "    uint8_t msgStatus = 0x01u; /* OsalPort_FAILURE; no transfer until msgSend succeeds. */",
+        "NPI MT allocation failure cannot report successful delivery")
     text = once(text,
         """        pOsalMsg->msg = OsalPort_malloc( MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN] );
 
