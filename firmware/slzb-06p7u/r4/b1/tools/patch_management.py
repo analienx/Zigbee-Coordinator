@@ -111,6 +111,54 @@ def patch_npi(text):
     }
     /* HOLD has no stack/MT task registration. Its frames stay with this
      * original NPI owner and enter the gated real MT dispatcher below. */""", "NPI hold does not read unregistered MT task")
+    # Source-proven RTOS priority inversion: with NPI_FLOW_CTRL==0 and
+    # NPI_SREQRSP disabled, an ASYNC TX queue with UART busy used to repost
+    # its own semaphore unconditionally. NPI priority=4 then spins while
+    # the MT/stack task can be starved. The already registered UART TX_DONE
+    # callback posts this SAME semaphore and re-arms the queue, so do not
+    # poll it while the current UART write is in progress.
+    # Source-owned scheduling fix only; do not touch proprietary NWK RTG.
+    text = once(text,
+        """                    if ((!Queue_empty(npiTxQueue)) && !NPITL_checkNpiBusy())
+                    {
+                        // Push the pending Async Msg to the host.
+                        NPITask_ProcessTXQ();
+                    }""",
+        """                    if ((!Queue_empty(npiTxQueue)) && !NPITL_checkNpiBusy() &&
+                         !b1_management_transport_unavailable())
+                    {
+                        // Push the pending Async Msg to the host.
+                        NPITask_ProcessTXQ();
+                    }""",
+        "NPI refuses queued host writes after transport HOLD")
+    text = once(text,
+        """                if (Queue_empty(npiTxQueue))
+                {
+                    // Q is empty, it's safe to clear the event flag.
+                    npiServiceTaskEvents &= ~NPITASK_TX_READY_EVENT;
+                }
+                else
+                {
+                    // Q is not empty, there's more to handle so preserve the
+                    // flag and repost to the task semaphore.
+                    Semaphore_post(npiSemHandle);
+                }""",
+        """                if (Queue_empty(npiTxQueue))
+                {
+                    // Q is empty, it's safe to clear the event flag.
+                    npiServiceTaskEvents &= ~NPITASK_TX_READY_EVENT;
+                }
+                else if (!NPITL_checkNpiBusy() &&
+                         !b1_management_transport_unavailable())
+                {
+                    // More queued entries can be serviced immediately ONLY
+                    // if UART is idle. Do not self-spin at NPI priority=4
+                    // while a previous write is still in progress. The real
+                    // UART TX_DONE callback posts this task's semaphore and
+                    // preserves/rearms the TX_READY flag for the next frame.
+                    Semaphore_post(npiSemHandle);
+                }""",
+        "NPI flow-off UART busy self-reposting starves MT")
     # MT handoff may fail after the first OSAL allocation, or if the MT task
     # rejects its queue. TI's native NPI code leaked both the wrapper and the
     # separately owned payload in those branches, then silently lost SREQs.

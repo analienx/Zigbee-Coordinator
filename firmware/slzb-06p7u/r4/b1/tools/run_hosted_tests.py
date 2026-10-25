@@ -286,6 +286,9 @@ def main():
         ("npi_mt_handoff", "make_npi_mt_handoff_harness.py", "--source",
          sdk / "source/ti/zstack/npi/npi_task.c",
          ("healthy", "wrapper_oom", "payload_oom", "send_failed")),
+        ("npi_tx_idle", "make_npi_tx_idle_harness.py", "--source",
+         sdk / "source/ti/zstack/npi/npi_task.c",
+         ("busy", "tx_done", "idle", "hold")),
         ("uart_rearm", "make_uart_rearm_harness.py", "--source",
          sdk / "source/ti/zstack/npi/npi_tl_uart.c",
          ("healthy", "overflow", "preheld", "driver_error", "driver_error_zero")),
@@ -297,6 +300,15 @@ def main():
         binary = compile_c(source, name, admission=(name == "management"), management=True)
         for scenario in scenarios:
             positive(binary, (scenario,))
+
+    # Reintroducing stock self-post while the UART is already busy must
+    # FAIL against the *actual extracted TI event branch*, not a mock model.
+    mutation(generated["npi_tx_idle"],
+             "else if (!NPITL_checkNpiBusy() &&\n                         !b1_management_transport_unavailable())",
+             "else",
+             "mutant_npi_uart_busy_semaphore_spin",
+             "posts==0 && transmitted==0 && pending==2",
+             ("busy",), admission=False, management=True)
 
     # Real TI ZDO callback -> the same original NPI/MT/SYS F1 transport
     # functions in one host binary. Tests READY, role loss and no regrant.
