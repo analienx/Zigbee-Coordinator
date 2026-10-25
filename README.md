@@ -18,6 +18,8 @@ See [`coordinators/README.md`](coordinators/README.md) and [`docs/COORDINATOR_RE
 
 ## Current focus — P7U / R4
 
+**Current engineering priority (25 October 2026): repair and prove the R4 firmware/ZNP command-handling failure, not repeat stock restoration.** Root cause, source repair, exact-SHA native qualification and physical acceptance come before recovery work; restoration is a last-resort network-safety fallback and never closes a firmware incident. The firmware and previous image have both shown post-startup loss of replies, so distinguish firmware, ESP/USB and host causes instead of assuming a single image is responsible. See the [P7U firmware-first policy](coordinators/slzb-06p7u/FIRMWARE_FIRST_POLICY.md). This priority shift grants no new authorization to reset, flash, alter NV or pair devices.
+
 **Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability; it is **not yet approved for physical production flashing**.
 
 - [R4 master plan #85](https://github.com/analienx/Zigbee-Coordinator/issues/85) and [R4-00 provenance draft #86](https://github.com/analienx/Zigbee-Coordinator/pull/86).
