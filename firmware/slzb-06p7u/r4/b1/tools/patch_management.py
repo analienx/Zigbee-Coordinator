@@ -134,7 +134,7 @@ def patch_npi(text):
         {
           memcpy(pOsalMsg->msg, pReq, (MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN]));
           msgStatus = OsalPort_msgSend(MTServiceTaskID, (byte *)pOsalMsg);
-          if (msgStatus != OsalPort_SUCCESS)
+          if (msgStatus != 0u) /* OsalPort_SUCCESS */
           {
             /* No destination task took ownership; release BOTH objects. */
             OsalPort_free(pOsalMsg->msg);
