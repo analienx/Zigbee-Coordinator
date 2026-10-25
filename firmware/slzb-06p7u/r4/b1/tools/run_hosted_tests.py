@@ -297,7 +297,7 @@ def main():
         run([sys.executable, b1 / "tools" / generator,
              flag, input_path, "--output", source], check=True)
         generated[name] = source
-        binary = compile_c(source, name, admission=(name == "management"), management=True)
+        binary = compile_c(source, name, admission=(name == "management"), management=(name != "npi_tx_idle"))
         for scenario in scenarios:
             positive(binary, (scenario,))
 
@@ -308,7 +308,7 @@ def main():
              "else",
              "mutant_npi_uart_busy_semaphore_spin",
              "posts==0 && transmitted==0 && pending==2",
-             ("busy",), admission=False, management=True)
+             ("busy",), admission=False, management=False)
 
     # Real TI ZDO callback -> the same original NPI/MT/SYS F1 transport
     # functions in one host binary. Tests READY, role loss and no regrant.
