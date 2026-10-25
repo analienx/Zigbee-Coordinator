@@ -3,6 +3,7 @@ import asyncio
 from dataclasses import dataclass
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -58,6 +59,28 @@ class Containment(unittest.TestCase):
                              ('http://supervisor/addons/45df7312_zigbee2mqtt/start', {}),
                              ('http://supervisor/core/api/services/homeassistant/restart', {})]:
             with self.subTest(url=url), self.assertRaisesRegex(op.Hold, 'API_SCOPE'): ha.request(url, payload)
+
+    def test_only_read_timeouts_are_retried(self):
+        ha = op.HA(); response = Mock()
+        response.__enter__ = Mock(return_value=response); response.__exit__ = Mock(return_value=False)
+        response.read.return_value = b'{"result":"ok"}'
+        with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-only'}), \
+             patch.object(op.time, 'sleep'), \
+             patch.object(op.urllib.request, 'urlopen', side_effect=[TimeoutError(), response]) as http:
+            self.assertEqual(ha.request('http://supervisor/addons/'+op.OWNER+'/info'), {'result': 'ok'})
+            self.assertEqual(http.call_count, 2)
+        with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-only'}), \
+             patch.object(op.urllib.request, 'urlopen', side_effect=TimeoutError()) as http:
+            with self.assertRaises(TimeoutError): ha.owner_action('start')
+            self.assertEqual(http.call_count, 1)
+
+    def test_exhausted_read_names_fixed_endpoint(self):
+        with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-only'}), \
+             patch.object(op.time, 'sleep'), \
+             patch.object(op.urllib.request, 'urlopen', side_effect=TimeoutError()) as http:
+            with self.assertRaisesRegex(op.Hold, 'READ_TIMEOUT_addons/local_p7u_r4_native_host/info'):
+                op.HA().info(op.OWNER)
+            self.assertEqual(http.call_count, 2)
 
     def test_stage_cannot_escape_or_use_links_or_duplicate_roots(self):
         for name in ('package/../x', '/share/x', 'input/C:\\Windows', 'package//x', 'third/x'):
@@ -258,6 +281,66 @@ class Boot(Execution):
         self.assertEqual(result['status'], 'FLASH_VERIFIED_HOST_STARTED_PENDING_SERVING')
         self.ha.restart_radio.assert_called_once(); self.ha.owner_action.assert_called_once_with('start')
         self.assertTrue((self.private/'started-pending-serving.json').exists())
+
+
+class PreBslRestore(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name); self.root.chmod(0o700)
+        self.data = self.root/'data'; self.data.mkdir()
+        for n in ('database.db', 'coordinator_backup.json'): (self.data/n).write_bytes(b'unchanged')
+        self.failed = self.root/'failed'; self.failed.mkdir(mode=0o700)
+        self.plan = {'source': op.SOURCE, 'installed': op.INSTALLED, 'package_pin': op.FAILED_PACKAGE_PIN,
+                     'candidate_pin': op.CANDIDATE_PIN, 'input_pin': 'input', 'management_sha256': 'board',
+                     'scope': 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG', 'owner': {'id': 'old'}}
+        self.pin = op.sha(op.canonical(self.plan))
+        for n, v in {'plan.json': self.plan, 'reader-baseline-check.json': {},
+                     'owner-backup-before-stop.json': {}, 'execute-intent.json': {'plan_sha256': self.pin},
+                     'hold.json': {'error_type': 'TimeoutError', 'automatic_retry': False,
+                                   'automatic_boot': False, 'plan_sha256': self.pin}}.items():
+            op.durable(self.failed, n, v)
+        self.ha = Mock(); self.ha.management.return_value = 'board'
+        self.ha.info.return_value = {'state': 'error', 'version': '0.2.1-068ae05e9f9a', 'build': False}
+        self.ha.inspect.return_value = {'id': 'new', 'image': op.IMAGE, 'running': True}
+        for name, v in [('FAILED_PRIVATE', self.failed), ('DATA', self.data),
+                        ('sealed_tree', Mock()), ('candidate', Mock()),
+                        ('run', Mock(return_value=op.canonical([{'Id': op.IMAGE}])) )]:
+            p = patch.object(op, name, v); p.start(); self.addCleanup(p.stop)
+
+    def restore(self): return op.restore_pre_bsl(self.root, 'new-package', self.pin, self.ha)
+
+    def test_only_unchanged_host_started_without_reset_or_stop(self):
+        self.assertEqual(self.restore()['source'], op.INSTALLED)
+        self.ha.owner_action.assert_called_once_with('start'); self.ha.restart_radio.assert_not_called()
+        self.assertTrue((self.failed/'hold.json').exists())
+        with self.assertRaisesRegex(op.Hold, 'RESTORE_CONSUMED'): self.restore()
+        self.ha.owner_action.assert_called_once()
+
+    def test_any_bsl_or_unknown_file_rejects(self):
+        op.durable(self.failed, 'bsl-entry-intent.json', {})
+        with self.assertRaisesRegex(op.Hold, 'RESTORE_NOT_PRE_BSL'): self.restore()
+        self.ha.owner_action.assert_not_called()
+
+    def test_wrong_plan_rejects(self):
+        self.pin = 'wrong'
+        with self.assertRaisesRegex(op.Hold, 'RESTORE_PROVENANCE'): self.restore()
+        self.ha.owner_action.assert_not_called()
+
+    def test_competing_holder_rejects(self):
+        self.ha.proof.side_effect = op.Hold('not-quiescent')
+        with self.assertRaises(op.Hold): self.restore()
+        self.ha.owner_action.assert_not_called()
+
+    def test_changed_image_rejects(self):
+        op.run.return_value = op.canonical([{'Id': 'foreign'}])
+        with self.assertRaisesRegex(op.Hold, 'RESTORE_IMAGE'): self.restore()
+        self.ha.owner_action.assert_not_called()
+
+    def test_unknown_start_response_cannot_replay(self):
+        self.ha.owner_action.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError): self.restore()
+        with self.assertRaisesRegex(op.Hold, 'RESTORE_CONSUMED'): self.restore()
+        self.ha.owner_action.assert_called_once_with('start')
 
 
 if __name__ == '__main__': unittest.main()

@@ -48,6 +48,7 @@ def once(root, name, raw):
 
 
 def verify(root, manifest_name, expected, names=None):
+    need(root.is_dir() and not root.is_symlink() and root.stat().st_mode & 0o077 == 0, 'PRIVATE_ROOT')
     need(digest((root/manifest_name).read_bytes()) == pin(expected), 'MANIFEST')
     m = json.loads((root/manifest_name).read_bytes()); files = m['files']
     need(type(files) is dict and (names is None or set(files) == names), 'FILE_SET')
@@ -55,13 +56,16 @@ def verify(root, manifest_name, expected, names=None):
     need(actual == set(files) | {manifest_name}, 'EXTRA_FILE')
     for name, expected_hash in files.items():
         safe_name('package/'+name)
+        target = root/name
+        need(target.is_file() and target.resolve().is_relative_to(root) and
+             all(not p.is_symlink() for p in (target, *target.parents) if p != root.parent), 'SYMLINK')
         need(digest((root/name).read_bytes()) == pin(expected_hash), 'FILE_HASH')
     return m
 
 
 def prepare(archive_pin):
     root = transfer(archive_pin)
-    need(not root.exists() and not root.is_symlink() and not INPUT.exists(), 'EXISTS')
+    need(not root.exists() and not root.is_symlink(), 'EXISTS')
     root.mkdir(mode=0o700)
     return {'status': 'PRIVATE_TRANSFER_CREATED', 'path': str(root)}
 
@@ -73,8 +77,9 @@ def install(archive_pin, package_pin, input_pin):
     need(archive.is_file() and not archive.is_symlink() and archive.stat().st_size < 32*1024*1024, 'ARCHIVE')
     need(digest(archive.read_bytes()) == archive_pin, 'ARCHIVE_HASH')
     destination = SHARE/('p7u-pr154-operator-'+package_pin[:16])
-    need(not destination.exists() and not destination.is_symlink() and
-         not INPUT.exists() and not INPUT.is_symlink(), 'TARGET_EXISTS')
+    need(not destination.exists() and not destination.is_symlink() and not INPUT.is_symlink(), 'TARGET_EXISTS')
+    reuse_input = INPUT.exists()
+    if reuse_input: verify(INPUT, 'INPUT.json', input_pin, NAMES)
     once(root, 'install-intent.json', json.dumps({'archive': archive_pin, 'package': package_pin, 'input': input_pin}).encode())
     with tarfile.open(archive, 'r:') as t:
         members = t.getmembers(); names = [m.name for m in members]
@@ -92,7 +97,8 @@ def install(archive_pin, package_pin, input_pin):
     need(package['firmware_source_sha'] == '2499154215c40ab6435b90886be96c8af6e37a74' and
          package['arm64_reader'] == 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4', 'PACKAGE_CLASS')
     os.chmod(root/'package/security-reader-aarch64', 0o700)
-    os.rename(root/'package', destination); os.rename(root/'input', INPUT)
+    os.rename(root/'package', destination)
+    if not reuse_input: os.rename(root/'input', INPUT)
     result = {'status': 'QUALIFIED_OPERATOR_AND_INPUT_STAGED_NO_HOST_STOP',
               'package': str(destination), 'package_pin': package_pin, 'input_pin': input_pin,
               'operator_source': package['operator_source_sha']}

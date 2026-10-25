@@ -31,7 +31,9 @@ OWNER = 'local_p7u_r4_native_host'
 SERIAL = '/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00'
 INPUT = Path('/share/p7u-pr154-input-2499154')
 CANDIDATE = Path('/share/p7u-pr154-stage-2499154')
-PRIVATE = Path('/share/p7u-pr154-deployment-2499154')
+PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v2')
+FAILED_PRIVATE = Path('/share/p7u-pr154-deployment-2499154')
+FAILED_PACKAGE_PIN = 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f'
 DATA = Path('/homeassistant/zigbee2mqtt')
 INSPECTOR_IMAGE = 'sha256:bc813fe0d598b3c6743449b87cf263b1080b752f45fc4b22c947f9e1fc59a24b'
 INPUT_NAMES = {'installed-candidate.json', 'installed-app.hex', 'installed-handoff.bin',
@@ -138,8 +140,17 @@ class HA:
         q = urllib.request.Request(url, data=None if payload is None else canonical(payload),
             headers={'Authorization': 'Bearer '+os.environ['SUPERVISOR_TOKEN'],
                      'Content-Type': 'application/json'}, method='GET' if payload is None else 'POST')
-        with urllib.request.urlopen(q, timeout=180 if payload is not None else 15) as r:
-            return json.load(r)
+        # A read may time out while Supervisor settles a stopped container.
+        # Retrying that read cannot replay a stop/start/reset. Mutations retain
+        # exactly one HTTP dispatch, even when the response is unknown.
+        for attempt in range(2 if payload is None else 1):
+            try:
+                with urllib.request.urlopen(q, timeout=180 if payload is not None else 15) as r:
+                    return json.load(r)
+            except TimeoutError:
+                if payload is not None: raise
+                if attempt: raise Hold('P7U_DEPLOY_HOLD_READ_TIMEOUT_' + url.removeprefix(root))
+                time.sleep(.2)
 
     def info(self, slug):
         need(slug in (OWNER, 'local_p7u_r4_fallback', '45df7312_zigbee2mqtt',
@@ -302,6 +313,54 @@ def check_plan(package, pin):
     candidate(); return p
 
 
+def restore_pre_bsl(package, package_pin, pin, ha):
+    """One start of unchanged firmware after the precisely bounded v1 hold.
+
+    This is not a retry of deploy: any BSL/capture/write/boot artifact, unknown
+    file or prior recovery intent rejects it. The failed operation is retained.
+    """
+    sealed_tree(package, 'PACKAGE.json', package_pin)
+    private_root(FAILED_PRIVATE)
+    need(not (FAILED_PRIVATE/'restore-intent.json').exists(), 'RESTORE_CONSUMED')
+    names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
+             'execute-intent.json', 'hold.json'}
+    need({v.name for v in FAILED_PRIVATE.iterdir()} == names, 'RESTORE_NOT_PRE_BSL')
+    p = load(FAILED_PRIVATE/'plan.json'); hold = load(FAILED_PRIVATE/'hold.json')
+    need(sha(canonical(p)) == pin and p['source'] == SOURCE and p['installed'] == INSTALLED and
+         p['package_pin'] == FAILED_PACKAGE_PIN and p['candidate_pin'] == CANDIDATE_PIN and
+         p['scope'] == 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG' and
+         load(FAILED_PRIVATE/'execute-intent.json')['plan_sha256'] == pin and
+         hold == {'error_type': 'TimeoutError', 'automatic_retry': False,
+                  'automatic_boot': False, 'plan_sha256': pin}, 'RESTORE_PROVENANCE')
+    sealed_tree(Path('/share/p7u-pr154-operator-'+FAILED_PACKAGE_PIN[:16]),
+                'PACKAGE.json', FAILED_PACKAGE_PIN)
+    sealed_tree(INPUT, 'INPUT.json', p['input_pin'], INPUT_NAMES); candidate()
+    ha.policy(); ha.proof(False)
+    need(ha.management() == p['management_sha256'], 'RESTORE_BOARD')
+    a = ha.info(OWNER)
+    need(a['state'] in ('stopped', 'error') and a['version'] == '0.2.1-068ae05e9f9a'
+         and a['build'] is False, 'RESTORE_HOST_VERSION')
+    image = json.loads(run(['docker', 'image', 'inspect',
+        'localhost:50144/p7u-r4-diagnostic:0.2.1-068ae05e9f9a']))
+    need(len(image) == 1 and image[0]['Id'] == IMAGE, 'RESTORE_IMAGE')
+    db = sha(read(DATA/'database.db')); backup = sha(read(DATA/'coordinator_backup.json'))
+    ha.proof(False)
+    need(db == sha(read(DATA/'database.db')) and backup == sha(read(DATA/'coordinator_backup.json')),
+         'RESTORE_DATA_CHANGED')
+    request = {'failed_plan_sha256': pin, 'failed_hold_sha256': sha(canonical(hold)),
+               'package_pin': package_pin, 'action': 'START_UNCHANGED_HOST_NO_RADIO_RESET',
+               'database_sha256': db, 'backup_sha256': backup, 'at': time.time()}
+    durable(FAILED_PRIVATE, 'restore-intent.json', request)
+    ha.owner_action('start')
+    owner = ha.inspect()
+    need(owner['running'] and owner['image'] == IMAGE and owner != p['owner'], 'RESTORE_NEW_OWNER')
+    ha.proof(True)
+    durable(FAILED_PRIVATE, 'restored-pending-serving.json',
+            {'installed': INSTALLED, 'owner': owner, 'request_sha256': sha(canonical(request)),
+             'at': time.time()})
+    return {'status': 'UNCHANGED_FIRMWARE_HOST_STARTED_PENDING_SERVING', 'source': INSTALLED}
+
+
 async def deploy(package, pin, ha):
     p = check_plan(package, pin)
     need(0 <= time.time()-p['created_at'] < 1800, 'PLAN_EXPIRED')
@@ -436,7 +495,7 @@ def boot(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'restore-pre-bsl'))
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
     parser.add_argument('--input-pin')
@@ -453,7 +512,10 @@ def main():
             result = plan(a.package, a.package_pin, a.input_pin, HA())
         else:
             need(a.plan_pin is not None and a.input_pin is None, 'EXECUTE_ARGUMENTS')
-            result = asyncio.run(deploy(a.package, a.plan_pin, HA())) if a.action == 'deploy' else boot(a.package, a.plan_pin, HA())
+            if a.action == 'restore-pre-bsl':
+                result = restore_pre_bsl(a.package, a.package_pin, a.plan_pin, HA())
+            else:
+                result = asyncio.run(deploy(a.package, a.plan_pin, HA())) if a.action == 'deploy' else boot(a.package, a.plan_pin, HA())
         print(json.dumps(result), flush=True)
     finally:
         os.close(lock)
