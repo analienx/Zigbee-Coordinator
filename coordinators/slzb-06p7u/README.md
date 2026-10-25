@@ -11,6 +11,8 @@
 
 ## Current work: R4, not the older P7 R2/R3 line
 
+**Effective 25 October 2026: [Firmware-first priority policy](FIRMWARE_FIRST_POLICY.md).** Investigate and fix loss of local ZNP responses; do not divert the primary engineering effort into restoring old firmware. Verified restoration is a contingency for preserving the network, not a permanent correction. A recent R4 candidate and the prior restored image both showed startup-response loss; investigate shared transport and host state as well as source defects. Preserve every existing physical-change and retained-security gate.
+
 - [R4 master issue #85](https://github.com/analienx/Zigbee-Coordinator/issues/85): redesigned stock-derived CC2652P7 ZNP, network/security preservation and qualification.
 - [R4-00 draft PR #86](https://github.com/analienx/Zigbee-Coordinator/pull/86): provenance and parity audit, **not an accepted source-equivalence proof**.
 - [R4-01a issue #87](https://github.com/analienx/Zigbee-Coordinator/issues/87) and [draft PR #88](https://github.com/analienx/Zigbee-Coordinator/pull/88): diagnostic-first contracts.
