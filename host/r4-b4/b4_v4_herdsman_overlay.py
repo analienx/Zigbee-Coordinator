@@ -51,6 +51,11 @@ V4_ADAPTER_METHOD = r"""
             this.b4V4Outcome.kind = "QUARANTINED";
             return undefined;
         }
+        const recoveryGate = this.znp.b4F2ReadAdmissionReason();
+        if (recoveryGate !== null) {
+            this.b4V4Outcome.reason = recoveryGate;
+            return undefined;
+        }
         if (input?.enabled !== true || input?.hostIdle !== true ||
             input?.otaActive !== false || typeof input.stillAllowed !== "function" ||
             !input.stillAllowed() || this.closing || !this.queue ||
@@ -73,7 +78,7 @@ V4_ADAPTER_METHOD = r"""
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
                 reason: "SUBMISSION_OR_REPLY_UNCERTAIN", submissionState: "UNCERTAIN"};
             const response = await this.znp.requestWithReply(
-                Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 1200);
+                Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 6000);
             const data = response.payload.diagnostic;
             if (!Buffer.isBuffer(data) || data.length !== 160 ||
                 data.toString("ascii", 0, 4) !== "R4D4" ||
@@ -124,6 +129,7 @@ V4_ADAPTER_METHOD = r"""
             }
             this.b4V4LastBoot = rawBoot;
             this.b4V4LastSeq = seq;
+            this.znp.b4F2AcceptReply();
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "VALID",
                 reason: "NATIVE_NONCE_MATCHED", submissionState: "RECEIVED"};
             return {
@@ -141,19 +147,27 @@ V4_ADAPTER_METHOD = r"""
                 radioEpochHardwareVerified: false,
             };
         } catch (error: unknown) {
-            if (error instanceof Error &&
-                (error.message === "B4 F2 runtime admission vetoed" ||
-                 error.message === "B4 DIAG_NOT_SUBMITTED_BUSY")) {
-                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
-                    reason: "OWNER_OR_OTA_BUSY", submissionState: "NONE"};
+            if (error instanceof Error && error.message === "B4 F2_REPLY_TIMEOUT") {
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: this.znp.b4IsDiagPoisoned() ? "F2_TIMEOUT_BUDGET_EXHAUSTED" : "F2_REPLY_TIMEOUT",
+                    submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
-            // A failed v4 waiter can consume a late frame; disable further
-            // experimental probes, ordinary AF/ZDO/SYS remain unchanged.
+            if (error instanceof Error &&
+                (error.message === "B4 F2 runtime admission vetoed" ||
+                 error.message === "B4 DIAG_NOT_SUBMITTED_BUSY" ||
+                 error.message === "B4 F2_TIMEOUT_COOLDOWN" ||
+                 error.message === "B4 F2_OWNER_PROGRESS_REQUIRED")) {
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
+                    reason: error.message.startsWith("B4 F2_") ? error.message.slice(3) : "OWNER_OR_OTA_BUSY",
+                    submissionState: "NONE"};
+                return undefined;
+            }
+            // Only a classified nonce-bound reply timeout is recoverable.
+            // Unknown transport/owner failures retain hard quarantine.
             this.znp.b4PoisonDiagSession();
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
-                reason: error instanceof Error && /after 1200ms/.test(error.message)
-                    ? "HOST_TIMING_UNCERTAIN_TIMEOUT" : "TRANSPORT_OR_WAIT_FAILURE",
+                reason: "TRANSPORT_OR_WAIT_FAILURE",
                 submissionState: "UNCERTAIN"};
             return undefined;
         } finally {
@@ -308,6 +322,81 @@ def plan(root):
         'throw new Error("B4 F0 runtime admission vetoed");',
         'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 F2 runtime admission vetoed" : "B4 F0 runtime admission vetoed");',
     )
+    # F0 has no nonce and retains its permanent timeout latch. F2 has a
+    # per-request wire nonce: correlate it BEFORE resolving the waiter, then
+    # permit only a later fresh read after both cooldown and owner SRSP progress.
+    znp = once(znp, "    state?: number;", "    state?: number;\n    b4F2Nonce?: Buffer;")
+    znp = once(znp, "    private b4DiagPoisoned = false;", """    private b4DiagPoisoned = false;
+    private b4F2ConsecutiveTimeouts = 0;
+    private b4F2NextAllowedMs = 0;
+    private b4F2OwnerProgress = 0;
+    private b4F2ProgressAtTimeout = 0;""")
+    znp = once(znp, "    public b4IsDiagPoisoned(): boolean {", """    /** Read-only nonce-bound F2 policy, never a reset or port reopen. */
+    public b4F2ReadAdmissionReason(): string | null {
+        if (this.b4F2ConsecutiveTimeouts >= 3) { return "F2_TIMEOUT_BUDGET_EXHAUSTED"; }
+        if (this.b4F2ConsecutiveTimeouts > 0) {
+            if (performance.now() < this.b4F2NextAllowedMs) { return "F2_TIMEOUT_COOLDOWN"; }
+            if (this.b4F2OwnerProgress === this.b4F2ProgressAtTimeout) { return "F2_OWNER_PROGRESS_REQUIRED"; }
+        }
+        return null;
+    }
+
+    public b4F2AcceptReply(): void {
+        this.b4F2ConsecutiveTimeouts = 0;
+        this.b4F2NextAllowedMs = 0;
+    }
+
+    private b4F2RecordReplyTimeout(): void {
+        this.b4F2ConsecutiveTimeouts = Math.min(3, this.b4F2ConsecutiveTimeouts + 1);
+        this.b4F2NextAllowedMs = performance.now() + 60_000;
+        this.b4F2ProgressAtTimeout = this.b4F2OwnerProgress;
+        if (this.b4F2ConsecutiveTimeouts >= 3) { this.b4PoisonDiagSession(); }
+    }
+
+    public b4IsDiagPoisoned(): boolean {""")
+    znp = once(znp, "            this.queue.isIdle() && this.waitress.b4IsIdle();",
+        "            this.queue.isIdle() && this.waitress.b4IsIdle() && this.b4F2ReadAdmissionReason() === null;")
+    znp = once(znp, "            this.waitress.resolve(object);", """            const matched = this.waitress.resolve(object);
+            if (matched && object.type === Type.SRSP &&
+                !(object.subsystem === Subsystem.SYS &&
+                  (object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4"))) {
+                this.b4F2OwnerProgress = Math.min(Number.MAX_SAFE_INTEGER, this.b4F2OwnerProgress + 1);
+            }""")
+    znp = once(znp, "        const object = ZpiObject.createRequest(subsystem, command, payload);", """        if (subsystem === Subsystem.SYS && command === "r4DiagReadOnlyV4") {
+            const reason = this.b4F2ReadAdmissionReason();
+            if (reason !== null) { throw new Error("B4 " + reason); }
+        }
+        const object = ZpiObject.createRequest(subsystem, command, payload);""")
+    # This source anchor is also used by the preservation-mode overlay; keep
+    # the original createRequest statement unchanged and unique.
+    znp = once(znp,
+        "                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);",
+        """                const isB4F2 = object.subsystem === Subsystem.SYS && object.command.name === "r4DiagReadOnlyV4";
+                const b4F2Nonce = isB4F2 ? Buffer.from(object.unpiFrame.data) : undefined;
+                if (isB4F2 && b4F2Nonce?.length !== 8) { throw new Error("B4 F2_INVALID_REQUEST_NONCE"); }
+                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem,
+                    command: object.command.name, ...(isB4F2 ? {b4F2Nonce} : {})}, timeout || t);""")
+    znp = once(znp, "            (matcher.state === undefined || matcher.state === zpiObject.payload.state)", """            (matcher.state === undefined || matcher.state === zpiObject.payload.state) &&
+            (!(matcher.type === Type.SRSP && matcher.subsystem === Subsystem.SYS &&
+               matcher.command === "r4DiagReadOnlyV4") ||
+                (Buffer.isBuffer(matcher.b4F2Nonce) && matcher.b4F2Nonce.length === 8 &&
+                 Buffer.isBuffer(zpiObject.payload.diagnostic) && zpiObject.payload.diagnostic.length === 160 &&
+                 matcher.b4F2Nonce.equals(zpiObject.payload.diagnostic.subarray(132, 140))))""")
+    znp = once(znp, """                    if (isB4Diag) {
+                        this.b4PoisonDiagSession();
+                        this.waitress.b4Cancel(waiter.ID, "B4 diagnostic failed");
+                    }
+                    throw error;""", """                    if (isB4Diag) {
+                        this.waitress.b4Cancel(waiter.ID, "B4 diagnostic failed");
+                        if (isB4F2 && error instanceof Error && error.message ===
+                            this.waitressTimeoutFormatter({type: Type.SRSP, subsystem: object.subsystem,
+                                command: object.command.name}, timeout || t)) {
+                            this.b4F2RecordReplyTimeout();
+                            throw new Error("B4 F2_REPLY_TIMEOUT");
+                        }
+                        this.b4PoisonDiagSession();
+                    }
+                    throw error;""")
     # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
     znp = once(znp,
         "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",

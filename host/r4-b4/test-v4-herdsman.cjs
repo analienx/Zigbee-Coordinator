@@ -39,6 +39,9 @@ function ownerWithResponse(chooser) {
         disabled: false,
         requests: 0,
         b4CanProbe() {return !this.disabled;},
+        b4F2ReadAdmissionReason() {return null;},
+        b4F2AcceptReply() {},
+        b4IsDiagPoisoned() {return this.disabled;},
         b4SetProbeGuard(guard) {this.guard = guard;},
         b4PoisonDiagSession() {this.disabled = true;},
         async requestWithReply(sys,cmd,payload,unused,timeout) {
@@ -46,7 +49,7 @@ function ownerWithResponse(chooser) {
             assert.equal(sys, Subsystem.SYS);
             assert.equal(cmd, "r4DiagReadOnlyV4");
             assert.equal(payload.nonce.length, 8);
-            assert.equal(timeout,1200);
+            assert.equal(timeout,6000);
             return {payload:{diagnostic:chooser(payload.nonce)}};
         }
     };

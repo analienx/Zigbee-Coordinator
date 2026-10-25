@@ -89,7 +89,7 @@ jobs:
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
-          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Adversarial no-serial worker durability tests (offline GH-hosted)
         run: |

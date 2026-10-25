@@ -19,7 +19,8 @@ MARKER = "P7U_B4_SAMPLED_SINGLE_OWNER_R4_V1"
 METHOD = r"""
     /** P7U_B4_SAMPLED_SINGLE_OWNER_R4_V1:
      *  All queries reuse the normal herdsman Controller/Znp queue. An SRSP
-     *  timeout poisons the v4 diagnostic session, never the production radio.
+     *  F2 timeouts gate later fresh nonce reads; hard failures quarantine
+     *  optional probes, never the production radio or passive evidence.
      */
     #b4Schedule(delay = 60_000): void {
         if (!this.#b4Operational || process.env.P7U_B4_COLLECTOR !== "1") {
@@ -150,11 +151,9 @@ METHOD = r"""
                     submissionState: outcome?.submissionState ?? "NONE",
                     timingQuality: kind === "FAILED" ? "HOST_TIMING_UNCERTAIN" : "NOT_PROBED",
                     sourceAbi: 4, imageRuntimeAttested: false});
-                // A sent, uncorrelated or malformed F2 permanently quarantines
-                // only optional diagnostics; never reset or re-open the radio.
-                if (kind === "FAILED" || kind === "QUARANTINED") {
-                    this.#b4SamplerDisabled = true;
-                }
+                // Znp owns nonce correlation, cooldown/progress admission and
+                // hard quarantine. Keep recording its no-wire status even in
+                // quarantine; worker/storage failure alone halts this timer.
                 return;
             }
             const epochTag = result.radioBootId === null ? null :

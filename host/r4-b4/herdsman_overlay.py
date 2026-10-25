@@ -423,6 +423,12 @@ def plan(root):
         if (!this.b4HostForensicsEnabled || !(error instanceof Error)) {
             return;
         }
+        // Optional diagnostic failures are recorded by their own sampler.
+        // They are not independent evidence of a production SYS failure.
+        if (subsystem === Subsystem.SYS &&
+            (command === "r4DiagReadOnly" || command === "r4DiagReadOnlyV4")) {
+            return;
+        }
         // Match the exact pinned Waitress-generated SRSP timeout error.
         // A transport write rejection or other exception is NOT a timeout.
         if (error.message !== this.waitressTimeoutFormatter({type: Type.SRSP, subsystem, command}, timeout)) {
