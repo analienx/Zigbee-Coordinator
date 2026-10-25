@@ -27,7 +27,8 @@ def main():
             dest = args.out/'source'/p; dest.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(p, dest)
     dest = args.out/'source/host/flash/p7u_pr154_ha.py'; dest.parent.mkdir(parents=True)
     shutil.copyfile('host/flash/p7u_pr154_ha.py', dest)
-    subprocess.run(['aarch64-linux-gnu-gcc', '-std=c11', '-O2', '-static',
+    subprocess.run(['aarch64-linux-gnu-gcc', '-std=c11', '-O1', '-static',
+                    '-I', 'firmware/slzb-06p7u/r4/b1', '-I', 'firmware/slzb-06p7u/r4/b1/include',
                     args.candidate/'security-reader.c', '-o', args.out/'security-reader-aarch64'], check=True)
     elf = (args.out/'security-reader-aarch64').read_bytes()
     assert elf[:6] == b'\x7fELF\x02\x01' and int.from_bytes(elf[18:20], 'little') == 183
