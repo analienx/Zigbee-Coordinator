@@ -31,8 +31,9 @@ OWNER = 'local_p7u_r4_native_host'
 SERIAL = '/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00'
 INPUT = Path('/share/p7u-pr154-input-2499154')
 CANDIDATE = Path('/share/p7u-pr154-stage-2499154')
-PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v3')
+PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v4')
 HELD_ROM = Path('/share/p7u-pr154-deployment-2499154-v2')
+FAILED_ATTACH = Path('/share/p7u-pr154-deployment-2499154-v3')
 FAILED_PRIVATE = Path('/share/p7u-pr154-deployment-2499154')
 FAILED_PACKAGE_PIN = 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f'
 DATA = Path('/homeassistant/zigbee2mqtt')
@@ -321,6 +322,28 @@ def rom_hold_provenance(ha, owner):
     return sha(canonical({'files': {n: file_sha(HELD_ROM/n) for n in sorted(names)}, 'owner': owner}))
 
 
+def bounded_reentry_provenance(ha, owner):
+    """One new ROM-entry session after a proven read-only attach failure.
+
+    Both earlier attempts must have stopped before any flash admission. This
+    cannot be used after an uncertain erase/program or a changed owner/image.
+    """
+    earlier = rom_hold_provenance(ha, owner); private_root(FAILED_ATTACH)
+    names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
+             'execute-intent.json', 'hold.json', 'cold-backup.json', 'cold-before-flash.tar',
+             'rom-reattach-intent.json'}
+    need({v.name for v in FAILED_ATTACH.iterdir()} == names, 'REENTRY_SCOPE')
+    p = load(FAILED_ATTACH/'plan.json'); pin = sha(canonical(p))
+    need(pin == '17faa6a2a670cfd62817e963498acb770ffd78d1234d11cf439b491234c4a773' and
+         p['owner'] == owner and p['rom_continuation_sha256'] == earlier and
+         load(FAILED_ATTACH/'execute-intent.json')['plan_sha256'] == pin and
+         load(FAILED_ATTACH/'rom-reattach-intent.json') == {'plan_sha256': pin, 'provenance': earlier} and
+         load(FAILED_ATTACH/'hold.json') == {'automatic_boot': False, 'automatic_retry': False,
+             'error_type': 'RomWireError', 'plan_sha256': pin}, 'REENTRY_PROVENANCE')
+    return sha(canonical({'earlier': earlier, 'files':
+                         {n: file_sha(FAILED_ATTACH/n) for n in sorted(names)}}))
+
+
 def plan(package, package_pin, input_pin, ha):
     sealed_tree(package, 'PACKAGE.json', package_pin)
     sealed_tree(INPUT, 'INPUT.json', input_pin, INPUT_NAMES)
@@ -345,7 +368,8 @@ def plan(package, package_pin, input_pin, ha):
         need(proof['slots']['diagnostic']['container_id'] == owner['id'], 'OWNER_PROOF_CHANGED')
     else:
         quiescent = quiescent_provenance(ha, owner)
-    rom_continuation = rom_hold_provenance(ha, owner) if HELD_ROM.exists() else None
+    reentry = bounded_reentry_provenance(ha, owner) if FAILED_ATTACH.exists() else None
+    rom_continuation = rom_hold_provenance(ha, owner) if HELD_ROM.exists() and not reentry else None
     backup = load(DATA/'coordinator_backup.json')
     from p7u_usb_security_model import parse_backup
     now = parse_backup(backup); need(100 <= len(now.peers) <= 107, 'OWNER_BACKUP')
@@ -359,7 +383,8 @@ def plan(package, package_pin, input_pin, ha):
          'installed_result_sha256': sha(canonical(result)), 'prior_verified_image_sha256': sha(expected),
          'scope': 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG', 'boot_separate': True,
          'candidate_pin': CANDIDATE_PIN, 'automatic_retry': False, 'automatic_rollback': False,
-         'quiescent_provenance_sha256': quiescent, 'rom_continuation_sha256': rom_continuation}
+         'quiescent_provenance_sha256': quiescent, 'rom_continuation_sha256': rom_continuation,
+         'bounded_reentry_sha256': reentry}
     durable(PRIVATE, 'plan.json', p)
     return {'status': 'PREPARED_OWNER_UNCHANGED', 'plan_sha256': sha(canonical(p)), 'source': SOURCE}
 
@@ -438,6 +463,9 @@ async def deploy(package, pin, ha):
     rom_continuation = p.get('rom_continuation_sha256')
     if rom_continuation:
         need(rom_hold_provenance(ha, p['owner']) == rom_continuation, 'ROM_HOLD_CHANGED')
+    reentry = p.get('bounded_reentry_sha256')
+    if reentry:
+        need(not rom_continuation and bounded_reentry_provenance(ha, p['owner']) == reentry, 'REENTRY_CHANGED')
     backup = read(DATA/'coordinator_backup.json')
     durable(PRIVATE, 'owner-backup-before-stop.json', backup)
     durable(PRIVATE, 'execute-intent.json', {'plan_sha256': pin, 'dispatch_at': time.time()})
@@ -528,7 +556,8 @@ async def deploy(package, pin, ha):
         return result
     except BaseException as exc:
         durable(PRIVATE, 'hold.json', {'error_type': type(exc).__name__, 'automatic_retry': False,
-                                      'automatic_boot': False, 'plan_sha256': pin})
+                                      'automatic_boot': False, 'plan_sha256': pin,
+                                      'safe_code': str(exc) if re.fullmatch('[A-Z0-9_]+', str(exc)) else 'OMITTED'})
         raise
     finally:
         if rom is not None: await rom.close()

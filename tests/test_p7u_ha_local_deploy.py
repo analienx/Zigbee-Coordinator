@@ -267,6 +267,21 @@ class Execution(unittest.IsolatedAsyncioTestCase):
                 await op.deploy(self.package, 'pin', self.ha)
         self.factory.assert_not_called(); self.ha.enter_bsl.assert_not_called()
 
+    async def test_bounded_fresh_session_enters_bsl_exactly_once(self):
+        self.ready(); self.p['quiescent_provenance_sha256'] = 'q'; self.p['bounded_reentry_sha256'] = 'r'
+        with patch.object(op, 'quiescent_provenance', return_value='q'), \
+             patch.object(op, 'bounded_reentry_provenance', return_value='r'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.ha.enter_bsl.assert_called_once(); self.ha.owner_action.assert_not_called()
+        self.t.execute.assert_awaited_once()
+
+    async def test_changed_bounded_reentry_proof_never_opens_serial(self):
+        self.p['bounded_reentry_sha256'] = 'r'
+        with patch.object(op, 'bounded_reentry_provenance', return_value='changed'):
+            with self.assertRaisesRegex(op.Hold, 'REENTRY_CHANGED'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.factory.assert_not_called(); self.ha.enter_bsl.assert_not_called()
+
 
 class Boot(Execution):
     def evidence(self):
