@@ -31,9 +31,10 @@ OWNER = 'local_p7u_r4_native_host'
 SERIAL = '/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00'
 INPUT = Path('/share/p7u-pr154-input-2499154')
 CANDIDATE = Path('/share/p7u-pr154-stage-2499154')
-PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v4')
+PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v5')
 HELD_ROM = Path('/share/p7u-pr154-deployment-2499154-v2')
 FAILED_ATTACH = Path('/share/p7u-pr154-deployment-2499154-v3')
+FLOOR_HOLD = Path('/share/p7u-pr154-deployment-2499154-v4')
 FAILED_PRIVATE = Path('/share/p7u-pr154-deployment-2499154')
 FAILED_PACKAGE_PIN = 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f'
 DATA = Path('/homeassistant/zigbee2mqtt')
@@ -340,8 +341,36 @@ def bounded_reentry_provenance(ha, owner):
          load(FAILED_ATTACH/'rom-reattach-intent.json') == {'plan_sha256': pin, 'provenance': earlier} and
          load(FAILED_ATTACH/'hold.json') == {'automatic_boot': False, 'automatic_retry': False,
              'error_type': 'RomWireError', 'plan_sha256': pin}, 'REENTRY_PROVENANCE')
-    return sha(canonical({'earlier': earlier, 'files':
-                         {n: file_sha(FAILED_ATTACH/n) for n in sorted(names)}}))
+    evidence = {'earlier': earlier, 'files': {n: file_sha(FAILED_ATTACH/n) for n in sorted(names)}}
+    if FLOOR_HOLD.exists():
+        private_root(FLOOR_HOLD)
+        names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
+                 'execute-intent.json', 'hold.json', 'cold-backup.json', 'cold-before-flash.tar',
+                 'bsl-entry-intent.json', 'sparse-receipt.json', 'fresh-sparse-snapshot.bin', 'security-receipt.json'}
+        need({v.name for v in FLOOR_HOLD.iterdir()} == names, 'FLOOR_HOLD_SCOPE')
+        p = load(FLOOR_HOLD/'plan.json'); pin = sha(canonical(p))
+        s = load(FLOOR_HOLD/'security-receipt.json')
+        need(pin == '473ce286d6ed89321159ba66545259c78c8513e82886092eef7850fb6fbb62ac' and
+             p['owner'] == owner and p['bounded_reentry_sha256'] == sha(canonical(evidence)) and
+             load(FLOOR_HOLD/'bsl-entry-intent.json') == {'attempts': 1, 'plan_sha256': pin} and
+             load(FLOOR_HOLD/'execute-intent.json')['plan_sha256'] == pin and
+             load(FLOOR_HOLD/'hold.json') == {'automatic_boot': False, 'automatic_retry': False,
+                 'error_type': 'KeyError', 'plan_sha256': pin, 'safe_code': 'OMITTED'} and
+             s['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY' and not s['reason_codes'] and
+             s['checks']['comparison_scope'] == 'KNOWN_R4_RUNTIME_SHORT_ADDRESS_ONLY' and
+             all(s[k] == 0 for k in ('write_attempts', 'erase_attempts', 'compaction_attempts')),
+             'FLOOR_HOLD_PROVENANCE')
+        evidence['floor_hold'] = {n: file_sha(FLOOR_HOLD/n) for n in sorted(names)}
+    return sha(canonical(evidence))
+
+
+def native_network_floor(sec, records, abi):
+    nib = sec.get(records, 0, 0x21, abi['structs']['nwkIB_t']['size'])
+    pan = sec.field(nib, abi, 'nwkIB_t', 'extendedPANID')
+    floors = [sec.number(raw, abi, 'nwkSecMaterialDesc_t', 'FrameCounter')
+              for (system, item, index), raw in records.items() if system == 1 and item == 7 and
+              sec.field(raw, abi, 'nwkSecMaterialDesc_t', 'extendedPanID') == pan]
+    return floors[0] if len(floors) == 1 else None
 
 
 def plan(package, package_pin, input_pin, ha):
@@ -512,14 +541,9 @@ async def deploy(package, pin, ha):
         durable(PRIVATE, 'security-receipt.json', security)
         need(security['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'NATIVE_SECURITY')
         records, counts = sec.read_private(reader, current)
-        nib = sec.get(records, 0, 0x21, abi['structs']['nwkIB_t']['size'])
-        pan = sec.field(nib, abi, 'nwkIB_t', 'extendedPANID')
-        floors = [sec.number(raw, abi, 'nwkSecMaterialDesc_t', 'FrameCounter')
-                  for (system, item, index), raw in records.items() if system == 1 and item == 7 and
-                  sec.field(raw, abi, 'nwkSecMaterialDesc_t', 'extendedPANID') == pan]
         owner = reconcile(historical=load(INPUT/'historical-backup.json'), fresh=json.loads(backup),
             records=records, abi=abi, native_preflight_pass=True, candidate_semantics_pass=True,
-            baseline_counter_floor=floors[0] if len(floors) == 1 else None)
+            baseline_counter_floor=native_network_floor(sec, records, abi))
         durable(PRIVATE, 'current-owner-security.json', owner)
         need(owner['status'] == 'PASS_CURRENT_OWNER_OFFLINE_ONLY', 'CURRENT_OWNER_SECURITY')
         plan = t.prepare_upgrade(installed_plan=old, expected_installed_plan_sha256=old.manifest['plan_sha256'],

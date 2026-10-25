@@ -96,6 +96,13 @@ class Containment(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'ARCHIVE_HASH'): stage.install('a'*64, 'b'*64, 'c'*64)
             self.assertFalse((root/'install-intent.json').exists())
 
+    def test_counter_floor_uses_real_native_abi_field_names(self):
+        from tests.test_p7u_stock20260311_security_preflight import security, synthetic_abi, formed
+        abi = synthetic_abi(); records = formed(abi)
+        self.assertEqual(op.native_network_floor(security, records, abi), 500)
+        records[1, 7, 1] = records[1, 7, 0]
+        self.assertIsNone(op.native_network_floor(security, records, abi))
+
 
 @dataclass
 class Receipt:
