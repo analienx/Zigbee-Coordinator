@@ -384,11 +384,7 @@ def restore_pre_bsl(package, package_pin, pin, ha):
     ha.owner_action('start')
     owner = ha.inspect()
     need(owner['running'] and owner['image'] == IMAGE and owner != p['owner'], 'RESTORE_NEW_OWNER')
-    quiescent = p.get('quiescent_provenance_sha256')
-    if quiescent:
-        need(quiescent_provenance(ha, p['owner']) == quiescent, 'QUIESCENT_CHANGED')
-    else:
-        ha.proof(True)
+    ha.proof(True)
     durable(FAILED_PRIVATE, 'restored-pending-serving.json',
             {'installed': INSTALLED, 'owner': owner, 'request_sha256': sha(canonical(request)),
              'at': time.time()})
@@ -404,7 +400,11 @@ async def deploy(package, pin, ha):
     need(sha(expected) == p['prior_verified_image_sha256'] and
          sha(canonical(result)) == p['installed_result_sha256'], 'INSTALLED_RECEIPT_CHANGED')
     ha.policy(); need(ha.inspect() == p['owner'] and ha.management() == p['management_sha256'], 'OWNER_CHANGED')
-    ha.proof(True)
+    quiescent = p.get('quiescent_provenance_sha256')
+    if quiescent:
+        need(quiescent_provenance(ha, p['owner']) == quiescent, 'QUIESCENT_CHANGED')
+    else:
+        ha.proof(True)
     backup = read(DATA/'coordinator_backup.json')
     durable(PRIVATE, 'owner-backup-before-stop.json', backup)
     durable(PRIVATE, 'execute-intent.json', {'plan_sha256': pin, 'dispatch_at': time.time()})
