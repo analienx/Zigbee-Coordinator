@@ -645,15 +645,15 @@ class StartupSerial:
     def close(self): self.port.close()
 
 
-def resume_pristine(znp, root, owner, evidence):
+def resume_pristine(znp, root, owner, evidence, *, source=SOURCE):
     from p7u_r4_startup_observer import Q0, Q2, Q3, checked, decode_e1
     from p7u_r4_startup_transport import observe_after_srsp
     deadline = time.monotonic()+25; frames = {}
     for name, query in (('B1P1', Q2), ('B1S1', Q0), ('B1E1', Q3)):
         raw = znp.request(1, 241, query, deadline=deadline)
         evidence(name, raw, dict(znp.history[-1])); frames[name] = raw
-    checked(frames['B1P1'], b'B1P1', 32, SOURCE); checked(frames['B1S1'], b'B1S1', 24, SOURCE)
-    before = decode_e1(frames['B1E1'], SOURCE)
+    checked(frames['B1P1'], b'B1P1', 32, source); checked(frames['B1S1'], b'B1S1', 24, source)
+    before = decode_e1(frames['B1E1'], source)
     need(frames['B1P1'][6] == 0 and frames['B1P1'][9] == 0 and
          frames['B1S1'][6] == 1 and frames['B1S1'][7] == 0 and frames['B1S1'][10] == 0 and
          before['state'] == 0 and before['first_error'] == 0 and before['milestones'] == 0,
@@ -665,11 +665,11 @@ def resume_pristine(znp, root, owner, evidence):
     ieee = legacy(1); key = legacy(0x3a)
     need(ieee[::-1].hex() == owner['coordinator_ieee'] and len(key) == 17 and
          key[1:].hex() == owner['network_key']['key'], 'STARTUP_NETWORK_IDENTITY')
-    durable(root, 'retained-startup-intent.json', {'source': SOURCE, 'attempts': 1,
+    durable(root, 'retained-startup-intent.json', {'source': source, 'attempts': 1,
             'command': 'ZDO_STARTUP_FROM_APP', 'payload': '6400', 'network_formation_authorized': False})
     srsp = znp.request(5, 0x40, bytes((100, 0)), deadline=time.monotonic()+10)
     need(srsp == bytes(1), 'STARTUP_SRSP')
-    result = observe_after_srsp(znp, SOURCE, time.monotonic(), absolute_seconds=80, save=evidence)
+    result = observe_after_srsp(znp, source, time.monotonic(), absolute_seconds=80, save=evidence)
     durable(root, 'startup-result.json', result)
     need(result['status'] == 'COORDINATOR_STATE9_MARKER_PASS', 'STARTUP_NATIVE_STATE9_NOT_PROVEN')
     return result
@@ -722,9 +722,162 @@ def startup_recovery(package, package_pin, pin, ha):
     return {'status': 'NATIVE_COORDINATOR_STATE9_VERIFIED_HOST_STARTED_PENDING_SERVING', 'source': SOURCE}
 
 
+def forward_transition(package):
+    t, sec, reconcile, factory, sparse = modules(package)
+    manifest = load(PRIVATE/'frozen-plan.json'); snapshot = read(PRIVATE/'fresh-sparse-snapshot.bin')
+    payload, error = t._parse_intel_hex(CANDIDATE/'P7U-STOCK20260311-APP-ONLY.hex')
+    need(not error, 'RECOVERY_FORWARD_HEX')
+    sectors = {int(a): bytes(payload.get(i, 255) for i in range(int(a), int(a)+8192))
+               for a in manifest['sector_sha256'] if int(a) != 0xAC000}
+    sectors[0xAC000] = read(CANDIDATE/'P7U-STOCK20260311-AC000-HANDOFF.bin')
+    forward = t._frozen(t.Transition(manifest, snapshot, sectors), manifest['plan_sha256'])
+    expected = bytearray(snapshot)
+    for a, raw in sectors.items(): expected[a:a+8192] = raw
+    return t, sec, reconcile, factory, sparse, forward, bytes(expected)
+
+
+def rollback_plan(package, package_pin, pin, ha):
+    p = verified_write(Path('/share/p7u-pr154-operator-263100aae0a71ef3'), pin)
+    failure = load(PRIVATE/'guarded-startup-recovery/startup-result.json')
+    need(failure['status'] == 'FAILED_STOP_NO_RETRY' and failure['ready_observed'] is False and
+         failure['failure_category'] == 'OBSERVER_TIMEOUT_STATE_UNKNOWN', 'ROLLBACK_NOT_FAILED_STARTUP')
+    root = PRIVATE/'rollback-3c7dd95'; need(not root.exists(), 'ROLLBACK_PLAN_CONSUMED')
+    owner = ha.inspect(); need(not owner['running'] and owner['image'] == IMAGE, 'ROLLBACK_OWNER')
+    ha.policy(); ha.proof(False); need(ha.management() == p['management_sha256'], 'ROLLBACK_BOARD')
+    t, sec, reconcile, factory, sparse, forward, expected = forward_transition(package)
+    old, prior, result, prior_expected = installed(t)
+    need(all(forward.snapshot[a:a+8192] == prior_expected[a:a+8192] for a in forward.sectors), 'ROLLBACK_OLD_PAIR')
+    root.mkdir(mode=0o700)
+    plan = {'source_to_restore': INSTALLED, 'forward_operation_plan_sha256': pin,
+            'forward_plan_sha256': forward.manifest['plan_sha256'], 'package_pin': package_pin,
+            'failed_startup_sha256': sha(canonical(failure)), 'owner': owner,
+            'management_sha256': p['management_sha256'], 'created_at': time.time(),
+            'scope': 'ORIGINAL_APP_AND_MATCHING_AC000_PRESERVE_CURRENT_NV_CCFG', 'automatic_retry': False}
+    durable(root, 'plan.json', plan)
+    return {'status': 'ROLLBACK_PLAN_PREPARED_NO_RADIO_ACTION', 'plan_sha256': sha(canonical(plan)), 'source': INSTALLED}
+
+
+def rollback_check(package, pin, ha):
+    root = PRIVATE/'rollback-3c7dd95'; private_root(root); p = load(root/'plan.json')
+    need(sha(canonical(p)) == pin and p['source_to_restore'] == INSTALLED and
+         p['scope'] == 'ORIGINAL_APP_AND_MATCHING_AC000_PRESERVE_CURRENT_NV_CCFG', 'ROLLBACK_PLAN_PIN')
+    sealed_tree(package, 'PACKAGE.json', p['package_pin'])
+    verified_write(Path('/share/p7u-pr154-operator-263100aae0a71ef3'), p['forward_operation_plan_sha256'])
+    need(sha(read(PRIVATE/'guarded-startup-recovery/startup-result.json')) == p['failed_startup_sha256'], 'ROLLBACK_FAILURE_CHANGED')
+    ha.policy(); ha.proof(False); need(ha.inspect() == p['owner'] and ha.management() == p['management_sha256'], 'ROLLBACK_OWNER_CHANGED')
+    return root, p
+
+
+async def rollback_write(package, pin, ha):
+    root, p = rollback_check(package, pin, ha)
+    need(0 <= time.time()-p['created_at'] < 1800 and not (root/'write-intent.json').exists(), 'ROLLBACK_EXPIRED_OR_CONSUMED')
+    t, sec, reconcile, factory, sparse, forward, expected = forward_transition(package)
+    durable(root, 'write-intent.json', {'plan_sha256': pin, 'at': time.time()})
+    backup = read(DATA/'coordinator_backup.json'); durable(root, 'owner-backup.json', backup)
+    rom = None
+    try:
+        rom = factory(); await rom.open(SERIAL)
+        durable(root, 'bsl-entry-intent.json', {'attempts': 1, 'at': time.time()}); ha.enter_bsl(); await asyncio.sleep(1)
+        for _ in range(48):
+            try: raw = await asyncio.wait_for(rom.reader.read(128), .015)
+            except asyncio.TimeoutError: break
+            if not raw: break
+        need(await rom.synchronize(), 'ROLLBACK_SYNC'); need(await rom.identity_sha256() == ROM_ID, 'ROLLBACK_SILICON')
+        await rom.enable_fast_reads()
+        capture = await sparse(rom, prior_full_verified=expected, expected_identity_sha256=ROM_ID, total_timeout_seconds=60)
+        from dataclasses import asdict
+        proof = asdict(capture.receipt); current = capture.snapshot; await rom.assert_read_status()
+        durable(root, 'fresh-sparse-snapshot.bin', current); durable(root, 'sparse-receipt.json', proof)
+        c = candidate(); abi = load(CANDIDATE/'security-native-abi.json'); reader = package/'security-reader-aarch64'
+        bindings = {'capture_sha256': sha(current), 'baseline_capture_sha256': sha(forward.snapshot),
+                    'abi_sha256': sha(sec.abi_tool.canonical(abi)), 'reader_sha256': sha(read(reader)),
+                    'profile_sha256': c['profile_sha256'], 'native_manifest_sha256': c['native_manifest_sha256']}
+        security = sec.preflight(capture=current, baseline=forward.snapshot, abi=abi, reader=reader,
+                                 bindings=bindings, runtime_upgrade=True)
+        durable(root, 'security-receipt.json', security)
+        need(security['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'ROLLBACK_NATIVE_SECURITY')
+        records, counts = sec.read_private(reader, current)
+        owner = reconcile(historical=load(INPUT/'historical-backup.json'), fresh=json.loads(backup), records=records,
+            abi=abi, native_preflight_pass=True, candidate_semantics_pass=True,
+            baseline_counter_floor=native_network_floor(sec, records, abi))
+        durable(root, 'current-owner-security.json', owner)
+        need(owner['status'] == 'PASS_CURRENT_OWNER_OFFLINE_ONLY', 'ROLLBACK_OWNER_SECURITY')
+        plan = t.prepare_recovery(forward, expected_forward_plan_sha256=p['forward_plan_sha256'],
+            pass1=current, pass2=current, expected_capture_sha256=sha(current),
+            security_receipt=security, expected_security_receipt_sha256=sha(canonical(security)))
+        plan = t.bind_sparse_plan(plan, expected_plan_sha256=plan.manifest['plan_sha256'],
+            previous_verified_image=expected, sparse_receipt=proof, expected_sparse_receipt_sha256=sha(canonical(proof)))
+        need(set(plan.sectors) == set(forward.sectors), 'ROLLBACK_SECTOR_SCOPE')
+        durable(root, 'frozen-plan.json', plan.manifest)
+        admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
+            sparse_receipt=proof, expected_sparse_receipt_sha256=sha(canonical(proof)),
+            security_receipt=security, expected_security_receipt_sha256=sha(canonical(security)),
+            expected_live_identity_sha256=ROM_ID, operation_timeout=15, session_timeout=300)
+        durable(root, 'admission.json', admission)
+        async def journal(event):
+            with (root/'mutation-journal.jsonl').open('ab') as f:
+                os.chmod(f.name, 0o600); f.write(canonical(dict(event, wall_time=time.time()))+b'\n'); f.flush(); os.fsync(f.fileno())
+            return True
+        result = await t.execute(rom, plan, admission, expected_plan_sha256=plan.manifest['plan_sha256'],
+            expected_admission_sha256=admission['admission_sha256'], capture_receipt=proof,
+            expected_capture_receipt_sha256=sha(canonical(proof)), expected_live_identity_sha256=ROM_ID,
+            journal=journal, operation_timeout=15, session_timeout=900, same_session_sparse=True)
+        durable(root, 'verified-write.json', {'operation_plan_sha256': pin, 'source_to_restore': INSTALLED,
+            'frozen_plan_sha256': plan.manifest['plan_sha256'], 'journal_sha256': sha(read(root/'mutation-journal.jsonl')), 'result': result})
+        return result
+    except BaseException as exc:
+        durable(root, 'hold.json', {'type': type(exc).__name__, 'automatic_retry': False})
+        raise
+    finally:
+        if rom is not None: await rom.close()
+
+
+def rollback_start(package, pin, ha):
+    root, p = rollback_check(package, pin, ha)
+    need(not (root/'hold.json').exists() and not (root/'boot-intent.json').exists(), 'ROLLBACK_BOOT_CONSUMED_OR_HELD')
+    e = load(root/'verified-write.json'); result = e['result']; frozen = load(root/'frozen-plan.json')
+    digest = frozen.pop('plan_sha256'); snapshot = read(root/'fresh-sparse-snapshot.bin')
+    events = [json.loads(v) for v in read(root/'mutation-journal.jsonl').splitlines()]
+    expected = [a for a in frozen['program_order'] if sha(snapshot[a:a+8192]) != frozen['sector_sha256'][str(a)]]
+    need(e['operation_plan_sha256'] == pin and e['source_to_restore'] == INSTALLED and
+         e['frozen_plan_sha256'] == digest == sha(canonical(frozen)) and
+         e['journal_sha256'] == sha(read(root/'mutation-journal.jsonl')) and
+         result['written_sectors'] == expected and
+         [(v['address'], v['sha256']) for v in events if v.get('event') == 'SECTOR_VERIFIED'] ==
+         [(a, frozen['sector_sha256'][str(a)]) for a in expected] and
+         result['status'] == 'APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL' and
+         all(result[k] is False for k in ('nv_touched', 'ccfg_touched', 'reset_issued', 'automatic_rollback')),
+         'ROLLBACK_WRITE_NOT_VERIFIED')
+    modules(package)
+    from p7u_r4_startup_transport import FramedZnp, PrivateEvidenceJournal
+    durable(root, 'boot-intent.json', {'plan_sha256': pin, 'at': time.time(), 'attempts': 1})
+    port = None; evidence = None
+    try:
+        port = StartupSerial(); znp = FramedZnp(port, source=INSTALLED)
+        evidence = PrivateEvidenceJournal(root/'startup-evidence.jsonl', INSTALLED)
+        os.chmod(root/'startup-evidence.jsonl', 0o600); ha.restart_radio()
+        deadline = time.monotonic()+20
+        while True:
+            typ, command, data = znp._next(deadline)
+            if typ == 0x41 and command == 0x80:
+                need(len(data) == 6, 'ROLLBACK_RESET_IND'); break
+        need(len(znp.request(1, 2, deadline=time.monotonic()+10)) == 10, 'ROLLBACK_VERSION')
+        resume_pristine(znp, root, load(root/'owner-backup.json'), evidence, source=INSTALLED)
+    finally:
+        if evidence is not None: evidence.close()
+        if port is not None: port.close()
+    ha.policy(); ha.proof(False); durable(root, 'host-start-intent.json', {'at': time.time(), 'attempts': 1})
+    ha.owner_action('start'); owner = ha.inspect()
+    need(owner['running'] and owner['image'] == IMAGE and owner != p['owner'], 'ROLLBACK_HOST_START')
+    ha.proof(True)
+    durable(PRIVATE, 'started-pending-serving.json', {'source': INSTALLED, 'owner': owner, 'at': time.time()})
+    return {'status': 'ORIGINAL_FIRMWARE_NATIVE_STATE9_VERIFIED_HOST_STARTED_PENDING_SERVING', 'source': INSTALLED}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'restore-pre-bsl', 'startup-recovery'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'restore-pre-bsl', 'startup-recovery',
+                                         'rollback-plan', 'rollback-write', 'rollback-start'))
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
     parser.add_argument('--input-pin')
@@ -745,6 +898,9 @@ def main():
                 result = restore_pre_bsl(a.package, a.package_pin, a.plan_pin, HA())
             elif a.action == 'startup-recovery':
                 result = startup_recovery(a.package, a.package_pin, a.plan_pin, HA())
+            elif a.action == 'rollback-plan': result = rollback_plan(a.package, a.package_pin, a.plan_pin, HA())
+            elif a.action == 'rollback-write': result = asyncio.run(rollback_write(a.package, a.plan_pin, HA()))
+            elif a.action == 'rollback-start': result = rollback_start(a.package, a.plan_pin, HA())
             else:
                 result = asyncio.run(deploy(a.package, a.plan_pin, HA())) if a.action == 'deploy' else boot(a.package, a.plan_pin, HA())
         print(json.dumps(result), flush=True)

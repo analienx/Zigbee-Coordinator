@@ -487,4 +487,45 @@ class StartupBarrier(unittest.TestCase):
         h.restart_radio.assert_called_once(); h.owner_action.assert_not_called(); port.close.assert_called_once()
 
 
+class RollbackControl(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        Execution.setUp(self)
+        self.rollback_p = {'created_at': time.time(), 'forward_plan_sha256': 'forward-pin'}
+        for name, value in [('rollback_check', Mock(return_value=(self.private, self.rollback_p))),
+                ('forward_transition', Mock(return_value=(self.t, self.sec, self.reconcile,
+                    self.factory, self.capture, self.old, b'expected')))]:
+            p = patch.object(op, name, value); p.start(); self.addCleanup(p.stop)
+
+    async def test_consumed_rollback_never_reenters_rom(self):
+        op.durable(self.private, 'write-intent.json', {})
+        with self.assertRaisesRegex(op.Hold, 'ROLLBACK_EXPIRED_OR_CONSUMED'):
+            await op.rollback_write(self.package, 'pin', self.ha)
+        self.factory.assert_not_called(); self.ha.enter_bsl.assert_not_called()
+
+    async def test_current_security_hold_never_erases_or_boots(self):
+        with self.assertRaisesRegex(op.Hold, 'ROLLBACK_NATIVE_SECURITY'):
+            await op.rollback_write(self.package, 'pin', self.ha)
+        self.t.execute.assert_not_called(); self.ha.restart_radio.assert_not_called()
+        self.rom.close.assert_awaited_once()
+
+    async def test_unknown_rollback_bsl_ack_never_syncs_or_retries(self):
+        self.ha.enter_bsl.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError): await op.rollback_write(self.package, 'pin', self.ha)
+        self.rom.synchronize.assert_not_awaited(); self.t.execute.assert_not_called()
+        self.ha.enter_bsl.assert_called_once()
+
+    async def test_rollback_scope_uses_original_plan_only(self):
+        Execution.ready(self); self.old.sectors = dict(self.frozen.sectors)
+        self.t.prepare_recovery.return_value = self.frozen
+        result = await op.rollback_write(self.package, 'pin', self.ha)
+        self.assertEqual(result['status'], 'APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL')
+        self.t.prepare_recovery.assert_called_once()
+        self.assertIs(self.t.prepare_recovery.call_args.args[0], self.old)
+        self.ha.restart_radio.assert_not_called(); self.ha.owner_action.assert_not_called()
+
+    async def test_rollback_without_verified_write_never_boots(self):
+        with self.assertRaises(op.Hold): op.rollback_start(self.package, 'pin', self.ha)
+        self.ha.restart_radio.assert_not_called(); self.ha.owner_action.assert_not_called()
+
+
 if __name__ == '__main__': unittest.main()
