@@ -173,8 +173,9 @@ METHOD = r"""
                 radioEpochTag: epochTag, radioEpochHardwareVerified: false,
                 resetReason: result.resetReason,
                 imageRuntimeAttested: false,
-                hostPackage: "Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1",
-                firmwareSourceClaim: "323949a95c9a07901c4ffc3d026fca414982c148"
+                // F2 does not attest a firmware source revision. Installed
+                // source is bound by the separate physical deployment receipt.
+                hostPackage: "Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1"
             });
         } catch (error) {
             // A storage or source mismatch must stop optional sampling. It
