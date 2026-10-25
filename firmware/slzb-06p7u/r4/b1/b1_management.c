@@ -37,10 +37,10 @@ static uint16_t b1_startup_index, b1_startup_nv_item, b1_startup_nv_sub;
 static uint32_t b1_startup_sequence, b1_startup_nv_sequence;
 /* A numeric cookie survives freeing the original NPI queue record. */
 static uint8_t b1_tx_kind, b1_tx_complete, b1_tx_accepted, b1_tx_eot;
-/* Every UART2 TX_FINISHED belongs to an ordered physical write, not merely
- * whichever SRSP is currently awaiting transmission. No pointer survives. */
-static uint32_t b1_uart_submit_generation, b1_uart_eot_generation;
-static uint32_t b1_tx_target_generation;
+/* UART2_EVENT_TX_FINISHED proves physical FIFO drain, not one EOT per write.
+ * Several queued write callbacks can precede a single on-wire drain event.
+ * Accept EOT for the startup frame only after its write was accepted and its
+ * exact-length write callback completed. No pointer or counter survives. */
 static uint16_t b1_tx_length, b1_trace_expected_sequence;
 static uint8_t b1_trace_expected;
 static uint8_t b1_retained_admitted, b1_retained_network_started;
@@ -658,15 +658,12 @@ void b1_startup_tx_submit(const uint8_t *frame, uint16_t length)
             b1_trace_expected && frame[20] == (uint8_t)b1_trace_expected_sequence &&
             frame[21] == (uint8_t)(b1_trace_expected_sequence >> 8u)) kind = 2u;
     }
-    /* Reservation occurs before UART2_write so a synchronous callback cannot
-     * overtake the generation. A failed write latches transport HOLD; it must
-     * never be followed by another submission in the same boot. */
-    ++b1_uart_submit_generation;
-    /* Later ordinary messages cannot rebind a pending startup SRSP. */
+    /* Reserve the recognized startup frame before UART2_write, as a
+     * synchronous write callback can run in the submitter's context.
+     * Later ordinary messages cannot rebind an existing reservation. */
     if (kind != 0u && b1_tx_kind == 0u)
     {
         b1_tx_kind = kind; b1_tx_length = length;
-        b1_tx_target_generation = b1_uart_submit_generation;
         b1_tx_complete = b1_tx_accepted = b1_tx_eot = 0u;
     }
     B1_CS_LEAVE(key);
@@ -727,9 +724,12 @@ void b1_startup_tx_accepted(uint16_t length, int success)
 void b1_startup_tx_eot(void)
 {
     uintptr_t key = B1_CS_ENTER();
-    if (b1_uart_eot_generation < b1_uart_submit_generation)
-        ++b1_uart_eot_generation;
-    if (b1_tx_kind && b1_uart_eot_generation == b1_tx_target_generation)
+    /* TI UART2 signals TX_FINISHED only once the *physical FIFO is empty*.
+     * This is a drain event, not a per-write completion notification:
+     * successive UART2 writes may coalesce into one drain. An EOT cannot
+     * attest the selected frame until its own write is accepted and its
+     * exact-length FIFO-completion callback has arrived. */
+    if (b1_tx_kind && b1_tx_accepted && b1_tx_complete)
         b1_tx_eot = 1u;
     B1_CS_LEAVE(key);
     b1_startup_tx_publish();

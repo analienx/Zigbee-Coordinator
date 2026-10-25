@@ -13,7 +13,7 @@ SCENARIOS = (
     "bad_query", "bad_fcs", "areq", "alloc_fail", "npi_queue", "npi_sem",
     "npi_register", "uart_open", "uart_read", "start_hold", "start_healthy", "npi_first",
     "storm", "nv4_detail", "retained_commands", "uncommissioned_commands",
-    "startup_tx_generation", "startup_tx_short",
+    "startup_tx_generation", "startup_tx_coalesced", "startup_tx_short",
 )
 
 PREAMBLE = r'''
@@ -224,15 +224,22 @@ static void query(void) {
 }
 int main(int argc,char **argv) {
     assert(argc==2); const char *s=argv[1]; init_dispatch();
-    if(strcmp(s,"startup_tx_generation")==0 || strcmp(s,"startup_tx_short")==0) {
-        /* Numeric reservation: an unrelated earlier UART EOT must never run
-         * BDB before the exact admitted SRSP physically leaves the wire. */
+    if(strcmp(s,"startup_tx_generation")==0 || strcmp(s,"startup_tx_coalesced")==0 ||
+       strcmp(s,"startup_tx_short")==0) {
+        /* TX_FINISHED means FIFO drain, not completion of a single write.
+         * Case 1: prior write physically drains before the selected startup
+         * SRSP is even submitted. Case 2: both queued writes drain together
+         * under one TX_FINISHED interrupt. Neither may start BDB early. */
         uint8_t unrelated[]={0xfe,1,0x61,2,0,0x62};
         uint8_t startup[]={0xfe,1,0x65,0x40,0,0x24};
         assert(b1_startup_admit(0x65u,0x40u));
         b1_startup_tx_submit(unrelated,sizeof(unrelated));
         b1_startup_tx_accepted(sizeof(unrelated),1);
         b1_startup_tx_result(sizeof(unrelated),1);
+        if(strcmp(s,"startup_tx_generation")==0) {
+            b1_startup_tx_eot(); /* unrelated physical drain before SRSP */
+            assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
+        }
         b1_startup_tx_submit(startup,sizeof(startup));
         assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
         if(strcmp(s,"startup_tx_short")==0) {
@@ -242,10 +249,11 @@ int main(int argc,char **argv) {
             assert(b1_management_get_hold_active());
         } else {
             b1_startup_tx_accepted(sizeof(startup),1);
-            b1_startup_tx_result(sizeof(startup),1);
-            b1_startup_tx_eot(); /* completion of unrelated command */
+            /* No physical drain event may release BDB before FIFO completion. */
+            b1_startup_tx_eot();
             assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
-            b1_startup_tx_eot(); /* exact target SRSP finally completed */
+            b1_startup_tx_result(sizeof(startup),1);
+            b1_startup_tx_eot(); /* FIFO now empty; target fully on wire */
             assert(b1_startup_state()==B1_STARTUP_QUEUED);
             assert(b1_startup_begin());
             assert(!b1_startup_begin());

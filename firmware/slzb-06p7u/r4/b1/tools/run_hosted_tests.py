@@ -110,7 +110,7 @@ def main():
         return subprocess.run([str(arg) for arg in command], env=environment,
                               text=True, timeout=120, **kwargs)
 
-    def compile_c(source, name, *, admission=True, management=False):
+    def compile_c(source, name, *, admission=True, management=False, management_source=None):
         binary = work / name
         flags = (["-DB1_MANAGEMENT_ENABLED", "-DB1_MANAGEMENT_HOST",
                   "-DB1_BUILD_DIGEST_BYTES=0x12,0x34,0x56,0x78"] if management else [])
@@ -118,7 +118,7 @@ def main():
              "-Wno-unused-parameter", "-fsanitize=address,undefined",
              "-fno-omit-frame-pointer", "-fno-pie", "-no-pie", "-I", b1,
              *flags, source, *([b1 / "b1_admission.c"] if admission else []),
-             *([b1 / "b1_management.c"] if management else []),
+             *([management_source or b1 / "b1_management.c"] if management else []),
              "-o", binary], check=True)
         return binary
 
@@ -305,6 +305,32 @@ def main():
         binary = compile_c(source, name, admission=(name == "management"), management=(name != "npi_tx_idle"))
         for scenario in scenarios:
             positive(binary, (scenario,))
+
+    # A per-UART2_write event counter cannot handle one physical FIFO drain
+    # after successive write callbacks. Compile an intentionally regressed
+    # firmware source file and require the real management harness to fail.
+    original = (b1 / "b1_management.c").read_text(encoding="utf-8")
+    good = ("if (b1_tx_kind && b1_tx_accepted && b1_tx_complete)\n"
+            "        b1_tx_eot = 1u;")
+    bad = ("static unsigned fake_per_write_eot;\n"
+           "    if (fake_per_write_eot < 2u) ++fake_per_write_eot;\n"
+           "    if (b1_tx_kind && b1_tx_accepted && b1_tx_complete &&\n"
+           "        fake_per_write_eot == 2u)\n"
+           "        b1_tx_eot = 1u;")
+    if original.count(good) != 1:
+        raise RuntimeError("FIFO_DRAIN_REGRESSION_SOURCE_DRIFT")
+    mutant = work / "mutant_b1_fifo_eot_count.c"
+    mutant.write_text(original.replace(good, bad, 1))
+    binary = compile_c(generated["management"], "mutant_b1_fifo_eot_count",
+                       admission=True, management=True, management_source=mutant)
+    trial = run([binary, "startup_tx_coalesced"], capture_output=True)
+    if trial.returncode == 0 or "b1_startup_state()==B1_STARTUP_QUEUED" not in trial.stderr:
+        raise RuntimeError("FIFO_DRAIN_PER_WRITE_MUTANT_NOT_REJECTED: "
+                           + trial.stdout + trial.stderr)
+    results.append({"test": "fifo_drain_per_write_count",
+                    "result": "MUTANT_REJECTED",
+                    "classification": "HOSTED_C_SOURCE_BEHAVIOR_NOT_PHYSICAL_UART"})
+    print("B1_COALESCED_UART_TX_FINISHED_PER_WRITE_MUTANT_REJECTED", flush=True)
 
     # Reintroducing stock self-post while the UART is already busy must
     # FAIL against the *actual extracted TI event branch*, not a mock model.
