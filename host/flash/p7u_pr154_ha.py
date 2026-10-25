@@ -94,8 +94,6 @@ def sealed_tree(root, manifest_name, expected, names=None):
     raw = read(root/manifest_name); need(sha(raw) == expected, 'MANIFEST_PIN')
     files = json.loads(raw)['files']
     need(type(files) is dict and files and (names is None or set(files) == names), 'MANIFEST_FILES')
-    need({p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} ==
-         set(files) | {manifest_name}, 'UNSEALED_FILES')
     for name, digest in files.items():
         rel = Path(name)
         need(not rel.is_absolute() and '..' not in rel.parts and '\\' not in name, 'PATH_ESCAPE')
@@ -103,6 +101,8 @@ def sealed_tree(root, manifest_name, expected, names=None):
         need(target.resolve().is_relative_to(root) and
              all(not p.is_symlink() for p in (target, *target.parents) if p != root.parent), 'SYMLINK')
         need(sha(read(target)) == digest, 'FILE_PIN')
+    need({p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} ==
+         set(files) | {manifest_name}, 'UNSEALED_FILES')
     return json.loads(raw)
 
 

@@ -226,7 +226,7 @@ class Boot(Execution):
         p = patch.object(Path, 'is_char_device', Mock(return_value=True)); p.start(); self.addCleanup(p.stop)
 
     def test_no_result_never_boots(self):
-        with self.assertRaises(FileNotFoundError): op.boot(self.package, 'pin', self.ha)
+        with self.assertRaisesRegex(op.Hold, 'INPUT_FILE'): op.boot(self.package, 'pin', self.ha)
         self.ha.restart_radio.assert_not_called()
 
     def test_changed_journal_never_boots(self):
