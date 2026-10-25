@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -425,6 +426,65 @@ class PreBslRestore(unittest.TestCase):
         owner = self.quiescent(); op.durable(self.failed, 'bsl-entry-intent.json', {})
         with self.assertRaisesRegex(op.Hold, 'QUIESCENT_NOT_PRE_BSL'):
             op.quiescent_provenance(self.ha, owner)
+
+
+class StartupBarrier(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name); self.root.chmod(0o700)
+        release = SOURCE.parents[2]/'firmware/slzb-06p7u/r4/release'
+        p = patch.object(sys, 'path', [str(release), *sys.path]); p.start(); self.addCleanup(p.stop)
+        self.p = bytearray(32); self.p[:6] = b'B1P1\x01\x20'; self.p[12:16] = bytes.fromhex(op.SOURCE[:8])
+        self.s = bytearray(24); self.s[:6] = b'B1S1\x01\x18'; self.s[6] = 1; self.s[12:16] = self.p[12:16]
+        self.e = bytearray(128); self.e[:6] = b'B1E1\x01\x80'; self.e[8:12] = self.p[12:16]; self.e[88:112] = b'\xff'*24
+        self.ieee = bytes(range(1,9)); self.key = b'k'*16
+        self.owner = {'coordinator_ieee': self.ieee.hex(), 'network_key': {'key': self.key.hex()}}
+
+    def znp(self):
+        z = Mock(); z.history = [{}]
+        z.request.side_effect = [bytes(self.p), bytes(self.s), bytes(self.e),
+            b'\x00\x08'+self.ieee[::-1], b'\x00\x11\x00'+self.key, b'\x00']
+        return z
+
+    def test_pristine_identity_checked_before_one_resume(self):
+        import p7u_r4_startup_transport as transport
+        z = self.znp()
+        with patch.object(transport, 'observe_after_srsp', return_value={'status': 'COORDINATOR_STATE9_MARKER_PASS'}):
+            op.resume_pristine(z, self.root, self.owner, Mock())
+        starts = [c for c in z.request.call_args_list if c.args[:2] == (5, 0x40)]
+        self.assertEqual(len(starts), 1); self.assertEqual(starts[0].args[2], b'\x64\x00')
+        self.assertTrue((self.root/'retained-startup-intent.json').exists())
+
+    def test_nonpristine_firmware_never_resumes(self):
+        self.e[40] = 1; z = self.znp()
+        with self.assertRaisesRegex(op.Hold, 'STARTUP_NOT_PRISTINE'):
+            op.resume_pristine(z, self.root, self.owner, Mock())
+        self.assertFalse(any(c.args[:2] == (5, 0x40) for c in z.request.call_args_list))
+
+    def test_different_network_never_resumes(self):
+        z = self.znp(); self.owner['network_key']['key'] = (b'z'*16).hex()
+        with self.assertRaisesRegex(op.Hold, 'STARTUP_NETWORK_IDENTITY'):
+            op.resume_pristine(z, self.root, self.owner, Mock())
+        self.assertFalse(any(c.args[:2] == (5, 0x40) for c in z.request.call_args_list))
+
+    def test_reset_readiness_failure_never_starts_host_and_consumes_attempt(self):
+        import p7u_r4_startup_transport as transport
+        for n in ('verified-write.json', 'owner-backup-before-stop.json'):
+            op.durable(self.root, n, {})
+        for n in ('boot-intent.json', 'start-intent.json'):
+            op.durable(self.root, n, {'plan_sha256': 'pin'})
+        h = Mock(); h.inspect.return_value = {'id': 'failed', 'image': op.IMAGE, 'running': False, 'started_at': 'now'}
+        h.management.return_value = 'board'; z = Mock(); z._next.side_effect = TimeoutError()
+        port = Mock()
+        with patch.object(op, 'PRIVATE', self.root), patch.object(op, 'sealed_tree'), \
+             patch.object(op, 'verified_write', return_value={'owner': {'id': 'old'}, 'management_sha256': 'board'}), \
+             patch.object(op, 'run', return_value=b'AREQ - ZDO - stateChangeInd after 60000ms'), \
+             patch.object(op, 'modules'), patch.object(op, 'StartupSerial', return_value=port), \
+             patch.object(transport, 'FramedZnp', return_value=z):
+            with self.assertRaises(TimeoutError): op.startup_recovery(self.root, 'pkg', 'pin', h)
+            with self.assertRaisesRegex(op.Hold, 'STARTUP_RECOVERY_CONSUMED'):
+                op.startup_recovery(self.root, 'pkg', 'pin', h)
+        h.restart_radio.assert_called_once(); h.owner_action.assert_not_called(); port.close.assert_called_once()
 
 
 if __name__ == '__main__': unittest.main()

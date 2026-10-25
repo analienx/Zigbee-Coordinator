@@ -587,7 +587,7 @@ async def deploy(package, pin, ha):
         if rom is not None: await rom.close()
 
 
-def boot(package, pin, ha):
+def verified_write(package, pin):
     p = check_plan(package, pin); envelope = load(PRIVATE/'verified-write.json'); result = envelope['result']
     frozen = load(PRIVATE/'frozen-plan.json'); digest = frozen.pop('plan_sha256')
     snapshot = read(PRIVATE/'fresh-sparse-snapshot.bin')
@@ -606,6 +606,11 @@ def boot(package, pin, ha):
          result['verification_scope'] == 'WRITTEN_SHA_PLUS_ALL88_ROM_CRC' and
          all(result[k] is False for k in ('nv_touched', 'ccfg_touched', 'reset_issued', 'automatic_rollback')),
          'WRITE_NOT_VERIFIED')
+    return p
+
+
+def boot(package, pin, ha):
+    p = verified_write(package, pin)
     need(not (PRIVATE/'boot-intent.json').exists(), 'BOOT_CONSUMED')
     ha.policy(); ha.proof(False); need(ha.management() == p['management_sha256'], 'BOOT_BOARD')
     entity = ha.boot_binding()
@@ -620,9 +625,106 @@ def boot(package, pin, ha):
     return {'status': 'FLASH_VERIFIED_HOST_STARTED_PENDING_SERVING', 'source': SOURCE}
 
 
+class StartupSerial:
+    """Socket-shaped direct USB transport for the existing framed observer."""
+    def __init__(self):
+        import serial
+        self.port = serial.Serial(SERIAL, 115200, timeout=.75, write_timeout=2)
+
+    def settimeout(self, seconds):
+        self.port.timeout = seconds; self.port.write_timeout = seconds
+
+    def recv(self, count):
+        raw = self.port.read(count)
+        if not raw: raise TimeoutError()
+        return raw
+
+    def sendall(self, raw):
+        need(self.port.write(raw) == len(raw), 'STARTUP_SHORT_WRITE'); self.port.flush()
+
+    def close(self): self.port.close()
+
+
+def resume_pristine(znp, root, owner, evidence):
+    from p7u_r4_startup_observer import Q0, Q2, Q3, checked, decode_e1
+    from p7u_r4_startup_transport import observe_after_srsp
+    deadline = time.monotonic()+25; frames = {}
+    for name, query in (('B1P1', Q2), ('B1S1', Q0), ('B1E1', Q3)):
+        raw = znp.request(1, 241, query, deadline=deadline)
+        evidence(name, raw, dict(znp.history[-1])); frames[name] = raw
+    checked(frames['B1P1'], b'B1P1', 32, SOURCE); checked(frames['B1S1'], b'B1S1', 24, SOURCE)
+    before = decode_e1(frames['B1E1'], SOURCE)
+    need(frames['B1P1'][6] == 0 and frames['B1P1'][9] == 0 and
+         frames['B1S1'][6] == 1 and frames['B1S1'][7] == 0 and frames['B1S1'][10] == 0 and
+         before['state'] == 0 and before['first_error'] == 0 and before['milestones'] == 0,
+         'STARTUP_NOT_PRISTINE')
+    def legacy(item):
+        raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
+        need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')
+        return raw[2:]
+    ieee = legacy(1); key = legacy(0x3a)
+    need(ieee[::-1].hex() == owner['coordinator_ieee'] and len(key) == 17 and
+         key[1:].hex() == owner['network_key']['key'], 'STARTUP_NETWORK_IDENTITY')
+    durable(root, 'retained-startup-intent.json', {'source': SOURCE, 'attempts': 1,
+            'command': 'ZDO_STARTUP_FROM_APP', 'payload': '6400', 'network_formation_authorized': False})
+    srsp = znp.request(5, 0x40, bytes((100, 0)), deadline=time.monotonic()+10)
+    need(srsp == bytes(1), 'STARTUP_SRSP')
+    result = observe_after_srsp(znp, SOURCE, time.monotonic(), absolute_seconds=80, save=evidence)
+    durable(root, 'startup-result.json', result)
+    need(result['status'] == 'COORDINATOR_STATE9_MARKER_PASS', 'STARTUP_NATIVE_STATE9_NOT_PROVEN')
+    return result
+
+
+def startup_recovery(package, package_pin, pin, ha):
+    sealed_tree(package, 'PACKAGE.json', package_pin)
+    old_package = Path('/share/p7u-pr154-operator-263100aae0a71ef3')
+    p = verified_write(old_package, pin)
+    root = PRIVATE/'guarded-startup-recovery'
+    need(not root.exists(), 'STARTUP_RECOVERY_CONSUMED')
+    need(load(PRIVATE/'boot-intent.json')['plan_sha256'] == pin and
+         load(PRIVATE/'start-intent.json')['plan_sha256'] == pin and
+         not (PRIVATE/'started-pending-serving.json').exists(), 'STARTUP_RECOVERY_NOT_FAILED_BOOT')
+    failed = ha.inspect()
+    need(not failed['running'] and failed['image'] == IMAGE and failed != p['owner'], 'STARTUP_RECOVERY_OWNER')
+    log = run(['docker', 'logs', '--since', failed['started_at'], 'app_'+OWNER]).decode(errors='replace')
+    need('AREQ - ZDO - stateChangeInd after 60000ms' in log, 'STARTUP_RECOVERY_FAILURE_NOT_PROVEN')
+    ha.policy(); ha.proof(False)
+    need(ha.management() == p['management_sha256'], 'STARTUP_RECOVERY_BOARD'); ha.boot_binding()
+    root.mkdir(mode=0o700)
+    durable(root, 'intent.json', {'plan_sha256': pin, 'package_pin': package_pin,
+            'verified_write_sha256': sha(read(PRIVATE/'verified-write.json')), 'failed_owner': failed,
+            'action': 'OPEN_USB_RESET_WAIT_SYS_RESET_IND_RESUME_ONCE_VERIFY_STATE9_THEN_HOST', 'at': time.time()})
+    modules(package)
+    from p7u_r4_startup_transport import FramedZnp, PrivateEvidenceJournal
+    port = None; evidence = None
+    try:
+        port = StartupSerial(); znp = FramedZnp(port, source=SOURCE)
+        evidence = PrivateEvidenceJournal(root/'startup-evidence.jsonl', SOURCE)
+        os.chmod(root/'startup-evidence.jsonl', 0o600)
+        durable(root, 'radio-restart-intent.json', {'at': time.time(), 'attempts': 1})
+        ha.restart_radio()
+        deadline = time.monotonic()+20
+        while True:
+            typ, command, data = znp._next(deadline)
+            if typ == 0x41 and command == 0x80:
+                need(len(data) == 6, 'STARTUP_RESET_IND_SHAPE'); break
+        durable(root, 'boot-ready.json', {'no_request_before_reset_ind': True, 'at': time.time()})
+        resume_pristine(znp, root, load(PRIVATE/'owner-backup-before-stop.json'), evidence)
+    finally:
+        if evidence is not None: evidence.close()
+        if port is not None: port.close()
+    ha.policy(); ha.proof(False)
+    durable(root, 'host-start-intent.json', {'at': time.time(), 'attempts': 1})
+    ha.owner_action('start'); owner = ha.inspect()
+    need(owner['running'] and owner['image'] == IMAGE and owner != failed, 'STARTUP_RECOVERY_NEW_OWNER')
+    ha.proof(True)
+    durable(PRIVATE, 'started-pending-serving.json', {'source': SOURCE, 'owner': owner, 'at': time.time()})
+    return {'status': 'NATIVE_COORDINATOR_STATE9_VERIFIED_HOST_STARTED_PENDING_SERVING', 'source': SOURCE}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'restore-pre-bsl'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'restore-pre-bsl', 'startup-recovery'))
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
     parser.add_argument('--input-pin')
@@ -641,6 +743,8 @@ def main():
             need(a.plan_pin is not None and a.input_pin is None, 'EXECUTE_ARGUMENTS')
             if a.action == 'restore-pre-bsl':
                 result = restore_pre_bsl(a.package, a.package_pin, a.plan_pin, HA())
+            elif a.action == 'startup-recovery':
+                result = startup_recovery(a.package, a.package_pin, a.plan_pin, HA())
             else:
                 result = asyncio.run(deploy(a.package, a.plan_pin, HA())) if a.action == 'deploy' else boot(a.package, a.plan_pin, HA())
         print(json.dumps(result), flush=True)
