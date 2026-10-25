@@ -33,6 +33,15 @@ static unsigned allocated, live_alloc, freed, fail_at, send_calls;
 static int send_failed;
 static mtOSALSerialData_t *delivered;
 static int depth;
+static unsigned intercepted_b1;
+static void MT_BuildAndSendZToolResponse(uint8_t type, uint8_t cmd, uint8_t length, uint8_t *payload) {
+    (void)type;(void)cmd;(void)length;(void)payload;
+    ++intercepted_b1;
+}
+static void MT_ProcessIncoming(uint8_t *message) {
+    (void)message;
+    ++intercepted_b1;
+}
 uintptr_t b1_management_test_disable(void) {
     assert(depth==0);depth=1;return 5;
 }
@@ -83,6 +92,7 @@ int main(int argc,char **argv) {
     else if (strcmp(argv[1],"send_failed")==0) send_failed=1;
     else if (strcmp(argv[1],"healthy")!=0) return 2;
     uint8_t status=NPITask_sendBufToStack(in);
+    assert(intercepted_b1==0); /* These cases must exercise MT handoff. */
     if (strcmp(argv[1],"healthy")==0) {
         assert(status==OsalPort_SUCCESS);
         assert(!b1_management_transport_unavailable());
