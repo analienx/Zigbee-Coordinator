@@ -26,6 +26,7 @@ jobs:
       - name: Operator fault and existing transition gates
         run: |
           python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_r4_stock20260311_transition tests.test_p7u_stock20260311_security_preflight
+          python -m unittest discover -s firmware/slzb-06p7u/r4/release -p test_p7u_usb_current_owner_gate.py -v
       - name: Download exact qualified radio artifact and unchanged qualified ARM64 reader
         env:
           GH_TOKEN: ${{ github.token }}

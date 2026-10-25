@@ -238,6 +238,35 @@ class Execution(unittest.IsolatedAsyncioTestCase):
                 await op.deploy(self.package, 'pin', self.ha)
         self.ha.owner_action.assert_not_called(); self.factory.assert_not_called()
 
+    async def test_rom_reattach_never_repeats_bsl_or_stop(self):
+        self.ready(); self.p['quiescent_provenance_sha256'] = 'q'
+        self.p['rom_continuation_sha256'] = 'r'
+        held = self.root/'held'; held.mkdir(); (held/'fresh-sparse-snapshot.bin').write_bytes(b'current')
+        with patch.object(op, 'quiescent_provenance', return_value='q'), \
+             patch.object(op, 'rom_hold_provenance', return_value='r'), patch.object(op, 'HELD_ROM', held):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.ha.enter_bsl.assert_not_called(); self.ha.owner_action.assert_not_called()
+        self.assertTrue((self.private/'rom-reattach-intent.json').exists())
+        self.t.execute.assert_awaited_once()
+        self.assertTrue(self.sec.preflight.call_args.kwargs['runtime_upgrade'])
+
+    async def test_changed_rom_image_never_admits_or_writes(self):
+        self.ready(); self.p['quiescent_provenance_sha256'] = 'q'
+        self.p['rom_continuation_sha256'] = 'r'
+        held = self.root/'held'; held.mkdir(); (held/'fresh-sparse-snapshot.bin').write_bytes(b'different')
+        with patch.object(op, 'quiescent_provenance', return_value='q'), \
+             patch.object(op, 'rom_hold_provenance', return_value='r'), patch.object(op, 'HELD_ROM', held):
+            with self.assertRaisesRegex(op.Hold, 'ROM_IMAGE_CHANGED'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.ha.enter_bsl.assert_not_called(); self.t.execute.assert_not_awaited()
+
+    async def test_changed_rom_hold_never_opens_serial(self):
+        self.p['rom_continuation_sha256'] = 'r'
+        with patch.object(op, 'rom_hold_provenance', return_value='changed'):
+            with self.assertRaisesRegex(op.Hold, 'ROM_HOLD_CHANGED'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.factory.assert_not_called(); self.ha.enter_bsl.assert_not_called()
+
 
 class Boot(Execution):
     def evidence(self):

@@ -31,7 +31,8 @@ OWNER = 'local_p7u_r4_native_host'
 SERIAL = '/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00'
 INPUT = Path('/share/p7u-pr154-input-2499154')
 CANDIDATE = Path('/share/p7u-pr154-stage-2499154')
-PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v2')
+PRIVATE = Path('/share/p7u-pr154-deployment-2499154-v3')
+HELD_ROM = Path('/share/p7u-pr154-deployment-2499154-v2')
 FAILED_PRIVATE = Path('/share/p7u-pr154-deployment-2499154')
 FAILED_PACKAGE_PIN = 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f'
 DATA = Path('/homeassistant/zigbee2mqtt')
@@ -292,6 +293,34 @@ def quiescent_provenance(ha, owner):
     return sha(canonical({'files': {n: sha(read(FAILED_PRIVATE/n)) for n in sorted(names)}, 'owner': owner}))
 
 
+def rom_hold_provenance(ha, owner):
+    """Fresh plan after security-only HOLD, with no erase/program ever admitted.
+
+    No BSL command may be repeated. A new read-only ROM synchronization and
+    fresh capture must prove the same image before any candidate admission.
+    """
+    private_root(HELD_ROM)
+    names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
+             'execute-intent.json', 'hold.json', 'cold-backup.json', 'cold-before-flash.tar',
+             'bsl-entry-intent.json', 'sparse-receipt.json', 'fresh-sparse-snapshot.bin', 'security-receipt.json'}
+    need({v.name for v in HELD_ROM.iterdir()} == names, 'ROM_HOLD_SCOPE')
+    p = load(HELD_ROM/'plan.json'); pin = sha(canonical(p))
+    need(pin == '5fb074b7dc296405da3613e643a8c420d7fb64a57ec460f42df4aba187b633fa' and
+         p['owner'] == owner and not owner['running'] and owner['image'] == IMAGE,
+         'ROM_HOLD_PLAN_OR_OWNER')
+    need(load(HELD_ROM/'execute-intent.json')['plan_sha256'] == pin and
+         load(HELD_ROM/'bsl-entry-intent.json') == {'attempts': 1, 'plan_sha256': pin} and
+         load(HELD_ROM/'hold.json') == {'automatic_boot': False, 'automatic_retry': False,
+             'error_type': 'Hold', 'plan_sha256': pin}, 'ROM_HOLD_INTENTS')
+    s = load(HELD_ROM/'security-receipt.json'); capture = read(HELD_ROM/'fresh-sparse-snapshot.bin')
+    need(s['status'] == 'HOLD' and s['reason_codes'] ==
+         ['ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED'] and
+         all(s[k] == 0 for k in ('write_attempts', 'erase_attempts', 'compaction_attempts')) and
+         s['capture_sha256'] == sha(capture), 'ROM_HOLD_SECURITY')
+    ha.proof(False)
+    return sha(canonical({'files': {n: file_sha(HELD_ROM/n) for n in sorted(names)}, 'owner': owner}))
+
+
 def plan(package, package_pin, input_pin, ha):
     sealed_tree(package, 'PACKAGE.json', package_pin)
     sealed_tree(INPUT, 'INPUT.json', input_pin, INPUT_NAMES)
@@ -316,6 +345,7 @@ def plan(package, package_pin, input_pin, ha):
         need(proof['slots']['diagnostic']['container_id'] == owner['id'], 'OWNER_PROOF_CHANGED')
     else:
         quiescent = quiescent_provenance(ha, owner)
+    rom_continuation = rom_hold_provenance(ha, owner) if HELD_ROM.exists() else None
     backup = load(DATA/'coordinator_backup.json')
     from p7u_usb_security_model import parse_backup
     now = parse_backup(backup); need(100 <= len(now.peers) <= 107, 'OWNER_BACKUP')
@@ -329,7 +359,7 @@ def plan(package, package_pin, input_pin, ha):
          'installed_result_sha256': sha(canonical(result)), 'prior_verified_image_sha256': sha(expected),
          'scope': 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG', 'boot_separate': True,
          'candidate_pin': CANDIDATE_PIN, 'automatic_retry': False, 'automatic_rollback': False,
-         'quiescent_provenance_sha256': quiescent}
+         'quiescent_provenance_sha256': quiescent, 'rom_continuation_sha256': rom_continuation}
     durable(PRIVATE, 'plan.json', p)
     return {'status': 'PREPARED_OWNER_UNCHANGED', 'plan_sha256': sha(canonical(p)), 'source': SOURCE}
 
@@ -405,6 +435,9 @@ async def deploy(package, pin, ha):
         need(quiescent_provenance(ha, p['owner']) == quiescent, 'QUIESCENT_CHANGED')
     else:
         ha.proof(True)
+    rom_continuation = p.get('rom_continuation_sha256')
+    if rom_continuation:
+        need(rom_hold_provenance(ha, p['owner']) == rom_continuation, 'ROM_HOLD_CHANGED')
     backup = read(DATA/'coordinator_backup.json')
     durable(PRIVATE, 'owner-backup-before-stop.json', backup)
     durable(PRIVATE, 'execute-intent.json', {'plan_sha256': pin, 'dispatch_at': time.time()})
@@ -418,9 +451,12 @@ async def deploy(package, pin, ha):
         with cold.open('rb') as f: os.fsync(f.fileno())
         durable(PRIVATE, 'cold-backup.json', {'sha256': file_sha(cold),
                                             'bytes': cold.stat().st_size})
+        if rom_continuation:
+            durable(PRIVATE, 'rom-reattach-intent.json', {'plan_sha256': pin, 'provenance': rom_continuation})
         rom = factory(); await rom.open(SERIAL)
-        durable(PRIVATE, 'bsl-entry-intent.json', {'plan_sha256': pin, 'attempts': 1})
-        ha.enter_bsl(); await asyncio.sleep(1)
+        if not rom_continuation:
+            durable(PRIVATE, 'bsl-entry-intent.json', {'plan_sha256': pin, 'attempts': 1})
+            ha.enter_bsl(); await asyncio.sleep(1)
         drained = 0
         for _ in range(48):
             try: raw = await asyncio.wait_for(rom.reader.read(128), .015)
@@ -435,13 +471,16 @@ async def deploy(package, pin, ha):
         from dataclasses import asdict
         proof = asdict(capture.receipt); current = capture.snapshot
         await rom.assert_read_status()
+        if rom_continuation:
+            need(sha(current) == sha(read(HELD_ROM/'fresh-sparse-snapshot.bin')), 'ROM_IMAGE_CHANGED')
         durable(PRIVATE, 'fresh-sparse-snapshot.bin', current)
         durable(PRIVATE, 'sparse-receipt.json', proof)
         c = candidate(); abi = load(CANDIDATE/'security-native-abi.json'); reader = package/'security-reader-aarch64'
         bindings = {'capture_sha256': sha(current), 'baseline_capture_sha256': sha(old.snapshot),
                     'abi_sha256': sha(sec.abi_tool.canonical(abi)), 'reader_sha256': sha(read(reader)),
                     'profile_sha256': c['profile_sha256'], 'native_manifest_sha256': c['native_manifest_sha256']}
-        security = sec.preflight(capture=current, baseline=old.snapshot, abi=abi, reader=reader, bindings=bindings)
+        security = sec.preflight(capture=current, baseline=old.snapshot, abi=abi, reader=reader,
+                                 bindings=bindings, runtime_upgrade=True)
         durable(PRIVATE, 'security-receipt.json', security)
         need(security['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'NATIVE_SECURITY')
         records, counts = sec.read_private(reader, current)
