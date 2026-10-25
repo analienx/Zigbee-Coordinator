@@ -267,6 +267,31 @@ def installed(t):
     return old, c, result, bytes(expected)
 
 
+def quiescent_provenance(ha, owner):
+    """Admit only the consumed, pre-BSL v1 stop and its failed one-time start."""
+    private_root(FAILED_PRIVATE)
+    names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
+             'execute-intent.json', 'hold.json', 'restore-intent.json'}
+    need({v.name for v in FAILED_PRIVATE.iterdir()} == names, 'QUIESCENT_NOT_PRE_BSL')
+    p = load(FAILED_PRIVATE/'plan.json'); h = load(FAILED_PRIVATE/'hold.json')
+    r = load(FAILED_PRIVATE/'restore-intent.json'); pin = sha(canonical(p))
+    need(p['source'] == SOURCE and p['installed'] == INSTALLED and
+         p['package_pin'] == FAILED_PACKAGE_PIN and p['candidate_pin'] == CANDIDATE_PIN and
+         load(FAILED_PRIVATE/'execute-intent.json')['plan_sha256'] == pin and
+         h == {'error_type': 'TimeoutError', 'automatic_retry': False,
+               'automatic_boot': False, 'plan_sha256': pin} and
+         r['failed_plan_sha256'] == pin and r['failed_hold_sha256'] == sha(canonical(h)) and
+         r['package_pin'] == 'f9f6b06e08579f0532c6be9524ab5c8263cb13ee470188d2fb951c3a685fe16a' and
+         r['action'] == 'START_UNCHANGED_HOST_NO_RADIO_RESET', 'QUIESCENT_PROVENANCE')
+    need(owner['running'] is False and owner['image'] == IMAGE and owner != p['owner'] and
+         datetime.datetime.fromisoformat(owner['started_at'].replace('Z', '+00:00')).timestamp() >= r['at'],
+         'QUIESCENT_OWNER')
+    a = ha.info(OWNER)
+    need(a['state'] in ('stopped', 'error') and a['version'] == '0.2.1-068ae05e9f9a', 'QUIESCENT_APP')
+    ha.proof(False)
+    return sha(canonical({'files': {n: sha(read(FAILED_PRIVATE/n)) for n in sorted(names)}, 'owner': owner}))
+
+
 def plan(package, package_pin, input_pin, ha):
     sealed_tree(package, 'PACKAGE.json', package_pin)
     sealed_tree(INPUT, 'INPUT.json', input_pin, INPUT_NAMES)
@@ -284,9 +309,13 @@ def plan(package, package_pin, input_pin, ha):
                                         reader=reader, bindings=bindings)
     need(baseline_check['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'ARM64_READER_BASELINE')
     ha.policy(); management = ha.management(); ha.boot_binding()
-    owner = ha.inspect(); need(owner['running'] and owner['image'] == IMAGE, 'CURRENT_OWNER')
-    proof = ha.proof(True)
-    need(proof['slots']['diagnostic']['container_id'] == owner['id'], 'OWNER_PROOF_CHANGED')
+    owner = ha.inspect(); need(owner['image'] == IMAGE, 'CURRENT_OWNER')
+    quiescent = None
+    if owner['running']:
+        proof = ha.proof(True)
+        need(proof['slots']['diagnostic']['container_id'] == owner['id'], 'OWNER_PROOF_CHANGED')
+    else:
+        quiescent = quiescent_provenance(ha, owner)
     backup = load(DATA/'coordinator_backup.json')
     from p7u_usb_security_model import parse_backup
     now = parse_backup(backup); need(100 <= len(now.peers) <= 107, 'OWNER_BACKUP')
@@ -299,7 +328,8 @@ def plan(package, package_pin, input_pin, ha):
          'owner': owner, 'management_sha256': management, 'installed_plan_sha256': old.manifest['plan_sha256'],
          'installed_result_sha256': sha(canonical(result)), 'prior_verified_image_sha256': sha(expected),
          'scope': 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG', 'boot_separate': True,
-         'candidate_pin': CANDIDATE_PIN, 'automatic_retry': False, 'automatic_rollback': False}
+         'candidate_pin': CANDIDATE_PIN, 'automatic_retry': False, 'automatic_rollback': False,
+         'quiescent_provenance_sha256': quiescent}
     durable(PRIVATE, 'plan.json', p)
     return {'status': 'PREPARED_OWNER_UNCHANGED', 'plan_sha256': sha(canonical(p)), 'source': SOURCE}
 
@@ -354,7 +384,11 @@ def restore_pre_bsl(package, package_pin, pin, ha):
     ha.owner_action('start')
     owner = ha.inspect()
     need(owner['running'] and owner['image'] == IMAGE and owner != p['owner'], 'RESTORE_NEW_OWNER')
-    ha.proof(True)
+    quiescent = p.get('quiescent_provenance_sha256')
+    if quiescent:
+        need(quiescent_provenance(ha, p['owner']) == quiescent, 'QUIESCENT_CHANGED')
+    else:
+        ha.proof(True)
     durable(FAILED_PRIVATE, 'restored-pending-serving.json',
             {'installed': INSTALLED, 'owner': owner, 'request_sha256': sha(canonical(request)),
              'at': time.time()})
@@ -376,7 +410,8 @@ async def deploy(package, pin, ha):
     durable(PRIVATE, 'execute-intent.json', {'plan_sha256': pin, 'dispatch_at': time.time()})
     rom = None
     try:
-        ha.owner_action('stop'); ha.proof(False); ha.policy()
+        if not quiescent: ha.owner_action('stop')
+        ha.proof(False); ha.policy()
         cold = PRIVATE/'cold-before-flash.tar'
         with tarfile.open(cold, 'x') as archive: archive.add(DATA, arcname='zigbee2mqtt')
         os.chmod(cold, 0o600)

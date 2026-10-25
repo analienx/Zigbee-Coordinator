@@ -225,6 +225,19 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         self.ha.owner_action.assert_called_once_with('stop'); self.ha.restart_radio.assert_not_called()
         self.rom.close.assert_awaited_once()
 
+    async def test_qualified_quiescent_continuation_never_repeats_stop(self):
+        self.ready(); self.p['quiescent_provenance_sha256'] = 'proof'
+        with patch.object(op, 'quiescent_provenance', return_value='proof'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.ha.owner_action.assert_not_called(); self.t.execute.assert_awaited_once()
+
+    async def test_changed_quiescent_provenance_never_enters_bsl(self):
+        self.p['quiescent_provenance_sha256'] = 'proof'
+        with patch.object(op, 'quiescent_provenance', return_value='changed'):
+            with self.assertRaisesRegex(op.Hold, 'QUIESCENT_CHANGED'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.ha.owner_action.assert_not_called(); self.factory.assert_not_called()
+
 
 class Boot(Execution):
     def evidence(self):
@@ -341,6 +354,26 @@ class PreBslRestore(unittest.TestCase):
         with self.assertRaises(TimeoutError): self.restore()
         with self.assertRaisesRegex(op.Hold, 'RESTORE_CONSUMED'): self.restore()
         self.ha.owner_action.assert_called_once_with('start')
+
+    def quiescent(self):
+        self.ha.owner_action.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError): self.restore()
+        r = op.load(self.failed/'restore-intent.json')
+        r['package_pin'] = 'f9f6b06e08579f0532c6be9524ab5c8263cb13ee470188d2fb951c3a685fe16a'
+        (self.failed/'restore-intent.json').write_bytes(op.canonical(r))
+        return {'id': 'new', 'image': op.IMAGE, 'running': False,
+                'started_at': op.datetime.datetime.now(op.datetime.timezone.utc).isoformat()}
+
+    def test_quiescent_provenance_is_bound_and_requires_stopped_owner(self):
+        owner = self.quiescent()
+        self.assertEqual(len(op.quiescent_provenance(self.ha, owner)), 64)
+        with self.assertRaisesRegex(op.Hold, 'QUIESCENT_OWNER'):
+            op.quiescent_provenance(self.ha, dict(owner, running=True))
+
+    def test_quiescent_provenance_rejects_any_bsl_artifact(self):
+        owner = self.quiescent(); op.durable(self.failed, 'bsl-entry-intent.json', {})
+        with self.assertRaisesRegex(op.Hold, 'QUIESCENT_NOT_PRE_BSL'):
+            op.quiescent_provenance(self.ha, owner)
 
 
 if __name__ == '__main__': unittest.main()
