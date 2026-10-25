@@ -27,6 +27,7 @@ def main():
             dest = args.out/'source'/p; dest.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(p, dest)
     dest = args.out/'source/host/flash/p7u_pr154_ha.py'; dest.parent.mkdir(parents=True)
     shutil.copyfile('host/flash/p7u_pr154_ha.py', dest)
+    shutil.copyfile('host/flash/p7u_pr154_stage.py', dest.with_name('p7u_pr154_stage.py'))
     subprocess.run(['aarch64-linux-gnu-gcc', '-std=c11', '-O1', '-static',
                     '-I', 'firmware/slzb-06p7u/r4/b1', '-I', 'firmware/slzb-06p7u/r4/b1/include',
                     args.candidate/'security-reader.c', '-o', args.out/'security-reader-aarch64'], check=True)

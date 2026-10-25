@@ -94,6 +94,8 @@ def sealed_tree(root, manifest_name, expected, names=None):
     raw = read(root/manifest_name); need(sha(raw) == expected, 'MANIFEST_PIN')
     files = json.loads(raw)['files']
     need(type(files) is dict and files and (names is None or set(files) == names), 'MANIFEST_FILES')
+    need({p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} ==
+         set(files) | {manifest_name}, 'UNSEALED_FILES')
     for name, digest in files.items():
         rel = Path(name)
         need(not rel.is_absolute() and '..' not in rel.parts and '\\' not in name, 'PATH_ESCAPE')
@@ -222,6 +224,7 @@ class HA:
 
 
 def modules(package):
+    sys.dont_write_bytecode = True
     root = package/'source/firmware/slzb-06p7u/r4'
     sys.path[:0] = [str(package/'vendor'), str(root/'release'), str(root/'release/rom_writer'),
                    str(root/'qualification'), str(root/'b0/tools')]

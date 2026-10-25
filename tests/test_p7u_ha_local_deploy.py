@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, Mock, patch
 SOURCE = Path(__file__).resolve().parents[1]/'host/flash/p7u_pr154_ha.py'
 spec = importlib.util.spec_from_file_location('ha_deploy', SOURCE)
 op = importlib.util.module_from_spec(spec); spec.loader.exec_module(op)
+spec = importlib.util.spec_from_file_location('ha_stage', SOURCE.with_name('p7u_pr154_stage.py'))
+stage = importlib.util.module_from_spec(spec); spec.loader.exec_module(stage)
 
 
 class Containment(unittest.TestCase):
@@ -56,6 +58,20 @@ class Containment(unittest.TestCase):
                              ('http://supervisor/addons/45df7312_zigbee2mqtt/start', {}),
                              ('http://supervisor/core/api/services/homeassistant/restart', {})]:
             with self.subTest(url=url), self.assertRaisesRegex(op.Hold, 'API_SCOPE'): ha.request(url, payload)
+
+    def test_stage_cannot_escape_or_use_links_or_duplicate_roots(self):
+        for name in ('package/../x', '/share/x', 'input/C:\\Windows', 'package//x', 'third/x'):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'MEMBER_PATH'): stage.safe_name(name)
+        with patch.object(stage, 'SHARE', self.root), patch.object(stage, 'INPUT', self.root/'input-final'):
+            first = stage.prepare('a'*64)
+            self.assertTrue(Path(first['path']).is_dir())
+            with self.assertRaisesRegex(ValueError, 'EXISTS'): stage.prepare('a'*64)
+
+    def test_stage_rejects_archive_tamper_before_extract(self):
+        with patch.object(stage, 'SHARE', self.root), patch.object(stage, 'INPUT', self.root/'input-final'):
+            root = Path(stage.prepare('a'*64)['path']); (root/'payload.tar').write_bytes(b'tampered')
+            with self.assertRaisesRegex(ValueError, 'ARCHIVE_HASH'): stage.install('a'*64, 'b'*64, 'c'*64)
+            self.assertFalse((root/'install-intent.json').exists())
 
 
 @dataclass
