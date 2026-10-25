@@ -111,6 +111,51 @@ def patch_npi(text):
     }
     /* HOLD has no stack/MT task registration. Its frames stay with this
      * original NPI owner and enter the gated real MT dispatcher below. */""", "NPI hold does not read unregistered MT task")
+    # MT handoff may fail after the first OSAL allocation, or if the MT task
+    # rejects its queue. TI's native NPI code leaked both the wrapper and the
+    # separately owned payload in those branches, then silently lost SREQs.
+    # This is SOURCE-CORRECTNESS, not proof a live AF timeout was caused by OOM.
+    text = once(text,
+        """        pOsalMsg->msg = OsalPort_malloc( MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN] );
+
+        if(pOsalMsg->msg) {
+
+          memcpy(pOsalMsg->msg, pReq, (MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN]) );
+
+          msgStatus = OsalPort_msgSend( MTServiceTaskID, (byte *)pOsalMsg );
+        }
+
+    }
+
+    OsalPort_msgDeallocate(pMsg->pBuf);""",
+        """        pOsalMsg->msg = OsalPort_malloc( MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN] );
+
+        if (pOsalMsg->msg != NULL)
+        {
+          memcpy(pOsalMsg->msg, pReq, (MT_RPC_FRAME_HDR_SZ + pReq[MT_RPC_POS_LEN]));
+          msgStatus = OsalPort_msgSend(MTServiceTaskID, (byte *)pOsalMsg);
+          if (msgStatus != OsalPort_SUCCESS)
+          {
+            /* No destination task took ownership; release BOTH objects. */
+            OsalPort_free(pOsalMsg->msg);
+            (void)OsalPort_msgDeallocate((uint8_t *)pOsalMsg);
+            b1_management_transport_failed(B1_ERROR_NPI_QUEUE);
+          }
+        }
+        else
+        {
+          /* A wrapper with no payload was never queued: release it. */
+          (void)OsalPort_msgDeallocate((uint8_t *)pOsalMsg);
+          b1_management_transport_failed(B1_ERROR_NPI_QUEUE);
+        }
+    }
+    else
+    {
+        b1_management_transport_failed(B1_ERROR_NPI_QUEUE);
+    }
+
+    OsalPort_msgDeallocate(pMsg->pBuf);""",
+        "NPI RX-to-MT failure releases untransferred allocations")
     text = once(text, "    uint8 *pReq = (uint8 *)pMsg->pBuf;", """    uint8 *pReq = (uint8 *)pMsg->pBuf;
     /* Strict, RAM-only op3 B1E1 and op2 B1P1 share original NPI owner.
      * Ordinary op0/op1 and all Zigbee commands preserve their stack owner. */
