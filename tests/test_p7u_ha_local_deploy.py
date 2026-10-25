@@ -418,14 +418,26 @@ class PreBslRestore(unittest.TestCase):
 
     def test_quiescent_provenance_is_bound_and_requires_stopped_owner(self):
         owner = self.quiescent()
-        self.assertEqual(len(op.quiescent_provenance(self.ha, owner)), 64)
-        with self.assertRaisesRegex(op.Hold, 'QUIESCENT_OWNER'):
-            op.quiescent_provenance(self.ha, dict(owner, running=True))
+        (self.data/'coordinator_backup.json').write_bytes(b'{}')
+        with patch.dict(sys.modules, {'p7u_usb_security_model':
+                  SimpleNamespace(parse_backup=lambda raw: SimpleNamespace(peers=range(106)))}):
+            before = op.quiescent_provenance(self.ha, owner)
+            self.assertEqual(len(before), 64)
+            (self.data/'database.db').write_bytes(b'changed-during-admission')
+            after = op.quiescent_provenance(self.ha, owner)
+            self.assertNotEqual(before, after)
+            with self.assertRaisesRegex(op.Hold, 'QUIESCENT_OWNER'):
+                op.quiescent_provenance(self.ha, dict(owner, running=True))
 
-    def test_quiescent_provenance_rejects_any_bsl_artifact(self):
-        owner = self.quiescent(); op.durable(self.failed, 'bsl-entry-intent.json', {})
-        with self.assertRaisesRegex(op.Hold, 'QUIESCENT_NOT_PRE_BSL'):
-            op.quiescent_provenance(self.ha, owner)
+    def test_old_bsl_artifact_cannot_authorize_reentry_or_change_fresh_proof(self):
+        owner = self.quiescent()
+        (self.data/'coordinator_backup.json').write_bytes(b'{}')
+        with patch.dict(sys.modules, {'p7u_usb_security_model':
+                  SimpleNamespace(parse_backup=lambda raw: SimpleNamespace(peers=range(106)))}):
+            before = op.quiescent_provenance(self.ha, owner)
+            op.durable(self.failed, 'bsl-entry-intent.json', {})
+            self.assertEqual(before, op.quiescent_provenance(self.ha, owner))
+        self.ha.owner_action.assert_called_once_with('start')
 
 
 class StartupBarrier(unittest.TestCase):
