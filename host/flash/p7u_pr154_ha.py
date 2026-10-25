@@ -56,6 +56,13 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def file_sha(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as f:
+        for block in iter(lambda: f.read(1024*1024), b''): digest.update(block)
+    return digest.hexdigest()
+
+
 def read(path, limit=4*1024*1024):
     need(path.is_file() and not path.is_symlink() and path.stat().st_size <= limit, 'INPUT_FILE')
     return path.read_bytes()
@@ -312,7 +319,7 @@ async def deploy(package, pin, ha):
         with tarfile.open(cold, 'x') as archive: archive.add(DATA, arcname='zigbee2mqtt')
         os.chmod(cold, 0o600)
         with cold.open('rb') as f: os.fsync(f.fileno())
-        durable(PRIVATE, 'cold-backup.json', {'sha256': hashlib.file_digest(cold.open('rb'), 'sha256').hexdigest(),
+        durable(PRIVATE, 'cold-backup.json', {'sha256': file_sha(cold),
                                             'bytes': cold.stat().st_size})
         rom = factory(); await rom.open(SERIAL)
         durable(PRIVATE, 'bsl-entry-intent.json', {'plan_sha256': pin, 'attempts': 1})
@@ -452,7 +459,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except BaseException as exc:
+    except Exception as exc:
         print(json.dumps({'status': 'HOLD', 'error_type': type(exc).__name__,
                           'reason': str(exc) if isinstance(exc, Hold) else 'INSPECT_PRIVATE_RECEIPTS_NO_RETRY'}), flush=True)
         raise SystemExit(1)
