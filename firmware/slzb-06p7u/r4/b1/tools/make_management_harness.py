@@ -13,7 +13,7 @@ SCENARIOS = (
     "bad_query", "bad_fcs", "areq", "alloc_fail", "npi_queue", "npi_sem",
     "npi_register", "uart_open", "uart_read", "start_hold", "start_healthy", "npi_first",
     "storm", "nv4_detail", "retained_commands", "uncommissioned_commands",
-    "startup_tx_generation", "startup_tx_coalesced", "startup_tx_short",
+    "startup_tx_generation", "startup_tx_coalesced", "startup_tx_before_complete", "startup_tx_short",
 )
 
 PREAMBLE = r'''
@@ -225,7 +225,7 @@ static void query(void) {
 int main(int argc,char **argv) {
     assert(argc==2); const char *s=argv[1]; init_dispatch();
     if(strcmp(s,"startup_tx_generation")==0 || strcmp(s,"startup_tx_coalesced")==0 ||
-       strcmp(s,"startup_tx_short")==0) {
+       strcmp(s,"startup_tx_before_complete")==0 || strcmp(s,"startup_tx_short")==0) {
         /* TX_FINISHED means FIFO drain, not completion of a single write.
          * Case 1: prior write physically drains before the selected startup
          * SRSP is even submitted. Case 2: both queued writes drain together
@@ -249,9 +249,11 @@ int main(int argc,char **argv) {
             assert(b1_management_get_hold_active());
         } else {
             b1_startup_tx_accepted(sizeof(startup),1);
-            /* No physical drain event may release BDB before FIFO completion. */
-            b1_startup_tx_eot();
-            assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
+            if(strcmp(s,"startup_tx_before_complete")==0) {
+                /* A premature EOT must not release BDB before the target callback. */
+                b1_startup_tx_eot();
+                assert(b1_startup_state()==B1_STARTUP_WAIT_SRSP_TX);
+            }
             b1_startup_tx_result(sizeof(startup),1);
             b1_startup_tx_eot(); /* FIFO now empty; target fully on wire */
             assert(b1_startup_state()==B1_STARTUP_QUEUED);
