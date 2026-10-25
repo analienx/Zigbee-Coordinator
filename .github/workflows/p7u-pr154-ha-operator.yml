@@ -1,0 +1,45 @@
+name: P7U PR154 HA-local operator qualification (NO HARDWARE)
+on:
+  pull_request:
+    paths:
+      - 'host/flash/**'
+      - 'tests/test_p7u_ha_local_deploy.py'
+      - 'tools/package_p7u_pr154_ha.py'
+      - '.github/workflows/p7u-pr154-ha-operator.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+env:
+  OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  qualify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Operator fault and existing transition gates
+        run: |
+          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_r4_stock20260311_transition tests.test_p7u_stock20260311_security_preflight
+      - name: Obtain cross compiler and ARM runtime for read-only reader qualification
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
+      - name: Download exact qualified radio artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 40208596076 --repo analienx/Zigbee-Coordinator --name p7u-stock20260311-candidate-2499154215c40ab6435b90886be96c8af6e37a74 --dir /tmp/pr154-candidate
+          chmod +x /tmp/pr154-candidate/security-reader-linux
+      - name: Package reviewed sources and qualify ARM64 reader against public NV4
+        env:
+          PYTHONPATH: .
+        run: python tools/package_p7u_pr154_ha.py --candidate /tmp/pr154-candidate --out /tmp/p7u-pr154-ha-operator
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-pr154-ha-operator-${{ env.OPERATOR_SOURCE_SHA }}
+          path: /tmp/p7u-pr154-ha-operator
+          if-no-files-found: error
+          retention-days: 30
