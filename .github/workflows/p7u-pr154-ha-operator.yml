@@ -26,20 +26,17 @@ jobs:
       - name: Operator fault and existing transition gates
         run: |
           python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_r4_stock20260311_transition tests.test_p7u_stock20260311_security_preflight
-      - name: Obtain cross compiler and ARM runtime for read-only reader qualification
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
-      - name: Download exact qualified radio artifact
+      - name: Download exact qualified radio artifact and unchanged qualified ARM64 reader
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download 40208596076 --repo analienx/Zigbee-Coordinator --name p7u-stock20260311-candidate-2499154215c40ab6435b90886be96c8af6e37a74 --dir /tmp/pr154-candidate
+          gh run download 40218192163 --repo analienx/Zigbee-Coordinator --name p7u-pr154-ha-operator-1b1298463bec29e0bef265e33cc6a80f8b6ffaac --dir /tmp/qualified-reader-package
           chmod +x /tmp/pr154-candidate/security-reader-linux
-      - name: Package reviewed sources and qualify ARM64 reader against public NV4
+      - name: Package reviewed sources and retain separately qualified byte-pinned ARM64 reader
         env:
           PYTHONPATH: .
-        run: python tools/package_p7u_pr154_ha.py --candidate /tmp/pr154-candidate --out /tmp/p7u-pr154-ha-operator
+        run: python tools/package_p7u_pr154_ha.py --candidate /tmp/pr154-candidate --out /tmp/p7u-pr154-ha-operator --reader-package /tmp/qualified-reader-package
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: p7u-pr154-ha-operator-${{ env.OPERATOR_SOURCE_SHA }}
