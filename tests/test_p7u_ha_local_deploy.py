@@ -146,6 +146,7 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         self.capture.assert_not_awaited(); self.t.execute.assert_not_called()
 
     def ready(self):
+        (self.candidate/'security-native-abi.json').write_text('{"structs":{"nwkIB_t":{"size":1}}}')
         self.sec.preflight.return_value = {'status': 'PASS_RETAINED_SECURITY_OFFLINE_ONLY'}
         self.sec.read_private.return_value = ({(1, 7, 0): b'counter'}, {})
         self.sec.get.return_value = b'nib'; self.sec.field.return_value = b'pan'; self.sec.number.return_value = 123
