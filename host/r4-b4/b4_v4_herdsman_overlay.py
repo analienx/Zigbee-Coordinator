@@ -18,6 +18,7 @@ PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 ADAPTER = "src/adapter/z-stack/adapter/zStackAdapter.ts"
 ZNP = "src/adapter/z-stack/znp/znp.ts"
+WAITRESS = "src/utils/waitress.ts"
 PARSER = "src/adapter/z-stack/unpi/parser.ts"
 WRITER = "src/adapter/z-stack/unpi/writer.ts"
 CONTROLLER = "src/controller/controller.ts"
@@ -209,7 +210,7 @@ def once(s, a, b):
 
 def plan(root):
     root = Path(root)
-    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER, PARSER, WRITER)
+    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, WAITRESS, CONTROLLER, PARSER, WRITER)
     validate_sources(root, paths)
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("herdsman HEAD drift")
@@ -396,7 +397,7 @@ def plan(root):
             initialized: this.initialized,
             mutexIdle: this.queue.isIdle(),
             mutexQueued: this.queue.count,
-            waitressPending: this.waitress.waiters.size,
+            waitressPending: this.waitress.b4PendingCount(),
             diagnosticQuarantined: this.b4DiagPoisoned,
             srsp: {
                 AF: {...this.b4PassiveSrspStats.AF},
@@ -521,7 +522,21 @@ def plan(root):
         "                    logger.debug(`--> parsed ${frame}`, NS);",
         "                    logger.debug(`--> parsed type=${frame.type} subsystem=${frame.subsystem} command=${frame.commandID} bytes=${frame.data.length}`, NS);")
 
-    return {DEFINITION: (original[DEFINITION], definition),
+    # The pinned Waitress owns a private Map; expose numeric occupancy
+    # read-only, without changing resolution, timeout or cancellation behavior.
+    waitress = once(original[WAITRESS],
+        """    public b4IsIdle(): boolean {
+        return this.waiters.size === 0;
+    }""",
+        """    public b4IsIdle(): boolean {
+        return this.waiters.size === 0;
+    }
+
+    public b4PendingCount(): number {
+        return this.waiters.size;
+    }""")
+    return {WAITRESS: (original[WAITRESS], waitress),
+            DEFINITION: (original[DEFINITION], definition),
             PARAM: (original[PARAM], params), BUFFALO: (original[BUFFALO], buffalo),
             ADAPTER: (original[ADAPTER], adapter), ZNP: (original[ZNP], znp),
             CONTROLLER: (original[CONTROLLER], controller),

@@ -69,7 +69,9 @@ test("T7 tagged Waitress cancellation settles only F2 promise, not ordinary SYS"
     await settled;
     assert.equal(waitress.b4Cancel(f2.ID, "again"), false);
     assert.equal(waitress.waiters.size, 1);
+    assert.equal(waitress.b4PendingCount(), 1);
     waitress.remove(normal.ID);
+    assert.equal(waitress.b4PendingCount(), 0);
     assert.equal(waitress.b4IsIdle(), true);
 });
 
