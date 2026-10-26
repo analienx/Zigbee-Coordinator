@@ -495,10 +495,19 @@ def plan(root):
         this.b4ProbeGuard = guard;
     }
 
+    /** AF/ZDO asynchronous completion waiters do not own the synchronous
+     * MT channel. SYS reset AREQ and unknown matcher types still veto F2.
+     * One predicate shared by the early and the pre-write diagnostic gate.
+     */
+    private b4NoBlockingWaiters(): boolean {
+        return this.waitress.b4HasNoActiveBlockingWaiters((matcher) =>
+            matcher.type === Type.AREQ &&
+            (matcher.subsystem === Subsystem.AF || matcher.subsystem === Subsystem.ZDO));
+    }
+
     public b4CanProbe(): boolean {
         return this.initialized && !this.b4DiagPoisoned &&
-            this.queue.isIdle() &&
-            this.waitress.b4HasNoActiveBlockingWaiters((matcher) => matcher.type === Type.AREQ);
+            this.queue.isIdle() && this.b4NoBlockingWaiters();
     }
 
     public isInitialized(): boolean {""",
@@ -552,7 +561,7 @@ def plan(root):
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
                 object.command.name === "r4DiagReadOnly" &&
                 (!this.initialized || this.b4DiagPoisoned ||
-                    !this.waitress.b4HasNoActiveBlockingWaiters((matcher) => matcher.type === Type.AREQ))) {
+                    !this.b4NoBlockingWaiters())) {
                 throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");
             }
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
