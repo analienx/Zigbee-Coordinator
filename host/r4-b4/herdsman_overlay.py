@@ -339,8 +339,11 @@ def plan(root):
     )
     # B4: bounded in-process timeout metadata, entirely free of device IDs,
     # IEEE addresses, raw frames, payloads, serial paths and disk access.
-    # A mutex can become idle while Waitress still retains a pending or
-    # timed-out SRSP record. No diagnostics in that ambiguous owner state.
+    # A mutex can be idle while ZNP keeps unrelated AREQ callback waiters.
+    # Only *live* SRSP/unknown waiters veto a diagnostic. Expired tombstones
+    # are inspected but never cleaned or altered; F2 timeout still poisons
+    # the diagnostic session. This method MUST run again inside the mutex
+    # before any diagnostic UART write.
     changes[WAITRESS] = replace_once(
         originals[WAITRESS],
         "    public clear(): void {",
@@ -371,6 +374,30 @@ def plan(root):
     /** B4_EXPERIMENTAL_EXISTING_OWNER: observation only. */
     public b4IsIdle(): boolean {
         return this.waiters.size === 0;
+    }
+
+    /** Read-only, fail-closed classification for optional ZNP diagnostics.
+     *  Active AREQ completion callbacks do not own the SRSP transport.
+     *  Unknown/live SRSP matchers block; timeout tombstones have settled.
+     *  Never delete, reject, restart or retime stock waiters.
+     */
+    public b4HasNoActiveBlockingWaiters(isAsync: (matcher: TMatcher) => boolean): boolean {
+        for (const waiter of this.waiters.values()) {
+            if (waiter.timedout === true) {
+                continue;
+            }
+            if (waiter.timedout !== false || waiter.resolved !== false) {
+                return false;
+            }
+            try {
+                if (!isAsync(waiter.matcher)) {
+                    return false;
+                }
+            } catch {
+                return false;
+            }
+        }
+        return true;
     }
 
     public clear(): void {""",
@@ -470,7 +497,8 @@ def plan(root):
 
     public b4CanProbe(): boolean {
         return this.initialized && !this.b4DiagPoisoned &&
-            this.queue.isIdle() && this.waitress.b4IsIdle();
+            this.queue.isIdle() &&
+            this.waitress.b4HasNoActiveBlockingWaiters((matcher) => matcher.type === Type.AREQ);
     }
 
     public isInitialized(): boolean {""",
@@ -523,7 +551,8 @@ def plan(root):
         """        return this.queue.run<ZpiObject | undefined>(async () => {
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
                 object.command.name === "r4DiagReadOnly" &&
-                (!this.initialized || this.b4DiagPoisoned || !this.waitress.b4IsIdle())) {
+                (!this.initialized || this.b4DiagPoisoned ||
+                    !this.waitress.b4HasNoActiveBlockingWaiters((matcher) => matcher.type === Type.AREQ))) {
                 throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");
             }
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
