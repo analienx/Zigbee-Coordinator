@@ -27,10 +27,10 @@ def record(at, kind="SKIPPED", reason="ADAPTER_QUEUE_PENDING", host=HOST, owner=
 
 
 def f2(at, seq=1, **extra):
-    return record(at, kind="VALID", reason=None, sequence=seq,
-                  validityMask=0x2c, asyncDepth=0, asyncHighWater=148,
-                  srspDepth=None, srspHighWater=None, uartTxFinishedEvents=43092,
-                  **extra)
+    fields = dict(sequence=seq, validityMask=0x2c, asyncDepth=0, asyncHighWater=148,
+                  srspDepth=None, srspHighWater=None, uartTxFinishedEvents=43092)
+    fields.update(extra)
+    return record(at, kind="VALID", reason=None, **fields)
 
 
 def progress(ok, timeout):
@@ -60,6 +60,15 @@ def write_chain(root, rows):
 
 
 class FreshnessTests(unittest.TestCase):
+    def test_jitter_retains_one_minute_lower_bound_and_existing_queue_gates(self):
+        source = Path(__file__).with_name("b4_v4_live_collector_overlay.py").read_text()
+        self.assertIn("randomInt(60_000, 90_001)", source)
+        self.assertIn("Math.max(60_000, delay)", source)
+        self.assertIn("this.b4ProbeReadOnlyDiagnosticsV4(true)", source)
+        self.assertIn("this.#b4Schedule(60_000)", source)
+        self.assertIn("this.#b4SamplerDisabled", source)
+        self.assertNotIn("new Znp(", source)
+
     def test_skipped_sampling_with_advancing_srsp_is_not_a_hang(self):
         rows = [f2(1_000_000), record(1_150_000, hostEvidence=progress(10, 2)),
                 record(1_240_000, reason="ZNP_WAITRESS_PENDING",
