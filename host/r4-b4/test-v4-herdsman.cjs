@@ -139,6 +139,56 @@ test("V4 disabled/busy/OTA/replaced predicate all send zero serial requests",asy
     assert.equal(owner.znp.requests,0);
 });
 
+test("V4 F2 uses existing ZNP owner when only unrelated AREQ callback is outstanding", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true; // synthetic owner, do not open any serial device
+    const callback = znp.waitress.waitFor(
+        {type: Type.AREQ, subsystem: Subsystem.AF, command: "dataConfirm"}, 2000
+    );
+    const transmitted = [];
+    znp.unpiWriter.writeFrame = (request) => {
+        transmitted.push(request.commandID);
+        assert.equal(request.commandID, 242);
+        assert.equal(request.data.length, 8);
+        queueMicrotask(() => znp.onUnpiParsed(
+            new Frame(Type.SRSP, Subsystem.SYS, request.commandID, wire(request.data))
+        ));
+    };
+    const owner = Object.create(ZStackAdapter.prototype);
+    owner.znp = znp;
+    owner.queue = {count: () => 0};
+    owner.interpanLock = false; owner.closing = false;
+    owner.b4DiagInFlight = false; owner.b4NextAllowedMs = 0;
+    assert.equal(znp.waitress.b4IsIdle(), false);
+    assert.equal(znp.b4CanProbe(), true);
+    const result = await owner.b4ReadOnlyDiagnosticsV4(allowed);
+    assert.equal(result?.abi, 4);
+    assert.equal(result?.sequence, 1);
+    assert.equal(owner.b4GetV4Outcome().kind, "VALID");
+    assert.deepEqual(transmitted, [242]);
+    assert.equal(znp.waitress.waiters.size, 1); // AREQ callback never discarded
+    znp.waitress.remove(callback.ID);
+});
+
+test("V4 F2 direct write still rejects a live unrelated SRSP without transmission", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    const transmitted = [];
+    znp.unpiWriter.writeFrame = (request) => transmitted.push(request.commandID);
+    const active = znp.waitress.waitFor(
+        {type: Type.SRSP, subsystem: Subsystem.ZDO, command: "permitJoin"}, 3000
+    );
+    assert.equal(znp.b4CanProbe(), false);
+    await assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnlyV4",
+            {nonce: Buffer.from("0102030405060708", "hex")}, undefined, 200),
+        /owner unavailable or poisoned inside ZNP mutex/
+    );
+    assert.deepEqual(transmitted, []);
+    assert.equal(znp.b4IsDiagPoisoned(), false); // safely not submitted
+    znp.waitress.remove(active.ID);
+});
+
 test("V4 real compiled Znp mutex vetoes F2 after OTA begins while queued",async()=>{
     const znp = new Znp("/dev/not-opened",115200,false);
     znp.initialized = true;
