@@ -39,6 +39,7 @@ function ownerWithResponse(chooser) {
         disabled: false,
         requests: 0,
         b4CanProbe() {return !this.disabled;},
+        b4CanProbeV4() {return !this.disabled;},
         b4SetProbeGuard(guard) {this.guard = guard;},
         b4PoisonDiagSession() {this.disabled = true;},
         async requestWithReply(sys,cmd,payload,unused,timeout) {
@@ -160,7 +161,8 @@ test("V4 F2 uses existing ZNP owner when only unrelated AREQ callback is outstan
     owner.interpanLock = false; owner.closing = false;
     owner.b4DiagInFlight = false; owner.b4NextAllowedMs = 0;
     assert.equal(znp.waitress.b4IsIdle(), false);
-    assert.equal(znp.b4CanProbe(), true);
+    assert.equal(znp.b4CanProbeV4(), true);
+    assert.equal(znp.b4CanProbe(), false); // F0 remains all-waiter blocked
     const result = await owner.b4ReadOnlyDiagnosticsV4(allowed);
     assert.equal(result?.abi, 4);
     assert.equal(result?.sequence, 1);
@@ -178,11 +180,11 @@ test("V4 F2 direct write still rejects a live unrelated SRSP without transmissio
     const active = znp.waitress.waitFor(
         {type: Type.SRSP, subsystem: Subsystem.ZDO, command: "permitJoin"}, 3000
     );
-    assert.equal(znp.b4CanProbe(), false);
+    assert.equal(znp.b4CanProbeV4(), false);
     await assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnlyV4",
             {nonce: Buffer.from("0102030405060708", "hex")}, undefined, 200),
-        /owner unavailable or poisoned inside ZNP mutex/
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
     );
     assert.deepEqual(transmitted, []);
     assert.equal(znp.b4IsDiagPoisoned(), false); // safely not submitted
