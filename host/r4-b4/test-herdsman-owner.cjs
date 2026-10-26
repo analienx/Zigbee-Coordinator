@@ -379,6 +379,45 @@ test("REVIEW-P1: ZNP mutex idle but unresolved Waitress still forbids F0", () =>
     assert.equal(znp.b4CanProbe(), true);
 });
 
+test("F2 admission: live AREQ callbacks do not monopolize idle ZNP SRSP transport", () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    const asyncCallback = znp.waitress.waitFor(
+        {type: Type.AREQ, subsystem: Subsystem.AF, command: "dataConfirm"}, 10_000
+    );
+    assert.equal(znp.queue.isIdle(), true);
+    assert.equal(znp.waitress.b4IsIdle(), false); // legacy all-waiter veto
+    assert.equal(znp.b4CanProbe(), true); // no active SRSP; safe to inspect
+    assert.equal(znp.waitress.waiters.size, 1); // never mutate/clean the AREQ
+    const unknown = znp.waitress.waitFor(
+        {type: -1, subsystem: Subsystem.AF, command: "unknown"}, 10_000
+    );
+    assert.equal(znp.b4CanProbe(), false); // fail-closed unknown matcher
+    znp.waitress.remove(unknown.ID);
+    assert.equal(znp.waitress.b4HasNoActiveBlockingWaiters(() => {
+        throw Error("unexpected matcher");
+    }), false); // fail closed on predicate error
+    assert.equal(znp.b4CanProbe(), true);
+    znp.waitress.remove(asyncCallback.ID);
+    assert.equal(znp.waitress.b4IsIdle(), true);
+});
+
+test("F2 admission: settled SRSP timeout tombstone cannot starve safe later readings", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    const expired = znp.waitress.waitFor(
+        {type: Type.SRSP, subsystem: Subsystem.ZDO, command: "permitJoin"}, 10
+    );
+    const failure = assert.rejects(expired.start().promise, /after 10ms/);
+    assert.equal(znp.b4CanProbe(), false); // still actively waiting for SRSP
+    await failure;
+    assert.equal(znp.waitress.b4IsIdle(), false); // pinned Waitress retains tombstone
+    assert.equal(znp.b4CanProbe(), true); // settled waiter is no active SRSP
+    assert.equal(znp.waitress.waiters.size, 1); // no repairs to stock state
+    znp.waitress.remove(expired.ID);
+    assert.equal(znp.waitress.waiters.size, 0);
+});
+
 test("REVIEW-P0: F0 queued before first timeout cannot escape the mutex after quarantine", async () => {
     const znp = new Znp("/dev/no-serial", 115200, false);
     znp.initialized = true;
