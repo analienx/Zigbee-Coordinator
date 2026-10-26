@@ -159,13 +159,24 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     v3local.write_text(v3source,encoding="utf-8")
     v3=load("r4_reviewed_b4_v3_reconciled",v3local)
     native_v3=v3.apply(sdk)
-    # Re-read the actual composed C, not the Python patch recipe. Exactly one
-    # UART2 event subscriber is active and its callback must fan out to B1.
-    combined_uart=(sdk/UART).read_text(encoding="utf-8")
-    if (combined_uart.count("params.eventCallback = B4_NpiUartTxFinishedCallback;") != 1 or
-        combined_uart.count("b1_startup_uart_event(handle, event, data, userArg);") != 1 or
-        combined_uart.count("uartHandle = UART2_open(CONFIG_DISPLAY_UART, &params);") != 1):
-        raise ValueError("B1_B4_UART_SINGLE_OWNER_FANOUT_NOT_PROVEN")
+    # B1 subscribed before B4's overlay. B4 is now the ONLY selected physical
+    # subscriber and forwards to B1 *after* its short counter critical section.
+    # The generated source used to select B4 and then overwrite that pointer
+    # with B1 just before UART2_open (while misleading static counts passed).
+    uart_path=sdk/UART
+    combined_uart=uart_path.read_text(encoding="utf-8")
+    prior_owner="    params.eventCallback = b1_startup_uart_event;\n"
+    if combined_uart.count(prior_owner)!=1:
+        raise ValueError("B1_B4_OLD_UART_SUBSCRIBER_PREIMAGE_DRIFT")
+    combined_uart=combined_uart.replace(prior_owner,"",1)
+    # The actual initializer and callback bodies are source-compiled and the
+    # event callback *passed to UART2_open* is executed with an intercepted
+    # UART2_open; negative mutants cover override, missing and duplicate B1.
+    from r4_uart_event_selection import exercise as exercise_uart_selection
+    receipt=exercise_uart_selection(combined_uart)
+    uart_path.write_text(combined_uart,encoding="utf-8",newline="")
+    if receipt["status"]!="PASS_SELECTED_UART2_OPEN_CALLBACK_COMPILED_AND_MUTANTS_REJECTED":
+        raise ValueError("B1_B4_SELECTED_UART_EVENT_BEHAVIORAL_HOLD")
     v4=load("r4_immutable_b4_v4",b4v4script)
     native_v4=v4.apply(sdk)
 
