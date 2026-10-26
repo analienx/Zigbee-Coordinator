@@ -68,7 +68,7 @@ static void b1_management_transport_failed(uint8_t code){
 '''
     tests=r'''
 int main(void){
- (void)&OsalPort_msgSend; (void)&npiTaskID;
+ (void)&OsalPort_msgSend; (void)&OsalPort_msgDeallocate; (void)&OsalPort_msgAllocate; (void)&OsalPort_enterCS; (void)&OsalPort_leaveCS; (void)&b1_management_transport_failed; (void)&npiTaskID;
  uint8_t status=0u;
  MT_BuildAndSendZToolResponse(0x64u,0u,1u,&status);
  assert(B4_AfRspProduced==1u && B4_AfRspEnqueued==1u);
