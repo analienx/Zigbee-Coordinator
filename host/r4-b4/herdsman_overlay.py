@@ -505,7 +505,14 @@ def plan(root):
             (matcher.subsystem === Subsystem.AF || matcher.subsystem === Subsystem.ZDO));
     }
 
+    /** Legacy F0 has no nonce: retain the original strict all-waiter gate. */
     public b4CanProbe(): boolean {
+        return this.initialized && !this.b4DiagPoisoned &&
+            this.queue.isIdle() && this.waitress.b4IsIdle();
+    }
+
+    /** Nonce-correlated F2 may coexist with ordinary AF/ZDO callbacks. */
+    public b4CanProbeV4(): boolean {
         return this.initialized && !this.b4DiagPoisoned &&
             this.queue.isIdle() && this.b4NoBlockingWaiters();
     }
@@ -560,8 +567,7 @@ def plan(root):
         """        return this.queue.run<ZpiObject | undefined>(async () => {
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
                 object.command.name === "r4DiagReadOnly" &&
-                (!this.initialized || this.b4DiagPoisoned ||
-                    !this.b4NoBlockingWaiters())) {
+                (!this.initialized || this.b4DiagPoisoned || !this.waitress.b4IsIdle())) {
                 throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");
             }
             if (object.type === Type.SREQ && object.subsystem === Subsystem.SYS &&
