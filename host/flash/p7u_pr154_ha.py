@@ -1,4 +1,4 @@
-"""Fixed-target R4 f9fd9bf deployment. No arbitrary shell, device, firmware or HTTP URL.
+"""Fixed-target R4 afbb7a8 deployment. No arbitrary shell, device, firmware or HTTP URL.
 
 plan performs admission without stopping Z2M. deploy consumes one immutable
 plan before stopping the sole owner. boot is a separate, once-only phase and
@@ -23,22 +23,22 @@ import tarfile
 import time
 import urllib.request
 
-SOURCE = 'f9fd9bffa7161b576fecf07d1473eeff8c1f5035'
+SOURCE = 'afbb7a8445f0454d53038ed34b4110fa29a5d671'
 INSTALLED = '3c7dd95c99194ec5e62a70ea4ff9e55f47cc470d'
-CANDIDATE_PIN = 'ca470f906528976f053c788de6373fcd5397330ab9dcb9bfb500b94f6389e473'
+CANDIDATE_PIN = 'ff77c12ef20a2e54ab3d4bb93e19a2cea08d45240226c5145e701f0f94b95983'
 IMAGE = 'sha256:6c7a5f2c82b46c1785ecedf006514bf009dd7fcc0437382fba99c6396852ce3b'
 ROM_ID = '0be85df5dc59b5996f9ebb3339c2ac8491bf1015903817278929cc41ec2fbaf2'
 OWNER = 'local_p7u_r4_native_host'
 SERIAL = '/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00'
-INPUT = Path('/share/p7u-r4-input-f9fd9bf')
-CANDIDATE = Path('/share/p7u-r4-stage-f9fd9bf')
-PRIVATE = Path('/share/p7u-r4-deployment-f9fd9bf-once')
+INPUT = Path('/share/p7u-r4-input-afbb7a8')
+CANDIDATE = Path('/share/p7u-r4-stage-afbb7a8')
+PRIVATE = Path('/share/p7u-r4-deployment-afbb7a8-once')
 OPERATIONS = Path('/share/p7u-r4-firmware-operations')
 OPERATION_ID = re.compile(r'[0-9a-f]{32}$')
 PLAN_TTL_SECONDS = 1800
-HELD_ROM = Path('/share/p7u-r4-f9fd9bf-no-prior-rom-continuation')
-FAILED_ATTACH = Path('/share/p7u-r4-f9fd9bf-no-prior-attach')
-FLOOR_HOLD = Path('/share/p7u-r4-f9fd9bf-no-prior-floor')
+HELD_ROM = Path('/share/p7u-r4-afbb7a8-no-prior-rom-continuation')
+FAILED_ATTACH = Path('/share/p7u-r4-afbb7a8-no-prior-attach')
+FLOOR_HOLD = Path('/share/p7u-r4-afbb7a8-no-prior-floor')
 FAILED_PRIVATE = Path('/share/p7u-pr154-deployment-2499154')
 FAILED_PACKAGE_PIN = 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f'
 DATA = Path('/homeassistant/zigbee2mqtt')

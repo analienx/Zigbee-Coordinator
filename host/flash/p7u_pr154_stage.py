@@ -13,7 +13,7 @@ import re
 import tarfile
 
 SHARE = Path('/share')
-INPUT = SHARE/'p7u-r4-input-f9fd9bf'
+INPUT = SHARE/'p7u-r4-input-afbb7a8'
 NAMES = {'installed-candidate.json', 'installed-app.hex', 'installed-handoff.bin',
          'installed-plan.json', 'installed-result.json', 'installed-before.bin',
          'management.json', 'historical-backup.json'}
@@ -31,7 +31,7 @@ def pin(value):
     return value
 
 
-def transfer(archive_pin): return SHARE/('p7u-r4-f9fd9bf-transfer-'+pin(archive_pin)[:16])
+def transfer(archive_pin): return SHARE/('p7u-r4-afbb7a8-transfer-'+pin(archive_pin)[:16])
 
 
 def safe_name(value):
@@ -76,7 +76,7 @@ def install(archive_pin, package_pin, input_pin):
     archive = root/'payload.tar'
     need(archive.is_file() and not archive.is_symlink() and archive.stat().st_size < 32*1024*1024, 'ARCHIVE')
     need(digest(archive.read_bytes()) == archive_pin, 'ARCHIVE_HASH')
-    destination = SHARE/('p7u-r4-f9fd9bf-operator-'+package_pin[:16])
+    destination = SHARE/('p7u-r4-afbb7a8-operator-'+package_pin[:16])
     need(not destination.exists() and not destination.is_symlink() and not INPUT.is_symlink(), 'TARGET_EXISTS')
     reuse_input = INPUT.exists()
     if reuse_input: verify(INPUT, 'INPUT.json', input_pin, NAMES)
@@ -94,7 +94,7 @@ def install(archive_pin, package_pin, input_pin):
             once(target.parent, target.name, t.extractfile(m).read())
     package = verify(root/'package', 'PACKAGE.json', package_pin)
     verify(root/'input', 'INPUT.json', input_pin, NAMES)
-    need(package['firmware_source_sha'] == 'f9fd9bffa7161b576fecf07d1473eeff8c1f5035' and
+    need(package['firmware_source_sha'] == 'afbb7a8445f0454d53038ed34b4110fa29a5d671' and
          package['arm64_reader'] == 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4', 'PACKAGE_CLASS')
     os.chmod(root/'package/security-reader-aarch64', 0o700)
     os.rename(root/'package', destination)

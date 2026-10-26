@@ -35,7 +35,7 @@ def main():
     source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     assert source == os.environ['OPERATOR_SOURCE_SHA']
     c = json.loads((args.candidate/'candidate.json').read_bytes())
-    assert c['source_sha'] == 'f9fd9bffa7161b576fecf07d1473eeff8c1f5035'
+    assert c['source_sha'] == 'afbb7a8445f0454d53038ed34b4110fa29a5d671'
     assert sha(args.candidate/'security-reader.c') == 'a8bbbf32add1cf79a2ddb2370f06ff8f1cdc53279dc5c953f595d5674aed25e7'
     args.out.mkdir(exist_ok=False)
     for directory in ('release', 'release/rom_writer', 'qualification', 'b0/tools', 'b1/tools'):
@@ -65,7 +65,7 @@ def main():
             assert bad.returncode != 0 and not bad.stdout
     subprocess.run(['python', '-m', 'pip', 'install', '--no-compile', '--target', str(args.out/'vendor'),
                     'pyserial==3.5', 'pyserial-asyncio==0.6'], check=True)
-    report = {'schema': 'p7u-r4-f9fd9bf-ha-package-v1', 'operator_source_sha': source,
+    report = {'schema': 'p7u-r4-afbb7a8-ha-package-v1', 'operator_source_sha': source,
               'firmware_source_sha': c['source_sha'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'arm64_reader': 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4',
               'hardware_tested': False,

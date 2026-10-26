@@ -545,8 +545,8 @@ if __name__ == '__main__': unittest.main()
 
 class FirmwareFirstQuiescentGate(unittest.TestCase):
     def test_exact_candidate_pin_and_fresh_operation_path(self):
-        self.assertEqual(op.SOURCE, 'f9fd9bffa7161b576fecf07d1473eeff8c1f5035')
-        self.assertEqual(op.CANDIDATE_PIN, 'ca470f906528976f053c788de6373fcd5397330ab9dcb9bfb500b94f6389e473')
+        self.assertEqual(op.SOURCE, 'afbb7a8445f0454d53038ed34b4110fa29a5d671')
+        self.assertEqual(op.CANDIDATE_PIN, 'ff77c12ef20a2e54ab3d4bb93e19a2cea08d45240226c5145e701f0f94b95983')
         self.assertNotIn('2499154', str(op.PRIVATE))
         self.assertNotIn('2499154', str(op.INPUT))
     def test_running_host_cannot_be_quiescent(self):

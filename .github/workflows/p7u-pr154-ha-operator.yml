@@ -1,4 +1,4 @@
-name: P7U R4 f9fd9bf flash operator qualification (NO HARDWARE)
+name: P7U R4 afbb7a8 flash operator qualification (NO HARDWARE)
 on:
   pull_request:
     paths:
@@ -33,16 +33,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download 40226161422 --repo analienx/Zigbee-Coordinator --name p7u-stock20260311-candidate-f9fd9bffa7161b576fecf07d1473eeff8c1f5035 --dir /tmp/r4-f9fd9bf-candidate
+          gh run download 40280580605 --repo analienx/Zigbee-Coordinator --name p7u-stock20260311-candidate-afbb7a8445f0454d53038ed34b4110fa29a5d671 --dir /tmp/r4-afbb7a8-candidate
           gh run download 40218192163 --repo analienx/Zigbee-Coordinator --name p7u-pr154-ha-operator-1b1298463bec29e0bef265e33cc6a80f8b6ffaac --dir /tmp/qualified-reader-package
-          chmod +x /tmp/r4-f9fd9bf-candidate/security-reader-linux
+          chmod +x /tmp/r4-afbb7a8-candidate/security-reader-linux
       - name: Package reviewed sources and retain separately qualified byte-pinned ARM64 reader
         env:
           PYTHONPATH: .
-        run: python tools/package_p7u_pr154_ha.py --candidate /tmp/r4-f9fd9bf-candidate --out /tmp/p7u-r4-f9fd9bf-ha-operator --reader-package /tmp/qualified-reader-package
+        run: python tools/package_p7u_pr154_ha.py --candidate /tmp/r4-afbb7a8-candidate --out /tmp/p7u-r4-afbb7a8-ha-operator --reader-package /tmp/qualified-reader-package
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: p7u-r4-f9fd9bf-ha-operator-${{ env.OPERATOR_SOURCE_SHA }}
-          path: /tmp/p7u-r4-f9fd9bf-ha-operator
+          name: p7u-r4-afbb7a8-ha-operator-${{ env.OPERATOR_SOURCE_SHA }}
+          path: /tmp/p7u-r4-afbb7a8-ha-operator
           if-no-files-found: error
           retention-days: 30
