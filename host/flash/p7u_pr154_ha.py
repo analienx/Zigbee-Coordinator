@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
 import tarfile
@@ -32,6 +33,9 @@ SERIAL = '/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00
 INPUT = Path('/share/p7u-r4-input-f9fd9bf')
 CANDIDATE = Path('/share/p7u-r4-stage-f9fd9bf')
 PRIVATE = Path('/share/p7u-r4-deployment-f9fd9bf-once')
+OPERATIONS = Path('/share/p7u-r4-firmware-operations')
+OPERATION_ID = re.compile(r'[0-9a-f]{32}$')
+PLAN_TTL_SECONDS = 1800
 HELD_ROM = Path('/share/p7u-r4-f9fd9bf-no-prior-rom-continuation')
 FAILED_ATTACH = Path('/share/p7u-r4-f9fd9bf-no-prior-attach')
 FLOOR_HOLD = Path('/share/p7u-r4-f9fd9bf-no-prior-floor')
@@ -51,6 +55,59 @@ class Hold(RuntimeError):
 def need(ok, reason):
     if not ok:
         raise Hold('P7U_DEPLOY_HOLD_' + reason)
+
+
+def select_operation(operation_id=None, *, create=False):
+    # This is called under the existing shared lifecycle lock. Prior journals
+    # are never removed, mutated, renamed or replayed after expiry.
+    if not OPERATIONS.exists():
+        need(create and not OPERATIONS.is_symlink(), 'OPERATION_ROOT_MISSING')
+        OPERATIONS.mkdir(mode=0o700)
+    private_root(OPERATIONS)
+    if create:
+        need(operation_id is None, 'OPERATION_ID_CLIENT_SELECTED')
+        for _ in range(4):
+            selected = secrets.token_hex(16)
+            target = OPERATIONS/selected
+            if not target.exists() and not target.is_symlink():
+                return selected, target
+        raise Hold('P7U_DEPLOY_HOLD_OPERATION_ID_COLLISION')
+    need(isinstance(operation_id, str) and
+         OPERATION_ID.fullmatch(operation_id) is not None, 'OPERATION_ID')
+    target = OPERATIONS/operation_id
+    private_root(target)
+    return operation_id, target
+
+
+def operation_status():
+    # Read-only and sanitized; no secret records or identities.
+    private_root(PRIVATE)
+    p = load(PRIVATE/'plan.json')
+    if PRIVATE.parent == OPERATIONS:
+        need(p.get('operation_id') == PRIVATE.name, 'OPERATION_PLAN_BINDING')
+    elapsed = time.time() - p['created_at']
+    if (PRIVATE/'serving-accepted.json').exists():
+        state = 'SERVING_ACCEPTED'
+    elif (PRIVATE/'started-pending-serving.json').exists():
+        state = 'HOST_RUNNING_PENDING_STARTUP'
+    elif (PRIVATE/'boot-intent.json').exists():
+        state = 'BOOT_DISPATCHED_PENDING_OR_UNKNOWN'
+    elif (PRIVATE/'verified-write.json').exists():
+        state = 'WRITE_VERIFIED_STILL_IN_ROM'
+    elif (PRIVATE/'execute-intent.json').exists():
+        state = 'EXECUTION_ADMISSION_CONSUMED'
+    elif elapsed >= PLAN_TTL_SECONDS or elapsed < 0:
+        state = 'EXPIRED_UNUSED'
+    else:
+        state = 'PREPARED'
+    if (PRIVATE/'hold.json').exists():
+        state = 'HELD_WITH_REASON'
+    return {'status': state, 'operation_id': PRIVATE.name,
+            'plan_sha256': sha(canonical(p)),
+            'expires_at': p['created_at'] + PLAN_TTL_SECONDS,
+            'execution_admission_consumed': (PRIVATE/'execute-intent.json').exists(),
+            'boot_dispatched': (PRIVATE/'boot-intent.json').exists(),
+            'firmware_source': SOURCE}
 
 
 def canonical(value):
@@ -404,8 +461,9 @@ def plan(package, package_pin, input_pin, ha):
     need(not PRIVATE.exists(), 'OPERATION_EXISTS')
     PRIVATE.mkdir(mode=0o700)
     durable(PRIVATE, 'reader-baseline-check.json', baseline_check)
-    p = {'schema': 'p7u-r4-f9fd9bf-firmware-first-v1', 'source': SOURCE, 'installed': INSTALLED,
-         'created_at': time.time(), 'package_pin': package_pin, 'input_pin': input_pin,
+    p = {'schema': 'p7u-r4-firmware-first-operation-v2', 'source': SOURCE, 'installed': INSTALLED,
+         'created_at': time.time(), 'operation_id': PRIVATE.name if PRIVATE.parent == OPERATIONS else None,
+         'package_pin': package_pin, 'input_pin': input_pin,
          'owner': owner, 'management_sha256': management, 'installed_plan_sha256': old.manifest['plan_sha256'],
          'installed_result_sha256': sha(canonical(result)), 'prior_verified_image_sha256': sha(expected),
          'scope': 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG', 'boot_separate': True,
@@ -413,11 +471,16 @@ def plan(package, package_pin, input_pin, ha):
          'quiescent_provenance_sha256': quiescent, 'rom_continuation_sha256': rom_continuation,
          'bounded_reentry_sha256': reentry}
     durable(PRIVATE, 'plan.json', p)
-    return {'status': 'PREPARED_OWNER_UNCHANGED', 'plan_sha256': sha(canonical(p)), 'source': SOURCE}
+    return {'status': 'PREPARED_OWNER_UNCHANGED', 'plan_sha256': sha(canonical(p)),
+            'operation_id': p['operation_id'],
+            'expires_at': p['created_at'] + PLAN_TTL_SECONDS,
+            'source': SOURCE}
 
 
 def check_plan(package, pin):
     private_root(PRIVATE); p = load(PRIVATE/'plan.json')
+    if PRIVATE.parent == OPERATIONS:
+        need(p.get('operation_id') == PRIVATE.name, 'OPERATION_PLAN_BINDING')
     need(sha(canonical(p)) == pin and p['source'] == SOURCE and p['installed'] == INSTALLED and
          p['scope'] == 'CHANGED_APP_AND_PAIRED_AC000_PRESERVE_NV_CCFG', 'PLAN_PIN')
     sealed_tree(package, 'PACKAGE.json', p['package_pin'])
@@ -475,7 +538,7 @@ def restore_pre_bsl(package, package_pin, pin, ha):
 
 async def deploy(package, pin, ha):
     p = check_plan(package, pin)
-    need(0 <= time.time()-p['created_at'] < 1800, 'PLAN_EXPIRED')
+    need(0 <= time.time()-p['created_at'] < PLAN_TTL_SECONDS, 'PLAN_EXPIRED')
     need(not (PRIVATE/'execute-intent.json').exists(), 'EXECUTION_CONSUMED')
     t, sec, reconcile, factory, sparse = modules(package)
     old, prior, result, expected = installed(t)
@@ -874,7 +937,8 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'status'))
+    parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
     parser.add_argument('--input-pin')
@@ -886,20 +950,23 @@ def main():
     lock = os.open('/share/p7u-lifecycle/private/exclusive-manager.lock', os.O_RDWR | os.O_NOFOLLOW)
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        global PRIVATE
         if a.action == 'plan':
-            need(a.input_pin is not None and a.plan_pin is None, 'PLAN_ARGUMENTS')
+            need(a.input_pin is not None and a.plan_pin is None and
+                 a.operation_id is None, 'PLAN_ARGUMENTS')
+            operation_id, PRIVATE = select_operation(create=True)
             result = plan(a.package, a.package_pin, a.input_pin, HA())
         else:
-            need(a.plan_pin is not None and a.input_pin is None, 'EXECUTE_ARGUMENTS')
-            if a.action == 'restore-pre-bsl':
-                result = restore_pre_bsl(a.package, a.package_pin, a.plan_pin, HA())
-            elif a.action == 'startup-recovery':
-                result = startup_recovery(a.package, a.package_pin, a.plan_pin, HA())
-            elif a.action == 'rollback-plan': result = rollback_plan(a.package, a.package_pin, a.plan_pin, HA())
-            elif a.action == 'rollback-write': result = asyncio.run(rollback_write(a.package, a.plan_pin, HA()))
-            elif a.action == 'rollback-start': result = rollback_start(a.package, a.plan_pin, HA())
+            need(a.input_pin is None, 'EXECUTE_ARGUMENTS')
+            operation_id, PRIVATE = select_operation(a.operation_id)
+            if a.action == 'status':
+                need(a.plan_pin is None, 'STATUS_ARGUMENTS')
+                result = operation_status()
             else:
-                result = asyncio.run(deploy(a.package, a.plan_pin, HA())) if a.action == 'deploy' else boot(a.package, a.plan_pin, HA())
+                need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
+                result = (asyncio.run(deploy(a.package, a.plan_pin, HA()))
+                          if a.action == 'deploy' else boot(a.package, a.plan_pin, HA()))
+
         print(json.dumps(result), flush=True)
     finally:
         os.close(lock)

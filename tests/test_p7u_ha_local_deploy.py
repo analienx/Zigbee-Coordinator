@@ -565,3 +565,57 @@ class FirmwareFirstQuiescentGate(unittest.TestCase):
         with self.assertRaisesRegex(op.Hold, 'QUIESCENT_APP_VERSION'):
             op.quiescent_provenance(ha, {'running': False, 'image': op.IMAGE})
         ha.proof.assert_not_called()
+
+
+class ImmutableOperationLifecycle(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.root.chmod(0o700)
+        self.ops = self.root/"operations"
+        p=patch.object(op,"OPERATIONS",self.ops)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_expired_unused_operation_is_never_deleted_or_reused(self):
+        old_id,old_path = op.select_operation(create=True)
+        self.assertRegex(old_id,r"^[0-9a-f]{32}$")
+        old_path.mkdir(mode=0o700)
+        old_plan={"created_at":time.time()-3600,"operation_id":old_id}
+        op.durable(old_path,"plan.json",old_plan)
+        with patch.object(op,"PRIVATE",old_path):
+            receipt=op.operation_status()
+            self.assertEqual(receipt["status"],"EXPIRED_UNUSED")
+            self.assertFalse(receipt["execution_admission_consumed"])
+        new_id,new_path=op.select_operation(create=True)
+        self.assertNotEqual(old_id,new_id)
+        self.assertNotEqual(old_path,new_path)
+        self.assertTrue((old_path/"plan.json").exists())
+        self.assertFalse(new_path.exists())
+        with self.assertRaisesRegex(op.Hold,"PRIVATE_ROOT"):
+            with patch.object(op,"PRIVATE",new_path):
+                op.operation_status()
+
+    def test_exact_existing_operation_id_required(self):
+        old_id,old_path=op.select_operation(create=True)
+        old_path.mkdir(mode=0o700)
+        self.assertEqual(op.select_operation(old_id),(old_id,old_path))
+        for ident in ("../"+old_id,"a"*31,"A"*32,old_id+"x","not_hex"):
+            with self.subTest(ident=ident):
+                with self.assertRaisesRegex(op.Hold,"OPERATION_ID"):
+                    op.select_operation(ident)
+
+    def test_status_never_claims_boot_success_from_dispatch(self):
+        opid,path=op.select_operation(create=True)
+        path.mkdir(mode=0o700)
+        plan={"created_at":time.time()-4000,"operation_id":opid}
+        op.durable(path,"plan.json",plan)
+        with patch.object(op,"PRIVATE",path):
+            self.assertEqual(op.operation_status()["status"],"EXPIRED_UNUSED")
+            op.durable(path,"execute-intent.json",{"plan_sha256":"t"})
+            self.assertEqual(op.operation_status()["status"],"EXECUTION_ADMISSION_CONSUMED")
+            op.durable(path,"boot-intent.json",{"plan_sha256":"t"})
+            self.assertEqual(op.operation_status()["status"],"BOOT_DISPATCHED_PENDING_OR_UNKNOWN")
+            op.durable(path,"started-pending-serving.json",{"source":op.SOURCE})
+            self.assertEqual(op.operation_status()["status"],"HOST_RUNNING_PENDING_STARTUP")
