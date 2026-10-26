@@ -84,6 +84,7 @@ static UART2_Handle UART2_open(int id,const UART2_Params *p){
 int main(void){
     UART2_Params params={0};
 '''
+    main+='    (void)&B4_NpiUartTxFinishedCallback; (void)&b1_startup_uart_event;\n'
     main+=init+"\n"
     main+=r'''
     assert(uartHandle==(void*)1);assert(installed!=0);
