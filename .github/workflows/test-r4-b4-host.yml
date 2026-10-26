@@ -42,6 +42,7 @@ jobs:
           python -m pip install paho-mqtt==2.1.0
           python host/r4-b4/test-p7u-host-integrity.py -v
           python host/r4-b4/test-p7u-f2-acceptance.py -v
+          python host/r4-b4/test-p7u-f2-freshness.py -v
           python host/r4-b4/test-p7u-passive-incidents.py -v
           python -m py_compile host/r4-b4/p7u_host_integrity.py
           python host/r4-b4/ha-addon/test-p7u-lifecycle-core.py -v
