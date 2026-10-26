@@ -77,11 +77,11 @@ int main(void){
  queue_reject=1u;
  MT_BuildAndSendZToolResponse(0x64u,0u,1u,&status);
  assert(B4_AfRspProduced==2u && B4_AfRspEnqueued==1u);
- assert(B4_AfRspSendFailed==1u && freed==1u && held==1u);
+ assert(B4_AfRspSendFailed==1u && freed==1u && held==0u);
  queue_reject=0u;allocate_fail=1u;
  MT_BuildAndSendZToolResponse(0x64u,0u,1u,&status);
  assert(B4_AfRspProduced==3u && B4_AfRspEnqueued==1u);
- assert(B4_AfRspAllocFailed==1u && held==2u && freed==1u);
+ assert(B4_AfRspAllocFailed==1u && held==0u && freed==1u);
  allocate_fail=0u;
  MT_BuildAndSendZToolResponse(0x63u,0u,1u,&status);
  assert(B4_AfRspProduced==3u && B4_AfRspEnqueued==1u);
@@ -112,6 +112,8 @@ def exercise(sdk):
     for needle in ("B4_SysAfResponseTrace();","case 0xF3:",
                    "MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF3u"):
         if sys.count(needle)!=1:raise ValueError("AF_TRACE_MISSING_"+needle)
+    if "b1_management_transport_failed(" in s or "b1_management_transport_failed(" in task:
+        raise ValueError("AF_LOGICAL_RESPONSE_FAILURE_MUST_NOT_LATCH_PHYSICAL_UART")
     if not compile_run(s,"positive"):raise ValueError("AF_MT_POSITIVE_BEHAVIOR_FAILED")
     mutants=[
       ("ignored_send_status",s.replace("if (OsalPort_msgSend(npiTaskID, pRspMsg) != 0u)",
@@ -119,11 +121,15 @@ def exercise(sdk):
       ("leaked_failed_send",s.replace("(void)OsalPort_msgDeallocate(pRspMsg);",
                                       "(void)0;",1)),
       ("unreported_send_failure",s.replace(
-            "            b1_management_transport_failed(B1_ERROR_NPI_QUEUE);",
-            "            (void)0;",1)),
+            "if (afReg) B4_AfRspTick(&B4_AfRspSendFailed);",
+            "if (afReg) (void)0;",1)),
       ("unreported_alloc_failure",s.replace(
-            "        if (afReg) B4_AfRspTick(&B4_AfRspAllocFailed);\n        b1_management_transport_failed(B1_ERROR_NPI_QUEUE);",
-            "        if (afReg) B4_AfRspTick(&B4_AfRspAllocFailed);\n        (void)0;",1)),
+            "if (afReg) B4_AfRspTick(&B4_AfRspAllocFailed);",
+            "if (afReg) (void)0;",1)),
+      ("fatal_mt_response_failure",s.replace(
+            "(void)OsalPort_msgDeallocate(pRspMsg);",
+            "(void)OsalPort_msgDeallocate(pRspMsg);\n"
+            "            b1_management_transport_failed(B1_ERROR_NPI_QUEUE);",1)),
     ]
     for name,mutant in mutants:
         if mutant==s:raise ValueError("AF_MUTATION_FAILED_"+name)

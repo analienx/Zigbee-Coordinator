@@ -22,8 +22,6 @@ def apply(sdk):
     c=sdk/CLIENT
     source=c.read_text()
     before[CLIENT]=hashlib.sha256(source.encode()).hexdigest()
-    source=one(source,'#include "npi_data.h"\n','#include "npi_data.h"\n#include "b1_management.h"\n',
-               "CLIENT_B1_HEADER")
     source=one(source,'static uint8_t npiTaskID;\n','''static uint8_t npiTaskID;
 
 /* Source-bounded response lifecycle. All counters are RAM-only and
@@ -60,7 +58,7 @@ static void B4_AfRspTick(volatile uint32_t *p)
         {
             if (afReg) B4_AfRspTick(&B4_AfRspSendFailed);
             (void)OsalPort_msgDeallocate(pRspMsg);
-            b1_management_transport_failed(B1_ERROR_NPI_QUEUE);
+            /* Logical queue rejection is not a physical UART hardware failure. */
         }
         else if (afReg)
         {
@@ -70,7 +68,7 @@ static void B4_AfRspTick(volatile uint32_t *p)
     else
     {
         if (afReg) B4_AfRspTick(&B4_AfRspAllocFailed);
-        b1_management_transport_failed(B1_ERROR_NPI_QUEUE);
+        /* Transient MT allocation failure must not disable UART. */
     }
     return;
 }''',"CLIENT_SEND_AND_FAILURE")
@@ -144,7 +142,7 @@ static void NPITask_processStackMsg(uint8_t *pMsg)
                 else
                 {
                     B4_AfNpiTick(&B4_AfRspTlRejected);
-                    b1_management_transport_failed(B1_ERROR_NPI_QUEUE);
+                    /* Keep native NPI/UART responsive after logical TX rejection. */
                 }
             }
         }
