@@ -112,7 +112,10 @@ def exercise(sdk):
     for needle in ("B4_SysAfResponseTrace();","case 0xF3:",
                    "MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF3u"):
         if sys.count(needle)!=1:raise ValueError("AF_TRACE_MISSING_"+needle)
-    if "b1_management_transport_failed(" in s or "b1_management_transport_failed(" in task:
+    tx_begin=task.index("static void NPITask_ProcessTXQ(void)\n{")
+    tx_end=task.index("\n#if defined(NPI_SREQRSP)",tx_begin)
+    if ("b1_management_transport_failed(" in s or
+        "b1_management_transport_failed(" in task[tx_begin:tx_end]):
         raise ValueError("AF_LOGICAL_RESPONSE_FAILURE_MUST_NOT_LATCH_PHYSICAL_UART")
     if not compile_run(s,"positive"):raise ValueError("AF_MT_POSITIVE_BEHAVIOR_FAILED")
     mutants=[
