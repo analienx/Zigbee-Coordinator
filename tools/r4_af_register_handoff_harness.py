@@ -104,7 +104,7 @@ int main(void){
 def exercise(sdk):
     sdk=Path(sdk)
     s=(sdk/CLIENT).read_text()
-    task=(sdk/TASK).read_text();sys=(sdk/SYS).read_text();b1=(sdk/B1).read_text()
+    task=(sdk/TASK).read_text();sys=(sdk/SYS).read_text()
     for requirement in ("B4_AfRspNpiReceived","B4_AfRspFramedQueued",
                         "B4_AfRspFramingFailed","B4_AfRspDequeued","B4_AfRspTlRejected"):
         if requirement not in task or requirement not in sys:
@@ -112,8 +112,6 @@ def exercise(sdk):
     for needle in ("B4_SysAfResponseTrace();","case 0xF3:",
                    "MT_BuildAndSendZToolResponse(MT_SRSP_SYS, 0xF3u"):
         if sys.count(needle)!=1:raise ValueError("AF_TRACE_MISSING_"+needle)
-    if "frame[2] == 0xF3u" not in b1:
-        raise ValueError("AF_F3_HOLD_EXACT_ADMISSION_MISSING")
     if not compile_run(s,"positive"):raise ValueError("AF_MT_POSITIVE_BEHAVIOR_FAILED")
     mutants=[
       ("ignored_send_status",s.replace("if (OsalPort_msgSend(npiTaskID, pRspMsg) != 0u)",

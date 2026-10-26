@@ -217,13 +217,11 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
             expected.get(name)))
         if earlier is not None:beforehash[name]=earlier
         afterhash[name]=hashlib.sha256((sdk/name).read_bytes()).hexdigest()
-    # Include previously unmodified TI npi_client_mt.c and common NV unit
-    # re-hashes in the exact-source attestation; no hidden untracked edits.
+    # Include modified TI npi_client_mt.c in exact-source attestation.
+    # Never change the qualified native B1 management C security seal.
     af_client="source/ti/zstack/npi/npi_client_mt.c"
-    af_b1="source/ti/common/nv/b1_management.c"
     afterhash[af_client]=hashlib.sha256((sdk/af_client).read_bytes()).hexdigest()
-    afterhash[af_b1]=hashlib.sha256((sdk/af_b1).read_bytes()).hexdigest()
-    for name in (af_client,af_b1):
+    for name in (af_client,):
         if afterhash[name] != af_handoff["source_modified_sha256"][name]:
             raise ValueError("AF_TRACE_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]

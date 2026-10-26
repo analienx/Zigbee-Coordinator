@@ -202,25 +202,8 @@ static void B4_SysAfResponseTrace(void)
     p.write_text(s,encoding="utf8",newline="")
     after[SYS]=hashlib.sha256(s.encode()).hexdigest()
 
-    p=sdk/B1;s=p.read_text();before[B1]=hashlib.sha256(s.encode()).hexdigest()
-    marker='''    if (frame[1] == 0x21u && frame[2] == 0xF2u)
-    {
-'''
-    s=one(s,marker,'''    /* Exact empty read-only F3 AF transport evidence even in HOLD. */
-    if (frame[1] == 0x21u && frame[2] == 0xF3u)
-    {
-        if (frame[0] != 0u)
-        {
-            *rpc_error = 4u;
-            return B1_MT_REJECT;
-        }
-        return B1_MT_CONTINUE;
-    }
-'''+marker,"F3_HOLD_READ_ONLY")
-    p.write_text(s,encoding="utf8",newline="")
-    after[B1]=hashlib.sha256(s.encode()).hexdigest()
     return {"status":"AF_REGISTER_REAL_MT_NPI_OUTBOUND_FAILURE_PATH_CORRECTED",
             "source_modified_sha256":after,"source_before_sha256":before,
             "no_new_serial_owner":True,"no_nv_mutations":True,
-            "source_trace_abi":"SYS_F3_AFR1_48_BYT_RAMP_ONLY",
+            "source_trace_abi":"SYS_F3_AFR1_48_BYTE_RAM_ONLY_NORMAL_MT",
             "loss_paths":["producer_alloc","producer_msg_send","npi_frame","npi_queue_rec","npi_tl_submit"]}
