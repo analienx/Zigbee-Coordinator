@@ -387,8 +387,14 @@ test("F2 admission: live AREQ callbacks do not monopolize idle ZNP SRSP transpor
     );
     assert.equal(znp.queue.isIdle(), true);
     assert.equal(znp.waitress.b4IsIdle(), false); // legacy all-waiter veto
-    assert.equal(znp.b4CanProbe(), true); // no active SRSP; safe to inspect
+    assert.equal(znp.b4CanProbe(), true); // only ordinary AF AREQ is pending
     assert.equal(znp.waitress.waiters.size, 1); // never mutate/clean the AREQ
+    const reset = znp.waitress.waitFor(
+        {type: Type.AREQ, subsystem: Subsystem.SYS, command: "resetInd"}, 10_000
+    );
+    assert.equal(znp.b4CanProbe(), false); // SYS reset AREQ is NOT harmless
+    znp.waitress.remove(reset.ID);
+    assert.equal(znp.b4CanProbe(), true);
     const unknown = znp.waitress.waitFor(
         {type: -1, subsystem: Subsystem.AF, command: "unknown"}, 10_000
     );
