@@ -55,7 +55,7 @@ V4_ADAPTER_METHOD = r"""
             input?.otaActive !== false || typeof input.stillAllowed !== "function" ||
             !input.stillAllowed() || this.closing || !this.queue ||
             this.queue.count() !== 0 || this.interpanLock ||
-            !this.znp.b4CanProbe()) {
+            !this.znp.b4CanProbeV4()) {
             return undefined;
         }
         const now = performance.now();
@@ -291,6 +291,21 @@ def plan(root):
         raise ValueError("v3 diagnostic owner mutex guard count drift")
     znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
+    # F0 remains conservative because its 132-byte response has no nonce.
+    # F2 alone may bypass unrelated AF/ZDO AREQ callbacks and settled
+    # tombstones, but never a live SRSP or an unknown/reset callback.
+    znp = once(
+        znp,
+        '!this.waitress.b4IsIdle())) {',
+        '!(object.command.name === "r4DiagReadOnlyV4" ? this.b4NoBlockingWaiters() : this.waitress.b4IsIdle()))) {',
+    )
+    # For F2 a pre-wire admission veto is NOT a diagnostic failure. Returning
+    # the existing NOT_SUBMITTED code prevents accidental poison/quarantine.
+    znp = once(
+        znp,
+        'throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");',
+        'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 DIAG_NOT_SUBMITTED_BUSY" : "B4 F0 owner unavailable or poisoned inside ZNP mutex");',
+    )
     # The v3 overlay's writer/timer cleanup previously applied only to F0.
     # F2 must use exactly the same tagged waiter's settlement and quarantine.
     znp = once(
