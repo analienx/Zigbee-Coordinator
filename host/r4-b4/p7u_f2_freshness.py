@@ -21,6 +21,7 @@ ALLOWED_REASONS = frozenset((
     "F2_REPLY_TIMEOUT", "PASSIVE_HOST_SREQ_TIMEOUT",
     "DIAGNOSTIC_QUARANTINED", "HOST_NOT_OPERATIONAL",
     "HERDSMAN_UNAVAILABLE", "HERDSMAN_STOPPING", "ADAPTER_DISCONNECTED",
+    "AF_SREQ_TIMEOUT", "ZDO_SREQ_TIMEOUT", "SYS_SREQ_TIMEOUT", "UTIL_SREQ_TIMEOUT",
 ))
 
 
@@ -88,7 +89,12 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 300_000,
         )
     # Never attribute another restarted owner's good F2 to the current process.
     owner = (last.get("hostRunId"), last.get("ownerGeneration"))
-    current = [r for r in rows if (r.get("hostRunId"), r.get("ownerGeneration")) == owner]
+    current = []
+    for r in reversed(rows):
+        if (r.get("hostRunId"), r.get("ownerGeneration")) != owner:
+            break
+        current.append(r)
+    current.reverse()
     report["current_owner_records"] = len(current)
     valid = [r for r in current if r.get("kind") == "VALID"]
     report["valid_f2_current_owner_count"] = len(valid)
