@@ -319,6 +319,10 @@ def prepare_recovery(forward: Transition, *, expected_forward_plan_sha256: str,
     restored = {a: original.snapshot[a:a + SECTOR] for a in original.sectors}
     manifest = copy.deepcopy(original.manifest)
     manifest.pop('plan_sha256')
+    # Recovery has a NEW capture/session. Never inherit the forward sparse
+    # witness or prevent binding a newly observed recovery witness.
+    for key in ('capture_mode', 'sparse_receipt_sha256', 'sparse_previous_sha256'):
+        manifest.pop(key, None)
     manifest.update(plan_kind='RECOVER_ORIGINAL_APP_AND_BOOT_ONLY',
         recovery_of_plan_sha256=expected_forward_plan_sha256,
         capture_sha256=expected_capture_sha256,
