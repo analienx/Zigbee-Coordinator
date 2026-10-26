@@ -260,6 +260,32 @@ class RetainedSecurityTests(unittest.TestCase):
         self.now[1, 1, 356] = record(self.abi, "AddrMgrEntry_t", user=4, extAddr=b"b" * 8)
         self.hold("ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED")
 
+    def test_runtime_upgrade_allows_only_short_address_bytes(self):
+        self.now[1, 1, 9] = record(self.abi, 'AddrMgrEntry_t', user=2, nwkAddr=1234, extAddr=bytes([9])*8)
+        self.hold('ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
+        before = copy.deepcopy(self.now)
+        result = security.evaluate_records(self.now, self.before, self.abi, runtime_upgrade=True)
+        self.assertTrue(result['semantic_checks_passed'], result)
+        self.assertEqual(result['runtime_short_address_changes'], 1)
+        self.assertEqual(self.now, before)
+        for index in (0, 1, 4):  # ownership, native padding, IEEE identity
+            with self.subTest(byte=index):
+                raw = bytearray(before[1, 1, 9]); raw[index] ^= 1
+                self.now[1, 1, 9] = bytes(raw)
+                result = security.evaluate_records(self.now, self.before, self.abi, runtime_upgrade=True)
+                self.assertFalse(result['semantic_checks_passed'])
+
+    def test_runtime_upgrade_still_rejects_counter_regression_and_new_peer(self):
+        self.now[1, 1, 9] = record(self.abi, 'AddrMgrEntry_t', user=2, nwkAddr=1234, extAddr=bytes([9])*8)
+        self.now[1, 7, 0] = record(self.abi, 'nwkSecMaterialDesc_t', FrameCounter=499, extendedPanID=bytes(range(11,19)))
+        r = security.evaluate_records(self.now, self.before, self.abi, runtime_upgrade=True)
+        self.assertEqual(r['reason_codes'], ['NWK_PERSISTED_COUNTER_REGRESSION'])
+        self.now = copy.deepcopy(self.before)
+        self.now[1, 4, 298] = record(self.abi, 'APSME_TCLinkKeyNVEntry_t', txFrmCntr=150,
+            rxFrmCntr=130, extAddr=b'new-peer', keyAttributes=2)
+        r = security.evaluate_records(self.now, self.before, self.abi, runtime_upgrade=True)
+        self.assertEqual(r['reason_codes'], ['TC_RETAINED_SET_CHANGED'])
+
     def test_aps_reference_requires_existing_address_and_security_user(self):
         table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
         table += record(self.abi, "ZDSecMgrEntry_t", ami=9, keyNvId=0)

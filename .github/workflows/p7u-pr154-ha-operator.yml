@@ -1,0 +1,48 @@
+name: P7U R4 4021fff flash operator qualification (NO HARDWARE)
+on:
+  pull_request:
+    paths:
+      - 'host/flash/**'
+      - 'tests/test_p7u_ha_local_deploy.py'
+      - 'tools/package_p7u_pr154_ha.py'
+      - '.github/workflows/p7u-pr154-ha-operator.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+env:
+  OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  qualify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - name: Operator fault and existing transition gates
+        run: |
+          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_r4_stock20260311_transition tests.test_p7u_stock20260311_security_preflight
+          python -m unittest discover -s firmware/slzb-06p7u/r4/release -p test_p7u_usb_current_owner_gate.py -v
+          python -m unittest -v tests.test_p7u_r4_startup_observer tests.test_p7u_r4_completion_observer tests.test_p7u_r4_completion_source
+          PYTHONPATH=tests:. python -m unittest -v tests.test_p7u_usb_sparse_transition
+      - name: Download exact qualified radio artifact and unchanged qualified ARM64 reader
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 40292285146 --repo analienx/Zigbee-Coordinator --name p7u-stock20260311-candidate-4021fff71421884a2a5e6f6455139e36b02ea28a --dir /tmp/r4-4021fff-candidate
+          gh run download 40218192163 --repo analienx/Zigbee-Coordinator --name p7u-pr154-ha-operator-1b1298463bec29e0bef265e33cc6a80f8b6ffaac --dir /tmp/qualified-reader-package
+          chmod +x /tmp/r4-4021fff-candidate/security-reader-linux
+      - name: Package reviewed sources and retain separately qualified byte-pinned ARM64 reader
+        env:
+          PYTHONPATH: .
+        run: python tools/package_p7u_pr154_ha.py --candidate /tmp/r4-4021fff-candidate --out /tmp/p7u-r4-4021fff-ha-operator --reader-package /tmp/qualified-reader-package
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-r4-4021fff-ha-operator-${{ env.OPERATOR_SOURCE_SHA }}
+          path: /tmp/p7u-r4-4021fff-ha-operator
+          if-no-files-found: error
+          retention-days: 30
