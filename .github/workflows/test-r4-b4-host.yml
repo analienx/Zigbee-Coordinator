@@ -130,7 +130,10 @@ jobs:
           assert s.count('!this.#b4Operational') >= 2
           assert 'P7U_B4_COLLECTOR !== "1"' in s
           assert 'this.b4ProbeReadOnlyDiagnosticsV4(true)' in s
-          assert 'setTimeout(() => { void this.#b4Sample(); }, delay)' in s
+          assert 'setTimeout(() => { void this.#b4Sample(); }, nextDelay)' in s
+          assert 'randomInt(60_000, 90_001)' in s
+          assert 'Math.max(60_000, delay)' in s
+          assert 'this.#b4Schedule(60_000)' in s
           assert 'this.#b4Persist(' in s
           assert 'this.#b4StartWorker()' in s
           assert 'this.#b4Worker.postMessage(' in s
