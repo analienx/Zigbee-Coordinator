@@ -150,7 +150,13 @@ def evaluate(rows: list[dict], *, serving: str = "UNKNOWN") -> F2Verdict:
     require(all(isinstance(x, str) and x.isdecimal() for x in elapsed),
             "MONOTONIC_EVIDENCE")
     require(all(x == 4 for x in abi), "ABI")
-    require(all(type(x) is int and x in (0x2c, 0x3f) for x in masks), "COUNTER_VALIDITY")
+    require(all(type(x) is int and x in (0x2c, 0x3f, 0x00ffffec, 0x00ffffff)
+                for x in masks), "COUNTER_VALIDITY")
+    require(all((r.get("minor") in (None, 1) and r.get("validityMask") in (0x2c, 0x3f)) or
+                (r.get("minor") == 2 and r.get("validityMask") in (0x00ffffec, 0x00ffffff)
+                 and type(r.get("mtLifecycle")) is dict and
+                 len(r["mtLifecycle"]) == 18)
+                for r in last), "MINOR_COUNTER_SCHEMA")
     if (len(owner) != 1 or len(host) != 1 or None in owner or None in host):
         return F2Verdict("INSUFFICIENT", "UNKNOWN", serving, None, None, (),
                          valid_count, "records cross host-run or owner generation")
