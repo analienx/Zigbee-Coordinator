@@ -5,6 +5,7 @@ server-generated plan, opens a new ROM session, recaptures NV and checks all88
 CRCs again. It must not repeat BSL entry or reuse the consumed execution intent.
 """
 import hashlib,json
+import re
 
 NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar',
@@ -101,3 +102,19 @@ def consume_reentry(ns,plan_pin):
     root.mkdir(mode=0o700)
     ns['durable'](root,'intent.json',{'new_operation':ns['PRIVATE'].name,'plan_sha256':plan_pin,
           'failed_attach':ns['FAILED_ATTACH'].name,'attempts':1,'action':'FRESH_BSL_ENTRY_AFTER_ZERO_WRITE_ATTACH_TIMEOUT'})
+
+def verified_pair_package(ns,plan_pin):
+    """Find the ORIGINAL sealed writer package from the immutable plan pin."""
+    p=ns['load'](ns['PRIVATE']/'plan.json')
+    ns['need'](ns['sha'](ns['canonical'](p))==plan_pin and p['source']==ns['SOURCE'],
+               'PAIRED_STARTUP_FORWARD_PLAN')
+    pin=p['package_pin']
+    ns['need'](isinstance(pin,str) and re.fullmatch('[0-9a-f]{64}',pin) is not None,'PAIRED_STARTUP_PACKAGE_PIN')
+    matches=list(ns['OPERATIONS'].parent.glob('p7u-paired-operator-????????????-'+pin[:16]))
+    ns['need'](len(matches)==1,'PAIRED_STARTUP_WRITER_PACKAGE')
+    package=matches[0];meta=ns['sealed_tree'](package,'PACKAGE.json',pin)
+    ns['need'](meta['firmware_source_sha']==ns['SOURCE']==meta['paired_host_source_sha'] and
+         meta['paired_host_image']==ns['IMAGE'] and
+         package.name=='p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16],
+         'PAIRED_STARTUP_WRITER_BINDING')
+    return package

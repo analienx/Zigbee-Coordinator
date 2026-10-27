@@ -100,3 +100,10 @@ pinned witness may authorize exactly one fresh BSL entry. A separate immutable
 consumption record is written before dispatch. Any earlier BSL-entry, capture,
 admission or write artifact on the failed attachment rejects this path. The new
 capture must equal the original held image before security and flash admission.
+
+After verified programming, a host timeout waiting for state9 can use the named
+`resume-native` phase once. It verifies the original writer package and write
+receipts, the failed single owner, fresh pristine B1 checkpoints and the retained
+IEEE/key identity. It then requests retained startup once with formation denied,
+observes native state9, releases its temporary serial ownership and starts the
+paired host. The tested existing resume protocol and timeout limits are retained.

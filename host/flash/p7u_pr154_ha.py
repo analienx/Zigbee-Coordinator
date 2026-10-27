@@ -816,7 +816,11 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
 
 def startup_recovery(package, package_pin, pin, ha):
     sealed_tree(package, 'PACKAGE.json', package_pin)
-    old_package = Path('/share/p7u-pr154-operator-263100aae0a71ef3')
+    if globals().get('PAIRED_HOST_VERSION'):
+        from p7u_paired_hold import verified_pair_package
+        old_package=verified_pair_package(globals(),pin)
+    else:
+        old_package = Path('/share/p7u-pr154-operator-263100aae0a71ef3')
     p = verified_write(old_package, pin)
     root = PRIVATE/'guarded-startup-recovery'
     need(not root.exists(), 'STARTUP_RECOVERY_CONSUMED')
@@ -1015,7 +1019,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'resume-native', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1046,8 +1050,9 @@ def main():
                 result = operation_status()
             else:
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
-                result = (asyncio.run(deploy(a.package, a.plan_pin, HA()))
-                          if a.action == 'deploy' else boot(a.package, a.plan_pin, HA()))
+                if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
+                elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
+                else: result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
 
         print(json.dumps(result), flush=True)
     finally:

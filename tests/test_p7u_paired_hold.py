@@ -109,3 +109,20 @@ class ReadonlyHold(unittest.TestCase):
             path=attach/name;path.write_bytes(b'x')
             with self.assertRaisesRegex(ValueError,'FILE_SET'):hold.reentry_provenance(self.ns,self.ha,self.owner)
             path.unlink()
+
+    def test_native_resume_binds_original_writer_package_and_rejects_changed_bytes(self):
+        operations=Path(self.tmp.name)/'operations';operations.mkdir(mode=0o700)
+        source='6'*40
+        meta={'operator_source_sha':source,'firmware_source_sha':self.plan['source'],
+          'paired_host_source_sha':self.plan['source'],'paired_host_image':self.owner['image'],
+          'files':{'x':op.sha(b'original')}}
+        raw=op.canonical(meta);pin=op.sha(raw)
+        package=operations.parent/('p7u-paired-operator-'+source[:12]+'-'+pin[:16]);package.mkdir(mode=0o700)
+        (package/'PACKAGE.json').write_bytes(raw);(package/'x').write_bytes(b'original')
+        plan=dict(self.plan,package_pin=pin);(self.root/'plan.json').write_bytes(op.canonical(plan))
+        ns=dict(self.ns,PRIVATE=self.root,OPERATIONS=operations,sealed_tree=op.sealed_tree)
+        plan_pin=op.sha(op.canonical(plan))
+        self.assertEqual(hold.verified_pair_package(ns,plan_pin),package)
+        with self.assertRaisesRegex(op.Hold,'FORWARD_PLAN'):hold.verified_pair_package(ns,'bad-pin')
+        (package/'x').write_bytes(b'changed')
+        with self.assertRaisesRegex(op.Hold,'FILE_PIN'):hold.verified_pair_package(ns,plan_pin)
