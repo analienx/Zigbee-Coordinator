@@ -217,6 +217,37 @@ class FreshnessTests(unittest.TestCase):
         with self.assertRaises(EvidenceHold):
             analyze([record(1000, hostEvidence=bad)], now_ms=2000)
 
+    def test_f2_v42_stage_deltas_and_epoch_scope(self):
+        fields = ("allProduced", "allEnqueued", "allAllocFailed",
+                  "allSendFailed", "allNpiReceived", "allFramedQueued",
+                  "allFramingFailed", "allTlSubmitted", "allTlRejected",
+                  "afRegProduced", "afRegEnqueued", "afRegAllocFailed",
+                  "afRegSendFailed", "afRegNpiReceived", "afRegFramedQueued",
+                  "afRegFramingFailed", "afRegTlSubmitted", "afRegTlRejected")
+        a = {k: 10 for k in fields}
+        b = {k: 20 for k in fields}
+        q = analyze([f2(1000, 1, minor=2, validityMask=0x00ffffec,
+                        mtLifecycle=a, radioEpochTag="epoch-a"),
+                     f2(2000, 2, minor=2, validityMask=0x00ffffec,
+                        mtLifecycle=b, radioEpochTag="epoch-a")],
+                    now_ms=3000)
+        self.assertEqual(q["native_mt_lifecycle"]["allTlSubmitted"],20)
+        self.assertEqual(q["native_mt_lifecycle_delta"]["allTlSubmitted"],10)
+        self.assertEqual(q["native_mt_delta_status"],
+                         "SAME_OWNER_TOKEN_OBSERVATION_NOT_HARDWARE_ATTESTED")
+        q = analyze([f2(1000, 1, minor=2, validityMask=0x00ffffec,
+                        mtLifecycle=a, radioEpochTag="epoch-a"),
+                     f2(2000, 2, minor=2, validityMask=0x00ffffec,
+                        mtLifecycle=b, radioEpochTag="epoch-b")],
+                    now_ms=3000)
+        self.assertIsNone(q["native_mt_lifecycle_delta"])
+        with self.assertRaises(EvidenceHold):
+            analyze([f2(1000, 1, minor=2, validityMask=0x2c,
+                        mtLifecycle=a)], now_ms=2000)
+        with self.assertRaises(EvidenceHold):
+            analyze([f2(1000, 1, minor=2, validityMask=0x00ffffec,
+                        mtLifecycle={**a, "rawPayload":123})], now_ms=2000)
+
     def test_future_clock_never_fabricates_freshness(self):
         q = analyze([f2(2_000)], now_ms=1_000)
         self.assertEqual(q["f2_freshness"], "CLOCK_UNCERTAIN")
