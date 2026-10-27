@@ -396,3 +396,26 @@ test("expired Waitress entries are not mislabeled live pending work", () => {
                 ...accounting, rawMapEntries: 2018}}}), /HOST_WAITRESS_ACCOUNTING/);
     } finally {x.cleanup();}
 });
+
+test("F2 v4.2 commits exactly 18 named response stages, rejects any nested identifier", () => {
+    const x = dir();
+    try {
+        const state = workerModule.open(x.root);
+        const names = ["allProduced", "allEnqueued", "allAllocFailed",
+            "allSendFailed", "allNpiReceived", "allFramedQueued",
+            "allFramingFailed", "allTlSubmitted", "allTlRejected",
+            "afRegProduced", "afRegEnqueued", "afRegAllocFailed",
+            "afRegSendFailed", "afRegNpiReceived", "afRegFramedQueued",
+            "afRegFramingFailed", "afRegTlSubmitted", "afRegTlRejected"];
+        const counters=Object.fromEntries(names.map((n, i) => [n, i]));
+        const row={...fixture(), minor:2, validityMask:0x00FFFFEC, mtLifecycle:counters};
+        workerModule.commit(state,row);
+        assert.equal(workerModule.open(x.root).records[0].mtLifecycle.allTlSubmitted,7);
+        assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
+            ...counters,rawPayload:"deadbeef"}}),/F2_V42_LIFECYCLE_SHAPE/);
+        assert.throws(()=>workerModule.commit(state,{...row,minor:1}),
+            /F2_V42_LIFECYCLE_SHAPE/);
+        assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
+            ...counters,allProduced:-1}}),/F2_V42_LIFECYCLE_SHAPE/);
+    } finally {x.cleanup();}
+});
