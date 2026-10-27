@@ -133,6 +133,67 @@ def apply(sdk):
     s=one(s,"    payload[157] = 1u; /* v4 ABI minor */",
         "    payload[157] = 2u; /* F2 v4.2 MT/NPI causality */",
         "F2_MINOR")
+    # The steady-state outage was AF_DATA_REQUEST SRSP starvation.
+    # F3 already exposes all nine AF_REGISTER counters; reuse F2 slots
+    # 15..23 for the *frequent* AF data-request family instead.
+    af_data=("Produced","Enqueued","AllocFailed","SendFailed","NpiReceived",
+             "FramedQueued","FramingFailed","TlSubmitted","TlRejected")
+    c=one(c,"volatile uint32_t B4_AfRspProduced = 0u;",
+        "\n".join("volatile uint32_t B4_AfDataRsp"+k+" = 0u;" for k in af_data[:4])+
+        "\nvolatile uint32_t B4_AfRspProduced = 0u;","AFDATA_PRODUCER_DEFS")
+    key="    uint8_t allSrsp = ((cmdType & 0xE0u) == 0x60u);"
+    c=one(c,key,key+
+        "\n    uint8_t afData = (cmdType == 0x64u && cmdId >= 0x01u && cmdId <= 0x03u);",
+        "AFDATA_PRODUCER_CLASS")
+    for tag,needle in (
+        ("Produced","    if (allSrsp) B4_AfRspTick(&B4_AllRspProduced);"),
+        ("SendFailed","            if (allSrsp) B4_AfRspTick(&B4_AllRspSendFailed);"),
+        ("Enqueued","            if (allSrsp) B4_AfRspTick(&B4_AllRspEnqueued);"),
+        ("AllocFailed","        if (allSrsp) B4_AfRspTick(&B4_AllRspAllocFailed);"),
+    ):
+        c=one(c,needle,needle+
+            "\n    if (afData) B4_AfRspTick(&B4_AfDataRsp"+tag+");",
+            "AFDATA_PRODUCER_"+tag)
+    n=one(n,"volatile uint32_t B4_AfRspNpiReceived = 0u;",
+        "\n".join("volatile uint32_t B4_AfDataRsp"+k+" = 0u;" for k in af_data[4:])+
+        "\nvolatile uint32_t B4_AfRspNpiReceived = 0u;","AFDATA_NPI_DEFS")
+    key="    uint8_t allSrspResponse = (pMsg != NULL && (pMsg[1] & 0xE0u) == 0x60u);"
+    n=one(n,key,key+
+        "\n    uint8_t afDataResponse = (pMsg != NULL && pMsg[1] == 0x64u && "
+        "pMsg[2] >= 0x01u && pMsg[2] <= 0x03u);",
+        "AFDATA_NPI_RX_CLASS")
+    for tag,needle in (
+        ("NpiReceived","    if (allSrspResponse) B4_AfNpiTick(&B4_AllRspNpiReceived);"),
+        ("FramedQueued","                    if (allSrspResponse) B4_AfNpiTick(&B4_AllRspFramedQueued);"),
+        ("FramingFailed","          if (allSrspResponse) B4_AfNpiTick(&B4_AllRspFramingFailed);"),
+    ):
+        n=one(n,needle,needle+
+            "\n    if (afDataResponse) B4_AfNpiTick(&B4_AfDataRsp"+tag+");",
+            "AFDATA_NPI_"+tag)
+    key="    if (allSrspResponse && pNPIMsg == NULL) B4_AfNpiTick(&B4_AllRspFramingFailed);"
+    n=one(n,key,key+
+        "\n    if (afDataResponse && pNPIMsg == NULL) B4_AfNpiTick(&B4_AfDataRspFramingFailed);",
+        "AFDATA_NPI_FRAME_NULL")
+    key="            uint8_t allSrspResponse = (recPtr->npiMsg->pBufSize >= 5u &&\n                                  (recPtr->npiMsg->pBuf[2] & 0xE0u) == 0x60u);"
+    n=one(n,key,key+
+        "\n            uint8_t afDataResponse = (recPtr->npiMsg->pBufSize >= 6u && "
+        "recPtr->npiMsg->pBuf[2] == 0x64u && "
+        "recPtr->npiMsg->pBuf[3] >= 0x01u && "
+        "recPtr->npiMsg->pBuf[3] <= 0x03u);",
+        "AFDATA_NPI_TX_CLASS")
+    key="            if (allSrspResponse)\n                B4_AfNpiTick(submitted == recPtr->npiMsg->pBufSize ?\n                    &B4_AllRspTlSubmitted : &B4_AllRspTlRejected);"
+    n=one(n,key,key+
+        "\n            if (afDataResponse)\n"
+        "                B4_AfNpiTick(submitted == recPtr->npiMsg->pBufSize ?\n"
+        "                    &B4_AfDataRspTlSubmitted : &B4_AfDataRspTlRejected);",
+        "AFDATA_TL_SUBMIT")
+    s=one(s,"static uint32_t B4_V4SampleSequence = 0u;",
+        "\n".join("extern volatile uint32_t B4_AfDataRsp"+k+";" for k in af_data)+
+        "\nstatic uint32_t B4_V4SampleSequence = 0u;","AFDATA_F2_EXTERNS")
+    for i,name in enumerate(AF):
+        s=one(s,"    causal["+str(9+i)+"] = B4_AfRsp"+name+";",
+            "    causal["+str(9+i)+"] = B4_AfDataRsp"+af_data[i]+";",
+            "AFDATA_F2_SLOT_"+str(i))
     changed={CLIENT:c,TASK:n,SYS:s}
     for p,data in changed.items():
         (sdk/p).write_text(data,encoding="utf-8",newline="")
@@ -142,7 +203,7 @@ def apply(sdk):
         "uart_extra_requests":0,"no_nv_writes":True,
         "response_abi":"SYS_F2_160_MINOR2",
         "slot6_14":["all_"+k for k in GENERAL],
-        "slot15_23":["af_register_"+k for k in AF],
+        "slot15_23":["af_data_"+k for k in AF],
         "before_sha256":{p:hashlib.sha256(data.encode()).hexdigest()
                          for p,data in original.items()},
         "modified_sha256":{p:hashlib.sha256(data.encode()).hexdigest()
