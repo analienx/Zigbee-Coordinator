@@ -36,6 +36,7 @@ static uint16 msgFragLen = 0;
 static unsigned txPktCount = 0;
 static int lower_response = 0, task_notifications = 0, user_completions = 0;
 static int physical_uart_failure_latch = 0;
+static int cs_depth = 0, cs_unbalanced = 0, task_inside_cs = 0;
 static bool b1_management_transport_unavailable(void) { return physical_uart_failure_latch != 0; }
 static void b1_management_transport_failed(int e) {
  if (e == B1_ERROR_UART_WRITE) physical_uart_failure_latch++;
@@ -46,10 +47,10 @@ static void b1_startup_tx_result(uint16_t size, int submitted) {
 }
 static uint16 TransportTxLen = 0;
 static void (*npiTransmitCB)(int,int) = NULL;
-static void sent_task(int count) { (void)count; task_notifications++; }
+static void sent_task(int count) { (void)count; if(cs_depth!=0)task_inside_cs++; task_notifications++; }
 static TxCallback taskTxCB = sent_task;
-static uint32_t OsalPort_enterCS(void) { return 0; }
-static void OsalPort_leaveCS(uint32_t key) { (void)key; }
+static uint32_t OsalPort_enterCS(void) { cs_depth++; return 0; }
+static void OsalPort_leaveCS(uint32_t key) { (void)key; if(cs_depth<=0)cs_unbalanced++; else cs_depth--; }
 static bool NPITL_checkNpiBusy(void) { return npiTxActive; }
 static uint16 transportWrite(uint16 len) {
  // Model the real UART transport precondition: accepted writes retain TX len.
@@ -86,6 +87,13 @@ int main(void) {
  NPITLUART_writeCallBack(NULL,NULL,12,NULL,4);
  if (npiTxActive || user_completions != 2 ||
      task_notifications != 1 || physical_uart_failure_latch != 1) return 15;
+ // A previously accepted write can finish after B1 physical HOLD.
+ // B1 deliberately suppresses its success: do not let NPI busy remain set.
+ TransportTxLen=12; npiTxActive=true;
+ NPITLUART_writeCallBack(NULL,NULL,12,NULL,UART2_STATUS_SUCCESS);
+ if (npiTxActive || user_completions!=2 ||
+     task_notifications!=2 || physical_uart_failure_latch!=1) return 20;
+ if (cs_depth!=0 || cs_unbalanced!=0 || task_inside_cs!=0) return 21;
  printf("NPI_UART_TX_EXACT_C_LIVENESS_PASS\n");
  return 0;
 }
@@ -111,8 +119,9 @@ static uint8_t TransportTxBuf[256];
 static uint16 TransportTxLen;
 static bool hold = false;
 static int physical_uart_write_attempts = 0;
-static uint32_t OsalPort_enterCS(void) { return 0; }
-static void OsalPort_leaveCS(uint32_t key) { (void)key; }
+static int cs_depth=0, cs_unbalanced=0;
+static uint32_t OsalPort_enterCS(void) { cs_depth++; return 0; }
+static void OsalPort_leaveCS(uint32_t key) { (void)key; if(cs_depth<=0)cs_unbalanced++; else cs_depth--; }
 static bool b1_management_transport_unavailable(void) { return hold; }
 static void b1_management_transport_failed(int err) { (void)err; hold = true; }
 static void b1_startup_tx_submit(const uint8_t *p, uint16 len) {
@@ -133,6 +142,7 @@ int main(void) {
  hold = true; /* B1 physical HOLD after a completed callback error. */
  if (NPITLUART_writeTransport(12) != 0 || physical_uart_write_attempts != 1)
    return 32; /* stale callback cannot race any NEW accepted UART write */
+ if (cs_depth!=0 || cs_unbalanced!=0) return 33;
  puts("B1_HOLD_REAL_UART_SUBMISSION_GUARD_PASS");
  return 0;
 }
@@ -201,12 +211,19 @@ def exercise(sdk):
     gate_mutant_rc,_=run("NEGATIVE_B1_HOLD_BYPASS",_b1_gate_c(gate_mutant))
     if gate_mutant_rc==0:
         raise RuntimeError("B1_HOLD_GATE_MUTANT_NOT_REJECTED")
-    return {"status":"PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_FOUR_MUTANTS",
+    release_cs="    OsalPort_leaveCS(key);"
+    if abort.count(release_cs)!=1:raise RuntimeError("ABORT_CS_RELEASE_SOURCE_DRIFT")
+    missing_release=abort.replace(release_cs,"    /* bad: CS left held during NPI notification */",1)
+    rc,_=run("NEGATIVE_NPI_NOTIFY_UNDER_CS",_c(writer,missing_release,callback))
+    if rc==0:raise RuntimeError("CS_UNBALANCED_MUTANT_NOT_REJECTED")
+    return {"status":"PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_FIVE_MUTANTS",
             "cases":["immediate_rejection_unwedges","accepted_write_completes",
                      "asynchronous_failure_does_not_fake_success",
                      "failed_fragment_clears_dangling_remainder",
                      "next_write_remains_possible"],
-            "negative_mutants":["stuck_busy","inverted_b1_status","missing_b1_abort","b1_hold_bypass"],
+            "negative_mutants":["stuck_busy","inverted_b1_status","missing_b1_abort","b1_hold_bypass","npi_notify_under_cs"],
+            "cs_and_task_notification":"BALANCED_AND_OUTSIDE_CRITICAL_SECTION",
+            "hold_prelatched_success":"B1_FAIL_CLOSED_UNWIND",
             "stale_callback_guard":"B1_HOLD_PREVENTS_NEW_UART_SUBMISSION_AFTER_ERROR",
             "hardware_access":False}
 

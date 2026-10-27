@@ -32,6 +32,39 @@ def extract(s: str, signature: str) -> str:
                 return s[pos:k + 1]
     raise ValueError("UART_TX_LIVENESS_FUNCTION_UNBALANCED_" + signature)
 
+def verify_ti_uart2_callback_ownership(sdk):
+    """Verify exact pinned TI software completion guards, without changing driver."""
+    sdk = Path(sdk)
+    driver = (sdk / "source/ti/drivers/uart2/UART2CC26X2.c").read_text(encoding="utf-8")
+    common = (sdk / "source/ti/drivers/UART2.c").read_text(encoding="utf-8")
+    success = extract(driver, "static void UART2CC26X2_hwiIntWrite(uintptr_t arg)")
+    if (success.count("(object->writeCount == 0) && object->writeInUse") != 1
+            or success.count("object->writeCallback(handle,") != 1
+            or success.count("object->writeInUse = false;") != 1):
+        raise ValueError("TI_UART2_SUCCESS_SINGLE_CALLBACK_GUARD_DRIFT")
+    if success.index("object->writeInUse = false;") > success.index("object->writeCallback(handle,"):
+        raise ValueError("TI_UART2_SUCCESS_CALLBACK_OWNERSHIP_ORDER")
+    cancel = extract(common, "void __attribute__((weak)) UART2_writeCancel(UART2_Handle handle)")
+    if (cancel.count("if (object->writeInUse)") != 1
+            or cancel.count("object->writeCallback(handle,") != 1
+            or "UART2_STATUS_ECANCELLED" not in cancel):
+        raise ValueError("TI_UART2_CANCEL_SINGLE_CALLBACK_GUARD_DRIFT")
+    if cancel.index("object->writeInUse = false;") > cancel.index("object->writeCallback(handle,"):
+        raise ValueError("TI_UART2_CANCEL_CALLBACK_OWNERSHIP_ORDER")
+    if ("return UART2_STATUS_EINUSE;" not in common or
+            "object->writeInUse          = true;" not in common):
+        raise ValueError("TI_UART2_WRITE_IN_USE_ADMISSION_DRIFT")
+    return {
+        "schema": "p7u-ti-8_33-callback-ownership-v1",
+        "uart2_driver_sha256": hashlib.sha256(driver.encode()).hexdigest(),
+        "uart2_generic_sha256": hashlib.sha256(common.encode()).hexdigest(),
+        "normal": "IN_USE_AND_ZERO_COUNT_CLEARED_BEFORE_CALLBACK",
+        "cancel": "IN_USE_CLEARED_BEFORE_CALLBACK",
+        "physical_irq_duplication_disproved": False,
+        "hardware_or_nv_changed": False,
+    }
+
+
 def apply(sdk):
     sdk = Path(sdk)
     originals = {name: (sdk / name).read_text(encoding="utf-8") for name in (TL, UART)}

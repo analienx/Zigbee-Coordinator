@@ -198,11 +198,13 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
 
     # Correct TI's conditional TX-active latch with the ACTUAL composed UART.
     # An unstarted write must not leave the NPI task blocked forever.
-    from r4_uart_tx_liveness import apply as patch_uart_tx_liveness
+    from r4_uart_tx_liveness import (apply as patch_uart_tx_liveness,
+                                     verify_ti_uart2_callback_ownership)
+    ti_callback_source = verify_ti_uart2_callback_ownership(sdk)
     tx_liveness = patch_uart_tx_liveness(sdk)
     from r4_uart_tx_liveness_harness import exercise as exercise_tx_liveness
     tx_c = exercise_tx_liveness(sdk)
-    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_FOUR_MUTANTS":
+    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_FIVE_MUTANTS":
         raise ValueError("R4_UART_TX_FAILURE_UNWIND_NOT_SOURCE_PROVEN")
     for name in (TL, UART):
         if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != tx_liveness["modified_sha256"][name]:
@@ -275,6 +277,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "f2_v42_causal_response_path":f2_causal,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
+        "ti_uart2_callback_ownership":ti_callback_source,
         "b1_f1_and_b4_f0_f2_dispatch":True,
         "b1_b4_uart_single_owner_tx_finished_fanout":True,
         "b1_f2_hold_exception_enabled_for_disposable_composite":True,
