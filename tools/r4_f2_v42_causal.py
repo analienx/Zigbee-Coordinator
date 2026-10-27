@@ -80,8 +80,11 @@ def apply(sdk):
         "                    if (allSrspResponse) B4_AfNpiTick(&B4_AllRspFramedQueued);",
         "NPI_QUEUE_COUNT")
     fail="if (afResponse) B4_AfNpiTick(&B4_AfRspFramingFailed);"
-    if n.count(fail)!=2: raise ValueError("F2_V42_NPI_FRAME_FAIL_HOOK_COUNT")
-    n=n.replace(fail,fail+"\n    if (allSrspResponse) B4_AfNpiTick(&B4_AllRspFramingFailed);")
+    n=one(n,fail,fail+"\n          if (allSrspResponse) B4_AfNpiTick(&B4_AllRspFramingFailed);",
+          "NPI_RECORD_ALLOC_FAIL")
+    fail_null="if (afResponse && pNPIMsg == NULL) B4_AfNpiTick(&B4_AfRspFramingFailed);"
+    n=one(n,fail_null,fail_null+"\n    if (allSrspResponse && pNPIMsg == NULL) B4_AfNpiTick(&B4_AllRspFramingFailed);",
+          "NPI_FRAME_NULL")
     n=one(n,
         """uint8_t afResponse = (recPtr->npiMsg->pBufSize >= 6u &&
                                   recPtr->npiMsg->pBuf[2] == 0x64u &&
