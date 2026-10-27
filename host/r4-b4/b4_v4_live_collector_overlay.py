@@ -37,6 +37,19 @@ METHOD = r"""
      * IPC admission is bounded; main loop never calls sync read/fsync/rename.
      * ACK is durable manifest receipt only; no re-send on missing ACK.
      */
+    /** 30-minute native F2 objective, based on DURABLE worker commits only.
+     *  This is an observability warning, never a radio recovery trigger.
+     */
+    #b4Native30mCheck(now = Date.now()): void {
+        const origin = this.#b4LastNativeCommittedUtc || this.#b4NativeCollectionBeganUtc;
+        if (!origin || now < origin || now - origin < 1_800_000) { return; }
+        if (this.#b4Native30mWarnedAt && now - this.#b4Native30mWarnedAt < 1_800_000) { return; }
+        this.#b4Native30mWarnedAt = now;
+        logger.warn("P7U F2 NATIVE_30M_MISSED: no durable VALID native snapshot within 1800s; " +
+            "sampling remains subject to adapter queue, ZNP waiters and OTA gates; " +
+            "DO NOT reset radio on F2 staleness");
+    }
+
     #b4StartWorker(): void {
         if (this.#b4Worker || process.env.P7U_B4_COLLECTOR !== "1") { return; }
         const hostRun = randomUUID();
@@ -69,6 +82,12 @@ METHOD = r"""
                 }
             } else if (message.type === "committed" && typeof message.id === "number") {
                 this.#b4PendingIds.delete(message.id);
+                const nativeCommittedUtc = this.#b4PendingNativeValidUtc.get(message.id);
+                this.#b4PendingNativeValidUtc.delete(message.id);
+                if (nativeCommittedUtc !== undefined) {
+                    this.#b4LastNativeCommittedUtc = nativeCommittedUtc;
+                    this.#b4Native30mWarnedAt = 0;
+                }
                 clearTimeout(this.#b4AckTimers.get(message.id));
                 this.#b4AckTimers.delete(message.id);
             } else if (message.type === "fatal") {
@@ -86,6 +105,7 @@ METHOD = r"""
             this.#b4WorkerReady = false;
             this.#b4SamplerDisabled = true;
             this.#b4PendingIds.clear();
+            this.#b4PendingNativeValidUtc.clear();
             for (const timer of this.#b4AckTimers.values()) { clearTimeout(timer); }
             this.#b4AckTimers.clear();
         });
@@ -103,9 +123,13 @@ METHOD = r"""
         }
         const id = ++this.#b4RecordId;
         this.#b4PendingIds.add(id);
+        if (sample.kind === "VALID" && typeof sample.utc === "number") {
+            this.#b4PendingNativeValidUtc.set(id, sample.utc);
+        }
         const timer = setTimeout(() => {
             this.#b4AckTimers.delete(id);
             this.#b4PendingIds.delete(id);
+            this.#b4PendingNativeValidUtc.delete(id);
             this.#b4SamplerDisabled = true;
             this.#b4WorkerReady = false;
             logger.error("P7U B4 optional evidence ACK timed out; sampling halted (radio untouched)");
@@ -122,6 +146,7 @@ METHOD = r"""
             this.#b4Worker.postMessage({type: "append", id, record});
         } catch {
             this.#b4PendingIds.delete(id);
+            this.#b4PendingNativeValidUtc.delete(id);
             clearTimeout(this.#b4AckTimers.get(id));
             this.#b4AckTimers.delete(id);
             this.#b4SamplerDisabled = true;
@@ -192,6 +217,7 @@ METHOD = r"""
                 (error instanceof Error ? error.name : "UnknownError"));
         } finally {
             this.#b4InFlight = false;
+            this.#b4Native30mCheck();
             if (this.#b4Operational && !this.#b4SamplerDisabled) {
                 this.#b4Schedule(60_000);
             }
@@ -278,6 +304,10 @@ import b4Data from "./util/data";''')
     readonly #b4EpochKey = randomBytes(32);
     #b4Worker: Worker | undefined;
     #b4WorkerReady = false;
+    #b4NativeCollectionBeganUtc = 0;
+    #b4LastNativeCommittedUtc = 0;
+    #b4Native30mWarnedAt = 0;
+    readonly #b4PendingNativeValidUtc = new Map<number, number>();
     #b4HostRunId = "";
     #b4OwnerGeneration = "";
     #b4RecordId = 0;
@@ -289,6 +319,9 @@ import b4Data from "./util/data";''')
         """        settings.setOnboarding(false);
         // Only at steady state: startup AbortController is about to be GC'd.
         this.#b4Operational = true;
+        this.#b4NativeCollectionBeganUtc = Date.now();
+        this.#b4LastNativeCommittedUtc = 0;
+        this.#b4Native30mWarnedAt = 0;
         try { this.#b4StartWorker(); }
         catch {
             this.#b4SamplerDisabled = true;
