@@ -425,7 +425,8 @@ def plan(root):
             initialized: this.initialized,
             mutexIdle: this.queue.isIdle(),
             mutexQueued: this.queue.count,
-            waitressPending: this.waitress.b4PendingCount(),
+            waitressPending: this.waitress.b4PendingCount(), // LEGACY raw Map.size, includes tombstones
+            waitressAccounting: this.waitress.b4Occupancy(),
             diagnosticQuarantined: this.b4DiagPoisoned,
             srsp: {
                 AF: {...this.b4PassiveSrspStats.AF},
@@ -628,7 +629,23 @@ def plan(root):
     }
 
     public b4PendingCount(): number {
-        return this.waiters.size;
+        return this.waiters.size; // LEGACY map entries, includes expired tombstones
+    }
+
+    /** Passive only. Timeout callbacks mark timedout but do not delete the
+     * entry until a future forEachMatching() sweep (or explicit remove()).
+     * Never mistake map.size for outstanding live waits.
+     */
+    public b4Occupancy() {
+        let active = 0;
+        let timedOut = 0;
+        let resolved = 0;
+        for (const waiter of this.waiters.values()) {
+            if (waiter.timedout) {timedOut++;}
+            else if (waiter.resolved) {resolved++;}
+            else {active++;}
+        }
+        return {active, timedOut, resolved, rawMapEntries: this.waiters.size};
     }""")
     return {WAITRESS: (original[WAITRESS], waitress),
             DEFINITION: (original[DEFINITION], definition),
