@@ -64,6 +64,7 @@ function sameRecord(entry) {
         // Version-additive only: historical hash-chain records have no wire
         // metrics. Do not rewrite/recompute past evidence to add them.
         if (Object.hasOwn(e, "wire")) expected.push("wire");
+        if (Object.hasOwn(e, "waitressAccounting")) expected.push("waitressAccounting");
         hold(exact(e, expected), "HOST_EVIDENCE_FIELDS");
         if (Object.hasOwn(e, "wire")) {
             const w = e.wire;
@@ -75,6 +76,14 @@ function sameRecord(entry) {
                     "txQueuedRawBuffers"].every(k => num(w[k])) &&
                 w.measurement === "EXISTING_OWNER_STREAM_ONLY",
                 "HOST_WIRE_EVIDENCE_SHAPE");
+        }
+        if (Object.hasOwn(e, "waitressAccounting")) {
+            const c = e.waitressAccounting;
+            hold(exact(c, ["active", "timedOut", "resolved", "rawMapEntries"]) &&
+                num(c.active) && num(c.timedOut) && num(c.resolved) &&
+                num(c.rawMapEntries) &&
+                c.active + c.timedOut + c.resolved === c.rawMapEntries,
+                "HOST_WAITRESS_ACCOUNTING");
         }
         hold(typeof e.initialized === "boolean" &&
             typeof e.mutexIdle === "boolean" &&
