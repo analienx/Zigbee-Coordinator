@@ -69,7 +69,8 @@ test("F2 never resubmits without both cooldown and matched production SRSP progr
     assert.equal(h.adapter.b4GetV4Outcome().reason, "F2_REPLY_TIMEOUT");
     assert.deepEqual(h.passive, [], "a diagnostic is not a production SYS timeout");
     assert.equal(h.znp.waitress.waiters.size, 0);
-    assert.equal(h.znp.b4CanProbe(), false);
+    assert.equal(h.znp.b4CanProbeV4(), false); // F2 cooldown held
+    assert.equal(h.znp.b4CanProbe(), true); // legacy F0 isn't coupled to F2 cooldown
     assert.equal(await h.offer(), undefined);
     assert.equal(h.adapter.b4GetV4Outcome().reason, "F2_TIMEOUT_COOLDOWN");
     await h.advance(60_001);
