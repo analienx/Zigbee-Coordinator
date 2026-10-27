@@ -45,7 +45,7 @@ METHOD = r"""
         if (!origin || now < origin || now - origin < 1_800_000) { return; }
         if (this.#b4Native30mWarnedAt && now - this.#b4Native30mWarnedAt < 1_800_000) { return; }
         this.#b4Native30mWarnedAt = now;
-        logger.warn("P7U F2 NATIVE_30M_MISSED: no durable VALID native snapshot within 1800s; " +
+        logger.error("P7U F2 NATIVE_30M_MISSED: no durable VALID native snapshot within 1800s; " +
             "sampling remains subject to adapter queue, ZNP waiters and OTA gates; " +
             "DO NOT reset radio on F2 staleness");
     }
