@@ -26,7 +26,11 @@ METHOD = r"""
         if (!this.#b4Operational || process.env.P7U_B4_COLLECTOR !== "1") {
             return;
         }
-        this.#b4Timer = setTimeout(() => { void this.#b4Sample(); }, delay);
+        // Frequency never exceeds once a minute. Break 60s phase lock
+        // without bypassing OTA, ZNP mutex or queue ownership.
+        const nextDelay = delay === 60_000 ? randomInt(60_000, 90_001)
+            : Math.max(60_000, delay);
+        this.#b4Timer = setTimeout(() => { void this.#b4Sample(); }, nextDelay);
     }
 
     /** F3 durable evidence writer runs in a separate NO-SERIAL worker.
@@ -261,7 +265,7 @@ def plan(root: Path):
     src = once(src, 'import bind from "bind-decorator";',
         '''import bind from "bind-decorator";
 import * as b4Path from "node:path";
-import {createHmac, randomBytes, randomUUID} from "node:crypto";
+import {createHmac, randomBytes, randomInt, randomUUID} from "node:crypto";
 import {Worker} from "node:worker_threads";
 import b4Data from "./util/data";''')
     src = once(src, "    #startAbortController: AbortController | undefined;",
