@@ -161,10 +161,10 @@ V4_ADAPTER_METHOD = r"""
             const fields = [
                 "allProduced", "allEnqueued", "allAllocFailed", "allSendFailed",
                 "allNpiReceived", "allFramedQueued", "allFramingFailed",
-                "allTlSubmitted", "allTlRejected", "afRegProduced",
-                "afRegEnqueued", "afRegAllocFailed", "afRegSendFailed",
-                "afRegNpiReceived", "afRegFramedQueued", "afRegFramingFailed",
-                "afRegTlSubmitted", "afRegTlRejected"
+                "allTlSubmitted", "allTlRejected", "afDataProduced",
+                "afDataEnqueued", "afDataAllocFailed", "afDataSendFailed",
+                "afDataNpiReceived", "afDataFramedQueued", "afDataFramingFailed",
+                "afDataTlSubmitted", "afDataTlRejected"
             ];
             const mtLifecycle = minor === 2 ? Object.fromEntries(fields.map(
                 (field, index) => [field, data.readUInt32LE(56 + index * 4)])) : null;
