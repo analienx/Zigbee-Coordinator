@@ -8,6 +8,12 @@ Repository-level documentation is organized by **coordinator scope**, even where
 - Root [README](../README.md) — repository purpose, safety invariants and current focus.
 - [16 October 2026 branch-prune audit](BRANCH_PRUNE_AUDIT_2026-10-16.md) — verified pre-cleanup recovery bundle, deleted branches and retained R4/finalized P10 dependency refs.
 
+## Production service recovery: P7U hard hangs (start here)
+
+- **[Priority #1: SLZB-06P7U ROM/BSL-to-existing-APP recovery runbook](../coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md)** — source-pinned, one-shot, no-power-cycle/no-flash procedure that **restored the production network on 27 Oct 2026**.
+- [P7U agent recovery skill](../skills/p7u-rom-bsl-recovery/SKILL.md) — how future agents choose this path, preserve counters and confirm real device traffic.
+- [Physical recovery evidence #143](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051) and [root-cause F2 follow-up #144](https://github.com/analienx/Zigbee-Coordinator/issues/144).
+
 ## slzb-06p7u — PRIMARY P7U / CC2652P7 / R4
 
 - [P7U identity, R4 development and safety gates](../coordinators/slzb-06p7u/README.md)
