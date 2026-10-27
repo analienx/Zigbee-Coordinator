@@ -91,6 +91,53 @@ int main(void) {
 }
 """
 
+
+def _b1_gate_c(actual_uart_write):
+    # This second independent C fixture compiles the *actual composed*
+    # NPITLUART_writeTransport function, not a Python approximation of HOLD.
+    return r"""
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+typedef unsigned short uint16;
+typedef unsigned char uint8;
+typedef void *UART2_Handle;
+#define NPI_FLOW_CTRL 0
+#define UART2_STATUS_SUCCESS 0
+#define B1_ERROR_UART_WRITE 17
+static UART2_Handle uartHandle = NULL;
+static uint8_t TransportTxBuf[256];
+static uint16 TransportTxLen;
+static bool hold = false;
+static int physical_uart_write_attempts = 0;
+static uint32_t OsalPort_enterCS(void) { return 0; }
+static void OsalPort_leaveCS(uint32_t key) { (void)key; }
+static bool b1_management_transport_unavailable(void) { return hold; }
+static void b1_management_transport_failed(int err) { (void)err; hold = true; }
+static void b1_startup_tx_submit(const uint8_t *p, uint16 len) {
+ (void)p; (void)len;
+}
+static void b1_startup_tx_accepted(uint16 len, int ok) {
+ (void)len; (void)ok;
+}
+static int_fast16_t UART2_write(UART2_Handle h, void *p, size_t len, void *arg) {
+ (void)h; (void)p; (void)len; (void)arg;
+ physical_uart_write_attempts++;
+ return UART2_STATUS_SUCCESS;
+}
+""" + actual_uart_write + r"""
+int main(void) {
+ if (NPITLUART_writeTransport(12) != 12 || physical_uart_write_attempts != 1)
+   return 31;
+ hold = true; /* B1 physical HOLD after a completed callback error. */
+ if (NPITLUART_writeTransport(12) != 0 || physical_uart_write_attempts != 1)
+   return 32; /* stale callback cannot race any NEW accepted UART write */
+ puts("B1_HOLD_REAL_UART_SUBMISSION_GUARD_PASS");
+ return 0;
+}
+"""
+
 def exercise(sdk):
     sdk=Path(sdk)
     tl=(sdk/TL).read_text()
@@ -98,6 +145,7 @@ def exercise(sdk):
     writer=extract(tl,"uint16 NPITL_writeTL(uint8 *buf, uint16 len)")
     abort=extract(tl,"void NPITL_abortFailedTx(void)")
     callback=extract(uart,"static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)")
+    tx_writer=extract(uart,"uint16 NPITLUART_writeTransport(uint16 len)")
     cc=shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:raise RuntimeError("NATIVE_C_COMPILER_REQUIRED")
     def run(label,source):
@@ -141,12 +189,25 @@ def exercise(sdk):
     if callback.count(unwind)!=1:raise RuntimeError("B1_ABORT_UNWIND_MISSING")
     rc,_=run("NEGATIVE_MISSING_B1_ABORT",_c(writer,abort,callback.replace(unwind,"",1)))
     if rc==0:raise RuntimeError("FAILED_TO_CATCH_MISSING_B1_ABORT_MUTANT")
-    return {"status":"PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_THREE_MUTANTS",
+    # The B1 callback enters physical HOLD *before* our error unwind. Prove
+    # from actual accepted TI C that no new physical write can start afterward.
+    gate_rc,gate_out=run("B1_HOLD_GATE",_b1_gate_c(tx_writer))
+    if gate_rc!=0 or "B1_HOLD_REAL_UART_SUBMISSION_GUARD_PASS" not in gate_out:
+        raise RuntimeError("B1_HOLD_NOT_ACTUALLY_GATING_UART_WRITES")
+    anchor="if (b1_management_transport_unavailable())"
+    if tx_writer.count(anchor)!=1:
+        raise RuntimeError("B1_HOLD_GATE_SOURCE_DRIFT")
+    gate_mutant=tx_writer.replace(anchor,"if (0)",1)
+    gate_mutant_rc,_=run("NEGATIVE_B1_HOLD_BYPASS",_b1_gate_c(gate_mutant))
+    if gate_mutant_rc==0:
+        raise RuntimeError("B1_HOLD_GATE_MUTANT_NOT_REJECTED")
+    return {"status":"PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_FOUR_MUTANTS",
             "cases":["immediate_rejection_unwedges","accepted_write_completes",
                      "asynchronous_failure_does_not_fake_success",
                      "failed_fragment_clears_dangling_remainder",
                      "next_write_remains_possible"],
-            "negative_mutants":["stuck_busy","inverted_b1_status","missing_b1_abort"],
+            "negative_mutants":["stuck_busy","inverted_b1_status","missing_b1_abort","b1_hold_bypass"],
+            "stale_callback_guard":"B1_HOLD_PREVENTS_NEW_UART_SUBMISSION_AFTER_ERROR",
             "hardware_access":False}
 
 if __name__=="__main__":
