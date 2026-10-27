@@ -24,6 +24,7 @@ NVO="source/ti/common/nv/nvocmp.c"
 SYS="source/ti/zstack/mt/mt_sys.c"
 TASK="source/ti/zstack/npi/npi_task.c"
 UART="source/ti/zstack/npi/npi_tl_uart.c"
+TL="source/ti/zstack/npi/npi_tl.c"
 
 def load(name,path):
     if path.is_symlink() or not path.is_file(): raise ValueError("UNTRUSTED_PINNED_SCRIPT "+name)
@@ -195,6 +196,18 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
             raise ValueError("F2_V42_AFTER_AF_HANDOFF_PREIMAGE_DRIFT_"+name)
 
 
+    # Correct TI's conditional TX-active latch with the ACTUAL composed UART.
+    # An unstarted write must not leave the NPI task blocked forever.
+    from r4_uart_tx_liveness import apply as patch_uart_tx_liveness
+    tx_liveness = patch_uart_tx_liveness(sdk)
+    from r4_uart_tx_liveness_harness import exercise as exercise_tx_liveness
+    tx_c = exercise_tx_liveness(sdk)
+    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_TWO_MUTANTS":
+        raise ValueError("R4_UART_TX_FAILURE_UNWIND_NOT_SOURCE_PROVEN")
+    for name in (TL, UART):
+        if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != tx_liveness["modified_sha256"][name]:
+            raise ValueError("R4_UART_TX_LIVENESS_DIGEST_UNBOUND_" + name)
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -218,7 +231,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     # B1 native sealer's exact-Git-SHA invariants remain mandatory.
     beforehash={}
     afterhash={}
-    for name in (ZDO,NVO,TASK,UART,SYS):
+    for name in (ZDO,NVO,TASK,UART,SYS,TL):
         earlier= b1.get("modified_zdapp_sha256") if name==ZDO else (
             b1.get("modified_nv_sha256") if name==NVO else (
             expected.get(name)))
@@ -260,6 +273,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "af_register_outbound_handoff":af_handoff,
         "af_register_actual_c_behavior":af_behavior,
         "f2_v42_causal_response_path":f2_causal,
+        "uart_tx_liveness_fix":tx_liveness,
+        "uart_tx_liveness_actual_c":tx_c,
         "b1_f1_and_b4_f0_f2_dispatch":True,
         "b1_b4_uart_single_owner_tx_finished_fanout":True,
         "b1_f2_hold_exception_enabled_for_disposable_composite":True,

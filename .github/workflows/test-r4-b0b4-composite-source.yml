@@ -5,6 +5,8 @@ on:
       - 'tools/r4_b1_b3_security_fuse.py'
       - '.github/workflows/test-r4-b0b4-composite-source.yml'
       - 'tools/r4_b0_b4_composite_stage.py'
+      - 'tools/r4_uart_tx_liveness.py'
+      - 'tools/r4_uart_tx_liveness_harness.py'
 permissions:
   contents: read
 jobs:
