@@ -15,6 +15,25 @@ from pathlib import Path
 from p7u_f2_acceptance import EvidenceHold, read_verified_history
 
 SUBSYSTEMS = ("AF", "ZDO", "SYS", "UTIL")
+MT_LIFECYCLE_FIELDS = (
+    "allProduced", "allEnqueued", "allAllocFailed", "allSendFailed",
+    "allNpiReceived", "allFramedQueued", "allFramingFailed",
+    "allTlSubmitted", "allTlRejected", "afRegProduced",
+    "afRegEnqueued", "afRegAllocFailed", "afRegSendFailed",
+    "afRegNpiReceived", "afRegFramedQueued", "afRegFramingFailed",
+    "afRegTlSubmitted", "afRegTlRejected",
+)
+
+def _mt_lifecycle(record: dict) -> dict | None:
+    data = record.get("mtLifecycle")
+    if data is None:
+        return None
+    if (record.get("minor") != 2 or type(data) is not dict
+            or set(data) != set(MT_LIFECYCLE_FIELDS)
+            or not all(type(data[k]) is int and 0 <= data[k] <= 0xFFFFFFFF
+                       for k in MT_LIFECYCLE_FIELDS)):
+        raise EvidenceHold("P7U_F2_V42_MT_LIFECYCLE_INVALID")
+    return data
 ALLOWED_REASONS = frozenset((
     "ADAPTER_QUEUE_PENDING", "ZNP_WAITRESS_PENDING", "OUTER_ADMISSION_GATED",
     "HOST_OR_OTA_ADMISSION_SKIPPED", "COOLDOWN_OR_ALREADY_IN_FLIGHT",
@@ -97,6 +116,9 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
         "wire_boundary_status": "NOT_INSTALLED_OR_INSUFFICIENT",
         "wire_boundary_deltas": None,
         "waitress_live_vs_expired": None,
+        "native_mt_lifecycle": None,
+        "native_mt_lifecycle_delta": None,
+        "native_mt_delta_status": "NOT_QUALIFIED",
     }
     if not rows:
         return report
@@ -159,7 +181,7 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
             "FRESH" if age <= fresh_after_ms else "STALE"
         )
         mask = latest_valid.get("validityMask")
-        if type(mask) not in (int,) or mask not in (0x2c, 0x3f):
+        if type(mask) is not int or mask not in (0x2c, 0x3f, 0x00ffffec, 0x00ffffff):
             raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_VALIDITY_MASK")
         native = {
             "sequence": latest_valid.get("sequence"),
@@ -174,6 +196,31 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
             if v is not None and not _nonneg(v):
                 raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_INVALID_NATIVE_COUNTER")
         report["last_native"] = native
+        report["native_mt_lifecycle"] = _mt_lifecycle(latest_valid)
+        if latest_valid.get("minor") == 2 and report["native_mt_lifecycle"] is None:
+            raise EvidenceHold("P7U_F2_V42_MISSING_RADIO_CAUSAL_COUNTERS")
+        if latest_valid.get("minor") == 2 and mask not in (0x00ffffec, 0x00ffffff):
+            raise EvidenceHold("P7U_F2_V42_INVALID_COUNTER_MASK")
+        if latest_valid.get("minor") == 1 and mask not in (0x2c, 0x3f):
+            raise EvidenceHold("P7U_F2_V41_INVALID_COUNTER_MASK")
+        qualified = [v for v in valid if
+                     v.get("minor") == 2 and
+                     _mt_lifecycle(v) is not None and
+                     v.get("radioEpochTag") is not None and
+                     v.get("radioEpochTag") == latest_valid.get("radioEpochTag")]
+        if len(qualified) >= 2:
+            first, last_mt = qualified[0], qualified[-1]
+            if (type(first.get("sequence")) is int and
+                    type(last_mt.get("sequence")) is int and
+                    last_mt["sequence"] > first["sequence"]):
+                old, new = _mt_lifecycle(first), _mt_lifecycle(last_mt)
+                deltas = {k: new[k] - old[k] for k in MT_LIFECYCLE_FIELDS}
+                if any(x < 0 for x in deltas.values()):
+                    report["native_mt_delta_status"] = "COUNTER_DISCONTINUITY"
+                else:
+                    report["native_mt_delta_status"] = (
+                        "SAME_OWNER_TOKEN_OBSERVATION_NOT_HARDWARE_ATTESTED")
+                    report["native_mt_lifecycle_delta"] = deltas
     # Count only events in a recent bounded window, same owner, no negative ages.
     recent = [r for r in current if
               (t := _age(now_ms, r.get("utc"))) is not None and
