@@ -45,10 +45,11 @@ V4_ADAPTER_METHOD = r"""
         enabled: boolean; hostIdle: boolean; otaActive: boolean;
         stillAllowed: () => boolean;
     }): Promise<{
-        abi: 4; minor: 1; validityMask: number; srspDepth: number | null;
+        abi: 4; minor: 1 | 2; validityMask: number; srspDepth: number | null;
         srspHighWater: number | null; asyncDepth: number; asyncHighWater: number;
         srspEnqueued: number | null; uartTxFinishedEvents: number;
         sequence: number; radioBootId: string | null; resetReason: number | null;
+        mtLifecycle: Record<string, number> | null;
         buildImageDigest: null; radioEpochHardwareVerified: false;
     } | undefined> {
         this.b4V4Attempt = (this.b4V4Attempt ?? 0) + 1;
@@ -108,7 +109,7 @@ V4_ADAPTER_METHOD = r"""
                 // v4 F2 echoes the REQUEST nonce. An old response is invalid.
                 !nonce.equals(data.subarray(132, 140)) ||
                 data.readUInt32LE(8) & ~0x01 ||
-                data[157] !== 1 || data[158] & ~0x01 || data[159] !== 0 ||
+                ![1, 2].includes(data[157]) || data[158] & ~0x01 || data[159] !== 0 ||
                 !data.subarray(140, 156).equals(Buffer.alloc(16)) ||
                 data.readUInt32LE(24) !== 0 || data.readUInt32LE(28) === 0) {
                 this.znp.b4PoisonDiagSession();
@@ -117,11 +118,14 @@ V4_ADAPTER_METHOD = r"""
                 return undefined;
             }
             const validity = data.readUInt32LE(12);
-            if ((validity !== 0x3F && validity !== 0x2C) ||
+            const minor = data[157] as 1 | 2;
+            const allowedMasks = minor === 1 ? [0x3F, 0x2C] :
+                [0x00FFFFFF, 0x00FFFFEC];
+            if (!allowedMasks.includes(validity) ||
                 Array.from({length: 25}, (_, i) => i).some((i) =>
                     !(validity & (1 << i)) &&
                     data.readUInt32LE(32 + 4 * i) !== 0) ||
-                (validity === 0x3F && data.readUInt32LE(32) > data.readUInt32LE(36)) ||
+                ((validity & 1) !== 0 && data.readUInt32LE(32) > data.readUInt32LE(36)) ||
                 data.readUInt32LE(40) > data.readUInt32LE(44)) {
                 this.znp.b4PoisonDiagSession();
                 this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
@@ -154,8 +158,18 @@ V4_ADAPTER_METHOD = r"""
             this.znp.b4F2AcceptReply();
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "VALID",
                 reason: "NATIVE_NONCE_MATCHED", submissionState: "RECEIVED"};
+            const fields = [
+                "allProduced", "allEnqueued", "allAllocFailed", "allSendFailed",
+                "allNpiReceived", "allFramedQueued", "allFramingFailed",
+                "allTlSubmitted", "allTlRejected", "afRegProduced",
+                "afRegEnqueued", "afRegAllocFailed", "afRegSendFailed",
+                "afRegNpiReceived", "afRegFramedQueued", "afRegFramingFailed",
+                "afRegTlSubmitted", "afRegTlRejected"
+            ];
+            const mtLifecycle = minor === 2 ? Object.fromEntries(fields.map(
+                (field, index) => [field, data.readUInt32LE(56 + index * 4)])) : null;
             return {
-                abi: 4, minor: 1, validityMask: validity,
+                abi: 4, minor, validityMask: validity, mtLifecycle,
                 srspDepth: validity & 1 ? data.readUInt32LE(32) : null,
                 srspHighWater: validity & 2 ? data.readUInt32LE(36) : null,
                 asyncDepth: data.readUInt32LE(40),
