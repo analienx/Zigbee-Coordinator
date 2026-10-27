@@ -55,9 +55,9 @@ function sameRecord(entry) {
             const fields = ["allProduced", "allEnqueued", "allAllocFailed",
                 "allSendFailed", "allNpiReceived", "allFramedQueued",
                 "allFramingFailed", "allTlSubmitted", "allTlRejected",
-                "afRegProduced", "afRegEnqueued", "afRegAllocFailed",
-                "afRegSendFailed", "afRegNpiReceived", "afRegFramedQueued",
-                "afRegFramingFailed", "afRegTlSubmitted", "afRegTlRejected"];
+                "afDataProduced", "afDataEnqueued", "afDataAllocFailed",
+                "afDataSendFailed", "afDataNpiReceived", "afDataFramedQueued",
+                "afDataFramingFailed", "afDataTlSubmitted", "afDataTlRejected"];
             hold(entry.minor === 2 && v && typeof v === "object" &&
                 !Array.isArray(v) &&
                 Object.keys(v).length === fields.length &&
