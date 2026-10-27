@@ -24,6 +24,9 @@ typedef void *UART2_Handle;
 typedef void (*TxCallback)(int);
 #define NPI_FLOW_CTRL 0
 #define UART2_STATUS_SUCCESS 0
+#define B1_ERROR_UART_WRITE 17
+#define TRUE true
+#define FALSE false
 #define NPI_MAX_FRAG_SIZE 16
 static volatile bool npiTxActive = false;
 static uint8_t npiTxBuf[512];
@@ -32,6 +35,15 @@ static uint8_t *msgFrag = NULL;
 static uint16 msgFragLen = 0;
 static unsigned txPktCount = 0;
 static int lower_response = 0, task_notifications = 0, user_completions = 0;
+static int physical_uart_failure_latch = 0;
+static bool b1_management_transport_unavailable(void) { return false; }
+static void b1_management_transport_failed(int e) {
+ if (e == B1_ERROR_UART_WRITE) physical_uart_failure_latch++;
+}
+static void b1_startup_tx_result(uint16_t size, int submitted) {
+ (void)size;
+ (void)submitted;
+}
 static uint16 TransportTxLen = 0;
 static void (*npiTransmitCB)(int,int) = NULL;
 static void sent_task(int count) { (void)count; task_notifications++; }
