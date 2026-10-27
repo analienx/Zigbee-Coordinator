@@ -68,12 +68,18 @@ class FreshnessTests(unittest.TestCase):
         self.assertIn("this.#b4Schedule(60_000)", source)
         self.assertIn("this.#b4SamplerDisabled", source)
         self.assertNotIn("new Znp(", source)
+        self.assertIn("P7U F2 NATIVE_30M_MISSED", source)
+        self.assertIn("const nativeCommittedUtc = this.#b4PendingNativeValidUtc.get(message.id)", source)
+        self.assertIn("this.#b4LastNativeCommittedUtc = nativeCommittedUtc", source)
+        self.assertIn("this.#b4PendingNativeValidUtc.delete(id)", source)
+        self.assertIn("now - origin < 1_800_000", source)
+        self.assertIn("DO NOT reset radio on F2 staleness", source)
 
     def test_skipped_sampling_with_advancing_srsp_is_not_a_hang(self):
         rows = [f2(1_000_000), record(1_150_000, hostEvidence=progress(10, 2)),
                 record(1_240_000, reason="ZNP_WAITRESS_PENDING",
                        hostEvidence=progress(90, 2))]
-        q = analyze(rows, now_ms=1_400_000)
+        q = analyze(rows, now_ms=1_400_000, fresh_after_ms=300_000)
         self.assertEqual(q["f2_freshness"], "STALE")
         self.assertEqual(q["collector_feed"], "FRESH")
         self.assertEqual(q["passive_srsp_progress"], "OBSERVED_HOST_COUNTERS")
@@ -113,6 +119,37 @@ class FreshnessTests(unittest.TestCase):
         self.assertEqual(q["passive_srsp_progress"], "COUNTER_DISCONTINUITY")
         self.assertIsNone(q["passive_srsp_delta"])
 
+    def test_native_30m_window_and_collector_feed_are_separate(self):
+        # A healthy passive feed must NEVER conceal a >30m native blackout.
+        rows = [f2(1_000), record(1_820_000, processUptimeMs=1_820_000)]
+        q = analyze(rows, now_ms=1_850_000)
+        self.assertEqual(q["collector_feed"], "FRESH")
+        self.assertEqual(q["f2_freshness"], "STALE")
+        self.assertEqual(q["native_f2_30m_objective"], "BREACHED")
+        self.assertEqual(q["native_f2_in_last_30m"], 0)
+        self.assertFalse(q["automatic_recovery_permitted"])
+        self.assertEqual(q["retained_network_serving"], "NOT_ASSESSED")
+
+    def test_native_30m_met_by_valid_commit_not_skipped_sampling(self):
+        q = analyze([record(1_000), f2(1_710_000, 2),
+                     record(1_810_000)], now_ms=1_820_000)
+        self.assertEqual(q["native_f2_30m_objective"], "MET")
+        self.assertEqual(q["native_f2_in_last_30m"], 1)
+        self.assertEqual(q["collector_feed"], "FRESH")
+
+    def test_previous_owner_native_cannot_satisfy_30m(self):
+        rows = [f2(1_000), record(2_000, owner=OTHER, processUptimeMs=100_000)]
+        q = analyze(rows, now_ms=3_000)
+        self.assertEqual(q["native_f2_in_last_30m"], 0)
+        self.assertEqual(q["native_f2_30m_objective"], "NOT_YET_OBSERVED_FOR_30M")
+        self.assertFalse(q["automatic_recovery_permitted"])
+
+    def test_no_first_native_for_over_30m_is_breach_not_false_fresh(self):
+        q = analyze([record(10_000, processUptimeMs=1_910_000)],
+                    now_ms=20_000)
+        self.assertEqual(q["f2_freshness"], "NO_CURRENT_OWNER_VALID")
+        self.assertEqual(q["native_f2_30m_objective"], "BREACHED")
+
     def test_future_clock_never_fabricates_freshness(self):
         q = analyze([f2(2_000)], now_ms=1_000)
         self.assertEqual(q["f2_freshness"], "CLOCK_UNCERTAIN")
@@ -139,7 +176,8 @@ class FreshnessTests(unittest.TestCase):
             path = Path(directory)
             write_chain(path, [f2(1000), record(2000)])
             cmd = [sys.executable, str(Path(__file__).with_name("p7u_f2_freshness.py")),
-                   "--history-dir", str(path), "--now-ms", "400000"]
+                   "--history-dir", str(path), "--now-ms", "400000",
+                   "--fresh-seconds", "300"]
             r = subprocess.run(cmd, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             d = json.loads(r.stdout)
