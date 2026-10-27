@@ -2,11 +2,9 @@ name: R4 B0-B4 source composite preflight (NO FLASH)
 on:
   pull_request:
     paths:
-      - 'tools/r4_b1_b3_security_fuse.py'
       - '.github/workflows/test-r4-b0b4-composite-source.yml'
-      - 'tools/r4_b0_b4_composite_stage.py'
-      - 'tools/r4_uart_tx_liveness.py'
-      - 'tools/r4_uart_tx_liveness_harness.py'
+      - 'tools/r4_*.py'
+      - 'firmware/slzb-06p7u/r4/b1/**'
 permissions:
   contents: read
 jobs:
@@ -84,6 +82,10 @@ jobs:
           c=json.loads(Path('/tmp/r4composite-source.json').read_text())
           assert c['source_ready'] is False
           assert c['b1_f1_and_b4_f0_f2_dispatch'] is True
+          assert c['ti_uart2_callback_ownership']['source_bytes_equal_pinned_git_blobs'] is True
+          assert c['composite_write_scope']['outside_scope_unchanged'] is True
+          assert len(c['uart_tx_liveness_actual_c']['cases']) == 6
+          assert len(c['uart_tx_liveness_actual_c']['negative_mutants']) == 5
           assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
           print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
           PY

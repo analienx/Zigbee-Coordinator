@@ -230,7 +230,14 @@ def _fetch_exact(work, repo, sha, label):
     code, _ = _run_git(work, ["remote", "add", "origin", url])
     if code != 0:
         return "git remote add failed for %s" % label
-    code, _ = _run_git(work, ["fetch", "--depth", "1", "origin", sha])
+    # Attestation reads commit metadata, trees and two small source blobs.
+    # Avoid downloading the full SDK on every negative control: a large
+    # redundant transfer was hitting the bounded fetch timeout in CI.
+    # Git fetch registers the filtered remote as a promisor, so show/ls-tree
+    # can still fetch any specifically inspected blob. All SHA/type/content
+    # and stage-specific negative-control checks below remain mandatory.
+    code, _ = _run_git(work, ["fetch", "--filter=blob:none", "--no-tags",
+                            "--depth", "1", "origin", sha])
     if code != 0:
         return "fetch of %s %s from %s failed" % (label, sha, repo)
     code, resolved = _run_git(work, ["rev-parse", "FETCH_HEAD"])

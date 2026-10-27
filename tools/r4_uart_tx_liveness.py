@@ -6,10 +6,25 @@ new serial owners, radio parameters, RF, NV, CCFG, or security modifications.
 """
 from pathlib import Path
 import hashlib
+import subprocess
 
 TL = "source/ti/zstack/npi/npi_tl.c"
 UART = "source/ti/zstack/npi/npi_tl_uart.c"
 MARKER = "B4_R4_UART_TX_ERROR_UNWIND_V1"
+TI_SHA = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58"
+
+def pinned_source(sdk, relative):
+    """Bind inspected bytes to the immutable SDK, including dirty trees."""
+    path = sdk / relative
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("TI_UART2_UNTRUSTED_SOURCE_" + relative)
+    original = subprocess.check_output(
+        ["git", "-C", str(sdk), "show", TI_SHA + ":" + relative],
+        stderr=subprocess.PIPE)
+    actual = path.read_bytes()
+    if actual != original:
+        raise ValueError("TI_UART2_PINNED_BYTES_DRIFT_" + relative)
+    return actual
 
 def once(s: str, before: str, after: str, name: str) -> str:
     n = s.count(before)
@@ -35,8 +50,10 @@ def extract(s: str, signature: str) -> str:
 def verify_ti_uart2_callback_ownership(sdk):
     """Verify exact pinned TI software completion guards, without changing driver."""
     sdk = Path(sdk)
-    driver = (sdk / "source/ti/drivers/uart2/UART2CC26X2.c").read_text(encoding="utf-8")
-    common = (sdk / "source/ti/drivers/UART2.c").read_text(encoding="utf-8")
+    driver_bytes = pinned_source(sdk, "source/ti/drivers/uart2/UART2CC26X2.c")
+    common_bytes = pinned_source(sdk, "source/ti/drivers/UART2.c")
+    driver = driver_bytes.decode("utf-8")
+    common = common_bytes.decode("utf-8")
     success = extract(driver, "static void UART2CC26X2_hwiIntWrite(uintptr_t arg)")
     if (success.count("(object->writeCount == 0) && object->writeInUse") != 1
             or success.count("object->writeCallback(handle,") != 1
@@ -55,9 +72,11 @@ def verify_ti_uart2_callback_ownership(sdk):
             "object->writeInUse          = true;" not in common):
         raise ValueError("TI_UART2_WRITE_IN_USE_ADMISSION_DRIFT")
     return {
-        "schema": "p7u-ti-8_33-callback-ownership-v1",
-        "uart2_driver_sha256": hashlib.sha256(driver.encode()).hexdigest(),
-        "uart2_generic_sha256": hashlib.sha256(common.encode()).hexdigest(),
+        "schema": "p7u-ti-8_33-callback-ownership-v2",
+        "ti_sdk_sha": TI_SHA,
+        "source_bytes_equal_pinned_git_blobs": True,
+        "uart2_driver_sha256": hashlib.sha256(driver_bytes).hexdigest(),
+        "uart2_generic_sha256": hashlib.sha256(common_bytes).hexdigest(),
         "normal": "IN_USE_AND_ZERO_COUNT_CLEARED_BEFORE_CALLBACK",
         "cancel": "IN_USE_CLEARED_BEFORE_CALLBACK",
         "physical_irq_duplication_disproved": False,
@@ -82,7 +101,8 @@ def apply(sdk):
     {
         /* B4_R4_UART_TX_ERROR_UNWIND_V1: no UART callback will complete a
          * synchronously rejected write. Discard unstarted fragments; keep
-         * npiTxActive FALSE so other queued SRSPs can be attempted. */
+         * npiTxActive FALSE. B1 physical HOLD, if latched, still forbids
+         * subsequent UART writes; this does not recover the transport. */
         npiTxActive = FALSE;
         npiTxBufLen = 0u;
         msgFrag = NULL;
@@ -93,7 +113,7 @@ def apply(sdk):
 
     # The driver callback owns one already-accepted write. On failure it
     # must not report a successful TX, but must release the NPI busy state
-    # and notify the existing task so any queued responses can progress.
+    # and notify the existing task. B1 HOLD still blocks physical writes.
     hook = """/* B4_R4_UART_TX_ERROR_UNWIND_V1: called on failed UART completion only.
  * Caller holds no radio/network state locks; notification posts existing
  * NPI task event. An immediate write failure is handled in NPITL_writeTL. */

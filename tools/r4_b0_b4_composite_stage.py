@@ -25,6 +25,27 @@ SYS="source/ti/zstack/mt/mt_sys.c"
 TASK="source/ti/zstack/npi/npi_task.c"
 UART="source/ti/zstack/npi/npi_tl_uart.c"
 TL="source/ti/zstack/npi/npi_tl.c"
+CLIENT="source/ti/zstack/npi/npi_client_mt.c"
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT)
+
+def outside_write_scope(sdk):
+    """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
+    excluded=[":(exclude)"+name for name in COMPOSITE_WRITES]
+    diff=subprocess.check_output(["git","-C",str(sdk),"diff","--binary",
+                                  "--no-ext-diff","HEAD","--",".",*excluded])
+    untracked=subprocess.check_output(["git","-C",str(sdk),"ls-files","--others",
+                                      "--exclude-standard","-z"])
+    files={}
+    for raw in untracked.split(b"\0"):
+        if not raw:continue
+        name=raw.decode("utf-8")
+        if name in COMPOSITE_WRITES:continue
+        path=sdk/name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("COMPOSITE_UNTRUSTED_UNTRACKED_"+name)
+        files[name]=hashlib.sha256(path.read_bytes()).hexdigest()
+    return {"tracked_delta_sha256":hashlib.sha256(diff).hexdigest(),
+            "untracked_sha256":files}
 
 def load(name,path):
     if path.is_symlink() or not path.is_file(): raise ValueError("UNTRUSTED_PINNED_SCRIPT "+name)
@@ -56,6 +77,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         raise ValueError("SDK_SHA_DRIFT")
     if b2sha!=B2_SHA or b2failuresha!=B2_FAILURE_SHA or b4sha!=B4_SHA:
         raise ValueError("SIBLING_COMMIT_PIN_DRIFT")
+    preserved_scope=outside_write_scope(sdk)
     prior=json.loads(fusionreceipt.read_text())
     b1=json.loads(b1receipt.read_text())
     if (prior.get("schema")!="r4-b1-b3-partial-security-fusion-v1" or
@@ -204,7 +226,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     tx_liveness = patch_uart_tx_liveness(sdk)
     from r4_uart_tx_liveness_harness import exercise as exercise_tx_liveness
     tx_c = exercise_tx_liveness(sdk)
-    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_FIVE_MUTANTS":
+    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_INTEGRATED_AND_FIVE_MUTANTS":
         raise ValueError("R4_UART_TX_FAILURE_UNWIND_NOT_SOURCE_PROVEN")
     for name in (TL, UART):
         if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != tx_liveness["modified_sha256"][name]:
@@ -255,10 +277,25 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for name in (TASK,UART,SYS):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
+    # These new inputs must be checked again by the post-link B1 native sealer,
+    # not merely recorded in the source-stage receipt.
+    for key,name,value in (
+            ("modified_npi_tl_liveness_sha256",TL,afterhash[TL]),
+            ("ti_uart2_driver_sha256","source/ti/drivers/uart2/UART2CC26X2.c",
+             ti_callback_source["uart2_driver_sha256"]),
+            ("ti_uart2_generic_sha256","source/ti/drivers/UART2.c",
+             ti_callback_source["uart2_generic_sha256"])):
+        bindings[key]=name
+        b1[key]=value
+    b1["additional_source_bindings"]=bindings
+    required=b1.setdefault("additional_required_functions",[])
+    if "NPITL_abortFailedTx" not in required:required.append("NPITL_abortFailedTx")
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
     b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
     b1["b4_pinned_commit"]=B4_SHA
+    if outside_write_scope(sdk)!=preserved_scope:
+        raise ValueError("COMPOSITE_CHANGED_SDK_OUTSIDE_REVIEWED_WRITE_SCOPE")
     b1receipt.write_text(json.dumps(b1,indent=2,sort_keys=True)+"\n")
     return {
         "schema":"r4-b0-b4-source-composite-v1",
@@ -278,6 +315,9 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
+        "composite_write_scope":{"allowed_paths":list(COMPOSITE_WRITES),
+                                 "outside_scope_unchanged":True,
+                                 "preserved_fingerprint":preserved_scope},
         "b1_f1_and_b4_f0_f2_dispatch":True,
         "b1_b4_uart_single_owner_tx_finished_fanout":True,
         "b1_f2_hold_exception_enabled_for_disposable_composite":True,
