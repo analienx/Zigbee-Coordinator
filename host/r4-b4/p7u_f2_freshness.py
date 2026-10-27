@@ -18,10 +18,10 @@ SUBSYSTEMS = ("AF", "ZDO", "SYS", "UTIL")
 MT_LIFECYCLE_FIELDS = (
     "allProduced", "allEnqueued", "allAllocFailed", "allSendFailed",
     "allNpiReceived", "allFramedQueued", "allFramingFailed",
-    "allTlSubmitted", "allTlRejected", "afRegProduced",
-    "afRegEnqueued", "afRegAllocFailed", "afRegSendFailed",
-    "afRegNpiReceived", "afRegFramedQueued", "afRegFramingFailed",
-    "afRegTlSubmitted", "afRegTlRejected",
+    "allTlSubmitted", "allTlRejected", "afDataProduced",
+    "afDataEnqueued", "afDataAllocFailed", "afDataSendFailed",
+    "afDataNpiReceived", "afDataFramedQueued", "afDataFramingFailed",
+    "afDataTlSubmitted", "afDataTlRejected",
 )
 
 def _mt_lifecycle(record: dict) -> dict | None:
