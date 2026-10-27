@@ -58,10 +58,12 @@ def _host_counts(record: dict) -> dict | None:
     return result
 
 
-def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 300_000,
-            progress_window_ms: int = 3_600_000) -> dict:
+def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
+            progress_window_ms: int = 3_600_000,
+            collector_fresh_after_ms: int = 180_000) -> dict:
     if not (_nonneg(now_ms) and _nonneg(fresh_after_ms) and fresh_after_ms > 0
-            and _nonneg(progress_window_ms) and progress_window_ms > 0):
+            and _nonneg(progress_window_ms) and progress_window_ms > 0
+            and _nonneg(collector_fresh_after_ms) and collector_fresh_after_ms > 0):
         raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_REPORT_ARGUMENTS")
     report = {
         "schema": "p7u-f2-passive-freshness-v1",
@@ -70,6 +72,8 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 300_000,
         "evidence_trust": "VERIFIED_CHAIN_REQUIRED_BY_READER",
         "collector_feed": "NO_RECORDS", "collector_last_record_age_s": None,
         "f2_freshness": "NO_CURRENT_OWNER_VALID", "last_valid_f2_age_s": None,
+        "native_f2_30m_objective": "NOT_ASSESSED",
+        "native_f2_in_last_30m": 0, "native_f2_deadline_seconds": 1800,
         "last_valid_f2_utc_ms": None, "valid_f2_current_owner_count": 0,
         "current_owner_records": 0, "last_native": None,
         "recent_sampling_outcomes": {"VALID": 0, "SKIPPED": 0, "FAILED": 0, "QUARANTINED": 0},
@@ -85,7 +89,7 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 300_000,
         report["collector_feed"] = "CLOCK_UNCERTAIN"
     else:
         report["collector_feed"] = (
-            "FRESH" if latest_age <= fresh_after_ms else "STALE"
+            "FRESH" if latest_age <= collector_fresh_after_ms else "STALE"
         )
     # Never attribute another restarted owner's good F2 to the current process.
     owner = (last.get("hostRunId"), last.get("ownerGeneration"))
@@ -99,6 +103,25 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 300_000,
     valid = [r for r in current if r.get("kind") == "VALID"]
     report["valid_f2_current_owner_count"] = len(valid)
     latest_valid = valid[-1] if valid else None
+    thirty_minutes = 1_800_000
+    current_native = [r for r in valid if
+                      (t := _age(now_ms, r.get("utc"))) is not None and
+                      t <= thirty_minutes]
+    report["native_f2_in_last_30m"] = len(current_native)
+    if current_native:
+        report["native_f2_30m_objective"] = "MET"
+    else:
+        # No previous owner's native records are eligible, even after restart.
+        # If no native sample exists since this owner started, use its earliest
+        # monotonic uptime as a lower bound on duration (never infer 0).
+        latest_uptime = last.get("processUptimeMs")
+        uptime_expired = _nonneg(latest_uptime) and latest_uptime >= thirty_minutes
+        first_seen_age = _age(now_ms, current[0].get("utc")) if current else None
+        report["native_f2_30m_objective"] = (
+            "BREACHED" if uptime_expired or
+            (first_seen_age is not None and first_seen_age >= thirty_minutes)
+            else "NOT_YET_OBSERVED_FOR_30M"
+        )
     if latest_valid:
         age = _age(now_ms, latest_valid.get("utc"))
         report["last_valid_f2_age_s"] = age / 1000 if age is not None else None
@@ -162,7 +185,10 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 300_000,
 def main() -> None:
     p = argparse.ArgumentParser(description="Read-only verified F2 freshness; never reset")
     p.add_argument("--history-dir", type=Path, required=True)
-    p.add_argument("--fresh-seconds", type=int, default=300)
+    p.add_argument("--fresh-seconds", type=int, default=1800,
+                   help="native F2 age objective (default 1800 seconds / 30 min)")
+    p.add_argument("--collector-fresh-seconds", type=int, default=180,
+                   help="passive collector feed age budget (default 180 seconds)")
     p.add_argument("--window-seconds", type=int, default=3600)
     p.add_argument("--now-ms", type=int, default=None, help="offline replay only")
     args = p.parse_args()
@@ -172,6 +198,7 @@ def main() -> None:
             rows, now_ms=args.now_ms if args.now_ms is not None else int(time.time() * 1000),
             fresh_after_ms=args.fresh_seconds * 1000,
             progress_window_ms=args.window_seconds * 1000,
+            collector_fresh_after_ms=args.collector_fresh_seconds * 1000,
         )
         print(json.dumps(report, sort_keys=True, separators=(",", ":")))
     except EvidenceHold as exc:
