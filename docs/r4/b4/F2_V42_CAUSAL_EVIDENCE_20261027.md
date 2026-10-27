@@ -19,9 +19,9 @@ Existing slots0..5 preserved: SRSP queue depth+HWM (only if NPI_SREQRSP), async 
 | 12 | allFramingFailed | native NPI frame creation/queue allocation failure |
 | 13 | allTlSubmitted | original NPITL_writeTL returned complete length |
 | 14 | allTlRejected | original NPITL_writeTL returned short/error |
-| 15–23 | afRegProduced, afRegEnqueued, afRegAllocFailed, afRegSendFailed, afRegNpiReceived, afRegFramedQueued, afRegFramingFailed, afRegTlSubmitted, afRegTlRejected | Same nine existing **AF_REGISTER-only** counters from the physically accepted 4cfe F3 diagnostics |
+| 15–23 | afDataProduced, afDataEnqueued, afDataAllocFailed, afDataSendFailed, afDataNpiReceived, afDataFramedQueued, afDataFramingFailed, afDataTlSubmitted, afDataTlRejected | Same nine existing **AF_REGISTER-only** counters from the physically accepted 4cfe F3 diagnostics |
 
-**Slot24 remains reserved zero.** General counters include SYS F2 self-responses *after* snapshot, so they are not directly comparable to AF host counts one-for-one. AF_REGISTER-only metrics diagnose startup endpoint registration; **do not confuse them with steady-state AF DATA_REQUEST replies**.
+**Slot24 remains reserved zero.** General counters include SYS F2 self-responses *after* snapshot, so they are not directly comparable to AF host counts one-for-one. This second bank specifically addresses the progressing AF data-request SRSP timeouts seen before the actual hang. **AF_REGISTER remains covered by existing F3**, without consuming the scarce F2 slots.
 
 Counters are saturating uint32 held in RAM and read under a single OSAL critical section in F2. Original producer/NPI behavior and failure policy are unchanged. All-stage coverage is conditional on the exact compiled CC2652P7 SDK source; native C and stack-overhead checks are release gates. No physical UART-TX proof from TL accepted. Host USB writer queued bytes are likewise **not physical-transmission evidence**.
 
