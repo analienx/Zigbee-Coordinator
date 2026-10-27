@@ -239,3 +239,40 @@ test("V4 Controller uses original Z-Stack owner only",async()=>{
     ctrl.adapter=adapter;ctrl.adapterDisconnected=true;
     assert.equal(await ctrl.b4ReadOnlyDiagnosticsV4FromExistingOwner(allowed),undefined);
 });
+
+test("F2 v4.2 preserves v4.1 framing and provides exactly 18 native causal stages", async () => {
+    const values = Array.from({length:18}, (_, i) => i + 11);
+    const owner = ownerWithResponse((nonce) => {
+        const frame = wire(nonce, {minor:2, mask:0x00FFFFFF, seq:7});
+        for (let i=0; i<18; i++) frame.writeUInt32LE(values[i], 56 + i*4);
+        return frame;
+    });
+    const result = await owner.b4ReadOnlyDiagnosticsV4(allowed);
+    assert.equal(result.minor, 2);
+    assert.equal(result.validityMask, 0x00FFFFFF);
+    assert.equal(result.mtLifecycle.allProduced, 11);
+    assert.equal(result.mtLifecycle.allTlRejected, 19);
+    assert.equal(result.mtLifecycle.afRegProduced, 20);
+    assert.equal(result.mtLifecycle.afRegTlRejected, 28);
+    assert.equal(Object.keys(result.mtLifecycle).length, 18);
+    assert.equal(owner.znp.requests, 1);
+    const oldOwner = ownerWithResponse((nonce)=>wire(nonce,{minor:1,mask:0x3F}));
+    assert.equal((await oldOwner.b4ReadOnlyDiagnosticsV4(allowed)).mtLifecycle, null);
+});
+
+test("F2 v4.2 quarantines wrong validity, reserved slot, and incompatible minor", async () => {
+    for (const mutate of [
+        (d) => d.writeUInt32LE(0x2c,12),
+        (d) => d.writeUInt32LE(1,128), // slot24 is NOT a valid counter
+        (d) => {d[157]=1;}, // v4.1 must not carry v4.2 counters
+    ]) {
+        const owner=ownerWithResponse((nonce) => {
+            const d=wire(nonce,{minor:2,mask:0x00FFFFEC});
+            d.writeUInt32LE(12,56);
+            mutate(d);
+            return d;
+        });
+        assert.equal(await owner.b4ReadOnlyDiagnosticsV4(allowed), undefined);
+        assert.equal(owner.znp.disabled,true);
+    }
+});
