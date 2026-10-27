@@ -413,8 +413,11 @@ test("F2 v4.2 commits exactly 18 named response stages, rejects any nested ident
         assert.equal(workerModule.open(x.root).records[0].mtLifecycle.allTlSubmitted,7);
         assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
             ...counters,rawPayload:"deadbeef"}}),/F2_V42_LIFECYCLE_SHAPE/);
-        assert.throws(()=>workerModule.commit(state,{...row,minor:1}),
+        assert.throws(()=>workerModule.commit(state,{...row,minor:1,validityMask:0x2C}),
             /F2_V42_LIFECYCLE_SHAPE/);
+        // Keep independent malformed-mask rejection explicit; do not weaken the validator.
+        assert.throws(()=>workerModule.commit(state,{...row,minor:1}),
+            /F2_V41_VALIDITY_MASK/);
         assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
             ...counters,allProduced:-1}}),/F2_V42_LIFECYCLE_SHAPE/);
     } finally {x.cleanup();}
