@@ -50,6 +50,17 @@ function sameRecord(entry) {
             entry.sequence > 0, "VALID_SEQUENCE");
         hold(Number.isSafeInteger(entry.validityMask) &&
             entry.validityMask >= 0, "VALID_MASK");
+        if (entry.minor === 2) {
+            hold(entry.validityMask === 0x00FFFFEC ||
+                entry.validityMask === 0x00FFFFFF,
+                "F2_V42_VALIDITY_MASK");
+            hold(Object.hasOwn(entry, "mtLifecycle") &&
+                entry.mtLifecycle !== null, "F2_V42_MISSING_CAUSAL_COUNTERS");
+        }
+        if (entry.minor === 1) {
+            hold(entry.validityMask === 0x2C || entry.validityMask === 0x3F,
+                "F2_V41_VALIDITY_MASK");
+        }
         if (Object.hasOwn(entry, "mtLifecycle") && entry.mtLifecycle !== null) {
             const v = entry.mtLifecycle;
             const fields = ["allProduced", "allEnqueued", "allAllocFailed",
