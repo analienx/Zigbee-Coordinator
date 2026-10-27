@@ -26,9 +26,9 @@ Never infer logical MT/OSAL queue errors are physical UART failures or invoke th
 2. A subsequently accepted response still transmits and completes normally **before** B1 enters HOLD.
 3. Asynchronous UART completion error releases busy state, preserves B1 physical HOLD and does not report successful TX.
 4. Failed fragmented transmissions clear unsafe fragment state.
-5. Three deliberately broken C mutants—stuck-busy, inverted B1 status and omitted B1 error unwind—must fail.
+5. Four deliberately broken C mutants—stuck-busy, inverted B1 status, omitted B1 error unwind, and bypassed B1 HOLD—must fail.
 
-A full source receipt binds final npi_tl.c and npi_tl_uart.c hashes. CI must include exact-source and dual-native builds, B1 NV/security seal and negative tests. No mocked-green or local-only build counts as hardware qualification. Do not weaken original B1 security admission or composite pinning.
+Muse Code Wonder Max's initial review of `93016f` raised a potential stale-callback ownership gap: an error callback might clear another in-flight write. The reviewed R4 B1 callback first latches **physical HOLD** and returns before the v4.3 unwind; the repair now runs at that early return after releasing the CS, and the new **actual composed TI C test proves that B1 HOLD prevents any subsequent UART2_write submission** (plus a negative mutant that bypasses this condition). This bounds post-HOLD stale callbacks, but it does **not** establish whether a late callback can refer to a different write that was already accepted *before* HOLD; no per-write generation token is available from the examined TI callback contract. A full source receipt binds final npi_tl.c and npi_tl_uart.c hashes. CI must include exact-source and dual-native builds, B1 NV/security seal and negative tests. No mocked-green or local-only build counts as hardware qualification. Do not weaken original B1 security admission or composite pinning.
 
 ## Remaining work before physical flash
 
