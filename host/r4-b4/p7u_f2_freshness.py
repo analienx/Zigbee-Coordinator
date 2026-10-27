@@ -58,6 +58,21 @@ def _host_counts(record: dict) -> dict | None:
     return result
 
 
+def _host_wire(record: dict) -> dict | None:
+    evidence = record.get("hostEvidence")
+    if type(evidence) is not dict or "wire" not in evidence:
+        return None
+    wire = evidence["wire"]
+    keys = ("rxRawBytes", "rxChunks", "unpiParsedFrames",
+            "unpiParseErrors", "unpiBufferedBytes", "txQueuedBytes",
+            "txQueuedFrames", "txQueuedRawBuffers")
+    if (type(wire) is not dict or set(wire) != set(keys) | {"measurement"}
+            or wire.get("measurement") != "EXISTING_OWNER_STREAM_ONLY"
+            or not all(_nonneg(wire.get(k)) for k in keys)):
+        raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_WIRE_SCHEMA")
+    return {k: wire[k] for k in keys}
+
+
 def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
             progress_window_ms: int = 3_600_000,
             collector_fresh_after_ms: int = 180_000) -> dict:
@@ -79,6 +94,8 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
         "recent_sampling_outcomes": {"VALID": 0, "SKIPPED": 0, "FAILED": 0, "QUARANTINED": 0},
         "recent_skip_reasons": {}, "latest_failed_event": None,
         "passive_srsp_progress": "UNKNOWN", "passive_srsp_delta": None,
+        "wire_boundary_status": "NOT_INSTALLED_OR_INSUFFICIENT",
+        "wire_boundary_deltas": None,
     }
     if not rows:
         return report
@@ -179,6 +196,32 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
             deltas[name] = {"ok": ok, "timeout": timeout}
         report["passive_srsp_progress"] = "OBSERVED_HOST_COUNTERS"
         report["passive_srsp_delta"] = deltas
+    wire_rows = [(r, _host_wire(r)) for r in recent]
+    wire_rows = [(r, w) for r, w in wire_rows if w is not None]
+    if len(wire_rows) >= 2:
+        before, after = wire_rows[0][1], wire_rows[-1][1]
+        cumulative = ("rxRawBytes", "rxChunks", "unpiParsedFrames",
+                      "unpiParseErrors", "txQueuedBytes",
+                      "txQueuedFrames", "txQueuedRawBuffers")
+        diff = {k: after[k] - before[k] for k in cumulative}
+        if any(v < 0 for v in diff.values()):
+            report["wire_boundary_status"] = "COUNTER_DISCONTINUITY"
+        else:
+            report["wire_boundary_deltas"] = {
+                **diff, "unpiBufferedBytesLatest": after["unpiBufferedBytes"]}
+            af = (report.get("passive_srsp_delta") or {}).get("AF") or {}
+            if diff["txQueuedBytes"] > 0 and diff["rxRawBytes"] == 0:
+                verdict = "NO_RAW_RX_WHILE_HOST_QUEUES_TX"
+            elif diff["rxRawBytes"] > 0 and diff["unpiParsedFrames"] == 0:
+                verdict = "RAW_RX_WITHOUT_VALID_UNPI_FRAMES"
+            elif (diff["unpiParsedFrames"] > 0 and af.get("ok") == 0
+                  and (af.get("timeout") or 0) > 0):
+                verdict = "VALID_UNPI_BUT_AF_SRSP_NOT_PROGRESSING"
+            elif diff["rxRawBytes"] > 0 and diff["unpiParsedFrames"] > 0:
+                verdict = "RAW_RX_AND_UNPI_PROGRESS"
+            else:
+                verdict = "NO_DETERMINING_CHANGE"
+            report["wire_boundary_status"] = verdict
     return report
 
 
