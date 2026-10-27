@@ -187,6 +187,13 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     af_behavior=exercise_af_handoff(sdk)
     if af_behavior["status"] != "AF_ACTUAL_TI_C_OUTBOUND_FAILURE_PATH_AND_MUTANTS_PASS":
         raise ValueError("AF_REAL_OUTBOUND_BEHAVIOR_UNPROVEN")
+    # v4.2 F2 causal patch composes on the actual 4cfe AF-fix source only.
+    from r4_f2_v42_causal import apply as extend_f2_causality
+    f2_causal = extend_f2_causality(sdk)
+    for name in ("source/ti/zstack/npi/npi_client_mt.c", TASK, SYS):
+        if f2_causal["before_sha256"][name] != af_handoff["source_modified_sha256"][name]:
+            raise ValueError("F2_V42_AFTER_AF_HANDOFF_PREIMAGE_DRIFT_"+name)
+
 
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
@@ -222,9 +229,12 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     af_client="source/ti/zstack/npi/npi_client_mt.c"
     afterhash[af_client]=hashlib.sha256((sdk/af_client).read_bytes()).hexdigest()
     for name in (af_client,):
-        if afterhash[name] != af_handoff["source_modified_sha256"][name]:
-            raise ValueError("AF_TRACE_RECEIPT_UNBOUND_"+name)
+        if afterhash[name] != f2_causal["modified_sha256"][name]:
+            raise ValueError("F2_V42_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
+    for name in (TASK,SYS):
+        if afterhash[name] != f2_causal["modified_sha256"][name]:
+            raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
     for name in (TASK,UART,SYS):
@@ -249,6 +259,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "b4_v4_patch_evidence":native_v4,
         "af_register_outbound_handoff":af_handoff,
         "af_register_actual_c_behavior":af_behavior,
+        "f2_v42_causal_response_path":f2_causal,
         "b1_f1_and_b4_f0_f2_dispatch":True,
         "b1_b4_uart_single_owner_tx_finished_fanout":True,
         "b1_f2_hold_exception_enabled_for_disposable_composite":True,
