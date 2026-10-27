@@ -203,7 +203,7 @@ def apply(sdk):
         "uart_extra_requests":0,"no_nv_writes":True,
         "response_abi":"SYS_F2_160_MINOR2",
         "slot6_14":["all_"+k for k in GENERAL],
-        "slot15_23":["af_data_"+k for k in AF],
+        "slot15_23":["af_data_"+k for k in af_data],
         "before_sha256":{p:hashlib.sha256(data.encode()).hexdigest()
                          for p,data in original.items()},
         "modified_sha256":{p:hashlib.sha256(data.encode()).hexdigest()
