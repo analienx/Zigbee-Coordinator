@@ -418,6 +418,13 @@ test("F2 v4.2 commits exactly 18 named response stages, rejects any nested ident
         // Keep independent malformed-mask rejection explicit; do not weaken the validator.
         assert.throws(()=>workerModule.commit(state,{...row,minor:1}),
             /F2_V41_VALIDITY_MASK/);
+        assert.throws(()=>workerModule.commit(state,{...row,minor:3}),
+            /F2_UNSUPPORTED_MINOR/);
+        assert.throws(()=>workerModule.commit(state,{...row,minor:null}),
+            /F2_UNSUPPORTED_MINOR/);
+        // Legacy minor-omitted v4.1 remains valid only with its original masks.
+        assert.throws(()=>workerModule.commit(state,{...fixture(),validityMask:0xDEAD}),
+            /F2_V41_VALIDITY_MASK/);
         assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
             ...counters,allProduced:-1}}),/F2_V42_LIFECYCLE_SHAPE/);
     } finally {x.cleanup();}
