@@ -202,7 +202,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     tx_liveness = patch_uart_tx_liveness(sdk)
     from r4_uart_tx_liveness_harness import exercise as exercise_tx_liveness
     tx_c = exercise_tx_liveness(sdk)
-    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_TWO_MUTANTS":
+    if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_THREE_MUTANTS":
         raise ValueError("R4_UART_TX_FAILURE_UNWIND_NOT_SOURCE_PROVEN")
     for name in (TL, UART):
         if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != tx_liveness["modified_sha256"][name]:
