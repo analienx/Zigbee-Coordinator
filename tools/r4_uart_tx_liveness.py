@@ -84,28 +84,19 @@ void NPITL_abortFailedTx(void)
         hook + "uint16 NPITL_readTL(uint8 *buf, uint16 len)\n{",
         "ABORT_FUNCTION")
     callback = extract(u, "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)")
-    if "npiTransmitCB(0,TransportTxLen);" not in callback:
-        raise ValueError("UART_TX_LIVENESS_CALLBACK_PREIMAGE_DRIFT")
+    # B1 already stops the write callback on a genuine UART failure and
+    # latches physical transport HOLD. Unwind the lower-layer busy state
+    # on that *actual* early-return path; never weaken B1 HOLD or claim TX.
+    if ("b1_management_transport_failed(B1_ERROR_UART_WRITE);" not in callback
+            or "b1_startup_tx_result((uint16_t)size, 1);" not in callback):
+        raise ValueError("UART_TX_LIVENESS_B1_FAIL_CLOSED_PREIMAGE_DRIFT")
     updated = once(callback,
-        """#else
-    if ( npiTransmitCB )
-    {
-        npiTransmitCB(0,TransportTxLen);
-    }
-#endif // NPI_FLOW_CTRL = 1""",
-        """#else
-    if (status != UART2_STATUS_SUCCESS)
-    {
-        /* Completion failed: do not label this as a physical TX success. */
-        TransportTxLen = 0u;
-        NPITL_abortFailedTx();
-    }
-    else if ( npiTransmitCB )
-    {
-        npiTransmitCB(0,TransportTxLen);
-    }
-#endif // NPI_FLOW_CTRL = 1""",
-        "CALLBACK_FAILED_STATUS")
+        """        OsalPort_leaveCS(key);
+        return; /* Do not claim completed host write after failure. */""",
+        """        OsalPort_leaveCS(key);
+        NPITL_abortFailedTx(); /* preserve B1 HOLD; no false TX completion */
+        return; /* Do not claim completed host write after failure. */""",
+        "B1_CALLBACK_EARLY_FAILURE_UNWIND")
     u = once(u, callback, updated, "CALLBACK_FUNCTION")
     u = once(u,
         "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status);",
