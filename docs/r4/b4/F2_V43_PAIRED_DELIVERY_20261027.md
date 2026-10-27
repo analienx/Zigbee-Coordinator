@@ -94,3 +94,9 @@ file of that operation and the stopped owner, rejects any flash-admission or
 write artifact, and creates a new server-generated operation. It must recapture
 the same current image with88 ROM CRCs and fresh NV, rerun all security checks,
 and avoid repeating BSL entry. It cannot continue a failed or ambiguous write.
+
+If that read-only attachment times out before any capture or admission, a second
+pinned witness may authorize exactly one fresh BSL entry. A separate immutable
+consumption record is written before dispatch. Any earlier BSL-entry, capture,
+admission or write artifact on the failed attachment rejects this path. The new
+capture must equal the original held image before security and flash admission.

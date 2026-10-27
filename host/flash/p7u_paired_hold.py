@@ -9,6 +9,8 @@ import hashlib,json
 NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar',
        'bsl-entry-intent.json','sparse-receipt.json','fresh-sparse-snapshot.bin','security-receipt.json'}
+ATTACH_NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
+       'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar','rom-reattach-intent.json'}
 
 def absent_owner(ns,ha):
     """Supervisor removes a stopped add-on container. Prove its absence exactly."""
@@ -26,11 +28,11 @@ def absent_owner(ns,ha):
     ha.proof(False)
     return {'id':None,'image':ns['IMAGE'],'started_at':None,'running':False,'absent':True}
 
-def fingerprint(root,owner,source):
-    if not root.is_dir() or root.is_symlink() or {f.name for f in root.iterdir()}!=NAMES:
+def fingerprint(root,owner,source,names=NAMES):
+    if not root.is_dir() or root.is_symlink() or {f.name for f in root.iterdir()}!=names:
         raise ValueError('PAIRED_READONLY_HOLD_FILE_SET')
     files={}
-    for name in sorted(NAMES):
+    for name in sorted(names):
         p=root/name
         if not p.is_file() or p.is_symlink():raise ValueError('PAIRED_READONLY_HOLD_FILE_TYPE')
         with p.open('rb') as f:files[name]=hashlib.file_digest(f,'sha256').hexdigest()
@@ -71,3 +73,31 @@ def provenance(ns,ha,owner):
          cold['bytes']==(root/'cold-before-flash.tar').stat().st_size,'PAIRED_READONLY_HOLD_BACKUP')
     ha.proof(False)
     return digest
+
+def reentry_provenance(ns,ha,owner):
+    first=provenance(ns,ha,owner);need=ns['need'];root=ns['FAILED_ATTACH'];ns['private_root'](root)
+    marker=ns['OPERATIONS']/('readonly-reentry-'+root.name)
+    need(not marker.exists() and not marker.is_symlink(),'PAIRED_ROM_REENTRY_ALREADY_CONSUMED')
+    digest=fingerprint(root,owner,ns['SOURCE'],ATTACH_NAMES)
+    need(digest==ns['PAIRED_ROM_REENTRY_PIN'],'PAIRED_ATTACH_HOLD_PIN')
+    load=ns['load'];p=load(root/'plan.json');pin=ns['sha'](ns['canonical'](p))
+    need(pin==ns['PAIRED_ROM_REENTRY_PLAN_PIN'] and p['operation_id']==root.name and
+         p['source']==ns['SOURCE'] and p['installed']==ns['INSTALLED'] and p['owner']==owner and
+         p['candidate_pin']==ns['CANDIDATE_PIN'] and p['input_pin']==ns['PREVIOUS_INPUT_PIN'] and
+         p['rom_continuation_sha256']==first and not p.get('bounded_reentry_sha256'),
+         'PAIRED_ATTACH_HOLD_PLAN')
+    need(load(root/'execute-intent.json')['plan_sha256']==pin and
+         load(root/'rom-reattach-intent.json')=={'plan_sha256':pin,'provenance':first} and
+         load(root/'hold.json')=={'automatic_boot':False,'automatic_retry':False,'error_type':'RomWireError',
+           'plan_sha256':pin,'safe_code':'BSL_ACK_TIMEOUT_OR_DISCONNECTED'},'PAIRED_ATTACH_HOLD_REASON')
+    cold=load(root/'cold-backup.json')
+    need(cold['sha256']==ns['file_sha'](root/'cold-before-flash.tar') and
+         cold['bytes']==(root/'cold-before-flash.tar').stat().st_size,'PAIRED_ATTACH_HOLD_BACKUP')
+    return ns['sha'](ns['canonical']({'first_readonly_hold':first,'failed_attach':digest}))
+
+def consume_reentry(ns,plan_pin):
+    root=ns['OPERATIONS']/('readonly-reentry-'+ns['FAILED_ATTACH'].name)
+    ns['need'](not root.exists() and not root.is_symlink(),'PAIRED_ROM_REENTRY_ALREADY_CONSUMED')
+    root.mkdir(mode=0o700)
+    ns['durable'](root,'intent.json',{'new_operation':ns['PRIVATE'].name,'plan_sha256':plan_pin,
+          'failed_attach':ns['FAILED_ATTACH'].name,'attempts':1,'action':'FRESH_BSL_ENTRY_AFTER_ZERO_WRITE_ATTACH_TIMEOUT'})

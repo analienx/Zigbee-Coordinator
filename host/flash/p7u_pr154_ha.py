@@ -452,6 +452,9 @@ def bounded_reentry_provenance(ha, owner):
     Both earlier attempts must have stopped before any flash admission. This
     cannot be used after an uncertain erase/program or a changed owner/image.
     """
+    if globals().get('PAIRED_ROM_REENTRY_PIN'):
+        from p7u_paired_hold import reentry_provenance
+        return reentry_provenance(globals(),ha,owner)
     earlier = rom_hold_provenance(ha, owner); private_root(FAILED_ATTACH)
     names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
              'execute-intent.json', 'hold.json', 'cold-backup.json', 'cold-before-flash.tar',
@@ -644,6 +647,9 @@ async def deploy(package, pin, ha):
             durable(PRIVATE, 'rom-reattach-intent.json', {'plan_sha256': pin, 'provenance': rom_continuation})
         rom = factory(); await rom.open(SERIAL)
         if not rom_continuation:
+            if reentry and globals().get('PAIRED_ROM_REENTRY_PIN'):
+                from p7u_paired_hold import consume_reentry
+                consume_reentry(globals(),pin)
             durable(PRIVATE, 'bsl-entry-intent.json', {'plan_sha256': pin, 'attempts': 1})
             ha.enter_bsl(); await asyncio.sleep(1)
         drained = 0
@@ -660,7 +666,7 @@ async def deploy(package, pin, ha):
         from dataclasses import asdict
         proof = asdict(capture.receipt); current = capture.snapshot
         await rom.assert_read_status()
-        if rom_continuation:
+        if rom_continuation or (reentry and globals().get('PAIRED_ROM_REENTRY_PIN')):
             need(sha(current) == sha(read(HELD_ROM/'fresh-sparse-snapshot.bin')), 'ROM_IMAGE_CHANGED')
         durable(PRIVATE, 'fresh-sparse-snapshot.bin', current)
         durable(PRIVATE, 'sparse-receipt.json', proof)

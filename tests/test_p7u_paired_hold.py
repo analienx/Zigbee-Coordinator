@@ -73,3 +73,39 @@ class ReadonlyHold(unittest.TestCase):
         proc.return_value.stderr='error: no such object: app_local_p7u_r4_native_host'
         ns['run'].return_value=json.dumps([{'Id':'wrong-image'}]).encode()
         with self.assertRaisesRegex(op.Hold,'ABSENT_OWNER_IMAGE'):hold.absent_owner(ns,self.ha)
+
+    def attach_fixture(self):
+        operations=Path(self.tmp.name)/'operations';operations.mkdir(mode=0o700)
+        attach=operations/('4'*32);attach.mkdir(mode=0o700)
+        p=dict(self.plan,operation_id=attach.name,owner=self.owner,
+               rom_continuation_sha256=self.ns['PAIRED_ROM_HOLD_PIN'],bounded_reentry_sha256=None)
+        pin=op.sha(op.canonical(p))
+        values={n:{} for n in hold.ATTACH_NAMES if n.endswith('.json')}
+        values.update({'plan.json':p,'execute-intent.json':{'plan_sha256':pin},
+          'rom-reattach-intent.json':{'plan_sha256':pin,'provenance':self.ns['PAIRED_ROM_HOLD_PIN']},
+          'hold.json':{'automatic_boot':False,'automatic_retry':False,'error_type':'RomWireError',
+                       'plan_sha256':pin,'safe_code':'BSL_ACK_TIMEOUT_OR_DISCONNECTED'},
+          'cold-backup.json':{'bytes':4,'sha256':op.sha(b'cold')}})
+        for name,value in values.items():(attach/name).write_bytes(op.canonical(value))
+        (attach/'cold-before-flash.tar').write_bytes(b'cold')
+        self.ns.update(FAILED_ATTACH=attach,OPERATIONS=operations,PRIVATE=operations/('5'*32),durable=op.durable,
+             PAIRED_ROM_REENTRY_PLAN_PIN=pin,
+             PAIRED_ROM_REENTRY_PIN=hold.fingerprint(attach,self.owner,self.plan['source'],hold.ATTACH_NAMES))
+        return attach
+
+    def test_exact_readonly_attach_can_consume_only_one_fresh_bsl_entry(self):
+        attach=self.attach_fixture()
+        digest=hold.reentry_provenance(self.ns,self.ha,self.owner)
+        self.assertEqual(len(digest),64)
+        hold.consume_reentry(self.ns,'new-plan-pin')
+        marker=self.ns['OPERATIONS']/('readonly-reentry-'+attach.name)/'intent.json'
+        self.assertEqual(json.loads(marker.read_bytes())['attempts'],1)
+        with self.assertRaisesRegex(op.Hold,'ALREADY_CONSUMED'):hold.consume_reentry(self.ns,'new-plan-pin')
+        with self.assertRaisesRegex(op.Hold,'ALREADY_CONSUMED'):hold.reentry_provenance(self.ns,self.ha,self.owner)
+
+    def test_attach_with_bsl_capture_or_write_admission_cannot_authorize_reentry(self):
+        attach=self.attach_fixture()
+        for name in ('bsl-entry-intent.json','fresh-sparse-snapshot.bin','admission.json','mutation-journal.jsonl'):
+            path=attach/name;path.write_bytes(b'x')
+            with self.assertRaisesRegex(ValueError,'FILE_SET'):hold.reentry_provenance(self.ns,self.ha,self.owner)
+            path.unlink()

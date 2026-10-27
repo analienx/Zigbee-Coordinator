@@ -14,6 +14,7 @@ PIN_FIELDS = ("candidate_pin", "previous_plan_pin", "previous_frozen_pin",
               "input_pin")
 FIELDS = {"schema", "source_sha", "installed_source", "previous_operation", *PIN_FIELDS}
 HOLD_FIELDS={"readonly_hold_operation","readonly_hold_plan_pin","readonly_hold_pin"}
+ATTACH_FIELDS={"readonly_attach_operation","readonly_attach_plan_pin","readonly_attach_pin"}
 
 
 def canonical(value):
@@ -26,7 +27,7 @@ def binding_values(raw, expected_pin, package):
     need(re.fullmatch(r"[0-9a-f]{64}", expected_pin or "") is not None and
          hashlib.sha256(raw).hexdigest() == expected_pin, "PIN")
     data=json.loads(raw)
-    need(type(data) is dict and set(data) in (FIELDS,FIELDS|HOLD_FIELDS) and data["schema"]=="p7u-paired-operation-v1", "FIELDS")
+    need(type(data) is dict and set(data) in (FIELDS,FIELDS|HOLD_FIELDS,FIELDS|HOLD_FIELDS|ATTACH_FIELDS) and data["schema"]=="p7u-paired-operation-v1", "FIELDS")
     need(data["installed_source"]==INSTALLED and
          re.fullmatch(r"[0-9a-f]{40}", data["source_sha"]) is not None, "SOURCES")
     need(package.get("firmware_source_sha")==data["source_sha"] and
@@ -54,4 +55,10 @@ def binding_values(raw, expected_pin, package):
         result.update(HELD_ROM=Path('/share/p7u-r4-firmware-operations')/data['readonly_hold_operation'],
                       PAIRED_ROM_HOLD_PLAN_PIN=data['readonly_hold_plan_pin'],
                       PAIRED_ROM_HOLD_PIN=data['readonly_hold_pin'])
+    if ATTACH_FIELDS.issubset(data):
+        need(re.fullmatch(r"[0-9a-f]{32}",data["readonly_attach_operation"]) is not None and
+             all(re.fullmatch(r"[0-9a-f]{64}",data[k]) is not None for k in ("readonly_attach_plan_pin","readonly_attach_pin")),"READONLY_ATTACH_FIELDS")
+        result.update(FAILED_ATTACH=Path('/share/p7u-r4-firmware-operations')/data['readonly_attach_operation'],
+                      PAIRED_ROM_REENTRY_PLAN_PIN=data['readonly_attach_plan_pin'],
+                      PAIRED_ROM_REENTRY_PIN=data['readonly_attach_pin'])
     return result

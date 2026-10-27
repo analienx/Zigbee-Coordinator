@@ -42,6 +42,11 @@ class Binding(unittest.TestCase):
         data.update(readonly_hold_operation='2'*32,readonly_hold_plan_pin='e'*64,readonly_hold_pin='f'*64)
         result=self.call(data,package)
         self.assertEqual(str(result['HELD_ROM']),'/share/p7u-r4-firmware-operations/'+'2'*32)
+        data.update(readonly_attach_operation='3'*32,readonly_attach_plan_pin='1'*64,readonly_attach_pin='2'*64)
+        self.assertEqual(self.call(data,package)['FAILED_ATTACH'].name,'3'*32)
+        data['readonly_attach_operation']='not-an-id'
+        with self.assertRaisesRegex(ValueError,'READONLY_ATTACH_FIELDS'):self.call(data,package)
+        data['readonly_attach_operation']='3'*32
         data['readonly_hold_operation']='../arbitrary'
         with self.assertRaisesRegex(ValueError,'READONLY_HOLD_FIELDS'):self.call(data,package)
 
