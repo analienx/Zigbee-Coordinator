@@ -18,6 +18,16 @@ Priority, highest first:
 | **P3 — one bounded, authorized hardware validation** | With the one existing coordinator and proven rescue capability, perform a separately approved trial; validate boot/state 9, local command acknowledgements under normal traffic, fresh device MQTT reports and a bounded soak before any map scan or stress. | Reliable ordinary mesh operation and fewer/no previously reproducible local ZNP failures; record baseline, new evidence, limits and failures. |
 | **P4 — production safety recovery** | Restore a known-good operating state **only when needed** to preserve service/safety or unblock diagnosis, using the least disruptive admissible action. Keep previous APP/boot and recovery material ready as contingency, never as primary engineering deliverable. | Service restored *if necessary*, but firmware incident and P0/P1 remain OPEN. |
 
+## Operational recovery priority update — 2026-10-27
+
+During a **confirmed hard local ZNP hang** with household Zigbee service offline, **service restoration now takes immediate precedence** over ongoing firmware research. The first approved recovery *method* is the **[guarded TI ROM/BSL round-trip → boot unchanged R4 → one Z2M startup → real MQTT device verification](HANG_RECOVERY_RUNBOOK.md)**.
+
+This is a **priority change for operational incidents**, not a waiver of private backup/security/counter preservation, exact coordinator and SMLIGHT OS source verification, exclusive serial ownership, fresh operator authorization, durable one-shot intents or flash safety. Never automate BSL from missing F2 alone.
+
+On 27-Oct, **normal Zigbee-only restart** failed at AF register and **ESP32 restart** failed at SYS ping; a **read-only ROM/BSL entry and APP reboot** restored 24 *non-retained* MQTT messages from 5 devices in 5.7 seconds without any flash, power cut, NV or CCFG write. [Physical #143](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051).
+
+**Engineering priority is unchanged:** determine and fix the actual ZNP/NPI/UART or bridge sequencing defect. ROM BSL success means execution and bidirectional UART worked *after entering ROM* and the same APP/NV later served, but does **not** prove which component or reset-line state had been wedged. The F2 last-valid-age and unsupported queue counters remain important [#144](https://github.com/analienx/Zigbee-Coordinator/issues/144).
+
 ## Verified production milestone — 2026-10-26 (not a stock rollback)
 
 The **sole** SMLIGHT SLZB-06P7U / CC2652P7 is physically flashed with firmware source `4cfe317083c2a3d1b784350b0ab960e27218e618` and the matching APP/AC000. Its independently verified, single-use guarded write and boot operation is `0bd33ea656639db0e833961a6d0be4f6`; write admission covered all 88 ROM CRCs and **did not touch NV or CCFG**. The matching sealed operator/release source is `c30e29e3448ca71937272e420cba70e3884e5ae2`. Firmware CI **12/12** and operator CI **13/13** passed on the exact source SHAs.
