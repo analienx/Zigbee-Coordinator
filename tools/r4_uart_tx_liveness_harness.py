@@ -36,7 +36,7 @@ static uint16 msgFragLen = 0;
 static unsigned txPktCount = 0;
 static int lower_response = 0, task_notifications = 0, user_completions = 0;
 static int physical_uart_failure_latch = 0;
-static bool b1_management_transport_unavailable(void) { return false; }
+static bool b1_management_transport_unavailable(void) { return physical_uart_failure_latch != 0; }
 static void b1_management_transport_failed(int e) {
  if (e == B1_ERROR_UART_WRITE) physical_uart_failure_latch++;
 }
@@ -72,17 +72,20 @@ int main(void) {
  if (NPITL_writeTL(b,12) != 12 || !npiTxActive) return 12;
  NPITLUART_writeCallBack(NULL,NULL,12,NULL,UART2_STATUS_SUCCESS);
  if (npiTxActive || user_completions != 1) return 13;
- // Asynchronous failure must NOT be reported as successful completion.
- if (NPITL_writeTL(b,12) != 12 || !npiTxActive) return 14;
- NPITLUART_writeCallBack(NULL,NULL,12,NULL,4);
- if (npiTxActive || user_completions != 1 || task_notifications != 1) return 15;
- // Fragmented, synchronously rejected transmissions must not retain
- // dangling pointers to a caller-owned message.
+ // Fragment failure and subsequent accepted TX are exercised BEFORE B1 HOLD.
  lower_response = 0;
  if (NPITL_writeTL(b,32) != 0) return 16;
  if (npiTxActive || msgFragLen || msgFrag || npiTxBufLen) return 17;
  lower_response = 1;
  if (NPITL_writeTL(b,12) != 12) return 18;
+ NPITLUART_writeCallBack(NULL,NULL,12,NULL,UART2_STATUS_SUCCESS);
+ if (npiTxActive || user_completions != 2) return 19;
+ // Genuine async UART failure must preserve B1 physical HOLD, never
+ // fake a TX success, yet clear stale NPI busy state at the early return.
+ if (NPITL_writeTL(b,12) != 12 || !npiTxActive) return 14;
+ NPITLUART_writeCallBack(NULL,NULL,12,NULL,4);
+ if (npiTxActive || user_completions != 2 ||
+     task_notifications != 1 || physical_uart_failure_latch != 1) return 15;
  printf("NPI_UART_TX_EXACT_C_LIVENESS_PASS\n");
  return 0;
 }
@@ -127,18 +130,23 @@ def exercise(sdk):
     mutant_writer=writer[:i]+writer[end:]
     rc,_=run("NEGATIVE_STUCK_BUSY",_c(mutant_writer,abort,callback))
     if rc==0:raise RuntimeError("FAILED_TO_CATCH_STUCK_BUSY_MUTANT")
-    failed_branch="""    if (status != UART2_STATUS_SUCCESS)"""
-    if callback.count(failed_branch)!=1:raise RuntimeError("ASYNC_STATUS_TEST_ABSENT")
-    mut_callback=callback.replace("    if (status != UART2_STATUS_SUCCESS)",
-        "    if (status == UART2_STATUS_SUCCESS)",1)
-    rc,_=run("NEGATIVE_FALSE_TX",_c(writer,abort,mut_callback))
-    if rc==0:raise RuntimeError("FAILED_TO_CATCH_FALSE_TX_MUTANT")
-    return {"status":"PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_TWO_MUTANTS",
+    failed_branch="    if (status != UART2_STATUS_SUCCESS || size != TransportTxLen ||"
+    if callback.count(failed_branch)!=1:
+        raise RuntimeError("B1_PHYSICAL_UART_ERROR_GATE_MISSING")
+    mut_callback=callback.replace(failed_branch,
+        "    if (status == UART2_STATUS_SUCCESS || size != TransportTxLen ||",1)
+    rc,_=run("NEGATIVE_INVERTED_B1_STATUS",_c(writer,abort,mut_callback))
+    if rc==0:raise RuntimeError("FAILED_TO_CATCH_INVERTED_B1_STATUS_MUTANT")
+    unwind="        NPITL_abortFailedTx(); /* preserve B1 HOLD; no false TX completion */"
+    if callback.count(unwind)!=1:raise RuntimeError("B1_ABORT_UNWIND_MISSING")
+    rc,_=run("NEGATIVE_MISSING_B1_ABORT",_c(writer,abort,callback.replace(unwind,"",1)))
+    if rc==0:raise RuntimeError("FAILED_TO_CATCH_MISSING_B1_ABORT_MUTANT")
+    return {"status":"PASS_ACTUAL_TI_COMPOSED_C_POSITIVE_AND_THREE_MUTANTS",
             "cases":["immediate_rejection_unwedges","accepted_write_completes",
                      "asynchronous_failure_does_not_fake_success",
                      "failed_fragment_clears_dangling_remainder",
                      "next_write_remains_possible"],
-            "negative_mutants":["stuck_busy","inverted_callback_status"],
+            "negative_mutants":["stuck_busy","inverted_b1_status","missing_b1_abort"],
             "hardware_access":False}
 
 if __name__=="__main__":
