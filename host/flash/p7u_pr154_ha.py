@@ -396,7 +396,7 @@ def quiescent_provenance(ha, owner):
     need(owner['running'] is False and owner['image'] == IMAGE, 'QUIESCENT_OWNER')
     info = ha.info(OWNER)
     need(info['state'] in ('error','stopped') and
-         info['version'] == '0.2.1-068ae05e9f9a' and info['build'] is False,
+         info['version'] == globals().get('PAIRED_HOST_VERSION', '0.2.1-068ae05e9f9a') and info['build'] is False,
          'QUIESCENT_APP_VERSION')
     ha.proof(False)
     backup = read(DATA/'coordinator_backup.json')
@@ -416,6 +416,9 @@ def rom_hold_provenance(ha, owner):
     No BSL command may be repeated. A new read-only ROM synchronization and
     fresh capture must prove the same image before any candidate admission.
     """
+    if globals().get('PAIRED_ROM_HOLD_PIN'):
+        from p7u_paired_hold import provenance
+        return provenance(globals(),ha,owner)
     private_root(HELD_ROM)
     names = {'plan.json', 'reader-baseline-check.json', 'owner-backup-before-stop.json',
              'execute-intent.json', 'hold.json', 'cold-backup.json', 'cold-before-flash.tar',

@@ -78,3 +78,19 @@ fresh protected-region backups and readback verification. Accept only after norm
 Zigbee/MQTT responses resume and at least three genuine minor3 snapshots with
 advancing native sequence and complete progress fields are durably committed.
 Preserve prior diagnostic history and original network/security state.
+
+The host and firmware remain a pair even when the separately qualified operator
+is repaired. The qualified pair is source899f179. A live read-only preflight
+found ten normal short-address changes and one user3 to user2 association release.
+Pinned TI `source/ti/zstack/stack/nwk/addr_mgr.h` at SDK3615ad5d (SHA256
+b3112594ba8332efdae74f6f7b482e5b93524e01b14b27acace76db51e4b84b9)
+defines ASSOC=1 and SECURITY=2. Runtime comparison permits only release of ASSOC
+while retaining SECURITY, IEEE identity, padding and every other ownership bit.
+Keys, replay floors and APS references keep their original strict checks. This
+normalizes comparison only; it never edits any NV byte.
+
+A consumed zero-write HOLD is not replayed. A pinned continuation binds every
+file of that operation and the stopped owner, rejects any flash-admission or
+write artifact, and creates a new server-generated operation. It must recapture
+the same current image with88 ROM CRCs and fresh NV, rerun all security checks,
+and avoid repeating BSL entry. It cannot continue a failed or ambiguous write.

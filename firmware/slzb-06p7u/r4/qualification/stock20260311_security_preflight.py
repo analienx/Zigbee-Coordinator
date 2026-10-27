@@ -440,6 +440,7 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
         now = inspect_state(current, abi)
         old = inspect_state(baseline, abi)
         changed_short_addresses = 0
+        released_associations = 0
         comparison = now
         if runtime_upgrade:
             # A running Zigbee network may assign a different short NWK address
@@ -453,13 +454,27 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                 after = addresses.get(index)
                 require(after is not None, 'ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
                 changed_short_addresses += after[offset:offset+width] != before[offset:offset+width]
-                addresses[index] = after[:offset] + before[offset:offset+width] + after[offset+width:]
+                normalized = after[:offset] + before[offset:offset+width] + after[offset+width:]
+                # Pinned TI addr_mgr.h (SDK 3615ad5d), SHA256 b3112594...
+                # ASSOC=0x01 is transient association ownership; SECURITY=2.
+                # Only RELEASE of ASSOC while retaining SECURITY and every
+                # other bit may differ. Never add ownership or clear security.
+                user_offset, user_width = abi['structs']['AddrMgrEntry_t']['fields']['user']
+                require(user_width == 1, 'NATIVE_ABI_WIDTH_MISMATCH')
+                before_user, after_user = before[user_offset], after[user_offset]
+                if (before_user & 2 and before_user & 1 and not after_user & 1 and
+                        after_user | 1 == before_user):
+                    normalized = normalized[:user_offset] + bytes((before_user,)) + normalized[user_offset+1:]
+                    released_associations += 1
+                addresses[index] = normalized
             comparison = dict(now, addresses=addresses)
         compare_retained(comparison, old)
         return {"semantic_checks_passed": True, "reason_codes": [],
                 "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"]),
-                "comparison_scope": 'KNOWN_R4_RUNTIME_SHORT_ADDRESS_ONLY' if runtime_upgrade else 'STRICT_RETAINED',
-                "runtime_short_address_changes": changed_short_addresses}
+                "comparison_scope": ('KNOWN_R4_RUNTIME_SHORT_ADDRESS_AND_ASSOC_RELEASE_ONLY' if released_associations else
+                                     'KNOWN_R4_RUNTIME_SHORT_ADDRESS_ONLY' if runtime_upgrade else 'STRICT_RETAINED'),
+                "runtime_short_address_changes": changed_short_addresses,
+                "runtime_association_releases": released_associations}
     except (Hold, KeyError, TypeError, IndexError, ValueError) as error:
         code = str(error) if isinstance(error, Hold) else "SECURITY_RECORD_OR_ABI_MALFORMED"
         return {"semantic_checks_passed": False, "reason_codes": [code]}

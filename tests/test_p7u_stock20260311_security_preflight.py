@@ -286,6 +286,26 @@ class RetainedSecurityTests(unittest.TestCase):
         r = security.evaluate_records(self.now, self.before, self.abi, runtime_upgrade=True)
         self.assertEqual(r['reason_codes'], ['TC_RETAINED_SET_CHANGED'])
 
+    def test_runtime_association_release_retains_security_identity_and_bytes(self):
+        self.before[1, 1, 9] = record(self.abi, 'AddrMgrEntry_t', user=3, nwkAddr=9, extAddr=bytes([9])*8)
+        self.now[1, 1, 9] = record(self.abi, 'AddrMgrEntry_t', user=2, nwkAddr=1234, extAddr=bytes([9])*8)
+        original=copy.deepcopy(self.now)
+        self.hold('ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
+        result=security.evaluate_records(self.now,self.before,self.abi,runtime_upgrade=True)
+        self.assertTrue(result['semantic_checks_passed'],result)
+        self.assertEqual(result['runtime_association_releases'],1)
+        self.assertEqual(self.now,original)
+        for index in (1,4):
+            altered=copy.deepcopy(original);raw=bytearray(altered[1,1,9]);raw[index]^=1;altered[1,1,9]=bytes(raw)
+            self.assertFalse(security.evaluate_records(altered,self.before,self.abi,runtime_upgrade=True)['semantic_checks_passed'])
+        for user in (0,1,4,6,7):
+            altered=copy.deepcopy(original)
+            altered[1,1,9]=record(self.abi,'AddrMgrEntry_t',user=user,nwkAddr=1234,extAddr=bytes([9])*8)
+            self.assertFalse(security.evaluate_records(altered,self.before,self.abi,runtime_upgrade=True)['semantic_checks_passed'])
+        self.now[1,7,0]=record(self.abi,'nwkSecMaterialDesc_t',FrameCounter=499,extendedPanID=bytes(range(11,19)))
+        self.assertEqual(security.evaluate_records(self.now,self.before,self.abi,runtime_upgrade=True)['reason_codes'],
+                         ['NWK_PERSISTED_COUNTER_REGRESSION'])
+
     def test_aps_reference_requires_existing_address_and_security_user(self):
         table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
         table += record(self.abi, "ZDSecMgrEntry_t", ami=9, keyNvId=0)

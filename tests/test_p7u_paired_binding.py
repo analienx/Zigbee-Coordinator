@@ -33,8 +33,17 @@ class Binding(unittest.TestCase):
     def test_changed_binding_or_package_source_is_denied(self):
         data,package=self.fixture()
         with self.assertRaisesRegex(ValueError,"PIN"):self.call(data,package,"d"*64)
-        package["operator_source_sha"]="d"*40
+        package["operator_source_sha"]="not-a-source"
         with self.assertRaisesRegex(ValueError,"PACKAGE_SOURCE"):self.call(data,package)
+
+    def test_independently_qualified_operator_keeps_firmware_and_host_paired(self):
+        data,package=self.fixture();package['operator_source_sha']='d'*40
+        self.assertEqual(self.call(data,package)['SOURCE'],data['source_sha'])
+        data.update(readonly_hold_operation='2'*32,readonly_hold_plan_pin='e'*64,readonly_hold_pin='f'*64)
+        result=self.call(data,package)
+        self.assertEqual(str(result['HELD_ROM']),'/share/p7u-r4-firmware-operations/'+'2'*32)
+        data['readonly_hold_operation']='../arbitrary'
+        with self.assertRaisesRegex(ValueError,'READONLY_HOLD_FIELDS'):self.call(data,package)
 
     def test_no_arbitrary_path_command_or_installed_image(self):
         for key,value in (("previous_operation","../../etc"),("source_sha","a"*39+";"),

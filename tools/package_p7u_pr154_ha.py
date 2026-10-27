@@ -37,9 +37,9 @@ def main():
     source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     assert source == os.environ['OPERATOR_SOURCE_SHA']
     c = json.loads((args.candidate/'candidate.json').read_bytes())
-    assert c['source_sha'] == source == os.environ['FIRMWARE_SOURCE_SHA']
+    assert c['source_sha'] == os.environ['FIRMWARE_SOURCE_SHA']
     host = json.loads(args.host_release.read_bytes())
-    assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == source
+    assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == c['source_sha']
     paired_image = host['profiles']['diagnostic']['image_id']
     import re
     assert re.fullmatch('sha256:[0-9a-f]{64}', paired_image)
@@ -53,6 +53,7 @@ def main():
     shutil.copyfile('host/flash/p7u_pr154_ha.py', dest)
     shutil.copyfile('host/flash/p7u_pr154_stage.py', dest.with_name('p7u_pr154_stage.py'))
     shutil.copyfile('host/flash/p7u_paired_binding.py', dest.with_name('p7u_paired_binding.py'))
+    shutil.copyfile('host/flash/p7u_paired_hold.py', dest.with_name('p7u_paired_hold.py'))
     if args.reader_package:
         (args.out/'security-reader-aarch64').write_bytes(qualified_reader(args.reader_package))
     else:
