@@ -20,7 +20,7 @@ const allowed = new Set([
     "schema", "kind", "utc", "probeLatencyMs", "monotonicReceiveNs", "reason",
     "sourceAbi", "imageRuntimeAttested", "abi", "minor", "sequence", "validityMask",
     "srspDepth", "srspHighWater", "asyncDepth", "asyncHighWater", "srspEnqueued",
-    "uartTxFinishedEvents", "radioEpochTag", "radioEpochHardwareVerified",
+    "uartTxFinishedEvents", "mtLifecycle", "radioEpochTag", "radioEpochHardwareVerified",
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
     "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
@@ -50,6 +50,26 @@ function sameRecord(entry) {
             entry.sequence > 0, "VALID_SEQUENCE");
         hold(Number.isSafeInteger(entry.validityMask) &&
             entry.validityMask >= 0, "VALID_MASK");
+        if (Object.hasOwn(entry, "mtLifecycle") && entry.mtLifecycle !== null) {
+            const v = entry.mtLifecycle;
+            const fields = ["allProduced", "allEnqueued", "allAllocFailed",
+                "allSendFailed", "allNpiReceived", "allFramedQueued",
+                "allFramingFailed", "allTlSubmitted", "allTlRejected",
+                "afRegProduced", "afRegEnqueued", "afRegAllocFailed",
+                "afRegSendFailed", "afRegNpiReceived", "afRegFramedQueued",
+                "afRegFramingFailed", "afRegTlSubmitted", "afRegTlRejected"];
+            hold(entry.minor === 2 && v && typeof v === "object" &&
+                !Array.isArray(v) &&
+                Object.keys(v).length === fields.length &&
+                Object.keys(v).every(k => fields.includes(k)) &&
+                fields.every(k => Number.isSafeInteger(v[k]) &&
+                    v[k] >= 0 && v[k] <= 0xFFFFFFFF),
+                "F2_V42_LIFECYCLE_SHAPE");
+        }
+        if (entry.minor === 1) {
+            hold(!Object.hasOwn(entry, "mtLifecycle") ||
+                entry.mtLifecycle === null, "F2_V41_NO_CAUSAL_CLAIM");
+        }
     }
     if ("hostEvidence" in entry && entry.hostEvidence !== null) {
         const e = entry.hostEvidence;
