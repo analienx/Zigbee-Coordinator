@@ -221,9 +221,9 @@ class FreshnessTests(unittest.TestCase):
         fields = ("allProduced", "allEnqueued", "allAllocFailed",
                   "allSendFailed", "allNpiReceived", "allFramedQueued",
                   "allFramingFailed", "allTlSubmitted", "allTlRejected",
-                  "afRegProduced", "afRegEnqueued", "afRegAllocFailed",
-                  "afRegSendFailed", "afRegNpiReceived", "afRegFramedQueued",
-                  "afRegFramingFailed", "afRegTlSubmitted", "afRegTlRejected")
+                  "afDataProduced", "afDataEnqueued", "afDataAllocFailed",
+                  "afDataSendFailed", "afDataNpiReceived", "afDataFramedQueued",
+                  "afDataFramingFailed", "afDataTlSubmitted", "afDataTlRejected")
         a = {k: 10 for k in fields}
         b = {k: 20 for k in fields}
         q = analyze([f2(1000, 1, minor=2, validityMask=0x00ffffec,
