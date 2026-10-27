@@ -34,10 +34,16 @@ The final *observed increments* were **ZDO ~03:59 UTC**, **UTIL ~04:00 UTC**, **
 
 ## Cross-repository corroboration, NOT causal proof
 
-- [Koenkk/Z-Stack-firmware#592](https://github.com/Koenkk/Z-Stack-firmware/issues/592) documents 35 malformed serial packet lengths (CC2652P7 path) versus zero on EFR32MG21 on the **same older dual-radio SMLIGHT board**, with progressive AF SRSP timeouts. That user used **TCP**, CC2652P7 fw 20240315, ESP firmware v3.2.4; our sole P7U uses **USB**, R4 4cfe317, SLZB-OS v3.4.3.dev1. This is independent *family-level* evidence for a serial/UART-path pathology, **not evidence that ESP vs CC2652 hardware has been uniquely isolated**.
+- [Koenkk/Z-Stack-firmware#592](https://github.com/Koenkk/Z-Stack-firmware/issues/592), cross-posted to [SMLIGHT #5](https://github.com/smlight-tech/slzb-os-scripts/issues/5), originally seemed to support a CC2652P7 UART corruption analogy; **SMLIGHT's explicit correction invalidates the report's radio attribution, reboot interpretation and stated version**. It is **excluded from causal evidence** pending independently verified log mappings.
 - [Koenkk/zigbee2mqtt#32837](https://github.com/Koenkk/zigbee2mqtt/issues/32837) reports a similar CC2652P7 ZNP stall recovered by Zigbee reset+client restart without removing power; recovery recipes differ by incident and device.
 - [Legacy SMLIGHT source](https://github.com/smlight-dev/slzb-06-firmware/blob/main/src/etc.cpp): ordinary radio reset asserts RST only ~250ms; legacy BSL asserts FLASH select before RST, then holds ROM for ~2s. [Current SLZB-OS Berry API](https://github.com/smlight-tech/slzb-os-scripts/blob/main/docs/modules/zb.md) says ESP32-S3 U-series reset/boot-select pins can run through a TCA9555 expander (pin IDs 100+n), and UART driver restart is separate. **The actual v3.4.3.dev1 compiled BSL-vs-RST implementation and expander timings are not publicly established**.
 - [Official v3.4.3.dev1 release](https://smlight.tech/support/manuals/books/slzb-os/page/changelog-slzb-os) explicitly notes adaptive UART FIFO/timing configuration. The TCP socket-server fixes in the same notes **must not be mislabeled as USB evidence**.
+
+## External corroboration retraction after reading SMLIGHT's own issue review
+
+**DO NOT use Koenkk/Z-Stack-firmware#592 (cross-post smlight-tech/slzb-os-scripts#5) as verified evidence isolating CC2652P7 serial framing.** Its report labels ZB1 as CC2652P7 and ZB2 as EFR32MG21, but [SMLIGHT contributor Tarik2142 explicitly corrected that ZB1 is EFR32](https://github.com/smlight-tech/slzb-os-scripts/issues/5#issuecomment-3919177925), pointed out that "Reboot reason: SOFTWARE" is a *commanded reboot*, not evidence of a crash, and noted that the described firmware/log versions were inconsistent. The reported 35 packet-length errors might be real text but **their radio attribution and interpretation are disputed**. The dual-radio numeric comparison cannot currently distinguish CC2652P7 from EFR32. Treat it as **unreliable and excluded from root-cause likelihood ranking**, not independent proof of a TI/ESP bridge fault.
+
+The separately documented [Koenkk/Z-Stack-firmware#518](https://github.com/Koenkk/Z-Stack-firmware/issues/518) reports user-perceived stability issues after a CC2652P7 firmware change, but without causal counters; it does **not repair the credibility defect** of #592. **Our local one-radio P7U counters and source-pinned ROM recovery remain the dominant evidence.**
 
 ## Falsifiable first-missing-boundary matrix
 
