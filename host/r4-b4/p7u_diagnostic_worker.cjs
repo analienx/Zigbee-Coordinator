@@ -50,6 +50,10 @@ function sameRecord(entry) {
             entry.sequence > 0, "VALID_SEQUENCE");
         hold(Number.isSafeInteger(entry.validityMask) &&
             entry.validityMask >= 0, "VALID_MASK");
+        // Earlier v4.1 records may omit minor. Any explicit unknown minor
+        // must fail closed rather than being counted as a native VALID reply.
+        hold(entry.minor === undefined || entry.minor === 1 ||
+            entry.minor === 2, "F2_UNSUPPORTED_MINOR");
         if (entry.minor === 2) {
             hold(entry.validityMask === 0x00FFFFEC ||
                 entry.validityMask === 0x00FFFFFF,
@@ -57,7 +61,7 @@ function sameRecord(entry) {
             hold(Object.hasOwn(entry, "mtLifecycle") &&
                 entry.mtLifecycle !== null, "F2_V42_MISSING_CAUSAL_COUNTERS");
         }
-        if (entry.minor === 1) {
+        if (entry.minor === 1 || entry.minor === undefined) {
             hold(entry.validityMask === 0x2C || entry.validityMask === 0x3F,
                 "F2_V41_VALIDITY_MASK");
         }
@@ -77,7 +81,7 @@ function sameRecord(entry) {
                     v[k] >= 0 && v[k] <= 0xFFFFFFFF),
                 "F2_V42_LIFECYCLE_SHAPE");
         }
-        if (entry.minor === 1) {
+        if (entry.minor === 1 || entry.minor === undefined) {
             hold(!Object.hasOwn(entry, "mtLifecycle") ||
                 entry.mtLifecycle === null, "F2_V41_NO_CAUSAL_CLAIM");
         }
