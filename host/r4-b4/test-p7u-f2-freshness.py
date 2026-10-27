@@ -202,6 +202,21 @@ class FreshnessTests(unittest.TestCase):
             analyze([record(1000, hostEvidence=bad),
                      record(2000, hostEvidence=bad)], now_ms=3000)
 
+    def test_waitress_legacy_map_occupancy_not_active_requests(self):
+        accounting = {"active": 2, "timedOut": 2026, "resolved": 0,
+                      "rawMapEntries": 2028}
+        x = progress(1, 0)
+        x["waitressAccounting"] = accounting
+        x["waitressPending"] = 2028
+        q = analyze([record(1000, hostEvidence=x)], now_ms=2000)
+        self.assertEqual(q["waitress_live_vs_expired"]["active"], 2)
+        self.assertEqual(q["waitress_live_vs_expired"]["timedOut"], 2026)
+        self.assertFalse(q["automatic_recovery_permitted"])
+        bad = dict(x)
+        bad["waitressAccounting"] = {**accounting, "active": 3}
+        with self.assertRaises(EvidenceHold):
+            analyze([record(1000, hostEvidence=bad)], now_ms=2000)
+
     def test_future_clock_never_fabricates_freshness(self):
         q = analyze([f2(2_000)], now_ms=1_000)
         self.assertEqual(q["f2_freshness"], "CLOCK_UNCERTAIN")
