@@ -373,6 +373,23 @@ def plan(root):
         return this.waiters.size === 0;
     }
 
+    /** Read-only: an active non-AF/ZDO callback, SRSP or unknown matcher
+     *  blocks the nonce-correlated F2 diagnostic. Expired tombstones have
+     *  already settled. Never modify any stock Waitress entry here.
+     */
+    public b4HasNoActiveBlockingWaiters(allowed: (matcher: TMatcher) => boolean): boolean {
+        for (const waiter of this.waiters.values()) {
+            if (waiter.timedout === true) { continue; }
+            if (waiter.timedout !== false || waiter.resolved !== false) { return false; }
+            try {
+                if (!allowed(waiter.matcher)) { return false; }
+            } catch {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public clear(): void {""",
     )
     changes[ZNP] = replace_once(
