@@ -78,8 +78,8 @@ V4_ADAPTER_METHOD = r"""
             : this.interpanLock ? "INTERPAN_LOCK"
             : !local.initialized ? "ZNP_NOT_INITIALIZED"
             : !local.mutexIdle ? "ZNP_MUTEX_BUSY"
-            : local.waitressPending !== 0 ? "ZNP_WAITRESS_PENDING"
-            : !this.znp.b4CanProbe() ? "ZNP_OTHER_ADMISSION"
+            : !this.znp.b4F2NoBlockingWaiters() ? "ZNP_WAITRESS_PENDING"
+            : !this.znp.b4CanProbeV4() ? "ZNP_OTHER_ADMISSION"
             : null;
         if (gate !== null) {
             this.b4V4Outcome.reason = gate;
@@ -332,6 +332,18 @@ def plan(root):
         raise ValueError("v3 diagnostic owner mutex guard count drift")
     znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
+    # The F2 pre-write check runs under the existing ZNP mutex; it is a
+    # second admission check, not a new serial owner. F0 remains all-waiter.
+    znp = once(
+        znp,
+        '!this.waitress.b4IsIdle())) {',
+        '!(object.command.name === "r4DiagReadOnlyV4" ? (this.b4F2NoBlockingWaiters() && this.b4F2ReadAdmissionReason() === null) : this.waitress.b4IsIdle()))) {',
+    )
+    znp = once(
+        znp,
+        'throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");',
+        'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 DIAG_NOT_SUBMITTED_BUSY" : "B4 F0 owner unavailable or poisoned inside ZNP mutex");',
+    )
     # The v3 overlay's writer/timer cleanup previously applied only to F0.
     # F2 must use exactly the same tagged waiter's settlement and quarantine.
     znp = once(
@@ -392,6 +404,22 @@ def plan(root):
         }
     }
 
+    /** F2-only: AF/ZDO completion AREQs may remain pending while a
+     *  synchronous MT reply slot is free. SYS reset/unknown and all live
+     *  SRSP waiters must block. Does not mutate stock Waitress state.
+     */
+    public b4F2NoBlockingWaiters(): boolean {
+        return this.waitress.b4HasNoActiveBlockingWaiters((matcher) =>
+            matcher.type === Type.AREQ &&
+            (matcher.subsystem === Subsystem.AF || matcher.subsystem === Subsystem.ZDO));
+    }
+
+    public b4CanProbeV4(): boolean {
+        return this.initialized && !this.b4DiagPoisoned &&
+            this.queue.isIdle() && this.b4F2NoBlockingWaiters() &&
+            this.b4F2ReadAdmissionReason() === null;
+    }
+
     public b4GetPassiveOwnerMetrics() {
         return {
             initialized: this.initialized,
@@ -432,8 +460,10 @@ def plan(root):
     }
 
     public b4IsDiagPoisoned(): boolean {""")
-    znp = once(znp, "            this.queue.isIdle() && this.waitress.b4IsIdle();",
-        "            this.queue.isIdle() && this.waitress.b4IsIdle() && this.b4F2ReadAdmissionReason() === null;")
+    # F0 has no nonce: preserve the pristine conservative all-waiter gate.
+    # The F2 timeout policy belongs only to b4CanProbeV4().
+    if znp.count("this.queue.isIdle() && this.waitress.b4IsIdle();") != 1:
+        raise ValueError("v3 F0 strict admission anchor drift")
     znp = once(znp, "            this.waitress.resolve(object);", """            const matched = this.waitress.resolve(object);
             if (matched && object.type === Type.SRSP &&
                 !(object.subsystem === Subsystem.SYS &&
