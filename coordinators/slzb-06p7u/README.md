@@ -9,6 +9,12 @@
 - Current role (16 October 2026): **primary engineering and coordinator reliability target**; preserve the existing network.
 - Distinct from `slzb-06p7` (legacy entry) and `mr4u-p10` (CC2674P10).
 
+## First-line recovery when the production ZNP interface hangs
+
+**Use the [verified P7U ROM/BSL recovery runbook](HANG_RECOVERY_RUNBOOK.md) first**, not ordinary Zigbee/ESP reset loops or a speculative reflash. On **2026-10-27**, the source-verified TI BSL entry → read-only chip ID/ROM CRC → application boot of the unchanged R4 image → one Z2M startup **physically recovered** household service with independent fresh non-retained MQTT device messages. There was no power cycle, flash, NV/CCFG write or network re-commissioning.
+
+This is a **service-restoration** priority for a *confirmed local SRSP/ZNP hard hang*, subject to exact USB/MAC/OS source checks, sole serial ownership, private backups, fresh operator authority and durable single-shot journal. The separate firmware-first **engineering** investigation remains open; BSL success is a clue, not a proven root cause.
+
 ## Current work: R4, not the older P7 R2/R3 line
 
 **Effective 25 October 2026: [Firmware-first priority policy](FIRMWARE_FIRST_POLICY.md).** Investigate and fix loss of local ZNP responses; do not divert the primary engineering effort into restoring old firmware. Verified restoration is a contingency for preserving the network, not a permanent correction. A recent R4 candidate and the prior restored image both showed startup-response loss; investigate shared transport and host state as well as source defects. Preserve every existing physical-change and retained-security gate.
