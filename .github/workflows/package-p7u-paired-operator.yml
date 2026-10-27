@@ -1,6 +1,12 @@
 name: P7U paired guarded operator package (NO LIVE ACTION)
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/package-p7u-paired-operator.yml'
+      - 'host/flash/**'
+      - 'host/r4-b4/**'
+      - 'tools/package_p7u_pr154_ha.py'
   workflow_dispatch:
     inputs:
       native_run:
@@ -17,17 +23,17 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
-      OPERATOR_SOURCE_SHA: ${{ github.sha }}
-      FIRMWARE_SOURCE_SHA: ${{ github.sha }}
+      OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      FIRMWARE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       NATIVE_RUN: ${{ inputs.native_run }}
       HOST_RUN: ${{ inputs.host_run }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
@@ -35,13 +41,24 @@ jobs:
       - name: Bind only successful paired artifacts from this source
         run: |
           python - <<'PY'
-          import json,os,subprocess
+          import json,os,subprocess,time
           from pathlib import Path
-          repo=os.environ['GITHUB_REPOSITORY']; sha=os.environ['GITHUB_SHA']
+          repo=os.environ['GITHUB_REPOSITORY']; sha=os.environ['FIRMWARE_SOURCE_SHA']
           for key,workflow,prefix,dest in (
             ('NATIVE_RUN','test-r4-stock20260311-native.yml','p7u-stock20260311-candidate-','candidate'),
             ('HOST_RUN','release-p7u-host.yml','p7u-deployable-host-release-','host')):
-              run_id=os.environ[key]; assert run_id.isdecimal()
+              run_id=os.environ[key]
+              deadline=time.monotonic()+30*60
+              while not run_id:
+                  runs=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100']))['workflow_runs']
+                  matches=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
+                  run=max(matches,key=lambda r:r['id']) if matches else None
+                  if run and run['status']=='completed':
+                      assert run['conclusion']=='success', workflow+' did not pass'
+                      run_id=str(run['id']);break
+                  assert time.monotonic()<deadline, 'paired artifact wait expired'
+                  print('Waiting for paired artifact '+workflow,flush=True);time.sleep(20)
+              assert run_id.isdecimal()
               run=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run_id}']))
               assert run['head_sha']==sha and run['conclusion']=='success' and run['status']=='completed'
               assert run['path']=='.github/workflows/'+workflow
@@ -59,6 +76,6 @@ jobs:
             --out /tmp/paired/operator
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: p7u-paired-operator-${{ github.sha }}
+          name: p7u-paired-operator-${{ github.event.pull_request.head.sha || github.sha }}
           path: /tmp/paired/operator/
           if-no-files-found: error
