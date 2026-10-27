@@ -39,6 +39,16 @@ function ownerWithResponse(chooser) {
         disabled: false,
         requests: 0,
         b4CanProbe() {return !this.disabled;},
+        b4CanProbeV4() {return !this.disabled;},
+        b4F2NoBlockingWaiters() {return !this.disabled;},
+        b4GetPassiveOwnerMetrics() {
+            return {initialized:true, mutexIdle:true, mutexQueued:0,
+                waitressPending:0, diagnosticQuarantined:this.disabled,
+                srsp:{}, scope:"HOST_OWNER_LIFETIME_ONLY"};
+        },
+        b4F2ReadAdmissionReason() {return null;},
+        b4F2AcceptReply() {},
+        b4IsDiagPoisoned() {return this.disabled;},
         b4SetProbeGuard(guard) {this.guard = guard;},
         b4PoisonDiagSession() {this.disabled = true;},
         async requestWithReply(sys,cmd,payload,unused,timeout) {
@@ -46,7 +56,7 @@ function ownerWithResponse(chooser) {
             assert.equal(sys, Subsystem.SYS);
             assert.equal(cmd, "r4DiagReadOnlyV4");
             assert.equal(payload.nonce.length, 8);
-            assert.equal(timeout,1200);
+            assert.equal(timeout,6000);
             return {payload:{diagnostic:chooser(payload.nonce)}};
         }
     };
@@ -139,6 +149,57 @@ test("V4 disabled/busy/OTA/replaced predicate all send zero serial requests",asy
     assert.equal(owner.znp.requests,0);
 });
 
+test("V4 F2 uses existing ZNP owner when only unrelated AREQ callback is outstanding", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true; // synthetic owner, do not open any serial device
+    const callback = znp.waitress.waitFor(
+        {type: Type.AREQ, subsystem: Subsystem.AF, command: "dataConfirm"}, 2000
+    );
+    const transmitted = [];
+    znp.unpiWriter.writeFrame = (request) => {
+        transmitted.push(request.commandID);
+        assert.equal(request.commandID, 242);
+        assert.equal(request.data.length, 8);
+        queueMicrotask(() => znp.onUnpiParsed(
+            new Frame(Type.SRSP, Subsystem.SYS, request.commandID, wire(request.data))
+        ));
+    };
+    const owner = Object.create(ZStackAdapter.prototype);
+    owner.znp = znp;
+    owner.queue = {count: () => 0};
+    owner.interpanLock = false; owner.closing = false;
+    owner.b4DiagInFlight = false; owner.b4NextAllowedMs = 0;
+    assert.equal(znp.waitress.b4IsIdle(), false);
+    assert.equal(znp.b4CanProbeV4(), true);
+    assert.equal(znp.b4CanProbe(), false); // F0 remains all-waiter blocked
+    const result = await owner.b4ReadOnlyDiagnosticsV4(allowed);
+    assert.equal(result?.abi, 4);
+    assert.equal(result?.sequence, 1);
+    assert.equal(owner.b4GetV4Outcome().kind, "VALID");
+    assert.deepEqual(transmitted, [242]);
+    assert.equal(znp.waitress.waiters.size, 1); // AREQ callback never discarded
+    znp.waitress.remove(callback.ID);
+});
+
+test("V4 F2 direct write still rejects a live unrelated SRSP without transmission", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    const transmitted = [];
+    znp.unpiWriter.writeFrame = (request) => transmitted.push(request.commandID);
+    const active = znp.waitress.waitFor(
+        {type: Type.SRSP, subsystem: Subsystem.ZDO, command: "permitJoin"}, 3000
+    );
+    assert.equal(znp.b4CanProbeV4(), false);
+    await assert.rejects(
+        znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnlyV4",
+            {nonce: Buffer.from("0102030405060708", "hex")}, undefined, 200),
+        /B4 DIAG_NOT_SUBMITTED_BUSY/
+    );
+    assert.deepEqual(transmitted, []);
+    assert.equal(znp.b4IsDiagPoisoned(), false); // safely not submitted
+    znp.waitress.remove(active.ID);
+});
+
 test("V4 real compiled Znp mutex vetoes F2 after OTA begins while queued",async()=>{
     const znp = new Znp("/dev/not-opened",115200,false);
     znp.initialized = true;
@@ -177,4 +238,41 @@ test("V4 Controller uses original Z-Stack owner only",async()=>{
     assert.equal(await ctrl.b4ReadOnlyDiagnosticsV4FromExistingOwner(allowed),undefined);
     ctrl.adapter=adapter;ctrl.adapterDisconnected=true;
     assert.equal(await ctrl.b4ReadOnlyDiagnosticsV4FromExistingOwner(allowed),undefined);
+});
+
+test("F2 v4.2 preserves v4.1 framing and provides exactly 18 native causal stages", async () => {
+    const values = Array.from({length:18}, (_, i) => i + 11);
+    const owner = ownerWithResponse((nonce) => {
+        const frame = wire(nonce, {minor:2, mask:0x00FFFFFF, seq:7});
+        for (let i=0; i<18; i++) frame.writeUInt32LE(values[i], 56 + i*4);
+        return frame;
+    });
+    const result = await owner.b4ReadOnlyDiagnosticsV4(allowed);
+    assert.equal(result.minor, 2);
+    assert.equal(result.validityMask, 0x00FFFFFF);
+    assert.equal(result.mtLifecycle.allProduced, 11);
+    assert.equal(result.mtLifecycle.allTlRejected, 19);
+    assert.equal(result.mtLifecycle.afDataProduced, 20);
+    assert.equal(result.mtLifecycle.afDataTlRejected, 28);
+    assert.equal(Object.keys(result.mtLifecycle).length, 18);
+    assert.equal(owner.znp.requests, 1);
+    const oldOwner = ownerWithResponse((nonce)=>wire(nonce,{minor:1,mask:0x3F}));
+    assert.equal((await oldOwner.b4ReadOnlyDiagnosticsV4(allowed)).mtLifecycle, null);
+});
+
+test("F2 v4.2 quarantines wrong validity, reserved slot, and incompatible minor", async () => {
+    for (const mutate of [
+        (d) => d.writeUInt32LE(0x2c,12),
+        (d) => d.writeUInt32LE(1,128), // slot24 is NOT a valid counter
+        (d) => {d[157]=1;}, // v4.1 must not carry v4.2 counters
+    ]) {
+        const owner=ownerWithResponse((nonce) => {
+            const d=wire(nonce,{minor:2,mask:0x00FFFFEC});
+            d.writeUInt32LE(12,56);
+            mutate(d);
+            return d;
+        });
+        assert.equal(await owner.b4ReadOnlyDiagnosticsV4(allowed), undefined);
+        assert.equal(owner.znp.disabled,true);
+    }
 });

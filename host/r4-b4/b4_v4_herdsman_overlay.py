@@ -18,8 +18,10 @@ PARAM = "src/adapter/z-stack/znp/parameterType.ts"
 BUFFALO = "src/adapter/z-stack/znp/buffaloZnp.ts"
 ADAPTER = "src/adapter/z-stack/adapter/zStackAdapter.ts"
 ZNP = "src/adapter/z-stack/znp/znp.ts"
+WAITRESS = "src/utils/waitress.ts"
 PARSER = "src/adapter/z-stack/unpi/parser.ts"
 WRITER = "src/adapter/z-stack/unpi/writer.ts"
+MUTEX = "src/utils/async-mutex.ts"
 CONTROLLER = "src/controller/controller.ts"
 MARKER = "B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE"
 
@@ -33,14 +35,23 @@ V4_ADAPTER_METHOD = r"""
         return {...this.b4V4Outcome};
     }
 
+    /** Passive in-process metrics ONLY. No UART or Zigbee SREQ. */
+    public b4GetNoWireEvidence() {
+        return {...this.znp.b4GetPassiveOwnerMetrics(),
+            adapterQueuePending: this.queue?.count() ?? null,
+            adapterClosing: this.closing, interpanLocked: !!this.interpanLock};
+    }
+
     public async b4ReadOnlyDiagnosticsV4(input: {
         enabled: boolean; hostIdle: boolean; otaActive: boolean;
-        stillAllowed: () => boolean;
+        stillAllowed: () => boolean; reserveAtBoundary?: boolean;
     }): Promise<{
-        abi: 4; minor: 1; validityMask: number; srspDepth: number | null;
+        abi: 4; minor: 1 | 2 | 3; validityMask: number; srspDepth: number | null;
         srspHighWater: number | null; asyncDepth: number; asyncHighWater: number;
         srspEnqueued: number | null; uartTxFinishedEvents: number;
         sequence: number; radioBootId: string | null; resetReason: number | null;
+        mtLifecycle: Record<string, number> | null;
+        uartProgress: Record<string, number> | null;
         buildImageDigest: null; radioEpochHardwareVerified: false;
     } | undefined> {
         this.b4V4Attempt = (this.b4V4Attempt ?? 0) + 1;
@@ -51,11 +62,31 @@ V4_ADAPTER_METHOD = r"""
             this.b4V4Outcome.kind = "QUARANTINED";
             return undefined;
         }
-        if (input?.enabled !== true || input?.hostIdle !== true ||
-            input?.otaActive !== false || typeof input.stillAllowed !== "function" ||
-            !input.stillAllowed() || this.closing || !this.queue ||
-            this.queue.count() !== 0 || this.interpanLock ||
-            !this.znp.b4CanProbe()) {
+        const recoveryGate = this.znp.b4F2ReadAdmissionReason();
+        if (recoveryGate !== null) {
+            this.b4V4Outcome.reason = recoveryGate;
+            return undefined;
+        }
+        // One deterministic, privacy-safe reason for EACH no-wire admission
+        // veto. Never attempt a diagnostic while the production owner is busy.
+        const local = this.znp.b4GetPassiveOwnerMetrics();
+        const reserveAtBoundary = input?.reserveAtBoundary === true;
+        const gate = input?.enabled !== true ? "PROBE_NOT_ENABLED"
+            : input?.hostIdle !== true ? "HOST_NOT_IDLE"
+            : input?.otaActive !== false ? "OTA_ACTIVE_OR_UNKNOWN"
+            : typeof input.stillAllowed !== "function" ? "OWNER_GUARD_UNAVAILABLE"
+            : !input.stillAllowed() ? "OWNER_OR_OTA_GUARD_REVOKED"
+            : this.closing ? "ADAPTER_CLOSING"
+            : !this.queue ? "ADAPTER_QUEUE_UNAVAILABLE"
+            : !reserveAtBoundary && this.queue.count() !== 0 ? "ADAPTER_QUEUE_PENDING"
+            : this.interpanLock ? "INTERPAN_LOCK"
+            : !local.initialized ? "ZNP_NOT_INITIALIZED"
+            : !reserveAtBoundary && !local.mutexIdle ? "ZNP_MUTEX_BUSY"
+            : !reserveAtBoundary && !this.znp.b4F2NoBlockingWaiters() ? "ZNP_WAITRESS_PENDING"
+            : !this.znp.b4CanProbeV4(reserveAtBoundary) ? "ZNP_OTHER_ADMISSION"
+            : null;
+        if (gate !== null) {
+            this.b4V4Outcome.reason = gate;
             return undefined;
         }
         const now = performance.now();
@@ -68,20 +99,23 @@ V4_ADAPTER_METHOD = r"""
         const nonce = randomBytes(8);
         this.b4DiagInFlight = true;
         this.b4NextAllowedMs = now + 30_000;
-        this.znp.b4SetProbeGuard(input.stillAllowed);
+        this.znp.b4SetF2BoundaryAdmission(reserveAtBoundary);
+        this.znp.b4SetProbeGuard(() => input.stillAllowed() && !this.closing && !this.interpanLock);
         try {
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
                 reason: "SUBMISSION_OR_REPLY_UNCERTAIN", submissionState: "UNCERTAIN"};
             const response = await this.znp.requestWithReply(
-                Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 1200);
+                Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, reserveAtBoundary ? 500 : 6000);
             const data = response.payload.diagnostic;
-            if (!Buffer.isBuffer(data) || data.length !== 160 ||
+            if (!Buffer.isBuffer(data) || ![160, 240].includes(data.length) ||
                 data.toString("ascii", 0, 4) !== "R4D4" ||
-                data[4] !== 4 || data[5] !== 0 || data.readUInt16LE(6) !== 160 ||
+                data[4] !== 4 || data[5] !== 0 || data.readUInt16LE(6) !== data.length ||
                 // v4 F2 echoes the REQUEST nonce. An old response is invalid.
                 !nonce.equals(data.subarray(132, 140)) ||
                 data.readUInt32LE(8) & ~0x01 ||
-                data[157] !== 1 || data[158] & ~0x01 || data[159] !== 0 ||
+                ![1, 2, 3].includes(data[157]) ||
+                data.length !== (data[157] === 3 ? 240 : 160) ||
+                data[158] & ~0x01 || data[159] !== 0 ||
                 !data.subarray(140, 156).equals(Buffer.alloc(16)) ||
                 data.readUInt32LE(24) !== 0 || data.readUInt32LE(28) === 0) {
                 this.znp.b4PoisonDiagSession();
@@ -90,11 +124,14 @@ V4_ADAPTER_METHOD = r"""
                 return undefined;
             }
             const validity = data.readUInt32LE(12);
-            if ((validity !== 0x3F && validity !== 0x2C) ||
+            const minor = data[157] as 1 | 2 | 3;
+            const allowedMasks = minor === 1 ? [0x3F, 0x2C] :
+                [0x00FFFFFF, 0x00FFFFEC];
+            if (!allowedMasks.includes(validity) ||
                 Array.from({length: 25}, (_, i) => i).some((i) =>
                     !(validity & (1 << i)) &&
                     data.readUInt32LE(32 + 4 * i) !== 0) ||
-                (validity === 0x3F && data.readUInt32LE(32) > data.readUInt32LE(36)) ||
+                ((validity & 1) !== 0 && data.readUInt32LE(32) > data.readUInt32LE(36)) ||
                 data.readUInt32LE(40) > data.readUInt32LE(44)) {
                 this.znp.b4PoisonDiagSession();
                 this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
@@ -122,12 +159,42 @@ V4_ADAPTER_METHOD = r"""
                     reason: "INVALID_NATIVE_RESPONSE", submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
+            const fields = [
+                "allProduced", "allEnqueued", "allAllocFailed", "allSendFailed",
+                "allNpiReceived", "allFramedQueued", "allFramingFailed",
+                "allTlSubmitted", "allTlRejected", "afDataProduced",
+                "afDataEnqueued", "afDataAllocFailed", "afDataSendFailed",
+                "afDataNpiReceived", "afDataFramedQueued", "afDataFramingFailed",
+                "afDataTlSubmitted", "afDataTlRejected"
+            ];
+            const mtLifecycle = minor >= 2 ? Object.fromEntries(fields.map(
+                (field, index) => [field, data.readUInt32LE(56 + index * 4)])) : null;
+            const progressFields = ["npiRequests", "mtEntered", "mtReturned",
+                "uartWriteAccepted", "uartWriteRejected", "uartCallbackOk",
+                "uartCallbackError", "uartLengthMismatch", "stateFlags", "uartRxBytes",
+                "firstFaultKind", "firstFaultStatusBits", "firstFaultExpected",
+                "firstFaultActual", "firstFaultFlags", "firstFaultTick", "firstFaultCommand",
+                "npiWakes", "b1FirstFailure", "tickPeriodUs"];
+            const uartProgress = minor === 3 ? Object.fromEntries(progressFields.map(
+                (field, index) => [field, data.readUInt32LE(160 + index * 4)])) : null;
+            if (uartProgress && (uartProgress.tickPeriodUs === 0 ||
+                    uartProgress.tickPeriodUs > 100000 || uartProgress.firstFaultKind > 5 ||
+                    uartProgress.b1FirstFailure > 255 || uartProgress.firstFaultCommand > 65535 ||
+                    (uartProgress.stateFlags & 0xFFF0) || (uartProgress.firstFaultFlags & 0xFFF0) ||
+                    (uartProgress.firstFaultKind === 0 && progressFields.slice(11,17).some(
+                        field => uartProgress[field] !== 0)))) {
+                this.znp.b4PoisonDiagSession();
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: "INVALID_NATIVE_RESPONSE", submissionState: "RECEIVED"};
+                return undefined;
+            }
             this.b4V4LastBoot = rawBoot;
             this.b4V4LastSeq = seq;
+            this.znp.b4F2AcceptReply();
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "VALID",
                 reason: "NATIVE_NONCE_MATCHED", submissionState: "RECEIVED"};
             return {
-                abi: 4, minor: 1, validityMask: validity,
+                abi: 4, minor, validityMask: validity, mtLifecycle, uartProgress,
                 srspDepth: validity & 1 ? data.readUInt32LE(32) : null,
                 srspHighWater: validity & 2 ? data.readUInt32LE(36) : null,
                 asyncDepth: data.readUInt32LE(40),
@@ -141,23 +208,32 @@ V4_ADAPTER_METHOD = r"""
                 radioEpochHardwareVerified: false,
             };
         } catch (error: unknown) {
-            if (error instanceof Error &&
-                (error.message === "B4 F2 runtime admission vetoed" ||
-                 error.message === "B4 DIAG_NOT_SUBMITTED_BUSY")) {
-                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
-                    reason: "OWNER_OR_OTA_BUSY", submissionState: "NONE"};
+            if (error instanceof Error && error.message === "B4 F2_REPLY_TIMEOUT") {
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: this.znp.b4IsDiagPoisoned() ? "F2_TIMEOUT_BUDGET_EXHAUSTED" : "F2_REPLY_TIMEOUT",
+                    submissionState: "SENT_OR_UNCERTAIN"};
                 return undefined;
             }
-            // A failed v4 waiter can consume a late frame; disable further
-            // experimental probes, ordinary AF/ZDO/SYS remain unchanged.
+            if (error instanceof Error &&
+                (error.message === "B4 F2 runtime admission vetoed" ||
+                 error.message === "B4 DIAG_NOT_SUBMITTED_BUSY" ||
+                 error.message === "B4 F2_TIMEOUT_COOLDOWN" ||
+                 error.message === "B4 F2_OWNER_PROGRESS_REQUIRED")) {
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "SKIPPED",
+                    reason: error.message.startsWith("B4 F2_") ? error.message.slice(3) : "OWNER_OR_OTA_BUSY",
+                    submissionState: "NONE"};
+                return undefined;
+            }
+            // Only a classified nonce-bound reply timeout is recoverable.
+            // Unknown transport/owner failures retain hard quarantine.
             this.znp.b4PoisonDiagSession();
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
-                reason: error instanceof Error && /after 1200ms/.test(error.message)
-                    ? "HOST_TIMING_UNCERTAIN_TIMEOUT" : "TRANSPORT_OR_WAIT_FAILURE",
+                reason: "TRANSPORT_OR_WAIT_FAILURE",
                 submissionState: "UNCERTAIN"};
             return undefined;
         } finally {
             this.znp.b4SetProbeGuard(undefined);
+            this.znp.b4SetF2BoundaryAdmission(false);
             this.b4DiagInFlight = false;
         }
     }
@@ -174,7 +250,7 @@ def once(s, a, b):
 
 def plan(root):
     root = Path(root)
-    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, CONTROLLER, PARSER, WRITER)
+    paths = (DEFINITION, PARAM, BUFFALO, ADAPTER, ZNP, WAITRESS, CONTROLLER, PARSER, WRITER, MUTEX)
     validate_sources(root, paths)
     if git(root, "rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("herdsman HEAD drift")
@@ -228,10 +304,11 @@ def plan(root):
             }
             case ParameterType.BUFFER160: {
                 // B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: no truncation.
-                if (this.getBuffer().length - this.getPosition() !== 160) {
-                    throw new Error("B4 v4 diagnostic length must be exactly 160");
+                const length = this.getBuffer().length - this.getPosition();
+                if (length !== 160 && length !== 240) {
+                    throw new Error("B4 v4 diagnostic length must be exactly 160 or 240");
                 }
-                return this.readBuffer(160);
+                return this.readBuffer(length);
             }""")
     adapter = once(original[ADAPTER],
         'import {performance} from "node:perf_hooks"; // B4 existing-owner monotonic cooldown',
@@ -252,7 +329,7 @@ def plan(root):
      */
     public async b4ReadOnlyDiagnosticsV4FromExistingOwner(input: {
         enabled: boolean; hostIdle: boolean; otaActive: boolean;
-        stillAllowed: () => boolean;
+        stillAllowed: () => boolean; reserveAtBoundary?: boolean;
     }) {
         if (this.stopping || this.adapterDisconnected ||
             typeof input?.stillAllowed !== "function" ||
@@ -274,6 +351,11 @@ def plan(root):
         return this.adapter instanceof ZStackAdapter ? this.adapter.b4GetV4Outcome() : null;
     }
 
+    /** No UART: snapshot adapter admission and host SRSP aggregates. */
+    public b4NoWireOwnerSnapshotFromExistingOwner() {
+        return this.adapter instanceof ZStackAdapter ? this.adapter.b4GetNoWireEvidence() : null;
+    }
+
     public isStopping(): boolean {""")
     znp = original[ZNP]
     znp = once(znp, "    public b4PoisonDiagSession(): void {",
@@ -291,6 +373,18 @@ def plan(root):
         raise ValueError("v3 diagnostic owner mutex guard count drift")
     znp = znp.replace(old_check,
         '(object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4") &&')
+    # The F2 pre-write check runs under the existing ZNP mutex; it is a
+    # second admission check, not a new serial owner. F0 remains all-waiter.
+    znp = once(
+        znp,
+        '!this.waitress.b4IsIdle())) {',
+        '!(object.command.name === "r4DiagReadOnlyV4" ? (this.b4F2NoBlockingWaiters() && this.b4F2ReadAdmissionReason() === null) : this.waitress.b4IsIdle()))) {',
+    )
+    znp = once(
+        znp,
+        'throw new Error("B4 F0 owner unavailable or poisoned inside ZNP mutex");',
+        'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 DIAG_NOT_SUBMITTED_BUSY" : "B4 F0 owner unavailable or poisoned inside ZNP mutex");',
+    )
     # The v3 overlay's writer/timer cleanup previously applied only to F0.
     # F2 must use exactly the same tagged waiter's settlement and quarantine.
     znp = once(
@@ -308,6 +402,171 @@ def plan(root):
         'throw new Error("B4 F0 runtime admission vetoed");',
         'throw new Error(object.command.name === "r4DiagReadOnlyV4" ? "B4 F2 runtime admission vetoed" : "B4 F0 runtime admission vetoed");',
     )
+    # F0 has no nonce and retains its permanent timeout latch. F2 has a
+    # per-request wire nonce: correlate it BEFORE resolving the waiter, then
+    # permit only a later fresh read after both cooldown and owner SRSP progress.
+    znp = once(znp, "    state?: number;", "    state?: number;\n    b4F2Nonce?: Buffer;")
+    znp = once(znp, "    private b4DiagPoisoned = false;", """    private b4DiagPoisoned = false;
+    private b4F2ConsecutiveTimeouts = 0;
+    private readonly b4PassiveSrspStats: Record<"AF" | "ZDO" | "SYS" | "UTIL",
+        {ok: number; timeout: number; maxLatencyMs: number; lastLatencyMs: number | null}> = {
+        AF: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+        ZDO: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+        SYS: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+        UTIL: {ok: 0, timeout: 0, maxLatencyMs: 0, lastLatencyMs: null},
+    };
+    private b4F2NextAllowedMs = 0;
+    private b4F2OwnerProgress = 0;
+    private b4F2ProgressAtTimeout = 0;""")
+    znp = once(znp, "    public b4IsDiagPoisoned(): boolean {", """    /** In-process, bounded, identity-free SRSP metrics. No extra requests,
+     *  no wall-clock assumptions, no radio-epoch claim. */
+    private b4PassiveSrspKey(subsystem: Subsystem): "AF" | "ZDO" | "SYS" | "UTIL" | null {
+        return subsystem === Subsystem.AF ? "AF"
+            : subsystem === Subsystem.ZDO ? "ZDO"
+            : subsystem === Subsystem.SYS ? "SYS"
+            : subsystem === Subsystem.UTIL ? "UTIL" : null;
+    }
+
+    private b4PassiveNoteAck(subsystem: Subsystem, elapsedMs: number): void {
+        const key = this.b4PassiveSrspKey(subsystem);
+        if (key === null || !Number.isFinite(elapsedMs) || elapsedMs < 0) { return; }
+        const stats = this.b4PassiveSrspStats[key];
+        const latency = Math.min(3600000, Math.floor(elapsedMs));
+        stats.ok = Math.min(Number.MAX_SAFE_INTEGER, stats.ok + 1);
+        stats.maxLatencyMs = Math.max(stats.maxLatencyMs, latency);
+        stats.lastLatencyMs = latency;
+    }
+
+    private b4PassiveNoteTimeout(subsystem: Subsystem): void {
+        const key = this.b4PassiveSrspKey(subsystem);
+        if (key !== null) {
+            const stats = this.b4PassiveSrspStats[key];
+            stats.timeout = Math.min(Number.MAX_SAFE_INTEGER, stats.timeout + 1);
+        }
+    }
+
+    /** F2-only: AF/ZDO completion AREQs may remain pending while a
+     *  synchronous MT reply slot is free. SYS reset/unknown and all live
+     *  SRSP waiters must block. Does not mutate stock Waitress state.
+     */
+    public b4F2NoBlockingWaiters(): boolean {
+        return this.waitress.b4HasNoActiveBlockingWaiters((matcher) =>
+            matcher.type === Type.AREQ &&
+            (matcher.subsystem === Subsystem.AF || matcher.subsystem === Subsystem.ZDO));
+    }
+
+    public b4CanProbeV4(): boolean {
+        return this.initialized && !this.b4DiagPoisoned &&
+            this.queue.isIdle() && this.b4F2NoBlockingWaiters() &&
+            this.b4F2ReadAdmissionReason() === null;
+    }
+
+    public b4GetPassiveOwnerMetrics() {
+        return {
+            initialized: this.initialized,
+            mutexIdle: this.queue.isIdle(),
+            mutexQueued: this.queue.count,
+            waitressPending: this.waitress.b4PendingCount(), // LEGACY raw Map.size, includes tombstones
+            waitressAccounting: this.waitress.b4Occupancy(),
+            diagnosticQuarantined: this.b4DiagPoisoned,
+            srsp: {
+                AF: {...this.b4PassiveSrspStats.AF},
+                ZDO: {...this.b4PassiveSrspStats.ZDO},
+                SYS: {...this.b4PassiveSrspStats.SYS},
+                UTIL: {...this.b4PassiveSrspStats.UTIL},
+            },
+            scope: "HOST_OWNER_LIFETIME_ONLY",
+        };
+    }
+
+    /** Read-only nonce-bound F2 policy, never a reset or port reopen. */
+    public b4F2ReadAdmissionReason(): string | null {
+        if (this.b4F2ConsecutiveTimeouts >= 3) { return "F2_TIMEOUT_BUDGET_EXHAUSTED"; }
+        if (this.b4F2ConsecutiveTimeouts > 0) {
+            if (performance.now() < this.b4F2NextAllowedMs) { return "F2_TIMEOUT_COOLDOWN"; }
+            if (this.b4F2OwnerProgress === this.b4F2ProgressAtTimeout) { return "F2_OWNER_PROGRESS_REQUIRED"; }
+        }
+        return null;
+    }
+
+    public b4F2AcceptReply(): void {
+        this.b4F2ConsecutiveTimeouts = 0;
+        this.b4F2NextAllowedMs = 0;
+    }
+
+    private b4F2RecordReplyTimeout(): void {
+        this.b4F2ConsecutiveTimeouts = Math.min(3, this.b4F2ConsecutiveTimeouts + 1);
+        this.b4F2NextAllowedMs = performance.now() + 60_000;
+        this.b4F2ProgressAtTimeout = this.b4F2OwnerProgress;
+        if (this.b4F2ConsecutiveTimeouts >= 3) { this.b4PoisonDiagSession(); }
+    }
+
+    public b4IsDiagPoisoned(): boolean {""")
+    # F0 has no nonce: preserve the pristine conservative all-waiter gate.
+    # The F2 timeout policy belongs only to b4CanProbeV4().
+    if znp.count("this.queue.isIdle() && this.waitress.b4IsIdle();") != 1:
+        raise ValueError("v3 F0 strict admission anchor drift")
+    znp = once(znp, "            this.waitress.resolve(object);", """            const matched = this.waitress.resolve(object);
+            if (matched && object.type === Type.SRSP &&
+                !(object.subsystem === Subsystem.SYS &&
+                  (object.command.name === "r4DiagReadOnly" || object.command.name === "r4DiagReadOnlyV4"))) {
+                this.b4F2OwnerProgress = Math.min(Number.MAX_SAFE_INTEGER, this.b4F2OwnerProgress + 1);
+            }""")
+    znp = once(znp, "        const object = ZpiObject.createRequest(subsystem, command, payload);", """        if (subsystem === Subsystem.SYS && command === "r4DiagReadOnlyV4") {
+            const reason = this.b4F2ReadAdmissionReason();
+            if (reason !== null) { throw new Error("B4 " + reason); }
+        }
+        const object = ZpiObject.createRequest(subsystem, command, payload);""")
+    # This source anchor is also used by the preservation-mode overlay; keep
+    # the original createRequest statement unchanged and unique.
+    znp = once(znp,
+        "                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem, command: object.command.name}, timeout || t);",
+        """                const isB4F2 = object.subsystem === Subsystem.SYS && object.command.name === "r4DiagReadOnlyV4";
+                const b4F2Nonce = isB4F2 ? Buffer.from(object.unpiFrame.data) : undefined;
+                if (isB4F2 && b4F2Nonce?.length !== 8) { throw new Error("B4 F2_INVALID_REQUEST_NONCE"); }
+                const waiter = this.waitress.waitFor({type: Type.SRSP, subsystem: object.subsystem,
+                    command: object.command.name, ...(isB4F2 ? {b4F2Nonce} : {})}, timeout || t);""")
+    znp = once(znp, "            (matcher.state === undefined || matcher.state === zpiObject.payload.state)", """            (matcher.state === undefined || matcher.state === zpiObject.payload.state) &&
+            (!(matcher.type === Type.SRSP && matcher.subsystem === Subsystem.SYS &&
+               matcher.command === "r4DiagReadOnlyV4") ||
+                (Buffer.isBuffer(matcher.b4F2Nonce) && matcher.b4F2Nonce.length === 8 &&
+                 Buffer.isBuffer(zpiObject.payload.diagnostic) && [160, 240].includes(zpiObject.payload.diagnostic.length) &&
+                 matcher.b4F2Nonce.equals(zpiObject.payload.diagnostic.subarray(132, 140))))""")
+    znp = once(znp, """                    if (isB4Diag) {
+                        this.b4PoisonDiagSession();
+                        this.waitress.b4Cancel(waiter.ID, "B4 diagnostic failed");
+                    }
+                    throw error;""", """                    if (isB4Diag) {
+                        this.waitress.b4Cancel(waiter.ID, "B4 diagnostic failed");
+                        if (isB4F2 && error instanceof Error && error.message ===
+                            this.waitressTimeoutFormatter({type: Type.SRSP, subsystem: object.subsystem,
+                                command: object.command.name}, timeout || t)) {
+                            this.b4F2RecordReplyTimeout();
+                            throw new Error("B4 F2_REPLY_TIMEOUT");
+                        }
+                        this.b4PoisonDiagSession();
+                    }
+                    throw error;""")
+    znp = once(znp,
+        "        const at_ms = Math.floor(performance.now());",
+        """        this.b4PassiveNoteTimeout(subsystem);
+        const at_ms = Math.floor(performance.now());""")
+    znp = once(znp,
+        "                const result = await waiter.start().promise.catch((error: unknown) => {",
+        """                const b4NormalAckStart = performance.now();
+                const result = await waiter.start().promise.then((response) => {
+                    if (!isB4Diag) {
+                        this.b4PassiveNoteAck(object.subsystem, performance.now() - b4NormalAckStart);
+                    }
+                    return response;
+                }).catch((error: unknown) => {""")
+    znp = once(znp,
+        "            const result = await waiter.start().promise.catch((error: unknown) => {",
+        """            const b4ZdoAckStart = performance.now();
+            const result = await waiter.start().promise.then((response) => {
+                this.b4PassiveNoteAck(Subsystem.ZDO, performance.now() - b4ZdoAckStart);
+                return response;
+            }).catch((error: unknown) => {""")
     # Redact v3/v4 host nonce and radio boot ID from ZNP DEBUG traces.
     znp = once(znp,
         "            logger.debug(() => `<-- ${object.toString(object.subsystem !== Subsystem.ZDO)}`, NS);",
@@ -315,9 +574,46 @@ def plan(root):
     znp = once(znp,
         "            logger.debug(() => `--> ${object}`, NS);",
         "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SREQ (diagnostic nonce redacted)\", NS);\n            } else {\n                logger.debug(() => `--> ${object}`, NS);\n            }")
+    # Passive existing-owner boundary observability: never open/reconfigure
+    # UART. RX counts are inside the normal UNPI parser, TX counts are frames
+    # offered to the existing stream (NOT a claim of physical TX completion).
+    znp = once(znp,
+        """    public b4GetPassiveOwnerMetrics() {
+        return {""",
+        """    public b4GetPassiveOwnerMetrics() {
+        return {
+            wire: {...this.unpiParser.b4NoWireIngress(),
+                ...this.unpiWriter.b4NoWireEgress(),
+                measurement: "EXISTING_OWNER_STREAM_ONLY"},""")
     # ZNP logging redaction alone is insufficient: pinned UNPI transport
     # DEBUG logging prints raw chunks/frame buffers, including boot token.
     writer = original[WRITER]
+    writer = once(writer,
+        "export class Writer extends stream.Readable {",
+        """export class Writer extends stream.Readable {
+    private b4TxQueuedBytes = 0;
+    private b4TxQueuedFrames = 0;
+    private b4TxQueuedRawBuffers = 0;
+
+    public b4NoWireEgress() {
+        return {txQueuedBytes: this.b4TxQueuedBytes,
+            txQueuedFrames: this.b4TxQueuedFrames,
+            txQueuedRawBuffers: this.b4TxQueuedRawBuffers};
+    }
+    private b4NoteQueued(bytes: number, frame: boolean): void {
+        this.b4TxQueuedBytes = Math.min(Number.MAX_SAFE_INTEGER, this.b4TxQueuedBytes + bytes);
+        if (frame) {
+            this.b4TxQueuedFrames = Math.min(Number.MAX_SAFE_INTEGER, this.b4TxQueuedFrames + 1);
+        } else {
+            this.b4TxQueuedRawBuffers = Math.min(Number.MAX_SAFE_INTEGER, this.b4TxQueuedRawBuffers + 1);
+        }
+    }""")
+    writer = once(writer,
+        "        this.push(buffer);\n    }\n\n    public writeBuffer",
+        "        this.b4NoteQueued(buffer.length, true);\n        this.push(buffer);\n    }\n\n    public writeBuffer")
+    writer = once(writer,
+        "        this.push(buffer);\n    }\n\n    public override _read",
+        "        this.b4NoteQueued(buffer.length, false);\n        this.push(buffer);\n    }\n\n    public override _read")
     writer = once(writer,
         "        logger.debug(`--> frame [${[...buffer]}]`, NS);",
         "        logger.debug(`--> frame ${buffer.length} bytes (payload redacted)`, NS);")
@@ -325,6 +621,34 @@ def plan(root):
         "        logger.debug(`--> buffer [${[...buffer]}]`, NS);",
         "        logger.debug(`--> buffer ${buffer.length} bytes (payload redacted)`, NS);")
     parser = original[PARSER]
+    parser = once(parser,
+        "    private buffer: Buffer;",
+        """    private buffer: Buffer;
+    private b4RxBytes = 0;
+    private b4RxChunks = 0;
+    private b4UnpiParsed = 0;
+    private b4UnpiParseErrors = 0;
+
+    public b4NoWireIngress() {
+        return {rxRawBytes: this.b4RxBytes,
+            rxChunks: this.b4RxChunks,
+            unpiParsedFrames: this.b4UnpiParsed,
+            unpiParseErrors: this.b4UnpiParseErrors,
+            unpiBufferedBytes: this.buffer.length};
+    }""")
+    parser = once(parser,
+        "        this.buffer = Buffer.concat([this.buffer, chunk]);",
+        """        this.b4RxBytes = Math.min(Number.MAX_SAFE_INTEGER, this.b4RxBytes + chunk.length);
+        this.b4RxChunks = Math.min(Number.MAX_SAFE_INTEGER, this.b4RxChunks + 1);
+        this.buffer = Buffer.concat([this.buffer, chunk]);""")
+    parser = once(parser,
+        '                    this.emit("parsed", frame);',
+        """                    this.b4UnpiParsed = Math.min(Number.MAX_SAFE_INTEGER, this.b4UnpiParsed + 1);
+                    this.emit("parsed", frame);""")
+    parser = once(parser,
+        '                } catch (error) {',
+        """                } catch (error) {
+                    this.b4UnpiParseErrors = Math.min(Number.MAX_SAFE_INTEGER, this.b4UnpiParseErrors + 1);""")
     parser = once(parser,
         "        logger.debug(`<-- [${[...chunk]}]`, NS);",
         "        logger.debug(`<-- ${chunk.length} bytes (payload redacted)`, NS);")
@@ -335,7 +659,39 @@ def plan(root):
         "                    logger.debug(`--> parsed ${frame}`, NS);",
         "                    logger.debug(`--> parsed type=${frame.type} subsystem=${frame.subsystem} command=${frame.commandID} bytes=${frame.data.length}`, NS);")
 
-    return {DEFINITION: (original[DEFINITION], definition),
+    # The pinned Waitress owns a private Map; expose numeric occupancy
+    # read-only, without changing resolution, timeout or cancellation behavior.
+    waitress = once(original[WAITRESS],
+        """    public b4IsIdle(): boolean {
+        return this.waiters.size === 0;
+    }""",
+        """    public b4IsIdle(): boolean {
+        return this.waiters.size === 0;
+    }
+
+    public b4PendingCount(): number {
+        return this.waiters.size; // LEGACY map entries, includes expired tombstones
+    }
+
+    /** Passive only. Timeout callbacks mark timedout but do not delete the
+     * entry until a future forEachMatching() sweep (or explicit remove()).
+     * Never mistake map.size for outstanding live waits.
+     */
+    public b4Occupancy() {
+        let active = 0;
+        let timedOut = 0;
+        let resolved = 0;
+        for (const waiter of this.waiters.values()) {
+            if (waiter.timedout) {timedOut++;}
+            else if (waiter.resolved) {resolved++;}
+            else {active++;}
+        }
+        return {active, timedOut, resolved, rawMapEntries: this.waiters.size};
+    }""")
+    from f2_boundary_admission import apply as add_boundary_admission
+    mutex, znp = add_boundary_admission(original[MUTEX], znp)
+    return {MUTEX: (original[MUTEX], mutex), WAITRESS: (original[WAITRESS], waitress),
+            DEFINITION: (original[DEFINITION], definition),
             PARAM: (original[PARAM], params), BUFFALO: (original[BUFFALO], buffalo),
             ADAPTER: (original[ADAPTER], adapter), ZNP: (original[ZNP], znp),
             CONTROLLER: (original[CONTROLLER], controller),

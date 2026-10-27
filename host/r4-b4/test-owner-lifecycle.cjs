@@ -69,7 +69,9 @@ test("T7 tagged Waitress cancellation settles only F2 promise, not ordinary SYS"
     await settled;
     assert.equal(waitress.b4Cancel(f2.ID, "again"), false);
     assert.equal(waitress.waiters.size, 1);
+    assert.equal(waitress.b4PendingCount(), 1);
     waitress.remove(normal.ID);
+    assert.equal(waitress.b4PendingCount(), 0);
     assert.equal(waitress.b4IsIdle(), true);
 });
 
@@ -104,21 +106,22 @@ test("T7 F2 synchronous writer exception cancels waiter, poisons only diagnostic
     assert.equal(writes, 2);
 });
 
-test("T7 F2 SRSP timeout cleans matcher; a late frame cannot reopen F2", async () => {
+test("T7 F2 timeout cleans matcher and gates a new read on cooldown/progress", async () => {
     const znp = new Znp("/dev/not-opened", 115200, false);
     znp.initialized = true;
     const sent = [];
     znp.unpiWriter.writeFrame = frame => sent.push(frame.commandID);
     await assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 15),
-        /after 15ms/,
+        /B4 F2_REPLY_TIMEOUT/,
     );
     assert.deepEqual(sent, [242]);
     assert.equal(znp.waitress.waiters.size, 0);
-    assert.equal(znp.b4DiagPoisoned, true);
+    assert.equal(znp.b4DiagPoisoned, false);
+    assert.equal(znp.b4F2ReadAdmissionReason(), "F2_TIMEOUT_COOLDOWN");
     await assert.rejects(
         znp.requestWithReply(Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 15),
-        /session poisoned/,
+        /F2_TIMEOUT_COOLDOWN/,
     );
     assert.deepEqual(sent, [242]);
 });

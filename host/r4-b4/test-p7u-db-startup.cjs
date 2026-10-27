@@ -134,6 +134,39 @@ test("failed initial ping holds without bootloader magic, RTS/DTR or radio reset
     assert.doesNotMatch(fn, /writeBuffer|asyncSet/);
 });
 
+test("a real delayed ping reply survives the former 1500ms deadline without retransmission", async (t) => {
+    const {Frame} = require(path.join(root, "dist/adapter/z-stack/unpi/frame.js"));
+    const {Type, Subsystem} = require(path.join(root, "dist/adapter/z-stack/unpi/constants.js"));
+    t.mock.timers.enable({apis: ["setTimeout"]});
+    const znp = new Znp("/dev/never-opened", 115200, false);
+    znp.initialized = true;
+    const commands = [];
+    znp.unpiWriter.writeFrame = frame => {
+        commands.push(frame.commandID);
+        setTimeout(() => znp.onUnpiParsed(new Frame(Type.SRSP, Subsystem.SYS, 1, Buffer.from([1, 0]))), 2000);
+    };
+    const ready = znp.skipBootloader();
+    await new Promise(setImmediate); // admit the real queued SREQ and its waiter
+    t.mock.timers.tick(2000);
+    await ready;
+    await assert.rejects(znp.skipBootloader(), /startup ping already consumed/);
+    assert.deepEqual(commands, [1]);
+});
+
+test("a genuinely absent readiness reply holds once and cannot submit another ping", async (t) => {
+    t.mock.timers.enable({apis: ["setTimeout"]});
+    const znp = new Znp("/dev/never-opened", 115200, false);
+    znp.initialized = true;
+    const commands = [];
+    znp.unpiWriter.writeFrame = frame => {commands.push(frame.commandID);};
+    const ready = assert.rejects(znp.skipBootloader(), /P7U HOLD_EXISTING_NV: ping unavailable/);
+    await new Promise(setImmediate);
+    t.mock.timers.tick(10000);
+    await ready;
+    await assert.rejects(znp.skipBootloader(), /startup ping already consumed/);
+    assert.deepEqual(commands, [1]);
+});
+
 test("all retained-owner runtime SYS/SAPI resets hold before queue or UART", () => {
     const znp = new Znp("/dev/never-opened", 115200, false);
     znp.initialized = true;

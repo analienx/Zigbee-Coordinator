@@ -20,10 +20,11 @@ const allowed = new Set([
     "schema", "kind", "utc", "probeLatencyMs", "monotonicReceiveNs", "reason",
     "sourceAbi", "imageRuntimeAttested", "abi", "minor", "sequence", "validityMask",
     "srspDepth", "srspHighWater", "asyncDepth", "asyncHighWater", "srspEnqueued",
-    "uartTxFinishedEvents", "radioEpochTag", "radioEpochHardwareVerified",
+    "uartTxFinishedEvents", "mtLifecycle", "uartProgress", "radioEpochTag", "radioEpochHardwareVerified",
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
-    "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped"
+    "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
+    "hostEvidence"
 ]);
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
@@ -49,6 +50,117 @@ function sameRecord(entry) {
             entry.sequence > 0, "VALID_SEQUENCE");
         hold(Number.isSafeInteger(entry.validityMask) &&
             entry.validityMask >= 0, "VALID_MASK");
+        // Earlier v4.1 records may omit minor. Any explicit unknown minor
+        // must fail closed rather than being counted as a native VALID reply.
+        hold(entry.minor === undefined || entry.minor === 1 ||
+            entry.minor === 2 || entry.minor === 3, "F2_UNSUPPORTED_MINOR");
+        if (entry.minor === 2 || entry.minor === 3) {
+            hold(entry.validityMask === 0x00FFFFEC ||
+                entry.validityMask === 0x00FFFFFF,
+                "F2_V42_VALIDITY_MASK");
+            hold(Object.hasOwn(entry, "mtLifecycle") &&
+                entry.mtLifecycle !== null, "F2_V42_MISSING_CAUSAL_COUNTERS");
+        }
+        if (entry.minor === 1 || entry.minor === undefined) {
+            hold(entry.validityMask === 0x2C || entry.validityMask === 0x3F,
+                "F2_V41_VALIDITY_MASK");
+        }
+        if (Object.hasOwn(entry, "mtLifecycle") && entry.mtLifecycle !== null) {
+            const v = entry.mtLifecycle;
+            const fields = ["allProduced", "allEnqueued", "allAllocFailed",
+                "allSendFailed", "allNpiReceived", "allFramedQueued",
+                "allFramingFailed", "allTlSubmitted", "allTlRejected",
+                "afDataProduced", "afDataEnqueued", "afDataAllocFailed",
+                "afDataSendFailed", "afDataNpiReceived", "afDataFramedQueued",
+                "afDataFramingFailed", "afDataTlSubmitted", "afDataTlRejected"];
+            hold((entry.minor === 2 || entry.minor === 3) && v && typeof v === "object" &&
+                !Array.isArray(v) &&
+                Object.keys(v).length === fields.length &&
+                Object.keys(v).every(k => fields.includes(k)) &&
+                fields.every(k => Number.isSafeInteger(v[k]) &&
+                    v[k] >= 0 && v[k] <= 0xFFFFFFFF),
+                "F2_V42_LIFECYCLE_SHAPE");
+        }
+        if (entry.minor === 1 || entry.minor === undefined) {
+            hold(!Object.hasOwn(entry, "mtLifecycle") ||
+                entry.mtLifecycle === null, "F2_V41_NO_CAUSAL_CLAIM");
+        }
+        if (entry.minor === 3) {
+            const v = entry.uartProgress;
+            const fields = ["npiRequests", "mtEntered", "mtReturned", "uartWriteAccepted",
+                "uartWriteRejected", "uartCallbackOk", "uartCallbackError", "uartLengthMismatch",
+                "stateFlags", "uartRxBytes", "firstFaultKind", "firstFaultStatusBits",
+                "firstFaultExpected", "firstFaultActual", "firstFaultFlags", "firstFaultTick",
+                "firstFaultCommand", "npiWakes", "b1FirstFailure", "tickPeriodUs"];
+            hold(v && typeof v === "object" && !Array.isArray(v) &&
+                Object.keys(v).length === fields.length && Object.keys(v).every(k => fields.includes(k)) &&
+                fields.every(k => Number.isSafeInteger(v[k]) && v[k] >= 0 && v[k] <= 0xFFFFFFFF) &&
+                v.firstFaultKind <= 5 && v.b1FirstFailure <= 255 &&
+                v.tickPeriodUs > 0 && v.tickPeriodUs <= 100000 && v.firstFaultCommand <= 65535 &&
+                !(v.stateFlags & 0xFFF0) && !(v.firstFaultFlags & 0xFFF0) &&
+                (v.firstFaultKind !== 0 || fields.slice(11,17).every(k => v[k] === 0)),
+                "F2_V43_PROGRESS_SHAPE");
+        } else {
+            hold(entry.uartProgress === undefined || entry.uartProgress === null, "F2_OLD_MINOR_NO_PROGRESS_CLAIM");
+        }
+    }
+    if (entry.kind !== "VALID") {
+        hold(entry.uartProgress === undefined || entry.uartProgress === null, "F2_NON_NATIVE_NO_PROGRESS_CLAIM");
+    }
+    if ("hostEvidence" in entry && entry.hostEvidence !== null) {
+        const e = entry.hostEvidence;
+        const obj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+        const exact = (v, keys) => obj(v) &&
+            Object.keys(v).length === keys.length &&
+            Object.keys(v).every(k => keys.includes(k));
+        const num = v => Number.isSafeInteger(v) && v >= 0;
+        const expected = ["initialized", "mutexIdle", "mutexQueued", "waitressPending",
+            "diagnosticQuarantined", "srsp", "scope", "adapterQueuePending",
+            "adapterClosing", "interpanLocked"];
+        // Version-additive only: historical hash-chain records have no wire
+        // metrics. Do not rewrite/recompute past evidence to add them.
+        if (Object.hasOwn(e, "wire")) expected.push("wire");
+        if (Object.hasOwn(e, "waitressAccounting")) expected.push("waitressAccounting");
+        hold(exact(e, expected), "HOST_EVIDENCE_FIELDS");
+        if (Object.hasOwn(e, "wire")) {
+            const w = e.wire;
+            hold(exact(w, ["rxRawBytes", "rxChunks", "unpiParsedFrames",
+                "unpiParseErrors", "unpiBufferedBytes", "txQueuedBytes",
+                "txQueuedFrames", "txQueuedRawBuffers", "measurement"]) &&
+                ["rxRawBytes", "rxChunks", "unpiParsedFrames", "unpiParseErrors",
+                    "unpiBufferedBytes", "txQueuedBytes", "txQueuedFrames",
+                    "txQueuedRawBuffers"].every(k => num(w[k])) &&
+                w.measurement === "EXISTING_OWNER_STREAM_ONLY",
+                "HOST_WIRE_EVIDENCE_SHAPE");
+        }
+        if (Object.hasOwn(e, "waitressAccounting")) {
+            const c = e.waitressAccounting;
+            hold(exact(c, ["active", "timedOut", "resolved", "rawMapEntries"]) &&
+                num(c.active) && num(c.timedOut) && num(c.resolved) &&
+                num(c.rawMapEntries) &&
+                c.active + c.timedOut + c.resolved === c.rawMapEntries,
+                "HOST_WAITRESS_ACCOUNTING");
+        }
+        hold(typeof e.initialized === "boolean" &&
+            typeof e.mutexIdle === "boolean" &&
+            num(e.mutexQueued) && num(e.waitressPending) &&
+            typeof e.diagnosticQuarantined === "boolean" &&
+            e.scope === "HOST_OWNER_LIFETIME_ONLY" &&
+            (e.adapterQueuePending === null || num(e.adapterQueuePending)) &&
+            typeof e.adapterClosing === "boolean" &&
+            typeof e.interpanLocked === "boolean", "HOST_EVIDENCE_STATE");
+        const subsystemNames = ["AF", "ZDO", "SYS", "UTIL"];
+        hold(exact(e.srsp, subsystemNames), "HOST_EVIDENCE_SUBSYSTEMS");
+        for (const subsystem of subsystemNames) {
+            const stats = e.srsp[subsystem];
+            hold(exact(stats, ["ok", "timeout", "maxLatencyMs", "lastLatencyMs"]) &&
+                num(stats.ok) && num(stats.timeout) &&
+                num(stats.maxLatencyMs) && stats.maxLatencyMs <= 3600000 &&
+                (stats.lastLatencyMs === null ||
+                    (num(stats.lastLatencyMs) &&
+                        stats.lastLatencyMs <= stats.maxLatencyMs)),
+                "HOST_EVIDENCE_STATS");
+        }
     }
     if (["hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped"].some(k => k in entry)) {
         hold(entry.kind === "FAILED" &&

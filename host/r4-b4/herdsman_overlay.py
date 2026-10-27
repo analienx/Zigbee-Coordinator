@@ -373,6 +373,23 @@ def plan(root):
         return this.waiters.size === 0;
     }
 
+    /** Read-only: an active non-AF/ZDO callback, SRSP or unknown matcher
+     *  blocks the nonce-correlated F2 diagnostic. Expired tombstones have
+     *  already settled. Never modify any stock Waitress entry here.
+     */
+    public b4HasNoActiveBlockingWaiters(allowed: (matcher: TMatcher) => boolean): boolean {
+        for (const waiter of this.waiters.values()) {
+            if (waiter.timedout === true) { continue; }
+            if (waiter.timedout !== false || waiter.resolved !== false) { return false; }
+            try {
+                if (!allowed(waiter.matcher)) { return false; }
+            } catch {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public clear(): void {""",
     )
     changes[ZNP] = replace_once(
@@ -421,6 +438,12 @@ def plan(root):
 
     private b4RecordHostSreqTimeout(subsystem: Subsystem, command: string, timeout: number, error: unknown): void {
         if (!this.b4HostForensicsEnabled || !(error instanceof Error)) {
+            return;
+        }
+        // Optional diagnostic failures are recorded by their own sampler.
+        // They are not independent evidence of a production SYS failure.
+        if (subsystem === Subsystem.SYS &&
+            (command === "r4DiagReadOnly" || command === "r4DiagReadOnlyV4")) {
             return;
         }
         // Match the exact pinned Waitress-generated SRSP timeout error.

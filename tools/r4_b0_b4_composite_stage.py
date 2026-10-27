@@ -26,7 +26,8 @@ TASK="source/ti/zstack/npi/npi_task.c"
 UART="source/ti/zstack/npi/npi_tl_uart.c"
 TL="source/ti/zstack/npi/npi_tl.c"
 CLIENT="source/ti/zstack/npi/npi_client_mt.c"
-COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT)
+MT="source/ti/zstack/mt/mt.c"
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT)
 
 def outside_write_scope(sdk):
     """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
@@ -224,12 +225,24 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
                                      verify_ti_uart2_callback_ownership)
     ti_callback_source = verify_ti_uart2_callback_ownership(sdk)
     tx_liveness = patch_uart_tx_liveness(sdk)
+    mt_keys=[key for key,path in bindings.items() if path==MT]
+    if (len(mt_keys)!=1 or hashlib.sha256((sdk/MT).read_bytes()).hexdigest()!=b1.get(mt_keys[0])):
+        raise ValueError("F2_V43_MT_B1_PREIMAGE_NOT_BOUND")
+    from r4_f2_v43_progress import apply as add_f2_progress
+    f2_progress = add_f2_progress(sdk)
+    for name in (TL,UART):
+        if f2_progress["before_sha256"][name] != tx_liveness["modified_sha256"][name]:
+            raise ValueError("F2_V43_TX_SOURCE_CHAIN_DRIFT_"+name)
     from r4_uart_tx_liveness_harness import exercise as exercise_tx_liveness
     tx_c = exercise_tx_liveness(sdk)
     if tx_c["status"] != "PASS_ACTUAL_TI_COMPOSED_C_INTEGRATED_AND_FIVE_MUTANTS":
         raise ValueError("R4_UART_TX_FAILURE_UNWIND_NOT_SOURCE_PROVEN")
+    from r4_f2_v43_harness import exercise as exercise_f2_progress
+    f2_progress_c=exercise_f2_progress(sdk)
+    if f2_progress_c["status"] != "PASS_ACTUAL_F2_V43_240_BYTE_PROGRESS_AND_FROZEN_FIRST_FAULT":
+        raise ValueError("R4_F2_V43_ACTUAL_C_FAILED")
     for name in (TL, UART):
-        if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != tx_liveness["modified_sha256"][name]:
+        if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != f2_progress["modified_sha256"][name]:
             raise ValueError("R4_UART_TX_LIVENESS_DIGEST_UNBOUND_" + name)
 
     # The conditional HOLD admission was source/C tested in B1 #122.
@@ -255,7 +268,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     # B1 native sealer's exact-Git-SHA invariants remain mandatory.
     beforehash={}
     afterhash={}
-    for name in (ZDO,NVO,TASK,UART,SYS,TL):
+    for name in (ZDO,NVO,TASK,UART,SYS,TL,MT):
         earlier= b1.get("modified_zdapp_sha256") if name==ZDO else (
             b1.get("modified_nv_sha256") if name==NVO else (
             expected.get(name)))
@@ -270,11 +283,12 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
             raise ValueError("F2_V42_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
-        if afterhash[name] != f2_causal["modified_sha256"][name]:
+        if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
+                afterhash[name] != f2_progress["modified_sha256"][name]):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
-    for name in (TASK,UART,SYS):
+    for name in (TASK,UART,SYS,MT):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
     # These new inputs must be checked again by the post-link B1 native sealer,
@@ -290,6 +304,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     b1["additional_source_bindings"]=bindings
     required=b1.setdefault("additional_required_functions",[])
     if "NPITL_abortFailedTx" not in required:required.append("NPITL_abortFailedTx")
+    for function in ("B4_V43_Request","B4_V43_Snapshot"):
+        if function not in required:required.append(function)
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
     b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
@@ -312,6 +328,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "af_register_outbound_handoff":af_handoff,
         "af_register_actual_c_behavior":af_behavior,
         "f2_v42_causal_response_path":f2_causal,
+        "f2_v43_request_uart_progress":f2_progress,
+        "f2_v43_actual_c":f2_progress_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

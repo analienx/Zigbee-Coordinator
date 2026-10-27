@@ -32,7 +32,7 @@ def plan(root):
     added = """    /** B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: explicit manual opt-in.
      *  Same private real OTA gate; no fallback to F0 on v4 errors.
      */
-    public async b4ProbeReadOnlyDiagnosticsV4(enabled = false) {
+    public async b4ProbeReadOnlyDiagnosticsV4(enabled = false, reserveAtBoundary = false) {
         const herdsman = this.zigbee.zhController;
         if (enabled !== true || this.#startAbortController?.signal.aborted !== false ||
             !herdsman || herdsman.isStopping() || herdsman.isAdapterDisconnected()) {
@@ -53,7 +53,7 @@ def plan(root):
             return undefined;
         }
         return await herdsman.b4ReadOnlyDiagnosticsV4FromExistingOwner({
-            enabled: true, hostIdle: true, otaActive: false, stillAllowed,
+            enabled: true, hostIdle: true, otaActive: false, stillAllowed, reserveAtBoundary,
         });
     }
 

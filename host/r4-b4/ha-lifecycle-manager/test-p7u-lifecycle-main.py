@@ -80,6 +80,19 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(m.LifecycleHold, "MANAGER_SOURCE_SHA"):
             m.load_plan(self.path, digest)
 
+    def test_explicit_database_renewal_is_hash_bound_and_only_from_official_owner(self):
+        p = plan(); p["previous_approval_sha256"] = "1" * 64
+        digest = self.write_plan(p)
+        self.assertEqual(m.load_plan(self.path, digest)["previous_approval_sha256"], "1" * 64)
+        p["original_slot"] = "fallback"
+        digest = self.write_plan(p)
+        with self.assertRaisesRegex(m.LifecycleHold, "PLAN_DB_RENEWAL_SCOPE"):
+            m.load_plan(self.path, digest)
+        p["original_slot"] = "official"; p["previous_approval_sha256"] = "invalid"
+        digest = self.write_plan(p)
+        with self.assertRaisesRegex(m.LifecycleHold, "PLAN_DB_RENEWAL_SCOPE"):
+            m.load_plan(self.path, digest)
+
     def test_plan_outside_private_directory_or_symlink_is_hold(self):
         digest = self.write_plan()
         outside = self.root / "outside.json"

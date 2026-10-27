@@ -379,6 +379,53 @@ test("REVIEW-P1: ZNP mutex idle but unresolved Waitress still forbids F0", () =>
     assert.equal(znp.b4CanProbe(), true);
 });
 
+test("F2-only admission: live AREQ callbacks never relax legacy F0", () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    const asyncCallback = znp.waitress.waitFor(
+        {type: Type.AREQ, subsystem: Subsystem.AF, command: "dataConfirm"}, 10_000
+    );
+    assert.equal(znp.queue.isIdle(), true);
+    assert.equal(znp.waitress.b4IsIdle(), false); // legacy all-waiter veto
+    assert.equal(znp.b4CanProbeV4(), true); // only ordinary AF AREQ is pending
+    assert.equal(znp.b4CanProbe(), false); // legacy F0 still forbids any waiter
+    assert.equal(znp.waitress.waiters.size, 1); // never mutate/clean the AREQ
+    const reset = znp.waitress.waitFor(
+        {type: Type.AREQ, subsystem: Subsystem.SYS, command: "resetInd"}, 10_000
+    );
+    assert.equal(znp.b4CanProbeV4(), false); // SYS reset AREQ is NOT harmless
+    znp.waitress.remove(reset.ID);
+    assert.equal(znp.b4CanProbeV4(), true);
+    const unknown = znp.waitress.waitFor(
+        {type: -1, subsystem: Subsystem.AF, command: "unknown"}, 10_000
+    );
+    assert.equal(znp.b4CanProbeV4(), false); // fail-closed unknown matcher
+    znp.waitress.remove(unknown.ID);
+    assert.equal(znp.waitress.b4HasNoActiveBlockingWaiters(() => {
+        throw Error("unexpected matcher");
+    }), false); // fail closed on predicate error
+    assert.equal(znp.b4CanProbeV4(), true);
+    znp.waitress.remove(asyncCallback.ID);
+    assert.equal(znp.waitress.b4IsIdle(), true);
+});
+
+test("F2 admission: settled SRSP timeout tombstone cannot starve safe later readings", async () => {
+    const znp = new Znp("/dev/not-opened", 115200, false);
+    znp.initialized = true;
+    const expired = znp.waitress.waitFor(
+        {type: Type.SRSP, subsystem: Subsystem.ZDO, command: "permitJoin"}, 10
+    );
+    const failure = assert.rejects(expired.start().promise, /after 10ms/);
+    assert.equal(znp.b4CanProbeV4(), false); // still actively waiting for SRSP
+    await failure;
+    assert.equal(znp.waitress.b4IsIdle(), false); // pinned Waitress retains tombstone
+    assert.equal(znp.b4CanProbeV4(), true); // settled waiter is no active SRSP
+    assert.equal(znp.b4CanProbe(), false); // uncorrelated F0 stays conservative
+    assert.equal(znp.waitress.waiters.size, 1); // no repairs to stock state
+    znp.waitress.remove(expired.ID);
+    assert.equal(znp.waitress.waiters.size, 0);
+});
+
 test("REVIEW-P0: F0 queued before first timeout cannot escape the mutex after quarantine", async () => {
     const znp = new Znp("/dev/no-serial", 115200, false);
     znp.initialized = true;

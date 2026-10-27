@@ -86,6 +86,9 @@ jobs:
           assert c['composite_write_scope']['outside_scope_unchanged'] is True
           assert len(c['uart_tx_liveness_actual_c']['cases']) == 6
           assert len(c['uart_tx_liveness_actual_c']['negative_mutants']) == 5
+          assert c['f2_v43_request_uart_progress']['reply_bytes'] == 240
+          assert c['f2_v43_request_uart_progress']['minor'] == 3
+          assert c['f2_v43_actual_c']['status'] == 'PASS_ACTUAL_F2_V43_240_BYTE_PROGRESS_AND_FROZEN_FIRST_FAULT'
           assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
           print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
           PY

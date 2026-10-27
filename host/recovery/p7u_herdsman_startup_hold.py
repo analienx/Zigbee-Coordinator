@@ -364,11 +364,16 @@ def plan(checkout, composition_receipt=None):
     if "Buffer.from([0xef])" not in original_method or "asyncSet({dtr: false, rts:" not in original_method:
         raise ValueError("pinned source skipBootloader implementation drift")
     safe_method = """    /** P7U_SAFE_PING_NO_BOOTLOADER_SIGNALS: retained owner only.
-     * No 0xEF magic, RTS/DTR fallback, or automatic reset; failure is HOLD.
+     * One bounded readiness request tolerates the observed USB/app boot
+     * interval. No 0xEF magic, RTS/DTR fallback, or automatic reset.
      */
     private async skipBootloader(): Promise<void> {
+        if (this.p7uStartupPingConsumed) {
+            throw new Error("P7U HOLD_EXISTING_NV: startup ping already consumed; no retry");
+        }
+        this.p7uStartupPingConsumed = true; // before an uncertain transmission
         try {
-            await this.request(Subsystem.SYS, "ping", {capabilities: 1}, undefined, 1500);
+            await this.request(Subsystem.SYS, "ping", {capabilities: 1}, undefined, 10000);
         } catch {
             throw new Error("P7U HOLD_EXISTING_NV: ping unavailable; no bootloader magic or line toggles");
         }
@@ -376,6 +381,8 @@ def plan(checkout, composition_receipt=None):
 
 """
     znp = znp[:first] + safe_method + znp[end:]
+    znp = once(znp, "    private initialized: boolean;",
+        "    private initialized: boolean;\n    private p7uStartupPingConsumed = false;")
     # A retained-only manager is not the sole caller of Znp.request():
     # Controller.reset()/Adapter.reset() can also submit SYS/SAPI resets.
     # Enforce the no-radio-reset contract at the transport boundary too.

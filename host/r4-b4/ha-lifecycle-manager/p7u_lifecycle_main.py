@@ -24,6 +24,7 @@ from p7u_lifecycle_core import Journal, LifecycleHold, Owner, guard, SHA
 from p7u_lifecycle_machine import Manager, require_running
 from p7u_ha_supervisor_port import HaSupervisorPort
 from p7u_serving_mqtt import Config, FreshMqttEvidence
+from p7u_db_quiesced import renewal_baseline, seal_quiesced
 
 DATABASE = Path("/config/zigbee2mqtt/database.db")
 PRIVATE_ROOT = Path("/share/p7u-lifecycle/private")
@@ -88,8 +89,14 @@ def load_plan(path: Path, expected_sha: str) -> dict:
         plan = json.loads(raw)
     except ValueError as exc:
         raise LifecycleHold("P7U_HOLD_PLAN_JSON") from exc
-    guard(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"reconciliation"}) and
+    guard(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"reconciliation"},
+          PLAN_FIELDS | {"previous_approval_sha256"}) and
           plan.get("schema") == "p7u-one-shot-plan-v1", "PLAN_SCHEMA")
+    if "previous_approval_sha256" in plan:
+        guard(plan.get("original_slot") == "official" and
+              type(plan["previous_approval_sha256"]) is str and
+              SHA.fullmatch(plan["previous_approval_sha256"]) is not None,
+              "PLAN_DB_RENEWAL_SCOPE")
     source = SOURCE.read_text().strip()
     guard(re.fullmatch(r"[a-f0-9]{40}", source) is not None and
           plan["source_sha"] == source, "MANAGER_SOURCE_SHA")
@@ -243,10 +250,17 @@ def claim_operation(plan: dict, plan_sha256: str) -> None:
 
 
 class PreservingPort(HaSupervisorPort):
-    def __init__(self, *args, artifact_directory: Path, **kwargs):
+    def __init__(self, *args, artifact_directory: Path,
+                 previous_approval_sha256: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.artifact_directory = artifact_directory
         self.cold_receipt: dict | None = None
+        self.previous_approval_sha256 = previous_approval_sha256
+
+    def preflight_database(self) -> dict:
+        if self.previous_approval_sha256 is not None:
+            return renewal_baseline(self._database_path(), self.previous_approval_sha256)
+        return super().preflight_database()
 
     def approve_quiesced_database(self, baseline: dict) -> dict:
         # Parent admission performs fresh, spaced /proc checks again. No file
@@ -256,7 +270,21 @@ class PreservingPort(HaSupervisorPort):
         from p7u_lifecycle_machine import zero_tty_three_times
         zero_tty_three_times(self)
         self.cold_receipt = cold_backup(self.artifact_directory)
-        result = super().approve_quiesced_database(baseline)
+        if self.previous_approval_sha256 is not None:
+            self._require_manual_profiles()
+            guard(all(not self.inspect(slot).running for slot in ("official", "diagnostic", "fallback")),
+                  "DB_APPROVAL_COMPETING_CONTAINER")
+            zero_tty_three_times(self)
+            result = seal_quiesced(database=self._database_path(), baseline=baseline,
+                all_slots_stopped=True, no_tty_holders=True,
+                previous_approval_sha256=self.previous_approval_sha256,
+                previous_approval_archive=self.artifact_directory / "previous-db-approval.json")
+            guard(all(not self.inspect(slot).running for slot in ("official", "diagnostic", "fallback")),
+                  "DB_APPROVAL_OWNER_APPEARED")
+            zero_tty_three_times(self)
+            self.database_receipt = result
+        else:
+            result = super().approve_quiesced_database(baseline)
         return {**result, "cold_backup": self.cold_receipt}
 
 
@@ -305,6 +333,7 @@ def run(options: dict) -> dict:
     probe = lambda slot, seconds: FreshMqttEvidence(config).collect(seconds)
     port = PreservingPort(plan["serial_by_id"], database=DATABASE,
                           serving_probe=probe, artifact_directory=plan_path.parent,
+                          previous_approval_sha256=plan.get("previous_approval_sha256"),
                           image_references=plan["image_references"])
     if "reconciliation" in plan:
         from p7u_reconciled_start import run_reconciled

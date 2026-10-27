@@ -42,6 +42,7 @@ jobs:
           python -m pip install paho-mqtt==2.1.0
           python host/r4-b4/test-p7u-host-integrity.py -v
           python host/r4-b4/test-p7u-f2-acceptance.py -v
+          python host/r4-b4/test-p7u-f2-freshness.py -v
           python host/r4-b4/test-p7u-passive-incidents.py -v
           python -m py_compile host/r4-b4/p7u_host_integrity.py
           python host/r4-b4/ha-addon/test-p7u-lifecycle-core.py -v
@@ -89,7 +90,7 @@ jobs:
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
-          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-f2-boundary.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Adversarial no-serial worker durability tests (offline GH-hosted)
         run: |
@@ -128,8 +129,13 @@ jobs:
           assert 'this.#b4Operational = false;' in s
           assert s.count('!this.#b4Operational') >= 2
           assert 'P7U_B4_COLLECTOR !== "1"' in s
-          assert 'this.b4ProbeReadOnlyDiagnosticsV4(true)' in s
-          assert 'setTimeout(() => { void this.#b4Sample(); }, delay)' in s
+          assert 'this.b4ProbeReadOnlyDiagnosticsV4(true, reserveAtBoundary)' in s
+          assert 'performance.now() - origin >= 900_000' in s
+          assert 'setTimeout(() => { void this.#b4Sample(); }, nextDelay)' in s
+          assert 'randomInt(60_000, 90_001)' in s
+          assert 'Math.max(60_000, delay)' in s
+          assert 'this.#b4Schedule(60_000)' in s
+          assert 'hostEvidence' in s
           assert 'this.#b4Persist(' in s
           assert 'this.#b4StartWorker()' in s
           assert 'this.#b4Worker.postMessage(' in s

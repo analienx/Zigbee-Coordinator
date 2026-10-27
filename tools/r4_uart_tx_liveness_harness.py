@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
 """
 
 
-def exercise(sdk):
+def actual_functions(sdk):
     sdk = Path(sdk)
     tl, uart = ((sdk / name).read_text() for name in (TL, UART))
     management_path = sdk / "source/ti/common/nv/b1_management.c"
@@ -144,6 +144,17 @@ def exercise(sdk):
         "callback": (uart, "static void NPITLUART_writeCallBack(UART2_Handle handle, void *ptr, size_t size, void *userArg, int_fast16_t status)"),
     }
     bodies = {key: extract(source, sig) for key, (source, sig) in signatures.items()}
+    if "B4_F2_V43_PROGRESS" in tl:
+        from r4_f2_v43_progress import progress_source
+        # Insert actual progress helpers before the actual UART call sites.
+        bodies = {key: body for key, body in list(bodies.items())[:3]} | {
+            "progress": progress_source(tl)} | {
+            key: body for key, body in list(bodies.items())[3:]}
+    return bodies, management_path
+
+
+def exercise(sdk):
+    bodies, management_path = actual_functions(sdk)
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
         raise RuntimeError("NATIVE_C_COMPILER_REQUIRED")
@@ -208,7 +219,7 @@ def exercise(sdk):
     return {"status": STATUS, "cases": cases,
             "supplementary_synthetic_fragment_cases": supplementary,
             "production_profile": {"NPI_FLOW_CTRL": 0, "NPI_MAX_FRAG_SIZE": 270},
-            "extracted_functions": list(signatures), "negative_mutants": rejected,
+            "extracted_functions": list(bodies), "negative_mutants": rejected,
             "submission_path": "ACTUAL_TL_TO_B1_UART_TO_STUBBED_UART2",
             "immediate_rejection_policy": "CLEAR_NPI_BUSY_PRESERVE_PHYSICAL_HOLD",
             "failed_tx_notification": "BALANCED_CS_AND_NOTIFICATION_OUTSIDE_CS",

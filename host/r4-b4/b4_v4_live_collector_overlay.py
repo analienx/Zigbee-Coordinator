@@ -19,19 +19,37 @@ MARKER = "P7U_B4_SAMPLED_SINGLE_OWNER_R4_V1"
 METHOD = r"""
     /** P7U_B4_SAMPLED_SINGLE_OWNER_R4_V1:
      *  All queries reuse the normal herdsman Controller/Znp queue. An SRSP
-     *  timeout poisons the v4 diagnostic session, never the production radio.
+     *  F2 timeouts gate later fresh nonce reads; hard failures quarantine
+     *  optional probes, never the production radio or passive evidence.
      */
     #b4Schedule(delay = 60_000): void {
         if (!this.#b4Operational || process.env.P7U_B4_COLLECTOR !== "1") {
             return;
         }
-        this.#b4Timer = setTimeout(() => { void this.#b4Sample(); }, delay);
+        // Frequency never exceeds once a minute. Break 60s phase lock
+        // without bypassing OTA, ZNP mutex or queue ownership.
+        const nextDelay = delay === 60_000 ? randomInt(60_000, 90_001)
+            : Math.max(60_000, delay);
+        this.#b4Timer = setTimeout(() => { void this.#b4Sample(); }, nextDelay);
     }
 
     /** F3 durable evidence writer runs in a separate NO-SERIAL worker.
      * IPC admission is bounded; main loop never calls sync read/fsync/rename.
      * ACK is durable manifest receipt only; no re-send on missing ACK.
      */
+    /** 30-minute native F2 objective, based on DURABLE worker commits only.
+     *  This is an observability warning, never a radio recovery trigger.
+     */
+    #b4Native30mCheck(now = Date.now()): void {
+        const origin = this.#b4LastNativeCommittedUtc || this.#b4NativeCollectionBeganUtc;
+        if (!origin || now < origin || now - origin < 1_800_000) { return; }
+        if (this.#b4Native30mWarnedAt && now - this.#b4Native30mWarnedAt < 1_800_000) { return; }
+        this.#b4Native30mWarnedAt = now;
+        logger.error("P7U F2 NATIVE_30M_MISSED: no durable VALID native snapshot within 1800s; " +
+            "sampling remains subject to adapter queue, ZNP waiters and OTA gates; " +
+            "DO NOT reset radio on F2 staleness");
+    }
+
     #b4StartWorker(): void {
         if (this.#b4Worker || process.env.P7U_B4_COLLECTOR !== "1") { return; }
         const hostRun = randomUUID();
@@ -64,6 +82,13 @@ METHOD = r"""
                 }
             } else if (message.type === "committed" && typeof message.id === "number") {
                 this.#b4PendingIds.delete(message.id);
+                const nativeCommittedUtc = this.#b4PendingNativeValidUtc.get(message.id);
+                this.#b4PendingNativeValidUtc.delete(message.id);
+                if (nativeCommittedUtc !== undefined) {
+                    this.#b4LastNativeCommittedUtc = nativeCommittedUtc;
+                    this.#b4LastNativeCommittedMono = performance.now();
+                    this.#b4Native30mWarnedAt = 0;
+                }
                 clearTimeout(this.#b4AckTimers.get(message.id));
                 this.#b4AckTimers.delete(message.id);
             } else if (message.type === "fatal") {
@@ -81,6 +106,7 @@ METHOD = r"""
             this.#b4WorkerReady = false;
             this.#b4SamplerDisabled = true;
             this.#b4PendingIds.clear();
+            this.#b4PendingNativeValidUtc.clear();
             for (const timer of this.#b4AckTimers.values()) { clearTimeout(timer); }
             this.#b4AckTimers.clear();
         });
@@ -98,9 +124,13 @@ METHOD = r"""
         }
         const id = ++this.#b4RecordId;
         this.#b4PendingIds.add(id);
+        if (sample.kind === "VALID" && typeof sample.utc === "number") {
+            this.#b4PendingNativeValidUtc.set(id, sample.utc);
+        }
         const timer = setTimeout(() => {
             this.#b4AckTimers.delete(id);
             this.#b4PendingIds.delete(id);
+            this.#b4PendingNativeValidUtc.delete(id);
             this.#b4SamplerDisabled = true;
             this.#b4WorkerReady = false;
             logger.error("P7U B4 optional evidence ACK timed out; sampling halted (radio untouched)");
@@ -117,6 +147,7 @@ METHOD = r"""
             this.#b4Worker.postMessage({type: "append", id, record});
         } catch {
             this.#b4PendingIds.delete(id);
+            this.#b4PendingNativeValidUtc.delete(id);
             clearTimeout(this.#b4AckTimers.get(id));
             this.#b4AckTimers.delete(id);
             this.#b4SamplerDisabled = true;
@@ -131,11 +162,18 @@ METHOD = r"""
         const probeStarted = performance.now();
         try {
             const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();
-            const result = await this.b4ProbeReadOnlyDiagnosticsV4(true);
+            // Reserve one bounded owner slot before the 30-minute native
+            // objective expires. Recheck OTA and active SRSP gates at entry.
+            const origin = this.#b4LastNativeCommittedMono || this.#b4NativeCollectionBeganMono;
+            const reserveAtBoundary = origin > 0 && performance.now() - origin >= 900_000;
+            const result = await this.b4ProbeReadOnlyDiagnosticsV4(true, reserveAtBoundary);
             const outcomeAfter = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();
             const freshOutcome = outcomeAfter && outcomeBefore &&
                 outcomeAfter.attempt > outcomeBefore.attempt ? outcomeAfter : null;
             const elapsedMs = Math.max(0, Math.round(performance.now() - probeStarted));
+            // Passive numeric-only evidence, even if F2 was not admitted.
+            // This accessor MUST NOT attempt another ZNP request.
+            const hostEvidence = this.zigbee.zhController?.b4NoWireOwnerSnapshotFromExistingOwner() ?? null;
             if (!this.#b4Operational) { return; }
             const utc = Date.now();
             if (!result) {
@@ -145,16 +183,14 @@ METHOD = r"""
                 this.#b4Persist({schema: "p7u-b4-native-sample-v1", kind,
                     utc, probeLatencyMs: elapsedMs,
                     monotonicReceiveNs: process.hrtime.bigint().toString(),
-                    reason: outcome?.reason ?? "HOST_OR_OTA_ADMISSION_SKIPPED",
+                    reason: outcome?.reason ?? this.#b4BridgeGateReason,
                     failureClass: kind === "FAILED" ? outcome?.reason : undefined,
                     submissionState: outcome?.submissionState ?? "NONE",
                     timingQuality: kind === "FAILED" ? "HOST_TIMING_UNCERTAIN" : "NOT_PROBED",
-                    sourceAbi: 4, imageRuntimeAttested: false});
-                // A sent, uncorrelated or malformed F2 permanently quarantines
-                // only optional diagnostics; never reset or re-open the radio.
-                if (kind === "FAILED" || kind === "QUARANTINED") {
-                    this.#b4SamplerDisabled = true;
-                }
+                    sourceAbi: 4, imageRuntimeAttested: false, hostEvidence});
+                // Znp owns nonce correlation, cooldown/progress admission and
+                // hard quarantine. Keep recording its no-wire status even in
+                // quarantine; worker/storage failure alone halts this timer.
                 return;
             }
             const epochTag = result.radioBootId === null ? null :
@@ -170,11 +206,15 @@ METHOD = r"""
                 asyncDepth: result.asyncDepth, asyncHighWater: result.asyncHighWater,
                 srspEnqueued: result.srspEnqueued,
                 uartTxFinishedEvents: result.uartTxFinishedEvents,
+                mtLifecycle: result.mtLifecycle,
+                uartProgress: result.uartProgress,
+                hostEvidence,
                 radioEpochTag: epochTag, radioEpochHardwareVerified: false,
                 resetReason: result.resetReason,
                 imageRuntimeAttested: false,
-                hostPackage: "Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1",
-                firmwareSourceClaim: "323949a95c9a07901c4ffc3d026fca414982c148"
+                // F2 does not attest a firmware source revision. Installed
+                // source is bound by the separate physical deployment receipt.
+                hostPackage: "Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1"
             });
         } catch (error) {
             // A storage or source mismatch must stop optional sampling. It
@@ -184,6 +224,7 @@ METHOD = r"""
                 (error instanceof Error ? error.name : "UnknownError"));
         } finally {
             this.#b4InFlight = false;
+            this.#b4Native30mCheck();
             if (this.#b4Operational && !this.#b4SamplerDisabled) {
                 this.#b4Schedule(60_000);
             }
@@ -206,7 +247,7 @@ def plan(root: Path):
     before = read_source_text(root, CONTROLLER)
     if MARKER in before:
         raise ValueError("already applied collector")
-    if before.count("public async b4ProbeReadOnlyDiagnosticsV4(enabled = false)") != 1:
+    if before.count("public async b4ProbeReadOnlyDiagnosticsV4(enabled = false, reserveAtBoundary = false)") != 1:
         raise ValueError("missing audited v4 bridge")
     # After normal start the upstream controller intentionally clears the
     # startup AbortController. BOTH prior methods would otherwise always skip.
@@ -219,10 +260,45 @@ def plan(root: Path):
         if src.count(old) != 2:
             raise ValueError("lifecycle check count drift: " + old)
         src = src.replace(old, new)
+    # The v4 bridge is pinned before this overlay; preserve its actual
+    # lifecycle rules but report WHY a no-wire probe was not admitted.
+    # Scope only to F2: the predecessor F0 bridge deliberately has
+    # identical !ota/stillAllowed syntax and MUST remain byte-identical.
+    begin = src.index("    public async b4ProbeReadOnlyDiagnosticsV4(enabled = false, reserveAtBoundary = false)")
+    end = src.index("    public async b4ProbeReadOnlyDiagnostics(enabled = false)", begin)
+    v4bridge = src[begin:end]
+    v4bridge = once(v4bridge, '''        if (enabled !== true || !this.#b4Operational ||
+            !herdsman || herdsman.isStopping() || herdsman.isAdapterDisconnected()) {
+            return undefined;
+        }''', '''        const outerGate = enabled !== true ? "COLLECTOR_NOT_ENABLED"
+            : !this.#b4Operational ? "HOST_NOT_OPERATIONAL"
+            : !herdsman ? "HERDSMAN_UNAVAILABLE"
+            : herdsman.isStopping() ? "HERDSMAN_STOPPING"
+            : herdsman.isAdapterDisconnected() ? "ADAPTER_DISCONNECTED" : null;
+        if (outerGate !== null) {
+            this.#b4BridgeGateReason = outerGate;
+            return undefined;
+        }''')
+    v4bridge = once(v4bridge, '''        if (!ota) {
+            return undefined;
+        }''', '''        if (!ota) {
+            this.#b4BridgeGateReason = "OTA_EXTENSION_UNAVAILABLE";
+            return undefined;
+        }''')
+    v4bridge = once(v4bridge, '''        if (!stillAllowed()) {
+            return undefined;
+        }
+        return await herdsman.b4ReadOnlyDiagnosticsV4FromExistingOwner({''', '''        if (!stillAllowed()) {
+            this.#b4BridgeGateReason = "OTA_OR_HOST_GUARD_BLOCKED";
+            return undefined;
+        }
+        this.#b4BridgeGateReason = "ADAPTER_EVALUATING";
+        return await herdsman.b4ReadOnlyDiagnosticsV4FromExistingOwner({''')
+    src = src[:begin] + v4bridge + src[end:]
     src = once(src, 'import bind from "bind-decorator";',
         '''import bind from "bind-decorator";
 import * as b4Path from "node:path";
-import {createHmac, randomBytes, randomUUID} from "node:crypto";
+import {createHmac, randomBytes, randomInt, randomUUID} from "node:crypto";
 import {Worker} from "node:worker_threads";
 import b4Data from "./util/data";''')
     src = once(src, "    #startAbortController: AbortController | undefined;",
@@ -231,9 +307,16 @@ import b4Data from "./util/data";''')
     #b4Timer: NodeJS.Timeout | undefined;
     #b4InFlight = false;
     #b4SamplerDisabled = false;
+    #b4BridgeGateReason = "NOT_ATTEMPTED";
     readonly #b4EpochKey = randomBytes(32);
     #b4Worker: Worker | undefined;
     #b4WorkerReady = false;
+    #b4NativeCollectionBeganUtc = 0;
+    #b4LastNativeCommittedUtc = 0;
+    #b4LastNativeCommittedMono = 0;
+    #b4NativeCollectionBeganMono = 0;
+    #b4Native30mWarnedAt = 0;
+    readonly #b4PendingNativeValidUtc = new Map<number, number>();
     #b4HostRunId = "";
     #b4OwnerGeneration = "";
     #b4RecordId = 0;
@@ -245,6 +328,11 @@ import b4Data from "./util/data";''')
         """        settings.setOnboarding(false);
         // Only at steady state: startup AbortController is about to be GC'd.
         this.#b4Operational = true;
+        this.#b4NativeCollectionBeganUtc = Date.now();
+        this.#b4NativeCollectionBeganMono = performance.now();
+        this.#b4LastNativeCommittedUtc = 0;
+        this.#b4LastNativeCommittedMono = 0;
+        this.#b4Native30mWarnedAt = 0;
         try { this.#b4StartWorker(); }
         catch {
             this.#b4SamplerDisabled = true;

@@ -23,8 +23,9 @@ class PassiveEvidenceTests(unittest.TestCase):
         admission = after.split("const id = ++this.#b4RecordId;", 1)[0]
         self.assertNotIn("this.#b4SamplerDisabled ||", admission)
         self.assertIn("this.#b4PendingIds.size >= 4", admission)
-        # F2 still independently stops after a genuinely ambiguous request.
-        self.assertIn("if (kind === \"FAILED\" || kind === \"QUARANTINED\")", method)
+        # Znp quarantines the wire path; keep durable no-wire status records.
+        self.assertNotIn("if (kind === \"FAILED\" || kind === \"QUARANTINED\")", method)
+        self.assertIn("Znp owns nonce correlation", method)
         self.assertIn("this.#b4SamplerDisabled = true;", method)
 
     def test_real_node_sink_persists_timeout_after_f2_quarantine(self):

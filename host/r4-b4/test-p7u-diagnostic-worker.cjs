@@ -318,3 +318,114 @@ test("actual worker thread delivers ACK only after read-back committed manifest"
         x.cleanup();
     }
 });
+
+function sampleHostEvidence() {
+    const stat = () => ({ok:1,timeout:0,maxLatencyMs:25,lastLatencyMs:25});
+    return {initialized:true,mutexIdle:true,mutexQueued:0,waitressPending:0,
+        diagnosticQuarantined:false,scope:"HOST_OWNER_LIFETIME_ONLY",
+        adapterQueuePending:0,adapterClosing:false,interpanLocked:false,
+        srsp:{AF:stat(),ZDO:stat(),SYS:stat(),UTIL:stat()}};
+}
+test("passive host SRSP and gate evidence is durable and rejects nested identifiers", () => {
+    const x=dir();
+    try {
+        const state=workerModule.open(x.root);
+        const skipped=fixture("SKIPPED");
+        delete skipped.abi;delete skipped.sequence;delete skipped.validityMask;
+        skipped.reason="ZNP_WAITRESS_PENDING";
+        skipped.hostEvidence=sampleHostEvidence();
+        workerModule.commit(state,skipped);
+        const valid={...fixture(),sequence:2,hostEvidence:sampleHostEvidence()};
+        workerModule.commit(state,valid);
+        const recovered=workerModule.open(x.root);
+        assert.equal(recovered.records.length,2);
+        assert.equal(recovered.records[0].hostEvidence.srsp.AF.ok,1);
+        assert.equal(recovered.records[1].hostEvidence.waitressPending,0);
+        const bad={...fixture(),hostEvidence:{...sampleHostEvidence(),ieeeAddr:"0xDEADBEEF"}};
+        assert.throws(()=>workerModule.commit(state,bad),/HOST_EVIDENCE_FIELDS/);
+        const huge={...fixture(),hostEvidence:{...sampleHostEvidence(),srsp:{
+            ...sampleHostEvidence().srsp,AF:{...sampleHostEvidence().srsp.AF,
+                lastLatencyMs:NaN}}}};
+        assert.throws(()=>workerModule.commit(state,huge),/HOST_EVIDENCE_STATS/);
+        const unknown={...fixture(),hostEvidence:{...sampleHostEvidence(),srsp:{
+            ...sampleHostEvidence().srsp,SYS:{...sampleHostEvidence().srsp.SYS,
+                command:"NV_READ"}}}};
+        assert.throws(()=>workerModule.commit(state,unknown),/HOST_EVIDENCE_STATS/);
+    } finally {x.cleanup();}
+});
+
+test("wire-boundary counters are durable, owner scoped and reject raw packet fields", () => {
+    const x = dir();
+    try {
+        const state = workerModule.open(x.root);
+        const wire = {rxRawBytes: 1024, rxChunks: 4, unpiParsedFrames: 10,
+            unpiParseErrors: 1, unpiBufferedBytes: 2, txQueuedBytes: 512,
+            txQueuedFrames: 8, txQueuedRawBuffers: 0,
+            measurement: "EXISTING_OWNER_STREAM_ONLY"};
+        workerModule.commit(state, {...fixture(), hostEvidence: {...sampleHostEvidence(), wire}});
+        const replay = workerModule.open(x.root);
+        assert.equal(replay.records[0].hostEvidence.wire.rxRawBytes, 1024);
+        assert.equal(replay.records[0].hostEvidence.wire.unpiParseErrors, 1);
+        assert.throws(() => workerModule.commit(state, {...fixture(),
+            hostEvidence: {...sampleHostEvidence(), wire: {...wire,
+                rawPayload: "FE016500"}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
+        assert.throws(() => workerModule.commit(state, {...fixture(),
+            hostEvidence: {...sampleHostEvidence(), wire: {...wire,
+                rxRawBytes: Number.NaN}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
+        assert.throws(() => workerModule.commit(state, {...fixture(),
+            hostEvidence: {...sampleHostEvidence(), wire: {...wire,
+                measurement: "RADIO_PHYSICAL_TX_PROVEN"}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
+    } finally {x.cleanup();}
+});
+
+test("expired Waitress entries are not mislabeled live pending work", () => {
+    const x = dir();
+    try {
+        const state = workerModule.open(x.root);
+        const accounting = {active: 2, timedOut: 2026,
+            resolved: 0, rawMapEntries: 2028};
+        workerModule.commit(state, {...fixture(), hostEvidence: {
+            ...sampleHostEvidence(), waitressPending: 2028,
+            waitressAccounting: accounting}});
+        const r = workerModule.open(x.root).records[0].hostEvidence;
+        assert.equal(r.waitressPending, 2028); // legacy Map.size is preserved
+        assert.equal(r.waitressAccounting.active, 2);
+        assert.equal(r.waitressAccounting.timedOut, 2026);
+        assert.throws(() => workerModule.commit(state, {...fixture(), hostEvidence: {
+            ...sampleHostEvidence(), waitressAccounting: {
+                ...accounting, rawMapEntries: 2018}}}), /HOST_WAITRESS_ACCOUNTING/);
+    } finally {x.cleanup();}
+});
+
+test("F2 v4.2 commits exactly 18 named response stages, rejects any nested identifier", () => {
+    const x = dir();
+    try {
+        const state = workerModule.open(x.root);
+        const names = ["allProduced", "allEnqueued", "allAllocFailed",
+            "allSendFailed", "allNpiReceived", "allFramedQueued",
+            "allFramingFailed", "allTlSubmitted", "allTlRejected",
+            "afDataProduced", "afDataEnqueued", "afDataAllocFailed",
+            "afDataSendFailed", "afDataNpiReceived", "afDataFramedQueued",
+            "afDataFramingFailed", "afDataTlSubmitted", "afDataTlRejected"];
+        const counters=Object.fromEntries(names.map((n, i) => [n, i]));
+        const row={...fixture(), minor:2, validityMask:0x00FFFFEC, mtLifecycle:counters};
+        workerModule.commit(state,row);
+        assert.equal(workerModule.open(x.root).records[0].mtLifecycle.allTlSubmitted,7);
+        assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
+            ...counters,rawPayload:"deadbeef"}}),/F2_V42_LIFECYCLE_SHAPE/);
+        assert.throws(()=>workerModule.commit(state,{...row,minor:1,validityMask:0x2C}),
+            /F2_V42_LIFECYCLE_SHAPE/);
+        // Keep independent malformed-mask rejection explicit; do not weaken the validator.
+        assert.throws(()=>workerModule.commit(state,{...row,minor:1}),
+            /F2_V41_VALIDITY_MASK/);
+        assert.throws(()=>workerModule.commit(state,{...row,minor:4}),
+            /F2_UNSUPPORTED_MINOR/);
+        assert.throws(()=>workerModule.commit(state,{...row,minor:null}),
+            /F2_UNSUPPORTED_MINOR/);
+        // Legacy minor-omitted v4.1 remains valid only with its original masks.
+        assert.throws(()=>workerModule.commit(state,{...fixture(),validityMask:0xDEAD}),
+            /F2_V41_VALIDITY_MASK/);
+        assert.throws(()=>workerModule.commit(state,{...row,mtLifecycle:{
+            ...counters,allProduced:-1}}),/F2_V42_LIFECYCLE_SHAPE/);
+    } finally {x.cleanup();}
+});
