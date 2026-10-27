@@ -201,6 +201,7 @@ METHOD = r"""
                 asyncDepth: result.asyncDepth, asyncHighWater: result.asyncHighWater,
                 srspEnqueued: result.srspEnqueued,
                 uartTxFinishedEvents: result.uartTxFinishedEvents,
+                mtLifecycle: result.mtLifecycle,
                 hostEvidence,
                 radioEpochTag: epochTag, radioEpochHardwareVerified: false,
                 resetReason: result.resetReason,
