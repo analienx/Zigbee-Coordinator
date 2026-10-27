@@ -353,3 +353,27 @@ test("passive host SRSP and gate evidence is durable and rejects nested identifi
         assert.throws(()=>workerModule.commit(state,unknown),/HOST_EVIDENCE_STATS/);
     } finally {x.cleanup();}
 });
+
+test("wire-boundary counters are durable, owner scoped and reject raw packet fields", () => {
+    const x = dir();
+    try {
+        const state = workerModule.open(x.root);
+        const wire = {rxRawBytes: 1024, rxChunks: 4, unpiParsedFrames: 10,
+            unpiParseErrors: 1, unpiBufferedBytes: 2, txQueuedBytes: 512,
+            txQueuedFrames: 8, txQueuedRawBuffers: 0,
+            measurement: "EXISTING_OWNER_STREAM_ONLY"};
+        workerModule.commit(state, {...fixture(), hostEvidence: {...sampleHostEvidence(), wire}});
+        const replay = workerModule.open(x.root);
+        assert.equal(replay.records[0].hostEvidence.wire.rxRawBytes, 1024);
+        assert.equal(replay.records[0].hostEvidence.wire.unpiParseErrors, 1);
+        assert.throws(() => workerModule.commit(state, {...fixture(),
+            hostEvidence: {...sampleHostEvidence(), wire: {...wire,
+                rawPayload: "FE016500"}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
+        assert.throws(() => workerModule.commit(state, {...fixture(),
+            hostEvidence: {...sampleHostEvidence(), wire: {...wire,
+                rxRawBytes: Number.NaN}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
+        assert.throws(() => workerModule.commit(state, {...fixture(),
+            hostEvidence: {...sampleHostEvidence(), wire: {...wire,
+                measurement: "RADIO_PHYSICAL_TX_PROVEN"}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
+    } finally {x.cleanup();}
+});
