@@ -8,7 +8,7 @@
 
 **UTC; from existing owner’s numeric host SRSP counters; timestamp precision is approximately the collector’s ~60-second observation interval.** SRSP progress means the existing host matched a reply; this is **not** RF reachability evidence. Source file path is intentionally private, only aggregate numeric results appear here.
 
-| Time | AF matched SRSP OK | AF SREQ timeout | ZDO SRSP OK | UTIL SRSP OK | Host Waitress pending | Adapter queue pending |
+| Time | AF matched SRSP OK | AF SREQ timeout | ZDO SRSP OK | UTIL SRSP OK | Host Waitress Map.size (includes expired) | Adapter queue pending |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Oct 26 15:19 (last native F2) | 14,381 | 186 | 353 | 6 | 0 | 0 |
 | Oct 27 02:00 | 57,870 | 341 | 1,671 | 16 | 7 | 2 |
@@ -20,6 +20,8 @@
 | Oct 27 07:17 | **66,321** | 1,804 | 1,782 | 63 | **2,028** | 0 |
 
 The final *observed increments* were **ZDO ~03:59 UTC**, **UTIL ~04:00 UTC**, **AF ~04:20 UTC**. **SYS ok=22 was already static since Oct 26 11:43 because no additional SYS successes were observed, not proof that SYS failed earlier**. Its actual new-process SYS ping failure is separate, subsequent hardware evidence. The *first* exact missing on-radio SRSP remains unknown.
+
+**Source-proven secondary artifact: the 2,028 `Waitress pending` count is not 2,028 active waits.** In the exact pinned [zigbee-herdsman `Waitress`](https://github.com/Koenkk/zigbee-herdsman/blob/0968f979d558874b17396c96b66382d4236bbdcd/src/utils/waitress.ts), timeout callback sets `waiter.timedout=true` and rejects, but **does not delete the Map entry**. The Map normally sweeps expired entries on `forEachMatching` when later frames are processed (or on explicit removal). The deployed host getter `b4PendingCount()` returned raw `this.waiters.size`; therefore the jump from ~81 at 04:20 to 2,028 at 07:17 **is strongly consistent with timed-out tombstone accumulation after incoming response processing ceased**, not proof of >2,000 active simultaneous Zigbee requests or an initiating queue overload. The new passive getter in PR #169 keeps the legacy count unchanged for historic comparability **and also exposes active vs timedOut vs resolved vs rawMapEntries**. Do not use raw Map.size to infer pressure or root cause.
 
 **Strong falsifier of naive F2 interpretation:** there were **51,940 further successful AF SRSPs after last VALID native F2** (Oct 26 15:19). Collection inactivity started **13+ hours before the final AF-success plateau**, so a stale F2 record is not evidence of NPI failure at that timestamp. The collector recorded many SKIPPED due adapter queue/Waitress admission. During an apparent healthy run after recovery, native F2 met the 30-minute SLO without restarting the device; new SLO warnings are in [PR #168](https://github.com/analienx/Zigbee-Coordinator/pull/168), not yet installed.
 
