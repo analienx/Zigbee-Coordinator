@@ -532,9 +532,46 @@ def plan(root):
     znp = once(znp,
         "            logger.debug(() => `--> ${object}`, NS);",
         "            if (object.subsystem === Subsystem.SYS &&\n                (object.command.name === \"r4DiagReadOnly\" || object.command.name === \"r4DiagReadOnlyV4\")) {\n                logger.debug(\"B4 SYS SREQ (diagnostic nonce redacted)\", NS);\n            } else {\n                logger.debug(() => `--> ${object}`, NS);\n            }")
+    # Passive existing-owner boundary observability: never open/reconfigure
+    # UART. RX counts are inside the normal UNPI parser, TX counts are frames
+    # offered to the existing stream (NOT a claim of physical TX completion).
+    znp = once(znp,
+        """    public b4GetPassiveOwnerMetrics() {
+        return {""",
+        """    public b4GetPassiveOwnerMetrics() {
+        return {
+            wire: {...this.unpiParser.b4NoWireIngress(),
+                ...this.unpiWriter.b4NoWireEgress(),
+                measurement: "EXISTING_OWNER_STREAM_ONLY"},""")
     # ZNP logging redaction alone is insufficient: pinned UNPI transport
     # DEBUG logging prints raw chunks/frame buffers, including boot token.
     writer = original[WRITER]
+    writer = once(writer,
+        "export class Writer extends stream.Readable {",
+        """export class Writer extends stream.Readable {
+    private b4TxQueuedBytes = 0;
+    private b4TxQueuedFrames = 0;
+    private b4TxQueuedRawBuffers = 0;
+
+    public b4NoWireEgress() {
+        return {txQueuedBytes: this.b4TxQueuedBytes,
+            txQueuedFrames: this.b4TxQueuedFrames,
+            txQueuedRawBuffers: this.b4TxQueuedRawBuffers};
+    }
+    private b4NoteQueued(bytes: number, frame: boolean): void {
+        this.b4TxQueuedBytes = Math.min(Number.MAX_SAFE_INTEGER, this.b4TxQueuedBytes + bytes);
+        if (frame) {
+            this.b4TxQueuedFrames = Math.min(Number.MAX_SAFE_INTEGER, this.b4TxQueuedFrames + 1);
+        } else {
+            this.b4TxQueuedRawBuffers = Math.min(Number.MAX_SAFE_INTEGER, this.b4TxQueuedRawBuffers + 1);
+        }
+    }""")
+    writer = once(writer,
+        "        this.push(buffer);\n    }\n\n    public writeBuffer",
+        "        this.b4NoteQueued(buffer.length, true);\n        this.push(buffer);\n    }\n\n    public writeBuffer")
+    writer = once(writer,
+        "        this.push(buffer);\n    }\n\n    public override _read",
+        "        this.b4NoteQueued(buffer.length, false);\n        this.push(buffer);\n    }\n\n    public override _read")
     writer = once(writer,
         "        logger.debug(`--> frame [${[...buffer]}]`, NS);",
         "        logger.debug(`--> frame ${buffer.length} bytes (payload redacted)`, NS);")
@@ -542,6 +579,34 @@ def plan(root):
         "        logger.debug(`--> buffer [${[...buffer]}]`, NS);",
         "        logger.debug(`--> buffer ${buffer.length} bytes (payload redacted)`, NS);")
     parser = original[PARSER]
+    parser = once(parser,
+        "    private buffer: Buffer;",
+        """    private buffer: Buffer;
+    private b4RxBytes = 0;
+    private b4RxChunks = 0;
+    private b4UnpiParsed = 0;
+    private b4UnpiParseErrors = 0;
+
+    public b4NoWireIngress() {
+        return {rxRawBytes: this.b4RxBytes,
+            rxChunks: this.b4RxChunks,
+            unpiParsedFrames: this.b4UnpiParsed,
+            unpiParseErrors: this.b4UnpiParseErrors,
+            unpiBufferedBytes: this.buffer.length};
+    }""")
+    parser = once(parser,
+        "        this.buffer = Buffer.concat([this.buffer, chunk]);",
+        """        this.b4RxBytes = Math.min(Number.MAX_SAFE_INTEGER, this.b4RxBytes + chunk.length);
+        this.b4RxChunks = Math.min(Number.MAX_SAFE_INTEGER, this.b4RxChunks + 1);
+        this.buffer = Buffer.concat([this.buffer, chunk]);""")
+    parser = once(parser,
+        '                    this.emit("parsed", frame);',
+        """                    this.b4UnpiParsed = Math.min(Number.MAX_SAFE_INTEGER, this.b4UnpiParsed + 1);
+                    this.emit("parsed", frame);""")
+    parser = once(parser,
+        '                } catch (error) {',
+        """                } catch (error) {
+                    this.b4UnpiParseErrors = Math.min(Number.MAX_SAFE_INTEGER, this.b4UnpiParseErrors + 1);""")
     parser = once(parser,
         "        logger.debug(`<-- [${[...chunk]}]`, NS);",
         "        logger.debug(`<-- ${chunk.length} bytes (payload redacted)`, NS);")
