@@ -16,6 +16,12 @@ This repository is intentionally **hardware-neutral at the top level**. Coordina
 
 See [`coordinators/README.md`](coordinators/README.md) and [`docs/COORDINATOR_REGISTRY.md`](docs/COORDINATOR_REGISTRY.md) for the canonical naming and status map.
 
+## First response to a confirmed P7U hard hang
+
+**Priority #1 operational restoration:** [guarded TI ROM/BSL round-trip → unchanged existing R4 APP → one Zigbee2MQTT start → fresh device-MQTT verification](coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md). This physically **restored the sole SLZB-06P7U on 27 October 2026**, without a power cycle, reflash, NV/security replay or re-pairing, after both normal Zigbee-only and ESP-only restarts failed. [Dedicated operator/agent skill](skills/p7u-rom-bsl-recovery/SKILL.md).
+
+**Distinguish priorities:** restore interrupted household service first via the proven, single-owner, one-shot method; continue **firmware-first source diagnosis/fix** separately. Recovery does not prove or close the defect. Never perform BSL while Z2M owns the radio, automatically replay consumed intents or use an unverified SMLIGHT control command.
+
 ## Current focus — P7U / R4
 
 **Current engineering priority (25 October 2026): repair and prove the R4 firmware/ZNP command-handling failure, not repeat stock restoration.** Root cause, source repair, exact-SHA native qualification and physical acceptance come before recovery work; restoration is a last-resort network-safety fallback and never closes a firmware incident. The firmware and previous image have both shown post-startup loss of replies, so distinguish firmware, ESP/USB and host causes instead of assuming a single image is responsible. See the [P7U firmware-first policy](coordinators/slzb-06p7u/FIRMWARE_FIRST_POLICY.md). This priority shift grants no new authorization to reset, flash, alter NV or pair devices.
