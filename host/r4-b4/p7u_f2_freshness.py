@@ -96,6 +96,7 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
         "passive_srsp_progress": "UNKNOWN", "passive_srsp_delta": None,
         "wire_boundary_status": "NOT_INSTALLED_OR_INSUFFICIENT",
         "wire_boundary_deltas": None,
+        "waitress_live_vs_expired": None,
     }
     if not rows:
         return report
@@ -117,6 +118,16 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
         current.append(r)
     current.reverse()
     report["current_owner_records"] = len(current)
+    accounting = ((current[-1].get("hostEvidence") or {}).get("waitressAccounting")
+                  if current else None)
+    if accounting is not None:
+        required = {"active", "timedOut", "resolved", "rawMapEntries"}
+        if (type(accounting) is not dict or set(accounting) != required or
+                not all(_nonneg(accounting.get(k)) for k in required) or
+                accounting["active"] + accounting["timedOut"] +
+                accounting["resolved"] != accounting["rawMapEntries"]):
+            raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_WAITRESS_ACCOUNTING")
+        report["waitress_live_vs_expired"] = accounting
     valid = [r for r in current if r.get("kind") == "VALID"]
     report["valid_f2_current_owner_count"] = len(valid)
     latest_valid = valid[-1] if valid else None
