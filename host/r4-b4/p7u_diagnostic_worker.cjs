@@ -58,9 +58,24 @@ function sameRecord(entry) {
             Object.keys(v).length === keys.length &&
             Object.keys(v).every(k => keys.includes(k));
         const num = v => Number.isSafeInteger(v) && v >= 0;
-        hold(exact(e, ["initialized", "mutexIdle", "mutexQueued", "waitressPending",
+        const expected = ["initialized", "mutexIdle", "mutexQueued", "waitressPending",
             "diagnosticQuarantined", "srsp", "scope", "adapterQueuePending",
-            "adapterClosing", "interpanLocked"]), "HOST_EVIDENCE_FIELDS");
+            "adapterClosing", "interpanLocked"];
+        // Version-additive only: historical hash-chain records have no wire
+        // metrics. Do not rewrite/recompute past evidence to add them.
+        if (Object.hasOwn(e, "wire")) expected.push("wire");
+        hold(exact(e, expected), "HOST_EVIDENCE_FIELDS");
+        if (Object.hasOwn(e, "wire")) {
+            const w = e.wire;
+            hold(exact(w, ["rxRawBytes", "rxChunks", "unpiParsedFrames",
+                "unpiParseErrors", "unpiBufferedBytes", "txQueuedBytes",
+                "txQueuedFrames", "txQueuedRawBuffers", "measurement"]) &&
+                ["rxRawBytes", "rxChunks", "unpiParsedFrames", "unpiParseErrors",
+                    "unpiBufferedBytes", "txQueuedBytes", "txQueuedFrames",
+                    "txQueuedRawBuffers"].every(k => num(w[k])) &&
+                w.measurement === "EXISTING_OWNER_STREAM_ONLY",
+                "HOST_WIRE_EVIDENCE_SHAPE");
+        }
         hold(typeof e.initialized === "boolean" &&
             typeof e.mutexIdle === "boolean" &&
             num(e.mutexQueued) && num(e.waitressPending) &&
