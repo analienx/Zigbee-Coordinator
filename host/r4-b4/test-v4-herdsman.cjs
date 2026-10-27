@@ -252,8 +252,8 @@ test("F2 v4.2 preserves v4.1 framing and provides exactly 18 native causal stage
     assert.equal(result.validityMask, 0x00FFFFFF);
     assert.equal(result.mtLifecycle.allProduced, 11);
     assert.equal(result.mtLifecycle.allTlRejected, 19);
-    assert.equal(result.mtLifecycle.afRegProduced, 20);
-    assert.equal(result.mtLifecycle.afRegTlRejected, 28);
+    assert.equal(result.mtLifecycle.afDataProduced, 20);
+    assert.equal(result.mtLifecycle.afDataTlRejected, 28);
     assert.equal(Object.keys(result.mtLifecycle).length, 18);
     assert.equal(owner.znp.requests, 1);
     const oldOwner = ownerWithResponse((nonce)=>wire(nonce,{minor:1,mask:0x3F}));
