@@ -50,6 +50,7 @@ function ownerWithResponse(chooser) {
         b4F2AcceptReply() {},
         b4IsDiagPoisoned() {return this.disabled;},
         b4SetProbeGuard(guard) {this.guard = guard;},
+        b4SetF2BoundaryAdmission(enabled) {this.boundaryAdmission = enabled;},
         b4PoisonDiagSession() {this.disabled = true;},
         async requestWithReply(sys,cmd,payload,unused,timeout) {
             this.requests++;
