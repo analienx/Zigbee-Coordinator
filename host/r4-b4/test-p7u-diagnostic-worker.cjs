@@ -404,9 +404,9 @@ test("F2 v4.2 commits exactly 18 named response stages, rejects any nested ident
         const names = ["allProduced", "allEnqueued", "allAllocFailed",
             "allSendFailed", "allNpiReceived", "allFramedQueued",
             "allFramingFailed", "allTlSubmitted", "allTlRejected",
-            "afRegProduced", "afRegEnqueued", "afRegAllocFailed",
-            "afRegSendFailed", "afRegNpiReceived", "afRegFramedQueued",
-            "afRegFramingFailed", "afRegTlSubmitted", "afRegTlRejected"];
+            "afDataProduced", "afDataEnqueued", "afDataAllocFailed",
+            "afDataSendFailed", "afDataNpiReceived", "afDataFramedQueued",
+            "afDataFramingFailed", "afDataTlSubmitted", "afDataTlRejected"];
         const counters=Object.fromEntries(names.map((n, i) => [n, i]));
         const row={...fixture(), minor:2, validityMask:0x00FFFFEC, mtLifecycle:counters};
         workerModule.commit(state,row);
