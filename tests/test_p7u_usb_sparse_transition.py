@@ -34,6 +34,35 @@ async def scenario():
     return rom,bound,args
 
 class SparseTransitionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recovery_from_sparse_forward_requires_new_witness_and_keeps_current_nv(self):
+        rom, forward, args = await scenario()
+        for a, raw in forward.sectors.items(): rom.image[a:a+m.SECTOR] = raw
+        expected = bytes(rom.image); rom.image[0xA4004] ^= 1; current = bytes(rom.image)
+        security = dict(args['security_receipt'], capture_sha256=m.sha(current),
+                        baseline_capture_sha256=forward.manifest['capture_sha256'])
+        recovery = m.prepare_recovery(forward, expected_forward_plan_sha256=forward.manifest['plan_sha256'],
+            pass1=current, pass2=current, expected_capture_sha256=m.sha(current),
+            security_receipt=security, expected_security_receipt_sha256=m.sha(m.canonical(security)))
+        self.assertNotIn('capture_mode', recovery.manifest)
+        with self.assertRaisesRegex(ValueError, 'SPARSE_PROVENANCE_INVALID'):
+            m.bind_sparse_plan(recovery, expected_plan_sha256=recovery.manifest['plan_sha256'],
+                previous_verified_image=expected, sparse_receipt=args['sparse_receipt'],
+                expected_sparse_receipt_sha256=args['expected_sparse_receipt_sha256'])
+        fresh = await capture_sparse(rom, prior_full_verified=expected, expected_identity_sha256=LIVE)
+        proof = vars(fresh.receipt)
+        recovery = m.bind_sparse_plan(recovery, expected_plan_sha256=recovery.manifest['plan_sha256'],
+            previous_verified_image=expected, sparse_receipt=proof, expected_sparse_receipt_sha256=m.sha(m.canonical(proof)))
+        admission = await m.admit_sparse(rom, recovery, expected_plan_sha256=recovery.manifest['plan_sha256'],
+            sparse_receipt=proof, expected_sparse_receipt_sha256=m.sha(m.canonical(proof)),
+            security_receipt=security, expected_security_receipt_sha256=m.sha(m.canonical(security)), expected_live_identity_sha256=LIVE)
+        async def journal(event): return True
+        await m.execute(rom, recovery, admission, expected_plan_sha256=recovery.manifest['plan_sha256'],
+            expected_admission_sha256=admission['admission_sha256'], capture_receipt=proof,
+            expected_capture_receipt_sha256=m.sha(m.canonical(proof)), expected_live_identity_sha256=LIVE,
+            journal=journal, same_session_sparse=True)
+        for a in forward.sectors: self.assertEqual(bytes(rom.image[a:a+m.SECTOR]), forward.snapshot[a:a+m.SECTOR])
+        self.assertEqual(bytes(rom.image[0xA0000:m.BOOT]), current[0xA0000:m.BOOT])
+
     async def test_rom_crc_sparse_admission_executes_readback_without_full_sha(self):
         rom,plan,args=await scenario()
         admission=await m.admit_sparse(rom,plan,**args)

@@ -433,15 +433,33 @@ def compare_retained(current: dict, baseline: dict) -> None:
                     code + "_PERSISTED_COUNTER_REGRESSION")
 
 
-def evaluate_records(current: dict, baseline: dict, abi: dict) -> dict:
+def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrade=False) -> dict:
     """Pure semantic layer for focused synthetic CI. Does not claim reader proof."""
     try:
         validate_abi(abi)
         now = inspect_state(current, abi)
         old = inspect_state(baseline, abi)
-        compare_retained(now, old)
+        changed_short_addresses = 0
+        comparison = now
+        if runtime_upgrade:
+            # A running Zigbee network may assign a different short NWK address
+            # to the SAME IEEE in the SAME address-manager slot. Normalize only
+            # those two bytes for historical comparison. Identity, user flags,
+            # padding, APS references, keys and replay floors remain exact.
+            offset, width = abi['structs']['AddrMgrEntry_t']['fields']['nwkAddr']
+            require(width == 2, 'NATIVE_ABI_WIDTH_MISMATCH')
+            addresses = dict(now['addresses'])
+            for index, before in old['addresses'].items():
+                after = addresses.get(index)
+                require(after is not None, 'ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
+                changed_short_addresses += after[offset:offset+width] != before[offset:offset+width]
+                addresses[index] = after[:offset] + before[offset:offset+width] + after[offset+width:]
+            comparison = dict(now, addresses=addresses)
+        compare_retained(comparison, old)
         return {"semantic_checks_passed": True, "reason_codes": [],
-                "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"])}
+                "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"]),
+                "comparison_scope": 'KNOWN_R4_RUNTIME_SHORT_ADDRESS_ONLY' if runtime_upgrade else 'STRICT_RETAINED',
+                "runtime_short_address_changes": changed_short_addresses}
     except (Hold, KeyError, TypeError, IndexError, ValueError) as error:
         code = str(error) if isinstance(error, Hold) else "SECURITY_RECORD_OR_ABI_MALFORMED"
         return {"semantic_checks_passed": False, "reason_codes": [code]}
@@ -456,7 +474,7 @@ def pinned_read(path: Path, expected: str, code: str) -> bytes:
 
 
 def preflight(*, capture: bytes, baseline: bytes, abi: dict, reader: Path,
-              bindings: dict, timeout: float = 20) -> dict:
+              bindings: dict, timeout: float = 20, runtime_upgrade=False) -> dict:
     result = {"schema": SCHEMA, "status": "HOLD", **bindings,
               "write_attempts": None, "erase_attempts": None, "compaction_attempts": None,
               "flash_authorized": False, "counter_values_changed": False,
@@ -477,7 +495,7 @@ def preflight(*, capture: bytes, baseline: bytes, abi: dict, reader: Path,
         result.update(write_attempts=0, erase_attempts=0, compaction_attempts=0)
         result["current_storage_counts"] = counts
         result["baseline_storage_counts"] = baseline_counts
-        semantic = evaluate_records(records, previous, abi)
+        semantic = evaluate_records(records, previous, abi, runtime_upgrade=runtime_upgrade)
         result["checks"] = semantic
         require(semantic["semantic_checks_passed"], semantic["reason_codes"][0] if semantic["reason_codes"] else "SECURITY_SEMANTICS_HOLD")
         result["status"] = "PASS_RETAINED_SECURITY_OFFLINE_ONLY"

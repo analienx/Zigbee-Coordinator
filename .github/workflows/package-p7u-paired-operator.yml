@@ -1,0 +1,64 @@
+name: P7U paired guarded operator package (NO LIVE ACTION)
+
+on:
+  workflow_dispatch:
+    inputs:
+      native_run:
+        description: Successful exact-source stock20260311 native run ID
+        required: true
+      host_run:
+        description: Successful exact-source deployable host release run ID
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPERATOR_SOURCE_SHA: ${{ github.sha }}
+      FIRMWARE_SOURCE_SHA: ${{ github.sha }}
+      NATIVE_RUN: ${{ inputs.native_run }}
+      HOST_RUN: ${{ inputs.host_run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Bind only successful paired artifacts from this source
+        run: |
+          python - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          repo=os.environ['GITHUB_REPOSITORY']; sha=os.environ['GITHUB_SHA']
+          for key,workflow,prefix,dest in (
+            ('NATIVE_RUN','test-r4-stock20260311-native.yml','p7u-stock20260311-candidate-','candidate'),
+            ('HOST_RUN','release-p7u-host.yml','p7u-deployable-host-release-','host')):
+              run_id=os.environ[key]; assert run_id.isdecimal()
+              run=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run_id}']))
+              assert run['head_sha']==sha and run['conclusion']=='success' and run['status']=='completed'
+              assert run['path']=='.github/workflows/'+workflow
+              subprocess.run(['gh','run','download',run_id,'--repo',repo,'--name',prefix+sha,'--dir','/tmp/paired/'+dest],check=True)
+          # The security reader source/ABI remains byte identical to this
+          # previously native/QEMU-qualified static ARM64 reader package.
+          subprocess.run(['gh','run','download','40218192163','--repo',repo,
+            '--name','p7u-pr154-ha-operator-1b1298463bec29e0bef265e33cc6a80f8b6ffaac',
+            '--dir','/tmp/paired/reader'],check=True)
+          PY
+      - name: Package source-pinned fixed-device operator without hardware access
+        run: |
+          python tools/package_p7u_pr154_ha.py --candidate /tmp/paired/candidate \
+            --host-release /tmp/paired/host/RELEASE.json --reader-package /tmp/paired/reader \
+            --out /tmp/paired/operator
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-paired-operator-${{ github.sha }}
+          path: /tmp/paired/operator/
+          if-no-files-found: error
