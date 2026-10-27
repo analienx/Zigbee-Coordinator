@@ -51,7 +51,11 @@ static TxCallback taskTxCB = sent_task;
 static uint32_t OsalPort_enterCS(void) { return 0; }
 static void OsalPort_leaveCS(uint32_t key) { (void)key; }
 static bool NPITL_checkNpiBusy(void) { return npiTxActive; }
-static uint16 transportWrite(uint16 len) { return lower_response ? len : 0; }
+static uint16 transportWrite(uint16 len) {
+ // Model the real UART transport precondition: accepted writes retain TX len.
+ TransportTxLen = lower_response ? len : 0;
+ return TransportTxLen;
+}
 static void complete_callback(int rx, int tx) {
  (void)rx;
  if (tx) { user_completions++; npiTxActive = false; }
