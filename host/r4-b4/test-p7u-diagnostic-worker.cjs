@@ -377,3 +377,22 @@ test("wire-boundary counters are durable, owner scoped and reject raw packet fie
                 measurement: "RADIO_PHYSICAL_TX_PROVEN"}}}), /HOST_WIRE_EVIDENCE_SHAPE/);
     } finally {x.cleanup();}
 });
+
+test("expired Waitress entries are not mislabeled live pending work", () => {
+    const x = dir();
+    try {
+        const state = workerModule.open(x.root);
+        const accounting = {active: 2, timedOut: 2026,
+            resolved: 0, rawMapEntries: 2028};
+        workerModule.commit(state, {...fixture(), hostEvidence: {
+            ...sampleHostEvidence(), waitressPending: 2028,
+            waitressAccounting: accounting}});
+        const r = workerModule.open(x.root).records[0].hostEvidence;
+        assert.equal(r.waitressPending, 2028); // legacy Map.size is preserved
+        assert.equal(r.waitressAccounting.active, 2);
+        assert.equal(r.waitressAccounting.timedOut, 2026);
+        assert.throws(() => workerModule.commit(state, {...fixture(), hostEvidence: {
+            ...sampleHostEvidence(), waitressAccounting: {
+                ...accounting, rawMapEntries: 2018}}}), /HOST_WAITRESS_ACCOUNTING/);
+    } finally {x.cleanup();}
+});
