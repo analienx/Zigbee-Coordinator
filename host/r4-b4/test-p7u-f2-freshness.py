@@ -150,6 +150,58 @@ class FreshnessTests(unittest.TestCase):
         self.assertEqual(q["f2_freshness"], "NO_CURRENT_OWNER_VALID")
         self.assertEqual(q["native_f2_30m_objective"], "BREACHED")
 
+    def test_passive_wire_boundary_silence_after_host_queue(self):
+        def ev(rx, parsed, tx):
+            return {**progress(100, 0), "wire": {
+                "rxRawBytes": rx, "rxChunks": rx // 10,
+                "unpiParsedFrames": parsed, "unpiParseErrors": 0,
+                "unpiBufferedBytes": 0, "txQueuedBytes": tx,
+                "txQueuedFrames": tx // 20, "txQueuedRawBuffers": 0,
+                "measurement": "EXISTING_OWNER_STREAM_ONLY"}}
+        q = analyze([record(1000, hostEvidence=ev(100, 5, 120)),
+                     record(2000, hostEvidence=ev(100, 5, 220))], now_ms=3000)
+        self.assertEqual(q["wire_boundary_status"], "NO_RAW_RX_WHILE_HOST_QUEUES_TX")
+        self.assertEqual(q["wire_boundary_deltas"]["rxRawBytes"], 0)
+        self.assertFalse(q["automatic_recovery_permitted"])
+        self.assertEqual(q["retained_network_serving"], "NOT_ASSESSED")
+
+    def test_passive_wire_raw_bytes_without_valid_unpi(self):
+        def ev(rx, parsed, errors):
+            return {**progress(100, 0), "wire": {
+                "rxRawBytes": rx, "rxChunks": 2, "unpiParsedFrames": parsed,
+                "unpiParseErrors": errors, "unpiBufferedBytes": 8,
+                "txQueuedBytes": 100, "txQueuedFrames": 4,
+                "txQueuedRawBuffers": 0,
+                "measurement": "EXISTING_OWNER_STREAM_ONLY"}}
+        q = analyze([record(1000, hostEvidence=ev(100, 2, 0)),
+                     record(2000, hostEvidence=ev(350, 2, 3))], now_ms=3000)
+        self.assertEqual(q["wire_boundary_status"], "RAW_RX_WITHOUT_VALID_UNPI_FRAMES")
+        self.assertEqual(q["wire_boundary_deltas"]["unpiParseErrors"], 3)
+
+    def test_passive_wire_parsed_frames_without_AF_srsp(self):
+        def ev(rx, parsed, timeout):
+            e = progress(40, timeout)
+            e["wire"] = {"rxRawBytes": rx, "rxChunks": rx // 10,
+                         "unpiParsedFrames": parsed, "unpiParseErrors": 0,
+                         "unpiBufferedBytes": 0, "txQueuedBytes": 100,
+                         "txQueuedFrames": 1, "txQueuedRawBuffers": 0,
+                         "measurement": "EXISTING_OWNER_STREAM_ONLY"}
+            return e
+        q = analyze([record(1000, hostEvidence=ev(200, 4, 1)),
+                     record(2000, hostEvidence=ev(500, 7, 5))], now_ms=3000)
+        self.assertEqual(q["wire_boundary_status"], "VALID_UNPI_BUT_AF_SRSP_NOT_PROGRESSING")
+        self.assertEqual(q["passive_srsp_delta"]["AF"]["timeout"], 4)
+
+    def test_wire_legacy_absent_and_tampering_hold(self):
+        q = analyze([record(1000, hostEvidence=progress(1, 1)),
+                     record(2000, hostEvidence=progress(2, 1))], now_ms=3000)
+        self.assertEqual(q["wire_boundary_status"], "NOT_INSTALLED_OR_INSUFFICIENT")
+        bad = progress(1, 1)
+        bad["wire"] = {"rxRawBytes": 1, "rawPayload": "FE...", "measurement": "EXISTING_OWNER_STREAM_ONLY"}
+        with self.assertRaises(EvidenceHold):
+            analyze([record(1000, hostEvidence=bad),
+                     record(2000, hostEvidence=bad)], now_ms=3000)
+
     def test_future_clock_never_fabricates_freshness(self):
         q = analyze([f2(2_000)], now_ms=1_000)
         self.assertEqual(q["f2_freshness"], "CLOCK_UNCERTAIN")
