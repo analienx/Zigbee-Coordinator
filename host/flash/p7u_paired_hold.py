@@ -10,6 +10,22 @@ NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar',
        'bsl-entry-intent.json','sparse-receipt.json','fresh-sparse-snapshot.bin','security-receipt.json'}
 
+def absent_owner(ns,ha):
+    """Supervisor removes a stopped add-on container. Prove its absence exactly."""
+    need=ns['need'];name='app_'+ns['OWNER']
+    p=ns['subprocess'].run(['docker','inspect',name],capture_output=True,text=True,timeout=20)
+    need(p.returncode==1 and p.stdout.strip() in ('','[]') and
+         p.stderr.strip().lower().endswith('no such object: '+name),'PAIRED_OWNER_ABSENCE_NOT_PROVEN')
+    info=ha.info(ns['OWNER'])
+    need(info['state'] in ('stopped','error') and info['version']==ns['PAIRED_HOST_VERSION'] and
+         info['build'] is False and info['boot']=='manual' and info['watchdog'] is False,
+         'PAIRED_ABSENT_OWNER_METADATA')
+    image=json.loads(ns['run'](['docker','image','inspect',
+         'localhost:50144/p7u-r4-diagnostic:'+ns['PAIRED_HOST_VERSION']]))
+    need(len(image)==1 and image[0]['Id']==ns['IMAGE'],'PAIRED_ABSENT_OWNER_IMAGE')
+    ha.proof(False)
+    return {'id':None,'image':ns['IMAGE'],'started_at':None,'running':False,'absent':True}
+
 def fingerprint(root,owner,source):
     if not root.is_dir() or root.is_symlink() or {f.name for f in root.iterdir()}!=NAMES:
         raise ValueError('PAIRED_READONLY_HOLD_FILE_SET')
@@ -27,10 +43,12 @@ def provenance(ns,ha,owner):
     digest=fingerprint(root,owner,ns['SOURCE'])
     need(digest==ns['PAIRED_ROM_HOLD_PIN'],'PAIRED_READONLY_HOLD_PIN')
     p=load(root/'plan.json');pin=ns['sha'](ns['canonical'](p))
+    absent={'id':None,'image':ns['IMAGE'],'started_at':None,'running':False,'absent':True}
     need(pin==ns['PAIRED_ROM_HOLD_PLAN_PIN'] and p['operation_id']==root.name and
          p['source']==ns['SOURCE'] and p['installed']==ns['INSTALLED'] and
          p['candidate_pin']==ns['CANDIDATE_PIN'] and p['input_pin']==ns['PREVIOUS_INPUT_PIN'] and
-         p['owner']['running'] is True and dict(p['owner'],running=False)==owner and
+         p['owner']['running'] is True and p['owner']['image']==ns['IMAGE'] and
+         (dict(p['owner'],running=False)==owner or owner==absent) and
          owner['running'] is False and owner['image']==ns['IMAGE'] and
          not p.get('rom_continuation_sha256') and not p.get('bounded_reentry_sha256'),
          'PAIRED_READONLY_HOLD_PLAN')

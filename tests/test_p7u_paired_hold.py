@@ -3,6 +3,7 @@ import importlib.util,json,tempfile
 from pathlib import Path
 from unittest.mock import Mock
 import unittest
+from types import SimpleNamespace
 from tests.test_p7u_ha_local_deploy import op
 
 p=Path(__file__).resolve().parents[1]/'host/flash/p7u_paired_hold.py'
@@ -58,3 +59,17 @@ class ReadonlyHold(unittest.TestCase):
         for owner in (dict(self.owner,id='other'),dict(self.owner,running=True)):
             with self.assertRaisesRegex(op.Hold,'HOLD_PIN'):hold.provenance(self.ns,self.ha,owner)
         self.ha.proof.assert_not_called()
+    def test_supervisor_removed_container_requires_exact_absence_and_pinned_image(self):
+        ns=dict(self.ns,OWNER='local_p7u_r4_native_host',PAIRED_HOST_VERSION='0.2.1-'+'2'*12)
+        proc=Mock(return_value=SimpleNamespace(returncode=1,stdout='[]',stderr='error: no such object: app_local_p7u_r4_native_host'))
+        ns['subprocess']=SimpleNamespace(run=proc)
+        ns['run']=Mock(return_value=json.dumps([{'Id':self.owner['image']}]).encode())
+        self.ha.info.return_value={'state':'error','version':ns['PAIRED_HOST_VERSION'],'build':False,'boot':'manual','watchdog':False}
+        owner=hold.absent_owner(ns,self.ha)
+        self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,owner,self.plan['source'])
+        self.assertEqual(hold.provenance(self.ns,self.ha,owner),self.ns['PAIRED_ROM_HOLD_PIN'])
+        proc.return_value.stderr='Cannot connect to Docker daemon'
+        with self.assertRaisesRegex(op.Hold,'ABSENCE_NOT_PROVEN'):hold.absent_owner(ns,self.ha)
+        proc.return_value.stderr='error: no such object: app_local_p7u_r4_native_host'
+        ns['run'].return_value=json.dumps([{'Id':'wrong-image'}]).encode()
+        with self.assertRaisesRegex(op.Hold,'ABSENT_OWNER_IMAGE'):hold.absent_owner(ns,self.ha)

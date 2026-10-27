@@ -231,7 +231,12 @@ class HA:
         need(a.get('result') == 'ok', 'OWNER_ACTION_ACK_UNKNOWN')
 
     def inspect(self):
-        a = json.loads(run(['docker', 'inspect', 'app_'+OWNER]))[0]
+        try:
+            a = json.loads(run(['docker', 'inspect', 'app_'+OWNER]))[0]
+        except Hold:
+            if not globals().get('PAIRED_ROM_HOLD_PIN'): raise
+            from p7u_paired_hold import absent_owner
+            return absent_owner(globals(), self)
         return {'id': a['Id'], 'image': a['Image'], 'started_at': a['State']['StartedAt'],
                 'running': a['State']['Running']}
 
