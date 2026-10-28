@@ -245,6 +245,18 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != f2_progress["modified_sha256"][name]:
             raise ValueError("R4_UART_TX_LIVENESS_DIGEST_UNBOUND_" + name)
 
+    # Passive TXQ pend-strand witness on the exact composed NPI task.
+    # Observation only: latches a lost TX_DONE wakeup into the existing
+    # F2 first-fault record (kind 6); never wakes or reorders the queue.
+    from r4_txq_strand_witness import apply as add_txq_strand_witness
+    txq_witness = add_txq_strand_witness(sdk)
+    if txq_witness["before_sha256"][TASK] != f2_progress["modified_sha256"][TASK]:
+        raise ValueError("TXQ_WITNESS_AFTER_F2_PROGRESS_PREIMAGE_DRIFT")
+    from r4_txq_strand_witness_harness import exercise as exercise_txq_witness
+    txq_witness_c = exercise_txq_witness(sdk)
+    if txq_witness_c["status"] != "PASS_REAL_PRODUCER_TXQ_CHAIN_BURST_AND_STRAND_MUTANTS":
+        raise ValueError("R4_TXQ_STRAND_WITNESS_NOT_SOURCE_PROVEN")
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -284,7 +296,9 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != f2_progress["modified_sha256"][name]):
+                afterhash[name] != (txq_witness["modified_sha256"][name]
+                                     if name == TASK else
+                                     f2_progress["modified_sha256"][name])):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
@@ -330,6 +344,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "f2_v42_causal_response_path":f2_causal,
         "f2_v43_request_uart_progress":f2_progress,
         "f2_v43_actual_c":f2_progress_c,
+        "txq_strand_witness":txq_witness,
+        "txq_strand_witness_actual_c":txq_witness_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

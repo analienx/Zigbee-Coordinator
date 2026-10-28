@@ -95,7 +95,7 @@ function sameRecord(entry) {
             hold(v && typeof v === "object" && !Array.isArray(v) &&
                 Object.keys(v).length === fields.length && Object.keys(v).every(k => fields.includes(k)) &&
                 fields.every(k => Number.isSafeInteger(v[k]) && v[k] >= 0 && v[k] <= 0xFFFFFFFF) &&
-                v.firstFaultKind <= 5 && v.b1FirstFailure <= 255 &&
+                v.firstFaultKind <= 6 && v.b1FirstFailure <= 255 &&
                 v.tickPeriodUs > 0 && v.tickPeriodUs <= 100000 && v.firstFaultCommand <= 65535 &&
                 !(v.stateFlags & 0xFFF0) && !(v.firstFaultFlags & 0xFFF0) &&
                 (v.firstFaultKind !== 0 || fields.slice(11,17).every(k => v[k] === 0)),
