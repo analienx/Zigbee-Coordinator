@@ -35,6 +35,23 @@ class BoundaryTests(unittest.TestCase):
               esp_uart_rx_delta=0)
         self.assertEqual(classify(o)["localization"],"ESP_BRIDGE_RX_GAP_CORRELATED")
         self.assertTrue(classify(o)["espUartObservable"])
+    def test_ethernet_missing_host_bytes_after_verified_esp_rx(self):
+        o=usb(mode="ETHERNET",host_usb_attached=None,
+              esp_status_authenticated=True,esp_uart_data_path_source_verified=True,
+              esp_uart_rx_delta=3)
+        self.assertEqual(classify(o)["localization"],
+                         "RADIO_TX_COMPLETION_WITHOUT_HOST_RAW_RX_CORRELATED")
+    def test_ethernet_esp_and_host_both_missed_earliest_fault_first(self):
+        o=usb(mode="ETHERNET",host_usb_attached=None,
+              esp_status_authenticated=True,esp_uart_data_path_source_verified=True,
+              esp_uart_rx_delta=0,host_unpi_rx_raw_delta=0)
+        self.assertEqual(classify(o)["localization"],"ESP_BRIDGE_RX_GAP_CORRELATED")
+    def test_unverified_esp_data_never_used_as_early_boundary(self):
+        with self.assertRaises(BoundaryEvidenceError):
+            classify(usb(mode="ETHERNET",host_usb_attached=None,
+                         esp_status_authenticated=False,
+                         esp_uart_data_path_source_verified=True,
+                         esp_uart_rx_delta=0))
     def test_bad_unsigned_and_mode_not_corroborated(self):
         with self.assertRaises(BoundaryEvidenceError):
             classify(usb(host_unpi_rx_raw_delta=-1))

@@ -50,16 +50,18 @@ def classify(o:Observation)->dict:
         result="RADIO_EPOCH_UNCERTAIN"
     elif o.mode=="USB_DIRECT" and o.host_usb_attached is not True:
         result="HOST_USB_PRESENCE_UNMEASURED"
+    elif (o.mode=="ETHERNET" and o.esp_uart_rx_delta is not None and
+          o.radio_tx_finished_delta is not None and o.radio_tx_finished_delta>0 and
+          o.esp_uart_rx_delta==0):
+        # Most upstream missing boundary wins; only with authenticated
+        # source-qualified ESP UART data path and a comparable sample window.
+        result="ESP_BRIDGE_RX_GAP_CORRELATED"
     elif o.radio_tx_finished_delta is not None and o.radio_tx_finished_delta>0 and (
          o.host_unpi_rx_raw_delta==0):
         result="RADIO_TX_COMPLETION_WITHOUT_HOST_RAW_RX_CORRELATED"
     elif (o.host_unpi_rx_raw_delta is not None and o.host_unpi_rx_raw_delta>0 and
           o.host_unpi_valid_frames_delta==0):
         result="HOST_RAW_RX_WITHOUT_VALID_UNPI_CORRELATED"
-    elif (o.mode=="ETHERNET" and o.esp_uart_rx_delta is not None and
-          o.radio_tx_finished_delta is not None and o.radio_tx_finished_delta>0 and
-          o.esp_uart_rx_delta==0):
-        result="ESP_BRIDGE_RX_GAP_CORRELATED"
     else:
         result="INSUFFICIENT_TO_LOCATE_SILENT_HANG"
     return {
