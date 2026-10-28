@@ -233,9 +233,13 @@ def apply(sdk):
                  "            ((uint16_t)recPtr->npiMsg->pBuf[2]<<8u)|recPtr->npiMsg->pBuf[3],\n"
                  "            submitted==recPtr->npiMsg->pBufSize?0u:1u);","V5_TX_TRANSITION")
     n=replace_fn(n,"static void B4_V44_Enqueue(NPI_QueueRec *recPtr)",
+                 "    uint32_t key = OsalPort_enterCS();",
+                 "    uint16_t v5Command=((uint16_t)recPtr->npiMsg->pBuf[2]<<8u)|recPtr->npiMsg->pBuf[3];\n"
+                 "    uint32_t key = OsalPort_enterCS();","V5_QUEUE_CAPTURE")
+    n=replace_fn(n,"static void B4_V44_Enqueue(NPI_QueueRec *recPtr)",
                  "    Semaphore_post(npiSemHandle);",
-                 "    Semaphore_post(npiSemHandle);\n"
-                 "    B4_V5_Record(5u,((uint16_t)recPtr->npiMsg->pBuf[2]<<8u)|recPtr->npiMsg->pBuf[3],0u);",
+                 "    B4_V5_Record(5u,v5Command,0u);\n"
+                 "    Semaphore_post(npiSemHandle);",
                  "V5_QUEUE_TRANSITION")
     n=replace_fn(n,
                  "__attribute__((noinline)) uint8_t B4_V45_SendReservedSrsp(uint8_t cmdType,\n    uint8_t cmdId, uint8_t dataLen, const uint8_t *pData)",
