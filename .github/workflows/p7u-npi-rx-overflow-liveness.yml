@@ -1,0 +1,59 @@
+name: P7U R4 pinned TI NPI RX overflow liveness (NO RADIO)
+on:
+  push:
+    branches:
+      - fix/p7u-r4-npi-rx-overflow-liveness-20261028
+    paths:
+      - 'tools/r4_npi_rx_overflow_liveness.py'
+      - 'tests/test_r4_npi_rx_overflow_source.py'
+      - '.github/workflows/p7u-npi-rx-overflow-liveness.yml'
+  pull_request:
+    paths:
+      - 'tools/r4_npi_rx_overflow_liveness.py'
+      - 'tests/test_r4_npi_rx_overflow_source.py'
+      - '.github/workflows/p7u-npi-rx-overflow-liveness.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pinned-source-rx-overflow:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exactly this candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Compose the exact TI 8.33 source and existing B1 overlay
+        env:
+          B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/p7u-rx-source
+      - name: Assert genuine overflow path, then compile repaired callback and parser under ASan UBSan
+        run: |
+          set -Eeuo pipefail
+          python tests/test_r4_npi_rx_overflow_source.py --sdk /tmp/p7u-rx-source/sdk
+      - name: Apply once to the pinned SDK copy and verify modifications remain isolated
+        run: |
+          set -Eeuo pipefail
+          python tools/r4_npi_rx_overflow_liveness.py \
+            --sdk /tmp/p7u-rx-source/sdk --receipt /tmp/p7u-rx-liveness.json
+          python - <<'PY'
+          import json
+          x=json.load(open('/tmp/p7u-rx-liveness.json'))
+          assert x['conditional_source_defect_removed'] is True
+          assert x['production_root_cause_proven'] is False
+          assert x['nv_or_security_changed'] is False
+          assert len(x['modified_sha256']) == 5
+          print('RX_OVERFLOW_SOURCE_PATCH_CONTRACT_PASS')
+          PY
+      - name: Save sanitized runner source-only receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-npi-rx-overflow-${{ github.sha }}
+          path: /tmp/p7u-rx-liveness.json
+          if-no-files-found: warn
