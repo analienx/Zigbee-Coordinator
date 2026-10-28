@@ -1,0 +1,65 @@
+name: P7U R4 actual TI NPI outgoing queue drain RCA (source only)
+on:
+  push:
+    branches:
+      - investigate/p7u-npi-real-txq-drain-20261028
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/b1/tools/make_npi_real_tx_drain_harness.py'
+      - '.github/workflows/p7u-npi-real-tx-drain-rca.yml'
+permissions:
+  contents: read
+jobs:
+  real-npi-tx-queue:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Compose and qualify exact pinned TI 8.33 source with existing B1 overlay
+        env:
+          B1_SOURCE_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+        run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/p7u-b1-real-tx-rca
+      - name: Compile genuine patched NPITask_ProcessTXQ and event paths
+        run: |
+          set -Eeuo pipefail
+          b=firmware/slzb-06p7u/r4/b1/tools
+          n=/tmp/p7u-b1-real-tx-rca/sdk/source/ti/zstack/npi/npi_task.c
+          t=/tmp/p7u-b1-real-tx-rca/sdk/source/ti/zstack/npi/npi_tl.c
+          python "$b/make_npi_real_tx_drain_harness.py" --source "$n" --tl-source "$t" --output /tmp/p7u-real-txq.c
+          gcc -std=c11 -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -no-pie \
+            /tmp/p7u-real-txq.c -o /tmp/p7u-real-txq
+      - name: Burst drain with real queue handler
+        run: |
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/p7u-real-txq burst
+      - name: Queued-idle lost event interleaving candidate
+        run: |
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/p7u-real-txq edge_loss
+      - name: Negative event-clear mutation oracle
+        run: |
+          set -Eeuo pipefail
+          b=firmware/slzb-06p7u/r4/b1/tools
+          n=/tmp/p7u-b1-real-tx-rca/sdk/source/ti/zstack/npi/npi_task.c
+          t=/tmp/p7u-b1-real-tx-rca/sdk/source/ti/zstack/npi/npi_tl.c
+          python "$b/make_npi_real_tx_drain_harness.py" --source "$n" --tl-source "$t" --output /tmp/p7u-real-txq-mutant.c --no-clear-mutant
+          gcc -std=c11 -O0 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function -no-pie /tmp/p7u-real-txq-mutant.c -o /tmp/p7u-real-txq-mutant
+          if /tmp/p7u-real-txq-mutant edge_loss > /tmp/p7u-mutant.log 2>&1; then
+            echo "Mutant not detected"
+            exit 1
+          fi
+          echo "NPI_EVENT_BIT_CLEAR_MUTANT_REJECTED"
+      - name: Save source-only evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-npi-real-txq-\${{ github.sha }}
+          path: |
+            /tmp/p7u-real-txq.c
+            /tmp/p7u-mutant.log
+          if-no-files-found: warn
