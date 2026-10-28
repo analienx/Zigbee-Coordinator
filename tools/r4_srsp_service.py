@@ -232,6 +232,10 @@ def apply(sdk):
     n = once(n, old, CONSUMER.rstrip(), 'V44_CONSUMER')
     n = once(n, '        Semaphore_pend(npiSemHandle, BIOS_WAIT_FOREVER);',
              '        B4_V44_Pend();', 'V44_ATOMIC_PENDING_WORK')
+    # Pend also recognizes complete RX work. Its dispatcher must use the same
+    # predicate, otherwise a lost RX event hint would keep the task awake.
+    n = once(n, '            if(npiServiceTaskEvents & NPITASK_FRAME_RX_EVENT)',
+             '            if (!Queue_empty(npiRxQueue))', 'V44_RX_WORK_DISPATCH')
     # Replace the entire old event-gated TX section, retaining RX and ISR merge.
     a = n.index('            // An ASYNC message is ready to send to the Host')
     b = n.index('            // The Transport Layer has received some bytes', a)

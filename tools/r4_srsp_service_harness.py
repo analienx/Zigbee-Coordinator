@@ -98,7 +98,8 @@ static unsigned OsalPort_msgSend(unsigned id,uint8_t*p){assert(id==1 && mail_in<
 static uint8_t*OsalPort_msgReceive(unsigned id){(void)id;return mail_out<mail_in?mail[mail_out++]:NULL;}
 static void NPIFrame_collectFrameData(void){}
 static unsigned NPIRxBuf_GetRxBufCount(void){return 0;}
-static void NPITask_processRXQ(void){assert(0);}
+static unsigned rx_processed;
+static void NPITask_processRXQ(void){(void)Queue_dequeue(npiRxQueue);++rx_processed;}
 static uint32_t srsp_sent,areq_sent,max_srsp_us,max_areq_gap,last_areq_at;
 static uint32_t last_srsp_id,last_areq_id;
 static uint16_t NPITL_writeTL(uint8_t*p,uint16_t n){
@@ -158,6 +159,7 @@ int main(int argc,char**argv){
  last_areq_at=srsp_sent;
  if(!setjmp(done))NPITask_process();
  assert(srsp_sent==61 && areq_sent==6012 && max_areq_gap<=4u);
+ unsigned fairness_max_gap=max_areq_gap;
  /* Lost hint/token must not strand queued, transmissible work. */
  make_message(1,62,20);NPITask_processStackMsg(OsalPort_msgReceive(1));
  tokens=0;npiServiceTaskEvents=0;
@@ -209,7 +211,11 @@ int main(int argc,char**argv){
   uint8_t*m=direct_message(60007);fail_alloc_at=alloc_calls+failure;
   NPITask_sendToHost(m);fail_alloc_at=0;assert(!live_alloc);
  }
- printf("V44_FLOOD_PASS max_srsp_us=%u areq_max_srsp_gap=%u loops=%u bytes_high=%u peak_allocations=%u\n",max_srsp_us,max_areq_gap,loops,B4_V44_BytesHigh[1],peak_alloc);
+ /* Sleep and dispatch must agree for complete RX work too. */
+ Queue_Elem rx;Queue_enqueue(npiRxQueue,&rx);npiServiceTaskEvents=0;tokens=0;
+ if(!setjmp(done))NPITask_process();
+ assert(rx_processed==1 && Queue_empty(npiRxQueue) && !live_alloc);
+ printf("V44_FLOOD_PASS max_srsp_us=%u contended_areq_max_srsp_gap=%u loops=%u bytes_high=%u peak_allocations=%u\n",max_srsp_us,fairness_max_gap,loops,B4_V44_BytesHigh[1],peak_alloc);
  return 0;
 }
 '''
@@ -265,6 +271,7 @@ def exercise(sdk):
         'event_only_sleep': ('if (!ready) Semaphore_pend', 'if (1) Semaphore_pend'),
         'busy_spin': ('B4_V44_TxReadyLocked() || !Queue_empty(npiRxQueue)',
                       '!Queue_empty(npiTxQueue) || !Queue_empty(B4_V44_SrspQueue) || !Queue_empty(npiRxQueue)'),
+        'rx_hint_spin': ('if (!Queue_empty(npiRxQueue))', 'if(npiServiceTaskEvents & NPITASK_FRAME_RX_EVENT)'),
     }
     for label,(old,new) in mutants.items():
         if source.count(old)!=1:raise RuntimeError('V44_MUTATION_ANCHOR_'+label)
