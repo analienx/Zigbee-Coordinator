@@ -152,6 +152,15 @@ void B4_V5_ReadPage1(uint8_t *out, const uint8_t *nonce)
     B4_V5_Put32(out+104u,(B4_V4BootValid==1u?1u:0u)|2u);
     B4_V5_Put32(out+108u,available);
     B4_V5_Put32(out+112u,Clock_tickPeriod);
+    /* Already source-qualified v4.3 progress and fault hooks: no new
+     * heap/stack instrumentation, no extra ISR work. */
+    B4_V5_Put32(out+116u,B4_V5_Get32(progress+0u*4u));  /* NPI requests */
+    B4_V5_Put32(out+120u,B4_V5_Get32(progress+3u*4u));  /* UART accepted */
+    B4_V5_Put32(out+124u,B4_V5_Get32(progress+4u*4u));  /* UART rejected */
+    B4_V5_Put32(out+128u,B4_V5_Get32(progress+8u*4u));  /* state flags */
+    B4_V5_Put32(out+132u,B4_V5_Get32(progress+10u*4u)); /* first fault */
+    B4_V5_Put32(out+136u,B4_V5_Get32(progress+15u*4u)); /* fault tick */
+    B4_V5_Put32(out+140u,B4_V5_Get32(progress+18u*4u)); /* B1 failure */
     B4_V5_CachedTick=now;
     B4_V5_CachedValid=1u;
     OsalPort_leaveCS(key);

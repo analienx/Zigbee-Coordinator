@@ -39,7 +39,8 @@ static volatile uint32_t B4_AllRspFramingFailed=0u;
 static volatile uint32_t B4_AllRspTlRejected=0u;
 static void B4_V43_Snapshot(uint8_t *out){
   memset(out,0,80);
-  out[20]=11;out[24]=4;out[36]=77;
+  out[0]=41;out[12]=8;out[16]=2;out[20]=11;out[24]=4;
+  out[32]=3;out[36]=77;out[40]=2;out[60]=99;out[72]=7;
 }
 """
 TEST=r"""
@@ -68,6 +69,10 @@ int main(void){
  assert(B4_V5_Get32(first+92)==11 && B4_V5_Get32(first+96)==4);
  assert(B4_V5_Get32(first+100)==77 && B4_V5_Get32(first+104)==3);
  assert(B4_V5_Get32(first+108)==2 && B4_V5_Get32(first+112)==10);
+ assert(B4_V5_Get32(first+116)==41 && B4_V5_Get32(first+120)==8);
+ assert(B4_V5_Get32(first+124)==2 && B4_V5_Get32(first+128)==3);
+ assert(B4_V5_Get32(first+132)==2 && B4_V5_Get32(first+136)==99);
+ assert(B4_V5_Get32(first+140)==7);
  assert(!B4_V5_ReadPage2(second,bad));
  assert(B4_V5_ReadPage2(second,nonce));
  assert(second[5]==2 && !memcmp(first+8,second+8,24));
