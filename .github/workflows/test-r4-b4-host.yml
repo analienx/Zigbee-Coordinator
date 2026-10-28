@@ -43,6 +43,7 @@ jobs:
           python host/r4-b4/test-p7u-host-integrity.py -v
           python host/r4-b4/test-p7u-f2-acceptance.py -v
           python host/r4-b4/test-p7u-f2-freshness.py -v
+          python host/r4-b4/test-p7u-f2-v5-pages.py -v
           python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding
           python host/r4-b4/test-p7u-passive-incidents.py -v
           python -m py_compile host/r4-b4/p7u_host_integrity.py
@@ -74,6 +75,7 @@ jobs:
             --receipt /tmp/b4-herdsman-v4-overlay.json
           PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --composition-receipt /tmp/b4-herdsman-v4-overlay.json --receipt /tmp/p7u-startup-hold.json
           python host/r4-b4/p7u_preservation_transport_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/p7u-preservation-transport.json
+          python host/r4-b4/b4_v5_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v5-overlay.json
       - name: Install exact herdsman package-manager version
         run: |
           npm install --global pnpm@10.33.0
