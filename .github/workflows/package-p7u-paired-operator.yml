@@ -29,7 +29,7 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
       OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -61,7 +61,7 @@ jobs:
             ('HOST_RUN','release-p7u-host.yml','p7u-deployable-host-release-','host',os.environ['HOST_SOURCE_SHA'])):
               assert re.fullmatch('[0-9a-f]{40}',sha)
               run_id=os.environ[key]
-              deadline=time.monotonic()+30*60
+              deadline=time.monotonic()+70*60
               while not run_id:
                   runs=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100']))['workflow_runs']
                   matches=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
@@ -69,7 +69,7 @@ jobs:
                   if run and run['status']=='completed':
                       assert run['conclusion']=='success', workflow+' did not pass'
                       run_id=str(run['id']);break
-                  assert time.monotonic()<deadline, 'paired artifact wait expired'
+                  assert time.monotonic()<deadline, 'paired exact-source artifact wait expired; check native/host workflow duration and trigger'
                   print('Waiting for paired artifact '+workflow,flush=True);time.sleep(20)
               assert run_id.isdecimal()
               run=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run_id}']))

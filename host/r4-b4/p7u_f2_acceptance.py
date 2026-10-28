@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 from dataclasses import dataclass
-from f2_progress_contract import valid_progress
+from f2_progress_contract import valid_progress, valid_congestion
 
 MAX_LOG = 4 * 1024 * 1024
 
@@ -151,13 +151,15 @@ def evaluate(rows: list[dict], *, serving: str = "UNKNOWN") -> F2Verdict:
     require(all(isinstance(x, str) and x.isdecimal() for x in elapsed),
             "MONOTONIC_EVIDENCE")
     require(all(x == 4 for x in abi), "ABI")
-    require(all(type(x) is int and x in (0x2c, 0x3f, 0x00ffffec, 0x00ffffff)
+    require(all(type(x) is int and x in (0x2c, 0x3f, 0x00ffffec, 0x00ffffff, 0x01ffffff)
                 for x in masks), "COUNTER_VALIDITY")
     require(all((r.get("minor") in (None, 1) and r.get("validityMask") in (0x2c, 0x3f)) or
-                (r.get("minor") in (2, 3) and r.get("validityMask") in (0x00ffffec, 0x00ffffff)
+                (r.get("minor") in (2, 3, 4) and
+                 r.get("validityMask") in ((0x01ffffff,) if r.get("minor") == 4 else (0x00ffffec, 0x00ffffff))
                  and type(r.get("mtLifecycle")) is dict and
                  len(r["mtLifecycle"]) == 18 and
-                 (r.get("minor") != 3 or valid_progress(r.get("uartProgress"))))
+                 (r.get("minor") not in (3, 4) or valid_progress(r.get("uartProgress"))) and
+                 (r.get("minor") != 4 or valid_congestion(r.get("congestion"))))
                 for r in last), "MINOR_COUNTER_SCHEMA")
     if (len(owner) != 1 or len(host) != 1 or None in owner or None in host):
         return F2Verdict("INSUFFICIENT", "UNKNOWN", serving, None, None, (),

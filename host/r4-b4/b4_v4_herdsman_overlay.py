@@ -46,12 +46,13 @@ V4_ADAPTER_METHOD = r"""
         enabled: boolean; hostIdle: boolean; otaActive: boolean;
         stillAllowed: () => boolean; reserveAtBoundary?: boolean;
     }): Promise<{
-        abi: 4; minor: 1 | 2 | 3; validityMask: number; srspDepth: number | null;
+        abi: 4; minor: 1 | 2 | 3 | 4; validityMask: number; srspDepth: number | null;
         srspHighWater: number | null; asyncDepth: number; asyncHighWater: number;
         srspEnqueued: number | null; uartTxFinishedEvents: number;
         sequence: number; radioBootId: string | null; resetReason: number | null;
         mtLifecycle: Record<string, number> | null;
         uartProgress: Record<string, number> | null;
+        congestion: Record<string, number> | null;
         buildImageDigest: null; radioEpochHardwareVerified: false;
     } | undefined> {
         this.b4V4Attempt = (this.b4V4Attempt ?? 0) + 1;
@@ -107,16 +108,16 @@ V4_ADAPTER_METHOD = r"""
             const response = await this.znp.requestWithReply(
                 Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 20000);
             const data = response.payload.diagnostic;
-            if (!Buffer.isBuffer(data) || ![160, 240].includes(data.length) ||
+            if (!Buffer.isBuffer(data) || ![160, 240, 248].includes(data.length) ||
                 data.toString("ascii", 0, 4) !== "R4D4" ||
                 data[4] !== 4 || data[5] !== 0 || data.readUInt16LE(6) !== data.length ||
                 // v4 F2 echoes the REQUEST nonce. An old response is invalid.
                 !nonce.equals(data.subarray(132, 140)) ||
                 data.readUInt32LE(8) & ~0x01 ||
-                ![1, 2, 3].includes(data[157]) ||
-                data.length !== (data[157] === 3 ? 240 : 160) ||
+                ![1, 2, 3, 4].includes(data[157]) ||
+                data.length !== (data[157] === 4 ? 248 : data[157] === 3 ? 240 : 160) ||
                 data[158] & ~0x01 || data[159] !== 0 ||
-                !data.subarray(140, 156).equals(Buffer.alloc(16)) ||
+                (data[157] !== 4 && !data.subarray(140, 156).equals(Buffer.alloc(16))) ||
                 data.readUInt32LE(24) !== 0 || data.readUInt32LE(28) === 0) {
                 this.znp.b4PoisonDiagSession();
                 this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
@@ -124,8 +125,8 @@ V4_ADAPTER_METHOD = r"""
                 return undefined;
             }
             const validity = data.readUInt32LE(12);
-            const minor = data[157] as 1 | 2 | 3;
-            const allowedMasks = minor === 1 ? [0x3F, 0x2C] :
+            const minor = data[157] as 1 | 2 | 3 | 4;
+            const allowedMasks = minor === 4 ? [0x01FFFFFF] : minor === 1 ? [0x3F, 0x2C] :
                 [0x00FFFFFF, 0x00FFFFEC];
             if (!allowedMasks.includes(validity) ||
                 Array.from({length: 25}, (_, i) => i).some((i) =>
@@ -175,7 +176,7 @@ V4_ADAPTER_METHOD = r"""
                 "firstFaultKind", "firstFaultStatusBits", "firstFaultExpected",
                 "firstFaultActual", "firstFaultFlags", "firstFaultTick", "firstFaultCommand",
                 "npiWakes", "b1FirstFailure", "tickPeriodUs"];
-            const uartProgress = minor === 3 ? Object.fromEntries(progressFields.map(
+            const uartProgress = minor >= 3 ? Object.fromEntries(progressFields.map(
                 (field, index) => [field, data.readUInt32LE(160 + index * 4)])) : null;
             if (uartProgress && (uartProgress.tickPeriodUs === 0 ||
                     uartProgress.tickPeriodUs > 100000 || uartProgress.firstFaultKind > 5 ||
@@ -188,13 +189,26 @@ V4_ADAPTER_METHOD = r"""
                     reason: "INVALID_NATIVE_RESPONSE", submissionState: "RECEIVED"};
                 return undefined;
             }
+            const congestion = minor === 4 ? {
+                srspQueuedBytes: data.readUInt32LE(140), asyncQueuedBytes: data.readUInt32LE(144),
+                srspBytesHighWater: data.readUInt32LE(148), asyncBytesHighWater: data.readUInt32LE(152),
+                maxSrspQueueAgeTicks: data.readUInt32LE(240), maxAsyncQueueAgeTicks: data.readUInt32LE(128),
+                maxReadyServiceGapTicks: data.readUInt32LE(244),
+            } : null;
+            if (congestion && (congestion.srspQueuedBytes > congestion.srspBytesHighWater ||
+                    congestion.asyncQueuedBytes > congestion.asyncBytesHighWater)) {
+                this.znp.b4PoisonDiagSession();
+                this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
+                    reason: "INVALID_NATIVE_RESPONSE", submissionState: "RECEIVED"};
+                return undefined;
+            }
             this.b4V4LastBoot = rawBoot;
             this.b4V4LastSeq = seq;
             this.znp.b4F2AcceptReply();
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "VALID",
                 reason: "NATIVE_NONCE_MATCHED", submissionState: "RECEIVED"};
             return {
-                abi: 4, minor, validityMask: validity, mtLifecycle, uartProgress,
+                abi: 4, minor, validityMask: validity, mtLifecycle, uartProgress, congestion,
                 srspDepth: validity & 1 ? data.readUInt32LE(32) : null,
                 srspHighWater: validity & 2 ? data.readUInt32LE(36) : null,
                 asyncDepth: data.readUInt32LE(40),
@@ -305,8 +319,8 @@ def plan(root):
             case ParameterType.BUFFER160: {
                 // B4_V4_NONCE_AND_BOOT_EPOCH_CANDIDATE: no truncation.
                 const length = this.getBuffer().length - this.getPosition();
-                if (length !== 160 && length !== 240) {
-                    throw new Error("B4 v4 diagnostic length must be exactly 160 or 240");
+                if (length !== 160 && length !== 240 && length !== 248) {
+                    throw new Error("B4 v4 diagnostic length must be exactly 160, 240 or 248");
                 }
                 return this.readBuffer(length);
             }""")
@@ -530,7 +544,7 @@ def plan(root):
             (!(matcher.type === Type.SRSP && matcher.subsystem === Subsystem.SYS &&
                matcher.command === "r4DiagReadOnlyV4") ||
                 (Buffer.isBuffer(matcher.b4F2Nonce) && matcher.b4F2Nonce.length === 8 &&
-                 Buffer.isBuffer(zpiObject.payload.diagnostic) && [160, 240].includes(zpiObject.payload.diagnostic.length) &&
+                 Buffer.isBuffer(zpiObject.payload.diagnostic) && [160, 240, 248].includes(zpiObject.payload.diagnostic.length) &&
                  matcher.b4F2Nonce.equals(zpiObject.payload.diagnostic.subarray(132, 140))))""")
     znp = once(znp, """                    if (isB4Diag) {
                         this.b4PoisonDiagSession();
@@ -690,6 +704,8 @@ def plan(root):
     }""")
     from f2_boundary_admission import apply as add_boundary_admission
     mutex, znp = add_boundary_admission(original[MUTEX], znp)
+    from confirmation_waiter_cleanup import apply as cleanup_confirmation_waiters
+    znp, waitress = cleanup_confirmation_waiters(znp, waitress)
     return {MUTEX: (original[MUTEX], mutex), WAITRESS: (original[WAITRESS], waitress),
             DEFINITION: (original[DEFINITION], definition),
             PARAM: (original[PARAM], params), BUFFALO: (original[BUFFALO], buffalo),

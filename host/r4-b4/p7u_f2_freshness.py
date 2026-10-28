@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from p7u_f2_acceptance import EvidenceHold, read_verified_history
-from f2_progress_contract import valid_progress
+from f2_progress_contract import valid_progress, valid_congestion
 
 SUBSYSTEMS = ("AF", "ZDO", "SYS", "UTIL")
 MT_LIFECYCLE_FIELDS = (
@@ -29,7 +29,7 @@ def _mt_lifecycle(record: dict) -> dict | None:
     data = record.get("mtLifecycle")
     if data is None:
         return None
-    if (record.get("minor") not in (2, 3) or type(data) is not dict
+    if (record.get("minor") not in (2, 3, 4) or type(data) is not dict
             or set(data) != set(MT_LIFECYCLE_FIELDS)
             or not all(type(data[k]) is int and 0 <= data[k] <= 0xFFFFFFFF
                        for k in MT_LIFECYCLE_FIELDS)):
@@ -199,14 +199,16 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
                 raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_INVALID_NATIVE_COUNTER")
         report["last_native"] = native
         report["native_mt_lifecycle"] = _mt_lifecycle(latest_valid)
-        if latest_valid.get("minor") in (2, 3) and report["native_mt_lifecycle"] is None:
+        if latest_valid.get("minor") in (2, 3, 4) and report["native_mt_lifecycle"] is None:
             raise EvidenceHold("P7U_F2_V42_MISSING_RADIO_CAUSAL_COUNTERS")
         if latest_valid.get("minor") in (2, 3) and mask not in (0x00ffffec, 0x00ffffff):
             raise EvidenceHold("P7U_F2_V42_INVALID_COUNTER_MASK")
+        if latest_valid.get("minor") == 4 and mask != 0x01ffffff:
+            raise EvidenceHold("P7U_F2_V44_INVALID_COUNTER_MASK")
         if latest_valid.get("minor") == 1 and mask not in (0x2c, 0x3f):
             raise EvidenceHold("P7U_F2_V41_INVALID_COUNTER_MASK")
         qualified = [v for v in valid if
-                     v.get("minor") in (2, 3) and
+                     v.get("minor") in (2, 3, 4) and
                      _mt_lifecycle(v) is not None and
                      v.get("radioEpochTag") is not None and
                      v.get("radioEpochTag") == latest_valid.get("radioEpochTag")]
@@ -224,8 +226,16 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
                         "SAME_OWNER_TOKEN_OBSERVATION_NOT_HARDWARE_ATTESTED")
                     report["native_mt_lifecycle_delta"] = deltas
         report["native_uart_progress"] = latest_valid.get("uartProgress")
-        if latest_valid.get("minor") == 3 and not valid_progress(report["native_uart_progress"]):
+        if latest_valid.get("minor") in (3, 4) and not valid_progress(report["native_uart_progress"]):
             raise EvidenceHold("P7U_F2_V43_PROGRESS_INVALID")
+        report["native_congestion"] = latest_valid.get("congestion")
+        if latest_valid.get("minor") == 4:
+            if not valid_congestion(report["native_congestion"]):
+                raise EvidenceHold("P7U_F2_V44_CONGESTION_INVALID")
+            ticks_us = report["native_uart_progress"]["tickPeriodUs"]
+            report["native_congestion_ms"] = {
+                k.removesuffix("Ticks") + "Ms": value * ticks_us / 1000
+                for k, value in report["native_congestion"].items() if k.endswith("Ticks")}
     # Count only events in a recent bounded window, same owner, no negative ages.
     recent = [r for r in current if
               (t := _age(now_ms, r.get("utc"))) is not None and

@@ -409,7 +409,7 @@ test("F2-only admission: live AREQ callbacks never relax legacy F0", () => {
     assert.equal(znp.waitress.b4IsIdle(), true);
 });
 
-test("F2 admission: settled SRSP timeout tombstone cannot starve safe later readings", async () => {
+test("F2 admission: settled SRSP timeout is reclaimed without a future response sweep", async () => {
     const znp = new Znp("/dev/not-opened", 115200, false);
     znp.initialized = true;
     const expired = znp.waitress.waitFor(
@@ -418,10 +418,10 @@ test("F2 admission: settled SRSP timeout tombstone cannot starve safe later read
     const failure = assert.rejects(expired.start().promise, /after 10ms/);
     assert.equal(znp.b4CanProbeV4(), false); // still actively waiting for SRSP
     await failure;
-    assert.equal(znp.waitress.b4IsIdle(), false); // pinned Waitress retains tombstone
+    assert.equal(znp.waitress.b4IsIdle(), true);
     assert.equal(znp.b4CanProbeV4(), true); // settled waiter is no active SRSP
-    assert.equal(znp.b4CanProbe(), false); // uncorrelated F0 stays conservative
-    assert.equal(znp.waitress.waiters.size, 1); // no repairs to stock state
+    assert.equal(znp.b4CanProbe(), true); // no live waiter remains
+    assert.equal(znp.waitress.waiters.size, 0);
     znp.waitress.remove(expired.ID);
     assert.equal(znp.waitress.waiters.size, 0);
 });

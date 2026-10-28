@@ -245,6 +245,16 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != f2_progress["modified_sha256"][name]:
             raise ValueError("R4_UART_TX_LIVENESS_DIGEST_UNBOUND_" + name)
 
+    # v4.4 is a distinct, narrowly scoped successor. Execute the historical
+    # v4.3 controls above before patching; qualify final scheduler bodies below.
+    from r4_srsp_service import apply as add_srsp_service
+    srsp_service = add_srsp_service(sdk)
+    for name in (TASK, SYS):
+        if srsp_service["before_sha256"][name] != f2_progress["modified_sha256"][name]:
+            raise ValueError("V44_SOURCE_CHAIN_DRIFT_" + name)
+    from r4_srsp_service_harness import exercise as exercise_srsp_service
+    srsp_service_c = exercise_srsp_service(sdk)
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -284,7 +294,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != f2_progress["modified_sha256"][name]):
+                afterhash[name] != srsp_service["modified_sha256"][name]):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
@@ -306,6 +316,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if "NPITL_abortFailedTx" not in required:required.append("NPITL_abortFailedTx")
     for function in ("B4_V43_Request","B4_V43_Snapshot"):
         if function not in required:required.append(function)
+    if "B4_V44_Snapshot" not in required: required.append("B4_V44_Snapshot")
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
     b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
@@ -330,6 +341,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "f2_v42_causal_response_path":f2_causal,
         "f2_v43_request_uart_progress":f2_progress,
         "f2_v43_actual_c":f2_progress_c,
+        "srsp_service_v44":srsp_service,
+        "srsp_service_v44_actual_c":srsp_service_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

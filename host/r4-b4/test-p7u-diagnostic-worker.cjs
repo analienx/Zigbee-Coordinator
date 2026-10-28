@@ -418,7 +418,7 @@ test("F2 v4.2 commits exactly 18 named response stages, rejects any nested ident
         // Keep independent malformed-mask rejection explicit; do not weaken the validator.
         assert.throws(()=>workerModule.commit(state,{...row,minor:1}),
             /F2_V41_VALIDITY_MASK/);
-        assert.throws(()=>workerModule.commit(state,{...row,minor:4}),
+        assert.throws(()=>workerModule.commit(state,{...row,minor:9}),
             /F2_UNSUPPORTED_MINOR/);
         assert.throws(()=>workerModule.commit(state,{...row,minor:null}),
             /F2_UNSUPPORTED_MINOR/);

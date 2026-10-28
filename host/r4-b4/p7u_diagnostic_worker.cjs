@@ -11,7 +11,9 @@ const {parentPort, workerData, isMainThread} = require("node:worker_threads");
 
 const SCHEMA = "p7u-f2-worker-v2";
 const LIMIT = 4 * 1024 * 1024;
-const RECORD_LIMIT = 3072;
+// Minor4 retains the complete legacy progress fields and adds congestion.
+// Keep a fixed per-record bound with room for saturated counters + owner data.
+const RECORD_LIMIT = 4096;
 const COUNT_LIMIT = 4096;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 const GENERATION = /^generation-[a-f0-9-]{36}$/;
@@ -20,7 +22,7 @@ const allowed = new Set([
     "schema", "kind", "utc", "probeLatencyMs", "monotonicReceiveNs", "reason",
     "sourceAbi", "imageRuntimeAttested", "abi", "minor", "sequence", "validityMask",
     "srspDepth", "srspHighWater", "asyncDepth", "asyncHighWater", "srspEnqueued",
-    "uartTxFinishedEvents", "mtLifecycle", "uartProgress", "radioEpochTag", "radioEpochHardwareVerified",
+    "uartTxFinishedEvents", "mtLifecycle", "uartProgress", "congestion", "radioEpochTag", "radioEpochHardwareVerified",
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
     "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
@@ -53,10 +55,10 @@ function sameRecord(entry) {
         // Earlier v4.1 records may omit minor. Any explicit unknown minor
         // must fail closed rather than being counted as a native VALID reply.
         hold(entry.minor === undefined || entry.minor === 1 ||
-            entry.minor === 2 || entry.minor === 3, "F2_UNSUPPORTED_MINOR");
-        if (entry.minor === 2 || entry.minor === 3) {
+            entry.minor === 2 || entry.minor === 3 || entry.minor === 4, "F2_UNSUPPORTED_MINOR");
+        if (entry.minor === 2 || entry.minor === 3 || entry.minor === 4) {
             hold(entry.validityMask === 0x00FFFFEC ||
-                entry.validityMask === 0x00FFFFFF,
+                entry.validityMask === 0x00FFFFFF || (entry.minor === 4 && entry.validityMask === 0x01FFFFFF),
                 "F2_V42_VALIDITY_MASK");
             hold(Object.hasOwn(entry, "mtLifecycle") &&
                 entry.mtLifecycle !== null, "F2_V42_MISSING_CAUSAL_COUNTERS");
@@ -73,7 +75,7 @@ function sameRecord(entry) {
                 "afDataProduced", "afDataEnqueued", "afDataAllocFailed",
                 "afDataSendFailed", "afDataNpiReceived", "afDataFramedQueued",
                 "afDataFramingFailed", "afDataTlSubmitted", "afDataTlRejected"];
-            hold((entry.minor === 2 || entry.minor === 3) && v && typeof v === "object" &&
+            hold((entry.minor === 2 || entry.minor === 3 || entry.minor === 4) && v && typeof v === "object" &&
                 !Array.isArray(v) &&
                 Object.keys(v).length === fields.length &&
                 Object.keys(v).every(k => fields.includes(k)) &&
@@ -85,7 +87,7 @@ function sameRecord(entry) {
             hold(!Object.hasOwn(entry, "mtLifecycle") ||
                 entry.mtLifecycle === null, "F2_V41_NO_CAUSAL_CLAIM");
         }
-        if (entry.minor === 3) {
+        if (entry.minor === 3 || entry.minor === 4) {
             const v = entry.uartProgress;
             const fields = ["npiRequests", "mtEntered", "mtReturned", "uartWriteAccepted",
                 "uartWriteRejected", "uartCallbackOk", "uartCallbackError", "uartLengthMismatch",
@@ -103,9 +105,22 @@ function sameRecord(entry) {
         } else {
             hold(entry.uartProgress === undefined || entry.uartProgress === null, "F2_OLD_MINOR_NO_PROGRESS_CLAIM");
         }
+        if (entry.minor === 4) {
+            const v = entry.congestion;
+            const fields = ["srspQueuedBytes", "asyncQueuedBytes", "srspBytesHighWater", "asyncBytesHighWater",
+                "maxSrspQueueAgeTicks", "maxAsyncQueueAgeTicks", "maxReadyServiceGapTicks"];
+            hold(entry.validityMask === 0x01FFFFFF && v && typeof v === "object" && !Array.isArray(v) &&
+                Object.keys(v).length === fields.length && Object.keys(v).every(k => fields.includes(k)) &&
+                fields.every(k => Number.isSafeInteger(v[k]) && v[k] >= 0 && v[k] <= 0xFFFFFFFF) &&
+                v.srspQueuedBytes <= v.srspBytesHighWater && v.asyncQueuedBytes <= v.asyncBytesHighWater,
+                "F2_V44_CONGESTION_SHAPE");
+        } else {
+            hold(entry.congestion === undefined || entry.congestion === null, "F2_OLD_MINOR_NO_CONGESTION_CLAIM");
+        }
     }
     if (entry.kind !== "VALID") {
         hold(entry.uartProgress === undefined || entry.uartProgress === null, "F2_NON_NATIVE_NO_PROGRESS_CLAIM");
+        hold(entry.congestion === undefined || entry.congestion === null, "F2_NON_NATIVE_NO_CONGESTION_CLAIM");
     }
     if ("hostEvidence" in entry && entry.hostEvidence !== null) {
         const e = entry.hostEvidence;
