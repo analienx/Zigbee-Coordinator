@@ -100,7 +100,7 @@ def exercise(sdk):
     globals_=task[task.index("#define B4_V44_SRSP_BURST"):task.index("static uint8_t B4_V44_ReadyTracked")]
     globals_+="static uint8_t B4_V44_ReadyTracked, B4_V44_SrspRun;\n"
     counters=sorted(set(re.findall(r"volatile uint32_t (B4_(?:AllRsp|AfDataRsp|AfRsp|Npi)[A-Za-z]+)",task+client)))
-    counter_src="\n".join("static uint32_t "+name+";" for name in counters if name!="B4_NpiUartTxFinishedCallback")
+    counter_src="\n".join("static volatile uint32_t "+name+";" for name in counters if name!="B4_NpiUartTxFinishedCallback")
     # Extract literal v4.5 slots/functions as compiled into the true TI task.
     start=task.index("/* B4_V45_STATIC_SRSP_RESERVE.")
     end=task.index("/* Enqueue between the check and pend",start)
