@@ -32,6 +32,25 @@ jobs:
         env:
           B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/p7u-rx-source
+      - name: Materialize remaining exact pinned TI NPI parser and ring sources
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          from sys import path as sys_path
+          sys_path.insert(0, 'tools')
+          from r4_npi_rx_overflow_liveness import PATHS
+          sdk=Path('/tmp/p7u-rx-source/sdk')
+          pin='3615ad5d3f4f271258d18a2f5ce1785064ff9a58'
+          assert subprocess.check_output(['git','-C',str(sdk),'rev-parse','HEAD'],text=True).strip() == pin
+          for name in PATHS:
+              dest=sdk/name
+              if not dest.is_file():
+                  original=subprocess.check_output(['git','-C',str(sdk),'show',pin+':'+name])
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  dest.write_bytes(original)
+          print('PINNED_TI_NPI_RX_SOURCE_SET_COMPLETE')
+          PY
       - name: Assert genuine overflow path, then compile repaired callback and parser under ASan UBSan
         run: |
           set -Eeuo pipefail
