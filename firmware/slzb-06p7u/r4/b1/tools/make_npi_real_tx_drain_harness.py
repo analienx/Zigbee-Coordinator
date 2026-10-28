@@ -74,7 +74,7 @@ static uint8_t *newMsg(void){
     memset(data,0x5A,5);
     return data;
 }
-static void NPITask_sendToHost(uint8_t *pMsg);
+void NPITask_sendToHost(uint8_t *pMsg);
 static bool Queue_empty(void *q){
     assert(q==npiTxQueue);
     bool answer=pending==0;
@@ -192,8 +192,8 @@ def build(source: str, tl: str, *, no_clear_mutant: bool = False):
         raise ValueError("UNBALANCED_TX_DONE_SOURCE")
     generated = (PREAMBLE + "\n" + busy + "\n" + prod + "\n" + tx
                  + "\n" + cb + "\nstatic void cycle(void){\n"
-                 + " uint32_t key;\n ++cycles;\n key=OsalPort_enterCS();\n"
-                 + merge + "\n OsalPort_leaveCS(key);\n"
+                 + " uint32_t key;\n ++cycles;\n"
+                 + merge + "\n"
                  + event + "\n" + done + "\n}\n" + MAIN)
     return generated
 
