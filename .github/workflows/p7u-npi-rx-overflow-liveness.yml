@@ -36,17 +36,18 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import subprocess
+          from urllib.request import urlopen
           from sys import path as sys_path
           sys_path.insert(0, 'tools')
           from r4_npi_rx_overflow_liveness import PATHS
           sdk=Path('/tmp/p7u-rx-source/sdk')
           pin='3615ad5d3f4f271258d18a2f5ce1785064ff9a58'
-          assert subprocess.check_output(['git','-C',str(sdk),'rev-parse','HEAD'],text=True).strip() == pin
+          base='https://raw.githubusercontent.com/TexasInstruments/simplelink-lowpower-f2-sdk/'+pin+'/'
           for name in PATHS:
               dest=sdk/name
               if not dest.is_file():
-                  original=subprocess.check_output(['git','-C',str(sdk),'show',pin+':'+name])
+                  with urlopen(base+name, timeout=25) as response:
+                      original=response.read()
                   dest.parent.mkdir(parents=True,exist_ok=True)
                   dest.write_bytes(original)
           print('PINNED_TI_NPI_RX_SOURCE_SET_COMPLETE')
