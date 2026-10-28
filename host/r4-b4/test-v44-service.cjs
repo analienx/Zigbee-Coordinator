@@ -48,6 +48,18 @@ test("standalone confirmation timeout removes itself with no later serial traffi
  const failure=assert.rejects(w.start().promise,/after 1000ms/);t.mock.timers.tick(1000);await failure;
  assert.equal(h.znp.waitress.waiters.size,0);
 });
+test("ZDO confirmation ownership is released on timeout, writer error and unsupported command",async t=>{
+ t.mock.timers.enable({apis:["setTimeout"]});const h=setup();
+ const response=()=>h.znp.waitFor(Type.AREQ,Subsystem.ZDO,"mgmtPermitJoinRsp",undefined,undefined,undefined,1000);
+ let w=response();const p=h.znp.requestZdo(0x0036,Buffer.from([0,0,1,0]),w.ID);
+ const rejected=assert.rejects(p,/after 6000ms/);t.mock.timers.tick(6000);await rejected;
+ assert.equal(h.znp.waitress.waiters.size,0);
+ h.znp.unpiWriter.writeFrame=()=>{throw Error("ZDO writer failed");};
+ w=response();await assert.rejects(h.znp.requestZdo(0x0036,Buffer.from([0,0,1,0]),w.ID),/writer failed/);
+ assert.equal(h.znp.waitress.waiters.size,0);
+ w=response();await assert.rejects(h.znp.requestZdo(0xffff,Buffer.alloc(0),w.ID),/not supported/);
+ assert.equal(h.znp.waitress.waiters.size,0);
+});
 test("minor4 nonce, congestion and existing progress survive real decode and durable storage",async()=>{
  const h=setup(),adapter=Object.create(ZStackAdapter.prototype);
  Object.assign(adapter,{znp:h.znp,queue:{count:()=>0},closing:false,interpanLock:false,b4DiagInFlight:false,b4NextAllowedMs:0});

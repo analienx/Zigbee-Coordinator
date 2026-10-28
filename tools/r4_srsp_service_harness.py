@@ -57,7 +57,7 @@ typedef struct {uint8_t msgType;uint16_t pBufSize;uint8_t*pBuf;} NPIMSG_msg_t;
 typedef enum {NPIMSG_Type_ASYNC=0,NPIMSG_Type_SYNCRSP=2} NPIMSG_Type;
 static Queue_Struct aq,rq;
 static Queue_Handle npiTxQueue=&aq,npiRxQueue=&rq;
-static unsigned cs_depth,posts,tokens,loops,live_alloc,allocation_fail;
+static unsigned cs_depth,posts,tokens,loops,live_alloc,allocation_fail,alloc_calls,fail_alloc_at;
 static unsigned flood_left=5968, produced_areq=32, peak_alloc;
 static void make_message(unsigned srsp,unsigned id,unsigned len);
 static uint32_t now_us,uart_due;
@@ -89,7 +89,7 @@ static void b1_evidence_note_npi_wake(void){
  }
 }
 static void B4_V43_Wake(void){}
-static void *OsalPort_malloc(size_t n){if(allocation_fail)return NULL;void*p=malloc(n);assert(p);++live_alloc;if(live_alloc>peak_alloc)peak_alloc=live_alloc;return p;}
+static void *OsalPort_malloc(size_t n){++alloc_calls;if(allocation_fail || alloc_calls==fail_alloc_at)return NULL;void*p=malloc(n);assert(p);++live_alloc;if(live_alloc>peak_alloc)peak_alloc=live_alloc;return p;}
 static void OsalPort_free(void*p){if(p){assert(live_alloc);--live_alloc;free(p);}}
 static void*OsalPort_msgAllocate(size_t n){return OsalPort_malloc(n);}
 static unsigned OsalPort_msgDeallocate(void*p){OsalPort_free(p);return 0;}
@@ -134,6 +134,10 @@ static void make_message(unsigned srsp,unsigned id,unsigned len){
  uint8_t data[250]={0};memcpy(data,&now_us,4);data[4]=id;data[5]=id>>8;
  MT_BuildAndSendZToolResponse(srsp?0x64u:0x44u,srsp?1u:0x81u,len,data);
 }
+static uint8_t*direct_message(unsigned id){
+ uint8_t*m=OsalPort_msgAllocate(23);assert(m);memset(m,0,23);m[0]=20;m[1]=0x64;m[2]=1;
+ memcpy(m+3,&now_us,4);m[7]=id;m[8]=id>>8;return m;
+}
 int main(int argc,char**argv){
  (void)argc;(void)argv;Queue_construct(&aq,NULL);Queue_construct(&rq,NULL);
  Queue_construct(&B4_V44_SrspQueueStruct,NULL);B4_V44_SrspQueue=Queue_handle(&B4_V44_SrspQueueStruct);
@@ -174,15 +178,19 @@ int main(int argc,char**argv){
  make_message(0,6014,20);NPITask_processStackMsg(OsalPort_msgReceive(1));
  busy=1;tokens=0;unsigned p=posts;B4_V44_Pend();assert(posts==p+1);
  NPITask_ProcessTXQ();busy=0;tokens=0;assert(!live_alloc);
+ /* The second public enqueue API has the same priority and ownership. */
+ NPITask_sendToHost(direct_message(60003));tokens=0;npiServiceTaskEvents=0;
+ if(!setjmp(done))NPITask_process();
+ assert(srsp_sent==65 && !live_alloc);
  /* Transport HOLD retains pending work, does not re-post/spin/submit. */
- make_message(1,60003,20);NPITask_processStackMsg(OsalPort_msgReceive(1));
+ make_message(1,60004,20);NPITask_processStackMsg(OsalPort_msgReceive(1));
  held=1;tokens=0;before=loops;
  if(!setjmp(done))NPITask_process();
  assert(loops==before && B4_NpiSrspDepth==1);held=0;
  if(!setjmp(done))NPITask_process();
  /* Tick wrap: elapsed queue age must remain small and unsigned. */
  now_us=100;B4_V44_MaxAge[0]=0;
- make_message(1,60004,20);NPITask_processStackMsg(OsalPort_msgReceive(1));
+ make_message(1,60005,20);NPITask_processStackMsg(OsalPort_msgReceive(1));
  ((NPI_QueueRec*)Queue_head(B4_V44_SrspQueue))->queuedTick=UINT32_MAX-9u;
  NPITask_ProcessTXQ();assert(B4_V44_MaxAge[0]==20u);busy=0;tokens=0;
  uint8_t snap[248]={0};B4_V44_Snapshot(snap);
@@ -196,7 +204,11 @@ int main(int argc,char**argv){
  assert(!memcmp(diag+3+240,snap+240,8));OsalPort_msgDeallocate(diag);
  assert(!live_alloc && !cs_depth && !B4_V44_Bytes[0] && !B4_V44_Bytes[1]);
  /* Actual allocation failure cleanup does not leak queue records. */
- allocation_fail=1;make_message(1,60005,20);allocation_fail=0;assert(!live_alloc);
+ allocation_fail=1;make_message(1,60006,20);allocation_fail=0;assert(!live_alloc);
+ for(unsigned failure=1;failure<=3;++failure){
+  uint8_t*m=direct_message(60007);fail_alloc_at=alloc_calls+failure;
+  NPITask_sendToHost(m);fail_alloc_at=0;assert(!live_alloc);
+ }
  printf("V44_FLOOD_PASS max_srsp_us=%u areq_max_srsp_gap=%u loops=%u bytes_high=%u peak_allocations=%u\n",max_srsp_us,max_areq_gap,loops,B4_V44_BytesHigh[1],peak_alloc);
  return 0;
 }
