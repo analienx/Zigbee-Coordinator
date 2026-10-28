@@ -245,13 +245,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if hashlib.sha256((sdk/name).read_bytes()).hexdigest() != f2_progress["modified_sha256"][name]:
             raise ValueError("R4_UART_TX_LIVENESS_DIGEST_UNBOUND_" + name)
 
-    # Passive TXQ pend-strand witness on the exact composed NPI task.
-    # Observation only: latches a lost TX_DONE wakeup into the existing
-    # F2 first-fault record (kind 6); never wakes or reorders the queue.
+    # Passive TXQ strand witness on the exact composed source.
+    # Observation only: two F2 snapshots confirm a queued/idle strand
+    # into the existing first-fault record (kind 6); never wakes it.
     from r4_txq_strand_witness import apply as add_txq_strand_witness
     txq_witness = add_txq_strand_witness(sdk)
     if txq_witness["before_sha256"][TASK] != f2_progress["modified_sha256"][TASK]:
         raise ValueError("TXQ_WITNESS_AFTER_F2_PROGRESS_PREIMAGE_DRIFT")
+    if txq_witness["before_sha256"][TL] != f2_progress["modified_sha256"][TL]:
+        raise ValueError("TXQ_WITNESS_TL_AFTER_F2_PROGRESS_PREIMAGE_DRIFT")
     from r4_txq_strand_witness_harness import exercise as exercise_txq_witness
     txq_witness_c = exercise_txq_witness(sdk)
     if txq_witness_c["status"] != "PASS_REAL_PRODUCER_TXQ_CHAIN_BURST_AND_STRAND_MUTANTS":

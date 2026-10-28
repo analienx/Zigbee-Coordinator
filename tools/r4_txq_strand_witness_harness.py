@@ -5,7 +5,7 @@ Compiles the actual composed bodies: MT_BuildAndSendZToolResponse ->
 OsalPort queue -> NPITask_processStackMsg -> NPITask_ProcessTXQ ->
 NPITL_writeTL -> NPITLUART_writeTransport/callback -> TL completion ->
 NPITask_transportTxDoneCallBack, plus the real NPITask_process message,
-TX_READY and TX_DONE sections and the pend-strand observer. Only OSAL,
+TX_READY and TX_DONE sections and the snapshot strand check. Only OSAL,
 Queue, semaphore and UART2 driver primitives are stubs; queue and counter
 state are the real composed variables, never re-implemented mirrors.
 Hosted disposable source only; no serial, hardware, NV or RF access.
@@ -22,7 +22,7 @@ from r4_txq_strand_witness import TASK
 
 CLIENT = "source/ti/zstack/npi/npi_client_mt.c"
 STATUS = "PASS_REAL_PRODUCER_TXQ_CHAIN_BURST_AND_STRAND_MUTANTS"
-CASES = ("burst", "dropped_done", "blocked", "failed")
+CASES = ("burst", "stranded_snapshot", "blocked", "failed")
 
 
 def _statement(text, marker):
@@ -73,28 +73,21 @@ def _fixture(sdk, task_text, bodies, progress_override=None):
     client = (sdk / CLIENT).read_text(encoding="utf-8")
     task = task_text
     merge, message, async_body, done = _sections(task)
-    hook = "B4_TxqPendObserve();\n  " if \
-        "B4_TxqPendObserve(); /* B4_TXQ_STRAND_WITNESS */" in task else ""
+    hook = ""
     producer = extract(client, "void MT_BuildAndSendZToolResponse(uint8_t cmdType, uint8_t cmdId,\n                                  uint8_t dataLen, uint8_t *pData)")
     tick = extract(client, "static void B4_AfRspTick(volatile uint32_t *p)")
     stack_msg = extract(task, "static void NPITask_processStackMsg(uint8_t *pMsg)")
     process_txq = extract(task, "static void NPITask_ProcessTXQ(void)")
     tx_done_cb = extract(task, "static void NPITask_transportTxDoneCallBack(int size)")
-    observe = extract(task, "static void B4_TxqPendObserve(void)")
     npi_tick = extract(task, "static void B4_AfNpiTick(volatile uint32_t *p)")
     progress = bodies["progress"] if progress_override is None else progress_override
     ordered = [bodies["latch"], bodies["failed"], bodies["unavailable"],
                progress, tick, producer, npi_tick, stack_msg, process_txq,
-               tx_done_cb, observe, bodies["writer"], bodies["abort"],
+               tx_done_cb, bodies["writer"], bodies["abort"],
                bodies["transmission"], bodies["uart_writer"], bodies["callback"]]
-    for name in ("B4_TxqPendSavedDepth", "B4_TxqPendSavedDequeues",
-                 "B4_TxqPendArmed"):
-        if name not in task:
-            raise RuntimeError("TXQ_HARNESS_PEND_STATE_MISSING_" + name)
-    counters = _counter_defs(task, client) + (
-        "static uint32_t B4_TxqPendSavedDepth = 0u;\n"
-        "static uint32_t B4_TxqPendSavedDequeues = 0u;\n"
-        "static uint8_t B4_TxqPendArmed = 0u;\n")
+    if "B4_TxqSnapshotCheck" not in bodies["progress"]:
+        raise RuntimeError("TXQ_HARNESS_SNAPSHOT_CHECK_MISSING")
+    counters = _counter_defs(task, client)
     return r"""
 #include <stdint.h>
 #include <stdbool.h>
@@ -266,16 +259,21 @@ int main(int argc, char **argv) {
           submitted[i][4] != (uint8_t)i) return 11;
     if (snap32(3) != 128 || snap32(5) != 128 || snap32(10) != 0) return 12;
     if (startup_completions != 128) return 13;
-  } else if (!strcmp(argv[1], "dropped_done")) {
+  } else if (!strcmp(argv[1], "stranded_snapshot")) {
     int guard = 0;
     produce(3, 0);
     while (!npiTxActive && guard++ < 100) cycle();
     if (!npiTxActive || uart_submits != 1) return 20;
     complete_ok();
-    /* Lose the TX_DONE flag and its semaphore post after a real completion. */
+    /* Lose the completion wake, then enqueue the remaining producer
+     * frames while the TL is marked busy so none is submitted. */
     TX_DONE_ISR_EVENT_FLAG = 0; sem_count = 0;
-    if (cycle() != 0) return 21;
-    if (cycle() != 0) return 22;
+    npiTxActive = true;
+    Semaphore_post(npiSemHandle); Semaphore_post(npiSemHandle);
+    while (osal_head != osal_tail) { if (!cycle()) return 21; }
+    if (B4_NpiAsyncDepth != 2 || Queue_empty(npiTxQueue)) return 22;
+    npiTxActive = false;
+    if (snap32(10) != 0 && snap32(10) != 6) return 27;
     if (snap32(10) != 6 || snap32(12) != 2) return 23;
     if (uart_submits != 1 || B4_NpiAsyncDepth != 2) return 24;
     Semaphore_post(npiSemHandle);
@@ -344,21 +342,21 @@ def exercise(sdk):
 
     source = _fixture(sdk, task, bodies)
     cases = run("PRODUCTION_CHAIN", source, CASES)
-    hook_line = "        B4_TxqPendObserve(); /* B4_TXQ_STRAND_WITNESS */\n"
-    if task.count(hook_line) != 1:
-        raise RuntimeError("TXQ_CHAIN_PEND_HOOK_ANCHOR")
-    mutants = []
-    mutant_task = task.replace(hook_line, "", 1)
-    run("missing_pend_observe", _fixture(sdk, mutant_task, bodies),
-        ["dropped_done"], expected_rc=23)
-    mutants.append("missing_pend_observe")
     progress = bodies["progress"]
-    anchor = "B4_V43_FirstFault(6u, 0, depth, 0u);"
+    call = "    B4_TxqSnapshotCheck(); /* B4_TXQ_STRAND_WITNESS */"
+    if progress.count(call) != 1:
+        raise RuntimeError("TXQ_CHAIN_SNAPSHOT_CALL_ANCHOR")
+    mutants = []
+    run("missing_snapshot_check",
+        _fixture(sdk, task, bodies, progress.replace(call, "", 1)),
+        ["stranded_snapshot"], expected_rc=23)
+    mutants.append("missing_snapshot_check")
+    anchor = "B4_V43_FirstFault(6u, 0, B4_NpiAsyncDepth, 0u);"
     if progress.count(anchor) != 1:
-        raise RuntimeError("TXQ_CHAIN_NOTESTRAND_ANCHOR")
+        raise RuntimeError("TXQ_CHAIN_STRAND_LATCH_ANCHOR")
     run("missing_strand_latch",
-        _fixture(sdk, task, bodies, progress.replace(anchor, "(void)depth;", 1)),
-        ["dropped_done"], expected_rc=23)
+        _fixture(sdk, task, bodies, progress.replace(anchor, "(void)0;", 1)),
+        ["stranded_snapshot"], expected_rc=23)
     mutants.append("missing_strand_latch")
     _, _, async_body, _ = _sections(task)
     busy_anchor = "else if (!NPITL_checkNpiBusy()"

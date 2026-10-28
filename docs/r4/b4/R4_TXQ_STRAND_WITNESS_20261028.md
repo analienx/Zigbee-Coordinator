@@ -1,4 +1,4 @@
-# R4 TXQ pend-strand witness — real producer chain proof (2026-10-28)
+# R4 TXQ strand witness — real producer chain proof (2026-10-28)
 
 **Status:** Source-only candidate on deployed lineage `b97179a` (firmware
 `899f179`, host `acaa002`). Not flashed. No hardware, serial, NV, HA,
@@ -58,15 +58,20 @@ flag with no future post — exactly what the witness confirms.
 
 ## Change (passive instrumentation, not a cure)
 
-- `tools/r4_f2_v43_progress.py`: `B4_V43_NoteStrand(depth)` latches
-  first-fault kind 6 (frozen-first semantics, expected field = queued
-  ASYNC depth). No F2 ABI change: reply stays 240 bytes, minor 3.
-- `tools/r4_txq_strand_witness.py`: in `npi_task.c` only, counts real
-  `NPITask_ProcessTXQ` dequeues and observes the pend point of
-  `NPITask_process`. Confirmation needs two pend entries with queued
-  ASYNC work, idle TL, no HOLD, and unchanged depth/dequeue count, so
-  an already-posted wake (which drains or dequeues first) cannot fire
-  it. It never posts, retries, reorders, or submits.
+- `tools/r4_txq_strand_witness.py`: counts real
+  `NPITask_ProcessTXQ` dequeues in `npi_task.c` and checks the strand
+  inside `B4_V43_Snapshot` (F2 path, snapshot CS held) in `npi_tl.c`.
+  Confirmation needs two consecutive F2 snapshots with queued ASYNC
+  work, idle TL, no HOLD, and unchanged depth/dequeue count; the first
+  snapshot only arms. A pend-entry observer was rejected in review:
+  any wake whose body runs dequeues before a second pend entry, so it
+  could never confirm the lost-wakeup state it targeted. Kind 6 keeps
+  frozen-first semantics (expected field = queued ASYNC depth). No F2
+  ABI change: reply stays 240 bytes, minor 3. It never posts, retries,
+  reorders, or submits. ASYNC depth is incremented by both NPI
+  producers (`NPITask_processStackMsg` and `NPITask_sendToHost`) under
+  CS at the pinned B4 stage; either producer's wake dequeues before a
+  later snapshot, so depth provenance does not affect confirmation.
 - Host validators (`f2_progress_contract.py`,
   `b4_v4_herdsman_overlay.py`, `p7u_diagnostic_worker.cjs`) accept
   first-fault kind 6. Nothing else about the wire contract changes.
@@ -79,16 +84,20 @@ only OSAL/Queue/semaphore/UART2 primitives stubbed:
 
 1. `burst`: 128 real producer frames drain in FIFO order;
    writeAccepted == callbackOk == 128; no strand.
-2. `dropped_done`: after a real completion, the TX_DONE flag and post
-   are dropped; two pend entries latch kind 6 with depth 2; a later
-   host-poll wake drains the queue (recovery, record stays frozen).
+2. `stranded_snapshot`: after a real completion, the completion wake
+   is dropped and the remaining producer frames are queued with the TL
+   idle and no wake pending; the first F2 snapshot only arms, the
+   second latches kind 6 with depth 2; a later host-poll wake drains
+   the queue (recovery, record stays frozen).
 3. `blocked`: no completion — TL stays busy, no strand, no spin.
 4. `failed`: error completion — HOLD latches, busy clears, no false
    callbackOk, no strand.
 
-Negative mutants must fail: removing the pend observation or the
-kind-6 latch (dropped_done), restoring busy self-repost (blocked), and
-removing the B1 abort notify (failed).
+Negative mutants must fail: removing the snapshot check or the
+kind-6 latch (stranded_snapshot), restoring busy self-repost
+(blocked), and removing the B1 abort notify (failed). Removing the
+check is also the pre-patch control: the same stranded state then
+latches nothing.
 
 ## ESP bridge boundary (exact unmet proof)
 
@@ -114,6 +123,6 @@ hardware, the lost-wakeup mechanism still needs a root-cause fix.
 - TX_DONE capture race: ISR flag merge is under the HwiP CS and the
   callback is HWI-context; sticky flag plus counting post cannot be
   consumed silently. Rejected as a design race; only an externally
-  dropped flag+post (modelled in `dropped_done`) strands the queue.
+  dropped flag+post (modelled in `stranded_snapshot`) strands it.
 - One-OSAL-message-per-wake starvation: each `processStackMsg` enqueue
   posts again, so a burst self-sustains wakeups. Rejected.

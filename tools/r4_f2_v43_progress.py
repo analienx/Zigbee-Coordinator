@@ -38,7 +38,6 @@ extern void B4_V43_Submit(int_fast16_t status, uint32_t expected);
 extern void B4_V43_Complete(int_fast16_t status, uint32_t actual, uint32_t expected);
 extern void B4_V43_Receive(int_fast16_t status, uint32_t actual);
 extern void B4_V43_Snapshot(uint8_t *out);
-extern void B4_V43_NoteStrand(uint32_t depth);
 """
 IMPL = r"""
 /* B4_F2_V43_PROGRESS. No allocation, payload copy, NV or UART operation. */
@@ -110,15 +109,6 @@ void B4_V43_Receive(int_fast16_t status, uint32_t actual)
     uint32_t key = OsalPort_enterCS();
     if (status == UART2_STATUS_SUCCESS) B4_V43_Tick(9u, actual);
     else B4_V43_FirstFault(4u, status, 0u, actual);
-    OsalPort_leaveCS(key);
-}
-void B4_V43_NoteStrand(uint32_t depth)
-{
-    uint32_t key = OsalPort_enterCS();
-    /* First-fault kind 6: TXQ pend strand confirmed by the NPI task
-     * (ASYNC work queued, TL idle, no HOLD, no dequeue across two pend
-     * entries). Passive record only; never wakes, retries or resets. */
-    B4_V43_FirstFault(6u, 0, depth, 0u);
     OsalPort_leaveCS(key);
 }
 void B4_V43_Snapshot(uint8_t *out)
