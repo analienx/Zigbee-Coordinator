@@ -33,9 +33,15 @@ allocator. A completed transport-copy release explicitly scrubs the fixed
 255-byte frame buffer through volatile stores before returning the slot to
 the reserve. Concurrent access uses existing OSAL critical sections.
 
-When all three slots are occupied, or NPI is not initialized, the *unchanged
-legacy dynamic path* is attempted; an unsuccessful dynamic attempt remains
-an explicit existing causal `AllRspAllocFailed`/send-failure event. The
+When all three slots are occupied, legacy heap allocation and framing are
+attempted, but an initialized SRSP producer synchronously admits its dynamic
+response into the same framed FIFO before returning. It does not leave that
+response in an OSAL mailbox that a later reserved response could bypass.
+The UART submitter remains the original NPI task. Before NPI initialization,
+or if an application reroute callback is installed, the original mailbox path
+is retained for both response classes. Allocation/framing failures retain their
+existing causal failure counters. The reserved early return preserves all
+AF data-response production, admission and framing counters as well. The
 new internal RAM-only counters are `B4_V45_ReserveUsed`,
 `B4_V45_ReserveExhausted` and `B4_V45_ReleaseFault`. They are **not**
 represented as minor4 F2 fields: changing F2 wire ABI requires separately
@@ -60,3 +66,12 @@ consideration; native linker RAM/map checks remain mandatory. The fixture
 uses a modeled UART, not real RF/ESP, and this change does **not** prove a
 terminal-hang cure or authorize flashing. NV, counters, CCFG, network state
 and physical UART ownership are unchanged.
+
+## Review corrections
+
+The initial reserve bypass could overtake an earlier mailbox-backed SRSP after
+slot re-use and skipped AF data-response F2 lifecycle counts. The corrected
+fixture covers reserve -> dynamic overflow -> reserve re-use without manually
+draining the mailbox, and checks AF commands 1/2/3 with the heap disabled.
+Negative mutations restore the mailbox bug and remove AF production/framing
+counts; those variants must fail before native qualification.

@@ -71,31 +71,49 @@ int main(void){
      * if memory is available: do not shed the fourth response. */
     allocation_fail=0;
     make_message(1,5,20);
-    while(mail_out<mail_in)NPITask_processStackMsg(OsalPort_msgReceive(1));
-    assert(B4_NpiSrspDepth==4 && B4_V45_ReserveExhausted==2);
-    drain();
+    /* Do not drain the mailbox here: that would hide a later reserved
+     * response overtaking the dynamic fallback. Admission must be complete. */
+    assert(mail_out==mail_in && B4_NpiSrspDepth==4 && B4_V45_ReserveExhausted==2);
+    NPITask_ProcessTXQ();assert(busy && srsp_sent==2);
+    make_message(1,6,20); /* re-use the newly freed reserve before completion */
+    assert(B4_NpiSrspDepth==4);
+    complete();
+    drain(); /* real UART fixture rejects any per-class wire reordering */
     assert(!live_alloc && !busy && B4_NpiSrspDepth==0 && B4_NpiAsyncDepth==0);
-    assert(srsp_sent==5 && completed_srsp==5 && areq_sent==18);
+    assert(srsp_sent==6 && completed_srsp==6 && areq_sent==18);
     for(unsigned i=0;i<B4_V45_POOL_SLOTS;++i)assert(!B4_V45_Slots[i].used);
     /* Physical HOLD is sticky: a reserve is allowed but never UART-submitted. */
     held=1;allocation_fail=1;
-    make_message(1,6,250);
-    assert(B4_NpiSrspDepth==1 && B4_V45_ReserveUsed==5);
-    NPITask_ProcessTXQ();assert(!busy && srsp_sent==5);
+    make_message(1,7,250);
+    assert(B4_NpiSrspDepth==1 && B4_V45_ReserveUsed==6);
+    NPITask_ProcessTXQ();assert(!busy && srsp_sent==6);
     held=0;
-    NPITask_ProcessTXQ();assert(busy && srsp_sent==6);
-    complete();assert(completed_srsp==6);
-    /* Slot release before callback is sound because TL already copied frame. */
-    make_message(1,7,4);
     NPITask_ProcessTXQ();assert(busy && srsp_sent==7);
+    complete();assert(completed_srsp==7);
+    /* Slot release before callback is sound because TL already copied frame. */
     make_message(1,8,4);
-    assert(B4_NpiSrspDepth==1 && B4_V45_ReserveUsed==7);
-    complete();NPITask_ProcessTXQ();assert(busy && srsp_sent==8);
+    NPITask_ProcessTXQ();assert(busy && srsp_sent==8);
+    make_message(1,9,4);
+    assert(B4_NpiSrspDepth==1 && B4_V45_ReserveUsed==8);
+    complete();NPITask_ProcessTXQ();assert(busy && srsp_sent==9);
     complete();
+    /* Every AF data-request family preserves all production/admission stages. */
+    for(unsigned command=1;command<=3;++command){
+        uint32_t produced=B4_AfDataRspProduced,enqueued=B4_AfDataRspEnqueued;
+        uint32_t received=B4_AfDataRspNpiReceived,framed=B4_AfDataRspFramedQueued;
+        uint32_t submitted=B4_AfDataRspTlSubmitted;
+        uint8_t data[20]={0};unsigned id=9+command;
+        memcpy(data,&now_us,4);data[4]=id;data[5]=id>>8;
+        MT_BuildAndSendZToolResponse(0x64u,command,20,data);
+        assert(B4_AfDataRspProduced==produced+1 && B4_AfDataRspEnqueued==enqueued+1);
+        assert(B4_AfDataRspNpiReceived==received+1 && B4_AfDataRspFramedQueued==framed+1);
+        NPITask_ProcessTXQ();complete();
+        assert(B4_AfDataRspTlSubmitted==submitted+1);
+    }
     allocation_fail=0;
     assert(!live_alloc && !B4_NpiSrspDepth && !B4_NpiAsyncDepth);
     for(unsigned i=0;i<B4_V45_POOL_SLOTS;++i)assert(!B4_V45_Slots[i].used);
-    assert(!B4_V45_ReleaseFault && completed_srsp==8);
+    assert(!B4_V45_ReleaseFault && completed_srsp==12);
     printf("V45_ACTUAL_C_PASS reserved=%u overflow=%u max_completion_us=%u live=%u\n",
            (unsigned)B4_V45_ReserveUsed,(unsigned)B4_V45_ReserveExhausted,
            max_srsp_us,live_alloc);
@@ -142,6 +160,7 @@ def exercise(sdk):
         raise RuntimeError("V45_SHORT_SRSP_UART_FIXTURE_DRIFT")
     source=prefix+record+"\n"+globals_+counter_src+"\n"
     source+="extern uint8_t B4_V45_SendReservedSrsp(uint8_t,uint8_t,uint8_t,const uint8_t *);\n"
+    source+="extern uint8_t B4_V45_QueueDynamicSrsp(uint8_t *);\n"
     source+=extract(client,"static void B4_AfRspTick(volatile uint32_t *p)")+"\n"
     source+=extract(client,"void MT_BuildAndSendZToolResponse(uint8_t cmdType, uint8_t cmdId,\n                                  uint8_t dataLen, uint8_t *pData)")+"\n"
     source+=extract(frame,"uint8_t npiframe_calcMTFCS(uint8_t *msg_ptr, uint8_t len)")+"\n"
@@ -187,6 +206,9 @@ static uint8_t afRegister(endPointDesc_t *d){(void)d;return ZSuccess;}
         "leak_reserved_slot":("B4_V45_Slots[i].used = 0u;", "B4_V45_Slots[i].used = 1u;"),
         "single_slot":("#define B4_V45_POOL_SLOTS 3u","#define B4_V45_POOL_SLOTS 1u"),
         "free_static_as_heap":("if (!B4_V45_ReleaseReserved(recPtr))","if (1)"),
+        "mailbox_fallback_overtakes":("if (allSrsp && B4_V45_QueueDynamicSrsp", "if (0 && B4_V45_QueueDynamicSrsp"),
+        "missing_af_data_produced":("if (afData) B4_AfRspTick(&B4_AfDataRspProduced);", ""),
+        "missing_af_data_framed":("B4_V45_Tick(&B4_AfDataRspFramedQueued);", ""),
     }
     for label,(old,new) in mutants.items():
         if source.count(old)!=1:raise RuntimeError("V45_MUTANT_ANCHOR_"+label)

@@ -333,7 +333,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for function in ("B4_V43_Request","B4_V43_Snapshot"):
         if function not in required:required.append(function)
     if "B4_V44_Snapshot" not in required: required.append("B4_V44_Snapshot")
-    for function in ("B4_V45_SendReservedSrsp", "B4_V45_ReleaseReserved"):
+    for function in ("B4_V45_SendReservedSrsp", "B4_V45_QueueDynamicSrsp", "B4_V45_ReleaseReserved"):
         if function not in required: required.append(function)
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
