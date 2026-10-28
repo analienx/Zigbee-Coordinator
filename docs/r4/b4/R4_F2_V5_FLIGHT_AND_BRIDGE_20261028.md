@@ -49,8 +49,8 @@ forbidden. Each new page is read-only and contains no RF operation.
 | 16–23 | radio boot token or zero, not exported / not hardware proof |
 | 24–27 | common RAM snapshot sequence |
 | 28–31 | common radio tick |
-| 32–115 (page1) | see `p7u_f2_v5_pages.FIELD_OFFSETS` |
-| 116–159 (page1) | reserved, all zero |
+| 32–143 (page1) | see `p7u_f2_v5_pages.FIELD_OFFSETS`; includes NPI handoff requests, UART write accepted/rejected, UART state flags, first UART fault kind/tick and B1 first failure |
+| 144–159 (page1) | reserved, all zero |
 | 32–159 (page2) | 16 packed 8-byte records; unused entries zero |
 
 Page1 validity bits at offset104: bit0 boot entropy sourced, bit1 cached

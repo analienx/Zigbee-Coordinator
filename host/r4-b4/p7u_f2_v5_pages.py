@@ -22,6 +22,10 @@ FIELD_OFFSETS={
   "uartTxCallbackOk":92,"uartTxCallbackError":96,
   "uartRxBytes":100,"validityFlags":104,"eventCount":108,
   "clockTickPeriodUs":112,
+  "npiRequests":116,"uartWriteAccepted":120,
+  "uartWriteRejected":124,"uartStateFlags":128,
+  "firstUartFaultKind":132,"firstUartFaultTick":136,
+  "b1FirstFailure":140,
 }
 
 class FlightEvidenceRejected(ValueError):
@@ -47,7 +51,7 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
     b,tick2,boot2=_header(page2,2,nonce)
     if a!=b or tick!=tick2 or boot!=boot2:
         raise FlightEvidenceRejected("V5_CROSS_PAGE_MISMATCH")
-    if page1[116:]!=bytes(PAGE_BYTES-116):
+    if page1[144:]!=bytes(PAGE_BYTES-144):
         raise FlightEvidenceRejected("V5_RESERVED_NONZERO")
     counters={name:_u32(page1,off) for name,off in FIELD_OFFSETS.items()}
     f=counters["validityFlags"]

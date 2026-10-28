@@ -52,7 +52,9 @@ test("V5 bounded flight snapshot durable and hostile untrusted fields rejected",
             "reserveExhausted","reserveReleaseFault","reserveActive",
             "allSrspProduced","allSrspAllocationFailed","allSrspFramingFailed",
             "allSrspTlRejected","uartTxCallbackOk","uartTxCallbackError",
-            "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs"];
+            "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs",
+            "npiRequests","uartWriteAccepted","uartWriteRejected","uartStateFlags",
+            "firstUartFaultKind","firstUartFaultTick","b1FirstFailure"];
         const counters=Object.fromEntries(fields.map(k=>[k,0]));
         counters.validityFlags=2;counters.clockTickPeriodUs=10;
         counters.eventTotal=1;counters.eventCount=1;

@@ -117,6 +117,10 @@ ADAPTER_METHOD=r'''
                 uartTxCallbackOk: 92, uartTxCallbackError: 96,
                 uartRxBytes: 100, validityFlags: 104,
                 eventCount: 108, clockTickPeriodUs: 112,
+                npiRequests: 116, uartWriteAccepted: 120,
+                uartWriteRejected: 124, uartStateFlags: 128,
+                firstUartFaultKind: 132, firstUartFaultTick: 136,
+                b1FirstFailure: 140,
             };
             const counters: Record<string, number> = {};
             for (const [name, offset] of Object.entries(positions))
@@ -129,7 +133,7 @@ ADAPTER_METHOD=r'''
                 (counters.validityFlags & 2) === 0 ||
                 counters.clockTickPeriodUs === 0 ||
                 counters.clockTickPeriodUs > 100000 ||
-                !a.subarray(116).equals(Buffer.alloc(44))) {
+                !a.subarray(144).equals(Buffer.alloc(16))) {
                 throw new Error("B4 V5_INVALID_METRICS");
             }
             const events: {tick: number; stage: number; subsystem: string; result: number}[]=[];

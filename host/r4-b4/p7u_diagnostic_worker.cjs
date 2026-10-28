@@ -63,7 +63,9 @@ function sameRecord(entry) {
             "reserveExhausted","reserveReleaseFault","reserveActive",
             "allSrspProduced","allSrspAllocationFailed","allSrspFramingFailed",
             "allSrspTlRejected","uartTxCallbackOk","uartTxCallbackError",
-            "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs"];
+            "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs",
+            "npiRequests","uartWriteAccepted","uartWriteRejected","uartStateFlags",
+            "firstUartFaultKind","firstUartFaultTick","b1FirstFailure"];
         hold(exact(flight,["abi","pageSequence","eventCount","counters","events","source"]) &&
             flight.abi===5 && flight.source==="RADIO_READ_ONLY" &&
             num(flight.pageSequence) && flight.pageSequence>0 &&
