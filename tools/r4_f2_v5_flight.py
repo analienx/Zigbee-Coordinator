@@ -45,6 +45,9 @@ static uint16_t B4_V5_CommandFromFrame(const uint8_t *frame, uint16_t size)
     return frame != NULL && size >= 5u ?
            (uint16_t)(((uint16_t)frame[2]<<8u)|frame[3]) : 0xffffu;
 }
+/* V4 boot identity is owned by mt_sys.c, not this NPI translation unit. */
+extern uint8_t B4_V4BootId[8];
+extern volatile uint32_t B4_V4BootValid;
 extern void B4_V43_Snapshot(uint8_t *out);
 extern volatile uint32_t B4_AllRspProduced, B4_AllRspAllocFailed;
 extern volatile uint32_t B4_AllRspFramingFailed, B4_AllRspTlRejected;
