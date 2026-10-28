@@ -255,6 +255,21 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     from r4_srsp_service_harness import exercise as exercise_srsp_service
     srsp_service_c = exercise_srsp_service(sdk)
 
+    # v4.5: reserve three complete SRSP frames independent of OSAL heap.
+    # Qualify the final actual C producer + ownership path after v4.4.
+    from r4_srsp_reserve import apply as add_srsp_reserve
+    srsp_reserve = add_srsp_reserve(sdk)
+    for name in (TASK,):
+        if srsp_reserve["before_sha256"][name] != srsp_service["modified_sha256"][name]:
+            raise ValueError("V45_NPI_SOURCE_CHAIN_DRIFT_"+name)
+    for name in ("source/ti/zstack/npi/npi_client_mt.c",):
+        if srsp_reserve["before_sha256"][name] != f2_causal["modified_sha256"][name]:
+            raise ValueError("V45_MT_SOURCE_CHAIN_DRIFT_"+name)
+    from r4_srsp_reserve_harness import exercise as exercise_srsp_reserve
+    srsp_reserve_c = exercise_srsp_reserve(sdk)
+    if srsp_reserve_c["status"] != "PASS":
+        raise ValueError("V45_STATIC_SRSP_RESERVE_ACTUAL_C_FAILED")
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -289,12 +304,13 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     af_client="source/ti/zstack/npi/npi_client_mt.c"
     afterhash[af_client]=hashlib.sha256((sdk/af_client).read_bytes()).hexdigest()
     for name in (af_client,):
-        if afterhash[name] != f2_causal["modified_sha256"][name]:
-            raise ValueError("F2_V42_RECEIPT_UNBOUND_"+name)
+        if afterhash[name] != srsp_reserve["modified_sha256"][name]:
+            raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != srsp_service["modified_sha256"][name]):
+                afterhash[name] != (srsp_reserve["modified_sha256"][name] if name == TASK else
+                                    srsp_service["modified_sha256"][name])):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
@@ -317,6 +333,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for function in ("B4_V43_Request","B4_V43_Snapshot"):
         if function not in required:required.append(function)
     if "B4_V44_Snapshot" not in required: required.append("B4_V44_Snapshot")
+    for function in ("B4_V45_SendReservedSrsp", "B4_V45_QueueDynamicSrsp", "B4_V45_ReleaseReserved"):
+        if function not in required: required.append(function)
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
     b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
@@ -343,6 +361,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "f2_v43_actual_c":f2_progress_c,
         "srsp_service_v44":srsp_service,
         "srsp_service_v44_actual_c":srsp_service_c,
+        "srsp_reserve_v45":srsp_reserve,
+        "srsp_reserve_v45_actual_c":srsp_reserve_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
