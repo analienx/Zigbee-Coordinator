@@ -1,0 +1,127 @@
+name: R4 Muse Spark 1.3 XHIGH subscription pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Start with auth-smoke; b4-review only after subscription verification'
+        type: choice
+        required: true
+        options:
+          - auth-smoke
+          - b4-review
+        default: auth-smoke
+      target_sha:
+        description: 'Pinned, full 40-character commit of the R4 source candidate'
+        type: string
+        required: true
+        default: '26b0fbe349e46e3b46f2a3bbd24b534b4aee708f'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r4-muse-spark-xhigh-pilot
+  cancel-in-progress: false
+
+jobs:
+  spark-pilot:
+    if: github.actor == 'analienx' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: r4-ai-review
+    steps:
+      - name: Validate exact SHA and dispatch options
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          REVIEW_MODE: ${{ inputs.mode }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          sha = os.environ["TARGET_SHA"]
+          mode = os.environ["REVIEW_MODE"]
+          assert re.fullmatch(r"[a-f0-9]{40}", sha), "Full 40-char SHA required"
+          assert mode in ("auth-smoke", "b4-review"), "Unknown dispatch mode"
+          print("Mode:", mode, "target SHA:", sha)
+          PY
+
+      - name: Checkout pinned source (review mode only)
+        if: inputs.mode == 'b4-review'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.target_sha }}
+          path: source
+
+      - name: Verify checked-out commit
+        if: inputs.mode == 'b4-review'
+        env:
+          EXPECTED_SHA: ${{ inputs.target_sha }}
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Install official Muse Code CLI
+        run: |
+          curl -fsSL https://dev.meta.ai/install.sh -o "$RUNNER_TEMP/muse-install.sh"
+          bash "$RUNNER_TEMP/muse-install.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify installed features
+        run: |
+          muse --version
+          muse exec --help | grep -F -- '--reasoning-effort'
+
+      - name: Minimal subscription auth test
+        if: inputs.mode == 'auth-smoke'
+        env:
+          META_API_KEY: ${{ secrets.MUSE_CODE_SUBSCRIPTION_KEY }}
+        run: |
+          test -n "$META_API_KEY" || { echo 'Subscription credential unavailable'; exit 1; }
+          cd "$RUNNER_TEMP"
+          muse exec --model muse-spark-1.3 --reasoning-effort xhigh \
+            --disable-shell --disable-write --disable-web-tools \
+            --disable-request-user-input --no-foreign-personal-context \
+            --no-session-log --max-model-steps 1 \
+            'Return exactly R4_GITHUB_SPARK_XHIGH_OK and do not call tools.' \
+            > "$RUNNER_TEMP/spark-result.txt"
+          grep -Fxq R4_GITHUB_SPARK_XHIGH_OK "$RUNNER_TEMP/spark-result.txt"
+
+      - name: Independent B4 source review (separate explicit dispatch)
+        if: inputs.mode == 'b4-review'
+        env:
+          META_API_KEY: ${{ secrets.MUSE_CODE_SUBSCRIPTION_KEY }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        working-directory: source
+        run: |
+          test -n "$META_API_KEY" || { echo 'Subscription credential unavailable'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/r4-spark-review"
+          cat > "$RUNNER_TEMP/r4-spark-review/task.md" <<'TASK'
+          Independently inspect the actual checked-out analienx/Zigbee-Coordinator
+          source at the exact supplied SHA. Read-only source review only.
+          Focus on B4 PR #105 SYS F2 160-byte diagnostics compared with
+          existing B1 SYS F1 and B4 F0, nonce replay, TRNG timeout/cancel,
+          SRSP producer reachability, RTOS/IRQ/race, host herdsman one-owner,
+          and differences versus the failing alternative B4 PR #104.
+          Every finding must contain SHA, severity, path + line, reachable
+          failure, falsification proposal and proved vs hypothetical status.
+          DO NOT run shell/tools that execute source; do not modify files,
+          network, firmware, hardware, GitHub issues or production services.
+          Never claim physical or integrated R4 acceptance.
+          TASK
+          printf '\nExact SHA: %s\n' "$TARGET_SHA" >> "$RUNNER_TEMP/r4-spark-review/task.md"
+          muse exec --model muse-spark-1.3 --reasoning-effort xhigh \
+            --disable-shell --disable-write --disable-web-tools \
+            --disable-request-user-input --no-foreign-personal-context \
+            --no-session-log --max-model-steps 25 \
+            --prompt-file "$RUNNER_TEMP/r4-spark-review/task.md" \
+            > "$RUNNER_TEMP/r4-spark-review/review.md"
+          test -s "$RUNNER_TEMP/r4-spark-review/review.md"
+
+      - name: Upload review findings (no automatic approval)
+        if: inputs.mode == 'b4-review'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r4-spark-xhigh-${{ github.run_id }}
+          path: ${{ runner.temp }}/r4-spark-review/review.md
+          if-no-files-found: warn
+          retention-days: 7
