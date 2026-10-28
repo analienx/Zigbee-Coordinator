@@ -163,7 +163,7 @@ enum { INTERCEPT = 1, ECHO = 2, NONE = 3 };
 static int incomingTXReroute = NONE;
 static uint32_t npiServiceTaskEvents;
 static uint16_t TX_DONE_ISR_EVENT_FLAG, MRDY_ISR_EVENT_FLAG, TRANSPORT_RX_ISR_EVENT_FLAG;
-static void b1_evidence_note_npi_wake(void) {}
+void b1_evidence_note_npi_wake(void) {}
 static volatile bool npiTxActive;
 static uint8_t npiTxBuf[NPI_TL_BUF_SIZE];
 static uint16 npiTxBufLen, msgFragLen, npiRxBufHead, npiRxBufTail;
