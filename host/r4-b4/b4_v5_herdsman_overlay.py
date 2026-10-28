@@ -28,6 +28,15 @@ ZNP_METHOD=r'''
         const request = Buffer.concat([Buffer.from([page]), nonce]);
         const frame = new UnpiFrame(Type.SREQ, Subsystem.SYS, 0xF2, request);
         return this.queue.run(async () => {
+            /* Revalidate immediately before the existing UART writer,
+             * not just before entering the ZNP mutex: OTA or shutdown
+             * may have begun while this request waited in the queue. */
+            if (!this.initialized || this.b4IsDiagPoisoned() ||
+                this.b4F2ReadAdmissionReason() !== null ||
+                !this.b4F2NoBlockingWaiters() ||
+                (this.b4ProbeGuard !== undefined && this.b4ProbeGuard() !== true)) {
+                throw new Error("B4 V5_LATE_OWNER_GUARD");
+            }
             /* The pinned ZpiObject parser maps SYS/F2 to the original
              * v4 command object, so use its name for waitress matching.
              * The matcher is extended below to distinguish LEN8/LEN9. */
