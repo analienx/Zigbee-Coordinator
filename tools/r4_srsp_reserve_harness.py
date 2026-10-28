@@ -17,6 +17,7 @@ from r4_srsp_service_harness import PREFIX
 
 CLIENT = "source/ti/zstack/npi/npi_client_mt.c"
 FRAME = "source/ti/zstack/npi/npi_frame_mt.c"
+AF = "source/ti/zstack/mt/mt_af.c"
 
 MAIN = r"""
 static void make_message(unsigned srsp, unsigned id, unsigned len){
@@ -43,13 +44,16 @@ int main(void){
     unsigned live_before=live_alloc;
     allocation_fail=1;
     /* Real producer must bypass every heap allocation, including framing. */
-    uint8_t afStatus=0u;
-    MT_BuildAndSendZToolResponse(0x64u,0x00u,1u,&afStatus);
+    /* Actual pinned MT_AfRegister handler must still send an error SRSP
+     * when descriptor allocation fails under a completely exhausted heap. */
+    uint8_t afRegisterRequest[4]={0u,0x24u,0u,1u};
+    MT_AfRegister(afRegisterRequest);
     assert(B4_V45_ReserveUsed==1 && B4_NpiSrspDepth==1 && live_alloc==live_before);
     assert(B4_AllRspNpiReceived && B4_AllRspFramedQueued);
     assert(B4_AfRspNpiReceived==1 && B4_AfRspFramedQueued==1);
     uint8_t *frame=B4_V45_Slots[0].frame;unsigned fcs=0;
     assert(frame[0]==0xfe && frame[1]==1 && frame[2]==0x64 && frame[3]==0);
+    assert(frame[4]==ZMemError);
     for(unsigned i=1;i<5;++i)fcs^=frame[i];
     assert(frame[5]==fcs);
     NPITask_ProcessTXQ();assert(srsp_sent==1 && busy);
@@ -104,6 +108,7 @@ def exercise(sdk):
     task=(sdk/TASK).read_text()
     client=(sdk/CLIENT).read_text()
     frame=(sdk/FRAME).read_text()
+    af_source=(sdk/AF).read_text()
     record=task[task.index("typedef struct NPI_QueueRec_t"):task.index("} NPI_QueueRec;")+len("} NPI_QueueRec;")]
     globals_=task[task.index("#define B4_V44_SRSP_BURST"):task.index("static uint8_t B4_V44_ReadyTracked")]
     globals_+="static uint8_t B4_V44_ReadyTracked, B4_V44_SrspRun;\n"
@@ -143,6 +148,24 @@ def exercise(sdk):
     source+=extract(frame,"NPIMSG_msg_t *NPIFrame_frameMsg(uint8_t *pIncomingMsg)")+"\n"
     source+="\n".join(extract(task,n) for n in names)+"\n"+reserve+"\n"
     source+="\n".join(extract(task,n) for n in remaining)+"\n"
+    # Extract the actual TI AF_REGISTER body, not a synthetic reply mock.
+    # Only the external endpoint descriptor and afRegister dependencies are
+    # stubbed, with heap allocation forced to fail by this fixture.
+    source+=r"""
+#define MT_RPC_POS_CMD1 2u
+#define MT_RPC_FRAME_HDR_SZ 3u
+#define MT_RPC_CMD_SRSP 0x60u
+#define MT_RPC_SYS_AF 0x04u
+#define ZMemError 0x10u
+#define ZSuccess 0u
+typedef struct {uint8_t *task_id;} endPointDesc_t;
+static uint8_t MT_TaskID;
+static uint8_t MT_BuildEndpointDesc(uint8_t *p, endPointDesc_t *d){
+ (void)p;(void)d;return ZSuccess;
+}
+static uint8_t afRegister(endPointDesc_t *d){(void)d;return ZSuccess;}
+"""
+    source+=extract(af_source,"static void MT_AfRegister(uint8_t *pBuf)")+"\n"
     source+=MAIN
     cc=shutil.which("cc") or shutil.which("gcc")
     if not cc:raise RuntimeError("V45_COMPILER_REQUIRED")
@@ -171,6 +194,7 @@ def exercise(sdk):
     return {"schema":"p7u-v45-actual-composite-reserved-srsp-v1",
       "status":"PASS","actual_compiled_ti_producer":True,
       "no_heap_srsp_produced_and_completed":True,
+      "actual_ti_af_register_oom_srsp":True,
       "source_sha256":hashlib.sha256(source.encode()).hexdigest(),
       "result":result,"negative_mutants":list(mutants),
       "physical_radio_nv_or_bridge_exercised":False}
