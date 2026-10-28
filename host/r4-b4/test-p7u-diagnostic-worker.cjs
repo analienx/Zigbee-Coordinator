@@ -61,6 +61,7 @@ test("V5 bounded flight snapshot durable and hostile untrusted fields rejected",
         const good={...fixture("FLIGHT"),probeLatencyMs:100,processUptimeMs:17000,
             flightV5:{abi:5,pageSequence:6,eventCount:1,counters,
                 events:[{tick:23,stage:3,subsystem:"AF",result:0}],
+                firstAnomaly:null,preAnomaly:null,
                 source:"RADIO_READ_ONLY"}};
         delete good.abi;delete good.sequence;delete good.validityMask;
         assert.equal(workerModule.commit(s,good).sequence,1);
@@ -73,6 +74,16 @@ test("V5 bounded flight snapshot durable and hostile untrusted fields rejected",
             flightV5:{...good.flightV5,counters:{...counters,reserveActive:4}}}),/V5_FLIGHT_COUNTERS/);
         assert.throws(()=>workerModule.commit(s,{...good,
             flightV5:{...good.flightV5,events:[{...good.flightV5.events[0],ieee:"0x123"}]}}),/V5_FLIGHT_EVENT/);
+        const frozen={...good.flightV5,counters:{...counters,validityFlags:6},
+            firstAnomaly:{tick:27,stage:8,subsystem:"SYS",result:1},
+            preAnomaly:{tick:26,stage:6,subsystem:"SYS",result:0}};
+        assert.equal(workerModule.commit(s,{...good,flightV5:frozen}).sequence,2);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...frozen,firstAnomaly:{...frozen.firstAnomaly,stage:3}}}),
+            /V5_FROZEN_ANOMALY/);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...good.flightV5,firstAnomaly:frozen.firstAnomaly}}),
+            /V5_UNQUALIFIED_ANOMALY/);
     } finally {x.cleanup();}
 });
 test("durable append+manifest replay with VALID and SKIPPED, no raw radio data", () => {

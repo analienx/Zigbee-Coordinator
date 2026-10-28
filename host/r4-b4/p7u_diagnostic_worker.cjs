@@ -66,7 +66,8 @@ function sameRecord(entry) {
             "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs",
             "npiRequests","uartWriteAccepted","uartWriteRejected","uartStateFlags",
             "firstUartFaultKind","firstUartFaultTick","b1FirstFailure"];
-        hold(exact(flight,["abi","pageSequence","eventCount","counters","events","source"]) &&
+        hold(exact(flight,["abi","pageSequence","eventCount","counters","events","source",
+             "firstAnomaly","preAnomaly"]) &&
             flight.abi===5 && flight.source==="RADIO_READ_ONLY" &&
             num(flight.pageSequence) && flight.pageSequence>0 &&
             num(flight.eventCount) && flight.eventCount<=16 &&
@@ -80,7 +81,7 @@ function sameRecord(entry) {
             (flight.counters.firstUartFaultKind!==0 || flight.counters.firstUartFaultTick===0) &&
             flight.counters.clockTickPeriodUs>0 &&
             flight.counters.clockTickPeriodUs<=100000 &&
-            flight.counters.validityFlags<=3 &&
+            flight.counters.validityFlags<=7 &&
             (flight.counters.validityFlags&2)===2 &&
             flight.counters.eventCount===Math.min(flight.counters.eventTotal,16) &&
             Array.isArray(flight.events) &&
@@ -92,6 +93,21 @@ function sameRecord(entry) {
                 event.stage>=1 && event.stage<=9 &&
                 !(event.stage===8 && event.result===0) &&
                 names.includes(event.subsystem), "V5_FLIGHT_EVENT");
+        }
+        const validAnomaly=(event,required)=>event!==null &&
+            exact(event,["tick","stage","subsystem","result"]) &&
+            num(event.tick) && num(event.result) && num(event.stage) &&
+            event.stage>=1 && event.stage<=9 &&
+            !(event.stage===8 && event.result===0) &&
+            names.includes(event.subsystem) &&
+            (!required || ((event.stage===8 || event.stage===9) && event.result!==0));
+        if ((flight.counters.validityFlags&4)===4) {
+            hold(validAnomaly(flight.firstAnomaly,true) &&
+                (flight.preAnomaly===null || validAnomaly(flight.preAnomaly,false)),
+                "V5_FROZEN_ANOMALY");
+        } else {
+            hold(flight.firstAnomaly===null && flight.preAnomaly===null,
+                 "V5_UNQUALIFIED_ANOMALY");
         }
         hold(Number.isSafeInteger(entry.probeLatencyMs) &&
             entry.probeLatencyMs>=0 && entry.probeLatencyMs<=30000 &&
