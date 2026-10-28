@@ -44,7 +44,7 @@ static uint16_t TX_DONE_ISR_EVENT_FLAG,MRDY_ISR_EVENT_FLAG,TRANSPORT_RX_ISR_EVEN
 static NPI_QueueRec *queueData[1024];
 static unsigned pending,transmitted,posts,freed,cs_depth,queue_checks;
 static bool npiTxActive,hold,inject_on_second_empty_check;
-static unsigned queues_seen_at_enter,cycles;
+static unsigned cycles;
 static int queue_object,semaphore_object;
 static void *npiTxQueue=&queue_object,*npiSemHandle=&semaphore_object;
 static uint32_t OsalPort_enterCS(void){return ++cs_depth;}
