@@ -1,1 +1,0 @@
-{"entries": [{"claim": "dup domain key probe", "domain": "startup-order", "domain": "startup-order", "evidence": "e", "id": "M-01", "status": "SOURCE_CONFIRMED", "verification": "v"}], "issue": 85, "phase": "R4-00-fixture", "schema": "r4-parity-matrix-v1", "status_notes": "negative fixture: duplicate JSON key must be rejected by the strict loader before any guard runs"}

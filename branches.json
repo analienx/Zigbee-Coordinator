@@ -1,0 +1,836 @@
+{
+  "archived_pull_requests": [
+    {
+      "contained_in_live": true,
+      "head": "fix/p7u-f2-v42-causal-lifecycle-20261027",
+      "number": 171,
+      "reason": "contained in delivered PR172",
+      "sha": "6975ef2573b89c0e33a93addd6360e84f16f3cf9"
+    },
+    {
+      "contained_in_live": true,
+      "head": "fix/p7u-r4-4cfe-f2-v42-radio-20261027",
+      "number": 170,
+      "reason": "contained in delivered PR172",
+      "sha": "9d7c0c37cda31e1c4cf2adfc30fc216f5a9cf02b"
+    },
+    {
+      "contained_in_live": true,
+      "head": "fix/p7u-passive-usb-unpi-boundary-20261027",
+      "number": 169,
+      "reason": "contained in delivered PR172",
+      "sha": "95017c94b673cb4777bf5f1c9e1675c2098928d6"
+    },
+    {
+      "contained_in_live": true,
+      "head": "fix/p7u-f2-durable-30m-slo-20261027",
+      "number": 168,
+      "reason": "contained in delivered PR172",
+      "sha": "bf2379425e3650a556c04ad0e8643a5da58a0bd5"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-f2-incident-host-livebase-20261027",
+      "number": 167,
+      "reason": "contained in delivered PR172",
+      "sha": "c5d8b0ce6fdf90aaf02393997bd192e04259d224"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-f2-freshness-20261026",
+      "number": 166,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "68d0c4087d45a49ac35452964e97bfb503942add"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-r4-4cfe-release-20261026",
+      "number": 164,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "c30e29e3448ca71937272e420cba70e3884e5ae2"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-af-srsp-handoff-20261026",
+      "number": 162,
+      "reason": "contained in delivered PR172",
+      "sha": "4cfe317083c2a3d1b784350b0ab960e27218e618"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-uart-firmware-only-20261026",
+      "number": 159,
+      "reason": "contained in delivered PR172",
+      "sha": "afbb7a8445f0454d53038ed34b4110fa29a5d671"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-r4-reliability-20261026",
+      "number": 158,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "4efc2f2f7babfa3ad991b9db4e135ce1439ae684"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-r4-flash-final-20261025",
+      "number": 157,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "4ae99422a604e044007dc9261e07804cc105cea4"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-eot-event-contract-20261025",
+      "number": 156,
+      "reason": "contained in delivered PR172",
+      "sha": "f9fd9bffa7161b576fecf07d1473eeff8c1f5035"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-pr154-ha-local-operator-20261025",
+      "number": 155,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "f609878518624f5b4e1da99ce1560e42d8acd763"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-mt-srsp-handoff-20261025",
+      "number": 154,
+      "reason": "contained in delivered PR172",
+      "sha": "2499154215c40ab6435b90886be96c8af6e37a74"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-collector-fallback-fix-20261025",
+      "number": 153,
+      "reason": "contained in delivered PR172",
+      "sha": "068ae05e9f9a8cc57dfd89d834c6dc8fe22f9ee6"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-under-five-20261024",
+      "number": 152,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "303e4bff0aeafc76ea1d7ad6b445f2582a3155f9"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-native-resume-confirm-20261024",
+      "number": 151,
+      "reason": "contained in delivered PR172",
+      "sha": "3c7dd95c99194ec5e62a70ea4ff9e55f47cc470d"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-tc-compat-20261024",
+      "number": 150,
+      "reason": "contained in delivered PR172",
+      "sha": "57ab8d0fc51475dc16ed6305d69000d7ac51ba81"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-usb-fast-cutover-20261024",
+      "number": 149,
+      "reason": "contained in delivered PR172",
+      "sha": "dae80a1a7f5fc4a2d2852a55f8d78c40b2eeac69"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-f2-safety-takeover-20261023",
+      "number": 148,
+      "reason": "contained in delivered PR172",
+      "sha": "5d9967ab601f0010a1880ac88b1695cb15e0cb32"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-f2-live-collector-20261022",
+      "number": 147,
+      "reason": "contained in delivered PR172",
+      "sha": "20737646e175df60c7d5e0af1d1b9880c2a8909f"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-operator-unchanged-boot-20261022",
+      "number": 142,
+      "reason": "contained in delivered PR172",
+      "sha": "f766f77ead8d5b5c09f42b1c9362264a3b7966b1"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-r4-p0-firmware-nib-resume-20261020",
+      "number": 141,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "861247c8a571978db28f5d467d850c3345e2dd8d"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/p7u-r4-p0-nondestructive-startup-20261020",
+      "number": 140,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "a40ab096d22c676f1aa23f491ef1d4614bd125fe"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/r4-b4-p2-symlink-containment-20261019",
+      "number": 138,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-review-fixes-20261018",
+      "number": 136,
+      "reason": "contained in delivered PR172",
+      "sha": "323949a95c9a07901c4ffc3d026fca414982c148"
+    },
+    {
+      "contained_in_live": true,
+      "head": "codex/p7u-r4-qualified-profiles",
+      "number": 135,
+      "reason": "contained in delivered PR172",
+      "sha": "e3b01300db9aaf3ed000ee3daff485ee286f7348"
+    },
+    {
+      "contained_in_live": true,
+      "head": "experiment/r4-p7u-fitted-direct-ccfg-20261017",
+      "number": 134,
+      "reason": "contained in delivered PR172",
+      "sha": "a4e63868f30f85648fd235c262510df308d51b51"
+    },
+    {
+      "contained_in_live": true,
+      "head": "experiment/r4-p7u-direct-rom-boot-20261017",
+      "number": 133,
+      "reason": "contained in delivered PR172",
+      "sha": "99c293678bf2943a489440be4ebdcafc6b30d69b"
+    },
+    {
+      "contained_in_live": true,
+      "head": "fix/r4-p7u-preserve-resident-boot-nv-20261017",
+      "number": 132,
+      "reason": "contained in delivered PR172",
+      "sha": "a5e2603a33c2087ce148daee29b31d021560327b"
+    },
+    {
+      "contained_in_live": true,
+      "head": "safety/r4-p7u-isolated-flash-preflight-20261017",
+      "number": 131,
+      "reason": "contained in delivered PR172",
+      "sha": "64b00c9faaa17da4ecb3df594c2f3fb5a613ae70"
+    },
+    {
+      "contained_in_live": true,
+      "head": "test/r4-composite-security-faults-20261017",
+      "number": 130,
+      "reason": "contained in delivered PR172",
+      "sha": "c9c53b5d8359c3b53538653f769419035e61cd5c"
+    },
+    {
+      "contained_in_live": true,
+      "head": "integration/r4-final-source-composite-seed-nvocmp-20261017",
+      "number": 129,
+      "reason": "contained in delivered PR172",
+      "sha": "71cc17ad84d4e78a185f70a004f2dab27d0d2444"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b3-seed-derivation-status-hold-20261017",
+      "number": 128,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "d9f6ea1f463b7be4f72f8ecd22fd0eb4d64fc193"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b1-b3-nvocmp-compaction-fusion-20261017",
+      "number": 127,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "1923a0b0e843594077700e8c395edc736e1d9c8f"
+    },
+    {
+      "contained_in_live": true,
+      "head": "integration/r4-b0-b4-composite-native-20261017",
+      "number": 126,
+      "reason": "contained in delivered PR172",
+      "sha": "fe62e0bb4540db777def147c7d8e52c8b888adb7"
+    },
+    {
+      "contained_in_live": true,
+      "head": "integration/r4-b1-b3-security-fusion-20261017",
+      "number": 125,
+      "reason": "contained in delivered PR172",
+      "sha": "e7ca9c0f8d3212e3f09915bd80e3b3654484306c"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b0-sector-erase-denial-20261017",
+      "number": 124,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "fcb7aab43fe057a67cc8495c1320eeed582687ff"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b3-nwk-counter-monotonic-20261017",
+      "number": 123,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "b481e0beabf1966900644f69d7f5d024708ebf73"
+    },
+    {
+      "contained_in_live": true,
+      "head": "fix/r4-b1-b4-f2-hold-admission-20261017",
+      "number": 122,
+      "reason": "contained in delivered PR172",
+      "sha": "140c38f19dbd90225ba86e0511f24469e0d243f0"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b2-mto-nv-failclosed-20261017",
+      "number": 121,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "d13a48f5226d42e247a17d9198d84c94a4415030"
+    },
+    {
+      "contained_in_live": false,
+      "head": "feat/r4-b5-b1-b4-source-compose-20261017",
+      "number": 120,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "cb3b98b8b1beb3049a7970ea459638b8c8ededda"
+    },
+    {
+      "contained_in_live": false,
+      "head": "integration/r4-b0-b4-source-convergence-20261017",
+      "number": 119,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "835fb7cb4714379a0cc8a1d9471623151d769cd4"
+    },
+    {
+      "contained_in_live": false,
+      "head": "integration/r4-b1-b2-b3-capacity-20261017",
+      "number": 118,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "2060c6a6ff96d665c8ac9175675a0197c31d6143"
+    },
+    {
+      "contained_in_live": false,
+      "head": "integration/r4-b1-b3-nv-compaction-journal-20261017",
+      "number": 117,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "2a61bf7e0f55cd678d99f55a0974c79abc7ed2da"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b0-sector-deny-proof-20261017",
+      "number": 116,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "bc4be05080013da05951edc517e5846efe16ab73"
+    },
+    {
+      "contained_in_live": false,
+      "head": "integration/r4-b1-b3-nwk-verified-checkpoint-20261017",
+      "number": 115,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "0b291f876d742ffa89d3484eeb8d0c2770dde9b8"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-b2-mto-scope-safe-20261017",
+      "number": 114,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "530a52631fbde274a2ae356c490bad71b47168a6"
+    },
+    {
+      "contained_in_live": true,
+      "head": "fix/r4-review-ii-b1-rf-source-gates-20261017",
+      "number": 112,
+      "reason": "contained in delivered PR172",
+      "sha": "cbe9b9f7ca3fcb2783065221c8b115648291c7a3"
+    },
+    {
+      "contained_in_live": false,
+      "head": "integration/r4-review-ii-composite-preflight-20261017",
+      "number": 111,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "2a1e59720b86f8ff7e3c8479bf75df41d18b474a"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-review-ii-b4-f2-link-audit-20261017",
+      "number": 110,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "3231abb1f13210eb88afe13ff7b7f9f29709cd6b"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-review-ii-provenance-20261017",
+      "number": 109,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "19d054161dd483f5c32ae574b65742650d923d49"
+    },
+    {
+      "contained_in_live": false,
+      "head": "fix/r4-review-ii-b3-security-20261017",
+      "number": 108,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "6dfc731ae4aabb905cb61c13af2840766e2c9dfc"
+    },
+    {
+      "contained_in_live": false,
+      "head": "review/r4-global-review-ii-20261017",
+      "number": 107,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "a71b40019adc59389da75fbe693039c7ba7a56bd"
+    },
+    {
+      "contained_in_live": false,
+      "head": "research/r4-spark13-xhigh-subscription-ci-pilot-20261017",
+      "number": 106,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "765b780b55a7cc561fbde370ed44575f50364bd7"
+    },
+    {
+      "contained_in_live": false,
+      "head": "feat/b4-v4-boot-nonce-20261017",
+      "number": 105,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a"
+    },
+    {
+      "contained_in_live": false,
+      "head": "feat/p7u-r4-b4-issue98",
+      "number": 100,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "981ce098658a40aa3145916a2f08a155aaa0367e"
+    },
+    {
+      "contained_in_live": false,
+      "head": "codex/r4-b3-nv-security-offline",
+      "number": 99,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "9b72e4fee2cb8adca89c4afed72dfa7db90d5163"
+    },
+    {
+      "contained_in_live": false,
+      "head": "feat/p7u-r4-b2-routing-capacity",
+      "number": 96,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "0b06ef8b2fd4fc3008c228208e7a16e1c86d8492"
+    },
+    {
+      "contained_in_live": true,
+      "head": "feat/r4-b1-codex-snapshot-20261016",
+      "number": 94,
+      "reason": "contained in delivered PR172",
+      "sha": "a514c194ea0d94b5d38b28c7b07ca5caba9aeffd"
+    },
+    {
+      "contained_in_live": true,
+      "head": "feat/r4-b1-direct-nv-safety-20261016",
+      "number": 93,
+      "reason": "contained in delivered PR172",
+      "sha": "c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f"
+    },
+    {
+      "contained_in_live": false,
+      "head": "review/p7u-r4-issue87-independent-fixes",
+      "number": 89,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "dc74b44019853f8b6cadf75c4e6e940fc715c906"
+    },
+    {
+      "contained_in_live": false,
+      "head": "feat/p7u-r4-diagnostic-first-issue87",
+      "number": 88,
+      "reason": "historical P7U candidate archived after delivered PR172",
+      "sha": "6c96e18e985ed6d1aae73ac7a5b5b51ec416574c"
+    },
+    {
+      "contained_in_live": true,
+      "head": "feat/p7u-r4-stock-derived-redesign",
+      "number": 86,
+      "reason": "contained in delivered PR172",
+      "sha": "38dbd279cd7112579726a38862ec3048b44ab5b3"
+    }
+  ],
+  "date": "2026-10-28",
+  "deleted_branch_tips": [
+    {
+      "branch": "base/p7u-r4-b0-sealed-for-b2",
+      "sha": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe"
+    },
+    {
+      "branch": "codex/p7u-collector-fallback-fix-20261025",
+      "sha": "068ae05e9f9a8cc57dfd89d834c6dc8fe22f9ee6"
+    },
+    {
+      "branch": "codex/p7u-f2-freshness-20261026",
+      "sha": "68d0c4087d45a49ac35452964e97bfb503942add"
+    },
+    {
+      "branch": "codex/p7u-f2-incident-host-livebase-20261027",
+      "sha": "c5d8b0ce6fdf90aaf02393997bd192e04259d224"
+    },
+    {
+      "branch": "codex/p7u-f2-safety-takeover-20261023",
+      "sha": "5d9967ab601f0010a1880ac88b1695cb15e0cb32"
+    },
+    {
+      "branch": "codex/p7u-nv4-hold-forensics-20261020",
+      "sha": "39adcd09d886d7f1c9bd2fffc0e787b5358dc62f"
+    },
+    {
+      "branch": "codex/p7u-pr154-ha-local-operator-20261025",
+      "sha": "f609878518624f5b4e1da99ce1560e42d8acd763"
+    },
+    {
+      "branch": "codex/p7u-r1-r5-finalize-20261019",
+      "sha": "933edf14144d542b607be56f0c7edbb9d66500bc"
+    },
+    {
+      "branch": "codex/p7u-r4-4cfe-release-20261026",
+      "sha": "c30e29e3448ca71937272e420cba70e3884e5ae2"
+    },
+    {
+      "branch": "codex/p7u-r4-af-release-20261026",
+      "sha": "fe11f4cec2f1de564e3c4000fc876b33e2845345"
+    },
+    {
+      "branch": "codex/p7u-r4-af-srsp-handoff-20261026",
+      "sha": "4cfe317083c2a3d1b784350b0ab960e27218e618"
+    },
+    {
+      "branch": "codex/p7u-r4-afbb-operator-20261026",
+      "sha": "de1d76ecd33947c2641ec843a3507c5c95d6ee2f"
+    },
+    {
+      "branch": "codex/p7u-r4-eot-event-contract-20261025",
+      "sha": "f9fd9bffa7161b576fecf07d1473eeff8c1f5035"
+    },
+    {
+      "branch": "codex/p7u-r4-f2-live-collector-20261022",
+      "sha": "20737646e175df60c7d5e0af1d1b9880c2a8909f"
+    },
+    {
+      "branch": "codex/p7u-r4-flash-final-20261025",
+      "sha": "4ae99422a604e044007dc9261e07804cc105cea4"
+    },
+    {
+      "branch": "codex/p7u-r4-mt-srsp-handoff-20261025",
+      "sha": "2499154215c40ab6435b90886be96c8af6e37a74"
+    },
+    {
+      "branch": "codex/p7u-r4-native-resume-confirm-20261024",
+      "sha": "3c7dd95c99194ec5e62a70ea4ff9e55f47cc470d"
+    },
+    {
+      "branch": "codex/p7u-r4-operator-unchanged-boot-20261022",
+      "sha": "f766f77ead8d5b5c09f42b1c9362264a3b7966b1"
+    },
+    {
+      "branch": "codex/p7u-r4-p0-firmware-nib-resume-20261020",
+      "sha": "861247c8a571978db28f5d467d850c3345e2dd8d"
+    },
+    {
+      "branch": "codex/p7u-r4-p0-nondestructive-startup-20261020",
+      "sha": "a40ab096d22c676f1aa23f491ef1d4614bd125fe"
+    },
+    {
+      "branch": "codex/p7u-r4-qualified-profiles",
+      "sha": "e3b01300db9aaf3ed000ee3daff485ee286f7348"
+    },
+    {
+      "branch": "codex/p7u-r4-reliability-20261026",
+      "sha": "4efc2f2f7babfa3ad991b9db4e135ce1439ae684"
+    },
+    {
+      "branch": "codex/p7u-r4-review-base-2bcda75-20261018",
+      "sha": "2bcda75ea31380c0ef15586c20192c222e58923b"
+    },
+    {
+      "branch": "codex/p7u-r4-review-fixes-20261018",
+      "sha": "323949a95c9a07901c4ffc3d026fca414982c148"
+    },
+    {
+      "branch": "codex/p7u-r4-uart-firmware-only-20261026",
+      "sha": "afbb7a8445f0454d53038ed34b4110fa29a5d671"
+    },
+    {
+      "branch": "codex/p7u-stock20260311-finalize-20261020",
+      "sha": "b3d5eca5f711f2da702bafeeaa755c5b94ba8387"
+    },
+    {
+      "branch": "codex/p7u-tc-compat-20261024",
+      "sha": "57ab8d0fc51475dc16ed6305d69000d7ac51ba81"
+    },
+    {
+      "branch": "codex/p7u-under-five-20261024",
+      "sha": "303e4bff0aeafc76ea1d7ad6b445f2582a3155f9"
+    },
+    {
+      "branch": "codex/p7u-usb-fast-cutover-20261024",
+      "sha": "dae80a1a7f5fc4a2d2852a55f8d78c40b2eeac69"
+    },
+    {
+      "branch": "codex/p7u-win-reader-20261020",
+      "sha": "dfbe452a00bcbfcbb5cd0f56505fd1766140238f"
+    },
+    {
+      "branch": "codex/r4-b3-nv-security-offline",
+      "sha": "9b72e4fee2cb8adca89c4afed72dfa7db90d5163"
+    },
+    {
+      "branch": "codex/r4-b4-p2-symlink-containment-20261019",
+      "sha": "6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88"
+    },
+    {
+      "branch": "codex/r4-b4-review-base-3231abb-20261019",
+      "sha": "3231abb1f13210eb88afe13ff7b7f9f29709cd6b"
+    },
+    {
+      "branch": "docs/p7u-r4-serving-acceptance-20261026",
+      "sha": "cffcb3ee6eae5979d3caa06cab3b8dffe9cfde6e"
+    },
+    {
+      "branch": "experiment/r4-p7u-direct-rom-boot-20261017",
+      "sha": "99c293678bf2943a489440be4ebdcafc6b30d69b"
+    },
+    {
+      "branch": "experiment/r4-p7u-fitted-direct-ccfg-20261017",
+      "sha": "a4e63868f30f85648fd235c262510df308d51b51"
+    },
+    {
+      "branch": "feat/b4-uart-tx-finished-sourced-20261017",
+      "sha": "cc50d417bc4da07a8b119674acdd74951b2b2563"
+    },
+    {
+      "branch": "feat/b4-v4-boot-nonce-20261017",
+      "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a"
+    },
+    {
+      "branch": "feat/b4-v4-epoch-nonce-20261017",
+      "sha": "39505f92bd870afb816113754236d99d61057c98"
+    },
+    {
+      "branch": "feat/b4-z2m-ota-guard-20261017",
+      "sha": "981ce098658a40aa3145916a2f08a155aaa0367e"
+    },
+    {
+      "branch": "feat/p7u-r4-b0-native-issue90",
+      "sha": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe"
+    },
+    {
+      "branch": "feat/p7u-r4-b2-routing-capacity",
+      "sha": "0b06ef8b2fd4fc3008c228208e7a16e1c86d8492"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-host-hardening",
+      "sha": "d23173677cebbe9deaad126df79eddb1e121e7ff"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-issue98",
+      "sha": "981ce098658a40aa3145916a2f08a155aaa0367e"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-native-npi-depth-counters",
+      "sha": "e1d2e488661333f64607f7dd32a7f1bb6d901fec"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-queued-f0-racefix",
+      "sha": "82c1ddb1e7cc948c274fc744434a97cb1c7cb9bc"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-review-hardening-20261017",
+      "sha": "9352a2d3b42ad7bd573b2b2b34845814be2b6078"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-srsp-general-queue-safe-counter",
+      "sha": "c4deba8984b4114647da789fae91165f629e3abd"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-sync-npi-compile-guard",
+      "sha": "7d8144655a082ad3e0c721fe1b661831414ff9c9"
+    },
+    {
+      "branch": "feat/p7u-r4-b4-z2m-source-gate",
+      "sha": "802c149dc92e61cb61a1a05a20181ea05a3dd6fe"
+    },
+    {
+      "branch": "feat/p7u-r4-diagnostic-first-issue87",
+      "sha": "6c96e18e985ed6d1aae73ac7a5b5b51ec416574c"
+    },
+    {
+      "branch": "feat/p7u-r4-stock-derived-redesign",
+      "sha": "38dbd279cd7112579726a38862ec3048b44ab5b3"
+    },
+    {
+      "branch": "feat/r4-b1-codex-snapshot-20261016",
+      "sha": "a514c194ea0d94b5d38b28c7b07ca5caba9aeffd"
+    },
+    {
+      "branch": "feat/r4-b1-direct-nv-safety-20261016",
+      "sha": "c86ccd1aa6ca6fc0405f656a7b8d9ce78784746f"
+    },
+    {
+      "branch": "feat/r4-b5-b1-b4-source-compose-20261017",
+      "sha": "cb3b98b8b1beb3049a7970ea459638b8c8ededda"
+    },
+    {
+      "branch": "fix/b4-final-owner-close-guard-20261017",
+      "sha": "6d824128f53e5ef1d645509847f476dff89e6aeb"
+    },
+    {
+      "branch": "fix/b4-v4-native-receipt-20261017",
+      "sha": "a36e0d8e74b40c972ce3807c6b536f2cb7530779"
+    },
+    {
+      "branch": "fix/b4-v4-trng-timeout-redaction-20261017",
+      "sha": "4019a7daa5e9dd1d8b7d71348439bbce481c281b"
+    },
+    {
+      "branch": "fix/b4-v4-trng-timeout-units-20261017",
+      "sha": "b09c6c1c2bb55ff7d46dd85ea15622e7f3a21e6a"
+    },
+    {
+      "branch": "fix/p7u-f2-durable-30m-slo-20261027",
+      "sha": "bf2379425e3650a556c04ad0e8643a5da58a0bd5"
+    },
+    {
+      "branch": "fix/p7u-f2-v42-causal-lifecycle-20261027",
+      "sha": "6975ef2573b89c0e33a93addd6360e84f16f3cf9"
+    },
+    {
+      "branch": "fix/p7u-passive-usb-unpi-boundary-20261027",
+      "sha": "95017c94b673cb4777bf5f1c9e1675c2098928d6"
+    },
+    {
+      "branch": "fix/p7u-r4-4cfe-f2-v42-radio-20261027",
+      "sha": "9d7c0c37cda31e1c4cf2adfc30fc216f5a9cf02b"
+    },
+    {
+      "branch": "fix/r4-b0-sector-deny-proof-20261017",
+      "sha": "bc4be05080013da05951edc517e5846efe16ab73"
+    },
+    {
+      "branch": "fix/r4-b0-sector-erase-denial-20261017",
+      "sha": "fcb7aab43fe057a67cc8495c1320eeed582687ff"
+    },
+    {
+      "branch": "fix/r4-b1-b3-nvocmp-compaction-fusion-20261017",
+      "sha": "1923a0b0e843594077700e8c395edc736e1d9c8f"
+    },
+    {
+      "branch": "fix/r4-b1-b4-f2-hold-admission-20261017",
+      "sha": "140c38f19dbd90225ba86e0511f24469e0d243f0"
+    },
+    {
+      "branch": "fix/r4-b2-mto-nv-admission-20261017",
+      "sha": "8a2bcc79881ca18bfe5340c01b5a40a7abb399f0"
+    },
+    {
+      "branch": "fix/r4-b2-mto-nv-failclosed-20261017",
+      "sha": "d13a48f5226d42e247a17d9198d84c94a4415030"
+    },
+    {
+      "branch": "fix/r4-b2-mto-scope-safe-20261017",
+      "sha": "530a52631fbde274a2ae356c490bad71b47168a6"
+    },
+    {
+      "branch": "fix/r4-b3-nwk-counter-monotonic-20261017",
+      "sha": "b481e0beabf1966900644f69d7f5d024708ebf73"
+    },
+    {
+      "branch": "fix/r4-b3-seed-derivation-status-hold-20261017",
+      "sha": "d9f6ea1f463b7be4f72f8ecd22fd0eb4d64fc193"
+    },
+    {
+      "branch": "fix/r4-p7u-preserve-resident-boot-nv-20261017",
+      "sha": "a5e2603a33c2087ce148daee29b31d021560327b"
+    },
+    {
+      "branch": "fix/r4-review-ii-b1-rf-source-gates-20261017",
+      "sha": "cbe9b9f7ca3fcb2783065221c8b115648291c7a3"
+    },
+    {
+      "branch": "fix/r4-review-ii-b3-security-20261017",
+      "sha": "6dfc731ae4aabb905cb61c13af2840766e2c9dfc"
+    },
+    {
+      "branch": "fix/r4-review-ii-b4-f2-link-audit-20261017",
+      "sha": "3231abb1f13210eb88afe13ff7b7f9f29709cd6b"
+    },
+    {
+      "branch": "fix/r4-review-ii-provenance-20261017",
+      "sha": "19d054161dd483f5c32ae574b65742650d923d49"
+    },
+    {
+      "branch": "integration/r4-b0-b4-composite-native-20261017",
+      "sha": "fe62e0bb4540db777def147c7d8e52c8b888adb7"
+    },
+    {
+      "branch": "integration/r4-b0-b4-source-convergence-20261017",
+      "sha": "835fb7cb4714379a0cc8a1d9471623151d769cd4"
+    },
+    {
+      "branch": "integration/r4-b1-b2-b3-capacity-20261017",
+      "sha": "2060c6a6ff96d665c8ac9175675a0197c31d6143"
+    },
+    {
+      "branch": "integration/r4-b1-b3-b2-native-20261017",
+      "sha": "e7ca9c0f8d3212e3f09915bd80e3b3654484306c"
+    },
+    {
+      "branch": "integration/r4-b1-b3-nv-compaction-journal-20261017",
+      "sha": "2a61bf7e0f55cd678d99f55a0974c79abc7ed2da"
+    },
+    {
+      "branch": "integration/r4-b1-b3-nwk-verified-checkpoint-20261017",
+      "sha": "0b291f876d742ffa89d3484eeb8d0c2770dde9b8"
+    },
+    {
+      "branch": "integration/r4-b1-b3-security-fusion-20261017",
+      "sha": "e7ca9c0f8d3212e3f09915bd80e3b3654484306c"
+    },
+    {
+      "branch": "integration/r4-final-source-composite-seed-nvocmp-20261017",
+      "sha": "71cc17ad84d4e78a185f70a004f2dab27d0d2444"
+    },
+    {
+      "branch": "integration/r4-review-ii-composite-preflight-20261017",
+      "sha": "2a1e59720b86f8ff7e3c8479bf75df41d18b474a"
+    },
+    {
+      "branch": "r4/b3-b0-base-1baefbee",
+      "sha": "1baefbee8e4de2c9d28c5e1a7c339cf2025a2afe"
+    },
+    {
+      "branch": "research/r4-spark13-xhigh-subscription-ci-pilot-20261017",
+      "sha": "765b780b55a7cc561fbde370ed44575f50364bd7"
+    },
+    {
+      "branch": "review/p7u-r4-issue87-independent-fixes",
+      "sha": "dc74b44019853f8b6cadf75c4e6e940fc715c906"
+    },
+    {
+      "branch": "review/r4-b0-postmerge-qualification-20261017",
+      "sha": "42ef3bf0595e128b3d9cdf5b62864bd5b7fb63dd"
+    },
+    {
+      "branch": "review/r4-global-review-ii-20261017",
+      "sha": "a71b40019adc59389da75fbe693039c7ba7a56bd"
+    },
+    {
+      "branch": "safety/r4-p7u-isolated-flash-preflight-20261017",
+      "sha": "64b00c9faaa17da4ecb3df594c2f3fb5a613ae70"
+    },
+    {
+      "branch": "test/r4-composite-security-faults-20261017",
+      "sha": "c9c53b5d8359c3b53538653f769419035e61cd5c"
+    }
+  ],
+  "maintained_prs": [
+    60,
+    146,
+    172
+  ],
+  "purpose": "Historical P7U candidates and superseded drafts, retained without merging their code into main or the delivered source.",
+  "repository": "analienx/Zigbee-Coordinator",
+  "restore": "git switch -c <chosen-name> <recorded-sha>; reopen the retained GitHub PR if needed.",
+  "schema": "public-git-branch-archive-v1"
+}
