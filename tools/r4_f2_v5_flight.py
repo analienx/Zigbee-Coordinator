@@ -275,7 +275,7 @@ def apply(sdk):
     if (MARKER in n or "B4_V45_STATIC_SRSP_RESERVE" not in n or
             "B4_F2_V43_PROGRESS" not in m or "B4_V44_Snapshot" not in s):
         raise ValueError("V5_REQUIRES_PINNED_V45_FULL_COMPOSITE")
-    /* Both NPI process and V4.4 queue precede V5 function definitions. */
+    # Both NPI process and V4.4 queue precede V5 definitions.
     n=once(n,"static Queue_Handle npiTxQueue;",
         "static Queue_Handle npiTxQueue;\n"
         "void B4_V5_Record(uint8_t, uint16_t, uint8_t);\n"
