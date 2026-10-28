@@ -58,7 +58,7 @@ void B4_V5_Record(uint8_t stage, uint16_t command, uint8_t result)
 {
     uint32_t key, index, tick;
     /* The diagnostic query must never bury the user's incident evidence. */
-    if (command == 0x21f2u) return;
+    if (command == 0x21f2u || command == 0x61f2u) return;
     key=OsalPort_enterCS();
     tick=Clock_getTicks();
     if (B4_V5_EventTotal != UINT32_MAX)
