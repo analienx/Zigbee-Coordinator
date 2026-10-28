@@ -1,30 +1,54 @@
 ---
 name: p7u-rom-bsl-recovery
-description: Restore a confirmed SLZB-06P7U CC2652P7 USB ZNP/SRSP hard hang. Priority-1 evidence-preserving TI ROM bootloader round-trip to existing firmware, with no flash or power cycle, followed by real Z2M device-MQTT verification.
+description: Recover a confirmed SLZB-06P7U CC2652P7 USB ZNP/SRSP hang through a qualified no-write ROM round-trip and retained startup. Verify fresh device traffic; network restoration and firmware flashing are separate tasks.
+metadata:
+  version: "2.0.0"
 ---
 
-# P7U first-line production hard-hang recovery
+# P7U USB hang recovery
 
-**Read the canonical detailed procedure before any physical action:** [HANG_RECOVERY_RUNBOOK.md](../../coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md).
+Read [the maintained runbook](../../coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md)
+before physical actions. Use existing task authorization; this skill grants no
+additional device permissions. Preserve a healthy running service during source,
+Git or skill maintenance.
 
-## Selection
+## Select the operation
 
-Choose this only for **proven local ZNP/SRSP failure** affecting the sole SLZB-06P7U; not ordinary unreachable routers or a slow network map. Prefer restoration of household service before longer root-cause repair. **Do not** begin with Zigbee-only/ESP-only restart loops; they failed on 27-Oct-2026, when the TI ROM BSL round-trip recovered.
+Confirm adapter-local SRSP failure and lost fresh device traffic. Individual
+offline devices, NWK_NO_ROUTE or a stale F2 sample alone do not establish a hang.
+Resolve the current owner and device identity from read-only evidence. P10/MR4U
+and missing-network restoration use different procedures.
 
-## One-shot guarded sequence
+## Qualified sequence
 
-1. Freeze prior F2, passive host, Z2M/MQTT logs and verified DB/coordinator NV/security backups; no serial owner, no OTA, disabled watchdog/guard. Pin CC2652P7 device, SMLIGHT management MAC/OS, USB by-id path and vendor JS SHA/command map.
-2. Create **new per-incident** locked and fsynced **consumed-before-send** marker. With exclusive USB access, source-verified SMLIGHT **CMD_ZB_BSL=2**, then read-only TI ROM SYNC/CHIP_ID **0xf000** and optional limited APP/CCFG CRC. Close the ROM serial port. No erase/download/NV writes.
-3. Create another durable intent, then verified SMLIGHT **CMD_ZB_RST=1** into unchanged existing APP (not an ESP reset or factory reset).
-4. Create a separate host-start intent, start **one** existing Z2M owner and verify completed herdsman/SYS/AF/ZDO startup, MQTT connection and **new authenticated non-retained MQTT device reports from multiple devices**. Interpret Supervisor API timeouts by checking actual state; no blind retry.
-5. Record result privately; do not replay consumed historical commands/scripts. If any gate fails, **STOP** and inspect, don't reflexively flash, power-cycle or re-form the network.
+1. Freeze F2/passive logs and verified network/security backups before reset.
+   Require the sole host stopped, no other UART holder or OTA, disabled recovery
+   automation, and the lifecycle lock. Pin USB, management MAC/OS and API source.
+2. Use the qualified writer's order: **open the pinned USB port before BSL entry**,
+   then issue one source-verified BSL action. On the qualified OS this is
+   `CMD_ZB_BSL=2`. Keep the port open for ROM SYNC, chip ID `0xf000` and bounded
+   read-only CRCs checked against the actual installed-image receipts. Close ROM.
+3. For retained R4 requiring native readiness, open the qualified startup observer
+   before the one application boot (`CMD_ZB_RST=1`). Verify a fresh reset indication,
+   pristine source-bound B1 checkpoints and retained IEEE/key identity. Request
+   non-forming startup once and prove native READY/state9 before closing the port.
+   An already observed READY with incomplete terminal proof permits read-only
+   completion through the qualified operator, not repeated startup.
+4. Start the installed compatible host once, then verify full herdsman startup,
+   MQTT and fresh non-retained reports from at least three devices. For F2 v4.3
+   delivery, verify three durable minor3 records with advancing counters, all20
+   progress/all18 response-stage fields and a valid journal chain/manifest.
 
-No **CMD_HARD_RESET=9**, no stock restore, no stale counter replay, no additional ZNP owner while serving. Flash is a **separate conditional decision** requiring new source-pinned image, full protected-sector and counter verification, operator approval and exact readback.
+Each side effect needs its own fsynced consumed-before-send intent. Reuse qualified
+source and fresh plans; historical one-shot scripts contain consumed state. An
+ambiguous ACK requires state inspection. A failed gate stops that operation.
 
-## What success means
+Do not substitute Core-first restart loops, intentional DTR/RTS experiments,
+transport-mode changes, `CMD_HARD_RESET=9`, NV replay or a firmware flash. Leave
+automatic recovery disabled. No second serial owner may run alongside Z2M.
 
-The 27-Oct physical incident: ordinary Zigbee restart failed at AF-register; ESP restart failed at SYS ping; entering TI ROM BSL, checking ROM and rebooting **unchanged R4** succeeded. Live independent MQTT v5 subscriber: **24 non-retained device messages across five devices in 5.7 seconds**; Z2M Supervisor started and container had zero restarts. **No flash, NV writes or external power removal.**
-
-This makes an APP runtime/NPI/UART-state lock or ESP/radio reset-bridge sequencing plausible, **not proven**. Focus engineering on actual BSL-vs-normal-reset hardware differences, first missing SRSP, radio RX/MT enqueue/dequeue/UART TX and independent ESP bridge counters. F2 lost its most important pre-hang window; don't call missing/unsupported F2 metrics zero.
-
-Relevant issues: [#143 recovery](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051), [#144 diagnostics](https://github.com/analienx/Zigbee-Coordinator/issues/144#issuecomment-6436979523).
+The 28-Oct result proves this sequence restores initial service without rewriting
+APP/AC000/NV/CCFG. It does not prove the startup or historical SRSP hang cured.
+Missing or skipped F2 observations remain missing, never zero.
+Track recovery in [#143](https://github.com/analienx/Zigbee-Coordinator/issues/143)
+and root-cause diagnostics in [#144](https://github.com/analienx/Zigbee-Coordinator/issues/144).

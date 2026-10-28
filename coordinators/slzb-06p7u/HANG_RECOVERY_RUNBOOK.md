@@ -1,6 +1,6 @@
 # SLZB-06P7U: Priority-1 hard-hang recovery — ROM/BSL round-trip
 
-**Operational decision (verified 2026-10-27):** When this P7U's local ZNP command/response path hangs, **first preserve evidence and perform a guarded ROM-bootloader round-trip, returning to the unchanged firmware**. Do not first repeat radio-only or ESP restarts; both failed in the October 27 incident. A physical power cut or reflash is **not required by this verified method**.
+**Operational decision (verified 27–28 October 2026):** When this P7U's local ZNP command/response path hangs, **first preserve evidence and perform a guarded ROM-bootloader round-trip, returning to the unchanged firmware**. Use the qualified writer's **USB-open-before-BSL-entry** ordering. Do not first repeat radio-only or ESP restarts. A physical power cut or reflash is **not required by this verified method**.
 
 **Scope:** the sole production SMLIGHT SLZB-06P7U, board R1.73, TI CC2652P7, SLZB-OS v3.4.3.dev1, USB mode, retained ~107-device network. Other coordinators, SLZB-OS versions and modes are *not automatically qualified*. Root-cause firmware work remains separately prioritized by [FIRMWARE_FIRST_POLICY.md](FIRMWARE_FIRST_POLICY.md).
 
@@ -26,22 +26,24 @@
 
 ### B. Enter and verify the TI ROM bootloader — without writing firmware
 
-- With no radio serial owner, issue exactly **one** approved SMLIGHT management **Zigbee BSL entry** using the source-verified action (on this pinned OS, `/api2?action=4&cmd=2`). The management `ok` ACK **does not alone prove** ROM entry.
-- After it settles, open **only** the pinned USB by-id at 115200 through the exact-source Python `SafeFastUsbRom` / `p7u_rom_lowlevel` transport from the qualified R4 release. Send one ROM SYNC, require the chip ID **`0xF000`**, and optionally read bounded, read-only ROM CRCs for APP sector 0 and CCFG. The 27-Oct incident measured APP sector-0 CRC32 `f713de7d` and CCFG-sector CRC32 `3c032e08`. These two checks prove ROM access, **not** full-image equality.
+- With no existing radio serial owner, **open only the pinned USB by-id at 115200 first**, through the exact-source `SafeFastUsbRom` / `p7u_rom_lowlevel` transport from the qualified release. Keep this temporary owner open through entry and verification. On 28-Oct, opening USB after BSL entry failed to obtain ROM ACKs; the writer's open-first order succeeded. The cause of that ordering dependency is unproven.
+- Write the durable entry intent, then issue exactly **one** approved SMLIGHT management **Zigbee BSL entry** using the source-verified action (on this pinned OS, `/api2?action=4&cmd=2`). After settling, use the qualified bounded stale-byte drain and send one ROM SYNC. Require chip ID **`0xF000`**, then bounded read-only CRCs for APP sector0, paired AC000 and CCFG as appropriate. Expected CRCs come from the actual current verified write/image and protected-sector receipts, never a historical firmware guess. A management `ok` ACK alone does not prove ROM entry, and three sector CRCs do not prove full-image equality.
 - **Always close the ROM UART before proceeding.** No erase, download, send-data, BSL re-entry retry, DTR/RTS probing or NV write. Failure to synchronize, unexpected chip ID, unexpected boot/CCFG or unexplained UART state is a STOP.
 
 ### C. Exit BSL to the **unchanged existing** R4 application
 
-- Write a new durable one-shot app-boot intent with the ROM read-only receipt and port-release proof.
-- With no ROM/Z2M owner, issue **one** source-verified **SMLIGHT Zigbee restart/application boot** action (qualified `CMD_ZB_RST=1`). This is **not** an ESP reset, factory reset, firmware flash or full power cut.
-- Permit application startup and confirm the exact USB by-id still exists. The radio image that previously served the network on 2026-10-26 was R4 source **`4cfe317083c2a3d1b784350b0ab960e27218e618`** with its paired APP+AC000. **No flash was executed in the 27-Oct recovery**.
+- After closing ROM, retained R4 that requires a native readiness handoff uses the qualified startup observer: open its temporary USB transport **before** application boot, with no Z2M owner. Write a fresh one-shot app-boot intent referencing the verified ROM receipt. Issue **one** identity-bound SMLIGHT Zigbee restart/application boot (qualified `CMD_ZB_RST=1`, or the matching verified native HA button).
+- Observe a fresh SYS reset indication before submitting requests. Through the source-qualified operator, verify pristine B1 checkpoints and retained coordinator IEEE/key identity, then request existing-network startup once with formation denied. Require source-bound native READY, coordinator state9 and terminal marker proof. If READY was already observed but terminal verification was incomplete, use the qualified read-only completion phase; do not reset or submit startup again.
+- Close the temporary startup UART before handing ownership to Z2M. A responding startup SRSP is request admission, not readiness: on 28-Oct it was followed by total status-response loss until ROM recovery. Do not repeat that request or silently substitute stock restore.
+- Resolve installed APP+AC000 provenance freshly. The 27-Oct recovery used source `4cfe317`; the 28-Oct recovery used verified source `899f179` and host `acaa002`. Neither recovery wrote firmware, NV or CCFG. Detailed [28-Oct delivery evidence](https://github.com/analienx/Zigbee-Coordinator/blob/56d022c56979990a3768373659844cfaac6de45d/docs/r4/b4/F2_V43_PAIRED_DELIVERY_20261027.md) remains source-pinned.
 
 ### D. Start exactly one host and prove **real serving**
 
 - Reconfirm port ownership zero and all recovery automation disabled. Write and fsync a **new** single-start intent before Supervisor starts the already installed host `local_p7u_r4_native_host` (27-Oct: `0.2.1-c5d8b0ce6fdf`). A Supervisor API call can time out while the container **has actually started**: inspect state and logs before any subsequent action; **do not repeat** the start on HTTP timeout.
 - Require full herdsman startup past SYS/AF registration, `Zigbee2MQTT started!`, an authenticated MQTT connection and no fatal NPI/SRSP errors. Do not run another UART diagnostic owner concurrently.
 - Independently sample a **read-only authenticated MQTT v5** subscriber on `zigbee2mqtt/+` using `retainHandling=2` (RH 2), discard `packet.retain=true` and broker bridge topics. Verify **new non-retained traffic from ≥3 distinct Zigbee device topics**. Initial Z2M startup publications alone are not sufficient evidence.
-- On **27-Oct**, Supervisor moved to `started`, Docker was `Running=true` with **RestartCount=0**, and the independent read-only subscriber captured **24 fresh non-retained messages from 5 device topics in 5.7 seconds** with no retained deliveries. This proves *initial household service restored*, not an unattended 7-day reliability soak.
+- For F2 v4.3 delivery, require three genuine minor3 records with all20 progress/all18 response-stage fields, advancing native sequence/counters and verified durable journal chain/manifest. Keep failed/skipped observations distinct from native zero. Ordinary recovery of an older ABI does not require unsupported minor3 fields.
+- On **27-Oct**, initial service proof was24 fresh non-retained messages from5 device topics in5.7 seconds. On **28-Oct**, it was6 fresh messages from3 devices in1.243 seconds, healthy host/zero restarts, then3 durable native F2 snapshots. These prove initial service and diagnostics; they do not prove the startup or long-running SRSP hang cured.
 
 ### E. Seal results
 
@@ -73,7 +75,7 @@ Earlier [22-Oct physical evidence](https://github.com/analienx/Zigbee-Coordinato
 
 **Best next discriminator (no intentional new hang):** Compare the board's actual source/logic for `CMD_ZB_BSL` versus `CMD_ZB_RST` (GPIO/reset/boot straps and UART mux); instrument independent ESP UART byte RX/TX, radio NPI receive → MT handler → SRSP enqueue/dequeue → physical TX-finished around first lost SRSP; preserve a bounded pre-hang native F2 snapshot. The October 27 F2 ring contained **1,177** valid chained records but only **76** native F2 replies, last ~13 h before failure; admission gates skipped later samples, and unsupported F2 SRSP queue counters must not be interpreted as zero. See [F2 postmortem](https://github.com/analienx/Zigbee-Coordinator/issues/144#issuecomment-6436979523).
 
-**Bottom line:** The ROM round-trip is a **proven restoration procedure** and a **causal localization clue**, **not** proof of a particular firmware defect and **not** permission for repeated resets or blind reflashing.
+The ROM round-trip is a proven restoration procedure and a causal localization clue. The underlying startup and long-running SRSP defects remain open; repeated resets or blind reflashing are not a diagnosis.
 
 ## Primary references
 
