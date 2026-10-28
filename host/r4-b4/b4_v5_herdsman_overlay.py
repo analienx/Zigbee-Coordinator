@@ -197,3 +197,13 @@ def apply(root):
       "before_sha256":{p:hashlib.sha256(t.encode()).hexdigest() for p,t in original.items()},
       "modified_sha256":{ZNP:hashlib.sha256(z.encode()).hexdigest(),
                          ADAPTER:hashlib.sha256(a.encode()).hexdigest()}}
+
+if __name__=="__main__":
+    import argparse,json
+    p=argparse.ArgumentParser()
+    p.add_argument("--checkout",required=True,type=Path)
+    p.add_argument("--receipt",required=True,type=Path)
+    args=p.parse_args()
+    result=apply(args.checkout)
+    args.receipt.write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
+    print(json.dumps(result,sort_keys=True))
