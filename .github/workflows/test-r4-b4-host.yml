@@ -44,6 +44,7 @@ jobs:
           python host/r4-b4/test-p7u-f2-acceptance.py -v
           python host/r4-b4/test-p7u-f2-freshness.py -v
           python host/r4-b4/test-p7u-f2-v5-pages.py -v
+          python host/r4-b4/test-p7u-boundary-evidence.py -v
           python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding
           python host/r4-b4/test-p7u-passive-incidents.py -v
           python -m py_compile host/r4-b4/p7u_host_integrity.py

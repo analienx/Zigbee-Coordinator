@@ -53,9 +53,9 @@ class V5PageTests(unittest.TestCase):
           (lambda x,y:u32(x,108,17)),
           (lambda x,y:u32(x,72,4)),
           (lambda x,y:u32(x,112,0)),
-          (lambda x,y:y.__setitem__(39,0)),
+          (lambda x,y:y.__setitem__(38,0)),
           (lambda x,y:y.__setitem__(46,255)),
-          (lambda x,y:y.__setitem__(47,1)),
+          (lambda x,y:y.__setitem__(48,1)),
           (lambda x,y:u32(x,56,3)),
         ]
         for mut in cases:

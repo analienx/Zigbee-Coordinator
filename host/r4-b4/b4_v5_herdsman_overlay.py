@@ -83,7 +83,7 @@ ADAPTER_METHOD=r'''
             !input.stillAllowed() || this.closing || !this.queue ||
             this.queue.count() !== 0 || this.interpanLock ||
             this.b4DiagInFlight || performance.now() < this.b4NextAllowedMs ||
-            !this.znp.b4CanProbeV4()) return undefined;
+            !this.znp.b4CanProbeV4(false)) return undefined;
         const nonce = randomBytes(8);
         this.b4DiagInFlight = true;
         this.b4NextAllowedMs = performance.now() + 30_000;
