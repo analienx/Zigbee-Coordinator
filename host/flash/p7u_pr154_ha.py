@@ -234,7 +234,7 @@ class HA:
         try:
             a = json.loads(run(['docker', 'inspect', 'app_'+OWNER]))[0]
         except Hold:
-            if not globals().get('PAIRED_ROM_HOLD_PIN'): raise
+            if not globals().get('PAIRED_HOST_VERSION'): raise
             from p7u_paired_hold import absent_owner
             return absent_owner(globals(), self)
         return {'id': a['Id'], 'image': a['Image'], 'started_at': a['State']['StartedAt'],
@@ -1021,7 +1021,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'resume-native', 'finish-native', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1054,6 +1054,9 @@ def main():
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
                 if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
                 elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
+                elif a.action=='boot-native':
+                    from p7u_paired_boot import boot_native
+                    result=boot_native(globals(),a.package,a.package_pin,a.plan_pin,HA())
                 elif a.action=='resume-native': result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
                 else:
                     from p7u_paired_finish import finish

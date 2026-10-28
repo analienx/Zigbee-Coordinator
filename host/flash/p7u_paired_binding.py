@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import re
 
-INSTALLED = "4cfe317083c2a3d1b784350b0ab960e27218e618"
+INSTALLED = "899f179031aae74db2e48699900f1cf5722bb4de"
 PIN_FIELDS = ("candidate_pin", "previous_plan_pin", "previous_frozen_pin",
               "previous_snapshot_pin", "previous_journal_pin", "previous_candidate_pin",
               "input_pin")
