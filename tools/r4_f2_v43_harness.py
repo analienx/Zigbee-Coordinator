@@ -85,7 +85,15 @@ int main(void) {
     anchor="  B4_V43_Request(2u, pBuf);"
     if source.count(anchor)!=1:raise RuntimeError("F2_V43_MT_RETURN_ANCHOR")
     run("MISSING_MT_RETURN",source.replace(anchor,"",1),41)
+    snap_at = source.index("void B4_V43_Snapshot(uint8_t *out)")
+    snap = source[snap_at:snap_at + 600]
+    def latched(segment):
+        cs_at = segment.find("OsalPort_enterCS()"); call_at = segment.find("b1_startup_snapshot(startup);")
+        return cs_at != -1 and call_at != -1 and cs_at < call_at
+    if not latched(snap): raise RuntimeError("F2_V43_TORN_STARTUP_LATCH")
+    torn = snap.replace("key = OsalPort_enterCS();", "b1_startup_snapshot(startup);", 1)
+    if latched(torn): raise RuntimeError("F2_V43_TORN_MUTANT_UNDETECTED")
     return {"status":STATUS,"reply_bytes":240,"minor":3,
             "actual_c_functions":[*bodies,"MT_ProcessIncoming","B4_SysReadOnlyDiagnosticsV4"],
-            "negative_mutants":["overwritten_first_fault","missing_mt_return"],
+            "negative_mutants":["overwritten_first_fault","missing_mt_return","torn_startup_latch_order"],
             "hardware_access":False}

@@ -115,8 +115,8 @@ void B4_V43_Snapshot(uint8_t *out)
 {
     uint8_t startup[B1_STARTUP_REPLY_SIZE];
     uint32_t i, j, key;
-    b1_startup_snapshot(startup);
     key = OsalPort_enterCS();
+    b1_startup_snapshot(startup);
     B4_V43_Progress[8] = B4_V43_Flags();
     B4_V43_Progress[18] = startup[9];
     B4_V43_Progress[19] = Clock_tickPeriod;
