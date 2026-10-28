@@ -51,6 +51,23 @@ Prior hardware recovery succeeded by entry/exit from TI ROM/BSL without changing
 5. **MT allocation failure, NPI write rejection, sticky transport HOLD, host UNPI frame corruption** (currently lower priority). Latest valid native all allocation/send/framing/reject counters were 0, B1 HOLD=0, MT entry/return balanced, native write callback errors=0; host USB RX/UNPI parsed continued without new parse errors. These findings exclude *sustained observed faults at those stages*, not events emerging after the last valid sample.
 6. **Permanent invalid NV/security/flash, global CPU or process OOM** (not supported by observed evidence). The host was running, ~217MiB RSS and modest CPU during earlier pressure; native handler and host callbacks made progress. Security/flash remained untouched. A later hard freeze can still have a different mechanism, so hardware and OS are not categorically excluded.
 
+### Verified regression-test blind spot (important)
+
+The installed source ancestry includes `firmware/slzb-06p7u/r4/b1/tools/make_npi_tx_idle_harness.py`. It extracts the *real* `NPITask_process` event body and TX_DONE callback logic, plus the actual TL busy predicate and UART callback. However, its `PREAMBLE` **substitutes**:
+
+```c
+static void NPITask_ProcessTXQ(void) {
+    assert(!npiTxActive && !hold && pending>0);
+    --pending;
+    ++transmitted;
+    npiTxActive=true;
+}
+```
+
+And it tests `busy`, `tx_done`, `idle`, `hold`, `driver_error`, `short_write`, `fragment` with this **stubbed outgoing queue-drain engine**; `Queue_empty()` and `Semaphore_post()` are also stubs. Thus the passing harness demonstrates selected callback/event behavior **but is not proof that the real `NPITask_ProcessTXQ` function drains the actual OSAL/TL queue correctly under sustained multi-producer pressure or concurrent callbacks**. The separate checked `make_npi_queue_harness.py` tests **incoming RX** queue allocation, not this outgoing TX-drain behavior; `make_npi_overflow_harness.py` tests the RX callback. This is a concrete current test-coverage gap, not a proven defective production implementation.
+
+**High-priority test improvement:** extract **the actual production `NPITask_ProcessTXQ` body**, the actual queue primitives or a clearly scoped fake retaining real enqueue/dequeue semantics, and the complete event merge/clear path. Run scheduling-interleaving mutants with backlog dozens to hundreds; assert bounded queue drain on idle TL with no B1 HOLD. Require a negative mutant that drops one TX_DONE event to be rejected by explicit forward-progress assertions. Do not mark the original seven-case harness as coverage of those properties.
+
 ### Key instrument-specific limitations
 
 - F2 v4.3 mask `0x00FFFFEC` has **SRSP depth/HWM/enqueued fields NULL** (NPI_SREQRSP disabled); do not invent zero values. `asyncDepth/HWM` are valid.
