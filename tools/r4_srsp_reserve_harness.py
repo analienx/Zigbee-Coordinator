@@ -116,7 +116,18 @@ def exercise(sdk):
                "static void NPITask_ProcessTXQ(void)",
                "static void NPITask_transportTxDoneCallBack(int size)",
                "static void NPITask_process(void)"]
-    source=PREFIX+record+"\n"+globals_+counter_src+"\n"
+    # The inherited v4.4 UART model only accepted larger synthetic frames.
+    # A genuine AF_REGISTER SRSP has one payload byte => 6 framed bytes.
+    prefix=PREFIX.replace(
+        "assert(!cs_depth && !busy && !held && n>=9 && n<=255);",
+        "assert(!cs_depth && !busy && !held && n>=6 && n<=255);")
+    prefix=prefix.replace(
+        "uint32_t stamp,id;memcpy(&stamp,p+4,4);id=p[8]|((uint32_t)p[9]<<8);",
+        "uint32_t stamp=now_us,id=p[3];"
+        "if(n>=10){memcpy(&stamp,p+4,4);id=p[8]|((uint32_t)p[9]<<8);}")
+    if prefix == PREFIX or "n>=9 && n<=255" in prefix:
+        raise RuntimeError("V45_SHORT_SRSP_UART_FIXTURE_DRIFT")
+    source=prefix+record+"\n"+globals_+counter_src+"\n"
     source+="extern uint8_t B4_V45_SendReservedSrsp(uint8_t,uint8_t,uint8_t,const uint8_t *);\n"
     source+=extract(client,"static void B4_AfRspTick(volatile uint32_t *p)")+"\n"
     source+=extract(client,"void MT_BuildAndSendZToolResponse(uint8_t cmdType, uint8_t cmdId,\n                                  uint8_t dataLen, uint8_t *pData)")+"\n"
