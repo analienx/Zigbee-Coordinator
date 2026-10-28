@@ -51,11 +51,11 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
     b,tick2,boot2=_header(page2,2,nonce)
     if a!=b or tick!=tick2 or boot!=boot2:
         raise FlightEvidenceRejected("V5_CROSS_PAGE_MISMATCH")
-    if page1[144:]!=bytes(PAGE_BYTES-144):
-        raise FlightEvidenceRejected("V5_RESERVED_NONZERO")
+    # Page1 144..159 contains two immutable 8-byte anomaly records
+    # only when bit2 is asserted. A zero bit requires all bytes zero.
     counters={name:_u32(page1,off) for name,off in FIELD_OFFSETS.items()}
     f=counters["validityFlags"]
-    if f & ~3 or (f&2)!=2 or not 0<counters["clockTickPeriodUs"]<=100000:
+    if f & ~7 or (f&2)!=2 or not 0<counters["clockTickPeriodUs"]<=100000:
         raise FlightEvidenceRejected("V5_FLAGS_OR_TICK")
     if (bool(f&1))!=(boot!=bytes(8)):
         raise FlightEvidenceRejected("V5_BOOT_VALIDITY")
@@ -72,6 +72,26 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
     if (counters["reserveUsed"]<counters["reserveActive"] or
         counters["reserveReleaseFault"]>counters["reserveUsed"]):
         raise FlightEvidenceRejected("V5_RESERVE_CONSTRAINT")
+    def decode_event(chunk:bytes, allow_empty:bool=False)->dict|None:
+        if allow_empty and chunk == bytes(8):
+            return None
+        stamp=_u32(chunk,0)
+        cmd=int.from_bytes(chunk[4:6],"little")
+        stage,result=chunk[6],chunk[7]
+        if stage not in STAGES or (stage==8 and result==0):
+            raise FlightEvidenceRejected("V5_BAD_EVENT")
+        return {"tick":stamp,"stage":STAGES[stage],"result":result,
+                "mtSubsystem":("AF" if ((cmd>>8)&31)==4 else
+                               "SYS" if ((cmd>>8)&31)==1 else
+                               "ZDO" if ((cmd>>8)&31)==5 else "OTHER")}
+    frozen=bool(f&4)
+    if not frozen and any(page1[144:160]):
+        raise FlightEvidenceRejected("V5_ANOMALY_WITHOUT_VALIDITY")
+    prev=decode_event(page1[144:152],True) if frozen else None
+    first=decode_event(page1[152:160]) if frozen else None
+    if frozen and (first is None or first["stage"] not in (
+            "TL_REJECTED","RESERVE_EXHAUSTED") or first["result"]==0):
+        raise FlightEvidenceRejected("V5_INVALID_FROZEN_ANOMALY")
     entries=[]
     for i in range(RING_COUNT):
         off=32+i*8
@@ -80,21 +100,16 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
             if any(chunk):
                 raise FlightEvidenceRejected("V5_UNUSED_RING_DIRTY")
             continue
-        stamp=_u32(page2,off)
-        cmd=int.from_bytes(page2[off+4:off+6],"little")
-        stage,result=page2[off+6],page2[off+7]
-        if stage not in STAGES or (stage==8 and result==0):
-            raise FlightEvidenceRejected("V5_BAD_EVENT")
-        # Deliberately don't export command identifier: even an MT command
-        # could be correlated with private behavior.
-        entries.append({"tick":stamp,"stage":STAGES[stage],"result":result,
-                        "mtSubsystem":("AF" if cmd>>8&31==4 else
-                                       "SYS" if cmd>>8&31==1 else
-                                       "ZDO" if cmd>>8&31==5 else "OTHER")})
-    if counters["eventCount"] and entries[-1]["tick"]>tick:
-        # Snapshot tick is before or at last event within a boot epoch.
-        # Unsigned wrap is possible; do not falsify a chronology claim.
-        raise FlightEvidenceRejected("V5_TICK_DISCONTINUITY")
+        # Deliberately do not export raw command identifiers.
+        entries.append(decode_event(chunk))
+    if counters["eventCount"]:
+        # UInt32 ticks are modular. A recent event just before wrap is
+        # valid even when its raw value exceeds snapshotTick after wrap.
+        # Half-range rejects a recent-looking future event, but events
+        # older than half a wrap are ambiguous and cannot be certified.
+        delta=(tick-entries[-1]["tick"]) & 0xffffffff
+        if delta >= 0x80000000:
+            raise FlightEvidenceRejected("V5_TICK_HALF_RANGE_UNQUALIFIED")
     if counters["mtEntered"]!=counters["mtExited"]:
         localization="MT_DISPATCH_IN_FLIGHT_AT_LAST_GOOD_SAMPLE"
     elif counters["allSrspAllocationFailed"]>0:
@@ -111,7 +126,8 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
        "sequence":a,"radioEpochHardwareVerified":False,
        "sampleTick":tick,"tickPeriodUs":counters.pop("clockTickPeriodUs"),
        "counters":{k:v for k,v in counters.items() if k!="validityFlags"},
-       "events":entries,"localization":localization,
+       "events":entries,"firstAnomaly":first,"preAnomaly":prev,
+       "localization":localization,
        "hardwareESPBridgeObserved":False,
        "heapFreeBytesKnown":False,"stackMarginKnown":False,
        "currentHangProven":False,"radioBootIdentityExported":False,

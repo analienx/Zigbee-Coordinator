@@ -87,6 +87,8 @@ ADAPTER_METHOD=r'''
         counters: Record<string, number>;
         events: {tick: number; stage: number; subsystem: string; result: number}[];
         source: "RADIO_READ_ONLY";
+        firstAnomaly: {tick: number; stage: number; subsystem: string; result: number} | null;
+        preAnomaly: {tick: number; stage: number; subsystem: string; result: number} | null;
     } | undefined> {
         if (input?.enabled !== true || input.hostIdle !== true ||
             input.otaActive !== false || typeof input.stillAllowed !== "function" ||
@@ -133,13 +135,32 @@ ADAPTER_METHOD=r'''
                 (counters.firstUartFaultKind === 0 && counters.firstUartFaultTick !== 0) ||
                 counters.eventCount > 16 ||
                 counters.eventCount !== Math.min(counters.eventTotal, 16) ||
-                (counters.validityFlags & ~3) !== 0 ||
+                (counters.validityFlags & ~7) !== 0 ||
+                Boolean(counters.validityFlags & 1) !== a.subarray(16,24).some(x=>x!==0) ||
                 (counters.validityFlags & 2) === 0 ||
                 counters.clockTickPeriodUs === 0 ||
                 counters.clockTickPeriodUs > 100000 ||
-                !a.subarray(144).equals(Buffer.alloc(16))) {
+                (!(counters.validityFlags & 4) &&
+                    !a.subarray(144).equals(Buffer.alloc(16)))) {
                 throw new Error("B4 V5_INVALID_METRICS");
             }
+            const parseEvent=(raw: Buffer, offset: number) => {
+                const command=raw.readUInt16LE(offset+4);
+                const subsystem=(command>>8)&0x1f;
+                const stage=raw[offset+6], result=raw[offset+7];
+                if(stage<1 || stage>9 || (stage===8 && result===0))
+                    throw new Error("B4 V5_INVALID_EVENT");
+                return {tick:raw.readUInt32LE(offset),stage,
+                    subsystem:subsystem===4?"AF":subsystem===1?"SYS":
+                        subsystem===5?"ZDO":"OTHER",result};
+            };
+            const frozen=Boolean(counters.validityFlags & 4);
+            const firstAnomaly=frozen ? parseEvent(a,152) : null;
+            const preAnomaly=frozen && !a.subarray(144,152).equals(Buffer.alloc(8)) ?
+                parseEvent(a,144) : null;
+            if(frozen && (firstAnomaly===null ||
+                (firstAnomaly.stage!==8 && firstAnomaly.stage!==9) ||
+                firstAnomaly.result===0)) throw new Error("B4 V5_INVALID_ANOMALY");
             const events: {tick: number; stage: number; subsystem: string; result: number}[]=[];
             for (let i = 0; i < 16; i++) {
                 const offset=32+i*8;
@@ -148,20 +169,14 @@ ADAPTER_METHOD=r'''
                         throw new Error("B4 V5_DIRTY_RING_TAIL");
                     continue;
                 }
-                const command=b.readUInt16LE(offset+4);
-                const subsystem= (command >> 8) & 0x1F;
-                const stage=b[offset+6], result=b[offset+7];
-                if (stage < 1 || stage > 9 ||
-                    (stage === 8 && result === 0)) {
-                    throw new Error("B4 V5_INVALID_RING");
-                }
-                events.push({tick:b.readUInt32LE(offset),stage,
-                    subsystem:subsystem===4?"AF":subsystem===1?"SYS":
-                        subsystem===5?"ZDO":"OTHER",result});
+                events.push(parseEvent(b,offset));
             }
+            if(events.length &&
+                (((a.readUInt32LE(28)-events[events.length-1].tick)>>>0)>=0x80000000))
+                throw new Error("B4 V5_TICK_HALF_RANGE_UNQUALIFIED");
             return {abi:5,pageSequence:a.readUInt32LE(24),
                 eventCount:counters.eventCount,counters,events,
-                source:"RADIO_READ_ONLY"};
+                firstAnomaly,preAnomaly,source:"RADIO_READ_ONLY"};
         } catch {
             /* No serial recovery or reset. An uncertain F2 page pair must
              * not permit another diagnostic or be shown as healthy. */
