@@ -81,7 +81,7 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
         if stage not in STAGES or (stage==8 and result==0):
             raise FlightEvidenceRejected("V5_BAD_EVENT")
         return {"tick":stamp,"stage":STAGES[stage],"result":result,
-                "mtSubsystem":("AF" if ((cmd>>8)&31)==4 else
+                "subsystem":("AF" if ((cmd>>8)&31)==4 else
                                "SYS" if ((cmd>>8)&31)==1 else
                                "ZDO" if ((cmd>>8)&31)==5 else "OTHER")}
     frozen=bool(f&4)

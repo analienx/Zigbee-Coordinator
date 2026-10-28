@@ -50,11 +50,19 @@ forbidden. Each new page is read-only and contains no RF operation.
 | 24–27 | common RAM snapshot sequence |
 | 28–31 | common radio tick |
 | 32–143 (page1) | see `p7u_f2_v5_pages.FIELD_OFFSETS`; includes NPI handoff requests, UART write accepted/rejected, UART state flags, first UART fault kind/tick and B1 first failure |
-| 144–159 (page1) | reserved, all zero |
+| 144–151 (page1) | First-anomaly preceding event (8B; zero if absent) |
+| 152–159 (page1) | Frozen first anomalous event (8B; zero if absent) |
 | 32–159 (page2) | 16 packed 8-byte records; unused entries zero |
 
 Page1 validity bits at offset104: bit0 boot entropy sourced, bit1 cached
-page2 valid. **All other bits MUST be zero.** In particular, none of these
+page2 valid, **bit2 indicates a frozen first anomaly**. All higher bits
+MUST be zero. The anomaly latch captures the first observable NPI UART TL
+rejection (stage 8) or reserved SRSP pool exhaustion (stage 9), along with
+the immediately preceding recorded event. This latch does **not** magically
+detect a silent MT handler or CPU deadlock: those require interpreting
+progress deltas from the last successful sample and external host data.
+The ring still retains the latest 16 task-side events, independently of
+the immutable first-anomaly pair. Neither status authorizes a reset. In particular, none of these
 are claimed as measured until source-qualified separately: global free
 heap bytes, contiguous block/low-water, arbitrary Zigbee stack task
 heartbeats, task stack high-water, ESP UART forwarding in USB-direct mode.
@@ -63,15 +71,28 @@ so explicit failure-stage evidence is useful without inventing heap bytes.
 
 ## Instrumentation safety
 
-* Fixed 16×8-byte event ring and fixed 160-byte second-page cache;
+* Fixed 16×8-byte event ring, two additional 8-byte first-anomaly
+  records and fixed 160-byte second-page cache;
   no dynamic allocation, logging, RF, NVS or host serial writes in hooks.
 * NPI wake pulse is updated without spamming the event ring; event records
   are only task-side transition points. Existing UART callback counters
   are reported verbatim, not relabeled as host receipt.
+* V5 C declarations are emitted before all NPI call sites; cross-TU V4
+  boot-token symbols are explicitly declared from the pinned V4 source.
+  New NPI queue/TX hooks decode command tags **only** from complete
+  frames of at least 5 bytes; NULL/short frames get an invalid-frame
+  sentinel without reading CMD0/CMD1. Native full-TU build remains required.
 * Capture command tags only (CMD0/CMD1), no payloads. Skip diagnostic F2
   events so sampling does not erase the incident ring.
 * The v4.5 reservation's static frames are still scrubbed after TL copy.
   Event staging reads local copies before queue wakeup, avoiding UAF.
+* Unrecognized page selector returns an explicit nonce-bound invalid-page
+  response (`R4D5` page=255), never 160 zero bytes. Both host decoders
+  check boot-token validity, frozen-event presence, stage/result shape
+  and reject recent-looking future timestamps with half-range uint32
+  modular arithmetic; a tick just before uint32 wrap and snapshot just
+  after wrap is valid. Very old timestamps beyond half a tick wrap are
+  **unqualified**, not a proven failure cause.
 * Only one bounded source snapshot under OSAL CS; old V4 F2 remains
   unchanged, including its original nonce location and validity mask.
 * Direct source/host regression tests and exact-current-SHA two native
