@@ -178,7 +178,7 @@ V4_ADAPTER_METHOD = r"""
             const uartProgress = minor === 3 ? Object.fromEntries(progressFields.map(
                 (field, index) => [field, data.readUInt32LE(160 + index * 4)])) : null;
             if (uartProgress && (uartProgress.tickPeriodUs === 0 ||
-                    uartProgress.tickPeriodUs > 100000 || uartProgress.firstFaultKind > 5 ||
+                    uartProgress.tickPeriodUs > 100000 || uartProgress.firstFaultKind > 6 ||
                     uartProgress.b1FirstFailure > 255 || uartProgress.firstFaultCommand > 65535 ||
                     (uartProgress.stateFlags & 0xFFF0) || (uartProgress.firstFaultFlags & 0xFFF0) ||
                     (uartProgress.firstFaultKind === 0 && progressFields.slice(11,17).some(
