@@ -43,11 +43,13 @@ int main(void){
     unsigned live_before=live_alloc;
     allocation_fail=1;
     /* Real producer must bypass every heap allocation, including framing. */
-    make_message(1,1,1);
+    uint8_t afStatus=0u;
+    MT_BuildAndSendZToolResponse(0x64u,0x00u,1u,&afStatus);
     assert(B4_V45_ReserveUsed==1 && B4_NpiSrspDepth==1 && live_alloc==live_before);
     assert(B4_AllRspNpiReceived && B4_AllRspFramedQueued);
+    assert(B4_AfRspNpiReceived==1 && B4_AfRspFramedQueued==1);
     uint8_t *frame=B4_V45_Slots[0].frame;unsigned fcs=0;
-    assert(frame[0]==0xfe && frame[1]==1 && frame[2]==0x64 && frame[3]==1);
+    assert(frame[0]==0xfe && frame[1]==1 && frame[2]==0x64 && frame[3]==0);
     for(unsigned i=1;i<5;++i)fcs^=frame[i];
     assert(frame[5]==fcs);
     NPITask_ProcessTXQ();assert(srsp_sent==1 && busy);
@@ -60,30 +62,35 @@ int main(void){
     make_message(1,5,1);
     assert(B4_V45_ReserveExhausted==1 && B4_AllRspAllocFailed>=1);
     assert(B4_NpiSrspDepth==3 && live_alloc==live_before);
+    /* When all reserve slots are full, use legacy dynamic overflow
+     * if memory is available: do not shed the fourth response. */
     allocation_fail=0;
+    make_message(1,5,20);
+    while(mail_out<mail_in)NPITask_processStackMsg(OsalPort_msgReceive(1));
+    assert(B4_NpiSrspDepth==4 && B4_V45_ReserveExhausted==2);
     drain();
     assert(!live_alloc && !busy && B4_NpiSrspDepth==0 && B4_NpiAsyncDepth==0);
-    assert(srsp_sent==4 && completed_srsp==4 && areq_sent==18);
+    assert(srsp_sent==5 && completed_srsp==5 && areq_sent==18);
     for(unsigned i=0;i<B4_V45_POOL_SLOTS;++i)assert(!B4_V45_Slots[i].used);
     /* Physical HOLD is sticky: a reserve is allowed but never UART-submitted. */
     held=1;allocation_fail=1;
     make_message(1,6,250);
     assert(B4_NpiSrspDepth==1 && B4_V45_ReserveUsed==5);
-    NPITask_ProcessTXQ();assert(!busy && srsp_sent==4);
+    NPITask_ProcessTXQ();assert(!busy && srsp_sent==5);
     held=0;
-    NPITask_ProcessTXQ();assert(busy && srsp_sent==5);
-    complete();assert(completed_srsp==5);
+    NPITask_ProcessTXQ();assert(busy && srsp_sent==6);
+    complete();assert(completed_srsp==6);
     /* Slot release before callback is sound because TL already copied frame. */
     make_message(1,7,4);
-    NPITask_ProcessTXQ();assert(busy && srsp_sent==6);
+    NPITask_ProcessTXQ();assert(busy && srsp_sent==7);
     make_message(1,8,4);
     assert(B4_NpiSrspDepth==1 && B4_V45_ReserveUsed==7);
-    complete();NPITask_ProcessTXQ();assert(busy && srsp_sent==7);
+    complete();NPITask_ProcessTXQ();assert(busy && srsp_sent==8);
     complete();
     allocation_fail=0;
     assert(!live_alloc && !B4_NpiSrspDepth && !B4_NpiAsyncDepth);
     for(unsigned i=0;i<B4_V45_POOL_SLOTS;++i)assert(!B4_V45_Slots[i].used);
-    assert(!B4_V45_ReleaseFault && completed_srsp==7);
+    assert(!B4_V45_ReleaseFault && completed_srsp==8);
     printf("V45_ACTUAL_C_PASS reserved=%u overflow=%u max_completion_us=%u live=%u\n",
            (unsigned)B4_V45_ReserveUsed,(unsigned)B4_V45_ReserveExhausted,
            max_srsp_us,live_alloc);
@@ -123,7 +130,7 @@ def exercise(sdk):
         "assert(!cs_depth && !busy && !held && n>=6 && n<=255);")
     prefix=prefix.replace(
         "uint32_t stamp,id;memcpy(&stamp,p+4,4);id=p[8]|((uint32_t)p[9]<<8);",
-        "uint32_t stamp=now_us,id=p[3];"
+        "uint32_t stamp=now_us,id=((p[2]&0xe0)==0x60 ? last_srsp_id:last_areq_id)+1u;"
         "if(n>=10){memcpy(&stamp,p+4,4);id=p[8]|((uint32_t)p[9]<<8);}")
     if prefix == PREFIX or "n>=9 && n<=255" in prefix:
         raise RuntimeError("V45_SHORT_SRSP_UART_FIXTURE_DRIFT")
