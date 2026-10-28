@@ -216,7 +216,8 @@ def apply(sdk):
     if (MARKER in n or "B4_V45_STATIC_SRSP_RESERVE" not in n or
             "B4_F2_V43_PROGRESS" not in m or "B4_V44_SRSP_SERVICE" not in s):
         raise ValueError("V5_REQUIRES_PINNED_V45_FULL_COMPOSITE")
-    n=once(n,"/* B4_V45_STATIC_SRSP_RESERVE.",NATIVE+"\n/* B4_V45_STATIC_SRSP_RESERVE.","V5_STATIC_DEF")
+    n=once(n,"static volatile uint32_t B4_V45_ReleaseFault = 0u;",
+           "static volatile uint32_t B4_V45_ReleaseFault = 0u;\n"+NATIVE,"V5_STATIC_DEF")
     n=replace_fn(n,"static void NPITask_process(void)",
                  "        B4_V43_Wake();",
                  "        B4_V43_Wake();\n        B4_V5_NpiPulse();","V5_WAKE_PULSE")

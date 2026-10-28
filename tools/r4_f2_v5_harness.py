@@ -101,7 +101,7 @@ def exercise(sdk):
     t=(sdk/TASK).read_text()
     s=(sdk/SYS).read_text()
     begin=t.index("/* B4_F2_V5_FLIGHT_RECORDER:")
-    end=t.index("/* B4_V45_STATIC_SRSP_RESERVE.",begin)
+    end=t.index("extern volatile uint32_t B4_AllRspNpiReceived",begin)
     source=PREFIX+t[begin:end]+TEST
     if "B4_SysReadOnlyDiagnosticsV5" not in s or "case 0xF2:" not in s:
         raise ValueError("V5_HANDLER_NOT_COMPOSED")
