@@ -54,6 +54,7 @@ int main(void){
     assert(frame[5]==fcs);
     NPITask_ProcessTXQ();assert(srsp_sent==1 && busy);
     assert(B4_V45_Slots[0].used==0 && live_alloc==live_before);
+    for(unsigned i=0;i<B4_V45_FRAME_BYTES;++i)assert(frame[i]==0u);
     complete();assert(completed_srsp==1);
     /* Three simultaneous reserved responses with a *completely dead* heap. */
     for(unsigned i=2;i<=4;++i)make_message(1,i,20);

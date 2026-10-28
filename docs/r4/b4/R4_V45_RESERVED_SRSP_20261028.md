@@ -29,7 +29,9 @@ SRSP queue. **No OSAL heap allocation, OSAL mailbox allocation or second
 framing allocation occurs on this path.** The NPI task is still the sole
 UART submitter; slots are released after the existing transport has accepted
 or rejected its bounded copy. Static memory is never given to the OSAL
-allocator. Concurrent access uses existing OSAL critical sections.
+allocator. A completed transport-copy release explicitly scrubs the fixed
+255-byte frame buffer through volatile stores before returning the slot to
+the reserve. Concurrent access uses existing OSAL critical sections.
 
 When all three slots are occupied, or NPI is not initialized, the *unchanged
 legacy dynamic path* is attempted; an unsuccessful dynamic attempt remains

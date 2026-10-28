@@ -99,7 +99,8 @@ __attribute__((noinline)) uint8_t B4_V45_SendReservedSrsp(uint8_t cmdType,
  * slot through OSALPort_msgDeallocate or OsalPort_free. */
 __attribute__((noinline)) static uint8_t B4_V45_ReleaseReserved(NPI_QueueRec *rec)
 {
-    uint32_t i, key;
+    uint32_t i, j, key;
+    volatile uint8_t *wipe;
     for (i = 0u; i < B4_V45_POOL_SLOTS; ++i)
     {
         if (rec == &B4_V45_Slots[i].rec)
@@ -107,6 +108,11 @@ __attribute__((noinline)) static uint8_t B4_V45_ReleaseReserved(NPI_QueueRec *re
             key = OsalPort_enterCS();
             if (!B4_V45_Slots[i].used && B4_V45_ReleaseFault != UINT32_MAX)
                 ++B4_V45_ReleaseFault;
+            /* SRSP payloads may be sensitive (e.g. management reads).
+             * TL has already copied these bounded bytes; scrub before
+             * making the slot available to another producer. */
+            wipe = (volatile uint8_t *)B4_V45_Slots[i].frame;
+            for (j = 0u; j < B4_V45_FRAME_BYTES; ++j) wipe[j] = 0u;
             B4_V45_Slots[i].used = 0u;
             OsalPort_leaveCS(key);
             return 1u;
