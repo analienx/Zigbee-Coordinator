@@ -7,6 +7,8 @@ description: CC2674P10/Z-Stack 3 existing-network recovery when a validated coor
 
 Use this skill for SMLIGHT/other CC2674P10 coordinators when an existing Zigbee network has already been restored into Z-Stack NVRAM, identity/security tables validate, but the coordinator fails specifically at the final network-start transition. The canonical cross-project migration policy remains `analienx/config:skills/zigbee-coordinator-migration/SKILL.md`; this file is the P10-specific implementation specialization.
 
+For the household's **SLZB-06P7U / CC2652P7** and its **2026-10-20 stock/R4 network-start incident**, use [p7u-zstack-restore-recovery](../p7u-zstack-restore-recovery/SKILL.md), not the P10/MR4U hardware instructions. On the P7U, stock firmware timed out on **both** ZDO startup and a separately guarded BDB mode-0 attempt after successful backup NV writes and narrowly reconciled legacy security records. Do not present the P10 mode-0 success as a universal fix.
+
 ## Known failure signature
 
 The recovery observation on 2026-10-01 is narrow:

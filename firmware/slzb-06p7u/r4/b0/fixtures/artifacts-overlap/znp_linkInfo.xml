@@ -1,0 +1,19 @@
+<link_info>
+<banner>TI ARM Clang Linker 3.2.2.LTS (build date)</banner>
+<output_file>znp.out</output_file>
+<entry_point><address>0x00000000</address></entry_point>
+<placement_map>
+<memory_area><name>FLASH</name><origin>0x00000000</origin><length>0x000AA000</length><used_space>0x00010000</used_space></memory_area>
+<memory_area><name>FLASH_NV</name><origin>0xAA000</origin><length>0x4000</length><used_space>0x0</used_space></memory_area>
+<memory_area><name>FLASH_LAST</name><origin>0xAE000</origin><length>0x2000</length><used_space>0x88</used_space></memory_area>
+<memory_area><name>SRAM</name><origin>0x20000000</origin><length>0x24000</length><used_space>0x1000</used_space></memory_area>
+</placement_map>
+<logical_group_list>
+<logical_group><name>APP</name>
+<section><name>.resetVecs</name><load_address>0x00000000</load_address><size>0x40</size></section>
+<section><name>.text</name><load_address>0x00000040</load_address><size>0x10000</size></section>
+<section><name>.ccfg</name><load_address>0x000AB000</load_address><size>0x88</size></section>
+<section><name>.stack</name><load_address>0x20000000</load_address><size>1024</size></section>
+</logical_group>
+</logical_group_list>
+</link_info>

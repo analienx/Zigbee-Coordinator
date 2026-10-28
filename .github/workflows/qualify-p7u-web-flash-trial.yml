@@ -1,0 +1,63 @@
+name: P7U one-attempt web trial boundaries (NO LIVE ACTION)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/p7u_web_flash_trial.py'
+      - 'host/r4-b4/test-p7u-web-flash-trial.py'
+      - '.github/workflows/qualify-p7u-web-flash-trial.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  trial-boundaries:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Verify fixed operation boundaries without hardware
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          python host/r4-b4/test-p7u-web-flash-trial.py -v
+          python -m py_compile host/r4-b4/p7u_web_flash_trial.py
+      - name: Seal the exact helper and already qualified image
+        run: |
+          set -euo pipefail
+          gh api repos/analienx/Zigbee-Coordinator/actions/runs/40072108433 > /tmp/package-run.json
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/package-run.json'))
+          assert r['head_sha']=='04af8acca7557fd1319b1e854548d3f5c2c5a6be' and r['status']=='completed' and r['conclusion']=='success'
+          PY
+          gh run download 40072108433 --repo analienx/Zigbee-Coordinator --name p7u-web-container-analysis-04af8acca7557fd1319b1e854548d3f5c2c5a6be --dir /tmp/web-candidate
+          mkdir /tmp/web-trial-release
+          cp host/r4-b4/p7u_web_flash_trial.py /tmp/web-trial-release/
+          python - <<'PY'
+          import hashlib,json,os,sys
+          from pathlib import Path
+          sys.path.insert(0,'host/r4-b4')
+          import p7u_web_flash_trial as t
+          out=Path('/tmp/web-trial-release')
+          blob=(Path('/tmp/web-candidate')/'P7U-R4-323949a-SLZB-WEB-CANDIDATE-NOT-QUALIFIED.bin').read_bytes()
+          t.image(blob);(out/'image.bin').write_bytes(blob)
+          r={'schema':'p7u-web-trial-release-v1','source_sha':os.environ['SOURCE'],
+             'helper_sha256':hashlib.sha256((out/'p7u_web_flash_trial.py').read_bytes()).hexdigest(),
+             'image_sha256':t.IMAGE_SHA,'radio_source_sha':t.RADIO_SOURCE,
+             'tests_scope':'CONTROL_PLANE_BOUNDARIES_ONLY_NO_DEVICE',
+             'live_action_performed':False,'backend_qualified':False}
+          (out/'WEB_TRIAL_RELEASE.json').write_text(json.dumps(r,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-web-trial-release-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/web-trial-release/
+          if-no-files-found: error

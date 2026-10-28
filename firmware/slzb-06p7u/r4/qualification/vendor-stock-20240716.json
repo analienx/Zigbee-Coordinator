@@ -1,0 +1,30 @@
+{
+  "schema": "r4-p7u-public-stock-reference-v1",
+  "url": "https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06p7v2/znp-SLZB-06P7-EXT-20240716.bin",
+  "sha256": "22f094b00459583fdcc56fb7ae0a1a84ff913d6810f9e729729a037de5a093c5",
+  "bytes": 173580,
+  "revision": "20240716",
+  "segments": [
+    {
+      "address": 0,
+      "bytes": 173464,
+      "crc_verified": true
+    },
+    {
+      "address": 720808,
+      "bytes": 88,
+      "crc_verified": true
+    }
+  ],
+  "ccfg_sha256": "fa750d46003f4cc059140ac75a83282ec61543b0d898c50cd2add61988c08b47",
+  "source_profile": {
+    "mode_conf_1": "0xffc00010",
+    "mode_conf": "0xf1b9c1ff",
+    "image_valid_conf": "0x00000000",
+    "bl_config": "0xc5fe0fc5"
+  },
+  "initial_sp": "0x20022000",
+  "reset_vector": "0x23d5d",
+  "current_physical_ccfg_verified": false,
+  "flash_authorized": false
+}

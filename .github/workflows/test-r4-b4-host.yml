@@ -1,0 +1,405 @@
+name: R4 B4 pinned herdsman existing-owner compile and tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+# Cancel stale PR preflights instead of exhausting GitHub runner quota.
+concurrency:
+  group: r4-b4-host-${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  b4-herdsman-real-source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      HERDSMAN_PIN: 0968f979d558874b17396c96b66382d4236bbdcd
+      B4_HERDSMAN_ROOT: /tmp/b4-herdsman-src
+      P7U_HERDSMAN_ROOT: /tmp/b4-herdsman-src
+      B4_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact immutable PR head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Fail-closed host database admission negative controls
+        run: |
+          set -euo pipefail
+          python -m pip install paho-mqtt==2.1.0
+          python host/r4-b4/test-p7u-host-integrity.py -v
+          python host/r4-b4/test-p7u-f2-acceptance.py -v
+          python host/r4-b4/test-p7u-f2-freshness.py -v
+          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding
+          python host/r4-b4/test-p7u-passive-incidents.py -v
+          python -m py_compile host/r4-b4/p7u_host_integrity.py
+          python host/r4-b4/ha-addon/test-p7u-lifecycle-core.py -v
+          python host/r4-b4/ha-addon/test-p7u-lifecycle-machine.py -v
+          python host/r4-b4/ha-addon/test-p7u-ha-readonly-inspector.py -v
+          python host/r4-b4/ha-addon/test-p7u-ha-supervisor-port.py -v
+          python host/r4-b4/ha-addon/test-p7u-serving-mqtt.py -v
+          python host/r4-b4/ha-addon/test-p7u-db-quiesced.py -v
+          python host/r4-b4/ha-lifecycle-manager/test-p7u-lifecycle-main.py -v
+          python -m py_compile host/r4-b4/ha-addon/p7u_lifecycle_core.py
+      - name: Checkout actual pinned herdsman without worktree contamination
+        run: |
+          set -euo pipefail
+          git init -q "$B4_HERDSMAN_ROOT"
+          git -C "$B4_HERDSMAN_ROOT" remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C "$B4_HERDSMAN_ROOT" fetch --depth 1 origin "$HERDSMAN_PIN"
+          git -C "$B4_HERDSMAN_ROOT" checkout --detach FETCH_HEAD
+          test "$(git -C "$B4_HERDSMAN_ROOT" rev-parse HEAD)" = "$HERDSMAN_PIN"
+      - name: Stage audited existing-owner F0 source overlay only
+        run: |
+          python host/r4-b4/herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-overlay.json
+          python host/r4-b4/b4_v4_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v4-overlay.json
+          test "$(python -c 'import json; print(json.load(open("/tmp/b4-herdsman-overlay.json"))["serial_owner"])')" = EXISTING_ZNP_ONLY
+      - name: Verify exact pinned diagnostic DEBUG payload redaction
+        run: |
+          python host/r4-b4/b4_v4_log_audit.py \
+            --checkout "$B4_HERDSMAN_ROOT" \
+            --receipt /tmp/b4-herdsman-v4-overlay.json
+          PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --composition-receipt /tmp/b4-herdsman-v4-overlay.json --receipt /tmp/p7u-startup-hold.json
+          python host/r4-b4/p7u_preservation_transport_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/p7u-preservation-transport.json
+      - name: Install exact herdsman package-manager version
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm --version | grep -Fx "10.33.0"
+      - name: Native pinned TypeScript build (no adapter opened)
+        working-directory: /tmp/b4-herdsman-src
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Verify protected startup using real compiled herdsman (before serial)
+        run: |
+          set -euo pipefail
+          sudo install -d -o "$USER" -g "$USER" /config/zigbee2mqtt
+          node --test host/r4-b4/test-p7u-db-startup.cjs host/r4-b4/test-p7u-db-durability.cjs
+      - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
+        run: |
+          set -euo pipefail
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-f2-boundary.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
+            | tee /tmp/b4-host-runtime-tests.tap
+      - name: Adversarial no-serial worker durability tests (offline GH-hosted)
+        run: |
+          node --test host/r4-b4/test-p7u-diagnostic-worker.cjs host/r4-b4/test-p7u-host-timeout-sink.cjs host/r4-b4/test-p7u-preservation.cjs
+          python host/r4-b4/test-p7u-preservation-gateway.py -v
+      - name: Verify pinned Z2M 2.14.0 OTA source and stage existing-owner read-only bridge
+        run: |
+          set -euo pipefail
+          git init -q /tmp/b4-z2m-host
+          git -C /tmp/b4-z2m-host remote add origin https://github.com/Koenkk/zigbee2mqtt.git
+          git -C /tmp/b4-z2m-host fetch --depth 1 origin 62b02e2aa1997c574223b80c196677b63a25f4a7
+          git -C /tmp/b4-z2m-host checkout --detach FETCH_HEAD
+          python host/r4-b4/b4_verify_z2m_source.py --z2m /tmp/b4-z2m-host
+          python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
+          python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
+          python host/r4-b4/b4_v4_live_collector_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-collector-receipt.json
+      - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@10.18.3
+          cd /tmp/b4-z2m-host
+          pnpm install --frozen-lockfile
+          test -d "$B4_HERDSMAN_ROOT/dist"
+          # Z2M sees the ACTUAL compiled pinned herdsman overlay, not a stub.
+          rm node_modules/zigbee-herdsman
+          ln -s "$B4_HERDSMAN_ROOT" node_modules/zigbee-herdsman
+          pnpm exec tsc --noEmit
+      - name: Inspect real Z2M steady-state lifecycle and bounded sampler admission
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/b4-z2m-host/lib/controller.ts').read_text()
+          assert s.count('this.#b4Operational') >= 7
+          assert 'this.#startAbortController = undefined; // gc' in s
+          assert 'this.#b4Operational = true;' in s
+          assert 'this.#b4Operational = false;' in s
+          assert s.count('!this.#b4Operational') >= 2
+          assert 'P7U_B4_COLLECTOR !== "1"' in s
+          assert 'this.b4ProbeReadOnlyDiagnosticsV4(true, reserveAtBoundary)' in s
+          assert 'performance.now() - origin >= 900_000' in s
+          assert 'setTimeout(() => { void this.#b4Sample(); }, nextDelay)' in s
+          assert 'randomInt(60_000, 90_001)' in s
+          assert 'Math.max(60_000, delay)' in s
+          assert 'this.#b4Schedule(60_000)' in s
+          assert 'hostEvidence' in s
+          assert 'this.#b4Persist(' in s
+          assert 'this.#b4StartWorker()' in s
+          assert 'this.#b4Worker.postMessage(' in s
+          assert 'writeFileSync' not in s[s.index('#b4StartWorker():'):s.index('async #b4Sample():')]
+          assert 'fsyncSync' not in s[s.index('#b4StartWorker():'):s.index('async #b4Sample():')]
+          print('PASS: repaired steady-state lifecycle, owner-only timer, fail-closed persistence')
+          PY
+
+      - name: Emit exact-source compiled native-owner candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/b4-z2m-host
+          pnpm exec tsc
+          test -s dist/controller.js
+          test -s dist/extension/otaUpdate.js
+          root=/tmp/p7u-r4-native-image
+          mkdir -p "$root"
+          cp dist/controller.js "$root/z2m-controller.js"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_diagnostic_worker.cjs" "$root/p7u_diagnostic_worker.cjs"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_host_timeout_sink.cjs" "$root/p7u_host_timeout_sink.cjs"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u_preservation_probe.cjs" "$root/p7u_preservation_probe.cjs"
+          cp dist/extension/otaUpdate.js "$root/z2m-otaUpdate.js"
+          cp -a "$B4_HERDSMAN_ROOT/dist" "$root/herdsman-dist"
+          cp "$GITHUB_WORKSPACE/host/r4-b4/p7u-z2m-native-collector.Dockerfile" "$root/Dockerfile"
+          node --check "$root/z2m-controller.js"
+          node --check "$root/p7u_diagnostic_worker.cjs"
+          node --check "$root/z2m-otaUpdate.js"
+          node --check "$root/herdsman-dist/adapter/z-stack/adapter/zStackAdapter.js"
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root=Path('/tmp/p7u-r4-native-image')
+          (root/'P7U_SOURCE_SHA.txt').write_text(os.environ['B4_SOURCE_SHA']+'\n')
+          doc={
+           'schema':'p7u-r4-z2m-host-image-v1',
+           'source_sha':os.environ['B4_SOURCE_SHA'],
+           'image_base_digest':'sha256:97246758dab5099113c5a46fcbc1b9a36968a0eb9fd95ce8df6e2868cc7f533f',
+           'z2m_upstream_sha':'62b02e2aa1997c574223b80c196677b63a25f4a7',
+           'herdsman_upstream_sha':os.environ['HERDSMAN_PIN'],
+           'runtime':'Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1',
+           'default_enabled':False,'hardware_verified':False,'installed':False,
+           'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in sorted(root.rglob('*')) if p.is_file()},
+          }
+          (root/'SOURCE_RECEIPT.json').write_text(json.dumps(doc,indent=2,sort_keys=True)+'\n')
+          PY
+      - name: Build reviewed arm64 host OCI on GitHub runner without startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version
+          docker buildx create --name p7u-r4-oci --driver docker-container --use
+          docker buildx inspect --bootstrap
+          mkdir -p /tmp/p7u-r4-host-image-artifact
+          tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
+          docker buildx build --platform linux/arm64 \
+            --tag "$tag" \
+            --file /tmp/p7u-r4-native-image/Dockerfile \
+            --output type=oci,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            --output type=docker,dest=/tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar \
+            /tmp/p7u-r4-native-image
+          cp /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json /tmp/p7u-r4-host-image-artifact/
+          sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            > /tmp/p7u-r4-host-image-artifact/oci.sha256
+          sha256sum /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar \
+            > /tmp/p7u-r4-host-image-artifact/docker.sha256
+      - name: Confirm exported OCI image contains exact compiled source binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host/r4-b4/p7u_native_image_audit.py \
+            --oci /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.oci.tar \
+            --source /tmp/p7u-r4-native-image/SOURCE_RECEIPT.json \
+            --receipt /tmp/p7u-r4-host-image-artifact/OCI_SOURCE_AUDIT.json
+      - name: Verify Docker-format backup artifact is directly loadable
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="p7u-r4-collector:sha-${B4_SOURCE_SHA:0:12}"
+          docker load --input /tmp/p7u-r4-host-image-artifact/p7u-r4-z2m-arm64.docker.tar
+          docker image inspect "$tag" --format '{{.Os}}/{{.Architecture}}' | grep -Fx 'linux/arm64'
+          docker image inspect "$tag" --format '{{.Id}}' > /tmp/p7u-r4-host-image-artifact/PINNED_IMAGE_ID.txt
+          docker image inspect "$tag" --format '{{.Config.Image}}' >/dev/null || true
+          echo "PASS: exact-source arm64 Docker archive loads; container was not started"
+      - name: Assemble Supervisor app with tested binaries, no HA compilation
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-staged-addon/herdsman-dist
+          cp host/r4-b4/ha-addon/{Dockerfile,config.yaml} /tmp/p7u-staged-addon/
+          cp /tmp/p7u-r4-native-image/{z2m-controller.js,z2m-otaUpdate.js,p7u_diagnostic_worker.cjs,p7u_host_timeout_sink.cjs,p7u_preservation_probe.cjs,P7U_SOURCE_SHA.txt} /tmp/p7u-staged-addon/
+          cp -a /tmp/p7u-r4-native-image/herdsman-dist/. /tmp/p7u-staged-addon/herdsman-dist/
+          test -s /tmp/p7u-staged-addon/p7u_diagnostic_worker.cjs
+          test -s /tmp/p7u-staged-addon/p7u_host_timeout_sink.cjs
+          grep -Fq 'COPY p7u_diagnostic_worker.cjs p7u_host_timeout_sink.cjs p7u_preservation_probe.cjs P7U_SOURCE_SHA.txt /app/dist/' /tmp/p7u-staged-addon/Dockerfile
+          grep -q 'P7U_APPROVED_DB_MANIFEST:' /tmp/p7u-staged-addon/config.yaml
+          grep -q 'COPY p7u_diagnostic_worker.cjs' /tmp/p7u-staged-addon/Dockerfile
+          tar -C /tmp -czf /tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz p7u-staged-addon
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path('/tmp/p7u-staged-addon')
+          archive=Path('/tmp/p7u-r4-host-image-artifact/p7u-staged-addon.tar.gz')
+          receipt={'schema':'p7u-staged-addon-v1','source_sha':os.environ['B4_SOURCE_SHA'],
+            'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
+            'files':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sorted(root.rglob('*')) if p.is_file()},'installed':False}
+          (archive.parent/'ADDON_BUNDLE_RECEIPT.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          PY
+      - name: Build and seal the dedicated read-only preservation role (no execution)
+        run: |
+          set -euo pipefail
+          tag="localhost:50148/p7u-preservation:0.1.0-${B4_SOURCE_SHA:0:12}"
+          root=/tmp/p7u-r4-host-image-artifact
+          docker buildx build --platform linux/arm64 --target preservation --tag "$tag" --file /tmp/p7u-r4-native-image/Dockerfile --output type=docker,dest="$root/p7u-preservation-arm64.docker.tar" /tmp/p7u-r4-native-image
+          docker load --input "$root/p7u-preservation-arm64.docker.tar"
+          cp host/r4-b4/p7u_preservation_gateway.py "$root/p7u_preservation_gateway.py"
+          pip install --disable-pip-version-check PyYAML==6.0.2
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          import yaml
+          root=Path('/tmp/p7u-r4-host-image-artifact');source=os.environ['B4_SOURCE_SHA'];version='0.1.0-'+source[:12]
+          ref='localhost:50148/p7u-preservation:'+version
+          meta=json.loads(subprocess.check_output(['docker','image','inspect',ref]))[0]
+          assert meta['Architecture']=='arm64' and meta['Config']['Entrypoint']==['node','/app/dist/p7u_preservation_probe.cjs'] and not meta['Config'].get('Cmd')
+          normal=json.loads(subprocess.check_output(['docker','image','inspect','p7u-r4-collector:sha-'+source[:12]]))[0]
+          assert meta['RootFS']['Layers']==normal['RootFS']['Layers'], 'preservation role must use the same audited filesystem'
+          import io,tarfile
+          subprocess.run(['docker','create','--name','p7u-preservation-prerequisite','--entrypoint','/bin/true',ref],check=True,stdout=subprocess.DEVNULL)
+          try:
+              archive=subprocess.check_output(['docker','cp','-L','p7u-preservation-prerequisite:/bin/stty','-'])
+              with tarfile.open(fileobj=io.BytesIO(archive)) as t:
+                  files=[m for m in t if m.isfile()]
+                  assert len(files)==1
+                  header=t.extractfile(files[0]).read(20)
+                  assert header[:4]==b'\x7fELF' and int.from_bytes(header[18:20],'little')==183
+          finally:subprocess.run(['docker','rm','p7u-preservation-prerequisite'],check=True,stdout=subprocess.DEVNULL)
+          config={'name':'P7U preservation F1 (one-shot)','version':version,'slug':'p7u_preservation_probe',
+            'description':'Exactly one status-only F1 read; no network startup, reset or NV operations',
+            'arch':['aarch64'],'startup':'once','boot':'manual_only','init':False,'image':'localhost:50148/p7u-preservation',
+            'uart':True,'udev':True,'hassio_api':False,'ingress':False,
+            'map':[{'type':'homeassistant_config','path':'/config','read_only':True},{'type':'share','path':'/share','read_only':False}],
+            'options':{},'schema':{}}
+          (root/'preservation-config.yaml').write_text(yaml.safe_dump(config,sort_keys=False))
+          with (root/'p7u-preservation-arm64.docker.tar').open('rb') as f:archive=hashlib.file_digest(f,'sha256').hexdigest()
+          receipt={'schema':'p7u-preservation-release-v1','source_sha':source,'version':version,'image_reference':ref,'image_id':meta['Id'],
+            'entrypoint':meta['Config']['Entrypoint'],'archive_sha256':archive,'config_sha256':hashlib.sha256((root/'preservation-config.yaml').read_bytes()).hexdigest(),
+            'gateway_sha256':hashlib.sha256((root/'p7u_preservation_gateway.py').read_bytes()).hexdigest(),'audited_filesystem_matches':True,'stty_arm64_verified':True,'radio_reset':False,'network_startup':False,'nv_write':False}
+          (root/'PRESERVATION_RELEASE.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Publish candidate image for separately authorized rollout
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p7u-r4-z2m-native-image-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-r4-host-image-artifact/
+          if-no-files-found: error
+          compression-level: 0
+      - name: Deny any production installation inference
+        run: |
+          echo "HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED; not Z2M integrated or installed"
+          test ! -e host/r4-b4/z2m-installed.ok
+      - name: Seal the tested existing-owner source bundle and integration receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import gzip
+          import hashlib
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import tarfile
+
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+
+          source_sha = git('rev-parse', 'HEAD').decode().strip()
+          if source_sha != os.environ['B4_SOURCE_SHA']:
+              raise ValueError('B4 integration source SHA changed')
+          host_pin = '6ceb6f6714db26b7fd2c33c53e0d40e29eb95e88'
+          firmware_pin = '3231abb1f13210eb88afe13ff7b7f9f29709cd6b'
+          herdsman_pin = '0968f979d558874b17396c96b66382d4236bbdcd'
+          z2m_pin = '62b02e2aa1997c574223b80c196677b63a25f4a7'
+          upstream = json.loads(Path('host/r4-b4/UPSTREAM.json').read_bytes())
+          if (upstream['host_source_commit'] != host_pin or
+                  upstream['firmware_source_commit'] != firmware_pin or
+                  upstream['herdsman_commit'] != herdsman_pin or
+                  upstream['zigbee2mqtt_commit'] != z2m_pin):
+              raise ValueError('B4 declared immutable input pin changed')
+          for root, expected in ((os.environ['B4_HERDSMAN_ROOT'], herdsman_pin),
+                                 ('/tmp/b4-z2m-host', z2m_pin)):
+              if git('-C', root, 'rev-parse', 'HEAD').decode().strip() != expected:
+                  raise ValueError('B4 tested checkout pin changed')
+
+          paths = sorted(p.decode() for p in
+                         git('ls-files', '-z', '--', 'host/r4-b4', 'host/recovery').split(b'\0') if p)
+          if not paths:
+              raise ValueError('B4 source bundle has no tracked inputs')
+          frozen = {}
+          for name in paths:
+              path = Path(name)
+              if not name.startswith(('host/r4-b4/', 'host/recovery/')) or path.is_symlink() or not path.is_file():
+                  raise ValueError('Unsafe B4 source bundle member')
+              data = path.read_bytes()
+              if data != git('show', source_sha + ':' + name):
+                  raise ValueError('B4 source changed during compilation/tests: ' + name)
+              frozen[name] = data
+
+          output = Path('/tmp/r4-b4-host-integration')
+          output.mkdir(exist_ok=False)
+          archive = output / 'host-bundle.tar.gz'
+          with archive.open('wb') as raw:
+              with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as zipped:
+                  with tarfile.open(fileobj=zipped, mode='w') as bundle:
+                      for name, data in frozen.items():
+                          member = tarfile.TarInfo(name)
+                          member.size = len(data)
+                          member.mode = 0o644
+                          bundle.addfile(member, io.BytesIO(data))
+          for name in ('b4-herdsman-overlay.json', 'b4-herdsman-v4-overlay.json',
+                       'b4-z2m-ota-receipt.json', 'b4-v4-z2m-ota-receipt.json',
+                       'b4-host-runtime-tests.tap', 'p7u-startup-hold.json'):
+              shutil.copyfile(Path('/tmp') / name, output / name)
+          files = {}
+          for path in sorted(output.iterdir()):
+              data = path.read_bytes()
+              files[path.name] = {'sha256': hashlib.sha256(data).hexdigest(),
+                                  'bytes': len(data)}
+          receipt = {
+              'schema': 'r4-b4-host-integration-v1',
+              'source_sha': source_sha,
+              'host_upstream_sha': host_pin,
+              'firmware_b4_sha': firmware_pin,
+              'herdsman_sha': herdsman_pin,
+              'z2m_sha': z2m_pin,
+              'status': 'HOSTED_SOURCE_COMPILED_AND_SYNTHETIC_TESTED',
+              'bundle_file': archive.name,
+              'bundle_sha256': files[archive.name]['sha256'],
+              'existing_owner_only': True,
+              'herdsman_typescript_compiled': True,
+              'z2m_typescript_compiled': True,
+              'host_runtime_tests_completed': True,
+              'retained_startup_protected': True,
+              'automatic_backup_restore': False,
+              'blank_backup_restore_supported': False,
+              'default_enabled': False,
+              'installed_host_changed': False,
+              'full_b0_b4_sealed': False,
+              'flash_authorized': False,
+              'source_files': {name: hashlib.sha256(data).hexdigest()
+                               for name, data in frozen.items()},
+              'files': files,
+          }
+          (output / 'host-integration-receipt.json').write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          PY
+      - name: Upload the source-bound host integration evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b4-host-integration-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/r4-b4-host-integration/
+          if-no-files-found: error

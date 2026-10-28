@@ -1,0 +1,171 @@
+name: P7U exact-source deployable host artifacts (NO LIVE ACTION)
+
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/**'
+      - 'host/recovery/p7u_herdsman_startup_hold.py'
+      - '.github/workflows/release-p7u-host.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p7u-host-release-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Select only successful hosted artifacts from this exact source
+        run: |
+          python - <<'PY'
+          import json,os,subprocess,time
+          from pathlib import Path
+          sha=os.environ['SOURCE_SHA']; repo=os.environ['GITHUB_REPOSITORY']
+          required={
+            'diagnostic':('test-p7u-r4-collector.yml','p7u-r4-z2m-native-image-'),
+            'fallback':('test-p7u-safe-fallback.yml','p7u-protected-fallback-'),
+            'inspector':('test-p7u-host-pid-inspector.yml','p7u-host-pid-inspector-'),
+            'manager':('test-p7u-lifecycle-manager.yml','p7u-lifecycle-manager-'),
+          }
+          paths={workflow for workflow,prefix in required.values()} | {'test-p7u-p0-herdsman-hold.yml','test-p10-r2-reset.yml'}
+          deadline=time.monotonic()+20*60
+          while True:
+              runs=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100']))['workflow_runs']
+              latest={}
+              for workflow in paths:
+                  found=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
+                  if found: latest[workflow]=max(found,key=lambda r:r['id'])
+              failed=[p for p,r in latest.items() if r['status']=='completed' and r['conclusion']!='success']
+              assert not failed, 'source qualification failed: '+repr(failed)
+              if len(latest)==len(paths) and all(r['status']=='completed' for r in latest.values()): break
+              assert time.monotonic()<deadline, 'timed out waiting for exact-source hosted checks'
+              print('Waiting for exact-source hosted checks',flush=True)
+              time.sleep(20)
+          out=Path('/tmp/p7u-release');out.mkdir()
+          selected={}
+          for slot,(workflow,prefix) in required.items():
+              candidates=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
+              assert candidates, 'missing exact-source workflow '+workflow
+              run=max(candidates,key=lambda r:r['id'])
+              assert run['status']=='completed' and run['conclusion']=='success', 'latest workflow not green '+workflow
+              destination=out/slot;destination.mkdir()
+              subprocess.run(['gh','run','download',str(run['id']),'--repo',repo,'--name',prefix+sha,'--dir',str(destination)],check=True)
+              selected[slot]={'run_id':run['id'],'url':run['html_url'],'head_sha':sha}
+          # The protected-startup and Python lanes must also pass at this SHA.
+          for qualification,workflow in (
+              ('protected_startup','test-p7u-p0-herdsman-hold.yml'),
+              ('python','test-p10-r2-reset.yml')):
+              candidates=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
+              assert candidates, 'missing validation '+workflow
+              run=max(candidates,key=lambda r:r['id'])
+              assert run['status']=='completed' and run['conclusion']=='success', 'validation not green '+workflow
+              selected[qualification]={'run_id':run['id'],'url':run['html_url'],'head_sha':sha}
+          (out/'source-runs.json').write_text(json.dumps(selected,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Prepare reviewed add-on contexts and manual-only registry configurations
+        run: |
+          pip install --disable-pip-version-check PyYAML==6.0.2
+          python - <<'PY'
+          import hashlib,json,os,tarfile
+          from pathlib import Path
+          import yaml
+          root=Path('/tmp/p7u-release'); sha=os.environ['SOURCE_SHA']
+          version='0.2.1-'+sha[:12]
+          names={'diagnostic':'addon','fallback':'fallback','inspector':'inspector','manager':'manager'}
+          configurations={}
+          for slot,suffix in names.items():
+              archive=root/slot/f'p7u-staged-{suffix}.tar.gz'
+              expected=f'p7u-staged-{suffix}'
+              receipt=json.loads((root/slot/'ADDON_BUNDLE_RECEIPT.json').read_text())
+              assert receipt['source_sha']==sha
+              assert receipt['archive_sha256']==hashlib.sha256(archive.read_bytes()).hexdigest()
+              with tarfile.open(archive) as t:
+                  members=t.getmembers()
+                  assert len(members)<10000
+                  for m in members:
+                      p=Path(m.name)
+                      assert not p.is_absolute() and '..' not in p.parts and p.parts[0]==expected
+                      assert m.isfile() or m.isdir(), 'special file in staged bundle'
+                  assert sum(m.size for m in members)<128*1024**2
+                  t.extractall(root/slot,filter='data')
+              context=root/slot/expected
+              actual={str(p.relative_to(context)):hashlib.sha256(p.read_bytes()).hexdigest()
+                      for p in sorted(context.rglob('*')) if p.is_file()}
+              assert actual==receipt['files'], 'staged package bytes differ from hosted receipt'
+              config=yaml.safe_load((context/'config.yaml').read_text())
+              assert config['boot']=='manual_only' and config['arch']==['aarch64']
+              # The rollout serves these exact prebuilt bytes through a
+              # loopback-only temporary registry on HA. No HA compilation,
+              # public package publication, or registry credential is needed.
+              config.update(version=version,image=f'localhost:50144/p7u-r4-{slot}')
+              destination=root/'published'/config['slug'];destination.mkdir(parents=True)
+              (destination/'config.yaml').write_text(yaml.safe_dump(config,sort_keys=False))
+              configurations[slot]={'image':config['image'],'version':version,'slug':'local_'+config['slug'],
+                  'context':str(context),'bundle_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
+                  'config_sha256':hashlib.sha256((destination/'config.yaml').read_bytes()).hexdigest()}
+          (root/'configurations.json').write_text(json.dumps(configurations,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Retag the qualified images without rebuilding any layer
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path('/tmp/p7u-release');sha=os.environ['SOURCE_SHA']
+          configs=json.loads((root/'configurations.json').read_text())
+          source_names={'diagnostic':'p7u-r4-z2m-arm64.docker.tar',
+              'fallback':'p7u-arm64.docker.tar','inspector':'p7u-host-pid-arm64.tar',
+              'manager':'p7u-manager-arm64.docker.tar'}
+          for slot,c in configs.items():
+              qualified=root/slot/source_names[slot]
+              with qualified.open('rb') as stream:
+                  source_hash=hashlib.file_digest(stream,'sha256').hexdigest()
+              if slot=='diagnostic':
+                  expected=(root/slot/'docker.sha256').read_text().split()[0]
+              else:
+                  file,key={'fallback':('ATTESTATION.json','docker_sha256'),
+                      'inspector':('RECEIPT.json','sha256'),
+                      'manager':('ADDON_BUNDLE_RECEIPT.json','image_archive_sha256')}[slot]
+                  attestation=json.loads((root/slot/file).read_text())
+                  assert attestation['source_sha']==sha
+                  expected=attestation[key]
+              assert source_hash==expected
+              pinned=(root/slot/'PINNED_IMAGE_ID.txt').read_text().strip()
+              assert pinned.startswith('sha256:') and len(pinned)==71
+              subprocess.run(['docker','load','--input',str(qualified)],check=True)
+              tag=c['image']+':'+c['version']
+              subprocess.run(['docker','tag',pinned,tag],check=True)
+              meta=json.loads(subprocess.check_output(['docker','image','inspect',tag]))[0]
+              assert meta['Id']==pinned and meta['Architecture']=='arm64' and meta['Os']=='linux'
+              c['image_id']=meta['Id']
+              c['source_image_archive_sha256']=source_hash
+              archive=root/'published'/c['slug'].removeprefix('local_')/'image.docker.tar'
+              subprocess.run(['docker','save','--output',str(archive),tag],check=True)
+              c['image_archive_sha256']=hashlib.file_digest(archive.open('rb'),'sha256').hexdigest()
+              c['image_archive_bytes']=archive.stat().st_size
+              del c['context']
+          receipt={'schema':'p7u-host-release-v1','source_sha':sha,'live_mutation':False,
+              'source_runs':json.loads((root/'source-runs.json').read_text()),'profiles':configs}
+          (root/'published'/'RELEASE.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-deployable-host-release-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-release/published/
+          if-no-files-found: error
+          compression-level: 6

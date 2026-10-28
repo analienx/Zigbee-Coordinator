@@ -1,0 +1,34 @@
+name: P7U R4 host ownership inspector
+version: "0.1.0"
+slug: p7u_r4_owner_inspector
+description: On-demand, read-only true host PID/cgroup/tty ownership proof; no radio access
+arch:
+  - aarch64
+startup: once
+boot: manual_only
+init: false
+host_pid: true
+# Global /proc/*/fd stat must include processes in other AppArmor profiles.
+# docker-default blocks that proof even with SYS_PTRACE/DAC_READ_SEARCH.
+# Scope the exemption to this manual one-shot observer; no full_access.
+apparmor: false
+# Character-device stat ONLY: inspector never opens or writes the UART.
+uart: true
+udev: true
+docker_api: true
+hassio_api: true
+hassio_role: default
+privileged:
+  - SYS_PTRACE
+  - DAC_READ_SEARCH
+map:
+  - type: homeassistant_config
+    path: /config
+    read_only: true
+  - type: share
+    path: /share
+    read_only: false
+options:
+  serial_by_id: /dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00
+schema:
+  serial_by_id: str

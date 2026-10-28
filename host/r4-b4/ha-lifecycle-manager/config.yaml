@@ -1,0 +1,41 @@
+name: P7U R4 one-shot host lifecycle manager
+version: "0.1.0"
+slug: p7u_r4_lifecycle_manager
+description: Exact-source one-shot ownership handover; no UART open, reset, or automatic retry
+arch:
+  - aarch64
+startup: once
+boot: manual_only
+init: false
+host_pid: true
+# The same global /proc/*/fd proof as the read-only inspector is mandatory.
+# docker-default blocks cross-profile FD stat despite the explicit capabilities.
+# Only this manual one-shot manager is exempted; no full_access is granted.
+apparmor: false
+uart: true
+udev: true
+docker_api: true
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+privileged:
+  - SYS_PTRACE
+  - DAC_READ_SEARCH
+map:
+  - type: homeassistant_config
+    path: /config
+    read_only: false
+  - type: share
+    path: /share
+    read_only: false
+  - type: backup
+    path: /backup
+    read_only: false
+options:
+  plan_path: /share/p7u-lifecycle/private/plan.json
+  plan_sha256: ""
+  execute: false
+schema:
+  plan_path: str
+  plan_sha256: str
+  execute: bool

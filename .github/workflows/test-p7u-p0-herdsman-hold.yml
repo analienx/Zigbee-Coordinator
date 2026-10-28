@@ -1,0 +1,78 @@
+name: P7U P0 herdsman non-destructive startup (NO HARDWARE)
+
+on:
+  push:
+    branches:
+      - codex/p7u-r4-p0-nondestructive-startup-20261020
+    paths:
+      - 'host/recovery/**'
+      - '.github/workflows/test-p7u-p0-herdsman-hold.yml'
+  pull_request:
+    paths:
+      - 'host/recovery/**'
+      - 'host/r4-b4/**'
+      - '.github/workflows/test-p7u-p0-herdsman-hold.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-herdsman-hold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Fetch immutable herdsman 10.9.1 source
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-host-recovery
+          git -C /tmp/p7u-host-recovery init -q
+          git -C /tmp/p7u-host-recovery remote add origin https://github.com/Koenkk/zigbee-herdsman.git
+          git -C /tmp/p7u-host-recovery fetch --depth 1 origin 0968f979d558874b17396c96b66382d4236bbdcd
+          test "$(git -C /tmp/p7u-host-recovery rev-parse FETCH_HEAD)" = 0968f979d558874b17396c96b66382d4236bbdcd
+          git -C /tmp/p7u-host-recovery checkout --detach FETCH_HEAD
+      - name: Patch pinned manager source in disposable checkout only
+        env:
+          PYTHONPATH: host/r4-b4
+        run: |
+          python host/recovery/p7u_herdsman_startup_hold.py \
+            --checkout /tmp/p7u-host-recovery \
+            --receipt /tmp/p7u-host-recovery-hold-receipt.json
+      - name: Compile actual patched herdsman TypeScript
+        run: |
+          npm install -g pnpm@10.33.0
+          cd /tmp/p7u-host-recovery
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Adversarial no-write startup tests
+        env:
+          P7U_HERDSMAN_ROOT: /tmp/p7u-host-recovery
+        run: node --test host/recovery/test-p7u-herdsman-hold.cjs
+      - name: Assert this is source-only, not an approved recovery
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('/tmp/p7u-host-recovery-hold-receipt.json').read_text())
+          assert receipt['installed'] is False
+          assert receipt['network_recovered'] is False
+          assert receipt['radio_access'] is False
+          assert receipt['restore_automatically_allowed'] is False
+          assert receipt['virgin_commissioning_allowed'] is False
+          assert receipt['retained_only'] is True
+          assert receipt['mandatory_readonly_f1'] is True
+          assert receipt['healthy_missing_marker_resume'] is True
+          assert len(receipt['files']) == 7  # manager, F1 ABI, controller DB/HOLD and ZNP no-bootloader
+          PY

@@ -1,0 +1,518 @@
+name: R4-B0-B4 composed native P7U F0-F1-F2 (NOT FLASH)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  r4-b1-admission-source:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact branch commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile pinned actual TI bodies and execute fault and mutation controls
+        run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
+      - name: Upload exact-source synthetic receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: b1-direct-source-${{ env.B1_SOURCE_SHA }}
+          path: |
+            /tmp/b1-hosted/overlay.json
+            /tmp/b1-hosted/test-results.json
+          if-no-files-found: warn
+
+  r4-b0-overlay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Compile R4-B0 tools and tests
+        run: |
+          python -m py_compile firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py firmware/slzb-06p7u/r4/b0/tools/b0_provision.py firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py firmware/slzb-06p7u/r4/b0/tools/b0_fetch_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py tests/test_r4_b0_bind_sysconfig.py firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py tests/test_r4_b0_p7u_board_overlay.py firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py tests/test_r4_b0_verify_generated_board.py tests/test_r4_b0_fetch_ti.py tests/test_r4_b0_install_ti.py tests/test_r4_b0_overlay.py tests/test_r4_b0_audit.py tests/test_r4_b0_collect_native.py tests/test_r4_b0_sdk_build_scope.py
+      - name: Assert R4-B0 fixture LF pin holds (CRLF drift guard)
+        run: |
+          test -f firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
+          grep -q "eol=lf" firmware/slzb-06p7u/r4/b0/fixtures/.gitattributes
+          git ls-files --eol firmware/slzb-06p7u/r4/b0/fixtures/ | tee /tmp/b0eol.txt
+          if grep -E '^i/(mixed|crlf)|w/crlf' /tmp/b0eol.txt; then
+            echo "R4-B0 fixtures have CRLF drift; text vectors must stay LF for the sha256 binding"
+            exit 1
+          fi
+          echo "R4-B0 fixture LF pin holds"
+      - name: Run R4-B0 overlay tests
+        run: python -m unittest -v tests.test_r4_b0_overlay
+      - name: Run R4-B0 image audit tests
+        run: python -m unittest -v tests.test_r4_b0_audit
+      - name: Test strict native artifact collector (synthetic test only)
+        run: python -m unittest -v tests.test_r4_b0_collect_native
+      - name: Test SHA-gated TI toolchain acquisition (offline)
+        run: python -m unittest -v tests.test_r4_b0_fetch_ti
+      - name: Test TI installer archive safety (offline)
+        run: python -m unittest -v tests.test_r4_b0_install_ti
+      - name: Test target-scoped SDK M4F build workaround
+        run: python -m unittest -v tests.test_r4_b0_sdk_build_scope
+      - name: Test pinned CCS SysConfig version dispatch
+        run: python -m unittest -v tests.test_r4_b0_bind_sysconfig
+      - name: Test measured P7U pinout and CCFG source overlay
+        run: python -m unittest -v tests.test_r4_b0_p7u_board_overlay
+      - name: Test exact TI Clang version banner and reject substring impostors
+        run: python -m unittest -v tests.test_r4_b0_provision_versions
+      - name: Test generated P7U UART and whole-CFG audit negative controls
+        run: python -m unittest -v tests.test_r4_b0_verify_generated_board
+      - name: Validate real B0 overlay documents
+        run: python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate firmware/slzb-06p7u/r4/b0
+      - name: Unit oracle sanity on valid vector (NOT native proof)
+        run: python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-valid --synthetic-fixture-oracle
+      - name: Negative control (o1) corrupted image must fail hash binding
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-hash --synthetic-fixture-oracle 2>&1); then
+            echo "control (o1) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "sha256 mismatch"
+          echo "control (o1) rejected at hash binding as required"
+      - name: Negative control (o2) echo-pass log must fail linker evidence
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-no-link --synthetic-fixture-oracle 2>&1); then
+            echo "control (o2) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "no actual linker invocation"
+          echo "control (o2) rejected at linker evidence as required"
+      - name: Negative control (o3) NV-CCFG overlap must fail
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-overlap --synthetic-fixture-oracle 2>&1); then
+            echo "control (o3) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "NV/CCFG overlap"
+          echo "control (o3) rejected at NV/CCFG separation as required"
+      - name: Negative control (o4) baud mutation must fail overlay
+        run: |
+          rm -rf /tmp/b0neg_baud
+          cp -r firmware/slzb-06p7u/r4/b0 /tmp/b0neg_baud
+          python -c "import json; p='/tmp/b0neg_baud/B0_BOARD_CONTRACT.json'; d=json.load(open(p)); [c.__setitem__('value',9600) for c in d['claims'] if c['id']=='uart-baud']; json.dump(d,open(p,'w'),indent=1)"
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate /tmp/b0neg_baud 2>&1); then
+            echo "control (o4) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "uart-baud"
+          echo "control (o4) rejected at board contract as required"
+      - name: Negative control (o5) absent artifacts must BLOCK, never pass
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-does-not-exist --synthetic-fixture-oracle 2>&1); then
+            echo "control (o5) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "B0-AUDIT-BLOCKED"
+          echo "control (o5) blocked without binary claim as required"
+      - name: Negative control (o6) fake ELF must fail ELF gate
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-elf --synthetic-fixture-oracle 2>&1); then
+            echo "control (o6) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "ELF"
+          echo "control (o6) rejected fake ELF as required"
+      - name: Negative control (o7) path traversal must fail confined
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-path-traversal --synthetic-fixture-oracle 2>&1); then
+            echo "control (o7) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "traversal"
+          echo "control (o7) rejected path traversal as required"
+      - name: Negative control (o8) synthetic map format must fail
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-synthetic-map --synthetic-fixture-oracle 2>&1); then
+            echo "control (o8) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "synthetic"
+          echo "control (o8) rejected synthetic map format as required"
+      - name: Negative control (o9) unhashable board claim id must fail without traceback
+        run: |
+          rm -rf /tmp/b0neg_ids
+          cp -r firmware/slzb-06p7u/r4/b0 /tmp/b0neg_ids
+          python -c "import json; p='/tmp/b0neg_ids/B0_BOARD_CONTRACT.json'; d=json.load(open(p)); d['claims'].append({'id':['uart-rx'],'value':'DIO12'}); json.dump(d,open(p,'w'),indent=1)"
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_overlay_validate.py validate /tmp/b0neg_ids 2>&1); then
+            echo "control (o9) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "nonempty string"
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o9) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o9) rejected unhashable claim id as required"
+      - name: Negative control (o10) tampered HEX/BIN with updated digests must fail cross-binding
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-tampered-hexbin --synthetic-fixture-oracle 2>&1); then
+            echo "control (o10) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "cross-binding"
+          if echo "$out" | grep -F "sha256 mismatch"; then
+            echo "control (o10) failed at hash only, cross-binding bypassed"
+            exit 1
+          fi
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o10) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o10) rejected at HEX/BIN cross-binding as required"
+      - name: Negative control (o11) injected SRAM bytes must fail content-binding
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-extra-bytes --synthetic-fixture-oracle 2>&1); then
+            echo "control (o11) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "content-binding"
+          echo "$out" | grep -F "no covering ELF PT_LOAD segment"
+          if echo "$out" | grep -F "sha256 mismatch"; then
+            echo "control (o11) failed at hash only, content-binding bypassed"
+            exit 1
+          fi
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o11) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o11) rejected injected bytes at content-binding as required"
+      - name: Negative control (o12) deviant FLASH geometry must fail donor pin
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-bad-geometry --synthetic-fixture-oracle 2>&1); then
+            echo "control (o12) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "geometry mismatch"
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o12) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o12) rejected deviant FLASH geometry as required"
+      - name: Negative control (o13) fabricated one-line log must fail log tripwire
+        run: |
+          if out=$(python firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py audit firmware/slzb-06p7u/r4/b0 --artifacts firmware/slzb-06p7u/r4/b0/fixtures/artifacts-fake-log --synthetic-fixture-oracle 2>&1); then
+            echo "control (o13) unexpectedly passed"
+            exit 1
+          fi
+          echo "$out" | grep -F "no actual linker invocation"
+          if echo "$out" | grep -F "Traceback"; then
+            echo "control (o13) leaked a traceback"
+            exit 1
+          fi
+          echo "control (o13) rejected fabricated one-line log as required"
+
+  r4-b0-upstream-inventory:
+    runs-on: ubuntu-latest
+    env:
+      EXPECT_TI_SDK_SHA: 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+      EXPECT_TI_EXAMPLES_SHA: 87ff5b638b632050228a7504f35cf3b95581c278
+      EXPECT_TI_RELEASE: lpf2-8.33.00.16
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      # Re-derives every donor file name in B0_DONOR_INVENTORY.json
+      # against upstream at the pinned SHAs. Any invented or renamed
+      # path fails here. Fails closed on network outage (fetch
+      # failure is nonzero with `external proof unavailable`, never
+      # a pass).
+      - name: Verify donor pins and exact upstream file names
+        run: |
+          set -e
+          rm -rf /tmp/b0donor && mkdir -p /tmp/b0donor && cd /tmp/b0donor
+          git init -q examples && (cd examples && git remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git && git fetch --depth 1 origin "$EXPECT_TI_EXAMPLES_SHA" || { echo "external proof unavailable (fetch of zstack-examples failed)"; exit 1; })
+          [ "$(cd examples && git rev-parse FETCH_HEAD)" = "$EXPECT_TI_EXAMPLES_SHA" ] || { echo "upstream mismatch (examples SHA)"; exit 1; }
+          echo "upstream OK: fetched zstack-examples $EXPECT_TI_EXAMPLES_SHA"
+          git init -q sdk && (cd sdk && git remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git && git fetch --depth 1 origin "$EXPECT_TI_SDK_SHA" || { echo "external proof unavailable (fetch of lowpower-f2-sdk failed)"; exit 1; })
+          [ "$(cd sdk && git rev-parse FETCH_HEAD)" = "$EXPECT_TI_SDK_SHA" ] || { echo "upstream mismatch (SDK SHA)"; exit 1; }
+          echo "upstream OK: fetched lowpower-f2-sdk $EXPECT_TI_SDK_SHA"
+          (cd examples && git ls-tree "$EXPECT_TI_EXAMPLES_SHA" cc13xx_cc26xx_sdk | grep -F "160000 commit $EXPECT_TI_SDK_SHA") || { echo "upstream mismatch (cc13xx_cc26xx_sdk gitlink)"; exit 1; }
+          echo "upstream OK: cc13xx_cc26xx_sdk gitlink mode 160000 equals SDK pin"
+          (cd sdk && git log -1 --format=%s "$EXPECT_TI_SDK_SHA" | grep -F "$EXPECT_TI_RELEASE") || { echo "upstream mismatch (SDK commit message release)"; exit 1; }
+          echo "upstream OK: SDK commit message names $EXPECT_TI_RELEASE"
+          for p in \
+            "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec" \
+            "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg" \
+            "README.md"; do
+            (cd examples && git ls-tree "$EXPECT_TI_EXAMPLES_SHA" "$p" | grep -F "$p") || { echo "upstream mismatch (missing examples path: $p)"; exit 1; }
+            echo "upstream OK: examples path present: $p"
+          done
+          for p in \
+            "source/ti/zstack/startup/main.c" \
+            "source/ti/zstack/npi/npi_task.c" \
+            "source/ti/zstack/mt/mt_sys.c" \
+            "source/ti/zstack/boards/cc13x2x7_cc26x2x7/cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd" \
+            "source/ti/devices/cc13x2x7_cc26x2x7/startup_files/startup_ticlang.c"; do
+            (cd sdk && git ls-tree "$EXPECT_TI_SDK_SHA" "$p" | grep -F "$p") || { echo "upstream mismatch (missing SDK path: $p)"; exit 1; }
+            echo "upstream OK: SDK path present: $p"
+          done
+          echo "B0 donor inventory attested upstream"
+      - name: Negative control (i1) bogus SHA must fail fetch closed
+        run: |
+          rm -rf /tmp/b0neg_i1 && mkdir -p /tmp/b0neg_i1 && cd /tmp/b0neg_i1
+          git init -q neg && (cd neg && git remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git && git fetch --depth 1 origin 0000000000000000000000000000000000000000 2>/dev/null) && { echo "control (i1) unexpectedly fetched"; exit 1; }
+          echo "control (i1) fetch refused as required (external proof unavailable, never a pass)"
+      - name: Negative control (i2) invented path must fail ls-tree
+        run: |
+          cd /tmp/b0donor/examples
+          if git ls-tree "$EXPECT_TI_EXAMPLES_SHA" "examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp_CC1352P7_4_tirtos7_ticlang.projectspec" | grep -F "znp_CC1352P7_4"; then
+            echo "control (i2) unexpectedly found invented path"
+            exit 1
+          fi
+          echo "control (i2) invented P7 projectspec name absent upstream as required (real name is znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec)"
+
+  r4-b0-native-build:
+    # Fail closed: a red SDK/board overlay or unverified TI donor blocks native promotion.
+    needs: [r4-b1-admission-source, r4-b0-overlay, r4-b0-upstream-inventory]
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    env:
+      B1_NATIVE_REPLICA: ${{ matrix.replica }}
+    concurrency:
+      group: r4-b0b4-composed-native-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ matrix.replica }}
+      cancel-in-progress: true
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout push SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      # Fail-closed provision gate: with no verified TI toolchain
+      # distribution provisioned, this emits a BLOCKED receipt and
+      # fails the job. It never fabricates ELF/HEX/BIN and never
+      # reports a build PASS. SysConfig 1.21.1.3772 must be present
+      # as an explicit standalone install: CCS 12.8 bundles only
+      # 1.21.0.3721, which never satisfies the pin. When the
+      # toolchain becomes available, the READY branch below performs
+      # the real CCS headless build. Fixture vectors in
+      # firmware/slzb-06p7u/r4/b0/fixtures/ are unit oracle sanity
+      # inputs only and are NEVER audited here as native proof.
+      - name: Restore checksum-pinned TI distribution cache
+        id: ti_archive_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/b0ti/downloads
+          key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
+      - name: Install TI ARM Clang Linux runtime dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libtinfo5
+          ldconfig -p | grep -F 'libtinfo.so.5'
+      - name: Authenticated TI bootstrap (hash pins required)
+        env:
+          TI_CCS_SHA256: ${{ secrets.TI_CCS_SHA256 }}
+          TI_SYSCONFIG_SHA256: ${{ secrets.TI_SYSCONFIG_SHA256 }}
+          TI_CLANG_SHA256: ${{ secrets.TI_CLANG_SHA256 }}
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_install_ti.py --root /tmp/b0ti --github-env "$GITHUB_ENV" --github-path "$GITHUB_PATH"
+      - name: Save authenticated TI archives before potentially failing compilation
+        if: steps.ti_archive_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/b0ti/downloads
+          key: r4-b0-ti-linux-ccs-fa807c9e-syscfg-0c1674f8-clang-2864bb10
+      - name: Provision gate (fail closed without toolchain)
+        run: |
+          export PATH="$(dirname "$CCS_ECLIPSE"):$SYSCONFIG_TOOL:$TICLANG_ARMCOMPILER/bin:$PATH"
+          python firmware/slzb-06p7u/r4/b0/tools/b0_provision.py provision --out /tmp/b0-provision-receipt.json
+      - name: Bind CCS SysConfig invocation to exact standalone pin
+        run: |
+          python firmware/slzb-06p7u/r4/b0/tools/b0_bind_sysconfig.py \
+            --ccs-eclipse "$CCS_ECLIPSE" --standalone-cli "$SYSCONFIG_CLI" \
+            --receipt /tmp/b0-sysconfig-binding.json
+      - name: Real native build (only when provision is READY)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf /tmp/b0src /tmp/b0out && mkdir -p /tmp/b0src /tmp/b0out && cd /tmp/b0src
+          git init -q examples
+          git -C examples remote add origin https://github.com/TexasInstruments/simplelink-zstack-examples.git
+          git -C examples fetch --depth 1 origin 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples checkout 87ff5b638b632050228a7504f35cf3b95581c278
+          git -C examples submodule update --init cc13xx_cc26xx_sdk
+          [ "$(git -C examples/cc13xx_cc26xx_sdk rev-parse HEAD)" = "3615ad5d3f4f271258d18a2f5ce1785064ff9a58" ] || { echo "upstream mismatch (SDK submodule pin)"; exit 1; }
+          "$SYSCONFIG_CLI" --version | grep -F "1.21.1+3772" || { echo "B0-BUILD-BLOCKED: standalone SysConfig 1.21.1.3772 not provisioned (CCS bundle 1.21.0.3721 is not sufficient); no dummy firmware produced"; exit 1; }
+          tiarmclang --version | grep -F "3.2.2" || { echo "B0-BUILD-BLOCKED: TI-ARM-CLANG 3.2.2.LTS not provisioned; no dummy firmware produced"; exit 1; }
+          echo "Building pinned TI SDK libraries with GNU make" | tee /tmp/b0out/build.log
+          sdk=/tmp/b0src/examples/cc13xx_cc26xx_sdk
+          test -f "$sdk/imports.mak"
+          : "${SYSCONFIG_TOOL:?missing pinned SysConfig directory}"
+          : "${TICLANG_ARMCOMPILER:?missing pinned TI Clang directory}"
+          printf '\nSYSCONFIG_TOOL := %s\nTICLANG_ARMCOMPILER := %s\nCMAKE := %s\nPYTHON := python3\nGCC_ARMCOMPILER :=\nIAR_ARMCOMPILER :=\n' "$SYSCONFIG_CLI" "$TICLANG_ARMCOMPILER" "$(command -v cmake)" >> "$sdk/imports.mak"
+          # Scoped workaround for upstream generic M4 ASM/FPU mismatch.
+          # Keep the target CC2652P7 M4F library compiled in this SDK.
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_sdk_build_scope.py" --sdk "$sdk" --receipt /tmp/b0out/sdk-scope-receipt.json
+          (cd "$sdk" && make -j2) 2>&1 | tee -a /tmp/b0out/build.log
+          find "$sdk" -type f \( -name '*.a' -o -name '*.lib' \) -print | tee /tmp/b0out/sdk-libraries.txt
+          test -s /tmp/b0out/sdk-libraries.txt
+          echo "Apply pinned-source R4-B1 admission overlay AFTER SDK library build and BEFORE ZNP project import" | tee -a /tmp/b0out/build.log
+          mkdir -p "$sdk/.b1-prerequisites"
+          curl -fL --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts \
+            -o "$sdk/.b1-prerequisites/herdsman-definition.ts"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/apply_b1.py" \
+            --sdk "$sdk" --receipt /tmp/b0out/b1-overlay.json
+          test -s /tmp/b0out/b1-overlay.json
+          echo "Fetch immutable B3 #123 source ONLY, never a mutable branch"
+          git init -q /tmp/r4-b3-source-git
+          git -C /tmp/r4-b3-source-git remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/r4-b3-source-git fetch --depth 1 origin b481e0beabf1966900644f69d7f5d024708ebf73
+          test "$(git -C /tmp/r4-b3-source-git rev-parse FETCH_HEAD)" = b481e0beabf1966900644f69d7f5d024708ebf73
+          git -C /tmp/r4-b3-source-git show b481e0beabf1966900644f69d7f5d024708ebf73:firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py > /tmp/r4_b3_pinned_security_overlay.py
+          echo "Fuse strict B1-owned security with B3 monotonic NWK SAVE and TRNG error denial"
+          python "$GITHUB_WORKSPACE/tools/r4_b1_b3_security_fuse.py" \
+            --sdk "$sdk" \
+            --b3-script /tmp/r4_b3_pinned_security_overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/b0out/b1-overlay.json \
+            --receipt /tmp/b0out/b1-b3-source-fusion.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("/tmp/b0out/b1-b3-source-fusion.json").read_text())
+          assert d["source_ready"] is False and d["flash_authorized"] is False
+          assert d["b3_nwk_save_monotonic_and_B1_HOLD"] is True
+          assert d["B3_NVOCMP_compaction_semantic_fusion_complete"] is False
+          PY
+          echo "Source-verify immutable B2 and B4 siblings"
+          mkdir -p /tmp/r4-composite-sources
+          git init -q /tmp/r4-composite-repo
+          git -C /tmp/r4-composite-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
+            git -C /tmp/r4-composite-repo fetch --depth 1 origin "$sha"
+            test "$(git -C /tmp/r4-composite-repo rev-parse FETCH_HEAD)" = "$sha"
+          done
+          git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4-composite-sources/b2_mto_fail_closed_overlay.py
+          git -C /tmp/r4-composite-repo show 530a52631fbde274a2ae356c490bad71b47168a6:firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py > /tmp/r4-composite-sources/b2_mto_failure_guard_overlay.py
+          git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compile_actual_mto_nv_timer.py > /tmp/r4-composite-sources/b2_compile_actual_mto_nv_timer.py
+          git -C /tmp/r4-composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compose.py > /tmp/r4-composite-sources/b2_compose.py
+          git -C /tmp/r4-composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_native_patch.py > /tmp/r4-composite-sources/b4_native_patch.py
+          git -C /tmp/r4-composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py > /tmp/r4-composite-sources/b4_v4_native_patch.py
+          python "$GITHUB_WORKSPACE/tools/r4_b0_b4_composite_stage.py" \
+            --sdk "$sdk" --baseline /tmp/r4-composite-sources \
+            --b1-receipt /tmp/b0out/b1-overlay.json \
+            --fusion-receipt /tmp/b0out/b1-b3-source-fusion.json \
+            --b2-script /tmp/r4-composite-sources/b2_mto_fail_closed_overlay.py \
+            --b2-failure-script /tmp/r4-composite-sources/b2_mto_failure_guard_overlay.py \
+            --b4-v3-script /tmp/r4-composite-sources/b4_native_patch.py \
+            --b4-v4-script /tmp/r4-composite-sources/b4_v4_native_patch.py \
+            --b2-sha d13a48f5226d42e247a17d9198d84c94a4415030 \
+            --b2-failure-sha 530a52631fbde274a2ae356c490bad71b47168a6 \
+            --b4-sha 3231abb1f13210eb88afe13ff7b7f9f29709cd6b \
+            --receipt /tmp/b0out/r4-composite-source.json
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          x=json.loads(Path("/tmp/b0out/r4-composite-source.json").read_text())
+          assert x["source_ready"] is False
+          assert x["flash_authorized"] is False
+          assert x["b1_f1_and_b4_f0_f2_dispatch"] is True
+          assert x["b2_mto_failure_guard"] == "ONLY_ACTIVE_FORMED_CONCENTRATOR"
+          assert x["b2_added_retry_throttle"] is False
+          PY
+          echo "Discover pinned TI compiler and SDK product in CCS" | tee -a /tmp/b0out/build.log
+          "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.toolDiscoveryPath "$TICLANG_ARMCOMPILER" 2>&1 | tee -a /tmp/b0out/build.log
+          "$CCS_ECLIPSE" -noSplash -data /tmp/b0ws -application com.ti.common.core.initialize -ccs.productDiscoveryPath "$sdk;$SYSCONFIG_TOOL" 2>&1 | tee -a /tmp/b0out/build.log
+          echo "importing and building the pinned ZNP projectspec"
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location /tmp/b0src/examples/examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec 2>&1 | tee -a /tmp/b0out/build.log
+          project=/tmp/b0ws/znp_LP_CC1352P7_4_tirtos7_ticlang
+          test -f "$project/znp.syscfg"
+          echo "Apply B2 P1 routing capacity to actual imported CCS ZNP compiler opts"
+          python /tmp/r4-composite-sources/b2_compose.py \
+            --opts "$project/Stack/Config/znp_cnf.opts" --profile P1 \
+            --receipt /tmp/b0out/b2-p1-composite-compiler-opts.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
+            --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
+          echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
+          "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
+            -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir /tmp/b0out/preflight-syscfg \
+            --receipt /tmp/b0out/p7u-generated-preflight.json
+          echo '$ eclipse -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang' | tee -a /tmp/b0out/build.log
+          eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang 2>&1 | tee -a /tmp/b0out/build.log
+          cp "$project/Stack/Config/znp_cnf.opts" /tmp/b0out/znp_cnf.opts
+          echo "Collecting real linker artifacts"
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_collect_native.py" --workspace /tmp/b0ws --out /tmp/b0out --clang "$TICLANG_ARMCOMPILER" --build-log /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \
+            --out-dir "$project/default/syscfg" \
+            --ccfg-bin /tmp/b0out/znp_LP_CC1352P7_4_tirtos7_ticlang.bin \
+            --receipt /tmp/b0out/p7u-generated-native.json
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_image_audit.py" audit "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0" --artifacts /tmp/b0out
+          python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b1/tools/seal_native.py" \
+            --artifacts /tmp/b0out --sdk "$sdk" --expected-sha "$B1_SOURCE_SHA"
+      - name: Upload native artifacts and receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-${{ matrix.replica }}
+          path: |
+            /tmp/b0-provision-receipt.json
+            /tmp/b0-sysconfig-binding.json
+            /tmp/b0out/
+          if-no-files-found: warn
+
+  r4-b1-native-reproducibility:
+    needs: [r4-b0-native-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.B1_SOURCE_SHA }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-1
+          path: /tmp/b1-replica-1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: r4-b1-direct-native-${{ env.B1_SOURCE_SHA }}-2
+          path: /tmp/b1-replica-2
+      - name: Compare independent clean native replicas
+        run: |
+          python firmware/slzb-06p7u/r4/b1/tools/compare_native.py \
+            --first /tmp/b1-replica-1/b0out --second /tmp/b1-replica-2/b0out \
+            --expected-sha "$B1_SOURCE_SHA" --out /tmp/b1-native-reproducibility.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r4-composite-reproducibility-${{ env.B1_SOURCE_SHA }}
+          path: /tmp/b1-native-reproducibility.json
+          if-no-files-found: error

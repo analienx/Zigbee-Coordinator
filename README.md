@@ -1,5 +1,7 @@
 # Zigbee Coordinator
 
+> **Current operational override (2026-10-20):** Active hardware for the R4 flash work is the **one SMLIGHT SLZB-06P7U R1.73 / CC2652P7**, currently restored to stock in **Ethernet mode**; its USB cable terminates at **Home Assistant**, *not* at the Windows Zephyrus. Keep Ethernet for remote BSL flash/readback (only with the guarded network transport) and switch to HA USB only after verified R4 boot. **GitHub Actions builds/tests first, native Windows only for direct hardware operations, never WSL.** Start with the [P7U transport and flash quickstart](firmware/slzb-06p7u/r4/release/P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The MR4U/P10 "current" statements below are historical and **do not describe the active Oct 2026 P7U task**.
+
 Shared firmware, migration, recovery, diagnostics and acceptance tooling for the Zigbee coordinators used by this Home Assistant / Zigbee2MQTT installation.
 
 This repository is intentionally **hardware-neutral at the top level**. Coordinator-specific work must identify the physical coordinator, radio silicon and host adapter stack explicitly.

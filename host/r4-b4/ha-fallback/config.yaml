@@ -1,0 +1,59 @@
+name: P7U R4 retained-network fallback
+version: "0.2.0"
+slug: p7u_r4_fallback
+description: Protected F2-free original-owner host
+arch:
+  - aarch64
+startup: application
+boot: manual_only
+init: false
+# Match the upstream entrypoint's read-only Supervisor metadata requirement.
+hassio_api: true
+hassio_role: default
+ingress: false
+uart: true
+udev: true
+services:
+  - mqtt:want
+map:
+  - type: homeassistant_config
+    path: /config
+    read_only: false
+  - type: app_config
+    path: /addon_config
+    read_only: false
+  - type: share
+    path: /share
+    read_only: false
+environment:
+  P7U_B4_COLLECTOR: "0"
+  P7U_APPROVED_DB_MANIFEST: /config/zigbee2mqtt/.p7u-approved.json
+options:
+  data_path: /config/zigbee2mqtt
+  socat:
+    enabled: false
+  mqtt: {}
+  serial: {}
+schema:
+  data_path: str
+  socat:
+    enabled: bool?
+    master: str?
+    slave: str?
+    options: str?
+    log: bool?
+  mqtt:
+    server: str?
+    ca: str?
+    key: str?
+    cert: str?
+    user: str?
+    password: password?
+    base_topic: str?
+  serial:
+    port: str?
+    adapter: str?
+    baudrate: int?
+    rtscts: bool?
+  watchdog: str?
+  force_onboarding: bool?

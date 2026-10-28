@@ -1,0 +1,21 @@
+CCS 12.8.0.00012 headless build log (R4-B0 unit-test vector; NEVER native proof)
+workspace: /tmp/b0ws (fresh -data dir for this vector build)
+host: ubuntu-22.04 runner (actions/setup-python 3.12)
+$ eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectImport -ccs.location examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec
+project import OK: znp_LP_CC1352P7_4_tirtos7_ticlang
+discovering TI tools: TICLANG_ARMCOMPILER=/opt/ti/ccs1280/ccs/tools/compiler/ti-cgt-armllvm_3.2.2.LTS
+discovering TI product: cc13xx_cc26xx_sdk @ 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+$ syscfg -o syscfg --product $SDK/.metadata/product.json --compiler ticlang tirtos7/znp.syscfg
+syscfg generation OK: ti_utils_build_linker.cmd.genlibs emitted (SysConfig 1.21.1.3772 standalone, NOT the CCS-bundled 1.21.0.3721)
+syscfg emitted: ti_drivers_config.c ti_drivers_config.h ti_devices_config.c
+$ eclipse -noSplash -data /tmp/b0ws -application com.ti.ccstudio.apps.projectBuild -ccs.projects znp_LP_CC1352P7_4_tirtos7_ticlang -ccs.configuration release
+building file: ../znp.syscfg (SysConfig 1.21.1.3772)
+building file: ../startup/main.c (tiarmclang 3.2.2.LTS)
+tiarmclang link: --rom_model --warn_sections --xml_link_info=znp_linkInfo.xml -llibc.a -ldriverlib.lib -ltimac_rom_PG2_0_rom_api_linker.cmd
+link step finished: diagnostics 0 errors, 0 warnings
+link OK: znp.out (ELF)
+$ tiarmobjcopy znp.out --output-target ihex znp.hex
+hex emission OK
+$ tiarmobjcopy znp.out -O binary znp.bin
+bin emission OK
+build finished: znp.out znp_linkInfo.xml znp.hex znp.bin
