@@ -35,6 +35,16 @@ static uint8_t B4_V5_CachedEvents[B4_V5_PAGE_SIZE];
 static uint8_t B4_V5_CachedNonce[8];
 static uint32_t B4_V5_CachedTick;
 static uint8_t B4_V5_CachedValid;
+static B4_V5_Event B4_V5_FirstAnomaly, B4_V5_PreAnomaly;
+static uint8_t B4_V5_AnomalyFrozen;
+static uint32_t B4_V5_AnomalyOrdinal;
+/* Only full MT frames contain SOF LEN CMD0 CMD1 FCS.
+ * Sentinel 0xffff is invalid: never dereference a short or NULL buffer. */
+static uint16_t B4_V5_CommandFromFrame(const uint8_t *frame, uint16_t size)
+{
+    return frame != NULL && size >= 5u ?
+           (uint16_t)(((uint16_t)frame[2]<<8u)|frame[3]) : 0xffffu;
+}
 extern void B4_V43_Snapshot(uint8_t *out);
 extern volatile uint32_t B4_AllRspProduced, B4_AllRspAllocFailed;
 extern volatile uint32_t B4_AllRspFramingFailed, B4_AllRspTlRejected;
@@ -46,6 +56,12 @@ static void B4_V5_Put32(uint8_t *p, uint32_t v)
 static void B4_V5_Put16(uint8_t *p, uint16_t v)
 {
     p[0]=(uint8_t)v; p[1]=(uint8_t)(v >> 8);
+}
+static void B4_V5_PutEvent(uint8_t *dst, const B4_V5_Event *e)
+{
+    B4_V5_Put32(dst,e->tick);
+    B4_V5_Put16(dst+4u,e->command);
+    dst[6]=e->stage; dst[7]=e->result;
 }
 static uint32_t B4_V5_Get32(const uint8_t *p)
 {
@@ -61,6 +77,21 @@ void B4_V5_Record(uint8_t stage, uint16_t command, uint8_t result)
     if (command == 0x21f2u || command == 0x61f2u) return;
     key=OsalPort_enterCS();
     tick=Clock_getTicks();
+    if (!B4_V5_AnomalyFrozen && (stage == 8u || stage == 9u))
+    {
+        /* Freeze first actively detectable failure and immediately preceding
+         * task transition. A missing MT exit cannot be detected until a
+         * later independent observation: do not claim it is frozen here. */
+        if (B4_V5_EventTotal)
+            B4_V5_PreAnomaly = B4_V5_Ring[
+                (B4_V5_EventTotal-1u)&(B4_V5_RING_SIZE-1u)];
+        B4_V5_FirstAnomaly.tick=tick;
+        B4_V5_FirstAnomaly.command=command;
+        B4_V5_FirstAnomaly.stage=stage;
+        B4_V5_FirstAnomaly.result=result;
+        B4_V5_AnomalyOrdinal=B4_V5_EventTotal;
+        B4_V5_AnomalyFrozen=1u;
+    }
     if (B4_V5_EventTotal != UINT32_MAX)
     {
         index=B4_V5_EventTotal & (B4_V5_RING_SIZE-1u);
@@ -123,9 +154,7 @@ void B4_V5_ReadPage1(uint8_t *out, const uint8_t *nonce)
     {
         const B4_V5_Event *e=&B4_V5_Ring[(first+i)&(B4_V5_RING_SIZE-1u)];
         uint8_t *dest=B4_V5_CachedEvents+32u+i*8u;
-        B4_V5_Put32(dest,e->tick);
-        B4_V5_Put16(dest+4u,e->command);
-        dest[6]=e->stage;dest[7]=e->result;
+        B4_V5_PutEvent(dest,e);
     }
     B4_V5_Put32(out+32u,B4_V5_NpiWakes);
     B4_V5_Put32(out+36u,B4_V5_NpiLastTick);
@@ -149,7 +178,8 @@ void B4_V5_ReadPage1(uint8_t *out, const uint8_t *nonce)
     /* bit0 boot entropy valid; bit1 coherent cached event page exists.
      * Heap byte statistics, independent stack high-water, ESP UART mux
      * visibility and Zigbee stack task heartbeat are NOT measured. */
-    B4_V5_Put32(out+104u,(B4_V4BootValid==1u?1u:0u)|2u);
+    B4_V5_Put32(out+104u,(B4_V4BootValid==1u?1u:0u)|2u|
+        (B4_V5_AnomalyFrozen?4u:0u));
     B4_V5_Put32(out+108u,available);
     B4_V5_Put32(out+112u,Clock_tickPeriod);
     /* Already source-qualified v4.3 progress and fault hooks: no new
@@ -161,6 +191,13 @@ void B4_V5_ReadPage1(uint8_t *out, const uint8_t *nonce)
     B4_V5_Put32(out+132u,B4_V5_Get32(progress+10u*4u)); /* first fault */
     B4_V5_Put32(out+136u,B4_V5_Get32(progress+15u*4u)); /* fault tick */
     B4_V5_Put32(out+140u,B4_V5_Get32(progress+18u*4u)); /* B1 failure */
+    /* 16 legacy-reserved bytes now expose two stable anomaly records.
+     * The first event stays frozen even after arbitrary further traffic. */
+    if (B4_V5_AnomalyFrozen)
+    {
+        B4_V5_PutEvent(out+144u,&B4_V5_PreAnomaly);
+        B4_V5_PutEvent(out+152u,&B4_V5_FirstAnomaly);
+    }
     B4_V5_CachedTick=now;
     B4_V5_CachedValid=1u;
     OsalPort_leaveCS(key);
@@ -196,7 +233,15 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)
     uint8_t payload[160]={0};
     uint8_t page=pBuf[MT_RPC_POS_DAT0];
     const uint8_t *nonce=pBuf+MT_RPC_POS_DAT0+1u;
-    if(page==1u)
+    if(page!=1u && page!=2u)
+    {
+        /* Explicit invalid-page status; no empty uncorrelated 160B SRSP. */
+        uint32_t i;
+        payload[0]='R';payload[1]='4';payload[2]='D';payload[3]='5';
+        payload[4]=5u;payload[5]=0xffu;payload[6]=160u;
+        for(i=0u;i<8u;++i)payload[8u+i]=nonce[i];
+    }
+    else if(page==1u)
         B4_V5_ReadPage1(payload,nonce);
     else if(page==2u)
     {
@@ -227,6 +272,13 @@ def apply(sdk):
     if (MARKER in n or "B4_V45_STATIC_SRSP_RESERVE" not in n or
             "B4_F2_V43_PROGRESS" not in m or "B4_V44_Snapshot" not in s):
         raise ValueError("V5_REQUIRES_PINNED_V45_FULL_COMPOSITE")
+    /* Both NPI process and V4.4 queue precede V5 function definitions. */
+    n=once(n,"static Queue_Handle npiTxQueue;",
+        "static Queue_Handle npiTxQueue;\n"
+        "void B4_V5_Record(uint8_t, uint16_t, uint8_t);\n"
+        "void B4_V5_NpiPulse(void);\n"
+        "static uint16_t B4_V5_CommandFromFrame(const uint8_t *, uint16_t);",
+        "V5_FORWARD_DECLARATIONS")
     n=once(n,"static volatile uint32_t B4_V45_ReleaseFault = 0u;",
            "static volatile uint32_t B4_V45_ReleaseFault = 0u;\n"+NATIVE,"V5_STATIC_DEF")
     n=replace_fn(n,"static void NPITask_process(void)",
@@ -236,18 +288,18 @@ def apply(sdk):
     # NPI TX task. Never log sensitive UART bytes or touch the ISR.
     n=replace_fn(n,"static void NPITask_ProcessTXQ(void)",
                  "        uint16_t submitted = NPITL_writeTL(recPtr->npiMsg->pBuf, recPtr->npiMsg->pBufSize);",
-                 "        B4_V5_Record(6u,((uint16_t)recPtr->npiMsg->pBuf[2]<<8u)|recPtr->npiMsg->pBuf[3],0u);\n"
+                 "        uint16_t v5Cmd=B4_V5_CommandFromFrame(recPtr->npiMsg->pBuf,recPtr->npiMsg->pBufSize);\n"
+                 "        B4_V5_Record(6u,v5Cmd,v5Cmd==0xffffu?2u:0u);\n"
                  "        uint16_t submitted = NPITL_writeTL(recPtr->npiMsg->pBuf, recPtr->npiMsg->pBufSize);\n"
-                 "        B4_V5_Record(submitted==recPtr->npiMsg->pBufSize?7u:8u,\n"
-                 "            ((uint16_t)recPtr->npiMsg->pBuf[2]<<8u)|recPtr->npiMsg->pBuf[3],\n"
-                 "            submitted==recPtr->npiMsg->pBufSize?0u:1u);","V5_TX_TRANSITION")
+                 "        B4_V5_Record(submitted==recPtr->npiMsg->pBufSize?7u:8u,v5Cmd,\n"
+                 "            submitted==recPtr->npiMsg->pBufSize?(v5Cmd==0xffffu?2u:0u):1u);","V5_TX_TRANSITION")
     n=replace_fn(n,"static void B4_V44_Enqueue(NPI_QueueRec *recPtr)",
                  "    uint32_t key = OsalPort_enterCS();",
-                 "    uint16_t v5Command=((uint16_t)recPtr->npiMsg->pBuf[2]<<8u)|recPtr->npiMsg->pBuf[3];\n"
+                 "    uint16_t v5Command=B4_V5_CommandFromFrame(recPtr->npiMsg->pBuf,recPtr->npiMsg->pBufSize);\n"
                  "    uint32_t key = OsalPort_enterCS();","V5_QUEUE_CAPTURE")
     n=replace_fn(n,"static void B4_V44_Enqueue(NPI_QueueRec *recPtr)",
                  "    Semaphore_post(npiSemHandle);",
-                 "    B4_V5_Record(5u,v5Command,0u);\n"
+                 "    B4_V5_Record(5u,v5Command,v5Command==0xffffu?2u:0u);\n"
                  "    Semaphore_post(npiSemHandle);",
                  "V5_QUEUE_TRANSITION")
     n=replace_fn(n,
