@@ -78,6 +78,12 @@ int main(void){
  assert(second[5]==2 && !memcmp(first+8,second+8,24));
  assert(second[32+6]==3 && second[40+6]==4);
  assert(!B4_V5_ReadPage2(second,nonce)); /* single-use */
+ assert(B4_V5_CommandFromFrame(NULL,9u)==0xffffu);
+ { uint8_t tiny[5]={0xfeu,0u,0x64u,0x22u,0u};
+   assert(B4_V5_CommandFromFrame(tiny,0u)==0xffffu);
+   assert(B4_V5_CommandFromFrame(tiny,3u)==0xffffu);
+   assert(B4_V5_CommandFromFrame(tiny,5u)==0x6422u);
+ }
  /* Next pair is the LAST 16 actual events, chronological, same epoch. */
  for(uint32_t i=0u;i<20u;++i){
    now_tick=200u+i;
@@ -93,6 +99,19 @@ int main(void){
                         ((uint16_t)second[32u+i*8u+5u]<<8u));
    assert(cmd==0x4404u+i);
  }
+ /* A detected TX rejection must freeze itself and the immediately prior
+  * stage even after many additional AREQs overwrite the rolling ring. */
+ now_tick=400u; B4_V5_Record(6u,0x6422u,0u);
+ now_tick=401u; B4_V5_Record(8u,0x6422u,1u);
+ for(uint32_t i=0u;i<60u;++i){
+   now_tick=402u+i; B4_V5_Record(5u,0x4422u,0u);
+ }
+ B4_V5_ReadPage1(first,nonce);
+ assert(B4_V5_Get32(first+104u)==7u);
+ assert(first[144u+6u]==6u && first[152u+6u]==8u);
+ assert(B4_V5_Get32(first+144u)==400u);
+ assert(B4_V5_Get32(first+152u)==401u);
+ assert(first[152u+7u]==1u);
  now_tick=400u; B4_V5_ReadPage1(first,nonce);
  now_tick=400u+200001u;
  assert(!B4_V5_ReadPage2(second,nonce)); /* TTL fail closed */

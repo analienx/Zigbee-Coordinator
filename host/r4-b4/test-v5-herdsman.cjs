@@ -88,6 +88,37 @@ test("V5 disabled/OTA/live SRSP veto without sending any diagnostic",async()=>{
  assert.equal(frames.length,0);
  znp.waitress.remove(srsp.ID);
 });
+test("V5 corrupt boot validity, future tick, and forged anomaly are quarantined",async()=>{
+ for(const bad of ["boot","tick","anomaly","dirty"]){
+   const {owner,znp}=adapterWithLink((page,nonce)=>{
+     const b=pages(page,nonce);
+     if(page===1&&bad==="boot")b.writeUInt32LE(2,104);
+     if(page===2&&bad==="tick")b.writeUInt32LE(251,32);
+     if(page===1&&bad==="anomaly"){
+       b.writeUInt32LE(7,104);b[158]=3;b[159]=1;
+     }
+     if(page===1&&bad==="dirty")b[152]=1;
+     return b;
+   });
+   assert.equal(await owner.b4ReadHangFlightV5(allowed),undefined);
+   assert.equal(znp.b4IsDiagPoisoned(),true);
+ }
+});
+test("V5 first frozen anomaly is preserved and sanitized",async()=>{
+ const {owner}=adapterWithLink((page,nonce)=>{
+   const b=pages(page,nonce);
+   if(page===1){
+     b.writeUInt32LE(7,104);
+     b.writeUInt32LE(220,144);b.writeUInt16LE(0x6422,148);b[150]=6;
+     b.writeUInt32LE(221,152);b.writeUInt16LE(0x6422,156);b[158]=8;b[159]=1;
+   }
+   return b;
+ });
+ const out=await owner.b4ReadHangFlightV5(allowed);
+ assert.equal(out?.preAnomaly?.stage,6);
+ assert.equal(out?.firstAnomaly?.stage,8);
+ assert.equal(out?.firstAnomaly?.subsystem,"AF");
+});
 test("V5 legacy V4 SYS F2 request remains buffer8",()=>{
  const {ZpiObject}=mod("adapter/z-stack/znp/zpiObject.js");
  const n=Buffer.from("0102030405060708","hex");

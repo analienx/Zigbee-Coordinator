@@ -64,6 +64,36 @@ class V5PageTests(unittest.TestCase):
                 mut(x,y)
                 with self.assertRaises(FlightEvidenceRejected):
                     decode_pair(bytes(x),bytes(y),NONCE)
+    def test_tick_wrap_and_future_timestamp(self):
+        a,b=fixture()
+        u32(a,28,0x10);u32(b,28,0x10)
+        u32(b,40,0xfffffff0)
+        self.assertEqual(decode_pair(bytes(a),bytes(b),NONCE)["events"][-1]["tick"],0xfffffff0)
+        u32(b,40,0x11)
+        with self.assertRaisesRegex(FlightEvidenceRejected,"V5_TICK_HALF_RANGE_UNQUALIFIED"):
+            decode_pair(bytes(a),bytes(b),NONCE)
+    def test_first_anomaly_frozen_and_following_event_rollover(self):
+        a,b=fixture()
+        u32(a,104,7)
+        u32(a,144,490)
+        a[148:150]=(0x6400).to_bytes(2,"little");a[150]=6
+        u32(a,152,491)
+        a[156:158]=(0x6400).to_bytes(2,"little")
+        a[158]=8;a[159]=1
+        out=decode_pair(bytes(a),bytes(b),NONCE)
+        self.assertEqual(out["preAnomaly"]["stage"],"TL_SUBMIT_ATTEMPT")
+        self.assertEqual(out["firstAnomaly"]["stage"],"TL_REJECTED")
+        a[158]=4
+        with self.assertRaisesRegex(FlightEvidenceRejected,"V5_INVALID_FROZEN_ANOMALY"):
+            decode_pair(bytes(a),bytes(b),NONCE)
+    def test_first_anomaly_requires_validity_and_nonzero_status(self):
+        a,b=fixture()
+        a[159]=1
+        with self.assertRaisesRegex(FlightEvidenceRejected,"V5_ANOMALY_WITHOUT_VALIDITY"):
+            decode_pair(bytes(a),bytes(b),NONCE)
+        u32(a,104,7);a[158]=8
+        with self.assertRaisesRegex(FlightEvidenceRejected,"V5_INVALID_FROZEN_ANOMALY"):
+            decode_pair(bytes(a),bytes(b),NONCE)
     def test_zero_ring_and_invalid_types(self):
         a,b=fixture();u32(a,56,0);u32(a,108,0);b[32:]=bytes(128)
         self.assertEqual(decode_pair(bytes(a),bytes(b),NONCE)["events"],[])
