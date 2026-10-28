@@ -107,3 +107,10 @@ receipts, the failed single owner, fresh pristine B1 checkpoints and the retaine
 IEEE/key identity. It then requests retained startup once with formation denied,
 observes native state9, releases its temporary serial ownership and starts the
 paired host. The tested existing resume protocol and timeout limits are retained.
+
+The serial socket adapter returns the first available bytes immediately; it does
+not wait to fill a512-byte read for every short SRSP. If native READY was observed
+but final verification timed out, `finish-native` performs fresh read-only F1,
+UTIL and configured-marker verification plus a nonce-bound240-byte F2 probe. It
+does not reset or repeat ZDO startup. Only the original terminal acceptance proof
+may authorize starting the paired host; each finish attempt is consumed once.

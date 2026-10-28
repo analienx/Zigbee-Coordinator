@@ -45,7 +45,7 @@ jobs:
         env:
           PYTHONPATH: tests
         run: |
-          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding tests.test_p7u_paired_hold tests.test_p7u_stock20260311_security_preflight tests.test_p7u_usb_sparse_transition
+          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding tests.test_p7u_paired_hold tests.test_p7u_paired_finish tests.test_p7u_stock20260311_security_preflight tests.test_p7u_usb_sparse_transition
       - name: Bind only successful paired artifacts from this source
         run: |
           python - <<'PY'

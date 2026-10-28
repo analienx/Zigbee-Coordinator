@@ -773,9 +773,11 @@ class StartupSerial:
         self.port.timeout = seconds; self.port.write_timeout = seconds
 
     def recv(self, count):
-        raw = self.port.read(count)
+        # Socket recv returns available bytes; Serial.read(count) instead waits
+        # for count bytes or its timeout, adding .75s to every short SRSP.
+        raw = self.port.read(1)
         if not raw: raise TimeoutError()
-        return raw
+        return raw + self.port.read(min(max(0,count-1),self.port.in_waiting))
 
     def sendall(self, raw):
         need(self.port.write(raw) == len(raw), 'STARTUP_SHORT_WRITE'); self.port.flush()
@@ -1019,7 +1021,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'resume-native', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'resume-native', 'finish-native', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1052,7 +1054,10 @@ def main():
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
                 if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
                 elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
-                else: result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
+                elif a.action=='resume-native': result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
+                else:
+                    from p7u_paired_finish import finish
+                    result=finish(globals(),a.package,a.package_pin,a.plan_pin,HA())
 
         print(json.dumps(result), flush=True)
     finally:
