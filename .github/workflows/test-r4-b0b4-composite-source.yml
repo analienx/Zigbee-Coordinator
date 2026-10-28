@@ -89,6 +89,9 @@ jobs:
           assert c['f2_v43_request_uart_progress']['reply_bytes'] == 240
           assert c['f2_v43_request_uart_progress']['minor'] == 3
           assert c['f2_v43_actual_c']['status'] == 'PASS_ACTUAL_F2_V43_240_BYTE_PROGRESS_AND_FROZEN_FIRST_FAULT'
+          assert c['srsp_service_v44']['reply_bytes'] == 248
+          assert c['srsp_service_v44']['minor'] == 4
+          assert c['srsp_service_v44_actual_c']['status'] == 'PASS'
           assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
           print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
           PY

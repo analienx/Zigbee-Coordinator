@@ -1,4 +1,14 @@
-"""Strict scalar-only F2 minor3 extension shared by offline evidence readers."""
+"""Strict scalar-only F2 minor3/4 extensions shared by offline evidence readers."""
+CONGESTION_FIELDS = ("srspQueuedBytes", "asyncQueuedBytes", "srspBytesHighWater",
+                     "asyncBytesHighWater", "maxSrspQueueAgeTicks", "maxAsyncQueueAgeTicks",
+                     "maxReadyServiceGapTicks")
+
+
+def valid_congestion(value):
+    return (type(value) is dict and set(value) == set(CONGESTION_FIELDS) and
+            all(type(value[k]) is int and 0 <= value[k] <= 0xffffffff for k in CONGESTION_FIELDS) and
+            value["srspQueuedBytes"] <= value["srspBytesHighWater"] and
+            value["asyncQueuedBytes"] <= value["asyncBytesHighWater"])
 FIELDS = ("npiRequests", "mtEntered", "mtReturned", "uartWriteAccepted",
           "uartWriteRejected", "uartCallbackOk", "uartCallbackError",
           "uartLengthMismatch", "stateFlags", "uartRxBytes", "firstFaultKind",

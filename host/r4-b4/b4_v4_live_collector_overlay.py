@@ -210,6 +210,7 @@ METHOD = r"""
                 uartTxFinishedEvents: result.uartTxFinishedEvents,
                 mtLifecycle: result.mtLifecycle,
                 uartProgress: result.uartProgress,
+                congestion: result.congestion,
                 hostEvidence,
                 radioEpochTag: epochTag, radioEpochHardwareVerified: false,
                 resetReason: result.resetReason,
