@@ -57,7 +57,9 @@ sweep. It changes host cleanup only, not coordinator recovery behavior.
 The composed-source stage executes the final actual TI MT producer, frame
 builder, both enqueue APIs, TX selector, task loop and completion callback in a
 compiled C fixture with sanitizers. A virtual 115200/8N1 UART adds delayed
-completions. The flood feeds 6000 full unsolicited frames with bounded live
+completions. The reported SRSP maximum is measured at the modeled
+transport-completion callback (including its delay), not inferred from the
+write submission plus estimated wire serialization. The flood feeds 6000 full unsolicited frames with bounded live
 allocations, injects SRSP during load, and requires SRSP completion under one
 second, FIFO order, at most four SRSPs between AREQs when both classes are
 pending, empty queues and zero live allocations after drain. Further cases
@@ -77,6 +79,10 @@ This first candidate intentionally does not claim the following later work:
   firmware implementation and management endpoint.
 - Physical flood qualification or captured failing-stage evidence for the final
   silent hang. Hosted passes alone do not mark that defect fixed.
+
+Packaging on pull requests can outlast the dual native build: its guarded
+artifact wait is 70 minutes within a 90-minute job. It still accepts only
+successful, exact-source native and host artifacts; wait expiry fails closed.
 
 No resets, firmware writes, network changes or bridge changes are performed by
 source qualification. A deployed candidate requires its own protected paired

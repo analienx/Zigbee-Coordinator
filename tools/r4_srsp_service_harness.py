@@ -77,12 +77,13 @@ static int NPITL_checkNpiBusy(void){return busy;}
 static int b1_management_transport_unavailable(void){return held;}
 static void Semaphore_post(void*s){assert(s==npiSemHandle);++posts;++tokens;}
 static void NPITask_transportTxDoneCallBack(int);
+static void virtual_complete_write(void);
 static void NPITask_processStackMsg(uint8_t*);
 static void NPITask_ProcessTXQ(void);
 static void B4_V44_Pend(void);
 static void b1_evidence_note_npi_wake(void){
  assert(++loops<250000u);now_us+=50u;
- if(busy && now_us>=uart_due){busy=0;NPITask_transportTxDoneCallBack(1);}
+ if(busy && now_us>=uart_due)virtual_complete_write();
  if(flood_left && live_alloc<192){
   make_message(0,++produced_areq,250);--flood_left;
   if(flood_left==3000)make_message(1,1,20);
@@ -101,14 +102,27 @@ static unsigned NPIRxBuf_GetRxBufCount(void){return 0;}
 static unsigned rx_processed;
 static void NPITask_processRXQ(void){(void)Queue_dequeue(npiRxQueue);++rx_processed;}
 static uint32_t srsp_sent,areq_sent,max_srsp_us,max_areq_gap,last_areq_at;
+static uint32_t current_tx_stamp,completed_srsp;
+static int current_tx_srsp;
 static uint32_t last_srsp_id,last_areq_id;
 static uint16_t NPITL_writeTL(uint8_t*p,uint16_t n){
  assert(!cs_depth && !busy && !held && n>=9 && n<=255);
  uint32_t stamp,id;memcpy(&stamp,p+4,4);id=p[8]|((uint32_t)p[9]<<8);
- uint32_t latency=now_us-stamp+(n*10000000u+115199u)/115200u;
- if((p[2]&0xe0)==0x60){assert(id>last_srsp_id);last_srsp_id=id;++srsp_sent;if(latency>max_srsp_us)max_srsp_us=latency;}
+ current_tx_stamp=stamp;current_tx_srsp=(p[2]&0xe0)==0x60;
+ if(current_tx_srsp){assert(id>last_srsp_id);last_srsp_id=id;++srsp_sent;}
  else{assert(id>last_areq_id);last_areq_id=id;++areq_sent;uint32_t gap=srsp_sent-last_areq_at;if(gap>max_areq_gap)max_areq_gap=gap;last_areq_at=srsp_sent;}
  busy=1;uart_due=now_us+(n*10000000u+115199u)/115200u+2000u;return n;
+}
+/* Measure when the simulated transport completes and calls the real NPI
+ * callback, not at submission or estimated end-of-wire serialization. */
+static void virtual_complete_write(void){
+ assert(busy && now_us>=uart_due);
+ if(current_tx_srsp){
+  uint32_t latency=now_us-current_tx_stamp;
+  if(latency>max_srsp_us)max_srsp_us=latency;
+  ++completed_srsp;
+ }
+ busy=0;NPITask_transportTxDoneCallBack(1);
 }
 static unsigned injection;
 static void make_message(unsigned srsp,unsigned id,unsigned len);
@@ -117,9 +131,9 @@ static void Semaphore_pend(void*s,unsigned timeout){
  if(tokens){--tokens;return;}
  if(injection){unsigned mode=injection;injection=0;
   if(mode==1){make_message(1,60001,20);assert(tokens);--tokens;return;}
-  if(mode==2){assert(busy);now_us=uart_due;busy=0;NPITask_transportTxDoneCallBack(1);assert(tokens);--tokens;return;}
+  if(mode==2){assert(busy);now_us=uart_due;virtual_complete_write();assert(tokens);--tokens;return;}
  }
- if(busy){now_us=uart_due;busy=0;NPITask_transportTxDoneCallBack(1);assert(tokens);--tokens;return;}
+ if(busy){now_us=uart_due;virtual_complete_write();assert(tokens);--tokens;return;}
  longjmp(done,1);
 }
 #define MT_RPC_POS_DAT0 3
@@ -147,7 +161,7 @@ int main(int argc,char**argv){
   * wire time, with bounded live allocations. Inject SRSP during the flood. */
  for(unsigned i=1;i<=32;++i)make_message(0,i,250);
  if(!setjmp(done))NPITask_process();
- assert(srsp_sent==1 && areq_sent==6000 && max_srsp_us<1000000u);
+ assert(srsp_sent==1 && completed_srsp==1 && areq_sent==6000 && max_srsp_us<1000000u);
  assert(!busy && !live_alloc && !B4_NpiSrspDepth && !B4_NpiAsyncDepth);
  assert(!B4_V44_Bytes[0] && !B4_V44_Bytes[1]);
  assert(B4_V44_BytesHigh[1]>10000u && B4_V44_MaxAge[1]>0);
@@ -215,7 +229,7 @@ int main(int argc,char**argv){
  Queue_Elem rx;Queue_enqueue(npiRxQueue,&rx);npiServiceTaskEvents=0;tokens=0;
  if(!setjmp(done))NPITask_process();
  assert(rx_processed==1 && Queue_empty(npiRxQueue) && !live_alloc);
- printf("V44_FLOOD_PASS max_srsp_us=%u contended_areq_max_srsp_gap=%u loops=%u bytes_high=%u peak_allocations=%u\n",max_srsp_us,fairness_max_gap,loops,B4_V44_BytesHigh[1],peak_alloc);
+ printf("V44_FLOOD_PASS measured_max_srsp_completion_us=%u contended_areq_max_srsp_gap=%u loops=%u bytes_high=%u peak_allocations=%u\n",max_srsp_us,fairness_max_gap,loops,B4_V44_BytesHigh[1],peak_alloc);
  return 0;
 }
 '''
