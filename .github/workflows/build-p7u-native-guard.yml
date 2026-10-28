@@ -1,0 +1,77 @@
+name: P7U native guard ARM64 release (NO LIVE ACTION)
+on:
+  pull_request:
+    paths: ['host/recovery/**', 'tests/test_p7u_*recovery*.py', '.github/workflows/build-p7u-native-guard.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p7u-native-guard-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Hosted policy, native binding and deployment negative controls
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          pip install PyYAML==6.0.2
+          python -m unittest discover -s tests -p 'test_p7u_*recovery*.py' -v
+      - name: Stage and build the exact prebuilt guard
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p7u-native-guard-context /tmp/p7u-native-guard-release
+          cp host/recovery/{policy,executor,persistence,ha_adapter,observer,mqtt_settings,alerts,forensics,run}.py /tmp/p7u-native-guard-context/
+          cp host/recovery/addon/{Dockerfile,config.yaml,README.md} /tmp/p7u-native-guard-context/
+          docker buildx create --driver docker-container --name p7u-native-guard --use
+          docker buildx inspect --bootstrap
+          docker buildx build --platform linux/arm64 --build-arg BUILD_VERSION="0.2.4-${SOURCE_SHA:0:12}" --build-arg SOURCE_SHA="$SOURCE_SHA" --tag "localhost:50146/p7u-native-guard:0.2.4-${SOURCE_SHA:0:12}" --output type=docker,dest=/tmp/p7u-native-guard-release/image.docker.tar /tmp/p7u-native-guard-context
+          docker load --input /tmp/p7u-native-guard-release/image.docker.tar
+          docker image inspect "localhost:50146/p7u-native-guard:0.2.4-${SOURCE_SHA:0:12}" --format '{{.Id}}' > /tmp/p7u-native-guard-release/IMAGE_ID.txt
+      - name: Attest actual layers, source files and manual-only registry configuration
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,tarfile
+          from pathlib import Path
+          import yaml
+          root=Path('/tmp/p7u-native-guard-context');out=Path('/tmp/p7u-native-guard-release');sha=os.environ['SOURCE_SHA']
+          expected={'app/'+p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.glob('*.py')};got={}
+          with tarfile.open(out/'image.docker.tar') as arc:
+              manifest=json.load(arc.extractfile('manifest.json'))[0]
+              image_config=json.load(arc.extractfile(manifest['Config']))
+              assert image_config['architecture']=='arm64'
+              assert image_config['config']['Labels']['org.opencontainers.image.revision']==sha
+              for layer in manifest['Layers']:
+                  with tarfile.open(fileobj=arc.extractfile(layer)) as entries:
+                      for member in entries:
+                          name=member.name.lstrip('./')
+                          if name in expected and member.isfile():got[name]=hashlib.sha256(entries.extractfile(member).read()).hexdigest()
+          assert expected==got and len(got)==9
+          config=yaml.safe_load((root/'config.yaml').read_text());assert config['slug']=='p7u_recovery'
+          config.update(version='0.2.4-'+sha[:12],image='localhost:50146/p7u-native-guard')
+          (out/'config.yaml').write_text(yaml.safe_dump(config,sort_keys=False))
+          for name in ['deploy_native_guard_024.py','native_guard_install.py']:
+              (out/name).write_bytes((Path('host/recovery')/name).read_bytes())
+          receipt={'schema':'p7u-native-guard-release-v1','source_sha':sha,'version':config['version'],
+                   'image_reference':config['image']+':'+config['version'],'image_id':(out/'IMAGE_ID.txt').read_text().strip(),
+                   'runtime_files':{n.removeprefix('app/'):h for n,h in expected.items()},
+                   'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in out.iterdir() if p.is_file()},
+                   'installed':False,'physical_action':False}
+          (out/'RELEASE.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-native-guard-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/p7u-native-guard-release/
+          if-no-files-found: error
+          compression-level: 6

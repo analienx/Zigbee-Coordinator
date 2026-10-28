@@ -1,0 +1,73 @@
+name: P7U shared recovery safety (source only)
+
+on:
+  push:
+    branches:
+      - codex/p7u-shared-recovery-policy-20261022
+    paths:
+      - 'host/recovery/**'
+      - 'tests/test_p7u_*recovery*.py'
+      - '.github/workflows/test-p7u-recovery.yml'
+  pull_request:
+    paths:
+      - 'host/recovery/**'
+      - 'tests/test_p7u_*recovery*.py'
+      - '.github/workflows/test-p7u-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-policy:
+    name: Policy and one-shot journal regressions
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned host configuration dependency
+        run: python -m pip -q install 'PyYAML==6.0.2'
+      - name: Compile all recovery sources
+        run: python -m compileall -q host/recovery tests/test_p7u_shared_recovery_policy.py tests/test_p7u_recovery_executor.py
+      - name: Offline policy and journal tests, no hardware
+        run: python -m unittest discover -s tests -p 'test_p7u_*recovery*.py' -v
+      - name: Validate no competing ZNP owner or forbidden reset endpoint
+        run: |
+          python - <<'PY'
+          import ast, pathlib
+          root = pathlib.Path('host/recovery')
+          for target in root.glob('*.py'):
+              tree = ast.parse(target.read_text())
+              imports = [
+                  alias.name for node in ast.walk(tree)
+                  if isinstance(node, (ast.Import, ast.ImportFrom))
+                  for alias in node.names
+              ]
+              assert not any(x.startswith(('serial','pyserial','zigpy')) for x in imports), target
+          code = (root/'ha_adapter.py').read_text()
+          assert '"RESTART_ESP": (3,' in code
+          assert '"RESET_RADIO": (1,' in code
+          assert 'if operation not in _ALLOWED' in code
+          assert 'def private_restart(' in code
+          print('PASS: ESP first via policy; no second serial owner or generic reset opcode')
+          PY
+      - name: Validate local HA add-on package definitions
+        run: |
+          python -m pip -q install 'PyYAML==6.0.2'
+          python - <<'PY'
+          import pathlib, yaml
+          root = pathlib.Path('host/recovery/addon')
+          cfg = yaml.safe_load((root/'config.yaml').read_text())
+          assert cfg['slug'] == 'p7u_recovery'
+          assert cfg['options']['enabled'] is False
+          assert cfg['options']['dry_run'] is True
+          assert cfg['options']['allow_private_http_fallback'] is False
+          assert cfg['options']['serial_owner_approved'] is False
+          assert cfg['options']['notify_on_confirmed_hang'] is False
+          assert cfg['boot'] == 'manual'
+          assert cfg['hassio_role'] == 'manager'
+          print('PASS: real HA package exists, disabled and non-autoboot by default')
+          PY

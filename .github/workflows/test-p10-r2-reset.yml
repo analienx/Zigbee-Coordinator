@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/mr4u-p10-r2-reset-helper
+      - codex/p7u-shared-recovery-policy-20261022
 
 permissions:
   contents: read
