@@ -208,6 +208,7 @@ test("actual startup owner accepts a7.9s UTIL reply once without resetting or re
     t.mock.timers.tick(7900);await flush();assert.equal(sent.length,2);
     const body=Buffer.alloc(14);body[12]=9;
     znp.onUnpiParsed(new Frame(Type.SRSP,Subsystem.UTIL,0,body));await pending;
-    assert.equal(sent.length,2);assert.equal(znp.queue.isIdle(),true);
+    assert.equal(sent.length,2);
+    assert.equal(typeof znp.queue.count==='function'?znp.queue.count():znp.queue.count,0);
     assert.equal(znp.waitress.waiters.size,0);assert.deepEqual(f.mutations,[]);
 });
