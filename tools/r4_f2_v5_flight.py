@@ -214,7 +214,7 @@ def apply(sdk):
     originals={p:(sdk/p).read_text(encoding="utf-8") for p in (TASK,MT,SYS)}
     n,m,s=(originals[p] for p in (TASK,MT,SYS))
     if (MARKER in n or "B4_V45_STATIC_SRSP_RESERVE" not in n or
-            "B4_F2_V43_PROGRESS" not in m or "B4_V44_SRSP_SERVICE" not in s):
+            "B4_F2_V43_PROGRESS" not in m or "B4_V44_Snapshot" not in s):
         raise ValueError("V5_REQUIRES_PINNED_V45_FULL_COMPOSITE")
     n=once(n,"static volatile uint32_t B4_V45_ReleaseFault = 0u;",
            "static volatile uint32_t B4_V45_ReleaseFault = 0u;\n"+NATIVE,"V5_STATIC_DEF")
