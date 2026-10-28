@@ -152,7 +152,7 @@ static NPIMSG_msg_t *NPIFrame_frameMsg(uint8_t *pMsg) {
   NPIMSG_msg_t *m = malloc(sizeof *m);
   uint8_t *framed = malloc((size_t)len + 4u);
   framed[0] = 0xFE; framed[1] = len; framed[2] = pMsg[1]; framed[3] = pMsg[2];
-  if (len > 1) memcpy(framed + 4, pMsg + 3, (size_t)len - 1u);
+  if (len > 0) memcpy(framed + 4, pMsg + 3, (size_t)len);
   m->pBuf = framed; m->pBufSize = (uint16_t)(len + 4u);
   m->msgType = NPIMSG_Type_ASYNC; /* production profile: NPI_SREQRSP off */
   OsalPort_msgDeallocate(pMsg);
