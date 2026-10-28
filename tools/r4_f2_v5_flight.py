@@ -196,8 +196,10 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)
             /* A stale/unpaired page is not a valid snapshot. Never invent
              * counters or return data from a different request/epoch. */
             payload[0]='R';payload[1]='4';payload[2]='D';payload[3]='5';
+            uint32_t i;
             payload[4]=5u;payload[5]=0xffu;
             payload[6]=160u; /* host must reject invalid page 255 */
+            for(i=0u;i<8u;++i)payload[8u+i]=nonce[i];
         }
     }
     MT_BuildAndSendZToolResponse(MT_SRSP_SYS,0xF2u,sizeof(payload),payload);
