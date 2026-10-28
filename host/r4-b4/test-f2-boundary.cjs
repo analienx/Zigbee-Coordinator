@@ -67,6 +67,18 @@ test("a queued F2 rechecks OTA at the exact write boundary",async()=>{
  assert.equal(h.znp.queue.isIdle(),true);
 });
 
+test("reserved F2 accepts the measured7.9s reply and then releases pending production",async t=>{
+ t.mock.timers.enable({apis:["setTimeout"]});
+ const h=setup();const first=h.ping();const next=h.ping();
+ const diag=h.adapter.b4ReadOnlyDiagnosticsV4(allowed);
+ h.receive(Buffer.from([1,0]),1);await first;await flush();
+ assert.equal(h.sent.length,2);assert.equal(h.sent[1].commandID,242);
+ t.mock.timers.tick(7900);await flush();assert.equal(h.sent.length,2);
+ h.receive(body(h.sent[1].data),242);assert.equal((await diag).minor,3);
+ await flush();assert.equal(h.sent.length,3);h.receive(Buffer.from([1,0]),1);await next;
+ assert.equal(h.znp.queue.isIdle(),true);assert.equal(h.znp.waitress.waiters.size,0);
+});
+
 test("reservation expiry removes only F2 and leaves the active owner intact",async t=>{
  t.mock.timers.enable({apis:["setTimeout"]});
  const h=setup();const first=h.ping();

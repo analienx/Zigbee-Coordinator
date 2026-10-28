@@ -105,7 +105,7 @@ V4_ADAPTER_METHOD = r"""
             this.b4V4Outcome = {attempt: this.b4V4Attempt, kind: "FAILED",
                 reason: "SUBMISSION_OR_REPLY_UNCERTAIN", submissionState: "UNCERTAIN"};
             const response = await this.znp.requestWithReply(
-                Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, reserveAtBoundary ? 500 : 6000);
+                Subsystem.SYS, "r4DiagReadOnlyV4", {nonce}, undefined, 20000);
             const data = response.payload.diagnostic;
             if (!Buffer.isBuffer(data) || ![160, 240].includes(data.length) ||
                 data.toString("ascii", 0, 4) !== "R4D4" ||

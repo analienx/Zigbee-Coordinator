@@ -32,14 +32,18 @@ def binding_values(raw, expected_pin, package):
          re.fullmatch(r"[0-9a-f]{40}", data["source_sha"]) is not None, "SOURCES")
     need(package.get("firmware_source_sha")==data["source_sha"] and
          re.fullmatch(r"[0-9a-f]{40}",package.get("operator_source_sha", "")) is not None, "PACKAGE_SOURCE")
-    need(package.get("paired_host_source_sha")==data["source_sha"] and
+    host_source=package.get('paired_host_source_sha','')
+    compatible=(host_source==data['source_sha'] or
+        (data['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and
+         package.get('f2_wire_contract')=='R4D4_MINOR3_240_V1'))
+    need(re.fullmatch(r'[0-9a-f]{40}',host_source) is not None and compatible and
          re.fullmatch(r"sha256:[0-9a-f]{64}", package.get("paired_host_image", "")) is not None, "PAIRED_HOST")
     need(re.fullmatch(r"[0-9a-f]{32}", data["previous_operation"]) is not None, "PREVIOUS_OPERATION")
     need(all(isinstance(data[k],str) and re.fullmatch(r"[0-9a-f]{64}",data[k]) for k in PIN_FIELDS), "HASH_FIELDS")
     suffix=data["source_sha"][:12]
     result={"SOURCE":data["source_sha"],"INSTALLED":INSTALLED,
         "IMAGE":package["paired_host_image"],"CANDIDATE_PIN":data["candidate_pin"],
-        "PAIRED_HOST_VERSION":"0.2.1-"+suffix,
+        "PAIRED_HOST_VERSION":"0.2.1-"+host_source[:12],
         "INPUT":Path("/share/p7u-paired-input-"+suffix),
         "CANDIDATE":Path("/share/p7u-paired-stage-"+suffix),
         "PREVIOUS_OP":Path("/share/p7u-r4-firmware-operations")/data["previous_operation"],

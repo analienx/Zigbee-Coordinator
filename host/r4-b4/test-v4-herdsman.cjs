@@ -57,7 +57,7 @@ function ownerWithResponse(chooser) {
             assert.equal(sys, Subsystem.SYS);
             assert.equal(cmd, "r4DiagReadOnlyV4");
             assert.equal(payload.nonce.length, 8);
-            assert.equal(timeout,6000);
+            assert.equal(timeout,20000);
             return {payload:{diagnostic:chooser(payload.nonce)}};
         }
     };

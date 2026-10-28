@@ -61,5 +61,14 @@ class Binding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"HASH_FIELDS"):self.call(data,package)
         data,package=self.fixture();package["paired_host_image"]="arbitrary:latest"
         with self.assertRaisesRegex(ValueError,"PAIRED_HOST"):self.call(data,package)
+
+    def test_qualified_host_repair_requires_explicit_known_v43_wire_contract(self):
+        data,package=self.fixture();data['source_sha']='899f179031aae74db2e48699900f1cf5722bb4de'
+        package['firmware_source_sha']=data['source_sha'];package['paired_host_source_sha']='d'*40
+        with self.assertRaisesRegex(ValueError,'PAIRED_HOST'):self.call(data,package)
+        package['f2_wire_contract']='R4D4_MINOR3_240_V1'
+        self.assertEqual(self.call(data,package)['PAIRED_HOST_VERSION'],'0.2.1-'+'d'*12)
+        package['f2_wire_contract']='unknown'
+        with self.assertRaisesRegex(ValueError,'PAIRED_HOST'):self.call(data,package)
         data,package=self.fixture();package["paired_host_source_sha"]="d"*40
         with self.assertRaisesRegex(ValueError,"PAIRED_HOST"):self.call(data,package)

@@ -15,6 +15,7 @@ const {NvItemsIds} = mod("adapter/z-stack/constants/common.js");
 const {ZnpVersion} = mod("adapter/z-stack/adapter/tstype.js");
 const Structs = mod("adapter/z-stack/structs/index.js");
 const {ZpiObject} = mod("adapter/z-stack/znp/zpiObject.js");
+const {Znp} = mod("adapter/z-stack/znp/znp.js");
 const {Frame} = mod("adapter/z-stack/unpi/frame.js");
 const {Type, Subsystem} = mod("adapter/z-stack/unpi/constants.js");
 
@@ -54,7 +55,7 @@ function fixture(state = {}) {
         [NvItemsIds.BDBNODEISONANETWORK, Buffer.from([state.bdb ?? 1])],
         [NvItemsIds.LOGICAL_TYPE, Buffer.from([state.role ?? 0])],
     ]);
-    const mutations = [], requests = [], reads = [];
+    const mutations = [], requests = [], reads = [], budgets = [];
     const nv = {
         memoryAlignment: state.alignment ?? "aligned",
         async init() {reads.push("init");},
@@ -68,8 +69,9 @@ function fixture(state = {}) {
         async updateItem(id) {mutations.push("update:" + id);},
     };
     const znp = {
-        async requestWithReply(system, command, payload) {
+        async requestWithReply(system, command, payload, unused, timeout) {
             requests.push(command);
+            budgets.push({command,timeout});
             if (command === "p7uRetainedStatus") {
                 assert.equal(system, Subsystem.SYS);
                 assert.deepEqual(payload.query, Buffer.from([0x42, 0x31, 0x51, 0x31, 1, 8, 0, 0]));
@@ -102,7 +104,7 @@ function fixture(state = {}) {
     manager.nwkOptions = {...config, panId: state.wrongPan ? 0x9999 : config.panId};
     manager.registerEndpoints = async () => {};
     manager.addToGroup = async () => {};
-    return {manager, mutations, requests, reads};
+    return {manager, mutations, requests, reads, budgets};
 }
 async function held(state) {
     const f = fixture(state);
@@ -127,6 +129,8 @@ test("healthy retained network resumes read-only with configured marker absent o
         const f = fixture({configured, stage, backup: true, deviceState: stage === 1 ? 0 : 9});
         assert.equal(await f.manager.determineStrategy(), "startup");
         await f.manager.beginStartup();
+        assert(f.budgets.filter(b=>b.command==='p7uRetainedStatus' || b.command==='getDeviceInfo')
+            .every(b=>b.timeout===20000),'bounded startup reads cover measured retained-radio latency');
         assert.deepEqual(f.mutations, []);
         assert(!f.reads.includes(NvItemsIds.NWK_ALTERN_KEY_INFO));
         assert(!f.reads.includes(NvItemsIds.PRECFGKEY));
@@ -187,4 +191,23 @@ test("fresh HOLD before startup revokes previous compatibility proof", async () 
     await assert.rejects(f.manager.beginStartup(), /HOLD_EXISTING_NV/);
     assert.deepEqual(f.mutations, []);
     assert(!f.requests.includes("startupFromApp"));
+});
+
+test("actual startup owner accepts a7.9s UTIL reply once without resetting or repeating startup", async t => {
+    const f=fixture({configured:true,stage:5});await f.manager.determineStrategy();
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const znp=new Znp('/dev/never-opened',115200,false);znp.initialized=true;
+    const sent=[];znp.unpiWriter.writeFrame=frame=>{
+        sent.push(frame);
+        if(frame.subsystem===Subsystem.SYS && frame.commandID===241)
+            queueMicrotask(()=>znp.onUnpiParsed(new Frame(Type.SRSP,Subsystem.SYS,241,status(5))));
+    };
+    f.manager.znp=znp;const pending=f.manager.beginStartup();
+    const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};await flush();
+    assert.equal(sent.length,2);assert.equal(sent[1].subsystem,Subsystem.UTIL);
+    t.mock.timers.tick(7900);await flush();assert.equal(sent.length,2);
+    const body=Buffer.alloc(14);body[12]=9;
+    znp.onUnpiParsed(new Frame(Type.SRSP,Subsystem.UTIL,0,body));await pending;
+    assert.equal(sent.length,2);assert.equal(znp.queue.isIdle(),true);
+    assert.equal(znp.waitress.waiters.size,0);assert.deepEqual(f.mutations,[]);
 });

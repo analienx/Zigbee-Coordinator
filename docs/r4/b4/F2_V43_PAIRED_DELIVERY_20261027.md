@@ -1,8 +1,9 @@
 # F2 v4.3 paired radio and host delivery
 
 This candidate combines the UART failure unwind with its matching F2 decoder,
-durable writer and collection admission. Both artifacts must name the same source
-commit. The host accepts deployed minor1 and minor2 while staged; minor3 radio
+durable writer and collection admission. The release pins the firmware and host
+source commits independently, with compiled and physical proof of the shared
+wire contract. The host accepts deployed minor1 and minor2 while staged; minor3 radio
 acceptance requires a genuine 240-byte reply and the new native fields.
 
 ## Firmware
@@ -47,12 +48,16 @@ remove dispatcher return instrumentation and must fail.
 
 ## Collection under sustained traffic
 
-Normal60–90-second attempts keep their existing idle admission. After15 minutes
+The first three worker-ACKed native records reserve a baseline through the existing
+owner. Later60–90-second attempts use idle admission. After15 minutes
 without a worker-ACKed native record, monotonic time enables one F2 reservation
 at the next transaction boundary of the existing ZNP mutex. The adapter queue may
 remain nonempty. F2 never interrupts the active request. Its reservation expires
 after at most1000ms without acquiring ownership. Once admitted, its reply budget
-is500ms. Waiting production requests resume afterward.
+is20seconds, covering a physical7.9second valid reply observed under retained
+network traffic. Waiting production requests resume afterward. The protected
+startup F1 and UTIL reads use the same20second budget; production request defaults
+remain unchanged. No request is retransmitted when its budget expires.
 
 OTA, disconnect, inter-PAN and live blocking SRSP gates are rechecked at the actual
 write boundary. Expiry, queue clear and veto cannot leave an orphaned reservation
@@ -67,9 +72,9 @@ adapter backlog alone from starving F2 for hours.
 
 ## Paired release and physical acceptance
 
-One source commit must pass the focused composed-C and real compiled host tests,
-current-stock dual native build, existing NV/CCFG/security and boot checks, and
-deployable-host artifact qualification. Native source sealing binds the modified
+The firmware source must pass composed-C, current-stock dual native, existing
+NV/CCFG/security and boot checks. The host source must pass the real compiled
+host tests and deployable-image qualification. Native source sealing binds the modified
 TL, MT, NPI and SYS sources and requires the progress helpers in the ARM ELF.
 
 Stage the matched host before the radio update; it remains compatible with the

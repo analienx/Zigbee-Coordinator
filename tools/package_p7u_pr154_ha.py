@@ -39,7 +39,8 @@ def main():
     c = json.loads((args.candidate/'candidate.json').read_bytes())
     assert c['source_sha'] == os.environ['FIRMWARE_SOURCE_SHA']
     host = json.loads(args.host_release.read_bytes())
-    assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == c['source_sha']
+    assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == os.environ.get('HOST_SOURCE_SHA',c['source_sha'])
+    assert host['source_sha']==c['source_sha'] or c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de', 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
     paired_image = host['profiles']['diagnostic']['image_id']
     import re
     assert re.fullmatch('sha256:[0-9a-f]{64}', paired_image)
@@ -79,6 +80,7 @@ def main():
     report = {'schema': 'p7u-r4-afbb7a8-ha-package-v1', 'operator_source_sha': source,
               'firmware_source_sha': c['source_sha'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'paired_host_image': paired_image, 'paired_host_source_sha': host['source_sha'],
+              'f2_wire_contract': 'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None,
               'arm64_reader': 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4',
               'hardware_tested': False,
               'reader_origin_package': 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f' if args.reader_package else None,

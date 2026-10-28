@@ -87,6 +87,7 @@ METHOD = r"""
                 if (nativeCommittedUtc !== undefined) {
                     this.#b4LastNativeCommittedUtc = nativeCommittedUtc;
                     this.#b4LastNativeCommittedMono = performance.now();
+                    this.#b4NativeCommittedCount = Math.min(3, this.#b4NativeCommittedCount + 1);
                     this.#b4Native30mWarnedAt = 0;
                 }
                 clearTimeout(this.#b4AckTimers.get(message.id));
@@ -165,7 +166,8 @@ METHOD = r"""
             // Reserve one bounded owner slot before the 30-minute native
             // objective expires. Recheck OTA and active SRSP gates at entry.
             const origin = this.#b4LastNativeCommittedMono || this.#b4NativeCollectionBeganMono;
-            const reserveAtBoundary = origin > 0 && performance.now() - origin >= 900_000;
+            const reserveAtBoundary = this.#b4NativeCommittedCount < 3 ||
+                (origin > 0 && performance.now() - origin >= 900_000);
             const result = await this.b4ProbeReadOnlyDiagnosticsV4(true, reserveAtBoundary);
             const outcomeAfter = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();
             const freshOutcome = outcomeAfter && outcomeBefore &&
@@ -314,6 +316,7 @@ import b4Data from "./util/data";''')
     #b4NativeCollectionBeganUtc = 0;
     #b4LastNativeCommittedUtc = 0;
     #b4LastNativeCommittedMono = 0;
+    #b4NativeCommittedCount = 0;
     #b4NativeCollectionBeganMono = 0;
     #b4Native30mWarnedAt = 0;
     readonly #b4PendingNativeValidUtc = new Map<number, number>();
@@ -332,6 +335,7 @@ import b4Data from "./util/data";''')
         this.#b4NativeCollectionBeganMono = performance.now();
         this.#b4LastNativeCommittedUtc = 0;
         this.#b4LastNativeCommittedMono = 0;
+        this.#b4NativeCommittedCount = 0;
         this.#b4Native30mWarnedAt = 0;
         try { this.#b4StartWorker(); }
         catch {

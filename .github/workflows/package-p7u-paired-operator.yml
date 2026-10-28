@@ -12,6 +12,9 @@ on:
       firmware_source:
         description: Qualified paired firmware and host source SHA (operator may be repaired independently)
         required: true
+      host_source:
+        description: Independently qualified compatible host source SHA (defaults to firmware source)
+        required: false
       native_run:
         description: Successful exact-source stock20260311 native run ID
         required: true
@@ -31,6 +34,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       FIRMWARE_SOURCE_SHA: ${{ inputs.firmware_source || github.event.pull_request.head.sha || github.sha }}
+      HOST_SOURCE_SHA: ${{ inputs.host_source || inputs.firmware_source || github.event.pull_request.head.sha || github.sha }}
       NATIVE_RUN: ${{ inputs.native_run }}
       HOST_RUN: ${{ inputs.host_run }}
     steps:
@@ -49,12 +53,13 @@ jobs:
       - name: Bind only successful paired artifacts from this source
         run: |
           python - <<'PY'
-          import json,os,subprocess,time
+          import json,os,subprocess,time,re
           from pathlib import Path
-          repo=os.environ['GITHUB_REPOSITORY']; sha=os.environ['FIRMWARE_SOURCE_SHA']
-          for key,workflow,prefix,dest in (
-            ('NATIVE_RUN','test-r4-stock20260311-native.yml','p7u-stock20260311-candidate-','candidate'),
-            ('HOST_RUN','release-p7u-host.yml','p7u-deployable-host-release-','host')):
+          repo=os.environ['GITHUB_REPOSITORY']
+          for key,workflow,prefix,dest,sha in (
+            ('NATIVE_RUN','test-r4-stock20260311-native.yml','p7u-stock20260311-candidate-','candidate',os.environ['FIRMWARE_SOURCE_SHA']),
+            ('HOST_RUN','release-p7u-host.yml','p7u-deployable-host-release-','host',os.environ['HOST_SOURCE_SHA'])):
+              assert re.fullmatch('[0-9a-f]{40}',sha)
               run_id=os.environ[key]
               deadline=time.monotonic()+30*60
               while not run_id:

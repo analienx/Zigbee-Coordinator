@@ -43,7 +43,7 @@ STATUS_METHOD = r'''
             const response = await this.znp.requestWithReply(
                 Subsystem.SYS, "p7uRetainedStatus",
                 {query: Buffer.from([0x42, 0x31, 0x51, 0x31, 1, 8, 0, 0])},
-                undefined, 2000);
+                undefined, 20000);
             data = response.payload.snapshot;
         } catch {
             throw new Error("P7U HOLD_EXISTING_NV: retained R4 status unavailable; no automatic restore");
@@ -280,6 +280,12 @@ def plan(checkout, composition_receipt=None):
                    "        if (!this.p7uRetainedNetworkValidated) {\n"
                    '            throw new Error("P7U HOLD_EXISTING_NV: retained startup was not validated");\n'
                    "        }\n        await this.p7uRequireRetainedR4Status();")
+    # Live retained NV4/TC300 startup returned a valid reply after 7.9s.
+    # Keep the normal production deadline unchanged; budget this startup read
+    # like the protected readiness ping, with exactly one transmission.
+    manager = once(manager,
+                   'const deviceInfo = await this.znp.requestWithReply(Subsystem.UTIL, "getDeviceInfo", {});',
+                   'const deviceInfo = await this.znp.requestWithReply(Subsystem.UTIL, "getDeviceInfo", {}, undefined, 20000);')
     for signature in (
         "    private async beginRestore(): Promise<void> {",
         "    private async beginCommissioning(nwkOptions: Models.NetworkOptions, failOnCollision = true, writeConfiguredFlag = true): Promise<void> {",

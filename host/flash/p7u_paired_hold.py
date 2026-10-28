@@ -114,7 +114,7 @@ def verified_pair_package(ns,plan_pin):
     ns['need'](len(matches)==1,'PAIRED_STARTUP_WRITER_PACKAGE')
     package=matches[0];meta=ns['sealed_tree'](package,'PACKAGE.json',pin)
     ns['need'](meta['firmware_source_sha']==ns['SOURCE']==meta['paired_host_source_sha'] and
-         meta['paired_host_image']==ns['IMAGE'] and
+         meta['paired_host_image']==p['owner']['image'] and
          package.name=='p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16],
          'PAIRED_STARTUP_WRITER_BINDING')
     return package

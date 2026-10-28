@@ -66,6 +66,8 @@ class FreshnessTests(unittest.TestCase):
         self.assertIn("Math.max(60_000, delay)", source)
         self.assertIn("this.b4ProbeReadOnlyDiagnosticsV4(true, reserveAtBoundary)", source)
         self.assertIn("performance.now() - origin >= 900_000", source)
+        self.assertIn("this.#b4NativeCommittedCount < 3", source)
+        self.assertIn("Math.min(3, this.#b4NativeCommittedCount + 1)", source)
         self.assertIn("this.#b4Schedule(60_000)", source)
         self.assertIn("this.#b4SamplerDisabled", source)
         self.assertNotIn("new Znp(", source)

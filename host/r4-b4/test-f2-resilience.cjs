@@ -11,6 +11,7 @@ const {Znp} = mod("adapter/z-stack/znp/znp.js");
 const {ZStackAdapter} = mod("adapter/z-stack/adapter/zStackAdapter.js");
 const {Frame} = mod("adapter/z-stack/unpi/frame.js");
 const {Type, Subsystem} = mod("adapter/z-stack/unpi/constants.js");
+const F2_REPLY_MS = 20000;
 const allowed = {enabled:true, hostIdle:true, otaActive:false, stillAllowed:()=>true};
 
 function body(nonce, seq = 1) {
@@ -53,10 +54,10 @@ function setup(t) {
     return {znp, adapter, sent, passive, receive, advance, offer, progress, progressAF};
 }
 
-test("F2 delayed beyond old 1.2s deadline still validates through real transport", async t => {
+test("F2 delayed beyond the former6s deadline validates once through real transport", async t => {
     const h = setup(t); const p = h.offer();
     assert.equal(h.sent.length, 1);
-    await h.advance(1800);
+    await h.advance(7900);
     h.receive(body(h.sent[0].data));
     assert.equal((await p).sequence, 1);
     assert.equal(h.znp.b4IsDiagPoisoned(), false);
@@ -64,7 +65,7 @@ test("F2 delayed beyond old 1.2s deadline still validates through real transport
 });
 
 test("F2 never resubmits without both cooldown and matched production SRSP progress", async t => {
-    const h = setup(t); const p = h.offer(); await h.advance(6000);
+    const h = setup(t); const p = h.offer(); await h.advance(F2_REPLY_MS);
     assert.equal(await p, undefined);
     assert.equal(h.adapter.b4GetV4Outcome().reason, "F2_REPLY_TIMEOUT");
     assert.deepEqual(h.passive, [], "a diagnostic is not a production SYS timeout");
@@ -87,7 +88,7 @@ test("F2 never resubmits without both cooldown and matched production SRSP progr
 });
 
 test("matched production progress alone cannot shorten the timeout cooldown", async t => {
-    const h = setup(t); const p = h.offer(); await h.advance(6000); await p;
+    const h = setup(t); const p = h.offer(); await h.advance(F2_REPLY_MS); await p;
     await h.progress(); await h.advance(59_999);
     assert.equal(await h.offer(), undefined);
     assert.equal(h.adapter.b4GetV4Outcome().reason, "F2_TIMEOUT_COOLDOWN");
@@ -110,7 +111,7 @@ test("active AF owns the mutex: F2 skips without queueing or writing", async t =
 
 test("old nonce response cannot consume a newer request waiter", async t => {
     const h = setup(t); const old = h.offer(); const a = Buffer.from(h.sent[0].data);
-    await h.advance(6000); await old; await h.advance(60_001); await h.progress();
+    await h.advance(F2_REPLY_MS); await old; await h.advance(60_001); await h.progress();
     const current = h.offer(); const b = Buffer.from(h.sent.at(-1).data);
     assert.notDeepEqual(a, b);
     h.receive(body(a, 1)); await flush();
@@ -123,7 +124,7 @@ test("old nonce response cannot consume a newer request waiter", async t => {
 test("three consecutive lost F2 replies hard-quarantine diagnostics but ordinary SYS stays live", async t => {
     const h = setup(t);
     for (let i = 0; i < 3; i++) {
-        const p = h.offer(); await h.advance(6000); await p;
+        const p = h.offer(); await h.advance(F2_REPLY_MS); await p;
         if (i !== 2) {await h.advance(60_001); await h.progress();}
     }
     assert.equal(h.adapter.b4GetV4Outcome().reason, "F2_TIMEOUT_BUDGET_EXHAUSTED");
@@ -150,7 +151,7 @@ test("correct nonce with invalid canonical body permanently quarantines without 
 });
 
 test("F2 timeout does not suppress a genuine production SYS timeout", async t => {
-    const h = setup(t); let p = h.offer(); await h.advance(6000); await p;
+    const h = setup(t); let p = h.offer(); await h.advance(F2_REPLY_MS); await p;
     p = h.znp.requestWithReply(Subsystem.SYS, "ping", {}, undefined, 6000);
     const rejected = assert.rejects(p, /SRSP - SYS - ping after 6000ms/);
     await h.advance(6000); await rejected;
@@ -184,7 +185,7 @@ test("seeded 1000-cycle soak: loss, late/out-of-order replies and ordinary traff
         // while the independent budget test exercises terminal quarantine.
         const lose = random() % 7 === 0 && h.znp.b4F2ConsecutiveTimeouts < 2;
         if (lose) {
-            await h.advance(6000); assert.equal(await pending, undefined);
+            await h.advance(F2_REPLY_MS); assert.equal(await pending, undefined);
             dropped = {nonce,seq}; failures++;
         } else {
             await h.advance(random() % 5000);
@@ -237,7 +238,7 @@ test("no-wire passive ack/timeout accounting distinguishes AF from SYS and F2", 
     assert.equal(after.srsp.SYS.timeout,1);
     assert.equal(after.srsp.SYS.ok,0);
     assert.equal(after.srsp.AF.timeout,0);
-    const f2 = h.offer();await h.advance(6000);await f2;
+    const f2 = h.offer();await h.advance(F2_REPLY_MS);await f2;
     const afterF2 = h.znp.b4GetPassiveOwnerMetrics();
     assert.equal(afterF2.srsp.SYS.timeout,1,"F2 timeout must not inflate production SYS statistics");
     assert.equal(afterF2.srsp.AF.ok,1);
