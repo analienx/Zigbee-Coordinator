@@ -171,6 +171,47 @@ def evaluate(rows: list[dict], *, serving: str = "UNKNOWN") -> F2Verdict:
                      tuple(seq), valid_count, "nonce-correlated native F2 recorded within one host owner")
 
 
+def _num(row, *path):
+    cur = row
+    for key in path:
+        if type(cur) is not dict:
+            return 0
+        cur = cur.get(key)
+    return cur if type(cur) is int else 0
+
+
+def assess_paired_replies(first, second=None):
+    """Classify TX shape only from paired seq-locked VALID replies.
+
+    A single reply can be a torn multi-region latch (causal, progress and
+    base depth are latched separately), so it never proves lost wakeup.
+    Returns (shape, reason); candidates are not field proof.
+    """
+    if type(first) is not dict or type(second) is not dict:
+        return ("UNVERIFIED",
+                "paired seq-locked VALID replies required; single reply may be torn")
+    def submitted(row):
+        return (_num(row, "mtLifecycle", "allTlSubmitted")
+                + _num(row, "mtLifecycle", "afDataTlSubmitted"))
+    d_sub = submitted(second) - submitted(first)
+    d_fin = (_num(second, "uartTxFinishedEvents")
+             - _num(first, "uartTxFinishedEvents"))
+    d_cb = (_num(second, "uartProgress", "uartCallbackOk")
+            - _num(first, "uartProgress", "uartCallbackOk"))
+    idle = ((_num(first, "uartProgress", "stateFlags") & 1) == 0
+            and (_num(second, "uartProgress", "stateFlags") & 1) == 0)
+    queued = (_num(first, "asyncDepth") > 0 and _num(second, "asyncDepth") > 0)
+    if queued and idle and d_sub == 0 and d_fin == 0:
+        return ("LOST_WAKE_CANDIDATE",
+                "depth queued, TL and FIFO idle across paired replies; not proof")
+    if d_cb > 0 and d_fin == 0:
+        return ("BRIDGE_CANDIDATE",
+                "UART callbacks advance while FIFO-finished events do not")
+    if d_sub > 0:
+        return ("THROUGHPUT", "TL submissions advancing across paired replies")
+    return ("UNVERIFIED", "paired replies do not separate TX shapes")
+
+
 def main():
     import argparse
     import dataclasses

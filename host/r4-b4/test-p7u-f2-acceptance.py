@@ -182,5 +182,34 @@ class Tests(unittest.TestCase):
             m.read_verified_history(self.root)
 
 
+def paired(depth, submitted, finished, cb, flags=0):
+    return {"kind": "VALID", "asyncDepth": depth,
+            "uartTxFinishedEvents": finished,
+            "mtLifecycle": {"allTlSubmitted": submitted, "afDataTlSubmitted": 0},
+            "uartProgress": {"uartCallbackOk": cb, "stateFlags": flags}}
+
+
+class TestPairedShape(unittest.TestCase):
+    def test_single_reply_is_unverified(self):
+        self.assertEqual(m.assess_paired_replies(paired(69, 100, 50, 80))[0],
+                         "UNVERIFIED")
+
+    def test_lost_wake_needs_paired_idle(self):
+        self.assertEqual(
+            m.assess_paired_replies(paired(69, 100, 50, 80),
+                                    paired(70, 100, 50, 80))[0],
+            "LOST_WAKE_CANDIDATE")
+        self.assertEqual(
+            m.assess_paired_replies(paired(69, 100, 50, 80),
+                                    paired(70, 101, 51, 81))[0],
+            "THROUGHPUT")
+
+    def test_bridge_candidate(self):
+        self.assertEqual(
+            m.assess_paired_replies(paired(0, 100, 50, 80),
+                                    paired(0, 100, 50, 90))[0],
+            "BRIDGE_CANDIDATE")
+
+
 if __name__ == "__main__":
     unittest.main()
