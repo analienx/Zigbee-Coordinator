@@ -91,8 +91,8 @@ class V5PageTests(unittest.TestCase):
         a[159]=1
         with self.assertRaisesRegex(FlightEvidenceRejected,"V5_ANOMALY_WITHOUT_VALIDITY"):
             decode_pair(bytes(a),bytes(b),NONCE)
-        u32(a,104,7);a[158]=8;a[159]=0  # TL reject with zero status is invalid
-        with self.assertRaisesRegex(FlightEvidenceRejected,"V5_INVALID_FROZEN_ANOMALY"):
+        u32(a,104,7);a[158]=8;a[159]=0  # Zero-status rejection fails event validation
+        with self.assertRaisesRegex(FlightEvidenceRejected,"V5_BAD_EVENT"):
             decode_pair(bytes(a),bytes(b),NONCE)
     def test_zero_ring_and_invalid_types(self):
         a,b=fixture();u32(a,56,0);u32(a,108,0);b[32:]=bytes(128)
