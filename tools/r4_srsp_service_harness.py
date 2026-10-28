@@ -34,6 +34,7 @@ typedef uint16_t uint16;
 #define BIOS_WAIT_FOREVER (~0u)
 #define MTRPC_POS_LEN 0
 #define MTRPC_POS_CMD0 1
+#define MTRPC_POS_CMD1 2
 #define MTRPC_FRAME_HDR_SZ 3
 #define MT_SOF 0xfe
 #define INTERCEPT 1
@@ -63,6 +64,7 @@ static uint32_t now_us,uart_due;
 static int busy,held;
 static jmp_buf done;
 static uint8_t npiServiceTaskId=1;
+static uint8_t npiTaskID=1;
 static uint32_t npiServiceTaskEvents;
 static uint16_t TX_DONE_ISR_EVENT_FLAG,MRDY_ISR_EVENT_FLAG,TRANSPORT_RX_ISR_EVENT_FLAG;
 static void*npiSemHandle=(void*)1;
