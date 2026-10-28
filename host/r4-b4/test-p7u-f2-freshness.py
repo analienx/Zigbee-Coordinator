@@ -254,7 +254,7 @@ class FreshnessTests(unittest.TestCase):
     def test_valid_minor4_mask_passes_initial_allowlist_and_strict_validation(self):
         # Prior logic accepted 0x01ffffff in its minor4 branch but rejected
         # exactly the same mask in its earlier general allowlist.
-        from f2_progress_contract import PROGRESS_FIELDS, CONGESTION_FIELDS
+        from f2_progress_contract import FIELDS as PROGRESS_FIELDS, CONGESTION_FIELDS
         rec = f2(1000, 1, minor=4, validityMask=0x01ffffff,
                  srspDepth=0, srspHighWater=0, asyncDepth=0, asyncHighWater=0,
                  mtLifecycle={k: 0 for k in (
