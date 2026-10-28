@@ -50,7 +50,8 @@ int main(void){
  B4_V5_NpiPulse();
  B4_V5_Record(3u,0x6400u,0u);
  B4_V5_Record(4u,0x6400u,0u);
- B4_V5_Record(3u,0x21f2u,0u); /* F2 must not pollute ring. */
+ B4_V5_Record(3u,0x21f2u,0u); /* F2 SREQ omitted. */
+ B4_V5_Record(7u,0x61f2u,0u); /* F2 SRSP omitted. */
  assert(B4_V5_EventTotal==2 && B4_V5_NpiWakes==1);
  B4_V45_ReserveUsed=12u;B4_V45_ReserveExhausted=2u;
  B4_V45_ReleaseFault=1u;B4_V45_Slots[1].used=1;
@@ -124,7 +125,7 @@ def exercise(sdk):
             return x.stdout.strip()
     result=run("real",source,True)
     mutants={
-       "diagnostic_self_pollution":("if (command == 0x21f2u) return;","if (0) return;"),
+       "diagnostic_self_pollution":("if (command == 0x21f2u || command == 0x61f2u) return;","if (0) return;"),
        "wrong_ring_start":("first=B4_V5_EventTotal < B4_V5_RING_SIZE ? 0u :",
                            "first=B4_V5_EventTotal < B4_V5_RING_SIZE ? 0u : 0u*"),
        "reusable_snapshot":("B4_V5_CachedValid=0u; /* one-time exact-pair retrieval */",
