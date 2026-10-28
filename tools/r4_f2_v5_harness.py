@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from r4_uart_tx_liveness import extract
 
 TASK="source/ti/zstack/npi/npi_task.c"
 SYS="source/ti/zstack/mt/mt_sys.c"
@@ -20,6 +21,13 @@ PREFIX=r"""
 #include <stdio.h>
 #include <stdlib.h>
 #define Clock_tickPeriod 10u
+#define MT_RPC_POS_DAT0 3u
+#define MT_SRSP_SYS 0x61u
+static uint8_t captured[160],capturedSize,capturedCmdType,capturedCmdId;
+static void MT_BuildAndSendZToolResponse(uint8_t type,uint8_t id,uint8_t len,uint8_t *buf){
+  capturedCmdType=type;capturedCmdId=id;capturedSize=len;
+  memcpy(captured,buf,len);
+}
 static uint32_t now_tick;
 static uint32_t cs_depth;
 static uint32_t OsalPort_enterCS(void){return cs_depth++;}
@@ -78,6 +86,20 @@ int main(void){
  assert(second[5]==2 && !memcmp(first+8,second+8,24));
  assert(second[32+6]==3 && second[40+6]==4);
  assert(!B4_V5_ReadPage2(second,nonce)); /* single-use */
+ /* Run actual composed MT SYS handler, not a synthetic decoder. */
+ { uint8_t cmd[12]={0}; cmd[MT_RPC_POS_DAT0]=3u;
+   for(unsigned i=0;i<8u;++i)cmd[MT_RPC_POS_DAT0+1u+i]=nonce[i];
+   B4_SysReadOnlyDiagnosticsV5(cmd);
+   assert(capturedCmdType==MT_SRSP_SYS && capturedCmdId==0xf2u);
+   assert(capturedSize==160u && !memcmp(captured,"R4D5",4));
+   assert(captured[5]==255u && !memcmp(captured+8,nonce,8));
+   cmd[MT_RPC_POS_DAT0]=1u;
+   B4_SysReadOnlyDiagnosticsV5(cmd);
+   assert(captured[5]==1u && captured[6]==160u);
+   cmd[MT_RPC_POS_DAT0]=2u;
+   B4_SysReadOnlyDiagnosticsV5(cmd);
+   assert(captured[5]==2u && !memcmp(captured+8,nonce,8));
+ }
  assert(B4_V5_CommandFromFrame(NULL,9u)==0xffffu);
  { uint8_t tiny[5]={0xfeu,0u,0x64u,0x22u,0u};
    assert(B4_V5_CommandFromFrame(tiny,0u)==0xffffu);
@@ -127,7 +149,9 @@ def exercise(sdk):
     s=(sdk/SYS).read_text()
     begin=t.index("/* B4_F2_V5_FLIGHT_RECORDER:")
     end=t.index("extern volatile uint32_t B4_AllRspNpiReceived",begin)
-    source=PREFIX+t[begin:end]+TEST
+    signature="__attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)"
+    handler=extract(s,signature)
+    source=PREFIX+t[begin:end]+handler+"\n"+TEST
     if "B4_SysReadOnlyDiagnosticsV5" not in s or "case 0xF2:" not in s:
         raise ValueError("V5_HANDLER_NOT_COMPOSED")
     if "pBuf[MT_RPC_POS_LEN] == 8u" not in s or "pBuf[MT_RPC_POS_LEN] == 9u" not in s:
