@@ -11,7 +11,9 @@ const {parentPort, workerData, isMainThread} = require("node:worker_threads");
 
 const SCHEMA = "p7u-f2-worker-v2";
 const LIMIT = 4 * 1024 * 1024;
-const RECORD_LIMIT = 3072;
+// Minor4 retains the complete legacy progress fields and adds congestion.
+// Keep a fixed per-record bound with room for saturated counters + owner data.
+const RECORD_LIMIT = 4096;
 const COUNT_LIMIT = 4096;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 const GENERATION = /^generation-[a-f0-9-]{36}$/;

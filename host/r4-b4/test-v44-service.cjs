@@ -67,10 +67,28 @@ test("minor4 nonce, congestion and existing progress survive real decode and dur
   const row={schema:"p7u-b4-native-sample-v1",kind:"VALID",utc:Date.now(),monotonicReceiveNs:"123",
    hostRunId:"8e2cdca6-17b6-4a4c-a951-a78742ad89e1",ownerGeneration:"28ca5f87-b319-4c93-93d3-23d0f46a316d",
    abi:4,minor:4,sequence:1,validityMask:result.validityMask,mtLifecycle:result.mtLifecycle,
-   uartProgress:result.uartProgress,congestion:result.congestion};
+   uartProgress:result.uartProgress,congestion:result.congestion,
+   probeLatencyMs:1000,processUptimeMs:100000,sourceAbi:4,imageRuntimeAttested:false,
+   srspDepth:result.srspDepth,srspHighWater:result.srspHighWater,asyncDepth:result.asyncDepth,
+   asyncHighWater:result.asyncHighWater,srspEnqueued:result.srspEnqueued,
+   uartTxFinishedEvents:result.uartTxFinishedEvents,
+   radioEpochTag:"b4b58f156dce221ea30f64ac",radioEpochHardwareVerified:false,
+   resetReason:null,hostPackage:"Zigbee2MQTT 2.14.0 / zigbee-herdsman 10.9.1",
+   hostEvidence:adapter.b4GetNoWireEvidence()};
   worker.commit(state,row);assert.deepEqual(worker.open(history).records[0].congestion,result.congestion);
   assert.throws(()=>worker.commit(state,{...row,congestion:null}),/CONGESTION/);
   assert.throws(()=>worker.commit(state,{...row,congestion:{...result.congestion,asyncQueuedBytes:201}}),/CONGESTION/);
   assert.throws(()=>worker.commit(state,{...row,congestion:{...result.congestion,payload:1}}),/CONGESTION/);
+  const saturated=structuredClone(row);
+  for(const k of Object.keys(saturated.mtLifecycle))saturated.mtLifecycle[k]=0xffffffff;
+  for(const k of ["npiRequests","mtEntered","mtReturned","uartWriteAccepted","uartRxBytes","npiWakes"])
+   saturated.uartProgress[k]=0xffffffff;
+  for(const k of Object.keys(saturated.congestion))saturated.congestion[k]=0xffffffff;
+  for(const stats of Object.values(saturated.hostEvidence.srsp))
+   Object.assign(stats,{ok:Number.MAX_SAFE_INTEGER,timeout:Number.MAX_SAFE_INTEGER,maxLatencyMs:3600000,lastLatencyMs:3600000});
+  for(const k of Object.keys(saturated.hostEvidence.wire))
+   if(k!=="measurement")saturated.hostEvidence.wire[k]=Number.MAX_SAFE_INTEGER;
+  worker.commit(state,saturated);
+  assert.equal(worker.open(history).records.length,2);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

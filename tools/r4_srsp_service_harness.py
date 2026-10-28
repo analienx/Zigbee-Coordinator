@@ -249,8 +249,10 @@ def exercise(sdk):
     output=run('flood',source,True)
     mutants = {
         'no_srsp_preference': ('Queue_empty(npiTxQueue) || B4_V44_SrspRun < B4_V44_SRSP_BURST', 'Queue_empty(npiTxQueue)'),
-        'areq_starvation': ('B4_V44_SrspRun < B4_V44_SRSP_BURST', '1'),
+        'areq_starvation': ('Queue_empty(npiTxQueue) || B4_V44_SrspRun < B4_V44_SRSP_BURST', '1'),
         'event_only_sleep': ('if (!ready) Semaphore_pend', 'if (1) Semaphore_pend'),
+        'busy_spin': ('B4_V44_TxReadyLocked() || !Queue_empty(npiRxQueue)',
+                      '!Queue_empty(npiTxQueue) || !Queue_empty(B4_V44_SrspQueue) || !Queue_empty(npiRxQueue)'),
     }
     for label,(old,new) in mutants.items():
         if source.count(old)!=1:raise RuntimeError('V44_MUTATION_ANCHOR_'+label)
