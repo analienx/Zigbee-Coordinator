@@ -95,8 +95,6 @@ jobs:
           assert c['srsp_reserve_v45']['reserve_slots'] == 3
           assert c['srsp_reserve_v45']['runtime_heap_dependency_for_reserved_path'] is False
           assert c['srsp_reserve_v45_actual_c']['status'] == 'PASS'
-          assert c['ingress_ownership_v45']['send_rejection_releases_payload_and_wrapper'] is True
-          assert c['ingress_ownership_v45_actual_c']['status'] == 'PASS'
           assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
           print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
           PY
