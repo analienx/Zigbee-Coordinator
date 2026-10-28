@@ -43,6 +43,36 @@ function seedLegacy(root, rows) {
     fs.writeFileSync(path.join(root, "events-v2.jsonl"), raw);
     fs.writeFileSync(path.join(root, "manifest-v2.json"), JSON.stringify(manifest) + "\n");
 }
+test("V5 bounded flight snapshot durable and hostile untrusted fields rejected", () => {
+    const x=dir();
+    try {
+        const s=workerModule.open(x.root);
+        const fields=["npiWakes","npiLastTick","mtEntered","mtLastEnteredTick",
+            "mtExited","mtLastExitedTick","eventTotal","reserveUsed",
+            "reserveExhausted","reserveReleaseFault","reserveActive",
+            "allSrspProduced","allSrspAllocationFailed","allSrspFramingFailed",
+            "allSrspTlRejected","uartTxCallbackOk","uartTxCallbackError",
+            "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs"];
+        const counters=Object.fromEntries(fields.map(k=>[k,0]));
+        counters.validityFlags=2;counters.clockTickPeriodUs=10;
+        counters.eventTotal=1;counters.eventCount=1;
+        const good={...fixture("FLIGHT"),probeLatencyMs:100,processUptimeMs:17000,
+            flightV5:{abi:5,pageSequence:6,eventCount:1,counters,
+                events:[{tick:23,stage:3,subsystem:"AF",result:0}],
+                source:"RADIO_READ_ONLY"}};
+        delete good.abi;delete good.sequence;delete good.validityMask;
+        assert.equal(workerModule.commit(s,good).sequence,1);
+        assert.equal(workerModule.open(x.root).manifest.lastValidSeq,null);
+        assert.equal(workerModule.open(x.root).manifest.sequence,1);
+        assert.throws(()=>workerModule.commit(s,{...good,nonce:"private"}),/RECORD_FIELD/);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...good.flightV5,rawFrame:"secret"}}),/V5_FLIGHT_COUNTERS/);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...good.flightV5,counters:{...counters,reserveActive:4}}}),/V5_FLIGHT_COUNTERS/);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...good.flightV5,events:[{...good.flightV5.events[0],ieee:"0x123"}]}}),/V5_FLIGHT_EVENT/);
+    } finally {x.cleanup();}
+});
 test("durable append+manifest replay with VALID and SKIPPED, no raw radio data", () => {
     const x = dir();
     try {
