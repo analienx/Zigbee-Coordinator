@@ -74,6 +74,10 @@ function sameRecord(entry) {
             flight.counters.eventCount===flight.eventCount &&
             flight.counters.reserveActive<=3 &&
             flight.counters.mtExited<=flight.counters.mtEntered &&
+            flight.counters.firstUartFaultKind<=5 &&
+            flight.counters.b1FirstFailure<=255 &&
+            (flight.counters.uartStateFlags&0xfff0)===0 &&
+            (flight.counters.firstUartFaultKind!==0 || flight.counters.firstUartFaultTick===0) &&
             flight.counters.clockTickPeriodUs>0 &&
             flight.counters.clockTickPeriodUs<=100000 &&
             flight.counters.validityFlags<=3 &&

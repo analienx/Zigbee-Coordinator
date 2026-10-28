@@ -49,7 +49,7 @@ class V5PageTests(unittest.TestCase):
           (lambda x,y:y.__setitem__(17,0)),
           (lambda x,y:y.__setitem__(5,255)),
           (lambda x,y:x.__setitem__(6,248)),
-          (lambda x,y:x.__setitem__(120,1)),
+          (lambda x,y:x.__setitem__(150,1)),
           (lambda x,y:u32(x,108,17)),
           (lambda x,y:u32(x,72,4)),
           (lambda x,y:u32(x,112,0)),

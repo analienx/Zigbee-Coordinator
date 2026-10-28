@@ -127,6 +127,10 @@ ADAPTER_METHOD=r'''
                 counters[name] = a.readUInt32LE(offset);
             if (counters.reserveActive > 3 ||
                 counters.mtExited > counters.mtEntered ||
+                counters.firstUartFaultKind > 5 ||
+                counters.b1FirstFailure > 255 ||
+                (counters.uartStateFlags & 0xfff0) !== 0 ||
+                (counters.firstUartFaultKind === 0 && counters.firstUartFaultTick !== 0) ||
                 counters.eventCount > 16 ||
                 counters.eventCount !== Math.min(counters.eventTotal, 16) ||
                 (counters.validityFlags & ~3) !== 0 ||

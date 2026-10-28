@@ -59,6 +59,11 @@ def decode_pair(page1:bytes,page2:bytes,nonce:bytes)->dict:
         raise FlightEvidenceRejected("V5_FLAGS_OR_TICK")
     if (bool(f&1))!=(boot!=bytes(8)):
         raise FlightEvidenceRejected("V5_BOOT_VALIDITY")
+    if (counters["firstUartFaultKind"]>5 or
+        counters["b1FirstFailure"]>255 or
+        counters["uartStateFlags"] & 0xfff0 or
+        (counters["firstUartFaultKind"]==0 and counters["firstUartFaultTick"]!=0)):
+        raise FlightEvidenceRejected("V5_UART_FAULT_PROVENANCE")
     if counters["reserveActive"]>3 or counters["eventCount"]>16 or (
         counters["mtExited"]>counters["mtEntered"]):
         raise FlightEvidenceRejected("V5_COUNTER_CONSTRAINT")
