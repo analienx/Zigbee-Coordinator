@@ -85,7 +85,15 @@ advancing native sequence and complete progress fields are durably committed.
 Preserve prior diagnostic history and original network/security state.
 
 The host and firmware remain a pair even when the separately qualified operator
-is repaired. The qualified pair is source899f179. A live read-only preflight
+is repaired. The qualified firmware is source `899f179031aae74db2e48699900f1cf5722bb4de`;
+the corrected host is source `acaa002519fe801429e981de2e815ec5af6f1d36`.
+The firmware's dual-native qualification is run
+[40568217557](https://github.com/analienx/Zigbee-Coordinator/actions/runs/40568217557),
+and the corrected host's deployable-image qualification is run
+[40647959804](https://github.com/analienx/Zigbee-Coordinator/actions/runs/40647959804).
+The host fixes the physically observed response-budget mismatch and collects
+three durable native baseline records before using ordinary idle admission.
+A live read-only preflight
 found ten normal short-address changes and one user3 to user2 association release.
 Pinned TI `source/ti/zstack/stack/nwk/addr_mgr.h` at SDK3615ad5d (SHA256
 b3112594ba8332efdae74f6f7b482e5b93524e01b14b27acace76db51e4b84b9)
@@ -119,3 +127,58 @@ but final verification timed out, `finish-native` performs fresh read-only F1,
 UTIL and configured-marker verification plus a nonce-bound240-byte F2 probe. It
 does not reset or repeat ZDO startup. Only the original terminal acceptance proof
 may authorize starting the paired host; each finish attempt is consumed once.
+
+## Physical recovery correction, 28 October
+
+The live firmware is the verified `899f179` APP plus its matching AC000 handoff.
+The diagnostic host installed on Home Assistant is `0.2.1-acaa002519fe`, image
+`sha256:520718d511473453cbcdc05a28734d94df0309a1b6e43dfe57fdcb7eca00f67f`.
+The initial protected host start timed out waiting for coordinator state9;
+ordinary radio startup did not restore service. Keep that failure distinct from
+the host's earlier six-second UTIL/F2 response-budget defect.
+
+The working ROM recovery uses the qualified writer's transport order: establish
+exclusive ownership, **open the pinned USB port before the one BSL-entry action**,
+keep it open for ROM SYNC, chip ID and bounded CRC verification, then close it.
+Opening the port after entry failed to obtain a ROM ACK on this incident. The
+successful open-first operation returned chip ID `0xf000` and matching CRCs for
+APP sector0, AC000 and CCFG without writing any of them. This establishes a
+working sequence; it does not identify which USB/reset-line behavior caused the
+ordering dependency. Do not add intentional DTR/RTS toggles.
+
+After closing the ROM port, the guarded retained-startup transport was opened
+before the single native application boot. A fresh SYS reset indication, pristine
+source-bound B1 checkpoints and retained IEEE/key checks preceded the sole
+non-forming startup request. All terminal checkpoints, native coordinator state9
+and a fresh nonce-bound F2 minor3 reply passed before releasing the temporary
+UART owner and starting the installed host. Every physical action and host start
+had a separate consumed-before-send durable intent. Private receipts preserve the
+failed operations as well as the successful operation; none are reusable scripts.
+
+The new owner completed Zigbee2MQTT startup and its independent authenticated
+MQTT observer received six fresh non-retained device reports from three devices
+in 1.243 seconds. Network data was not restored or replaced. Automatic recovery
+remains disabled. Runtime native collection and its thirty-minute view use only
+committed records; skipped or failed reads remain missing observations.
+
+Physical acceptance completed with three durably committed minor3 snapshots,
+native sequences2,3,4, on the same healthy host owner with zero restarts. The
+complete journal hash chain and committed manifest passed verification. Every
+snapshot carried all20 UART-progress fields and all18 MT response-stage fields.
+Across the baseline, NPI requests, MT entry/return and successful UART callbacks
+advanced by284,284/284 and1218 respectively. UART write rejections, callback
+errors, length mismatches, frozen first fault and B1 first failure were zero in
+all three observations. The third snapshot's passive host counters showed507 AF,31 ZDO,
+22 SYS and3 UTIL successes and zero timeouts in those four groups.
+
+The saved thirty-minute report verifies the current and archived journals,
+groups observations by owner and half-hour, and shows observed counter changes,
+native freshness, queue peaks and failed/skipped sampling reasons. Decreases
+are reported as resets; unsampled edges and missing data are not invented.
+This report is an initial partial window, not a claim that thirty minutes of
+the newly deployed pair had elapsed.
+
+This is a delivered conditional UART repair and improved diagnostics. The startup
+hang observed during delivery and the historical long-running SRSP failure remain
+open root-cause work. A working ROM recovery and an initial serving result do not
+prove either hang class cured.
