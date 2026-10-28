@@ -60,3 +60,26 @@ consideration; native linker RAM/map checks remain mandatory. The fixture
 uses a modeled UART, not real RF/ESP, and this change does **not** prove a
 terminal-hang cure or authorize flashing. NV, counters, CCFG, network state
 and physical UART ownership are unchanged.
+
+## Additional pinned NPI ingress leak correction
+
+The inbound request path is still heap-dependent, and the static SRSP reserve
+does **not** guarantee that an incoming SREQ reaches the MT handler under
+total heap exhaustion. However pinned TI `NPITask_sendBufToStack` has two
+concrete memory leaks in its original handoff: when its OSAL wrapper allocation
+succeeds but the separate payload allocation fails, the wrapper was never
+freed; and when OSAL message-send rejects a message, both the payload and
+wrapper were leaked. Both can exacerbate later OOM and silent command failure.
+
+The composed source now frees each owned allocation on both paths, sets a
+non-success default when allocation fails, and leaves message ownership with
+the MT service task only after a successful send. It preserves the existing
+NPI→MT OSAL queue and stack-task context. Two RAM-only counters distinguish
+allocation failure from send rejection. A separate compiled *actual TI
+function* fixture injects both failure sites and send rejection, checks
+successful ownership transfer, and rejects mutants restoring the leaks.
+
+Ingress `NPIFrame_collectFrameData` and the endpoint descriptor still need
+available heap. Full global-heap exhaustion before request dispatch is not
+claimed solved. This patch instead ensures failures don't permanently leak
+resources and improves the ability to recover once memory becomes available.

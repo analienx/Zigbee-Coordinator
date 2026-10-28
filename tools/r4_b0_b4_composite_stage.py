@@ -270,6 +270,17 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if srsp_reserve_c["status"] != "PASS":
         raise ValueError("V45_STATIC_SRSP_RESERVE_ACTUAL_C_FAILED")
 
+    # The original NPI RX→MT handoff leaked the OSAL wrapper when its
+    # second allocation failed, and leaked both buffers if send was rejected.
+    from r4_srsp_ingress_ownership import apply as repair_ingress
+    ingress_ownership = repair_ingress(sdk)
+    if ingress_ownership["before_sha256"] != srsp_reserve["modified_sha256"][TASK]:
+        raise ValueError("V45_INGRESS_SOURCE_CHAIN_DRIFT")
+    from r4_srsp_ingress_harness import exercise as exercise_ingress
+    ingress_ownership_c = exercise_ingress(sdk)
+    if ingress_ownership_c["status"] != "PASS":
+        raise ValueError("V45_INGRESS_OWNERSHIP_ACTUAL_C_FAILED")
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -309,7 +320,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != (srsp_reserve["modified_sha256"][name] if name == TASK else
+                afterhash[name] != (ingress_ownership["modified_sha256"] if name == TASK else
                                     srsp_service["modified_sha256"][name])):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
@@ -363,6 +374,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "srsp_service_v44_actual_c":srsp_service_c,
         "srsp_reserve_v45":srsp_reserve,
         "srsp_reserve_v45_actual_c":srsp_reserve_c,
+        "ingress_ownership_v45":ingress_ownership,
+        "ingress_ownership_v45_actual_c":ingress_ownership_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
