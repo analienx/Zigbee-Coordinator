@@ -11,6 +11,7 @@ from pathlib import Path
 
 ZNP="src/adapter/z-stack/znp/znp.ts"
 ADAPTER="src/adapter/z-stack/adapter/zStackAdapter.ts"
+CONTROLLER="src/controller/controller.ts"
 MARKER="B4_F2_V5_EXISTING_OWNER"
 
 ZNP_METHOD=r'''
@@ -171,9 +172,9 @@ def once(src,a,b,label):
 
 def apply(root):
     root=Path(root)
-    paths=(ZNP,ADAPTER)
+    paths=(ZNP,ADAPTER,CONTROLLER)
     original={p:(root/p).read_text(encoding="utf-8") for p in paths}
-    z,a=original[ZNP],original[ADAPTER]
+    z,a,c=original[ZNP],original[ADAPTER],original[CONTROLLER]
     if MARKER in z or "b4F2ReadAdmissionReason" not in z or "b4ReadOnlyDiagnosticsV4" not in a:
         raise ValueError("V5_HOST_REQUIRES_PINNED_V4_OWNER")
     z=once(z,"    public b4F2ReadAdmissionReason(): string | null {",
@@ -198,14 +199,16 @@ def apply(root):
     z=once(z,needle,replacement,"nonce_waiter_matcher")
     a=once(a,"    public async b4ReadOnlyDiagnosticsV4(input: ",
            ADAPTER_METHOD+"    public async b4ReadOnlyDiagnosticsV4(input: ","adapter_method")
-    for p,data in ((ZNP,z),(ADAPTER,a)):
+    c=once(c,"    public isStopping(): boolean {", "    /** P7U_F2_V5_EXISTING_OWNER: existing one ZStackAdapter, no UART open. */\n    public async b4ReadHangFlightV5FromExistingOwner(input: {\n        enabled: boolean; hostIdle: boolean; otaActive: boolean;\n        stillAllowed: () => boolean;\n    }) {\n        if (this.stopping || this.adapterDisconnected ||\n            typeof input?.stillAllowed !== \"function\" ||\n            !(this.adapter instanceof ZStackAdapter)) return undefined;\n        return await this.adapter.b4ReadHangFlightV5(input);\n    }\n\n" + "    public isStopping(): boolean {","CONTROLLER_PROXY")
+    for p,data in ((ZNP,z),(ADAPTER,a),(CONTROLLER,c)):
         (root/p).write_text(data,encoding="utf-8",newline="")
     return {"schema":"p7u-f2-v5-herdsman-existing-owner-v1",
       "serial_owner":"EXISTING_ZNP_ONLY","default_enabled":False,
       "new_serial_port":False,"native_radio_hardware_verified":False,
       "before_sha256":{p:hashlib.sha256(t.encode()).hexdigest() for p,t in original.items()},
       "modified_sha256":{ZNP:hashlib.sha256(z.encode()).hexdigest(),
-                         ADAPTER:hashlib.sha256(a.encode()).hexdigest()}}
+                         ADAPTER:hashlib.sha256(a.encode()).hexdigest(),
+                         CONTROLLER:hashlib.sha256(c.encode()).hexdigest()}}
 
 if __name__=="__main__":
     import argparse,json

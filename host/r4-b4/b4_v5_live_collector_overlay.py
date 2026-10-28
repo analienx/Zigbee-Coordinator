@@ -102,14 +102,12 @@ def apply(z2m,herdsman):
             raise ValueError("V5_DURABLE_PIN_DRIFT")
     src=read_checked(z2m,CONTROLLER)
     ctl=read_checked(herdsman,ZSTACK_CONTROLLER)
-    if (MARKER in src or MARKER in ctl or
+    if (MARKER in src or
         "P7U_B4_SAMPLED_SINGLE_OWNER_R4_V1" not in src or
         "b4ReadHangFlightV5(input:" not in read_checked(
              herdsman,"src/adapter/z-stack/adapter/zStackAdapter.ts") or
-        "b4ReadOnlyDiagnosticsV4FromExistingOwner" not in ctl):
+        "b4ReadHangFlightV5FromExistingOwner" not in ctl):
         raise ValueError("V5_DURABLE_REQUIRES_V4_V5_OWNERS")
-    ctl=once(ctl,"    public isStopping(): boolean {",
-        PROXY+"    public isStopping(): boolean {","HERDSMAN_PROXY")
     src=once(src,"    #b4Schedule(delay = 60_000): void {",
         Z2M_METHOD+"    #b4Schedule(delay = 60_000): void {","Z2M_METHOD")
     src=once(src,
@@ -120,9 +118,8 @@ def apply(z2m,herdsman):
         "            const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();",
         SAMPLE+"            const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();",
         "V5_SUBSTITUTE_F2_SAMPLE")
-    files={CONTROLLER:src,ZSTACK_CONTROLLER:ctl}
+    files={CONTROLLER:src}
     (z2m/CONTROLLER).write_text(src,encoding="utf-8",newline="")
-    (herdsman/ZSTACK_CONTROLLER).write_text(ctl,encoding="utf-8",newline="")
     return {
       "schema":"p7u-f2-v5-optin-durable-sampler-v1",
       "v4_legacy_samples_unchanged":True,

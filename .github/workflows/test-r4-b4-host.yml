@@ -111,6 +111,7 @@ jobs:
           python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_live_collector_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-collector-receipt.json
+          python host/r4-b4/b4_v5_live_collector_overlay.py --z2m /tmp/b4-z2m-host --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-z2m-v5-flight.json
       - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
         run: |
           set -euo pipefail
