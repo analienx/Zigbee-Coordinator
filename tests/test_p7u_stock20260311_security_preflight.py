@@ -306,6 +306,40 @@ class RetainedSecurityTests(unittest.TestCase):
         self.assertEqual(security.evaluate_records(self.now,self.before,self.abi,runtime_upgrade=True)['reason_codes'],
                          ['NWK_PERSISTED_COUNTER_REGRESSION'])
 
+    def test_runtime_vacant_fill_requires_independent_inventory_and_preserves_inputs(self):
+        peer=b'known-db'
+        self.now[1,1,12]=record(self.abi,'AddrMgrEntry_t',user=2,nwkAddr=1234,extAddr=peer)
+        original=copy.deepcopy(self.now)
+        denied=security.evaluate_records(self.now,self.before,self.abi,runtime_upgrade=True)
+        self.assertFalse(denied['semantic_checks_passed'])
+        allowed=security.evaluate_records(self.now,self.before,self.abi,runtime_upgrade=True,
+                                          runtime_inventory_peers=frozenset({peer}))
+        self.assertTrue(allowed['semantic_checks_passed'],allowed)
+        self.assertEqual(allowed['runtime_inventory_bound_address_fills'],1)
+        self.assertEqual(self.now,original)
+        self.hold('ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
+        for user in (0,1,3,4,6,255):
+            changed=copy.deepcopy(original)
+            changed[1,1,12]=record(self.abi,'AddrMgrEntry_t',user=user,nwkAddr=1234,extAddr=peer)
+            self.assertFalse(security.evaluate_records(changed,self.before,self.abi,runtime_upgrade=True,
+                runtime_inventory_peers=frozenset({peer}))['semantic_checks_passed'])
+        changed=copy.deepcopy(original);row=bytearray(changed[1,1,12]);row[1]=1;changed[1,1,12]=bytes(row)
+        self.assertFalse(security.evaluate_records(changed,self.before,self.abi,runtime_upgrade=True,
+            runtime_inventory_peers=frozenset({peer}))['semantic_checks_passed'])
+        changed=copy.deepcopy(original)
+        changed[1,7,0]=record(self.abi,'nwkSecMaterialDesc_t',FrameCounter=499,extendedPanID=bytes(range(11,19)))
+        self.assertEqual(security.evaluate_records(changed,self.before,self.abi,runtime_upgrade=True,
+            runtime_inventory_peers=frozenset({peer}))['reason_codes'],['NWK_PERSISTED_COUNTER_REGRESSION'])
+        # An existing occupied row, duplicate identity, or new capacity tail is never admitted.
+        for index in (9,357):
+            changed=copy.deepcopy(self.before)
+            changed[1,1,index]=record(self.abi,'AddrMgrEntry_t',user=2,nwkAddr=1234,extAddr=peer)
+            self.assertFalse(security.evaluate_records(changed,self.before,self.abi,runtime_upgrade=True,
+                runtime_inventory_peers=frozenset({peer}))['semantic_checks_passed'])
+        changed=copy.deepcopy(original);changed[1,1,13]=changed[1,1,12]
+        self.assertFalse(security.evaluate_records(changed,self.before,self.abi,runtime_upgrade=True,
+            runtime_inventory_peers=frozenset({peer}))['semantic_checks_passed'])
+
     def test_aps_reference_requires_existing_address_and_security_user(self):
         table = record(self.abi, "nvDeviceListHdr_t", numRecs=1)
         table += record(self.abi, "ZDSecMgrEntry_t", ami=9, keyNvId=0)

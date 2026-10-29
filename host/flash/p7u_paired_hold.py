@@ -50,8 +50,12 @@ def provenance(ns,ha,owner):
     need(pin==ns['PAIRED_ROM_HOLD_PLAN_PIN'] and p['operation_id']==root.name and
          p['source']==ns['SOURCE'] and p['installed']==ns['INSTALLED'] and
          p['candidate_pin']==ns['CANDIDATE_PIN'] and p['input_pin']==ns['PREVIOUS_INPUT_PIN'] and
-         p['owner']['running'] is True and p['owner']['image']==ns['IMAGE'] and
-         (dict(p['owner'],running=False)==owner or owner==absent) and
+         p['owner']['image']==ns['IMAGE'] and
+         ((p['owner']['running'] is True and
+           (dict(p['owner'],running=False)==owner or owner==absent)) or
+          (p['owner']==owner and p['owner']['running'] is False and
+           isinstance(p.get('quiescent_provenance_sha256'),str) and
+           re.fullmatch('[0-9a-f]{64}',p['quiescent_provenance_sha256']) is not None)) and
          owner['running'] is False and owner['image']==ns['IMAGE'] and
          not p.get('rom_continuation_sha256') and not p.get('bounded_reentry_sha256'),
          'PAIRED_READONLY_HOLD_PLAN')
@@ -113,7 +117,12 @@ def verified_pair_package(ns,plan_pin):
     matches=list(ns['OPERATIONS'].parent.glob('p7u-paired-operator-????????????-'+pin[:16]))
     ns['need'](len(matches)==1,'PAIRED_STARTUP_WRITER_PACKAGE')
     package=matches[0];meta=ns['sealed_tree'](package,'PACKAGE.json',pin)
-    ns['need'](meta['firmware_source_sha']==ns['SOURCE']==meta['paired_host_source_sha'] and
+    host=meta.get('paired_host_source_sha')
+    compatible=(host==ns['SOURCE'] or
+        (ns['SOURCE']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and
+         host=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
+         meta.get('f2_wire_contract')=='R4D4_MINOR4_AND_R4D5_PAGED_V1'))
+    ns['need'](meta['firmware_source_sha']==ns['SOURCE'] and compatible and
          meta['paired_host_image']==p['owner']['image'] and
          package.name=='p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16],
          'PAIRED_STARTUP_WRITER_BINDING')

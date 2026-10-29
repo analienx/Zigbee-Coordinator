@@ -72,3 +72,20 @@ class Binding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'PAIRED_HOST'):self.call(data,package)
         data,package=self.fixture();package["paired_host_source_sha"]="d"*40
         with self.assertRaisesRegex(ValueError,"PAIRED_HOST"):self.call(data,package)
+
+class RuntimePrioritySuccessorBinding(unittest.TestCase):
+    def test_only_exact_successor_and_unchanged_v5_host_pair(self):
+        helper=Binding(); data,package=helper.fixture()
+        data.update(source_sha="e3a0f3b7726adf1f6c182973f135665a5c3857e0",installed_source="85ce37c24802b0f16fec0afd00a1a0457656cd80")
+        package.update(firmware_source_sha="e3a0f3b7726adf1f6c182973f135665a5c3857e0",paired_host_source_sha="85ce37c24802b0f16fec0afd00a1a0457656cd80",
+                       f2_wire_contract="R4D4_MINOR4_AND_R4D5_PAGED_V1")
+        result=helper.call(data,package)
+        self.assertEqual(result['INSTALLED'],"85ce37c24802b0f16fec0afd00a1a0457656cd80")
+        self.assertEqual(result['SOURCE'],"e3a0f3b7726adf1f6c182973f135665a5c3857e0")
+        self.assertEqual(result['PAIRED_HOST_VERSION'],"0.2.1-85ce37c24802")
+        for field,bad in (('installed_source',binding.INSTALLED),('source_sha','f'*40)):
+            changed=dict(data);changed[field]=bad
+            with self.subTest(field=field),self.assertRaises(ValueError):helper.call(changed,package)
+        for field,bad in (('paired_host_source_sha','e'*40),('f2_wire_contract',None)):
+            changed=dict(package);changed[field]=bad
+            with self.subTest(field=field),self.assertRaises(ValueError):helper.call(data,changed)

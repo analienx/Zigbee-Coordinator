@@ -40,7 +40,8 @@ def main():
     assert c['source_sha'] == os.environ['FIRMWARE_SOURCE_SHA']
     host = json.loads(args.host_release.read_bytes())
     assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == os.environ.get('HOST_SOURCE_SHA',c['source_sha'])
-    assert host['source_sha']==c['source_sha'] or c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de', 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
+    priority_pair=(c['source_sha']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and host['source_sha']=='85ce37c24802b0f16fec0afd00a1a0457656cd80')
+    assert host['source_sha']==c['source_sha'] or priority_pair or c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de', 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
     paired_image = host['profiles']['diagnostic']['image_id']
     import re
     assert re.fullmatch('sha256:[0-9a-f]{64}', paired_image)
@@ -56,6 +57,7 @@ def main():
     shutil.copyfile('host/flash/p7u_paired_binding.py', dest.with_name('p7u_paired_binding.py'))
     shutil.copyfile('host/flash/p7u_paired_hold.py', dest.with_name('p7u_paired_hold.py'))
     shutil.copyfile('host/flash/p7u_paired_finish.py', dest.with_name('p7u_paired_finish.py'))
+    shutil.copyfile('host/flash/p7u_paired_boot.py', dest.with_name('p7u_paired_boot.py'))
     shutil.copyfile('host/r4-b4/f2_progress_contract.py', dest.with_name('f2_progress_contract.py'))
     if args.reader_package:
         (args.out/'security-reader-aarch64').write_bytes(qualified_reader(args.reader_package))
@@ -80,7 +82,8 @@ def main():
     report = {'schema': 'p7u-r4-afbb7a8-ha-package-v1', 'operator_source_sha': source,
               'firmware_source_sha': c['source_sha'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'paired_host_image': paired_image, 'paired_host_source_sha': host['source_sha'],
-              'f2_wire_contract': 'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None,
+              'f2_wire_contract': ('R4D4_MINOR4_AND_R4D5_PAGED_V1' if priority_pair else
+                                   'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None),
               'arm64_reader': 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4',
               'hardware_tested': False,
               'reader_origin_package': 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f' if args.reader_package else None,
