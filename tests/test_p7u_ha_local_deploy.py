@@ -97,6 +97,19 @@ class Containment(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'ARCHIVE_HASH'): stage.install('a'*64, 'b'*64, 'c'*64)
             self.assertFalse((root/'install-intent.json').exists())
 
+    def test_runtime_inventory_requires_both_backup_and_protected_database(self):
+        # No arbitrary identity supplied by the caller is promoted into the set.
+        from types import SimpleNamespace
+        fake=SimpleNamespace(parse_backup=lambda raw:SimpleNamespace(peers={b'original':None,b'old-only':None}))
+        rows=op.canonical({'type':'Router','ieeeAddr':'0x'+b'original'.hex()})+b'\n'
+        rows+=op.canonical({'type':'EndDevice','ieeeAddr':'0x'+b'db-only!'.hex()})+b'\n'
+        def read(path):return rows if path.name=='database.db' else b'{}'
+        def load(path):return {'schema':'p7u-db-admission-v1','database_sha256':op.sha(rows)} if path.name=='.p7u-approved.json' else {}
+        with patch.dict(sys.modules,{'p7u_usb_security_model':fake}),patch.object(op,'read',side_effect=read),patch.object(op,'load',side_effect=load):
+            self.assertEqual(op.runtime_inventory_peers(),frozenset({b'original'[::-1]}))
+        with patch.dict(sys.modules,{'p7u_usb_security_model':fake}),patch.object(op,'read',side_effect=read),patch.object(op,'load',return_value={}):
+            with self.assertRaisesRegex(op.Hold,'RUNTIME_INVENTORY_DB_PIN'):op.runtime_inventory_peers()
+
     def test_counter_floor_uses_real_native_abi_field_names(self):
         from tests.test_p7u_stock20260311_security_preflight import security, synthetic_abi, formed
         abi = synthetic_abi(); records = formed(abi)
@@ -123,6 +136,7 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         self.inputs = self.root/'input'; self.inputs.mkdir()
         for name in ('installed-app.hex', 'installed-handoff.bin'): (self.inputs/name).write_bytes(b'oldpublic')
         (self.inputs/'historical-backup.json').write_text('{}')
+        (self.data/'database.db').write_text('{}')
         self.ha = Mock(); self.owner = {'image': op.IMAGE, 'id': 'one', 'running': True}
         self.ha.inspect.return_value = self.owner; self.ha.management.return_value = 'm'
         self.p = {'created_at': time.time(), 'owner': self.owner, 'management_sha256': 'm',
@@ -143,6 +157,7 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         for name, value in [('check_plan', Mock(return_value=self.p)),
                             ('installed', Mock(return_value=(self.old, {}, {}, b'expected'))),
                             ('candidate', Mock(return_value={'profile_sha256': 'profile', 'native_manifest_sha256': 'manifest'})),
+                            ('runtime_inventory_peers', Mock(return_value=frozenset())),
                             ('modules', Mock(return_value=(self.t, self.sec, self.reconcile, self.factory, self.capture)))]:
             p = patch.object(op, name, value); p.start(); self.addCleanup(p.stop)
         p = patch.object(op.asyncio, 'sleep', AsyncMock()); p.start(); self.addCleanup(p.stop)
@@ -215,6 +230,69 @@ class Execution(unittest.IsolatedAsyncioTestCase):
     async def test_nv_sector_cannot_enter_execution(self):
         self.ready(); self.frozen.sectors[0xA4000] = bytes(8192)
         with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'): await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_v45_exact_additional_app_sector_is_required(self):
+        self.ready()
+        with patch.object(op, 'SOURCE', '98b882c49cdef2cb422822b8845bee3a4045765f'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_v45_qualified_app_envelope_can_execute(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        with patch.object(op, 'SOURCE', '98b882c49cdef2cb422822b8845bee3a4045765f'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_awaited_once(); self.ha.restart_radio.assert_not_called()
+
+    async def test_v45_cannot_add_nv_ccfg_or_extra_app_sectors(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        self.frozen.sectors[0xA4000] = bytes(8192)
+        with patch.object(op, 'SOURCE', '98b882c49cdef2cb422822b8845bee3a4045765f'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_v5_exact_additional_app_sector_is_required(self):
+        self.ready()
+        with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_v5_qualified_app_envelope_can_execute(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_awaited_once(); self.ha.restart_radio.assert_not_called()
+
+    async def test_v5_cannot_add_nv_ccfg_or_extra_app_sectors(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        self.frozen.sectors[0xA4000] = bytes(8192)
+        with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_runtime_priority_exact_additional_app_sector_is_required(self):
+        self.ready()
+        with patch.object(op, 'SOURCE', 'e3a0f3b7726adf1f6c182973f135665a5c3857e0'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_runtime_priority_qualified_app_envelope_can_execute(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        with patch.object(op, 'SOURCE', 'e3a0f3b7726adf1f6c182973f135665a5c3857e0'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_awaited_once(); self.ha.restart_radio.assert_not_called()
+
+    async def test_runtime_priority_cannot_add_nv_ccfg_or_extra_app_sectors(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        self.frozen.sectors[0xA4000] = bytes(8192)
+        with patch.object(op, 'SOURCE', 'e3a0f3b7726adf1f6c182973f135665a5c3857e0'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
         self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
 
     async def test_uncertain_writer_never_boots_or_replays(self):
@@ -619,3 +697,45 @@ class ImmutableOperationLifecycle(unittest.TestCase):
             self.assertEqual(op.operation_status()["status"],"BOOT_DISPATCHED_PENDING_OR_UNKNOWN")
             op.durable(path,"started-pending-serving.json",{"source":op.SOURCE})
             self.assertEqual(op.operation_status()["status"],"HOST_RUNNING_PENDING_STARTUP")
+
+class RuntimePriorityNativeQualification(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);(self.root/'native').mkdir()
+        raw=b'public ELF fixture';(self.root/'native/test.out').write_bytes(raw)
+        self.elf={'file':'test.out','sha256':op.sha(raw)}
+        self.q={'base_priority':4,'pending_srsp_priority':6,'task_num_priorities':{'value':8,'symbol':'ti_sysbios_knl_Task_numPriorities'},
+                'linked_priority_helper':{'owner':'npi_task.o','address':256,'size':32}}
+        self.c={'files':{'native/test.out':op.sha(raw)}}
+        self.native={'schema':'r4-b1-native-seal-v1','source_sha':'e3a0f3b7726adf1f6c182973f135665a5c3857e0',
+                     'srsp_runtime_priority':self.q,'artifacts':{'elf':self.elf}}
+        for key,value in (('SOURCE','e3a0f3b7726adf1f6c182973f135665a5c3857e0'),('CANDIDATE',self.root)):
+            p=patch.object(op,key,value);p.start();self.addCleanup(p.stop)
+    def save(self):
+        raw=op.canonical(self.native);(self.root/'b1-native-seal.json').write_bytes(raw)
+        self.c['files']['b1-native-seal.json']=op.sha(raw)
+    def test_exact_native_priority_seal_and_elf_hash_are_required(self):
+        self.save();self.assertEqual(op.runtime_priority_qualification(self.c)['pending_srsp_priority'],6)
+        (self.root/'native/test.out').write_bytes(b'changed')
+        with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_ELF_BINDING'):op.runtime_priority_qualification(self.c)
+    def test_bad_count_owner_priority_or_source_is_rejected(self):
+        for count in (0,6,7,16,True):
+            self.q['task_num_priorities']['value']=count;self.save()
+            with self.subTest(count=count),self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):
+                op.runtime_priority_qualification(self.c)
+        self.q['task_num_priorities']['value']=8
+        self.q['linked_priority_helper']['owner']='synthetic.o';self.save()
+        with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):op.runtime_priority_qualification(self.c)
+        self.q['linked_priority_helper']['owner']='npi_task.o'
+        self.native['source_sha']='f'*40;self.save()
+        with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):op.runtime_priority_qualification(self.c)
+    def test_changed_seal_is_rejected(self):
+        self.save();(self.root/'b1-native-seal.json').write_bytes(b'{}')
+        with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_SEAL_PIN'):op.runtime_priority_qualification(self.c)
+    def test_owned_stage_successor_requires_the_same_native_priority_proof(self):
+        source='66ed700c2818c7a0963dad9160d55109009bbaac'
+        with patch.object(op,'SOURCE',source):
+            self.native['source_sha']=source;self.save()
+            self.assertEqual(op.runtime_priority_qualification(self.c)['task_num_priorities']['value'],8)
+            self.q['task_num_priorities']['value']=7;self.save()
+            with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):op.runtime_priority_qualification(self.c)

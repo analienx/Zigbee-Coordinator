@@ -433,7 +433,8 @@ def compare_retained(current: dict, baseline: dict) -> None:
                     code + "_PERSISTED_COUNTER_REGRESSION")
 
 
-def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrade=False) -> dict:
+def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrade=False,
+                     runtime_inventory_peers=frozenset()) -> dict:
     """Pure semantic layer for focused synthetic CI. Does not claim reader proof."""
     try:
         validate_abi(abi)
@@ -441,6 +442,10 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
         old = inspect_state(baseline, abi)
         changed_short_addresses = 0
         released_associations = 0
+        materialized_addresses = 0
+        require(type(runtime_inventory_peers) is frozenset and
+                all(type(x) is bytes and len(x) == 8 and real(x)
+                    for x in runtime_inventory_peers), 'RUNTIME_INVENTORY_PEERS_INVALID')
         comparison = now
         if runtime_upgrade:
             # A running Zigbee network may assign a different short NWK address
@@ -453,6 +458,31 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
             for index, before in old['addresses'].items():
                 after = addresses.get(index)
                 require(after is not None, 'ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
+                # A persisted vacant slot may be allocated during ordinary
+                # runtime for a device independently present in BOTH the
+                # original same-unit backup and protected host inventory.
+                # This is comparison only: never edit either capture or NV.
+                peer = field(after, abi, 'AddrMgrEntry_t', 'extAddr')
+                old_peer = field(before, abi, 'AddrMgrEntry_t', 'extAddr')
+                if peer != old_peer and index in old['empty_addresses']:
+                    user_offset, user_width = abi['structs']['AddrMgrEntry_t']['fields']['user']
+                    require(user_width == 1, 'NATIVE_ABI_WIDTH_MISMATCH')
+                    mask = set(range(offset, offset+width)) | {user_offset}
+                    ext_offset, ext_width = abi['structs']['AddrMgrEntry_t']['fields']['extAddr']
+                    mask.update(range(ext_offset, ext_offset+ext_width))
+                    require(before[user_offset] == 0 and after[user_offset] == 2 and
+                            real(peer) and peer in runtime_inventory_peers and
+                            index not in old['aps'] and index not in now['aps'] and
+                            all(field(row, abi, 'AddrMgrEntry_t', 'extAddr') != peer
+                                for row in old['addresses'].values()) and
+                            sum(field(row, abi, 'AddrMgrEntry_t', 'extAddr') == peer
+                                for row in now['addresses'].values()) == 1 and
+                            all(before[i] == after[i] for i in range(len(before))
+                                if i not in mask),
+                            'ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED')
+                    addresses[index] = before
+                    materialized_addresses += 1
+                    continue
                 changed_short_addresses += after[offset:offset+width] != before[offset:offset+width]
                 normalized = after[:offset] + before[offset:offset+width] + after[offset+width:]
                 # Pinned TI addr_mgr.h (SDK 3615ad5d), SHA256 b3112594...
@@ -471,10 +501,12 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
         compare_retained(comparison, old)
         return {"semantic_checks_passed": True, "reason_codes": [],
                 "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"]),
-                "comparison_scope": ('KNOWN_R4_RUNTIME_SHORT_ADDRESS_AND_ASSOC_RELEASE_ONLY' if released_associations else
+                "comparison_scope": ('KNOWN_R4_RUNTIME_INVENTORY_BOUND_VACANT_FILL_ONLY' if materialized_addresses else
+                                     'KNOWN_R4_RUNTIME_SHORT_ADDRESS_AND_ASSOC_RELEASE_ONLY' if released_associations else
                                      'KNOWN_R4_RUNTIME_SHORT_ADDRESS_ONLY' if runtime_upgrade else 'STRICT_RETAINED'),
                 "runtime_short_address_changes": changed_short_addresses,
-                "runtime_association_releases": released_associations}
+                "runtime_association_releases": released_associations,
+                "runtime_inventory_bound_address_fills": materialized_addresses}
     except (Hold, KeyError, TypeError, IndexError, ValueError) as error:
         code = str(error) if isinstance(error, Hold) else "SECURITY_RECORD_OR_ABI_MALFORMED"
         return {"semantic_checks_passed": False, "reason_codes": [code]}
@@ -489,7 +521,8 @@ def pinned_read(path: Path, expected: str, code: str) -> bytes:
 
 
 def preflight(*, capture: bytes, baseline: bytes, abi: dict, reader: Path,
-              bindings: dict, timeout: float = 20, runtime_upgrade=False) -> dict:
+              bindings: dict, timeout: float = 20, runtime_upgrade=False,
+              runtime_inventory_peers=frozenset()) -> dict:
     result = {"schema": SCHEMA, "status": "HOLD", **bindings,
               "write_attempts": None, "erase_attempts": None, "compaction_attempts": None,
               "flash_authorized": False, "counter_values_changed": False,
@@ -510,7 +543,8 @@ def preflight(*, capture: bytes, baseline: bytes, abi: dict, reader: Path,
         result.update(write_attempts=0, erase_attempts=0, compaction_attempts=0)
         result["current_storage_counts"] = counts
         result["baseline_storage_counts"] = baseline_counts
-        semantic = evaluate_records(records, previous, abi, runtime_upgrade=runtime_upgrade)
+        semantic = evaluate_records(records, previous, abi, runtime_upgrade=runtime_upgrade,
+                                    runtime_inventory_peers=runtime_inventory_peers)
         result["checks"] = semantic
         require(semantic["semantic_checks_passed"], semantic["reason_codes"][0] if semantic["reason_codes"] else "SECURITY_SEMANTICS_HOLD")
         result["status"] = "PASS_RETAINED_SECURITY_OFFLINE_ONLY"
