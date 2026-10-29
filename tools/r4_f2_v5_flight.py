@@ -28,6 +28,7 @@ typedef struct {
 } B4_V5_Event;
 static B4_V5_Event B4_V5_Ring[B4_V5_RING_SIZE];
 static uint32_t B4_V5_EventTotal, B4_V5_SnapshotSequence;
+static uint32_t B4_V5_RingWriteIndex, B4_V5_RingCount;
 static uint32_t B4_V5_NpiWakes, B4_V5_NpiLastTick;
 static uint32_t B4_V5_MtEntered, B4_V5_MtLastEntered;
 static uint32_t B4_V5_MtExited, B4_V5_MtLastExited;
@@ -85,9 +86,9 @@ void B4_V5_Record(uint8_t stage, uint16_t command, uint8_t result)
         /* Freeze first actively detectable failure and immediately preceding
          * task transition. A missing MT exit cannot be detected until a
          * later independent observation: do not claim it is frozen here. */
-        if (B4_V5_EventTotal)
+        if (B4_V5_RingCount)
             B4_V5_PreAnomaly = B4_V5_Ring[
-                (B4_V5_EventTotal-1u)&(B4_V5_RING_SIZE-1u)];
+                (B4_V5_RingWriteIndex-1u)&(B4_V5_RING_SIZE-1u)];
         B4_V5_FirstAnomaly.tick=tick;
         B4_V5_FirstAnomaly.command=command;
         B4_V5_FirstAnomaly.stage=stage;
@@ -95,15 +96,16 @@ void B4_V5_Record(uint8_t stage, uint16_t command, uint8_t result)
         B4_V5_AnomalyOrdinal=B4_V5_EventTotal;
         B4_V5_AnomalyFrozen=1u;
     }
-    if (B4_V5_EventTotal != UINT32_MAX)
-    {
-        index=B4_V5_EventTotal & (B4_V5_RING_SIZE-1u);
-        B4_V5_Ring[index].tick=tick;
-        B4_V5_Ring[index].command=command;
-        B4_V5_Ring[index].stage=stage;
-        B4_V5_Ring[index].result=result;
-        ++B4_V5_EventTotal;
-    }
+    /* Lifetime count saturates; the ring MUST keep recording forever.
+     * Separate modular write pointer and bounded occupancy preserve last16. */
+    index=B4_V5_RingWriteIndex & (B4_V5_RING_SIZE-1u);
+    B4_V5_Ring[index].tick=tick;
+    B4_V5_Ring[index].command=command;
+    B4_V5_Ring[index].stage=stage;
+    B4_V5_Ring[index].result=result;
+    ++B4_V5_RingWriteIndex;
+    if (B4_V5_RingCount < B4_V5_RING_SIZE) ++B4_V5_RingCount;
+    if (B4_V5_EventTotal < UINT32_MAX) ++B4_V5_EventTotal;
     if (stage == 3u)
     {
         if (B4_V5_MtEntered != UINT32_MAX) ++B4_V5_MtEntered;
@@ -143,16 +145,19 @@ void B4_V5_ReadPage1(uint8_t *out, const uint8_t *nonce)
 {
     uint8_t progress[80]={0};
     uint32_t i,key,now,seq,available,first,position,active=0u;
-    B4_V43_Snapshot(progress); /* owns its own short CS */
+    /* Keep V4.3 progress and V5 ring within the SAME outer CS.
+     * V4.3's own OSAL CS restores its prior state (nested safe);
+     * B1 snapshot uses RAM-only state. Never claim multi-tick simultaneity. */
     key=OsalPort_enterCS();
+    B4_V43_Snapshot(progress);
     now=Clock_getTicks();seq=++B4_V5_SnapshotSequence;
     B4_V5_Header(out,1u,nonce,seq,now);
     for(i=0u;i<B4_V5_PAGE_SIZE;++i)B4_V5_CachedEvents[i]=0u;
     B4_V5_Header(B4_V5_CachedEvents,2u,nonce,seq,now);
     for(i=0u;i<8u;++i)B4_V5_CachedNonce[i]=nonce[i];
-    available=B4_V5_EventTotal < B4_V5_RING_SIZE ? B4_V5_EventTotal : B4_V5_RING_SIZE;
-    first=B4_V5_EventTotal < B4_V5_RING_SIZE ? 0u :
-         (B4_V5_EventTotal & (B4_V5_RING_SIZE-1u));
+    available=B4_V5_RingCount;
+    first=available < B4_V5_RING_SIZE ? 0u :
+         (B4_V5_RingWriteIndex & (B4_V5_RING_SIZE-1u));
     for(i=0u;i<available;++i)
     {
         const B4_V5_Event *e=&B4_V5_Ring[(first+i)&(B4_V5_RING_SIZE-1u)];
