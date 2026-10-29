@@ -98,7 +98,7 @@ ADAPTER_METHOD=r'''
         firstAnomaly: {tick: number; stage: number; subsystem: string; result: number} | null;
         preAnomaly: {tick: number; stage: number; subsystem: string; result: number} | null;
     } | {kind:"FAILED";reason:"V5_REPLY_TIMEOUT"|"V5_INVALID_OR_UNCERTAIN"|
-        "V5_PARTIAL_PAIR_OWNER_REVOKED";submissionState:"SENT_OR_UNCERTAIN"} | undefined> {
+        "V5_PARTIAL_PAIR_OWNER_REVOKED"|"V5_PARTIAL_PAIR_OWNER_BUSY";submissionState:"SENT_OR_UNCERTAIN"} | undefined> {
         if (input?.enabled !== true || input.hostIdle !== true ||
             input.otaActive !== false || typeof input.stillAllowed !== "function" ||
             !input.stillAllowed() || this.closing || !this.queue ||
@@ -110,8 +110,10 @@ ADAPTER_METHOD=r'''
         this.b4NextAllowedMs = performance.now() + 30_000;
         this.znp.b4SetProbeGuard(() => input.stillAllowed() &&
             !this.closing && !this.interpanLock);
+        let b4FirstPageReceived=false;
         try {
             const a = await this.znp.b4ReadV5Page(1, nonce);
+            b4FirstPageReceived=true;
             if (!input.stillAllowed() || this.closing || this.interpanLock)
                 return {kind:"FAILED",reason:"V5_PARTIAL_PAIR_OWNER_REVOKED",
                     submissionState:"SENT_OR_UNCERTAIN"};
@@ -197,6 +199,12 @@ ADAPTER_METHOD=r'''
                     a.subarray(16,24).toString("hex"):null,
                 source:"RADIO_READ_ONLY"};
         } catch (error) {
+            // These exact errors occur before waiter creation/UART submission.
+            // Normal traffic winning page admission is a deferred observation,
+            // not corrupt transport. Preserve timeout budget; do not retry here.
+            if(error instanceof Error && ["B4 V5_OWNER_ADMISSION_DENIED","B4 V5_LATE_OWNER_GUARD"].includes(error.message))
+                return b4FirstPageReceived?{kind:"FAILED",reason:"V5_PARTIAL_PAIR_OWNER_BUSY",
+                    submissionState:"SENT_OR_UNCERTAIN"}:undefined;
             /* A page may already have been written to UART: fail-closed,
              * but never call an attempted request NOT_SENT. */
             const timedOut=error instanceof Error &&

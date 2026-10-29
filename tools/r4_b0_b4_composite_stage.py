@@ -27,7 +27,8 @@ UART="source/ti/zstack/npi/npi_tl_uart.c"
 TL="source/ti/zstack/npi/npi_tl.c"
 CLIENT="source/ti/zstack/npi/npi_client_mt.c"
 MT="source/ti/zstack/mt/mt.c"
-COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT)
+STACK="source/ti/zstack/startup/zstackstartup.c"
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK)
 
 def outside_write_scope(sdk):
     """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
@@ -298,6 +299,17 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if runtime_priority_c["status"]!="PASS":
         raise ValueError("V46_RUNTIME_PRIORITY_ACTUAL_C_FAILED")
 
+    from r4_f2_owned_stage import apply as add_owned_stage
+    owned_stage=add_owned_stage(sdk,b1['modified_startup_sha256'])
+    for name,expected_hash in ((TASK,runtime_priority['modified_sha256'][TASK]),
+            (MT,v5_flight['modified_sha256'][MT]),(SYS,v5_flight['modified_sha256'][SYS]),
+            (TL,f2_progress['modified_sha256'][TL])):
+        if owned_stage['before_sha256'][name]!=expected_hash:
+            raise ValueError('V6_SOURCE_CHAIN_'+name)
+    from r4_f2_owned_stage_harness import exercise as exercise_owned_stage
+    owned_stage_c=exercise_owned_stage(sdk)
+    if owned_stage_c['status']!='PASS':raise ValueError('V6_OWNED_STAGE_ACTUAL_C_FAILED')
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -321,7 +333,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     # B1 native sealer's exact-Git-SHA invariants remain mandatory.
     beforehash={}
     afterhash={}
-    for name in (ZDO,NVO,TASK,UART,SYS,TL,MT):
+    for name in (ZDO,NVO,TASK,UART,SYS,TL,MT,STACK):
         earlier= b1.get("modified_zdapp_sha256") if name==ZDO else (
             b1.get("modified_nv_sha256") if name==NVO else (
             expected.get(name)))
@@ -331,24 +343,29 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     # Never change the qualified native B1 management C security seal.
     af_client="source/ti/zstack/npi/npi_client_mt.c"
     afterhash[af_client]=hashlib.sha256((sdk/af_client).read_bytes()).hexdigest()
+    beforehash[STACK]=owned_stage['before_sha256'][STACK]
     for name in (af_client,):
         if afterhash[name] != runtime_priority["modified_sha256"][name]:
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != (runtime_priority["modified_sha256"][name] if name==TASK else
-                                    v5_flight["modified_sha256"][name])):
+                afterhash[name] != owned_stage['modified_sha256'][name]):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
-    for name in (TASK,UART,SYS,MT):
+    for name in (TASK,UART,SYS,MT,STACK):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
     # These new inputs must be checked again by the post-link B1 native sealer,
     # not merely recorded in the source-stage receipt.
     for key,name,value in (
             ("modified_npi_tl_liveness_sha256",TL,afterhash[TL]),
+            ("modified_zstack_dispatch_stage_sha256",STACK,afterhash[STACK]),
+            ("v6_clock_header_sha256","kernel/tirtos7/packages/ti/sysbios/knl/Clock.h",
+             owned_stage['provider_sha256']['kernel/tirtos7/packages/ti/sysbios/knl/Clock.h']),
+            ("v6_clock_source_sha256","kernel/tirtos7/packages/ti/sysbios/knl/Clock.c",
+             owned_stage['provider_sha256']['kernel/tirtos7/packages/ti/sysbios/knl/Clock.c']),
             ("ti_uart2_driver_sha256","source/ti/drivers/uart2/UART2CC26X2.c",
              ti_callback_source["uart2_driver_sha256"]),
             ("ti_uart2_generic_sha256","source/ti/drivers/UART2.c",
@@ -367,6 +384,9 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if function not in required: required.append(function)
     if "B4_V46_RefreshNpiPriority" not in required:
         required.append("B4_V46_RefreshNpiPriority")
+    for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
+                     'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
+        if function not in required:required.append(function)
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
     b1["b2_mto_failure_guard_pinned_commit"]=B2_FAILURE_SHA
@@ -399,6 +419,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "f2_v5_actual_c":v5_actual_c,
         "srsp_runtime_priority":runtime_priority,
         "srsp_runtime_priority_actual_c":runtime_priority_c,
+        "owned_overdue_stage":owned_stage,
+        "owned_overdue_stage_actual_c":owned_stage_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

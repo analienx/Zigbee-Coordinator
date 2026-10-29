@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/test-r4-b0b4-composite-source.yml'
       - 'tools/r4_*.py'
+      - 'tools/r4_f2_owned_core.c'
       - 'firmware/slzb-06p7u/r4/b1/**'
 permissions:
   contents: read
@@ -20,6 +21,7 @@ jobs:
         run: |
           python -m py_compile \
             tools/r4_f2_v5_flight.py tools/r4_f2_v5_harness.py \
+            tools/r4_f2_owned_stage.py tools/r4_f2_owned_stage_harness.py \
             tools/r4_srsp_runtime_priority.py tools/r4_srsp_runtime_priority_harness.py \
             host/r4-b4/b4_v5_herdsman_overlay.py \
             host/r4-b4/b4_v5_live_collector_overlay.py \
