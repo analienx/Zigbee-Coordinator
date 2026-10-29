@@ -463,6 +463,9 @@ jobs:
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_p7u_board_overlay.py" \
             --syscfg "$project/znp.syscfg" --receipt /tmp/b0out/p7u-board-overlay.json
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/tools/r4_srsp_runtime_priority.py" \
+            --syscfg "$project/znp.syscfg" --task-source "$sdk/source/ti/zstack/npi/npi_task.c" \
+            --receipt /tmp/b0out/r4-srsp-priority-syscfg.json
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/b0/tools/b0_verify_generated_board.py" \

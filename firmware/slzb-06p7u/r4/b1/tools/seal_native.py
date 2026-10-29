@@ -134,6 +134,49 @@ def elf_functions(path):
     return result
 
 
+def elf_u32_object(path, wanted):
+    """Read one defined allocated ELF object; never trust map/XML text values."""
+    elf_functions(path)  # Same bounded ELF32/ARM/section validation.
+    raw=path.read_bytes()
+    offset=struct.unpack_from("<I",raw,32)[0]
+    size,count=struct.unpack_from("<HH",raw,46)
+    sections=[struct.unpack_from("<10I",raw,offset+i*size) for i in range(count)]
+    found=[]
+    for section in sections:
+        if section[1]!=2:continue
+        strings=sections[section[6]]
+        table=raw[strings[4]:strings[4]+strings[5]]
+        for position in range(section[4],section[4]+section[5],16):
+            name_offset,value,length,info,_,index=struct.unpack_from("<IIIBBH",raw,position)
+            if name_offset>=len(table):raise ValueError("ELF object name outside string table")
+            end=table.find(b"\0",name_offset)
+            if end<0:raise ValueError("ELF object name unterminated")
+            name=table[name_offset:end].decode("ascii",errors="strict")
+            if name!=wanted:continue
+            if info&15!=1 or length!=4 or not 0<index<count:
+                raise ValueError("Native priority object is not a defined u32")
+            target=sections[index]
+            if target[1]==8 or target[2]&2!=2 or not target[3]<=value<=target[3]+target[5]-4:
+                raise ValueError("Native priority object is outside allocated file data")
+            address=target[4]+value-target[3]
+            if not 0<=address<=len(raw)-4 or target[4]+target[5]>len(raw):
+                raise ValueError("Native priority object is outside ELF file")
+            data=raw[address:address+4]
+            found.append({"symbol":wanted,"address":value,"value":int.from_bytes(data,"little"),
+                          "bytes_sha256":hashlib.sha256(data).hexdigest()})
+    if len(found)!=1:raise ValueError("Native priority object missing or ambiguous")
+    return found[0]
+
+
+def srsp_priority_native_abi(elf, xml, functions):
+    count=elf_u32_object(elf,"ti_sysbios_knl_Task_numPriorities")
+    if count["value"]!=8:
+        raise ValueError("SRSP priority6 requires native Task_numPriorities exactly8")
+    owner=linked_guard_ownership(xml,functions,"B4_V46_RefreshNpiPriority","npi_task.o")
+    return {"task_num_priorities":count,"linked_priority_helper":owner,
+            "base_priority":4,"pending_srsp_priority":6,"physical_latency_validated":False}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts", type=Path, required=True)
@@ -220,6 +263,10 @@ def main():
     zdo_guard = retained_zdo_ownership(root / artifacts["xml"]["file"], functions)
     bdb_guard = linked_guard_ownership(root / artifacts["xml"]["file"], functions,
                                      BDB_GUARD, "bdb.o")
+    srsp_priority = None
+    if "B4_V46_RefreshNpiPriority" in required:
+        srsp_priority = srsp_priority_native_abi(root/artifacts["elf"]["file"],
+                                                root/artifacts["xml"]["file"],functions)
     tracked = subprocess.check_output(["git", "-C", str(repo), "ls-files", "firmware/slzb-06p7u/r4/b1",
                                        ".github/workflows/test-r4-b1-direct-native.yml"],
                                       text=True).splitlines()
@@ -249,6 +296,7 @@ def main():
         "linked_functions": {name: functions[name] for name in required},
         "retained_zdo_startup": zdo_guard,
         "retained_bdb_restore_failure": bdb_guard,
+        "srsp_runtime_priority": srsp_priority,
         "overlay_sha256": digest(root / "b1-overlay.json"),
         "source_files": source_files,
         "physical_rf": "NOT_MEASURED", "stock_nv": "STOCK_NV_LAYOUT_UNKNOWN",
