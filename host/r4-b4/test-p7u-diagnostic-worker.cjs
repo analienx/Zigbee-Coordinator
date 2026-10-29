@@ -59,6 +59,8 @@ test("V5 bounded flight snapshot durable and hostile untrusted fields rejected",
         counters.validityFlags=2;counters.clockTickPeriodUs=10;
         counters.eventTotal=1;counters.eventCount=1;
         const good={...fixture("FLIGHT"),probeLatencyMs:100,processUptimeMs:17000,
+            radioEpochTag:"abcd1234abcd1234abcd1234",
+            radioEpochHardwareVerified:false,hostEvidence:null,
             flightV5:{abi:5,pageSequence:6,eventCount:1,counters,
                 events:[{tick:23,stage:3,subsystem:"AF",result:0}],
                 firstAnomaly:null,preAnomaly:null,
@@ -70,6 +72,12 @@ test("V5 bounded flight snapshot durable and hostile untrusted fields rejected",
         assert.throws(()=>workerModule.commit(s,{...good,nonce:"private"}),/RECORD_FIELD/);
         assert.throws(()=>workerModule.commit(s,{...good,
             flightV5:{...good.flightV5,rawFrame:"secret"}}),/V5_FLIGHT_COUNTERS/);
+        assert.throws(()=>workerModule.commit(s,{...good,radioEpochTag:"radio-raw-boot-id"}),/V5_EPOCH_AND_PASSIVE_HOST/);
+        assert.throws(()=>workerModule.commit(s,{...good,radioEpochHardwareVerified:true}),/V5_EPOCH_AND_PASSIVE_HOST/);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...good.flightV5,counters:{...counters,reserveActive:1}}}),/V5_FLIGHT_COUNTERS/);
+        assert.throws(()=>workerModule.commit(s,{...good,
+            flightV5:{...good.flightV5,counters:{...counters,reserveUsed:1,reserveReleaseFault:2}}}),/V5_FLIGHT_COUNTERS/);
         assert.throws(()=>workerModule.commit(s,{...good,
             flightV5:{...good.flightV5,counters:{...counters,reserveActive:4}}}),/V5_FLIGHT_COUNTERS/);
         assert.throws(()=>workerModule.commit(s,{...good,

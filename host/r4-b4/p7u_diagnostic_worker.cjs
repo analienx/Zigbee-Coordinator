@@ -51,7 +51,8 @@ function sameRecord(entry) {
      * Reject unknown nested keys, raw payloads, identity, nonce and boot. */
     if (entry.kind === "FLIGHT") {
         const keys=["schema","kind","utc","monotonicReceiveNs","hostRunId",
-                    "ownerGeneration","processUptimeMs","probeLatencyMs","flightV5"];
+                    "ownerGeneration","processUptimeMs","probeLatencyMs","flightV5",
+                    "radioEpochTag","radioEpochHardwareVerified","hostEvidence"];
         hold(Object.keys(entry).length === keys.length &&
              Object.keys(entry).every(k=>keys.includes(k)), "V5_FLIGHT_TOP_LEVEL");
         const flight=entry.flightV5;
@@ -74,6 +75,8 @@ function sameRecord(entry) {
             exact(flight.counters,fields) && fields.every(k=>num(flight.counters[k])) &&
             flight.counters.eventCount===flight.eventCount &&
             flight.counters.reserveActive<=3 &&
+            flight.counters.reserveUsed>=flight.counters.reserveActive &&
+            flight.counters.reserveReleaseFault<=flight.counters.reserveUsed &&
             flight.counters.mtExited<=flight.counters.mtEntered &&
             flight.counters.firstUartFaultKind<=5 &&
             flight.counters.b1FirstFailure<=255 &&
@@ -86,6 +89,15 @@ function sameRecord(entry) {
             flight.counters.eventCount===Math.min(flight.counters.eventTotal,16) &&
             Array.isArray(flight.events) &&
             flight.events.length===flight.eventCount, "V5_FLIGHT_COUNTERS");
+        hold(entry.radioEpochHardwareVerified===false &&
+            (entry.radioEpochTag===null ||
+             (typeof entry.radioEpochTag==="string" &&
+              /^[a-f0-9]{24}$/.test(entry.radioEpochTag))) &&
+            (entry.hostEvidence===null ||
+             (entry.hostEvidence!==undefined &&
+              typeof entry.hostEvidence==="object" &&
+              !Array.isArray(entry.hostEvidence))),
+            "V5_EPOCH_AND_PASSIVE_HOST");
         const names=["AF","SYS","ZDO","OTHER"];
         for(const event of flight.events) {
             hold(exact(event,["tick","stage","subsystem","result"]) &&
