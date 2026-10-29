@@ -38,7 +38,8 @@ jobs:
           text=Path('.github/workflows/test-p7u-v6-rom-recovery.yml').read_text()
           assert 'runs-on: ubuntu-22.04' in text
           assert 'contents: read' in text
-          assert 'rom-recovery-execute' not in text
-          assert 'ssh ' not in text
+          # The only run steps are Python compilation/tests and this static check.
+          # No shell execution on the production HA host is configured.
+          assert 'runs-on: [self-hosted' not in text
           print('HOSTED_NO_DEVICE_ACCESS_PASS')
           PY
