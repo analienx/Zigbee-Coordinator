@@ -20,7 +20,14 @@ def apply(sdk,expected_stack_hash):
  if hashlib.sha256(before[STACK].encode()).hexdigest()!=expected_stack_hash:
   raise ValueError('V6_B1_STACK_PREIMAGE')
  providers[STACK]=subprocess.check_output(['git','-C',str(sdk),'show',TI_SHA+':'+STACK])
- if extract(before[STACK],'static void stackTaskFxn(UArg a0, UArg a1)')!=extract(providers[STACK].decode(),'static void stackTaskFxn(UArg a0, UArg a1)'):
+ # B1's exact dispatcher includes the pre-MAC guard, returned-event credit
+ # and existing evidence hooks. Reproduce that reviewed predecessor rather
+ # than requiring pristine TI or removing B1 logic to satisfy a hash.
+ import sys
+ b1tools=Path(__file__).resolve().parents[1]/'firmware/slzb-06p7u/r4/b1/tools'
+ sys.path.insert(0,str(b1tools))
+ from patch_security import patch_startup
+ if extract(before[STACK],'static void stackTaskFxn(UArg a0, UArg a1)')!=extract(patch_startup(providers[STACK].decode()),'static void stackTaskFxn(UArg a0, UArg a1)'):
   raise ValueError('V6_STACK_DISPATCH_PREIMAGE')
  if 'Clock_Handle Clock_construct(' not in providers[CLOCK_H].decode() or 'Swi_construct(&Clock_module->swiStruct' not in providers[CLOCK_C].decode():
   raise ValueError('V6_CLOCK_PROVIDER_DRIFT')

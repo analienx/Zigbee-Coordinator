@@ -69,7 +69,7 @@ test("V6 production/OTA/disabled admission sends no diagnostic",async()=>{
 test("V6 uses normal slots, retains busy demand and bounds V4/V5 service",async()=>{
  const r=spawnSync("python",["-c","import json,sys;sys.path.insert(0,'host/r4-b4');import b4_v6_stage_overlay as v;from b4_v5_live_collector_overlay import SAMPLE;print(json.dumps(v.STAGE_SAMPLE+SAMPLE.replace('this.#b4V5V4SlotsRemaining = 4;','this.#b4V6Turn=true;this.#b4V5V4SlotsRemaining = 4;')))"],{encoding:"utf8"});
  assert.equal(r.status,0,r.stderr);const body=JSON.parse(r.stdout);
- const T=new Function("process",`return class {#b4Operational=true;#b4V6Turn=true;#b4V5V4SlotsRemaining=0;#b4V5YieldToV4=false;
+ const T=new Function("process",`return class {#b4Operational=true;#b4EpochKey=Buffer.alloc(32,1);#b4V6Turn=true;#b4V5V4SlotsRemaining=0;#b4V5YieldToV4=false;
   zigbee={zhController:{b4NoWireOwnerSnapshotFromExistingOwner:()=>null}};calls=[];outcomes=[undefined,{kind:'FAILED',reason:'V6_REPLY_TIMEOUT',submissionState:'SENT_OR_UNCERTAIN'}];
   b4ProbeReadOnlyOwnedStageV6(){this.calls.push(6);return this.outcomes.shift();}
   b4ProbeReadOnlyHangFlightV5(){this.calls.push(5);return {kind:'FAILED',reason:'V5_REPLY_TIMEOUT',submissionState:'SENT_OR_UNCERTAIN'};}
