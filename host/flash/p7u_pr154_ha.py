@@ -1077,12 +1077,13 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
     parser.add_argument('--input-pin')
     parser.add_argument('--plan-pin')
+    parser.add_argument('--recovery-plan-pin', help='Immutable fresh V6 ROM recovery plan SHA256')
     parser.add_argument('--binding', type=Path, required=True)
     parser.add_argument('--binding-pin', required=True)
     a = parser.parse_args()
@@ -1104,19 +1105,33 @@ def main():
             need(a.input_pin is None, 'EXECUTE_ARGUMENTS')
             operation_id, PRIVATE = select_operation(a.operation_id)
             if a.action == 'status':
-                need(a.plan_pin is None, 'STATUS_ARGUMENTS')
+                need(a.plan_pin is None and a.recovery_plan_pin is None, 'STATUS_ARGUMENTS')
                 result = operation_status()
             else:
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
-                if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
-                elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
-                elif a.action=='boot-native':
-                    from p7u_paired_boot import boot_native
-                    result=boot_native(globals(),a.package,a.package_pin,a.plan_pin,HA())
-                elif a.action=='resume-native': result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
+                if a.action in ('rom-recovery-plan','rom-recovery-execute'):
+                    from p7u_v6_rom_recovery import plan as rom_plan, execute as rom_execute
+                    need(a.action == 'rom-recovery-execute' or a.recovery_plan_pin is None,
+                         'RECOVERY_PLAN_PHASE_ARGUMENTS')
+                    if a.action == 'rom-recovery-plan':
+                        result=rom_plan(globals(),a.package,a.package_pin,a.plan_pin,HA())
+                    else:
+                        need(a.recovery_plan_pin is not None and
+                             re.fullmatch('[0-9a-f]{64}',a.recovery_plan_pin) is not None,
+                             'RECOVERY_EXECUTE_PIN')
+                        result=rom_execute(globals(),a.package,a.package_pin,
+                                           a.plan_pin,a.recovery_plan_pin,HA())
                 else:
-                    from p7u_paired_finish import finish
-                    result=finish(globals(),a.package,a.package_pin,a.plan_pin,HA())
+                    need(a.recovery_plan_pin is None, 'UNEXPECTED_RECOVERY_PIN')
+                    if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
+                    elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
+                    elif a.action=='boot-native':
+                        from p7u_paired_boot import boot_native
+                        result=boot_native(globals(),a.package,a.package_pin,a.plan_pin,HA())
+                    elif a.action=='resume-native': result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
+                    else:
+                        from p7u_paired_finish import finish
+                        result=finish(globals(),a.package,a.package_pin,a.plan_pin,HA())
 
         print(json.dumps(result), flush=True)
     finally:
