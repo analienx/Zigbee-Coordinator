@@ -65,7 +65,10 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV6(uint8_t *pBuf)
 }
 '''
  s=once(s,'__attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)',handler+'\n__attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)','V6_HANDLER')
- s=once(s,'    if(page!=1u && page!=2u)','    if(page>=3u && page<=8u)\n    { B4_SysReadOnlyDiagnosticsV6(pBuf); return; }\n    if(page!=1u && page!=2u)','V6_SELECTOR')
+ # Dispatch directly from SYS, keeping V5's legacy handler byte-exact and
+ # avoiding an extra 160-byte V5 frame on the MT stack for a V6 request.
+ s=once(s,'      else if (pBuf[MT_RPC_POS_LEN] == 9u)\n        B4_SysReadOnlyDiagnosticsV5(pBuf);',
+  '      else if (pBuf[MT_RPC_POS_LEN] == 9u)\n      {\n        uint8_t page=pBuf[MT_RPC_POS_DAT0];\n        if(page>=3u && page<=8u) B4_SysReadOnlyDiagnosticsV6(pBuf);\n        else B4_SysReadOnlyDiagnosticsV5(pBuf);\n      }','V6_SELECTOR')
  after=dict(zip((TASK,MT,SYS,TL,STACK),(n,m,s,t,z)))
  for p,text in after.items():(sdk/p).write_text(text,encoding='utf-8',newline='')
  return {'schema':'p7u-f2-v6-owned-stage-v1','clock_period_us':250000,
