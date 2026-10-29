@@ -51,6 +51,7 @@ test("V5 both pages use same one owner, 9-byte F2, no second serial",async()=>{
  const out=await owner.b4ReadHangFlightV5(allowed);
  assert.equal(out?.abi,5);
  assert.equal(out?.pageSequence,17);
+ assert.equal(out?.radioBootId,"0102030405060708");
  assert.equal(out?.counters.reserveExhausted,1);
  assert.equal(out?.eventCount,1);
  assert.equal(out?.events[0].stage,4);
@@ -73,7 +74,9 @@ test("V5 bad page nonce or epoch quarantines, never exports stale evidence",asyn
      if(page===2&&kind==="page")b[5]=255;
      return b;
    });
-   assert.equal(await owner.b4ReadHangFlightV5(allowed),undefined);
+   const outcome=await owner.b4ReadHangFlightV5(allowed);
+   assert.equal(outcome?.kind,"FAILED");
+   assert.equal(outcome?.submissionState,"SENT_OR_UNCERTAIN");
    assert.equal(znp.b4IsDiagPoisoned(),true);
  }
 });
@@ -100,7 +103,9 @@ test("V5 corrupt boot validity, future tick, and forged anomaly are quarantined"
      if(page===1&&bad==="dirty")b[152]=1;
      return b;
    });
-   assert.equal(await owner.b4ReadHangFlightV5(allowed),undefined);
+   const outcome=await owner.b4ReadHangFlightV5(allowed);
+   assert.equal(outcome?.kind,"FAILED");
+   assert.equal(outcome?.submissionState,"SENT_OR_UNCERTAIN");
    assert.equal(znp.b4IsDiagPoisoned(),true);
  }
 });
@@ -118,6 +123,45 @@ test("V5 first frozen anomaly is preserved and sanitized",async()=>{
  assert.equal(out?.preAnomaly?.stage,6);
  assert.equal(out?.firstAnomaly?.stage,8);
  assert.equal(out?.firstAnomaly?.subsystem,"AF");
+});
+test("V5 impossible reserve counts rejected by actual-owner parser",async()=>{
+ for(const kind of ["active","release"]){
+   const {owner,znp}=adapterWithLink((page,nonce)=>{
+     const b=pages(page,nonce);
+     if(page===1&&kind==="active")b.writeUInt32LE(8,72);
+     if(page===1&&kind==="release")b.writeUInt32LE(8,68);
+     return b;
+   });
+   const out=await owner.b4ReadHangFlightV5(allowed);
+   assert.equal(out?.kind,"FAILED");
+   assert.equal(out?.submissionState,"SENT_OR_UNCERTAIN");
+   assert.equal(znp.b4IsDiagPoisoned(),true);
+ }
+});
+test("V5 page1 already submitted before guard revocation is FAILED",async()=>{
+ let still=true;
+ const {owner,frames,znp}=adapterWithLink((page,nonce)=>{
+   const b=pages(page,nonce);
+   if(page===1)still=false;
+   return b;
+ });
+ const out=await owner.b4ReadHangFlightV5({...allowed,stillAllowed:()=>still});
+ assert.equal(out?.kind,"FAILED");
+ assert.equal(out?.reason,"V5_PARTIAL_PAIR_OWNER_REVOKED");
+ assert.equal(out?.submissionState,"SENT_OR_UNCERTAIN");
+ assert.equal(frames.length,1);
+ assert.equal(znp.b4IsDiagPoisoned(),false);
+});
+test("V5 missing SRSP counts as V4 cooldown and never claims no wire",{timeout:12000},async()=>{
+ const {owner,frames,znp}=adapterWithLink();
+ znp.unpiWriter.writeFrame=frame=>{frames.push(frame);};
+ const out=await owner.b4ReadHangFlightV5(allowed);
+ assert.equal(out?.kind,"FAILED");
+ assert.equal(out?.reason,"V5_REPLY_TIMEOUT");
+ assert.equal(out?.submissionState,"SENT_OR_UNCERTAIN");
+ assert.equal(frames.length,1);
+ assert.equal(znp.b4IsDiagPoisoned(),false);
+ assert.equal(znp.b4F2ReadAdmissionReason(),"F2_TIMEOUT_COOLDOWN");
 });
 test("V5 legacy V4 SYS F2 request remains buffer8",()=>{
  const {ZpiObject}=mod("adapter/z-stack/znp/zpiObject.js");

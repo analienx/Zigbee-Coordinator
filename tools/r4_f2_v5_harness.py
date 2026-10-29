@@ -46,6 +46,7 @@ static volatile uint32_t B4_AllRspAllocFailed=0u;
 static volatile uint32_t B4_AllRspFramingFailed=0u;
 static volatile uint32_t B4_AllRspTlRejected=0u;
 static void B4_V43_Snapshot(uint8_t *out){
+  assert(cs_depth>0u); /* V5 outer CS precedes V4.3 metrics. */
   memset(out,0,80);
   out[0]=41;out[12]=8;out[16]=2;out[20]=11;out[24]=4;
   out[32]=3;out[36]=77;out[40]=2;out[60]=99;out[72]=7;
@@ -137,6 +138,17 @@ int main(void){
  now_tick=400u; B4_V5_ReadPage1(first,nonce);
  now_tick=400u+200001u;
  assert(!B4_V5_ReadPage2(second,nonce)); /* TTL fail closed */
+ /* Saturating lifetime counts must not freeze last-16 event capture. */
+ B4_V5_EventTotal=UINT32_MAX;
+ B4_V5_RingWriteIndex=0u;B4_V5_RingCount=16u;
+ now_tick=600u;B4_V5_Record(5u,0x4424u,0u);
+ assert(B4_V5_EventTotal==UINT32_MAX && B4_V5_RingWriteIndex==1u);
+ B4_V5_ReadPage1(first,nonce);
+ assert(B4_V5_Get32(first+56u)==UINT32_MAX);
+ assert(B4_V5_Get32(first+108u)==16u);
+ assert(B4_V5_ReadPage2(second,nonce));
+ assert(second[32u+15u*8u+6u]==5u);
+ assert(second[32u+15u*8u+4u]==0x44u);
  assert(!cs_depth);
  puts("V5_ACTUAL_C_PASS ring16 page1/2 nonce coherent TTL 4 mutants");
  return 0;
