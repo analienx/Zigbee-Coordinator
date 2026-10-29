@@ -33,7 +33,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      FIRMWARE_SOURCE_SHA: ${{ inputs.firmware_source || '7ee955430f2a6dd06548b8ca862c973558c8db54' }}
+      FIRMWARE_SOURCE_SHA: ${{ inputs.firmware_source || 'e3a0f3b7726adf1f6c182973f135665a5c3857e0' }}
       HOST_SOURCE_SHA: ${{ inputs.host_source || '85ce37c24802b0f16fec0afd00a1a0457656cd80' }}
       NATIVE_RUN: ${{ inputs.native_run }}
       HOST_RUN: ${{ inputs.host_run }}

@@ -276,21 +276,21 @@ class Execution(unittest.IsolatedAsyncioTestCase):
 
     async def test_runtime_priority_exact_additional_app_sector_is_required(self):
         self.ready()
-        with patch.object(op, 'SOURCE', '7ee955430f2a6dd06548b8ca862c973558c8db54'):
+        with patch.object(op, 'SOURCE', 'e3a0f3b7726adf1f6c182973f135665a5c3857e0'):
             with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
                 await op.deploy(self.package, 'pin', self.ha)
         self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
 
     async def test_runtime_priority_qualified_app_envelope_can_execute(self):
         self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
-        with patch.object(op, 'SOURCE', '7ee955430f2a6dd06548b8ca862c973558c8db54'):
+        with patch.object(op, 'SOURCE', 'e3a0f3b7726adf1f6c182973f135665a5c3857e0'):
             await op.deploy(self.package, 'pin', self.ha)
         self.t.execute.assert_awaited_once(); self.ha.restart_radio.assert_not_called()
 
     async def test_runtime_priority_cannot_add_nv_ccfg_or_extra_app_sectors(self):
         self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
         self.frozen.sectors[0xA4000] = bytes(8192)
-        with patch.object(op, 'SOURCE', '7ee955430f2a6dd06548b8ca862c973558c8db54'):
+        with patch.object(op, 'SOURCE', 'e3a0f3b7726adf1f6c182973f135665a5c3857e0'):
             with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
                 await op.deploy(self.package, 'pin', self.ha)
         self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
@@ -704,12 +704,12 @@ class RuntimePriorityNativeQualification(unittest.TestCase):
         self.root=Path(self.tmp.name);(self.root/'native').mkdir()
         raw=b'public ELF fixture';(self.root/'native/test.out').write_bytes(raw)
         self.elf={'file':'test.out','sha256':op.sha(raw)}
-        self.q={'base_priority':4,'pending_srsp_priority':6,'task_num_priorities':{'value':16},
+        self.q={'base_priority':4,'pending_srsp_priority':6,'task_num_priorities':{'value':8,'symbol':'ti_sysbios_knl_Task_numPriorities'},
                 'linked_priority_helper':{'owner':'npi_task.o','address':256,'size':32}}
         self.c={'files':{'native/test.out':op.sha(raw)}}
-        self.native={'schema':'r4-b1-native-seal-v1','source_sha':'7ee955430f2a6dd06548b8ca862c973558c8db54',
+        self.native={'schema':'r4-b1-native-seal-v1','source_sha':'e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                      'srsp_runtime_priority':self.q,'artifacts':{'elf':self.elf}}
-        for key,value in (('SOURCE','7ee955430f2a6dd06548b8ca862c973558c8db54'),('CANDIDATE',self.root)):
+        for key,value in (('SOURCE','e3a0f3b7726adf1f6c182973f135665a5c3857e0'),('CANDIDATE',self.root)):
             p=patch.object(op,key,value);p.start();self.addCleanup(p.stop)
     def save(self):
         raw=op.canonical(self.native);(self.root/'b1-native-seal.json').write_bytes(raw)
@@ -719,11 +719,11 @@ class RuntimePriorityNativeQualification(unittest.TestCase):
         (self.root/'native/test.out').write_bytes(b'changed')
         with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_ELF_BINDING'):op.runtime_priority_qualification(self.c)
     def test_bad_count_owner_priority_or_source_is_rejected(self):
-        for count in (0,6,7,True):
+        for count in (0,6,7,16,True):
             self.q['task_num_priorities']['value']=count;self.save()
             with self.subTest(count=count),self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):
                 op.runtime_priority_qualification(self.c)
-        self.q['task_num_priorities']['value']=16
+        self.q['task_num_priorities']['value']=8
         self.q['linked_priority_helper']['owner']='synthetic.o';self.save()
         with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):op.runtime_priority_qualification(self.c)
         self.q['linked_priority_helper']['owner']='npi_task.o'

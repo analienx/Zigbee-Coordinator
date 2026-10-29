@@ -40,7 +40,7 @@ def main():
     assert c['source_sha'] == os.environ['FIRMWARE_SOURCE_SHA']
     host = json.loads(args.host_release.read_bytes())
     assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == os.environ.get('HOST_SOURCE_SHA',c['source_sha'])
-    priority_pair=(c['source_sha']=='7ee955430f2a6dd06548b8ca862c973558c8db54' and host['source_sha']=='85ce37c24802b0f16fec0afd00a1a0457656cd80')
+    priority_pair=(c['source_sha']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and host['source_sha']=='85ce37c24802b0f16fec0afd00a1a0457656cd80')
     assert host['source_sha']==c['source_sha'] or priority_pair or c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de', 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
     paired_image = host['profiles']['diagnostic']['image_id']
     import re

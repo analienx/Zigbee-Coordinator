@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 
 INSTALLED = "899f179031aae74db2e48699900f1cf5722bb4de"
-QUALIFIED_SUCCESSORS = {"7ee955430f2a6dd06548b8ca862c973558c8db54": "85ce37c24802b0f16fec0afd00a1a0457656cd80"}
+QUALIFIED_SUCCESSORS = {"e3a0f3b7726adf1f6c182973f135665a5c3857e0": "85ce37c24802b0f16fec0afd00a1a0457656cd80"}
 PIN_FIELDS = ("candidate_pin", "previous_plan_pin", "previous_frozen_pin",
               "previous_snapshot_pin", "previous_journal_pin", "previous_candidate_pin",
               "input_pin")
@@ -36,7 +36,7 @@ def binding_values(raw, expected_pin, package):
          re.fullmatch(r"[0-9a-f]{40}",package.get("operator_source_sha", "")) is not None, "PACKAGE_SOURCE")
     host_source=package.get('paired_host_source_sha','')
     compatible=(host_source==data['source_sha'] or
-        (data['source_sha']=='7ee955430f2a6dd06548b8ca862c973558c8db54' and host_source=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
+        (data['source_sha']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and host_source=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
          package.get('f2_wire_contract')=='R4D4_MINOR4_AND_R4D5_PAGED_V1') or
         (data['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and
          package.get('f2_wire_contract')=='R4D4_MINOR3_240_V1'))
