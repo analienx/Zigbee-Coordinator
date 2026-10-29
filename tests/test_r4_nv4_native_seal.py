@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import tempfile
+import struct
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,56 @@ spec.loader.exec_module(seal)
 
 
 class Nv4NativeSealTests(unittest.TestCase):
+    @staticmethod
+    def priority_elf(value, *, symbol_type=1, symbol_size=4, symbol_address=0x1000):
+        strings=b'\0Task_numPriorities\0'
+        raw=bytearray(52)
+        raw[:7]=b'\x7fELF\x01\x01\x01'
+        struct.pack_into('<HHI',raw,16,2,40,1)
+        data_offset=len(raw);raw.extend(struct.pack('<I',value))
+        str_offset=len(raw);raw.extend(strings)
+        while len(raw)%4:raw.append(0)
+        sym_offset=len(raw);raw.extend(bytes(16))
+        raw.extend(struct.pack('<IIIBBH',1,symbol_address,symbol_size,0x10|symbol_type,0,1))
+        shoff=len(raw);struct.pack_into('<I',raw,32,shoff)
+        struct.pack_into('<HHH',raw,46,40,4,0)
+        for row in ((0,0,0,0,0,0,0,0,0,0),
+                    (0,1,2,0x1000,data_offset,4,0,0,4,0),
+                    (0,3,0,0,str_offset,len(strings),0,0,1,0),
+                    (0,2,0,0,sym_offset,32,2,0,4,16)):
+            raw.extend(struct.pack('<10I',*row))
+        return bytes(raw)
+
+    def test_priority_count_must_be_real_defined_allocated_elf_object(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'native.out';path.write_bytes(self.priority_elf(16))
+            self.assertEqual(seal.elf_u32_object(path,'Task_numPriorities')['value'],16)
+            for mutation in ({'symbol_type':0},{'symbol_size':8},{'symbol_address':0x1004}):
+                path.write_bytes(self.priority_elf(16,**mutation))
+                with self.subTest(mutation=mutation),self.assertRaises(ValueError):
+                    seal.elf_u32_object(path,'Task_numPriorities')
+            path.write_bytes(self.priority_elf(16))
+            with self.assertRaisesRegex(ValueError,'missing or ambiguous'):
+                seal.elf_u32_object(path,'synthetic_priority_count')
+
+    def test_priority_native_gate_rejects_unusable_range_and_wrong_owner(self):
+        name='B4_V46_RefreshNpiPriority'
+        functions={name:{'address':0x200,'size':0x20}}
+        template='<link_info><input_file id="f"><kind>object</kind><file>{owner}</file></input_file><object_component><name>.text.{name}</name><run_address>0x200</run_address><size>0x20</size><executable>true</executable><input_file_ref idref="f"/></object_component></link_info>'
+        with tempfile.TemporaryDirectory() as temp:
+            elf=Path(temp)/'native.out';xml=Path(temp)/'native.xml'
+            xml.write_text(template.format(owner='npi_task.o',name=name))
+            for count in (8,16,32):
+                elf.write_bytes(self.priority_elf(count))
+                self.assertEqual(seal.srsp_priority_native_abi(elf,xml,functions)['pending_srsp_priority'],6)
+            for count in (0,6,7,33):
+                elf.write_bytes(self.priority_elf(count))
+                with self.subTest(count=count),self.assertRaisesRegex(ValueError,'requires native'):
+                    seal.srsp_priority_native_abi(elf,xml,functions)
+            elf.write_bytes(self.priority_elf(16));xml.write_text(template.format(owner='synthetic.o',name=name))
+            with self.assertRaisesRegex(ValueError,'ownership differs'):
+                seal.srsp_priority_native_abi(elf,xml,functions)
+
     def test_reduced_source_shim_cannot_satisfy_native_startup_guard(self):
         for require, present, donor, blob, modified in (
                 (seal.require_retained_zdo_source, "retained_zdo_guard_source_present",

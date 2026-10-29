@@ -121,9 +121,19 @@ int main(void){
 }
 """
 
-def exercise(sdk):
+def build_source(sdk, *, prefix_extra="", external_v5_hooks=False):
     sdk = Path(sdk)
     task=(sdk/TASK).read_text()
+    if external_v5_hooks:
+        # V5 encoding is exercised by its separate actual-C harness. Keep
+        # the final producer/consumer/priority bodies verbatim; this fixture
+        # mocks only the diagnostic observer's side effects.
+        begin=task.index("/* B4_F2_V5_FLIGHT_RECORDER:")
+        end=task.index("extern volatile uint32_t B4_AllRspNpiReceived",begin)
+        prefix_extra+="\n"+extract(task,"static uint16_t B4_V5_CommandFromFrame(const uint8_t *frame, uint16_t size)")
+        prefix_extra+="\nstatic void B4_V5_Record(uint8_t s,uint16_t c,uint8_t r){(void)s;(void)c;(void)r;}\n"
+        prefix_extra+="static void B4_V5_NpiPulse(void){}\n"
+        task=task[:begin]+task[end:]
     client=(sdk/CLIENT).read_text()
     frame=(sdk/FRAME).read_text()
     af_source=(sdk/AF).read_text()
@@ -158,7 +168,7 @@ def exercise(sdk):
         "if(n>=10){memcpy(&stamp,p+4,4);id=p[8]|((uint32_t)p[9]<<8);}")
     if prefix == PREFIX or "n>=9 && n<=255" in prefix:
         raise RuntimeError("V45_SHORT_SRSP_UART_FIXTURE_DRIFT")
-    source=prefix+record+"\n"+globals_+counter_src+"\n"
+    source=prefix+prefix_extra+record+"\n"+globals_+counter_src+"\n"
     source+="extern uint8_t B4_V45_SendReservedSrsp(uint8_t,uint8_t,uint8_t,const uint8_t *);\n"
     source+="extern uint8_t B4_V45_QueueDynamicSrsp(uint8_t *);\n"
     source+=extract(client,"static void B4_AfRspTick(volatile uint32_t *p)")+"\n"
@@ -186,6 +196,11 @@ static uint8_t afRegister(endPointDesc_t *d){(void)d;return ZSuccess;}
 """
     source+=extract(af_source,"static void MT_AfRegister(uint8_t *pBuf)")+"\n"
     source+=MAIN
+    return source
+
+
+def exercise(sdk):
+    source=build_source(sdk)
     cc=shutil.which("cc") or shutil.which("gcc")
     if not cc:raise RuntimeError("V45_COMPILER_REQUIRED")
     def run(label,text,should_pass):
