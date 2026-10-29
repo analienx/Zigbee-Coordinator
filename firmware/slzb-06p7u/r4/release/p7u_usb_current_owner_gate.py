@@ -19,7 +19,8 @@ SCHEMA = "p7u-usb-current-owner-preservation-v1"
 def reconcile_current(*, historical: dict, fresh: dict, records: dict, abi: dict,
                       native_preflight_pass: bool = False,
                       candidate_semantics_pass: bool = False,
-                      baseline_counter_floor: int | None = None) -> dict:
+                      baseline_counter_floor: int | None = None,
+                      runtime_inventory_peers=frozenset()) -> dict:
     report = {"schema": SCHEMA, "status": "HOLD",
               "flash_authorized": False, "nv_write_authorized": False,
               "replay_old_nv_authorized": False,
@@ -46,7 +47,23 @@ def reconcile_current(*, historical: dict, fresh: dict, records: dict, abi: dict
         check(len(old_ids) == 107, "HISTORICAL_REFERENCE_INVALID")
         check(len(missing) <= 1, "HISTORICAL_MISSING_PEER_LIMIT_EXCEEDED")
         check(not extra, "CURRENT_UNEXPECTED_PEER")
-        check(now_ids == chip_ids, "CURRENT_SILICON_PEER_INVENTORY_MISMATCH")
+        # A stale host backup can omit the one historically keyless,
+        # non-child router whose address record has reappeared at runtime.
+        # Admit only that exact bounded difference, independently bound to
+        # original backup + protected DB by the sealed caller. Never synthesize
+        # backup entries, keys, children, new devices, or any NV write.
+        known_valid = (type(runtime_inventory_peers) is frozenset and
+                       all(type(peer) is bytes and len(peer) == 8
+                           for peer in runtime_inventory_peers))
+        known = {peer[::-1] for peer in runtime_inventory_peers} if known_valid else set()
+        extra_chip = chip_ids - now_ids
+        runtime_reappearance = (known_valid and len(extra_chip) == 1 and
+            extra_chip == missing and extra_chip <= known and
+            now_ids <= chip_ids and not (extra_chip & set(live["aps"])) and
+            all(old.peers[peer] == (None, None, None, False) for peer in extra_chip))
+        check(now_ids == chip_ids or runtime_reappearance,
+              "CURRENT_SILICON_PEER_INVENTORY_MISMATCH")
+        report["runtime_inventory_bound_reappearances"] = len(extra_chip) if runtime_reappearance else 0
         for ieee in missing:
             key, tx, rx, is_child = old.peers[ieee]
             check(key is None and tx is None and rx is None and is_child is False,

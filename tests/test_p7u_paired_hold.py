@@ -40,6 +40,21 @@ class ReadonlyHold(unittest.TestCase):
     def test_exact_zero_write_hold_can_prepare_a_new_rom_session(self):
         self.assertEqual(hold.provenance(self.ns,self.ha,self.owner),self.ns['PAIRED_ROM_HOLD_PIN'])
         self.ha.proof.assert_called_once_with(False)
+    def test_zero_write_hold_from_exact_quiescent_plan_is_supported(self):
+        self.plan.update(owner=self.owner,quiescent_provenance_sha256='f'*64)
+        self.pin=op.sha(op.canonical(self.plan))
+        for name in ('plan.json','execute-intent.json','bsl-entry-intent.json','hold.json'):
+            path=self.root/name
+            value=self.plan if name=='plan.json' else json.loads(path.read_bytes())
+            if name!='plan.json':value['plan_sha256']=self.pin
+            path.write_bytes(op.canonical(value))
+        self.ns['PAIRED_ROM_HOLD_PLAN_PIN']=self.pin;self.seal()
+        self.assertEqual(hold.provenance(self.ns,self.ha,self.owner),self.ns['PAIRED_ROM_HOLD_PIN'])
+        self.plan.pop('quiescent_provenance_sha256')
+        self.pin=op.sha(op.canonical(self.plan));(self.root/'plan.json').write_bytes(op.canonical(self.plan))
+        self.ns['PAIRED_ROM_HOLD_PLAN_PIN']=self.pin;self.seal()
+        with self.assertRaisesRegex(op.Hold,'HOLD_PLAN'):hold.provenance(self.ns,self.ha,self.owner)
+
     def test_admission_or_write_artifact_prevents_continuation(self):
         for name in ('admission.json','mutation-journal.jsonl','frozen-plan.json'):
             p=self.root/name;p.write_text('{}')
@@ -126,3 +141,28 @@ class ReadonlyHold(unittest.TestCase):
         with self.assertRaisesRegex(op.Hold,'FORWARD_PLAN'):hold.verified_pair_package(ns,'bad-pin')
         (package/'x').write_bytes(b'changed')
         with self.assertRaisesRegex(op.Hold,'FILE_PIN'):hold.verified_pair_package(ns,plan_pin)
+
+    def test_native_resume_accepts_only_exact_successor_host_wire_pair(self):
+        fw='e3a0f3b7726adf1f6c182973f135665a5c3857e0'
+        host='85ce37c24802b0f16fec0afd00a1a0457656cd80'
+        cases=[({},True),({'paired_host_source_sha':'7'*40},False),
+          ({'firmware_source_sha':'8'*40},False),({'f2_wire_contract':'wrong'},False),
+          ({'paired_host_image':'sha256:'+'0'*64},False)]
+        for changes,accepted in cases:
+            with self.subTest(changes=changes),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);operations=root/'operations';operations.mkdir(mode=0o700)
+                private=operations/('1'*32);private.mkdir(mode=0o700)
+                meta={'operator_source_sha':'6'*40,'firmware_source_sha':fw,
+                  'paired_host_source_sha':host,'paired_host_image':self.owner['image'],
+                  'f2_wire_contract':'R4D4_MINOR4_AND_R4D5_PAGED_V1','files':{'x':op.sha(b'original')}}
+                meta.update(changes);raw=op.canonical(meta);pin=op.sha(raw)
+                package=root/('p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16])
+                package.mkdir(mode=0o700);(package/'PACKAGE.json').write_bytes(raw)
+                (package/'x').write_bytes(b'original')
+                plan={'source':fw,'package_pin':pin,'owner':self.owner}
+                (private/'plan.json').write_bytes(op.canonical(plan))
+                ns=dict(self.ns,SOURCE=fw,PRIVATE=private,OPERATIONS=operations,sealed_tree=op.sealed_tree)
+                if accepted:self.assertEqual(hold.verified_pair_package(ns,op.sha(op.canonical(plan))),package)
+                else:
+                    with self.assertRaisesRegex(op.Hold,'WRITER_BINDING'):
+                        hold.verified_pair_package(ns,op.sha(op.canonical(plan)))

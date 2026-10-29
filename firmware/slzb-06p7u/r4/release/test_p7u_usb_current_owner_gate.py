@@ -16,12 +16,12 @@ class CurrentOwnerTests(unittest.TestCase):
         self.live = live_from(self.new)
         self.live["trust_center_raw"] = bytes(8)
 
-    def assess(self, native=True, semantics=True, floor=1000):
+    def assess(self, native=True, semantics=True, floor=1000, known=frozenset()):
         with patch.object(current, "_silicon_owner_fields", return_value=self.live):
             return current.reconcile_current(historical=self.old, fresh=self.new,
                      records={}, abi={}, native_preflight_pass=native,
                      candidate_semantics_pass=semantics,
-                     baseline_counter_floor=floor)
+                     baseline_counter_floor=floor,runtime_inventory_peers=known)
 
     def test_current_stock_106_with_one_historical_keyless_router(self):
         got = self.assess()
@@ -101,6 +101,31 @@ class CurrentOwnerTests(unittest.TestCase):
         self.assertIn("CURRENT_UNEXPECTED_PEER",self.assess()["reason_codes"])
         self.new["devices"][0]["ieee_address"]=self.new["devices"][1]["ieee_address"]
         self.assertIn("OWNER_DUPLICATE_OR_INVALID_IEEE",self.assess()["reason_codes"])
+
+    def test_one_keyless_historical_router_can_reappear_only_with_inventory_binding(self):
+        peer=bytes.fromhex(self.old["devices"][-1]["ieee_address"])
+        self.live["addresses"]=self.live["addresses"]|{peer}
+        self.assertEqual(self.assess()["status"],"HOLD")
+        result=self.assess(known=frozenset({peer[::-1]}))
+        self.assertEqual(result["status"],"PASS_CURRENT_OWNER_OFFLINE_ONLY")
+        self.assertEqual(result["runtime_inventory_bound_reappearances"],1)
+        self.assertFalse(result["nv_write_authorized"])
+        for field,value in (("link_key",{"key":"12"*16,"tx_counter":1,"rx_counter":2}),("is_child",True)):
+            previous=self.old["devices"][-1][field];self.old["devices"][-1][field]=value
+            self.assertEqual(self.assess(known=frozenset({peer[::-1]}))["status"],"HOLD")
+            self.old["devices"][-1][field]=previous
+        self.assertEqual(self.assess(known=frozenset({b"foreign!"}))["status"],"HOLD")
+        self.live["aps"][peer]=(b"k"*16,1,1)
+        self.assertEqual(self.assess(known=frozenset({peer[::-1]}))["status"],"HOLD")
+
+    def test_bound_reappearance_never_hides_missing_current_peer_or_counter_regression(self):
+        peer=bytes.fromhex(self.old["devices"][-1]["ieee_address"])
+        self.live["addresses"]=self.live["addresses"]|{peer}
+        known=frozenset({peer[::-1]})
+        self.assertEqual(self.assess(known=known,floor=999)["status"],"HOLD")
+        another=next(x for x in self.live["addresses"] if x!=peer)
+        self.live["addresses"]=self.live["addresses"]-{another}
+        self.assertEqual(self.assess(known=known)["status"],"HOLD")
 
     def test_historical_strict_audit_is_independent(self):
         with patch.object(strict,"_silicon_owner_fields", return_value=self.live):

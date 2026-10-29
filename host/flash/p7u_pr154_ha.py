@@ -175,12 +175,36 @@ def sealed_tree(root, manifest_name, expected, names=None):
     return json.loads(raw)
 
 
+def runtime_priority_qualification(c):
+    """Bind the new delivery to its genuine CI native ELF/priority seal."""
+    if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
+                      '66ed700c2818c7a0963dad9160d55109009bbaac'): return None
+    raw=read(CANDIDATE/'b1-native-seal.json')
+    need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
+    native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
+    count=(q.get('task_num_priorities') or {}).get('value')
+    helper=q.get('linked_priority_helper') or {}
+    elf=(native.get('artifacts') or {}).get('elf') or {}
+    name=elf.get('file','')
+    need(native.get('schema')=='r4-b1-native-seal-v1' and native.get('source_sha')==SOURCE and
+         type(count) is int and count==8 and
+         (q.get('task_num_priorities') or {}).get('symbol')=='ti_sysbios_knl_Task_numPriorities' and q.get('base_priority')==4 and
+         q.get('pending_srsp_priority')==6 and helper.get('owner')=='npi_task.o' and
+         type(helper.get('address')) is int and type(helper.get('size')) is int and helper['size']>0 and
+         re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]*',name) is not None,
+         'SRSP_PRIORITY_NATIVE')
+    need(elf.get('sha256')==c['files'].get('native/'+name) and
+         sha(read(CANDIDATE/'native'/name))==elf['sha256'], 'SRSP_PRIORITY_ELF_BINDING')
+    return q
+
+
 def candidate():
     c = load(CANDIDATE/'candidate.json')
     need(sha(canonical(c)) == CANDIDATE_PIN and c['source_sha'] == SOURCE, 'FIRMWARE_PIN')
     for name in ('P7U-STOCK20260311-APP-ONLY.hex', 'P7U-STOCK20260311-AC000-HANDOFF.bin',
                  'profile.json', 'security-native-abi.json', 'handoff-receipt.json'):
         need(sha(read(CANDIDATE/name)) == c['files'][name], 'CANDIDATE_FILE')
+    runtime_priority_qualification(c)
     return c
 
 
@@ -234,7 +258,7 @@ class HA:
         try:
             a = json.loads(run(['docker', 'inspect', 'app_'+OWNER]))[0]
         except Hold:
-            if not globals().get('PAIRED_ROM_HOLD_PIN'): raise
+            if not globals().get('PAIRED_HOST_VERSION'): raise
             from p7u_paired_hold import absent_owner
             return absent_owner(globals(), self)
         return {'id': a['Id'], 'image': a['Image'], 'started_at': a['State']['StartedAt'],
@@ -490,6 +514,27 @@ def bounded_reentry_provenance(ha, owner):
     return sha(canonical(evidence))
 
 
+def runtime_inventory_peers():
+    """Native-order identities independently known by original backup AND sealed DB."""
+    from p7u_usb_security_model import parse_backup
+    historical = parse_backup(load(INPUT/'historical-backup.json'))
+    raw = read(DATA/'database.db')
+    approval = load(DATA/'.p7u-approved.json')
+    need(approval.get('schema') == 'p7u-db-admission-v1' and
+         approval.get('database_sha256') == sha(raw), 'RUNTIME_INVENTORY_DB_PIN')
+    identities = set()
+    for line in raw.splitlines():
+        if not line.strip(): continue
+        row = json.loads(line)
+        need(type(row) is dict, 'RUNTIME_INVENTORY_ROW')
+        if row.get('type') not in ('Router', 'EndDevice'): continue
+        ieee = row.get('ieeeAddr')
+        need(type(ieee) is str and re.fullmatch('0x[0-9a-fA-F]{16}', ieee) is not None,
+             'RUNTIME_INVENTORY_IEEE')
+        identities.add(bytes.fromhex(ieee[2:]))
+    return frozenset(peer[::-1] for peer in historical.peers if peer in identities)
+
+
 def native_network_floor(sec, records, abi):
     nib = sec.get(records, 0, 0x21, abi['structs']['nwkIB_t']['size'])
     pan = sec.field(nib, abi, 'nwkIB_t', 'extendedPANID')
@@ -675,13 +720,16 @@ async def deploy(package, pin, ha):
                     'abi_sha256': sha(sec.abi_tool.canonical(abi)), 'reader_sha256': sha(read(reader)),
                     'profile_sha256': c['profile_sha256'], 'native_manifest_sha256': c['native_manifest_sha256']}
         security = sec.preflight(capture=current, baseline=old.snapshot, abi=abi, reader=reader,
-                                 bindings=bindings, runtime_upgrade=True)
+                                 bindings={**bindings, 'runtime_database_sha256': sha(read(DATA/'database.db')),
+                    'runtime_historical_backup_sha256': sha(read(INPUT/'historical-backup.json'))},
+                                 runtime_upgrade=True, runtime_inventory_peers=runtime_inventory_peers())
         durable(PRIVATE, 'security-receipt.json', security)
         need(security['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'NATIVE_SECURITY')
         records, counts = sec.read_private(reader, current)
         owner = reconcile(historical=load(INPUT/'historical-backup.json'), fresh=json.loads(backup),
             records=records, abi=abi, native_preflight_pass=True, candidate_semantics_pass=True,
-            baseline_counter_floor=native_network_floor(sec, records, abi))
+            baseline_counter_floor=native_network_floor(sec, records, abi),
+            runtime_inventory_peers=runtime_inventory_peers())
         durable(PRIVATE, 'current-owner-security.json', owner)
         need(owner['status'] == 'PASS_CURRENT_OWNER_OFFLINE_ONLY', 'CURRENT_OWNER_SECURITY')
         plan = t.prepare_upgrade(installed_plan=old, expected_installed_plan_sha256=old.manifest['plan_sha256'],
@@ -695,7 +743,15 @@ async def deploy(package, pin, ha):
             security_receipt=security, expected_security_receipt_sha256=sha(canonical(security)))
         plan = t.bind_sparse_plan(plan, expected_plan_sha256=plan.manifest['plan_sha256'],
             previous_verified_image=expected, sparse_receipt=proof, expected_sparse_receipt_sha256=sha(canonical(proof)))
-        need(set(plan.sectors) == set(range(0, 0x30000, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
+        # Exact reviewed v4.5 and V5 images add only APP sector 0x30000. Keep older
+        # operator profiles at their original envelope; never infer permission
+        # from an untrusted HEX length or widen through NV/CCFG.
+        app_end = 0x32000 if SOURCE in (
+            '98b882c49cdef2cb422822b8845bee3a4045765f',
+            '85ce37c24802b0f16fec0afd00a1a0457656cd80',
+            'e3a0f3b7726adf1f6c182973f135665a5c3857e0',
+            '66ed700c2818c7a0963dad9160d55109009bbaac') else 0x30000
+        need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
             sparse_receipt=proof, expected_sparse_receipt_sha256=sha(canonical(proof)),
@@ -1021,7 +1077,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'resume-native', 'finish-native', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1054,6 +1110,9 @@ def main():
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
                 if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
                 elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
+                elif a.action=='boot-native':
+                    from p7u_paired_boot import boot_native
+                    result=boot_native(globals(),a.package,a.package_pin,a.plan_pin,HA())
                 elif a.action=='resume-native': result=startup_recovery(a.package,a.package_pin,a.plan_pin,HA())
                 else:
                     from p7u_paired_finish import finish
