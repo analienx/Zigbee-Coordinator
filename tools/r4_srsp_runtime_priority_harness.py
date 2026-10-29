@@ -19,12 +19,15 @@ typedef Task_Struct *Task_Handle;
 static Task_Struct npiTaskStruct={4};
 static unsigned int Task_numPriorities=16u;
 static unsigned scheduler_depth,priority_changes;
+static void assert_admission_committed(void);
+void B4_V46_RefreshNpiPriority(void);
 static Task_Handle Task_handle(Task_Struct*p){return p;}
 static unsigned int Task_disable(void){assert(!cs_depth);return scheduler_depth++;}
 static void Task_restore(unsigned int key){assert(!cs_depth && scheduler_depth==key+1);--scheduler_depth;}
 static int Task_getPri(Task_Handle h){assert(h==&npiTaskStruct);return h->priority;}
 static int Task_setPri(Task_Handle h,int p){
  assert(!cs_depth && scheduler_depth && h==&npiTaskStruct && p>0 && (unsigned)p<Task_numPriorities);
+ if(p==6)assert_admission_committed();
  int old=h->priority;h->priority=p;++priority_changes;return old;
 }
 '''
@@ -91,6 +94,11 @@ int main(void){
 def exercise(sdk):
     sdk=Path(sdk)
     source=build_source(sdk,prefix_extra=TASK_MODEL,external_v5_hooks=True)
+    anchor="extern uint8_t B4_V45_SendReservedSrsp"
+    if source.count(anchor)!=1:raise ValueError("V46_COUNTER_FIXTURE_ANCHOR")
+    source=source.replace(anchor,"static void assert_admission_committed(void){\n"
+        " assert(B4_AllRspEnqueued>=B4_AllRspNpiReceived);\n"
+        " assert(B4_AfDataRspEnqueued>=B4_AfDataRspNpiReceived);\n}\n"+anchor,1)
     if source.count(RESERVE_MAIN)!=1:raise ValueError("V46_FIXTURE_MAIN_DRIFT")
     source=source.replace(RESERVE_MAIN,MAIN,1)
     cc=shutil.which("cc") or shutil.which("gcc")
@@ -109,8 +117,9 @@ def exercise(sdk):
     mutants={
       "priority_not_above_stack":("#define B4_V46_SRSP_PRIORITY 6","#define B4_V46_SRSP_PRIORITY 5"),
       "never_restore_base_priority":("int priority = urgent && Task_numPriorities", "int priority = 1 && Task_numPriorities"),
-      "reserved_boost_missing":("    B4_V45_Tick(&B4_V45_ReserveUsed);\n    B4_V46_RefreshNpiPriority();", "    B4_V45_Tick(&B4_V45_ReserveUsed);"),
-      "dynamic_boost_missing":("    NPITask_processStackMsg(pMsg);\n    B4_V46_RefreshNpiPriority();", "    NPITask_processStackMsg(pMsg);"),
+      "reserved_boost_missing":("        B4_AfRspTick(&B4_AllRspEnqueued);\n        B4_V46_RefreshNpiPriority();", "        B4_AfRspTick(&B4_AllRspEnqueued);"),
+      "dynamic_boost_missing":("            B4_AfRspTick(&B4_AllRspEnqueued);\n            B4_V46_RefreshNpiPriority();", "            B4_AfRspTick(&B4_AllRspEnqueued);"),
+      "preempt_before_admission_counted":("        B4_AfRspTick(&B4_AllRspEnqueued);\n        B4_V46_RefreshNpiPriority();", "        B4_V46_RefreshNpiPriority();\n        B4_AfRspTick(&B4_AllRspEnqueued);"),
     }
     for name,(old,new) in mutants.items():
         if source.count(old)!=1:raise ValueError("V46_MUTANT_DRIFT_"+name)

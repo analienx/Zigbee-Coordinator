@@ -291,6 +291,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     runtime_priority=add_runtime_priority(sdk)
     if runtime_priority["before_sha256"][TASK]!=v5_flight["modified_sha256"][TASK]:
         raise ValueError("V46_RUNTIME_PRIORITY_SOURCE_CHAIN_DRIFT")
+    if runtime_priority["before_sha256"][CLIENT]!=srsp_reserve["modified_sha256"][CLIENT]:
+        raise ValueError("V46_RUNTIME_PRIORITY_MT_SOURCE_CHAIN_DRIFT")
     from r4_srsp_runtime_priority_harness import exercise as exercise_runtime_priority
     runtime_priority_c=exercise_runtime_priority(sdk)
     if runtime_priority_c["status"]!="PASS":
@@ -330,7 +332,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     af_client="source/ti/zstack/npi/npi_client_mt.c"
     afterhash[af_client]=hashlib.sha256((sdk/af_client).read_bytes()).hexdigest()
     for name in (af_client,):
-        if afterhash[name] != srsp_reserve["modified_sha256"][name]:
+        if afterhash[name] != runtime_priority["modified_sha256"][name]:
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
