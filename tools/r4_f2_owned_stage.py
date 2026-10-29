@@ -15,8 +15,8 @@ CORE=Path(__file__).with_name('r4_f2_owned_core.c').read_text()
 def apply(sdk,expected_stack_hash):
  sdk=Path(sdk);before={p:(sdk/p).read_text() for p in (TASK,MT,SYS,TL,STACK)}
  providers={p:pinned_source(sdk,p) for p in (CLOCK_H,CLOCK_C)}
- # B1 already owns stackInit safety changes. Preserve those exact bytes and
- # require that the scheduler body being instrumented is still pristine TI.
+ # B1 already owns startup/dispatcher safety changes. Preserve those exact
+ # bytes and reproduce its reviewed predecessor below.
  if hashlib.sha256(before[STACK].encode()).hexdigest()!=expected_stack_hash:
   raise ValueError('V6_B1_STACK_PREIMAGE')
  providers[STACK]=subprocess.check_output(['git','-C',str(sdk),'show',TI_SHA+':'+STACK])

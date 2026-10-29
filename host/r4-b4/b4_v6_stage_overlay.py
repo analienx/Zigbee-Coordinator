@@ -146,6 +146,8 @@ def z2m(root):
  root=checked(root,'62b02e2aa1997c574223b80c196677b63a25f4a7');p=root/'lib/controller.ts';s=p.read_text()
  method=Z2M_METHOD.replace('b4ProbeReadOnlyHangFlightV5','b4ProbeReadOnlyOwnedStageV6').replace('b4ReadHangFlightV5FromExistingOwner','b4ReadOwnedStageV6FromExistingOwner')
  s=once(s,'    #b4V5V4SlotsRemaining = 0;','    #b4V6Turn = true;\n'+method+'    #b4V5V4SlotsRemaining = 0;','V6_Z2M_STATE')
+ s=once(s,'                            this.#b4V5V4SlotsRemaining=0;this.#b4V5YieldToV4=false;',
+  '                            this.#b4V6Turn=true;this.#b4V5V4SlotsRemaining=0;this.#b4V5YieldToV4=false;','V6_WARNING_DUE')
  if s.count('this.#b4V5V4SlotsRemaining = 4;')!=2:raise ValueError('V6_V5_TURN_ANCHOR')
  s=s.replace('this.#b4V5V4SlotsRemaining = 4;','this.#b4V6Turn=true;this.#b4V5V4SlotsRemaining = 4;')
  s=once(s,'            if (process.env.P7U_B4_FLIGHT_V5 === "1" &&',STAGE_SAMPLE+'            if (process.env.P7U_B4_FLIGHT_V5 === "1" &&','V6_SAME_SAMPLING_SLOT')

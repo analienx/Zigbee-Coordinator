@@ -35,7 +35,6 @@ static NPI_QueueRec *srsp,*areq;
 #define npiTxQueue (&areq)
 static bool Queue_empty(Queue_Handle q){assert(cs);return !*q;}
 static NPI_QueueRec *Queue_head(Queue_Handle q){assert(cs);return *q;}
-static uint16_t B4_V5_CommandFromFrame(const uint8_t *p,uint16_t n){return p&&n>=5?((uint16_t)p[2]<<8)|p[3]:0xffffu;}
 static void B4_V5_Put32(uint8_t *p,uint32_t v){for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(v>>(8*i));}
 static void B4_V5_PutEvent(uint8_t *p,const B4_V5_Event *e){B4_V5_Put32(p,e->tick);p[4]=e->command;p[5]=e->command>>8;p[6]=e->stage;p[7]=e->result;}
 static uint32_t B4_V5_Get32(const uint8_t *p){return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
@@ -104,7 +103,7 @@ int main(void){
 '''
 def exercise(sdk):
  sdk=Path(sdk);n=(sdk/TASK).read_text();a=n.index('/* B4_F2_V6_OWNED_STAGE:');b=n.index('/* B4_F2_V6_OWNED_STAGE_END */',a)
- source=PREFIX+n[a:b]+TEST
+ source=PREFIX+extract(n,'static uint16_t B4_V5_CommandFromFrame(const uint8_t *frame, uint16_t size)')+n[a:b]+TEST
  checks={
   'clock_started_in_owner_once':extract(n,'static void NPITask_process(void)').count('B4_V6_StartMonitor();')==1,
   'independent_callback_not_called_by_task':'B4_V6_Checkpoint(' not in extract(n,'static void NPITask_process(void)'),
