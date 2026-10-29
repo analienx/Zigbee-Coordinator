@@ -5,6 +5,9 @@ Applied after V5. Keep TI's initialization priority and original UART owner.
 This is a repair candidate for observed queue delays, not a silent-hang cure.
 """
 import hashlib
+import argparse
+import json
+import re
 from pathlib import Path
 from r4_uart_tx_liveness import extract, once
 from r4_srsp_service import TASK
@@ -79,3 +82,40 @@ def apply(sdk):
         "ordinary_priority_restored_at_owner_pend":True,"physical_hardware_validated":False,
         "before_sha256":{TASK:hashlib.sha256(original.encode()).hexdigest(),CLIENT:hashlib.sha256(client_original.encode()).hexdigest()},
         "modified_sha256":{TASK:hashlib.sha256(s.encode()).hexdigest(),CLIENT:hashlib.sha256(c.encode()).hexdigest()}}
+
+
+def transform_syscfg(source):
+    """Change the pinned live Task setting, not generated kernel C."""
+    if MARKER in source or source.count('const Task = scripting.addModule("/ti/sysbios/knl/Task");')!=1:
+        raise ValueError("V46_SYSCFG_TASK_MODULE_DRIFT")
+    pattern=r"(?m)^([ \t]*)Task\.numPriorities[ \t]*=[ \t]*6;[ \t]*$"
+    assignments=re.findall(r"(?m)^[ \t]*Task\.numPriorities[ \t]*=.*$",source)
+    if len(assignments)!=1 or len(re.findall(pattern,source))!=1:
+        raise ValueError("V46_SYSCFG_PRIORITY_PREIMAGE_DRIFT")
+    return re.sub(pattern,lambda m:m.group(1)+"// "+MARKER+": preserve init4/stack5, allow transient6.\n"+
+                  m.group(1)+"Task.numPriorities = 8;",source,count=1)
+
+
+def configure_syscfg(syscfg, task_source, receipt):
+    for path in (syscfg,task_source):
+        if path.is_symlink() or not path.is_file() or not str(path.resolve()).startswith('/tmp/'):
+            raise ValueError("V46_SYSCFG_REQUIRES_DISPOSABLE_NATIVE_INPUT")
+    task=task_source.read_bytes()
+    if MARKER.encode() not in task:raise ValueError("V46_SYSCFG_WITHOUT_PRIORITY_COMPONENT")
+    if receipt.exists() or receipt.is_symlink():raise ValueError("V46_SYSCFG_RECEIPT_ALREADY_EXISTS")
+    before=syscfg.read_bytes();after=transform_syscfg(before.decode().replace('\r\n','\n')).encode()
+    result={"schema":"p7u-srsp-task-priority-syscfg-v1","task_priorities":8,
+            "before_syscfg_sha256":hashlib.sha256(before).hexdigest(),
+            "after_syscfg_sha256":hashlib.sha256(after).hexdigest(),
+            "npi_source_sha256":hashlib.sha256(task).hexdigest(),"flash_authorized":False}
+    syscfg.write_bytes(after);receipt.write_text(json.dumps(result,sort_keys=True,indent=2)+'\n')
+    return result
+
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--syscfg',type=Path,required=True)
+    parser.add_argument('--task-source',type=Path,required=True)
+    parser.add_argument('--receipt',type=Path,required=True)
+    args=parser.parse_args()
+    print(json.dumps(configure_syscfg(args.syscfg,args.task_source,args.receipt)))

@@ -10,7 +10,9 @@ The existing two-class transmit queue runs in NPI at TI priority4. The stack run
 
 The priority predicate and update run under the Task scheduler lock, outside the OSAL critical section. This distinction matters: TI documents that a root `Task_restore()` may enable interrupts. No UART ISR, driver, physical completion handshake, NPI owner, class FIFO, four-SRSP AREQ fairness window, heap reservation, radio setting, NV, CCFG or security policy is changed. A busy UART continues to pend normally.
 
-The native sealer must find the actual `Task_numPriorities` u32 object in the linked ARM ELF, require8–32 priorities, and bind the priority helper to live `npi_task.o` code. Unsupported configurations cannot qualify for delivery; runtime also avoids an out-of-range priority call.
+The pinned example configures only six priorities (0–5). The native build therefore changes the live SysConfig input `Task.numPriorities` from6 to8 before generation, retaining all existing task priorities. It does not edit generated kernel C. The native sealer must find the actual `ti_sysbios_knl_Task_numPriorities` u32 object in the linked ARM ELF, require exactly8, and bind the priority helper to live `npi_task.o` code. Unsupported configurations cannot qualify for delivery; runtime also avoids an out-of-range priority call. The original compile of this candidate exposed the six-level configuration and failed this gate before any flash.
+
+The producer commits its admission counters before requesting a priority handoff. Since an elevation can immediately preempt MT, earlier placement could let NPI submit a frame before its enqueue bookkeeping was visible. A negative mutation explicitly checks that ordering.
 
 ## Required evidence
 

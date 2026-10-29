@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import struct
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,12 +13,14 @@ SCRIPT = ROOT / 'firmware/slzb-06p7u/r4/b1/tools/seal_native.py'
 spec = importlib.util.spec_from_file_location('r4_exact_b1_seal', SCRIPT)
 seal = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(seal)
+sys.path.insert(0,str(ROOT/'tools'))
+import r4_srsp_runtime_priority as priority
 
 
 class Nv4NativeSealTests(unittest.TestCase):
     @staticmethod
     def priority_elf(value, *, symbol_type=1, symbol_size=4, symbol_address=0x1000):
-        strings=b'\0Task_numPriorities\0'
+        strings=b'\0ti_sysbios_knl_Task_numPriorities\0'
         raw=bytearray(52)
         raw[:7]=b'\x7fELF\x01\x01\x01'
         struct.pack_into('<HHI',raw,16,2,40,1)
@@ -38,11 +41,11 @@ class Nv4NativeSealTests(unittest.TestCase):
     def test_priority_count_must_be_real_defined_allocated_elf_object(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'native.out';path.write_bytes(self.priority_elf(16))
-            self.assertEqual(seal.elf_u32_object(path,'Task_numPriorities')['value'],16)
+            self.assertEqual(seal.elf_u32_object(path,'ti_sysbios_knl_Task_numPriorities')['value'],16)
             for mutation in ({'symbol_type':0},{'symbol_size':8},{'symbol_address':0x1004}):
                 path.write_bytes(self.priority_elf(16,**mutation))
                 with self.subTest(mutation=mutation),self.assertRaises(ValueError):
-                    seal.elf_u32_object(path,'Task_numPriorities')
+                    seal.elf_u32_object(path,'ti_sysbios_knl_Task_numPriorities')
             path.write_bytes(self.priority_elf(16))
             with self.assertRaisesRegex(ValueError,'missing or ambiguous'):
                 seal.elf_u32_object(path,'synthetic_priority_count')
@@ -54,16 +57,24 @@ class Nv4NativeSealTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             elf=Path(temp)/'native.out';xml=Path(temp)/'native.xml'
             xml.write_text(template.format(owner='npi_task.o',name=name))
-            for count in (8,16,32):
+            for count in (8,):
                 elf.write_bytes(self.priority_elf(count))
                 self.assertEqual(seal.srsp_priority_native_abi(elf,xml,functions)['pending_srsp_priority'],6)
-            for count in (0,6,7,33):
+            for count in (0,6,7,16,32,33):
                 elf.write_bytes(self.priority_elf(count))
                 with self.subTest(count=count),self.assertRaisesRegex(ValueError,'requires native'):
                     seal.srsp_priority_native_abi(elf,xml,functions)
-            elf.write_bytes(self.priority_elf(16));xml.write_text(template.format(owner='synthetic.o',name=name))
+            elf.write_bytes(self.priority_elf(8));xml.write_text(template.format(owner='synthetic.o',name=name))
             with self.assertRaisesRegex(ValueError,'ownership differs'):
                 seal.srsp_priority_native_abi(elf,xml,functions)
+
+    def test_syscfg_configures_eight_priorities_without_changing_other_input(self):
+        src='const Task = scripting.addModule("/ti/sysbios/knl/Task");\n\tTask.numPriorities = 6;\nRF.unchanged = true;\n'
+        result=priority.transform_syscfg(src)
+        self.assertIn('Task.numPriorities = 8;',result)
+        self.assertTrue(result.endswith('RF.unchanged = true;\n'))
+        for bad in (result,src.replace('6;','5;'),src+'Task.numPriorities = 6;\n',src.replace('const Task','const Other')):
+            with self.subTest(bad=bad),self.assertRaises(ValueError):priority.transform_syscfg(bad)
 
     def test_reduced_source_shim_cannot_satisfy_native_startup_guard(self):
         for require, present, donor, blob, modified in (

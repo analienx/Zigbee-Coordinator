@@ -169,9 +169,9 @@ def elf_u32_object(path, wanted):
 
 
 def srsp_priority_native_abi(elf, xml, functions):
-    count=elf_u32_object(elf,"Task_numPriorities")
-    if not 8<=count["value"]<=32:
-        raise ValueError("SRSP priority6 requires native Task_numPriorities between8and32")
+    count=elf_u32_object(elf,"ti_sysbios_knl_Task_numPriorities")
+    if count["value"]!=8:
+        raise ValueError("SRSP priority6 requires native Task_numPriorities exactly8")
     owner=linked_guard_ownership(xml,functions,"B4_V46_RefreshNpiPriority","npi_task.o")
     return {"task_num_priorities":count,"linked_priority_helper":owner,
             "base_priority":4,"pending_srsp_priority":6,"physical_latency_validated":False}

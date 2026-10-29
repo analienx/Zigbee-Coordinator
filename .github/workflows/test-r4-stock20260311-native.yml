@@ -586,6 +586,9 @@ jobs:
           # APP vector0 requires separate AC000 handoff; current NVS A4000.
           # Keep stock 20260311 CCFG unchanged. B5 and flash remain OFF.
           echo '$ syscfg standalone pinned preflight (real execution)' | tee -a /tmp/b0out/build.log
+          python "$GITHUB_WORKSPACE/tools/r4_srsp_runtime_priority.py" \
+            --syscfg "$project/znp.syscfg" --task-source "$sdk/source/ti/zstack/npi/npi_task.c" \
+            --receipt /tmp/b0out/r4-srsp-priority-syscfg.json
           "$SYSCONFIG_CLI" --script "$project/znp.syscfg" -o /tmp/b0out/preflight-syscfg \
             -s "$sdk/.metadata/product.json" --compiler ticlang 2>&1 | tee -a /tmp/b0out/build.log
           python "$GITHUB_WORKSPACE/firmware/slzb-06p7u/r4/qualification/board_profile.py" \

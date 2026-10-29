@@ -17,7 +17,7 @@ TASK_MODEL=r'''
 typedef struct {int priority;} Task_Struct;
 typedef Task_Struct *Task_Handle;
 static Task_Struct npiTaskStruct={4};
-static unsigned int Task_numPriorities=16u;
+static unsigned int Task_numPriorities=8u;
 static unsigned scheduler_depth,priority_changes;
 static void assert_admission_committed(void);
 void B4_V46_RefreshNpiPriority(void);
@@ -75,7 +75,7 @@ int main(void){
  held=0;drain();assert(completed_srsp==7 && npiTaskStruct.priority==4);
  /* A config with no priority6 must never call an out-of-range Task API. */
  Task_numPriorities=6;make_message(1,8,20);assert(npiTaskStruct.priority==4);
- Task_numPriorities=16;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==6);
+ Task_numPriorities=8;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==6);
  drain();assert(npiTaskStruct.priority==4 && completed_srsp==8);
  /* Essential AREQ fairness and all frame/slot ownership remain covered by
   * the same final TX loop, including callbacks while the UART is busy. */
