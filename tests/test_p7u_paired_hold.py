@@ -154,10 +154,11 @@ class ReadonlyHold(unittest.TestCase):
                 private=operations/('1'*32);private.mkdir(mode=0o700)
                 meta={'operator_source_sha':'6'*40,'firmware_source_sha':fw,
                   'paired_host_source_sha':host,'paired_host_image':self.owner['image'],
-                  'f2_wire_contract':'R4D4_MINOR4_AND_R4D5_PAGED_V1','files':{}}
+                  'f2_wire_contract':'R4D4_MINOR4_AND_R4D5_PAGED_V1','files':{'x':op.sha(b'original')}}
                 meta.update(changes);raw=op.canonical(meta);pin=op.sha(raw)
                 package=root/('p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16])
                 package.mkdir(mode=0o700);(package/'PACKAGE.json').write_bytes(raw)
+                (package/'x').write_bytes(b'original')
                 plan={'source':fw,'package_pin':pin,'owner':self.owner}
                 (private/'plan.json').write_bytes(op.canonical(plan))
                 ns=dict(self.ns,SOURCE=fw,PRIVATE=private,OPERATIONS=operations,sealed_tree=op.sealed_tree)
