@@ -61,12 +61,17 @@ ZNP_METHOD=r'''
                 return Buffer.from(data);
             } catch (error) {
                 this.waitress.b4Cancel(waiter.ID, "B4 v5 no stale waiter");
-                /* v4 first-timeout cooldown and progress gate are retained,
-                 * never retry or send another diagnostic after uncertainty. */
-                if (!(error instanceof Error) ||
-                    error.message !== "B4 V5_INVALID_NATIVE_PAGE") {
-                    this.b4PoisonDiagSession();
+                /* V5 shares the V4 timeout budget/cooldown/progress gate.
+                 * No retry. Invalid/uncertain transport still quarantines. */
+                const timeout=error instanceof Error &&
+                    error.message===this.waitressTimeoutFormatter({
+                        type:Type.SRSP,subsystem:Subsystem.SYS,
+                        command:"r4DiagReadOnlyV4"},6000);
+                if (timeout) {
+                    this.b4V5RecordReplyTimeout();
+                    throw new Error("B4 V5_REPLY_TIMEOUT");
                 }
+                this.b4PoisonDiagSession();
                 throw error;
             }
         });
@@ -87,9 +92,11 @@ ADAPTER_METHOD=r'''
         counters: Record<string, number>;
         events: {tick: number; stage: number; subsystem: string; result: number}[];
         source: "RADIO_READ_ONLY";
+        radioBootId: string | null;
         firstAnomaly: {tick: number; stage: number; subsystem: string; result: number} | null;
         preAnomaly: {tick: number; stage: number; subsystem: string; result: number} | null;
-    } | undefined> {
+    } | {kind:"FAILED";reason:"V5_REPLY_TIMEOUT"|"V5_INVALID_OR_UNCERTAIN"|
+        "V5_PARTIAL_PAIR_OWNER_REVOKED";submissionState:"SENT_OR_UNCERTAIN"} | undefined> {
         if (input?.enabled !== true || input.hostIdle !== true ||
             input.otaActive !== false || typeof input.stillAllowed !== "function" ||
             !input.stillAllowed() || this.closing || !this.queue ||
@@ -104,7 +111,8 @@ ADAPTER_METHOD=r'''
         try {
             const a = await this.znp.b4ReadV5Page(1, nonce);
             if (!input.stillAllowed() || this.closing || this.interpanLock)
-                return undefined;
+                return {kind:"FAILED",reason:"V5_PARTIAL_PAIR_OWNER_REVOKED",
+                    submissionState:"SENT_OR_UNCERTAIN"};
             const b = await this.znp.b4ReadV5Page(2, nonce);
             if (!a.subarray(8, 32).equals(b.subarray(8, 32)) ||
                 a.readUInt32LE(24) === 0 || a[5] !== 1 || b[5] !== 2)
@@ -128,6 +136,8 @@ ADAPTER_METHOD=r'''
             for (const [name, offset] of Object.entries(positions))
                 counters[name] = a.readUInt32LE(offset);
             if (counters.reserveActive > 3 ||
+                counters.reserveUsed < counters.reserveActive ||
+                counters.reserveReleaseFault > counters.reserveUsed ||
                 counters.mtExited > counters.mtEntered ||
                 counters.firstUartFaultKind > 5 ||
                 counters.b1FirstFailure > 255 ||
@@ -176,12 +186,19 @@ ADAPTER_METHOD=r'''
                 throw new Error("B4 V5_TICK_HALF_RANGE_UNQUALIFIED");
             return {abi:5,pageSequence:a.readUInt32LE(24),
                 eventCount:counters.eventCount,counters,events,
-                firstAnomaly,preAnomaly,source:"RADIO_READ_ONLY"};
-        } catch {
-            /* No serial recovery or reset. An uncertain F2 page pair must
-             * not permit another diagnostic or be shown as healthy. */
-            this.znp.b4PoisonDiagSession();
-            return undefined;
+                firstAnomaly,preAnomaly,
+                radioBootId:(counters.validityFlags&1)===1?
+                    a.subarray(16,24).toString("hex"):null,
+                source:"RADIO_READ_ONLY"};
+        } catch (error) {
+            /* A page may already have been written to UART: fail-closed,
+             * but never call an attempted request NOT_SENT. */
+            const timedOut=error instanceof Error &&
+                error.message==="B4 V5_REPLY_TIMEOUT";
+            if (!timedOut) this.znp.b4PoisonDiagSession();
+            return {kind:"FAILED",
+                reason:timedOut?"V5_REPLY_TIMEOUT":"V5_INVALID_OR_UNCERTAIN",
+                submissionState:"SENT_OR_UNCERTAIN"};
         } finally {
             this.znp.b4SetProbeGuard(undefined);
             this.b4DiagInFlight = false;
@@ -201,7 +218,12 @@ def apply(root):
     if MARKER in z or "b4F2ReadAdmissionReason" not in z or "b4ReadOnlyDiagnosticsV4" not in a:
         raise ValueError("V5_HOST_REQUIRES_PINNED_V4_OWNER")
     z=once(z,"    public b4F2ReadAdmissionReason(): string | null {",
-           ZNP_METHOD+"    public b4F2ReadAdmissionReason(): string | null {","method")
+           ZNP_METHOD+
+           "    /** V5 shares the pinned V4 cooldown and owner-progress gate. */\n"
+           "    public b4V5RecordReplyTimeout(): void {\n"
+           "        this.b4F2RecordReplyTimeout();\n"
+           "    }\n\n"
+           "    public b4F2ReadAdmissionReason(): string | null {","method")
     # Reuse the exact same ZpiObject waiter response, but permit V5 LEN9
     # with nonce returned at bytes 8..15 and reject any other form.
     needle="""(Buffer.isBuffer(matcher.b4F2Nonce) && matcher.b4F2Nonce.length === 8 &&
