@@ -187,8 +187,8 @@ def exercise(sdk):
     result=run("real",source,True)
     mutants={
        "diagnostic_self_pollution":("if (command == 0x21f2u || command == 0x61f2u) return;","if (0) return;"),
-       "wrong_ring_start":("first=B4_V5_EventTotal < B4_V5_RING_SIZE ? 0u :",
-                           "first=B4_V5_EventTotal < B4_V5_RING_SIZE ? 0u : 0u*"),
+       "wrong_ring_start":("first=available < B4_V5_RING_SIZE ? 0u :",
+                           "first=available < B4_V5_RING_SIZE ? 0u : 0u*"),
        "reusable_snapshot":("B4_V5_CachedValid=0u; /* one-time exact-pair retrieval */",
                             "B4_V5_CachedValid=1u; /* broken replay */"),
        "forged_active_slots":("if(B4_V45_Slots[i].used)++active;",
