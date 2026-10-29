@@ -141,3 +141,27 @@ class ReadonlyHold(unittest.TestCase):
         with self.assertRaisesRegex(op.Hold,'FORWARD_PLAN'):hold.verified_pair_package(ns,'bad-pin')
         (package/'x').write_bytes(b'changed')
         with self.assertRaisesRegex(op.Hold,'FILE_PIN'):hold.verified_pair_package(ns,plan_pin)
+
+    def test_native_resume_accepts_only_exact_successor_host_wire_pair(self):
+        fw='e3a0f3b7726adf1f6c182973f135665a5c3857e0'
+        host='85ce37c24802b0f16fec0afd00a1a0457656cd80'
+        cases=[({},True),({'paired_host_source_sha':'7'*40},False),
+          ({'firmware_source_sha':'8'*40},False),({'f2_wire_contract':'wrong'},False),
+          ({'paired_host_image':'sha256:'+'0'*64},False)]
+        for changes,accepted in cases:
+            with self.subTest(changes=changes),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);operations=root/'operations';operations.mkdir(mode=0o700)
+                private=operations/('1'*32);private.mkdir(mode=0o700)
+                meta={'operator_source_sha':'6'*40,'firmware_source_sha':fw,
+                  'paired_host_source_sha':host,'paired_host_image':self.owner['image'],
+                  'f2_wire_contract':'R4D4_MINOR4_AND_R4D5_PAGED_V1','files':{}}
+                meta.update(changes);raw=op.canonical(meta);pin=op.sha(raw)
+                package=root/('p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16])
+                package.mkdir(mode=0o700);(package/'PACKAGE.json').write_bytes(raw)
+                plan={'source':fw,'package_pin':pin,'owner':self.owner}
+                (private/'plan.json').write_bytes(op.canonical(plan))
+                ns=dict(self.ns,SOURCE=fw,PRIVATE=private,OPERATIONS=operations,sealed_tree=op.sealed_tree)
+                if accepted:self.assertEqual(hold.verified_pair_package(ns,op.sha(op.canonical(plan))),package)
+                else:
+                    with self.assertRaisesRegex(op.Hold,'WRITER_BINDING'):
+                        hold.verified_pair_package(ns,op.sha(op.canonical(plan)))

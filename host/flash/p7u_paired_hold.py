@@ -117,7 +117,12 @@ def verified_pair_package(ns,plan_pin):
     matches=list(ns['OPERATIONS'].parent.glob('p7u-paired-operator-????????????-'+pin[:16]))
     ns['need'](len(matches)==1,'PAIRED_STARTUP_WRITER_PACKAGE')
     package=matches[0];meta=ns['sealed_tree'](package,'PACKAGE.json',pin)
-    ns['need'](meta['firmware_source_sha']==ns['SOURCE']==meta['paired_host_source_sha'] and
+    host=meta.get('paired_host_source_sha')
+    compatible=(host==ns['SOURCE'] or
+        (ns['SOURCE']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and
+         host=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
+         meta.get('f2_wire_contract')=='R4D4_MINOR4_AND_R4D5_PAGED_V1'))
+    ns['need'](meta['firmware_source_sha']==ns['SOURCE'] and compatible and
          meta['paired_host_image']==p['owner']['image'] and
          package.name=='p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16],
          'PAIRED_STARTUP_WRITER_BINDING')
