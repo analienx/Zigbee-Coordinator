@@ -174,8 +174,9 @@ def z2m(root):
         '            this.#b4PendingIds.size >= (sample.kind === "FIRST_WARNING" ? 4 : 3))','WARNING_RESERVED_IPC_SLOT')
     s=once(s,'            this.#b4Worker.postMessage({type: "append", id, record});',
         FLIGHT_TRACK,'WARNING_QUEUE_FLIGHT')
-    s=once(s,'            this.#b4PendingIds.delete(id);\n            this.#b4PendingNativeValidUtc.delete(id);',
-        '            this.#b4PendingWarningFlights.delete(id);\n            this.#b4PendingIds.delete(id);\n            this.#b4PendingNativeValidUtc.delete(id);','WARNING_FAILED_IPC_CLEANUP')
+    cleanup='            this.#b4PendingIds.delete(id);\n            this.#b4PendingNativeValidUtc.delete(id);'
+    if s.count(cleanup)!=2:raise ValueError('WARNING_ACK_TIMEOUT_AND_SEND_FAILURE_CLEANUP_DRIFT')
+    s=s.replace(cleanup,'            this.#b4PendingWarningFlights.delete(id);\n'+cleanup)
     s=once(s,'        this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(undefined);',
         '        this.zigbee.zhController?.b4SetFirstWarningSinkFromExistingOwner(undefined);\n        this.zigbee.zhController?.b4SetHostTimeoutSinkFromExistingOwner(undefined);','WARNING_SHUTDOWN')
     return root,{p:s}
