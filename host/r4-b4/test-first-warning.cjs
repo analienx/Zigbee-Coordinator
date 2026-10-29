@@ -75,7 +75,7 @@ test("first-warning journal survives reopen and rejects arbitrary identifiers/pa
     }
     const temp=fs.mkdtempSync(path.join(os.tmpdir(),"p7u-first-warning-"));
     try{
-        const dir=path.join(temp,"history"),store=worker.open(dir);worker.commit(store,row);
+        const dir=path.join(temp,"p7u-b4-diagnostics"),store=worker.open(dir);worker.commit(store,row);
         assert.deepEqual(worker.open(dir).records.at(-1).firstWarning,row.firstWarning);
         for(const bad of [
             {...row.firstWarning,rawPayload:"secret"},

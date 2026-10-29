@@ -136,7 +136,7 @@ function sameRecord(entry) {
             "startupFromApp","nodeDescReq","activeEpReq","simpleDescReq","mgmtLqiReq","mgmtRtgReq",
             "mgmtBindReq","mgmtNwkUpdateReq","permitJoin","getDeviceInfo","getExtAddr","setTxPower","OTHER"];
         const subs=["AF","ZDO","SYS","UTIL"];
-        hold(exact(entry,["schema","kind","utc","monotonicReceiveNs","hostRunId","ownerGeneration",
+        hold(entry.schema==="p7u-b4-native-sample-v1" && exact(entry,["schema","kind","utc","monotonicReceiveNs","hostRunId","ownerGeneration",
             "processUptimeMs","firstWarning","hostEvidence"]),"FIRST_WARNING_FIELDS");
         const w=entry.firstWarning;
         hold(exact(w,["schema","trigger","capturedMonoMs","operation","ingressTiming","recentOperations","scope","lastFlight"]) &&
