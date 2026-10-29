@@ -148,7 +148,8 @@ int main(void){
  assert(B4_V5_Get32(first+108u)==16u);
  assert(B4_V5_ReadPage2(second,nonce));
  assert(second[32u+15u*8u+6u]==5u);
- assert(second[32u+15u*8u+4u]==0x44u);
+ assert(second[32u+15u*8u+4u]==0x24u);
+ assert(second[32u+15u*8u+5u]==0x44u);
  assert(!cs_depth);
  puts("V5_ACTUAL_C_PASS ring16 page1/2 nonce coherent TTL 4 mutants");
  return 0;
