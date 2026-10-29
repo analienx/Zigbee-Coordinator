@@ -7,6 +7,7 @@ on:
       - '.github/workflows/test-r4-b4-host.yml'
       - 'firmware/slzb-06p7u/r4/**'
       - 'tools/r4_*.py'
+      - 'tools/r4_f2_owned_core.c'
       - 'host/r4-b4/**'
       - 'host/recovery/**'
       - 'tests/test_r4_*.py'

@@ -59,7 +59,9 @@ int main(void){
  assert(B4_V6_Faults[0].words[2]==0x2401 && B4_V6_Faults[0].history[0].tick==4);
  assert(!B4_V5_NpiWakes); // Clock alone observes a stuck task.
  B4_V6_MtEnd(id);now++;other=B4_V6_MtBegin(0x2401);B4_V6_MtEnd(id);
- assert(B4_V6_Mt.id==other);B4_V6_MtEnd(other);assert(!B4_V6_Mt.id);
+ assert(B4_V6_Mt.id==other);
+ now+=200000;checkpoint(0);assert(B4_V6_Faults[0].words[1]==id && B4_V6_Faults[0].words[4]==200100);
+ B4_V6_MtEnd(other);assert(!B4_V6_Mt.id);
  B4_V5_Ring[4].tick=999;now=900100;checkpoint(0);
  assert(B4_V6_Faults[0].words[4]==200100 && B4_V6_Faults[0].history[0].tick==4);
  B4_V6_Read(page,nonce,3);uint32_t sequence=B4_V5_Get32(page+24);
@@ -115,13 +117,13 @@ def exercise(sdk):
  if not all(checks.values()):raise ValueError('V6_INTEGRATION_'+str(checks))
  cc=shutil.which('cc') or shutil.which('gcc')
  if not cc:raise RuntimeError('V6_CC_REQUIRED')
- def run(text,passed):
+ def run(text,passed,label='baseline'):
   with tempfile.TemporaryDirectory(prefix='v6-owned-') as d:
    d=Path(d);p=d/'owned.c';exe=d/'owned';p.write_text(text)
    c=subprocess.run([cc,'-std=c11','-O1','-Wall','-Wextra','-Werror','-Wno-unused-function','-fsanitize=undefined,bounds',str(p),'-o',str(exe)],capture_output=True,text=True,timeout=30)
    if c.returncode:raise RuntimeError('V6_COMPILE\n'+c.stderr[-4000:])
    r=subprocess.run([str(exe)],capture_output=True,text=True,timeout=15)
-   if (r.returncode==0)!=passed:raise RuntimeError('V6_RESULT\n'+r.stdout+r.stderr[-2000:])
+   if (r.returncode==0)!=passed:raise RuntimeError('V6_RESULT_'+label+'\n'+r.stdout+r.stderr[-2000:])
  run(source,True)
  mutants={'stale_mt_exit':('owner && B4_V6_Mt.id==owner','owner'),
   'overwrite_frozen':(' || f->words[0]',''),
@@ -129,6 +131,6 @@ def exercise(sdk):
   'generic_four_second_false_positive':('2000000u : 8000000u','2000000u : 3000000u')}
  for name,(old,new) in mutants.items():
   if source.count(old)!=1:raise ValueError('V6_MUTANT_DRIFT_'+name)
-  run(source.replace(old,new,1),False)
+  run(source.replace(old,new,1),False,name)
  return {'status':'PASS','schema':'p7u-v6-owned-stage-actual-c-v1','checks':checks,
   'source_sha256':hashlib.sha256(source.encode()).hexdigest(),'negative_mutants':list(mutants),'physical_scheduling_proven':False}
