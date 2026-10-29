@@ -45,6 +45,11 @@ test("submitted failure remains FAILED and does not create a fast retry loop",as
     assert.equal(c.records[0].kind,"FAILED");
     assert.equal(c.records[0].submissionState,"SENT_OR_UNCERTAIN");
 });
+test("a known page-two busy refusal retains demand and yields one V4 slot",async()=>{
+    const c=collector();c.outcomes=[{kind:"FAILED",reason:"V5_PARTIAL_PAIR_OWNER_BUSY",submissionState:"SENT_OR_UNCERTAIN"},good()];
+    for(let i=0;i<3;i++)await c.sample();
+    assert.deepEqual(c.calls,[5,4,5]);assert.equal(c.records[0].submissionState,"SENT_OR_UNCERTAIN");
+});
 test("disabled V5 preserves V4 slots; stopping prevents committing a flight",async()=>{
     const c=collector(false);for(let i=0;i<6;i++)await c.sample();
     assert.deepEqual(c.calls,[4,4,4,4,4,4]);assert.equal(c.records.length,0);

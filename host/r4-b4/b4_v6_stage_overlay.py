@@ -76,6 +76,7 @@ ADAPTER=PARSER+r'''
     public async b4ReadOwnedStageV6(input:{enabled:boolean;hostIdle:boolean;otaActive:boolean;stillAllowed:()=>boolean}) {
 '''+gate+r'''
             const a=await this.znp.b4ReadV6Page(3,nonce);
+            b4FirstPageReceived=true;
             const selected=a.readUInt32LE(148);
             if(selected>5)throw Error("B4 V6_INVALID_SELECTION");
             if(!input.stillAllowed() || this.closing || this.interpanLock)
@@ -132,7 +133,8 @@ STAGE_SAMPLE=r'''
                         monotonicReceiveNs:process.hrtime.bigint().toString(),probeLatencyMs,
                         reason:stage.reason,failureClass:stage.reason,submissionState:stage.submissionState,
                         sourceAbi:6,imageRuntimeAttested:false,timingQuality:"HOST_TIMING_UNCERTAIN",hostEvidence});
-                    this.#b4V6Turn=false;this.#b4V5V4SlotsRemaining=4;
+                    if(stage.reason==="V6_PARTIAL_PAIR_OWNER_BUSY")this.#b4V5YieldToV4=true;
+                    else {this.#b4V6Turn=false;this.#b4V5V4SlotsRemaining=4;}
                 }else{
                     this.#b4Persist({schema:"p7u-b4-native-sample-v1",kind:"SKIPPED",utc,
                         monotonicReceiveNs:process.hrtime.bigint().toString(),reason:"HOST_OR_OTA_ADMISSION_SKIPPED",

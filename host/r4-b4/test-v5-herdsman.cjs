@@ -46,6 +46,21 @@ function adapterWithLink(chooser=pages) {
  return {znp,owner,frames};
 }
 const allowed={enabled:true,hostIdle:true,otaActive:false,stillAllowed:()=>true};
+
+test("V5 production traffic winning admission between pages defers without poison or timeout forgiveness",async()=>{
+ const {owner,znp,frames}=adapterWithLink();
+ const original=znp.b4ReadV5Page.bind(znp);let blocker;
+ znp.b4F2ConsecutiveTimeouts=1;znp.b4F2NextAllowedMs=0;znp.b4F2ProgressAtTimeout=-1;znp.b4F2OwnerProgress=0;
+ znp.b4ReadV5Page=async(page,nonce)=>{
+  const result=await original(page,nonce);
+  if(page===1)blocker=znp.waitress.waitFor({type:Type.SRSP,subsystem:Subsystem.AF,command:"dataRequest"},6000);
+  return result;
+ };
+ const out=await owner.b4ReadHangFlightV5(allowed);
+ assert.equal(out.reason,"V5_PARTIAL_PAIR_OWNER_BUSY");assert.equal(frames.length,1);
+ assert.equal(znp.b4IsDiagPoisoned(),false);assert.equal(znp.b4F2ConsecutiveTimeouts,1);
+ znp.waitress.remove(blocker.ID);assert.equal(znp.waitress.waiters.size,0);
+});
 test("V5 both pages use same one owner, 9-byte F2, no second serial",async()=>{
  const {owner,frames,znp}=adapterWithLink();
  znp.b4F2ConsecutiveTimeouts=1;

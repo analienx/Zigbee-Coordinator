@@ -50,6 +50,14 @@ test("V6 no overdue observation requires only one summary request",async()=>{
  const {a,frames}=owner((n,nonce)=>page(n,nonce,false));const v=await a.b4ReadOwnedStageV6(allowed);
  assert.equal(v.fault,null);assert.deepEqual(frames.map(f=>f.data[0]),[3]);
 });
+test("V6 normal traffic between pages retains a safe future opportunity",async()=>{
+ const {a,znp,frames}=owner();const read=znp.b4ReadV6Page.bind(znp);let blocker;
+ znp.b4ReadV6Page=async(n,nonce)=>{const p=await read(n,nonce);
+  if(n===3)blocker=znp.waitress.waitFor({type:Type.SRSP,subsystem:Subsystem.AF,command:"dataRequest"},6000);
+  return p;};
+ const v=await a.b4ReadOwnedStageV6(allowed);assert.equal(v.reason,"V6_PARTIAL_PAIR_OWNER_BUSY");
+ assert.equal(frames.length,1);assert.equal(znp.b4IsDiagPoisoned(),false);znp.waitress.remove(blocker.ID);
+});
 test("V6 rejects cross-snapshot, wrong stage, age and dirty frozen tail",async()=>{
  for(const kind of ["sequence","stage","age","tail"]){
   const {a,znp}=owner((n,nonce)=>{const b=page(n,nonce);if(n===4){

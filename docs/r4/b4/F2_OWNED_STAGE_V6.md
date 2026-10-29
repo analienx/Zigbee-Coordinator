@@ -77,6 +77,13 @@ with four V4 slots following a submitted transaction. Busy skips retain demand
 and yield one V4 slot. There is no new timer, forced request, second owner,
 extra request after an ordinary sample, or congestion retry burst.
 
+The first host warning marks V6 due at the next safe opportunity. A known
+pre-write production/owner veto on the second page is a partial observation,
+not corrupt transport: no second page is sent, demand remains pending, and
+one V4 slot precedes a later safe attempt. The existing timeout budget is not
+forgiven. Invalid replies and uncertain writes still quarantine. This also
+repairs V5's former generic-quarantine handling of this legitimate interleaving.
+
 The no-serial worker persists `STAGE` separately from `VALID` and `FLIGHT`,
 with strict nested privacy/bounds checks and a fixed 8 KiB record bound.
 The passive half-hour exporter keeps stage counters, histories and observed

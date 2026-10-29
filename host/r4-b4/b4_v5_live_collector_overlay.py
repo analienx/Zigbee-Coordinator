@@ -83,7 +83,8 @@ SAMPLE=r'''
                         sourceAbi:5,imageRuntimeAttested:false,
                         hostEvidence,
                     });
-                    this.#b4V5V4SlotsRemaining = 4;
+                    if(flight.reason==="V5_PARTIAL_PAIR_OWNER_BUSY")this.#b4V5YieldToV4=true;
+                    else { this.#b4V5V4SlotsRemaining = 4; }
                 } else if (flight && "abi" in flight && flight.abi===5) {
                     /* Token only crosses this in-process owner boundary.
                      * Persist ONLY a keyed tag with the same secret as V4. */
