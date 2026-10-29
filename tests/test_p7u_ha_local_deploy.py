@@ -238,6 +238,27 @@ class Execution(unittest.IsolatedAsyncioTestCase):
                 await op.deploy(self.package, 'pin', self.ha)
         self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
 
+    async def test_v5_exact_additional_app_sector_is_required(self):
+        self.ready()
+        with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
+    async def test_v5_qualified_app_envelope_can_execute(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_awaited_once(); self.ha.restart_radio.assert_not_called()
+
+    async def test_v5_cannot_add_nv_ccfg_or_extra_app_sectors(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        self.frozen.sectors[0xA4000] = bytes(8192)
+        with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
+
     async def test_uncertain_writer_never_boots_or_replays(self):
         self.ready(); self.t.execute.side_effect = TimeoutError()
         with self.assertRaises(TimeoutError): await op.deploy(self.package, 'pin', self.ha)
