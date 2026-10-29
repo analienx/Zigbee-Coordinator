@@ -93,8 +93,17 @@ so explicit failure-stage evidence is useful without inventing heap bytes.
   modular arithmetic; a tick just before uint32 wrap and snapshot just
   after wrap is valid. Very old timestamps beyond half a tick wrap are
   **unqualified**, not a proven failure cause.
-* Only one bounded source snapshot under OSAL CS; old V4 F2 remains
-  unchanged, including its original nonce location and validity mask.
+* V4.3 UART progress is sampled while V5's outer OSAL CS is held. The
+  V4.3 getter uses its own nested OSAL CS and restores the outer state;
+  radio event-ring and progress acquisition are now mutually protected.
+  The count still represents discrete update sites rather than a single
+  hardware-instant attestation.
+* The 16-entry ring uses a separate modular write cursor. Its lifetime
+  `eventTotal` saturates at UINT32_MAX, but new events continue replacing
+  the oldest entries indefinitely; tested at saturation without billions
+  of writes.
+* Old V4 F2 remains unchanged, including its original nonce location,
+  protocol and validity mask.
 * Direct source/host regression tests and exact-current-SHA two native
   ARM builds are mandatory. Hosted tests are **NOT** physical proof.
 
@@ -106,8 +115,12 @@ prove the ESP is actually on that data path. `p7u_boundary_evidence.py`
 accepts only independently authenticated, mode-specific observations and
 rejects invented ESP counters in USB mode. Existing-owner host UNPI
 bytes/valid frames, OS USB detach/reenumeration and qualified radio
-TX callback samples are distinct. Classifier output is **correlation**
-only, never automatic recovery authorization.
+TX callback samples are distinct. A positive radio→host or radio→ESP
+gap attribution now requires the **same audited host-monotonic interval**
+for both independent counters, uninterrupted observer counter epochs and
+authenticated source/mode visibility. Absent any such evidence the result
+is `INSUFFICIENT_TO_LOCATE_SILENT_HANG`, never a fabricated zero-byte gap.
+Classifier output is **correlation** only, not automatic recovery authorization.
 
 SMLIGHT's public manual distinguishes Ethernet serial-over-TCP from USB
 direct serial; the installed SLZB-OS proprietary build's exact data-mux
@@ -119,12 +132,23 @@ or unsafe USB monitor is being claimed or deployed.
 1. Complete exact-source TS compile for the existing-owner 9-byte query,
    negative nonce/page/sequence tests and one ABI-fail-closed packet.
 2. Offer healthy host-only samples at a low rate (existing 60–90s adaptive
-   collector), with **no extra F2 at an active OTA, busy adapter/Waitress
-   or after diagnostic timeout**.
+   collector), with **no extra F2 during OTA, busy adapter/Waitress
+   or a pending timeout cooldown**. An admitted V5 read is one nonce-bound
+   page1/page2 pair, without immediate retries. A matching F2 reply timeout
+   uses the proven V4 bounded consecutive-timeout counter, 60-second cooldown
+   and owner-progress requirement; after repeated timeouts the owner
+   quarantines. Unknown transport/invalid response errors quarantine immediately.
 3. Persist a bounded redacted **sanitized** pair through the existing
-   hash-chained worker using its strict allowlist; independent host/ESP
-   evidence uses a separate provenance code. Never persist raw nonce/boot
-   identifiers or unredacted data.
+   hash-chained worker using its strict allowlist. A V5 read that reached
+   owner submission but timed out or failed validation records a `FAILED`
+   record with `SENT_OR_UNCERTAIN`, never `SKIPPED / NONE`; a veto
+   before submission remains `SKIPPED / NONE`. A successful `FLIGHT`
+   includes the HMAC-SHA256 truncated keyed radio boot-epoch tag derived
+   in-process using the **same secret as V4**; raw boot bytes, keys and
+   nonce are dropped *before IPC*. The companion owner-only `hostEvidence`
+   is captured **after the page pair**, not magically simultaneous with
+   the radio snapshot. Independent ESP observations require their separate
+   attested comparable time-window provenance.
 4. The collector should act on the **first passive SRSP failure** to
    preserve what already exists, never bypassing the owner queue to force
    another F2. The live Z2M installation remains unchanged until a
@@ -140,3 +164,21 @@ or unsafe USB monitor is being claimed or deployed.
 progress, but cannot independently count a Zigbee background stack thread
 unless a separately pinned safe task-loop hook is validated. Global heap
 low-water and task stack margin remain unknown (not fabricated).
+
+## 29 October 2026 code-review repairs and remaining physical gates
+
+Seven independent review findings addressed in source: submitted V5 timeout
+classification, coherent progress and event acquisition, live/worker reserve
+counter parity, privacy-safe cross-sample boot tag with passive post-pair host
+evidence, comparable observer windows, V4 shared timeout budget, and permanent
+ring write continuation at UINT32 lifetime count saturation. Source-level and
+compiled native-host regressions are part of the PR head. 
+
+**NOT FLASH READY:** a native compiler/linker success is distinct from a
+bootable, safely erasable real-image profile. Existing guard receipts report
+protected CCFG erase-sector collision and an unqualified stock20260311 boot
+handoff; do not weaken the CCFG/NV/security gates to make a green build look
+like flash authorization. Hardware validation is still separate from the F2
+code fixes and can be performed only once the boot/protected-sector profile
+and same-unit backups are source-and-device qualified. The user’s objective
+remains root-cause evidence and firmware correction, not rollback proof.

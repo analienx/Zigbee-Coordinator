@@ -92,6 +92,20 @@ test("V5 bounded flight snapshot durable and hostile untrusted fields rejected",
         assert.throws(()=>workerModule.commit(s,{...good,
             flightV5:{...good.flightV5,firstAnomaly:frozen.firstAnomaly}}),
             /V5_UNQUALIFIED_ANOMALY/);
+        /* An actual F2 attempted on UART MUST survive as FAILED with
+         * uncertain submission, never a fictional SKIPPED / NONE. */
+        const failed=fixture("FAILED");
+        delete failed.abi;delete failed.sequence;delete failed.validityMask;
+        failed.processUptimeMs=17000;
+        failed.probeLatencyMs=6000;
+        failed.sourceAbi=5;failed.imageRuntimeAttested=false;
+        failed.reason="V5_REPLY_TIMEOUT";failed.failureClass="V5_REPLY_TIMEOUT";
+        failed.submissionState="SENT_OR_UNCERTAIN";
+        failed.timingQuality="HOST_TIMING_UNCERTAIN";
+        failed.hostEvidence=null;
+        assert.equal(workerModule.commit(s,failed).sequence,3);
+        assert.equal(workerModule.open(x.root).manifest.sequence,3);
+        assert.equal(workerModule.open(x.root).manifest.lastValidSeq,null);
     } finally {x.cleanup();}
 });
 test("durable append+manifest replay with VALID and SKIPPED, no raw radio data", () => {
