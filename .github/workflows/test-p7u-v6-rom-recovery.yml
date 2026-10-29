@@ -1,0 +1,44 @@
+name: P7U V6 ROM recovery operator - offline qualification ONLY
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/test-p7u-v6-rom-recovery.yml'
+      - 'host/flash/p7u_v6_rom_recovery.py'
+      - 'host/flash/p7u_pr154_ha.py'
+      - 'tools/package_p7u_pr154_ha.py'
+      - 'tests/test_p7u_v6_rom_recovery.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: No-hardware fail-closed recovery checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Compile versioned operator modules
+        run: |
+          python -m py_compile host/flash/p7u_v6_rom_recovery.py host/flash/p7u_pr154_ha.py tools/package_p7u_pr154_ha.py
+      - name: Verify one-shot guards without live equipment
+        run: |
+          python -m unittest -v tests.test_p7u_v6_rom_recovery
+      - name: Assert hosted job never has a live-operation step
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('.github/workflows/test-p7u-v6-rom-recovery.yml').read_text()
+          assert 'runs-on: ubuntu-22.04' in text
+          assert 'contents: read' in text
+          assert 'rom-recovery-execute' not in text
+          assert 'ssh ' not in text
+          print('HOSTED_NO_DEVICE_ACCESS_PASS')
+          PY
