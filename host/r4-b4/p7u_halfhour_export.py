@@ -162,6 +162,50 @@ def project_first_warning(value):
     return out
 
 
+V6_COUNTERS=set('''monitorFlags tickPeriodUs monitorChecks lastCheckTick maxCheckGapTicks npiWakes npiLastTick
+stackDispatchEntered stackLastEnteredTick stackDispatchExited stackLastExitedTick stackActiveService uartComplete
+uartLastCompleteTick faultMask firstObservedStage mtFastBudgetTicks mtOtherBudgetTicks srspQueueBudgetTicks
+asyncQueueBudgetTicks uartBudgetTicks mtStageId mtSinceTick txStageId txSinceTick srspQueuedBytes asyncQueuedBytes selectedFaultStage'''.split())
+V6_FAULT_NUMBERS=set('''stage stageId enteredTick observedTick ageTicks budgetTicks pendingFlags mtStageId txStageId
+srspQueuedBytes asyncQueuedBytes npiWakes stackDispatchEntered stackDispatchExited uartComplete eventCount eventTotal
+srspProducedAtMtEnter srspProducedAtObservation stackActiveService observationFlags'''.split())
+def project_stage(v):
+    def nums(obj,keys):
+        if not isinstance(obj,dict) or set(obj)!=keys or any(type(obj[k]) is not int or not 0<=obj[k]<=0xffffffff for k in keys):
+            raise ValueError('V6_EXPORT_NUMBERS')
+        return {k:obj[k] for k in keys}
+    def command(x):
+        if not isinstance(x,dict) or set(x)!={'subsystem','operation'} or x['subsystem'] not in {'AF','SYS','ZDO','OTHER'} or x['operation'] not in {
+            'dataRequest','dataRequestExt','dataRequestSrcRtg','register','ping','version','OTHER'}:raise ValueError('V6_EXPORT_COMMAND')
+        return dict(x)
+    if not isinstance(v,dict) or set(v)!={'abi','source','scope','ownerScope','pageSequence','nativeTick','counters','mtOperation','txOperation','fault'} or \
+        v['abi']!=6 or v['source']!='RADIO_READ_ONLY' or v['scope']!='OVERDUE_OBSERVATION_NOT_PERMANENT_FAULT' or \
+        v['ownerScope']!='STAGE_LOCAL_MT_FRAME_LOCAL_QUEUE_TX':raise ValueError('V6_EXPORT_SCHEMA')
+    out={k:v[k] for k in ('abi','source','scope','ownerScope')}
+    out.update(nums({k:v[k] for k in ('pageSequence','nativeTick')},{'pageSequence','nativeTick'}))
+    out['counters']=c=nums(v['counters'],V6_COUNTERS)
+    if not out['pageSequence'] or not c['monitorFlags']&1 or c['monitorFlags']>7 or not 0<c['tickPeriodUs']<=100000 or c['faultMask']>15 or \
+        not 0<=c['firstObservedStage']<=4 or not 0<=c['selectedFaultStage']<=4 or bool(c['faultMask'])!=bool(c['selectedFaultStage']):
+        raise ValueError('V6_EXPORT_FLAGS')
+    out['mtOperation']=command(v['mtOperation']);out['txOperation']=command(v['txOperation']);out['fault']=None
+    f=v['fault']
+    if f is not None:
+        if not isinstance(f,dict) or set(f)!=V6_FAULT_NUMBERS|{'subsystem','operation','events'}:raise ValueError('V6_EXPORT_FAULT_KEYS')
+        p=nums({k:f[k] for k in V6_FAULT_NUMBERS},V6_FAULT_NUMBERS)
+        if p['stage']!=c['selectedFaultStage'] or not p['stageId'] or not p['budgetTicks'] or not p['budgetTicks']<=p['ageTicks']<0x80000000 or \
+            (p['observedTick']-p['enteredTick'])&0xffffffff!=p['ageTicks'] or p['eventCount']!=min(p['eventTotal'],16) or \
+            p['pendingFlags']>63 or p['observationFlags']!=p['pendingFlags'] or not isinstance(f['events'],list) or len(f['events'])!=p['eventCount']:
+            raise ValueError('V6_EXPORT_FAULT')
+        p.update(command({k:f[k] for k in ('subsystem','operation')}));p['events']=[]
+        for e in f['events']:
+            if not isinstance(e,dict) or set(e)!={'tick','stage','result','subsystem','operation'}:raise ValueError('V6_EXPORT_EVENT_KEYS')
+            q=nums({k:e[k] for k in ('tick','stage','result')},{'tick','stage','result'})
+            if not 1<=q['stage']<=9 or q['result']>255 or (q['stage']==8 and not q['result']):raise ValueError('V6_EXPORT_EVENT')
+            q.update(command({k:e[k] for k in ('subsystem','operation')}));p['events'].append(q)
+        out['fault']=p
+    elif c['selectedFaultStage']:raise ValueError('V6_EXPORT_MISSING_FAULT')
+    return out
+
 def project(original: dict) -> dict:
     d = fields(original, SIMPLE, {"schema", "kind", "monotonicReceiveNs",
                 "hostPackage", "hostRunId", "ownerGeneration", "reason",
@@ -174,6 +218,8 @@ def project(original: dict) -> dict:
         d["flightV5"] = project_flight(original.get("flightV5"))
     if original.get('kind')=='FIRST_WARNING':
         d['firstWarning']=project_first_warning(original.get('firstWarning'))
+    if original.get('kind')=='STAGE':
+        d['stageV6']=project_stage(original.get('stageV6'))
     host = original.get("hostEvidence")
     if isinstance(host, dict):
         h = fields(host, HOST, {"scope"})
@@ -260,6 +306,7 @@ def analyze(rows, start, end):
     flights = [x for x in events if x.get("kind") == "FLIGHT"]
     failures = [x for x in events if x.get("kind") == "FAILED"]
     warnings = [x for x in events if x.get('kind')=='FIRST_WARNING']
+    stages = [x for x in events if x.get('kind')=='STAGE']
     segments = []
     for v in valid:
         owner = (v.get("hostRunId"), v.get("ownerGeneration"))
@@ -283,6 +330,7 @@ def analyze(rows, start, end):
         issues.append("VALID_F2_ABSENT_FOR_FINAL_5_MINUTES")
     if failures: issues.append("F2_OR_HOST_FAILURE_EVENT_RECORDED")
     if warnings: issues.append('HOST_FIRST_WARNING_CAPTURED')
+    if any(x['stageV6']['fault'] is not None for x in stages):issues.append('NATIVE_OVERDUE_STAGE_OBSERVED')
     if any(s["deltas"].get("hostEvidence.srsp.AF.timeout", {}).get("delta", 0) > 0
            for s in segments): issues.append("AF_SRSP_TIMEOUTS_INCREASED")
     if any(s["deltas"].get("uartProgress.uartWriteRejected", {}).get("delta", 0) > 0
@@ -297,6 +345,10 @@ def analyze(rows, start, end):
             "nativeMinorCounts": dict(collections.Counter(str(x.get("minor")) for x in valid)),
             "nativeV5Flights": len(flights),
             'hostFirstWarnings':len(warnings),
+            'nativeV6Stages':len(stages),
+            'lastStageUtc':utc(stages[-1]['utc']) if stages else None,
+            'lastStageCounters':stages[-1]['stageV6']['counters'] if stages else None,
+            'overdueStagesObserved':sorted({x['stageV6']['fault']['stage'] for x in stages if x['stageV6']['fault'] is not None}),
             'firstWarningTriggers':dict(collections.Counter(x['firstWarning']['trigger'] for x in warnings)),
             "lastFlightUtc": utc(flights[-1]["utc"]) if flights else None,
             "lastFlightCounters": flights[-1]["flightV5"]["counters"] if flights else None,
@@ -340,7 +392,7 @@ def main():
     gen, man, raw, rows = snapshot(args.root)
     report = {
         "schema": "p7u-f2-comprehensive-30m-v1", "captureUtc": utc(now),
-        "exporterVersion": "FIRST_WARNING_ADDITIVE_20261029",
+        "exporterVersion": "V6_STAGE_ADDITIVE_20261029",
         "readOnlyPassive": True,
         "noSerialAccessOrZnpRequests": True,
         "source": {

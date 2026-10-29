@@ -1,7 +1,7 @@
 """Owned operation-age observations on the pinned composed TI source."""
-import hashlib
+import hashlib,subprocess
 from pathlib import Path
-from r4_uart_tx_liveness import extract,once,pinned_source
+from r4_uart_tx_liveness import extract,once,pinned_source,TI_SHA
 TASK='source/ti/zstack/npi/npi_task.c'
 MT='source/ti/zstack/mt/mt.c'
 SYS='source/ti/zstack/mt/mt_sys.c'
@@ -12,9 +12,16 @@ CLOCK_C='kernel/tirtos7/packages/ti/sysbios/knl/Clock.c'
 MARKER='B4_F2_V6_OWNED_STAGE'
 CORE=Path(__file__).with_name('r4_f2_owned_core.c').read_text()
 
-def apply(sdk):
+def apply(sdk,expected_stack_hash):
  sdk=Path(sdk);before={p:(sdk/p).read_text() for p in (TASK,MT,SYS,TL,STACK)}
- providers={p:pinned_source(sdk,p) for p in (STACK,CLOCK_H,CLOCK_C)}
+ providers={p:pinned_source(sdk,p) for p in (CLOCK_H,CLOCK_C)}
+ # B1 already owns stackInit safety changes. Preserve those exact bytes and
+ # require that the scheduler body being instrumented is still pristine TI.
+ if hashlib.sha256(before[STACK].encode()).hexdigest()!=expected_stack_hash:
+  raise ValueError('V6_B1_STACK_PREIMAGE')
+ providers[STACK]=subprocess.check_output(['git','-C',str(sdk),'show',TI_SHA+':'+STACK])
+ if extract(before[STACK],'static void stackTaskFxn(UArg a0, UArg a1)')!=extract(providers[STACK].decode(),'static void stackTaskFxn(UArg a0, UArg a1)'):
+  raise ValueError('V6_STACK_DISPATCH_PREIMAGE')
  if 'Clock_Handle Clock_construct(' not in providers[CLOCK_H].decode() or 'Swi_construct(&Clock_module->swiStruct' not in providers[CLOCK_C].decode():
   raise ValueError('V6_CLOCK_PROVIDER_DRIFT')
  n,m,s,t,z=(before[p] for p in (TASK,MT,SYS,TL,STACK))

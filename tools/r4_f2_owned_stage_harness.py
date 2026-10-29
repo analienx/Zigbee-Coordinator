@@ -62,10 +62,12 @@ int main(void){
  assert(B4_V6_Mt.id==other);B4_V6_MtEnd(other);assert(!B4_V6_Mt.id);
  B4_V5_Ring[4].tick=999;now=900100;checkpoint(0);
  assert(B4_V6_Faults[0].words[4]==200100 && B4_V6_Faults[0].history[0].tick==4);
+ B4_V6_Read(page,nonce,3);uint32_t sequence=B4_V5_Get32(page+24);
  memset(page,0xaa,sizeof(page));B4_V6_Read(page,nonce,4);
  assert(!memcmp(page,"R4D6",4) && page[4]==6 && page[5]==4 && page[6]==248);
  assert(!memcmp(page+8,nonce,8) && B4_V5_Get32(page+32)==1 && page[248]==0xaa);
  assert(B4_V5_Get32(page+120)==4 && B4_V5_Get32(page+96)==16);
+ assert(B4_V5_Get32(page+24)==sequence);B4_V6_Read(page,nonce,4);assert(page[5]==255);
  clear();now=100;id=B4_V6_MtBegin(0x2121);now+=400000;checkpoint(0);
  assert(!B4_V6_FirstStage); // Ordinary four-second host latency != generic MT overdue.
  now+=400000;checkpoint(0);assert(B4_V6_FirstStage==1);B4_V6_MtEnd(id);

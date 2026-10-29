@@ -300,7 +300,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         raise ValueError("V46_RUNTIME_PRIORITY_ACTUAL_C_FAILED")
 
     from r4_f2_owned_stage import apply as add_owned_stage
-    owned_stage=add_owned_stage(sdk)
+    owned_stage=add_owned_stage(sdk,b1['modified_startup_sha256'])
     for name,expected_hash in ((TASK,runtime_priority['modified_sha256'][TASK]),
             (MT,v5_flight['modified_sha256'][MT]),(SYS,v5_flight['modified_sha256'][SYS]),
             (TL,f2_progress['modified_sha256'][TL])):
@@ -353,7 +353,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
-    for name in (TASK,UART,SYS,MT):
+    for name in (TASK,UART,SYS,MT,STACK):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
     # These new inputs must be checked again by the post-link B1 native sealer,

@@ -26,7 +26,7 @@ const allowed = new Set([
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
     "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
-    "hostEvidence", "flightV5", "firstWarning"
+    "hostEvidence", "flightV5", "firstWarning", "stageV6"
 ]);
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
@@ -39,7 +39,7 @@ function exists(file) {
 function sameRecord(entry) {
     hold(entry && typeof entry === "object" && !Array.isArray(entry), "RECORD_SHAPE");
     hold(Object.keys(entry).every(k => allowed.has(k)), "RECORD_FIELD");
-    hold(["VALID", "SKIPPED", "FAILED", "QUARANTINED", "OWNER_CLOSED", "FLIGHT", "FIRST_WARNING"].includes(entry.kind), "KIND");
+    hold(["VALID", "SKIPPED", "FAILED", "QUARANTINED", "OWNER_CLOSED", "FLIGHT", "FIRST_WARNING", "STAGE"].includes(entry.kind), "KIND");
     hold(Number.isSafeInteger(entry.utc) && entry.utc > 0, "UTC");
     hold(typeof entry.monotonicReceiveNs === "string" &&
         /^[0-9]{1,32}$/.test(entry.monotonicReceiveNs), "MONOTONIC");
@@ -173,6 +173,53 @@ function sameRecord(entry) {
         }
         hold(num(entry.processUptimeMs),"FIRST_WARNING_UPTIME");
     } else hold(!Object.hasOwn(entry,"firstWarning"),"FIRST_WARNING_ONLY");
+    if(entry.kind==="STAGE") {
+        const exact=(x,keys)=>x && typeof x==="object" && !Array.isArray(x) &&
+            Object.keys(x).length===keys.length && Object.keys(x).every(k=>keys.includes(k));
+        const num=x=>Number.isInteger(x) && x>=0 && x<=0xffffffff;
+        const command=x=>exact(x,["subsystem","operation"]) && ["AF","SYS","ZDO","OTHER"].includes(x.subsystem) &&
+            ["dataRequest","dataRequestExt","dataRequestSrcRtg","register","ping","version","OTHER"].includes(x.operation);
+        hold(exact(entry,["schema","kind","utc","monotonicReceiveNs","hostRunId","ownerGeneration","processUptimeMs",
+            "probeLatencyMs","stageV6","radioEpochTag","radioEpochHardwareVerified","hostEvidence"]) &&
+            entry.schema==="p7u-b4-native-sample-v1","V6_TOP");
+        const v=entry.stageV6,c=v?.counters;
+        const fields=["monitorFlags","tickPeriodUs","monitorChecks","lastCheckTick","maxCheckGapTicks","npiWakes",
+            "npiLastTick","stackDispatchEntered","stackLastEnteredTick","stackDispatchExited","stackLastExitedTick",
+            "stackActiveService","uartComplete","uartLastCompleteTick","faultMask","firstObservedStage",
+            "mtFastBudgetTicks","mtOtherBudgetTicks","srspQueueBudgetTicks","asyncQueueBudgetTicks","uartBudgetTicks",
+            "mtStageId","mtSinceTick","txStageId","txSinceTick","srspQueuedBytes","asyncQueuedBytes","selectedFaultStage"];
+        hold(exact(v,["abi","source","scope","ownerScope","pageSequence","nativeTick","counters","mtOperation","txOperation","fault"]) &&
+            v.abi===6 && v.source==="RADIO_READ_ONLY" && v.scope==="OVERDUE_OBSERVATION_NOT_PERMANENT_FAULT" &&
+            v.ownerScope==="STAGE_LOCAL_MT_FRAME_LOCAL_QUEUE_TX" && num(v.pageSequence) && v.pageSequence>0 && num(v.nativeTick) &&
+            exact(c,fields) && fields.every(k=>num(c[k])) && command(v.mtOperation) && command(v.txOperation),"V6_SUMMARY");
+        hold(c.monitorFlags<=7 && (c.monitorFlags&1) && c.tickPeriodUs>0 && c.tickPeriodUs<=100000 &&
+            c.faultMask<=15 && c.firstObservedStage<=4 && c.selectedFaultStage<=4 &&
+            Boolean(c.faultMask)===Boolean(c.selectedFaultStage) &&
+            Boolean(c.faultMask)===Boolean(c.firstObservedStage) &&
+            (!c.selectedFaultStage || (c.faultMask&(1<<(c.selectedFaultStage-1)))) &&
+            (!c.firstObservedStage || (c.faultMask&(1<<(c.firstObservedStage-1)))) &&
+            entry.radioEpochHardwareVerified===false &&
+            (entry.radioEpochTag===null || (typeof entry.radioEpochTag==="string" && /^[a-f0-9]{24}$/.test(entry.radioEpochTag))) &&
+            Boolean(c.monitorFlags&2)===(entry.radioEpochTag!==null),"V6_FLAGS");
+        const f=v.fault;
+        if(c.selectedFaultStage){
+            const numbers=["stage","stageId","enteredTick","observedTick","ageTicks","budgetTicks","pendingFlags",
+                "mtStageId","txStageId","srspQueuedBytes","asyncQueuedBytes","npiWakes","stackDispatchEntered",
+                "stackDispatchExited","uartComplete","eventCount","eventTotal","srspProducedAtMtEnter",
+                "srspProducedAtObservation","stackActiveService","observationFlags"];
+            hold(exact(f,[...numbers,"subsystem","operation","events"]) && numbers.every(k=>num(f[k])) &&
+                command({subsystem:f.subsystem,operation:f.operation}) && f.stage===c.selectedFaultStage && f.stageId>0 &&
+                f.budgetTicks>0 && f.ageTicks>=f.budgetTicks && f.ageTicks<0x80000000 &&
+                ((f.observedTick-f.enteredTick)>>>0)===f.ageTicks && f.pendingFlags<=63 && f.observationFlags===f.pendingFlags &&
+                f.eventCount<=16 && f.eventCount===Math.min(f.eventTotal,16) && Array.isArray(f.events) && f.events.length===f.eventCount,
+                "V6_FROZEN_FAULT");
+            for(const e of f.events)hold(exact(e,["tick","stage","result","subsystem","operation"]) && num(e.tick) &&
+                num(e.stage) && e.stage>=1 && e.stage<=9 && num(e.result) && e.result<=255 && !(e.stage===8 && !e.result) &&
+                command({subsystem:e.subsystem,operation:e.operation}),"V6_HISTORY");
+        }else hold(f===null,"V6_NO_UNOBSERVED_FAULT");
+        hold(Number.isSafeInteger(entry.processUptimeMs) && entry.processUptimeMs>=0 &&
+            num(entry.probeLatencyMs) && entry.probeLatencyMs<=30000,"V6_TIMING");
+    }else hold(!Object.hasOwn(entry,"stageV6"),"V6_STAGE_ONLY");
     if (entry.kind === "VALID") {
         hold(entry.abi === 4 && Number.isSafeInteger(entry.sequence) &&
             entry.sequence > 0, "VALID_SEQUENCE");
@@ -311,7 +358,7 @@ function sameRecord(entry) {
             entry.submissionState === "NO_DIAGNOSTIC_REQUEST", "HOST_TIMEOUT_RECORD");
     }
     const data = encode(entry);
-    hold(data.length <= (entry.kind==="FIRST_WARNING" ? 16384 : RECORD_LIMIT), "RECORD_SIZE");
+    hold(data.length <= (entry.kind==="FIRST_WARNING" ? 16384 : entry.kind==="STAGE" ? 8192 : RECORD_LIMIT), "RECORD_SIZE");
     return data;
 }
 function manifestInit() {

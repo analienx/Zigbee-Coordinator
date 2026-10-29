@@ -19,6 +19,9 @@ static volatile uint32_t B4_V6_StackWakes, B4_V6_StackLast, B4_V6_StackDone;
 static volatile uint32_t B4_V6_StackLastDone, B4_V6_StackService;
 static volatile uint32_t B4_V6_UartDone, B4_V6_UartLast;
 static B4_V6_Fault B4_V6_Faults[4];
+static B4_V6_Fault B4_V6_CachedFault;
+static uint8_t B4_V6_CachedHeader[32];
+static uint32_t B4_V6_CachedValid,B4_V6_LastReadStage;
 static uint32_t B4_V6_Ticks(uint32_t us)
 {
     return Clock_tickPeriod && Clock_tickPeriod<=100000u ?
@@ -159,7 +162,8 @@ __attribute__((noinline)) void B4_V6_Read(uint8_t *out,const uint8_t *nonce,uint
     out[0]='R';out[1]='4';out[2]='D';out[3]='6';out[4]=6u;out[5]=page;out[6]=(uint8_t)size;
     for(i=0u;i<8u;++i)out[8u+i]=nonce[i];
     if(B4_V4BootValid==1u)for(i=0u;i<8u;++i)out[16u+i]=B4_V4BootId[i];
-    B4_V5_Put32(out+24u,++B4_V6_Sequence);B4_V5_Put32(out+28u,Clock_getTicks());
+    if (++B4_V6_Sequence==0u)++B4_V6_Sequence;
+    B4_V5_Put32(out+24u,B4_V6_Sequence);B4_V5_Put32(out+28u,Clock_getTicks());
     for(i=0u;i<4u;++i)if(B4_V6_Faults[i].words[0])mask|=1u<<i;
     if(page==3u)
     {
@@ -174,13 +178,38 @@ __attribute__((noinline)) void B4_V6_Read(uint8_t *out,const uint8_t *nonce,uint
         values[21]=B4_V6_Mt.id;values[22]=B4_V6_Mt.command;values[23]=B4_V6_Mt.since;
         values[24]=B4_V6_Tx.id;values[25]=B4_V6_Tx.command;values[26]=B4_V6_Tx.since;
         values[27]=B4_V44_Bytes[0];values[28]=B4_V44_Bytes[1];
+        B4_V6_CachedValid=0u;
+        if(mask)
+        {
+            uint32_t selected=B4_V6_LastReadStage?B4_V6_LastReadStage:B4_V6_FirstStage-1u;
+            for(i=0u;i<4u;++i)
+            {
+                uint32_t stage=(selected+i)%4u;
+                if(mask&(1u<<stage))
+                {
+                    B4_V6_CachedFault=B4_V6_Faults[stage];values[29]=stage+1u;
+                    B4_V6_LastReadStage=stage+1u;B4_V6_CachedValid=1u;break;
+                }
+            }
+        }
         for(i=0u;i<32u;++i)B4_V5_Put32(out+32u+4u*i,values[i]);
+        for(i=0u;i<32u;++i)B4_V6_CachedHeader[i]=out[i];
     }
     else if(page>=4u && page<=7u)
     {
-        const B4_V6_Fault *f=&B4_V6_Faults[page-4u];
-        for(i=0u;i<22u;++i)B4_V5_Put32(out+32u+4u*i,f->words[i]);
-        for(i=0u;i<f->words[16];++i)B4_V5_PutEvent(out+120u+8u*i,&f->history[i]);
+        uint32_t valid=B4_V6_CachedValid && B4_V6_CachedFault.words[0]==page-3u &&
+            Clock_getTicks()-B4_V5_Get32(B4_V6_CachedHeader+28u)<=B4_V6_Ticks(2000000u);
+        const B4_V6_Fault *f=&B4_V6_CachedFault;
+        for(i=0u;i<8u;++i)if(nonce[i]!=B4_V6_CachedHeader[8u+i])valid=0u;
+        if(valid)
+        {
+            for(i=0u;i<32u;++i)out[i]=B4_V6_CachedHeader[i];
+            out[5]=page;out[6]=248u;
+            for(i=0u;i<22u;++i)B4_V5_Put32(out+32u+4u*i,f->words[i]);
+            for(i=0u;i<f->words[16];++i)B4_V5_PutEvent(out+120u+8u*i,&f->history[i]);
+        }
+        else out[5]=255u;
+        B4_V6_CachedValid=0u; /* Single exact-nonce pair; no replay. */
     }
     OsalPort_leaveCS(key);
 }
