@@ -64,12 +64,33 @@ SAMPLE=r'''
                 const flight=await this.b4ProbeReadOnlyHangFlightV5(true);
                 if (!this.#b4Operational) return;
                 const utc=Date.now();
-                if (flight) {
+                /* Passive host evidence is sampled AFTER the paired F2,
+                 * not at the same radio tick. It opens no additional wire. */
+                const hostEvidence=this.zigbee.zhController?.b4NoWireOwnerSnapshotFromExistingOwner() ?? null;
+                const probeLatencyMs=Math.max(0,Math.round(performance.now()-probeStarted));
+                if (flight && "kind" in flight && flight.kind==="FAILED") {
+                    this.#b4Persist({
+                        schema:"p7u-b4-native-sample-v1",kind:"FAILED",utc,
+                        monotonicReceiveNs:process.hrtime.bigint().toString(),
+                        probeLatencyMs,reason:flight.reason,
+                        failureClass:flight.reason,
+                        submissionState:flight.submissionState,
+                        timingQuality:"HOST_TIMING_UNCERTAIN",
+                        sourceAbi:5,imageRuntimeAttested:false,
+                        hostEvidence,
+                    });
+                } else if (flight && "abi" in flight && flight.abi===5) {
+                    /* Token only crosses this in-process owner boundary.
+                     * Persist ONLY a keyed tag with the same secret as V4. */
+                    const {radioBootId,...flightV5}=flight;
+                    const radioEpochTag=radioBootId===null ? null :
+                        createHmac("sha256",this.#b4EpochKey)
+                            .update(radioBootId,"utf8").digest("hex").slice(0,24);
                     this.#b4Persist({
                         schema:"p7u-b4-native-sample-v1",kind:"FLIGHT",utc,
                         monotonicReceiveNs:process.hrtime.bigint().toString(),
-                        probeLatencyMs:Math.max(0,Math.round(performance.now()-probeStarted)),
-                        flightV5:flight,
+                        probeLatencyMs,flightV5,radioEpochTag,
+                        radioEpochHardwareVerified:false,hostEvidence,
                     });
                 } else {
                     this.#b4Persist({
