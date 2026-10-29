@@ -3,8 +3,9 @@
 
 Apply AFTER: pinned V4 Z2M collector and V5 existing-owner herdsman overlay.
 Never installs, sends Zigbee traffic, starts a worker or opens serial itself.
-V5 is explicitly opt-in; every 5th original F2 sample is *substituted* by
-a pair, not additional requests after the normal V4 read.
+V5 is explicitly opt-in. Its first capture uses the first normal sampling
+opportunity. Busy skips leave it due, alternating with V4 to preserve bounded
+V4 admission. An attempted or successful pair is followed by four V4 slots.
 """
 import argparse,hashlib,json,subprocess
 from pathlib import Path
@@ -54,13 +55,16 @@ Z2M_METHOD=r'''
 '''
 
 SAMPLE=r'''
-            /* Replaces one of every five V4 samples when explicit opt-in is
-             * enabled; never stacks three F2 reads atop a normal V4 sample.
+            /* Capture on the first normal sampling opportunity. A pre-wire
+             * skip leaves V5 due, with one intervening V4 slot so its bounded
+             * admission cannot be starved. Never add a timer or wire request
+             * after the normal V4 read. A submitted pair (including failure)
+             * consumes its opportunity; preserve cooldown/quarantine rules.
              * The paired V5 data is committed as distinct FLIGHT record,
              * not manufactured VALID minor4 and not part of V4 freshness.
              * No request on an active OTA/busy/poisoned owner. */
             if (process.env.P7U_B4_FLIGHT_V5 === "1" &&
-                (++this.#b4V5EveryFifth % 5) === 0) {
+                this.#b4V5V4SlotsRemaining === 0 && !this.#b4V5YieldToV4) {
                 const flight=await this.b4ProbeReadOnlyHangFlightV5(true);
                 if (!this.#b4Operational) return;
                 const utc=Date.now();
@@ -79,6 +83,7 @@ SAMPLE=r'''
                         sourceAbi:5,imageRuntimeAttested:false,
                         hostEvidence,
                     });
+                    this.#b4V5V4SlotsRemaining = 4;
                 } else if (flight && "abi" in flight && flight.abi===5) {
                     /* Token only crosses this in-process owner boundary.
                      * Persist ONLY a keyed tag with the same secret as V4. */
@@ -92,6 +97,7 @@ SAMPLE=r'''
                         probeLatencyMs,flightV5,radioEpochTag,
                         radioEpochHardwareVerified:false,hostEvidence,
                     });
+                    this.#b4V5V4SlotsRemaining = 4;
                 } else {
                     this.#b4Persist({
                         schema:"p7u-b4-native-sample-v1",kind:"SKIPPED",utc,
@@ -99,8 +105,13 @@ SAMPLE=r'''
                         reason:"HOST_OR_OTA_ADMISSION_SKIPPED",
                         submissionState:"NONE",sourceAbi:5,
                     });
+                    this.#b4V5YieldToV4 = true;
                 }
                 return;
+            }
+            if (process.env.P7U_B4_FLIGHT_V5 === "1") {
+                this.#b4V5YieldToV4 = false;
+                if (this.#b4V5V4SlotsRemaining > 0) --this.#b4V5V4SlotsRemaining;
             }
 '''
 
@@ -133,7 +144,7 @@ def apply(z2m,herdsman):
         Z2M_METHOD+"    #b4Schedule(delay = 60_000): void {","Z2M_METHOD")
     src=once(src,
         "    async #b4Sample(): Promise<void> {",
-        "    #b4V5EveryFifth = 0;\n    async #b4Sample(): Promise<void> {",
+        "    #b4V5V4SlotsRemaining = 0;\n    #b4V5YieldToV4 = false;\n    async #b4Sample(): Promise<void> {",
         "V5_SAMPLING_COUNTER")
     src=once(src,
         "            const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();",
@@ -144,7 +155,11 @@ def apply(z2m,herdsman):
     return {
       "schema":"p7u-f2-v5-optin-durable-sampler-v1",
       "v4_legacy_samples_unchanged":True,
-      "v5_replaces_every_fifth_sample_only":True,
+      "v5_first_normal_sampling_opportunity":True,
+      "v5_busy_skip_remains_due":True,
+      "v4_slot_after_v5_busy_skip":True,
+      "v4_slots_between_submitted_v5_pairs":4,
+      "additional_sample_timers":0,
       "v5_optin_env":"P7U_B4_FLIGHT_V5",
       "default_enabled":False,"one_serial_owner":True,
       "worker_chain":"EXISTING_P7U_F2_WORKER_V2",

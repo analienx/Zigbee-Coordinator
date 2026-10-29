@@ -26,7 +26,7 @@ const allowed = new Set([
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
     "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
-    "hostEvidence", "flightV5"
+    "hostEvidence", "flightV5", "firstWarning"
 ]);
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
@@ -39,7 +39,7 @@ function exists(file) {
 function sameRecord(entry) {
     hold(entry && typeof entry === "object" && !Array.isArray(entry), "RECORD_SHAPE");
     hold(Object.keys(entry).every(k => allowed.has(k)), "RECORD_FIELD");
-    hold(["VALID", "SKIPPED", "FAILED", "QUARANTINED", "OWNER_CLOSED", "FLIGHT"].includes(entry.kind), "KIND");
+    hold(["VALID", "SKIPPED", "FAILED", "QUARANTINED", "OWNER_CLOSED", "FLIGHT", "FIRST_WARNING"].includes(entry.kind), "KIND");
     hold(Number.isSafeInteger(entry.utc) && entry.utc > 0, "UTC");
     hold(typeof entry.monotonicReceiveNs === "string" &&
         /^[0-9]{1,32}$/.test(entry.monotonicReceiveNs), "MONOTONIC");
@@ -128,6 +128,51 @@ function sameRecord(entry) {
     } else {
         hold(!Object.hasOwn(entry,"flightV5"),"V5_FLIGHT_ONLY");
     }
+    if(entry.kind==="FIRST_WARNING") {
+        const exact=(x,keys)=>x && typeof x==="object" && !Array.isArray(x) &&
+            Object.keys(x).length===keys.length && Object.keys(x).every(k=>keys.includes(k));
+        const num=v=>Number.isSafeInteger(v) && v>=0;
+        const names=["ping","version","register","dataRequest","dataRequestExt","dataRequestSrcRtg",
+            "startupFromApp","nodeDescReq","activeEpReq","simpleDescReq","mgmtLqiReq","mgmtRtgReq",
+            "mgmtBindReq","mgmtNwkUpdateReq","permitJoin","getDeviceInfo","getExtAddr","setTxPower","OTHER"];
+        const subs=["AF","ZDO","SYS","UTIL"];
+        hold(exact(entry,["schema","kind","utc","monotonicReceiveNs","hostRunId","ownerGeneration",
+            "processUptimeMs","firstWarning","hostEvidence"]),"FIRST_WARNING_FIELDS");
+        const w=entry.firstWarning;
+        hold(exact(w,["schema","trigger","capturedMonoMs","operation","ingressTiming","recentOperations","scope","lastFlight"]) &&
+            w.schema==="p7u-host-first-warning-v1" && ["PENDING_SLOW","SLOW_ACK","SRSP_TIMEOUT"].includes(w.trigger) &&
+            num(w.capturedMonoMs) && w.scope==="HOST_WARNING_NOT_RADIO_FAULT_PROOF","FIRST_WARNING_HEADER");
+        const op=w.operation;
+        hold(exact(op,["operationId","subsystem","operation","startedMonoMs","timeoutMs","warningAfterMs","elapsedMs","timerLatenessMs"]) &&
+            num(op.operationId) && op.operationId>0 && subs.includes(op.subsystem) && names.includes(op.operation) &&
+            num(op.startedMonoMs) && num(op.timeoutMs) && op.timeoutMs>0 && op.timeoutMs<=3600000 &&
+            num(op.warningAfterMs) && op.warningAfterMs===Math.min(4000,Math.max(250,Math.floor(op.timeoutMs*2/3))) &&
+            num(op.elapsedMs) && w.capturedMonoMs-op.startedMonoMs===op.elapsedMs &&
+            (w.trigger==="PENDING_SLOW" ? op.timerLatenessMs===Math.max(0,op.elapsedMs-op.warningAfterMs) :
+                op.timerLatenessMs===null),"FIRST_WARNING_OPERATION");
+        hold(exact(w.ingressTiming,["lastRxMonoMs","lastParsedMonoMs"]) &&
+            Object.values(w.ingressTiming).every(v=>v===null || (num(v) && v<=w.capturedMonoMs)),"FIRST_WARNING_INGRESS");
+        hold(Array.isArray(w.recentOperations) && w.recentOperations.length>0 && w.recentOperations.length<=16,
+            "FIRST_WARNING_HISTORY_BOUND");
+        for(const e of w.recentOperations)hold(exact(e,["atMonoMs","operationId","subsystem","operation","phase",
+            "rxRawBytes","parsedFrames","parseErrors","bufferedBytes","queueDepth","waiterMapEntries"]) &&
+            num(e.atMonoMs) && e.atMonoMs<=w.capturedMonoMs && num(e.operationId) && e.operationId>0 &&
+            subs.includes(e.subsystem) && names.includes(e.operation) && ["OFFERED","ACK","TIMEOUT","ERROR"].includes(e.phase) &&
+            ["rxRawBytes","parsedFrames","parseErrors","bufferedBytes","queueDepth","waiterMapEntries"].every(k=>num(e[k])),
+            "FIRST_WARNING_HISTORY_FIELDS");
+        const last=w.lastFlight;
+        if(last!==null){
+            hold(exact(last,["record","receipt","ageMs","ageBasis"]) && num(last.ageMs) &&
+                last.ageBasis==="HOST_MONOTONIC_SINCE_SAMPLE_ENQUEUE" &&
+                exact(last.receipt,["sequence","sha256","committedBytes"]) &&
+                num(last.receipt.sequence) && last.receipt.sequence>0 && num(last.receipt.committedBytes) &&
+                last.receipt.committedBytes>0 && /^[a-f0-9]{64}$/.test(last.receipt.sha256) &&
+                last.record?.kind==="FLIGHT" && last.record.hostRunId===entry.hostRunId &&
+                last.record.ownerGeneration===entry.ownerGeneration,"FIRST_WARNING_LAST_FLIGHT");
+            sameRecord(last.record); // Full existing privacy/metric validation, not a hash-only claim.
+        }
+        hold(num(entry.processUptimeMs),"FIRST_WARNING_UPTIME");
+    } else hold(!Object.hasOwn(entry,"firstWarning"),"FIRST_WARNING_ONLY");
     if (entry.kind === "VALID") {
         hold(entry.abi === 4 && Number.isSafeInteger(entry.sequence) &&
             entry.sequence > 0, "VALID_SEQUENCE");
@@ -266,7 +311,7 @@ function sameRecord(entry) {
             entry.submissionState === "NO_DIAGNOSTIC_REQUEST", "HOST_TIMEOUT_RECORD");
     }
     const data = encode(entry);
-    hold(data.length <= RECORD_LIMIT, "RECORD_SIZE");
+    hold(data.length <= (entry.kind==="FIRST_WARNING" ? 16384 : RECORD_LIMIT), "RECORD_SIZE");
     return data;
 }
 function manifestInit() {

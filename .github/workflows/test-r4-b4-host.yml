@@ -77,6 +77,7 @@ jobs:
           PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --composition-receipt /tmp/b4-herdsman-v4-overlay.json --receipt /tmp/p7u-startup-hold.json
           python host/r4-b4/p7u_preservation_transport_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/p7u-preservation-transport.json
           python host/r4-b4/b4_v5_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v5-overlay.json
+          python host/r4-b4/b4_first_warning_overlay.py --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-first-warning.json
       - name: Install exact herdsman package-manager version
         run: |
           npm install --global pnpm@10.33.0
@@ -112,6 +113,9 @@ jobs:
           python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_live_collector_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-collector-receipt.json
           python host/r4-b4/b4_v5_live_collector_overlay.py --z2m /tmp/b4-z2m-host --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-z2m-v5-flight.json
+          python host/r4-b4/b4_first_warning_overlay.py --z2m /tmp/b4-z2m-host --receipt /tmp/b4-z2m-first-warning.json
+          B4_FIRST_WARNING_FIXTURE=/tmp/b4-first-warning-fixture.json node --test host/r4-b4/test-v5-capture-timing.cjs host/r4-b4/test-first-warning.cjs
+          B4_FIRST_WARNING_FIXTURE=/tmp/b4-first-warning-fixture.json python host/r4-b4/test-first-warning-export.py -v
       - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
         run: |
           set -euo pipefail
