@@ -343,6 +343,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     # Never change the qualified native B1 management C security seal.
     af_client="source/ti/zstack/npi/npi_client_mt.c"
     afterhash[af_client]=hashlib.sha256((sdk/af_client).read_bytes()).hexdigest()
+    beforehash[STACK]=owned_stage['before_sha256'][STACK]
     for name in (af_client,):
         if afterhash[name] != runtime_priority["modified_sha256"][name]:
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
@@ -383,7 +384,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if function not in required: required.append(function)
     if "B4_V46_RefreshNpiPriority" not in required:
         required.append("B4_V46_RefreshNpiPriority")
-    for function in ('B4_V6_MtBegin','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
+    for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
                      'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
         if function not in required:required.append(function)
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"

@@ -45,6 +45,7 @@ TEST=r'''
 static void clear(void){
  memset(B4_V6_Faults,0,sizeof(B4_V6_Faults));B4_V6_Mt=(B4_V6_Owner){0};
  B4_V6_Tx=(B4_V6_Owner){0};srsp=areq=NULL;transport=B4_V6_TxSubmitted=0;
+ memset(B4_V6_Ingress,0,sizeof(B4_V6_Ingress));
  B4_V6_FirstStage=0;assert(!cs);
 }
 int main(void){
@@ -92,6 +93,12 @@ int main(void){
  B4_V6_Ordinal=UINT32_MAX;assert(!B4_V6_MtBegin(0x2401) && B4_V6_IdExhausted);
  memset(page,0xaa,sizeof(page));B4_V6_Read(page,nonce,3);assert(page[6]==160 && page[160]==0xaa);
  assert(B4_V5_Get32(page+32)==5 && B4_V5_Get32(page+92)==0 && !cs);
+ B4_V6_Ordinal=1000;clear();uint8_t request[3]={1,0x24,1};now=100;
+ id=B4_V6_MtQueued(request);now+=200000;checkpoint(0);
+ assert(B4_V6_Faults[4].words[0]==5 && B4_V6_Faults[4].words[1]==id);
+ other=B4_V6_MtClaim(request,0x2401);assert(other==id && B4_V6_Mt.id==id && !B4_V6_Ingress[0].owner.id);
+ B4_V6_MtQueueCancel(id);assert(B4_V6_Mt.id==id);B4_V6_MtEnd(id);
+ id=B4_V6_MtQueued(request);B4_V6_MtQueueCancel(id);assert(!B4_V6_Ingress[0].owner.id);
  puts("V6_OWNED_STAGE_ACTUAL_C_PASS");return 0;
 }
 '''

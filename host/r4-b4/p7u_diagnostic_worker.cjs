@@ -187,13 +187,13 @@ function sameRecord(entry) {
             "npiLastTick","stackDispatchEntered","stackLastEnteredTick","stackDispatchExited","stackLastExitedTick",
             "stackActiveService","uartComplete","uartLastCompleteTick","faultMask","firstObservedStage",
             "mtFastBudgetTicks","mtOtherBudgetTicks","srspQueueBudgetTicks","asyncQueueBudgetTicks","uartBudgetTicks",
-            "mtStageId","mtSinceTick","txStageId","txSinceTick","srspQueuedBytes","asyncQueuedBytes","selectedFaultStage"];
+            "mtStageId","mtSinceTick","txStageId","txSinceTick","srspQueuedBytes","asyncQueuedBytes","selectedFaultStage","ingressTrackingOverflow"];
         hold(exact(v,["abi","source","scope","ownerScope","pageSequence","nativeTick","counters","mtOperation","txOperation","fault"]) &&
             v.abi===6 && v.source==="RADIO_READ_ONLY" && v.scope==="OVERDUE_OBSERVATION_NOT_PERMANENT_FAULT" &&
-            v.ownerScope==="STAGE_LOCAL_MT_FRAME_LOCAL_QUEUE_TX" && num(v.pageSequence) && v.pageSequence>0 && num(v.nativeTick) &&
+            v.ownerScope==="INGRESS_MT_SHARED_FRAME_LOCAL_QUEUE_TX" && num(v.pageSequence) && v.pageSequence>0 && num(v.nativeTick) &&
             exact(c,fields) && fields.every(k=>num(c[k])) && command(v.mtOperation) && command(v.txOperation),"V6_SUMMARY");
         hold(c.monitorFlags<=7 && (c.monitorFlags&1) && c.tickPeriodUs>0 && c.tickPeriodUs<=100000 &&
-            c.faultMask<=15 && c.firstObservedStage<=4 && c.selectedFaultStage<=4 &&
+            c.faultMask<=31 && c.firstObservedStage<=5 && c.selectedFaultStage<=5 &&
             Boolean(c.faultMask)===Boolean(c.selectedFaultStage) &&
             Boolean(c.faultMask)===Boolean(c.firstObservedStage) &&
             (!c.selectedFaultStage || (c.faultMask&(1<<(c.selectedFaultStage-1)))) &&

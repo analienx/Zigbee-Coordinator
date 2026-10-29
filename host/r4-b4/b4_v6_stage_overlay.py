@@ -5,8 +5,8 @@ from b4_first_warning_overlay import checked
 from b4_v5_herdsman_overlay import ZNP_METHOD,ADAPTER_METHOD,once
 from b4_v5_live_collector_overlay import Z2M_METHOD
 
-ZNP=ZNP_METHOD.replace('b4ReadV5Page(page: 1 | 2','b4ReadV6Page(page: 3 | 4 | 5 | 6 | 7')
-ZNP=ZNP.replace('(page !== 1 && page !== 2)','(page < 3 || page > 7)')
+ZNP=ZNP_METHOD.replace('b4ReadV5Page(page: 1 | 2','b4ReadV6Page(page: 3 | 4 | 5 | 6 | 7 | 8')
+ZNP=ZNP.replace('(page !== 1 && page !== 2)','(page < 3 || page > 8)')
 ZNP=ZNP.replace('data.length !== 160','data.length !== (page===3?160:248)').replace('"R4D5"','"R4D6"')
 ZNP=ZNP.replace('data[4] !== 5','data[4] !== 6').replace('data.readUInt16LE(6) !== 160','data.readUInt16LE(6) !== data.length')
 ZNP=ZNP.replace('V5_','V6_').replace('V5_REPLY_TIMEOUT','V6_REPLY_TIMEOUT')
@@ -24,12 +24,12 @@ PARSER=r'''
             "stackLastExitedTick","stackActiveService","uartComplete","uartLastCompleteTick","faultMask",
             "firstObservedStage","mtFastBudgetTicks","mtOtherBudgetTicks","srspQueueBudgetTicks",
             "asyncQueueBudgetTicks","uartBudgetTicks","mtStageId","","mtSinceTick","txStageId","","txSinceTick",
-            "srspQueuedBytes","asyncQueuedBytes","selectedFaultStage"];
+            "srspQueuedBytes","asyncQueuedBytes","selectedFaultStage","ingressTrackingOverflow"];
         const counters:Record<string,number>={};
         fields.forEach((name,i)=>{if(name)counters[name]=a.readUInt32LE(32+4*i);});
         if(counters.monitorFlags>7 || !(counters.monitorFlags&1) || counters.tickPeriodUs<1 ||
-            counters.tickPeriodUs>100000 || counters.faultMask>15 || counters.firstObservedStage>4 ||
-            counters.selectedFaultStage>4 || a.readUInt32LE(24)===0 || !a.subarray(152).equals(Buffer.alloc(8)) ||
+            counters.tickPeriodUs>100000 || counters.faultMask>31 || counters.firstObservedStage>5 ||
+            counters.selectedFaultStage>5 || a.readUInt32LE(24)===0 || !a.subarray(156).equals(Buffer.alloc(4)) ||
             Boolean(counters.monitorFlags&2)!==a.subarray(16,24).some(v=>v!==0) ||
             Boolean(counters.faultMask)!==Boolean(counters.selectedFaultStage) ||
             Boolean(counters.faultMask)!==Boolean(counters.firstObservedStage) ||
@@ -62,7 +62,7 @@ PARSER=r'''
             fault={...values,...this.b4V6Command(b.readUInt32LE(40)),events};
         } else if(counters.selectedFaultStage)throw Error("B4 V6_MISSING_FAULT");
         return {abi:6 as const,source:"RADIO_READ_ONLY" as const,scope:"OVERDUE_OBSERVATION_NOT_PERMANENT_FAULT" as const,
-            ownerScope:"STAGE_LOCAL_MT_FRAME_LOCAL_QUEUE_TX" as const,pageSequence:a.readUInt32LE(24),
+            ownerScope:"INGRESS_MT_SHARED_FRAME_LOCAL_QUEUE_TX" as const,pageSequence:a.readUInt32LE(24),
             nativeTick:a.readUInt32LE(28),counters,mtOperation:this.b4V6Command(a.readUInt32LE(120)),
             txOperation:this.b4V6Command(a.readUInt32LE(132)),fault,
             radioBootId:(counters.monitorFlags&2)?a.subarray(16,24).toString("hex"):null};
@@ -77,10 +77,10 @@ ADAPTER=PARSER+r'''
 '''+gate+r'''
             const a=await this.znp.b4ReadV6Page(3,nonce);
             const selected=a.readUInt32LE(148);
-            if(selected>4)throw Error("B4 V6_INVALID_SELECTION");
+            if(selected>5)throw Error("B4 V6_INVALID_SELECTION");
             if(!input.stillAllowed() || this.closing || this.interpanLock)
                 return {kind:"FAILED" as const,reason:"V6_PARTIAL_PAIR_OWNER_REVOKED" as const,submissionState:"SENT_OR_UNCERTAIN" as const};
-            const b=selected?await this.znp.b4ReadV6Page((selected+3) as 4|5|6|7,nonce):undefined;
+            const b=selected?await this.znp.b4ReadV6Page((selected+3) as 4|5|6|7|8,nonce):undefined;
             const decoded=this.b4ParseV6(a,b);
             this.znp.b4F2AcceptReply();return decoded;
 '''+tail
@@ -97,7 +97,7 @@ def herdsman(root):
                      zpiObject.payload.diagnostic[4] === 5 && matcher.b4F2Nonce[0]<=2) ||
                     (zpiObject.payload.diagnostic.length === (matcher.b4F2Nonce[0]===3?160:248) &&
                      zpiObject.payload.diagnostic.subarray(0,4).toString("ascii") === "R4D6" &&
-                     zpiObject.payload.diagnostic[4] === 6 && matcher.b4F2Nonce[0]>=3 && matcher.b4F2Nonce[0]<=7)) &&''','V6_MATCHER')
+                     zpiObject.payload.diagnostic[4] === 6 && matcher.b4F2Nonce[0]>=3 && matcher.b4F2Nonce[0]<=8)) &&''','V6_MATCHER')
   elif rel.endswith('/zStackAdapter.ts'):
    s=once(s,'    public async b4ReadHangFlightV5(input:',ADAPTER+'    public async b4ReadHangFlightV5(input:','V6_ADAPTER')
   else:

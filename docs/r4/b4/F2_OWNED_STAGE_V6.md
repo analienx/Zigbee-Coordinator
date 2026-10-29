@@ -17,14 +17,19 @@ The exact Clock header/implementation and B1-modified stack source are bound
 into composition and native sealing. B1's pre-MAC validation, event credit
 repair and dispatcher evidence hooks remain in the actual stack loop.
 
-MT entry owns a non-reused boot-local generation and command until its
-matching exit. A stale exit cannot clear another owner. Framed messages own
+NPI handoff registers an exact copied-payload owner before OSAL send can wake
+the stack. A failed send cancels only that generation. MT entry claims the
+same generation by payload ownership and command, until its matching exit.
+A stale exit cannot clear another owner. Four bounded ingress slots report
+overflow explicitly; missing observations never change message admission.
+Direct MT calls use a fresh generation. Framed messages own
 separate queue generations; TX inherits the dequeued frame's generation.
 These identifiers are **stage-local**, not an end-to-end request identifier.
 Generation exhaustion disables new identity claims rather than reusing IDs.
 
 | Observed stage | Budget | Basis and interpretation |
 | --- | --- | --- |
+| NPI handoff awaiting MT entry | 2 s | Finds a request stranded before a handler starts; owner is registered before publishing the OSAL message |
 | AF dataRequest/Ext/SrcRtg, SYS ping/version handler | 2 s | Synchronous enqueue/query work; observation is well above normal millisecond execution, before the six-second host deadline |
 | Other MT handlers | 8 s | Allows slower NV/startup work; ordinary four-second host latency does not trigger this observation |
 | Framed SRSP queue head | 2 s | Leaves four seconds of the normal host deadline for the remainder; queue age starts at admission, not at host send |
@@ -37,7 +42,7 @@ and maximum scheduling gap expose observer delays. Interrupt masking, a stuck
 Clock Swi or a whole-CPU halt can stop the observer too. No instrumentation
 can establish progress while its own execution context is stopped.
 
-Four separate immutable records preserve the first overdue observation for
+Five separate immutable records preserve the first overdue observation for
 each stage, including command class, owner, entry/observation/age/budget,
 pending-state flags, queued bytes, response production, progress counters and
 the preceding 16 V5 events. An earlier SRSP queue delay cannot hide a later
@@ -57,7 +62,7 @@ ABI 6, with the same eight-byte nonce in an explicit nine-byte F2 request.
 | Selector | Size | Contents |
 | --- | --- | --- |
 | 3 | 160 | Observer/live progress, budgets, pending owners and selected frozen stage |
-| 4–7 | 248 | Frozen MT/SRSP queue/unsolicited queue/UART record and history |
+| 4–8 | 248 | Frozen MT/SRSP queue/unsolicited queue/UART/NPI handoff record and history |
 
 Selector 3 caches one selected immutable record, rotating among latched stages.
 Its selected follow-up uses the same nonce, sequence, native tick and boot

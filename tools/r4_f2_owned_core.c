@@ -1,7 +1,8 @@
 /* B4_F2_V6_OWNED_STAGE: bounded RAM-only observations, independent Clock Swi.
  * No allocation, queue mutation, semaphore post, UART, NV or recovery action.
- * Ownership ordinals identify a stage instance, not an end-to-end host request.
- * TX inherits its dequeued frame's ordinal; MT has its own scoped ordinal. */
+ * Ingress/MT share an ordinal via exact payload ownership; TX inherits its
+ * dequeued frame's ordinal. Outbound framing has separate ownership, so these
+ * are not an end-to-end host transaction identity. */
 typedef struct {
     uint32_t id, command, since, budget;
 } B4_V6_Owner;
@@ -18,7 +19,10 @@ static volatile uint32_t B4_V6_TxSubmitted;
 static volatile uint32_t B4_V6_StackWakes, B4_V6_StackLast, B4_V6_StackDone;
 static volatile uint32_t B4_V6_StackLastDone, B4_V6_StackService;
 static volatile uint32_t B4_V6_UartDone, B4_V6_UartLast;
-static B4_V6_Fault B4_V6_Faults[4];
+static B4_V6_Fault B4_V6_Faults[5];
+typedef struct { const uint8_t *frame; B4_V6_Owner owner; } B4_V6_IngressOwner;
+static B4_V6_IngressOwner B4_V6_Ingress[4];
+static uint32_t B4_V6_IngressOverflow;
 static B4_V6_Fault B4_V6_CachedFault;
 static uint8_t B4_V6_CachedHeader[32];
 static uint32_t B4_V6_CachedValid,B4_V6_LastReadStage;
@@ -57,6 +61,41 @@ __attribute__((noinline)) void B4_V6_MtEnd(uint32_t owner)
     uint32_t key=OsalPort_enterCS();
     if (owner && B4_V6_Mt.id==owner) B4_V6_Mt.id=0u;
     OsalPort_leaveCS(key);
+}
+static uint32_t B4_V6_MtQueued(const uint8_t *frame)
+{
+    uint32_t key=OsalPort_enterCS(),i,id=0u;
+    if(frame && (frame[1]&0xe0u)==0x20u && !(frame[1]==0x21u && frame[2]==0xf2u))
+    {
+        for(i=0u;i<4u;++i)if(!B4_V6_Ingress[i].owner.id)
+        {
+            id=B4_V6_NextLocked();B4_V6_Ingress[i].frame=frame;
+            B4_V6_Ingress[i].owner=(B4_V6_Owner){id,((uint32_t)frame[1]<<8u)|frame[2],
+                Clock_getTicks(),B4_V6_Ticks(2000000u)};break;
+        }
+        if(i==4u && B4_V6_IngressOverflow!=UINT32_MAX)++B4_V6_IngressOverflow;
+    }
+    OsalPort_leaveCS(key);return id;
+}
+static void B4_V6_MtQueueCancel(uint32_t id)
+{
+    uint32_t key=OsalPort_enterCS(),i;
+    for(i=0u;i<4u;++i)if(id && B4_V6_Ingress[i].owner.id==id)B4_V6_Ingress[i].owner.id=0u;
+    OsalPort_leaveCS(key);
+}
+__attribute__((noinline)) uint32_t B4_V6_MtClaim(const uint8_t *frame,uint16_t command)
+{
+    uint32_t key=OsalPort_enterCS(),i,id=0u;
+    if(!B4_V6_Mt.id)
+        for(i=0u;i<4u;++i)if(B4_V6_Ingress[i].owner.id && B4_V6_Ingress[i].frame==frame &&
+            B4_V6_Ingress[i].owner.command==command)
+        {
+            id=B4_V6_Ingress[i].owner.id;B4_V6_Ingress[i].owner.id=0u;
+            B4_V6_Mt=(B4_V6_Owner){id,command,Clock_getTicks(),B4_V6_MtBudget(command)};
+            B4_V6_MtProduced=B4_AllRspProduced;break;
+        }
+    if(!id)id=B4_V6_MtBegin(command);
+    OsalPort_leaveCS(key);return id;
 }
 __attribute__((noinline)) void B4_V6_StackPulse(uint32_t service,uint32_t done)
 {
@@ -129,6 +168,10 @@ __attribute__((noinline)) void B4_V6_Checkpoint(uintptr_t unused)
     if (B4_V6_TxSubmitted && !(transport&1u))B4_V6_Tx.id=0u;
     flags=B4_V6_Flags(transport);
     B4_V6_Observe(1u,B4_V6_Mt,now,flags);
+    {
+        uint32_t i;
+        for(i=0u;i<4u;++i)B4_V6_Observe(5u,B4_V6_Ingress[i].owner,now,flags);
+    }
     if (!(transport&2u))
     {
         uint32_t cls;
@@ -164,7 +207,7 @@ __attribute__((noinline)) void B4_V6_Read(uint8_t *out,const uint8_t *nonce,uint
     if(B4_V4BootValid==1u)for(i=0u;i<8u;++i)out[16u+i]=B4_V4BootId[i];
     if (++B4_V6_Sequence==0u)++B4_V6_Sequence;
     B4_V5_Put32(out+24u,B4_V6_Sequence);B4_V5_Put32(out+28u,Clock_getTicks());
-    for(i=0u;i<4u;++i)if(B4_V6_Faults[i].words[0])mask|=1u<<i;
+    for(i=0u;i<5u;++i)if(B4_V6_Faults[i].words[0])mask|=1u<<i;
     if(page==3u)
     {
         values[0]=(B4_V6_Started?1u:0u)|(B4_V4BootValid==1u?2u:0u)|(B4_V6_IdExhausted?4u:0u);
@@ -182,9 +225,9 @@ __attribute__((noinline)) void B4_V6_Read(uint8_t *out,const uint8_t *nonce,uint
         if(mask)
         {
             uint32_t selected=B4_V6_LastReadStage?B4_V6_LastReadStage:B4_V6_FirstStage-1u;
-            for(i=0u;i<4u;++i)
+            for(i=0u;i<5u;++i)
             {
-                uint32_t stage=(selected+i)%4u;
+                uint32_t stage=(selected+i)%5u;
                 if(mask&(1u<<stage))
                 {
                     B4_V6_CachedFault=B4_V6_Faults[stage];values[29]=stage+1u;
@@ -192,10 +235,11 @@ __attribute__((noinline)) void B4_V6_Read(uint8_t *out,const uint8_t *nonce,uint
                 }
             }
         }
+        values[30]=B4_V6_IngressOverflow;
         for(i=0u;i<32u;++i)B4_V5_Put32(out+32u+4u*i,values[i]);
         for(i=0u;i<32u;++i)B4_V6_CachedHeader[i]=out[i];
     }
-    else if(page>=4u && page<=7u)
+    else if(page>=4u && page<=8u)
     {
         uint32_t valid=B4_V6_CachedValid && B4_V6_CachedFault.words[0]==page-3u &&
             Clock_getTicks()-B4_V5_Get32(B4_V6_CachedHeader+28u)<=B4_V6_Ticks(2000000u);

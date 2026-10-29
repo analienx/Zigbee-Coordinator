@@ -34,18 +34,21 @@ def apply(sdk,expected_stack_hash):
  n,m,s,t,z=(before[p] for p in (TASK,MT,SYS,TL,STACK))
  if MARKER in n or 'B4_V46_RefreshNpiPriority' not in n:raise ValueError('V6_PREDECESSOR')
  # Definitions follow V5 ring/queue metadata, prototypes precede NPI consumers.
- decl='\nstatic uint32_t B4_V6_NextLocked(void);\nstatic void B4_V6_StartMonitor(void);\nstatic void B4_V6_TxBegin(uint32_t,uint16_t);\nstatic void B4_V6_TxOffered(uint32_t,uint32_t);\n'
+ decl='\nstatic uint32_t B4_V6_NextLocked(void);\nstatic void B4_V6_StartMonitor(void);\nstatic void B4_V6_TxBegin(uint32_t,uint16_t);\nstatic void B4_V6_TxOffered(uint32_t,uint32_t);\nstatic uint32_t B4_V6_MtQueued(const uint8_t *);\nstatic void B4_V6_MtQueueCancel(uint32_t);\n'
  n=once(n,'static Queue_Handle npiTxQueue;','static Queue_Handle npiTxQueue;'+decl,'V6_PROTOTYPES')
  n=once(n,'    uint32_t queuedTick;','    uint32_t queuedTick;\n    uint32_t ownedStageId;','V6_QUEUE_OWNER')
- n=once(n,'extern volatile uint32_t B4_AllRspNpiReceived;', 'extern volatile uint32_t B4_AllRspNpiReceived;\n'+CORE,'V6_CORE')
+ predecessor=extract(n,'uint8_t B4_V5_ReadPage2(uint8_t *out, const uint8_t *nonce)')
+ n=once(n,predecessor,predecessor+'\n'+CORE,'V6_CORE')
  n=once(n,'static uint32_t B4_V5_NpiWakes, B4_V5_NpiLastTick;','static volatile uint32_t B4_V5_NpiWakes, B4_V5_NpiLastTick;','V6_SHARED_NPI_PULSE')
  n=once(n,'    recPtr->queuedTick = Clock_getTicks();','    recPtr->queuedTick = Clock_getTicks();\n    recPtr->ownedStageId=v5Command==0x61f2u?0u:B4_V6_NextLocked();','V6_ENQUEUE_ID')
  n=once(n,'        B4_V5_Record(6u,v5Cmd,v5Cmd==0xffffu?2u:0u);','        B4_V5_Record(6u,v5Cmd,v5Cmd==0xffffu?2u:0u);\n        B4_V6_TxBegin(recPtr->ownedStageId,v5Cmd);','V6_TX_BEGIN')
  n=once(n,'        uint16_t submitted = NPITL_writeTL(recPtr->npiMsg->pBuf, recPtr->npiMsg->pBufSize);','        uint16_t submitted = NPITL_writeTL(recPtr->npiMsg->pBuf, recPtr->npiMsg->pBufSize);\n        B4_V6_TxOffered(recPtr->ownedStageId,submitted==recPtr->npiMsg->pBufSize);','V6_TX_OFFERED')
+ n=once(n,'          msgStatus = OsalPort_msgSend(MTServiceTaskID, (byte *)pOsalMsg);',
+  '          uint32_t v6Queued=B4_V6_MtQueued(pOsalMsg->msg);\n          msgStatus = OsalPort_msgSend(MTServiceTaskID, (byte *)pOsalMsg);\n          if(msgStatus!=0u)B4_V6_MtQueueCancel(v6Queued);','V6_NPI_HANDOFF')
  fn=extract(n,'static void NPITask_process(void)')
  n=once(n,fn,once(fn,'    /* Forever loop */','    B4_V6_StartMonitor();\n    /* Forever loop */','V6_MONITOR_START'),'V6_PROCESS')
- m=once(m,'extern void B4_V5_Record(uint8_t, uint16_t, uint8_t);','extern void B4_V5_Record(uint8_t, uint16_t, uint8_t);\nextern uint32_t B4_V6_MtBegin(uint16_t);\nextern void B4_V6_MtEnd(uint32_t);','V6_MT_DECL')
- m=once(m,'  B4_V43_Request(1u, pBuf);','  uint32_t v6Owner=B4_V6_MtBegin(((uint16_t)pBuf[1]<<8u)|pBuf[2]);\n  B4_V43_Request(1u, pBuf);','V6_MT_BEGIN')
+ m=once(m,'extern void B4_V5_Record(uint8_t, uint16_t, uint8_t);','extern void B4_V5_Record(uint8_t, uint16_t, uint8_t);\nextern uint32_t B4_V6_MtClaim(const uint8_t *,uint16_t);\nextern void B4_V6_MtEnd(uint32_t);','V6_MT_DECL')
+ m=once(m,'  B4_V43_Request(1u, pBuf);','  uint32_t v6Owner=B4_V6_MtClaim(pBuf,((uint16_t)pBuf[1]<<8u)|pBuf[2]);\n  B4_V43_Request(1u, pBuf);','V6_MT_BEGIN')
  m=once(m,'  B4_V43_Request(2u, pBuf);','  B4_V43_Request(2u, pBuf);\n  B4_V6_MtEnd(v6Owner);','V6_MT_END')
  z=once(z,'static void stackTaskFxn(UArg a0, UArg a1);','extern void B4_V6_StackPulse(uint32_t,uint32_t);\nstatic void stackTaskFxn(UArg a0, UArg a1);','V6_STACK_DECL')
  z=once(z,'        events = (zstackTasksArr[idx])( 0U, events );','        B4_V6_StackPulse((uint32_t)idx+1u,0u);\n        events = (zstackTasksArr[idx])( 0U, events );\n        B4_V6_StackPulse((uint32_t)idx+1u,1u);','V6_REAL_STACK_DISPATCH')
@@ -62,12 +65,12 @@ __attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV6(uint8_t *pBuf)
 }
 '''
  s=once(s,'__attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)',handler+'\n__attribute__((noinline)) static void B4_SysReadOnlyDiagnosticsV5(uint8_t *pBuf)','V6_HANDLER')
- s=once(s,'    if(page!=1u && page!=2u)','    if(page>=3u && page<=7u)\n    { B4_SysReadOnlyDiagnosticsV6(pBuf); return; }\n    if(page!=1u && page!=2u)','V6_SELECTOR')
+ s=once(s,'    if(page!=1u && page!=2u)','    if(page>=3u && page<=8u)\n    { B4_SysReadOnlyDiagnosticsV6(pBuf); return; }\n    if(page!=1u && page!=2u)','V6_SELECTOR')
  after=dict(zip((TASK,MT,SYS,TL,STACK),(n,m,s,t,z)))
  for p,text in after.items():(sdk/p).write_text(text,encoding='utf-8',newline='')
  return {'schema':'p7u-f2-v6-owned-stage-v1','clock_period_us':250000,
-  'budgets_us':{'mt_fast':2000000,'mt_other':8000000,'srsp_queue':2000000,'async_queue':60000000,'uart':250000},
-  'owner_scope':'STAGE_LOCAL_MT_AND_FRAME_LOCAL_QUEUE_TX','frozen_histories':4,'events_per_history':16,
+  'budgets_us':{'mt_fast':2000000,'mt_other':8000000,'npi_handoff':2000000,'srsp_queue':2000000,'async_queue':60000000,'uart':250000},
+  'owner_scope':'INGRESS_MT_SHARED_FRAME_LOCAL_QUEUE_TX','frozen_histories':5,'events_per_history':16,
   'legacy_v4_v5_wire_unchanged':True,'automatic_recovery':False,'heap_stack_esp_metrics_available':False,
   'provider_sha256':{p:hashlib.sha256(b).hexdigest() for p,b in providers.items()},
   'before_sha256':{p:hashlib.sha256(text.encode()).hexdigest() for p,text in before.items()},

@@ -165,7 +165,7 @@ def project_first_warning(value):
 V6_COUNTERS=set('''monitorFlags tickPeriodUs monitorChecks lastCheckTick maxCheckGapTicks npiWakes npiLastTick
 stackDispatchEntered stackLastEnteredTick stackDispatchExited stackLastExitedTick stackActiveService uartComplete
 uartLastCompleteTick faultMask firstObservedStage mtFastBudgetTicks mtOtherBudgetTicks srspQueueBudgetTicks
-asyncQueueBudgetTicks uartBudgetTicks mtStageId mtSinceTick txStageId txSinceTick srspQueuedBytes asyncQueuedBytes selectedFaultStage'''.split())
+asyncQueueBudgetTicks uartBudgetTicks mtStageId mtSinceTick txStageId txSinceTick srspQueuedBytes asyncQueuedBytes selectedFaultStage ingressTrackingOverflow'''.split())
 V6_FAULT_NUMBERS=set('''stage stageId enteredTick observedTick ageTicks budgetTicks pendingFlags mtStageId txStageId
 srspQueuedBytes asyncQueuedBytes npiWakes stackDispatchEntered stackDispatchExited uartComplete eventCount eventTotal
 srspProducedAtMtEnter srspProducedAtObservation stackActiveService observationFlags'''.split())
@@ -180,12 +180,12 @@ def project_stage(v):
         return dict(x)
     if not isinstance(v,dict) or set(v)!={'abi','source','scope','ownerScope','pageSequence','nativeTick','counters','mtOperation','txOperation','fault'} or \
         v['abi']!=6 or v['source']!='RADIO_READ_ONLY' or v['scope']!='OVERDUE_OBSERVATION_NOT_PERMANENT_FAULT' or \
-        v['ownerScope']!='STAGE_LOCAL_MT_FRAME_LOCAL_QUEUE_TX':raise ValueError('V6_EXPORT_SCHEMA')
+        v['ownerScope']!='INGRESS_MT_SHARED_FRAME_LOCAL_QUEUE_TX':raise ValueError('V6_EXPORT_SCHEMA')
     out={k:v[k] for k in ('abi','source','scope','ownerScope')}
     out.update(nums({k:v[k] for k in ('pageSequence','nativeTick')},{'pageSequence','nativeTick'}))
     out['counters']=c=nums(v['counters'],V6_COUNTERS)
-    if not out['pageSequence'] or not c['monitorFlags']&1 or c['monitorFlags']>7 or not 0<c['tickPeriodUs']<=100000 or c['faultMask']>15 or \
-        not 0<=c['firstObservedStage']<=4 or not 0<=c['selectedFaultStage']<=4 or bool(c['faultMask'])!=bool(c['selectedFaultStage']):
+    if not out['pageSequence'] or not c['monitorFlags']&1 or c['monitorFlags']>7 or not 0<c['tickPeriodUs']<=100000 or c['faultMask']>31 or \
+        not 0<=c['firstObservedStage']<=5 or not 0<=c['selectedFaultStage']<=5 or bool(c['faultMask'])!=bool(c['selectedFaultStage']):
         raise ValueError('V6_EXPORT_FLAGS')
     out['mtOperation']=command(v['mtOperation']);out['txOperation']=command(v['txOperation']);out['fault']=None
     f=v['fault']
