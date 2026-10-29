@@ -77,7 +77,14 @@ test("V5 bad page nonce or epoch quarantines, never exports stale evidence",asyn
    const outcome=await owner.b4ReadHangFlightV5(allowed);
    assert.equal(outcome?.kind,"FAILED");
    assert.equal(outcome?.submissionState,"SENT_OR_UNCERTAIN");
-   assert.equal(znp.b4IsDiagPoisoned(),true);
+   if(kind==="nonce"){
+     assert.equal(outcome?.reason,"V5_REPLY_TIMEOUT");
+     assert.equal(znp.b4IsDiagPoisoned(),false);
+     assert.equal(znp.b4F2ReadAdmissionReason(),"F2_TIMEOUT_COOLDOWN");
+   }else{
+     assert.equal(outcome?.reason,"V5_INVALID_OR_UNCERTAIN");
+     assert.equal(znp.b4IsDiagPoisoned(),true);
+   }
  }
 });
 test("V5 disabled/OTA/live SRSP veto without sending any diagnostic",async()=>{
