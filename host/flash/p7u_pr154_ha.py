@@ -695,7 +695,11 @@ async def deploy(package, pin, ha):
             security_receipt=security, expected_security_receipt_sha256=sha(canonical(security)))
         plan = t.bind_sparse_plan(plan, expected_plan_sha256=plan.manifest['plan_sha256'],
             previous_verified_image=expected, sparse_receipt=proof, expected_sparse_receipt_sha256=sha(canonical(proof)))
-        need(set(plan.sectors) == set(range(0, 0x30000, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
+        # Exact reviewed v4.5 image adds only APP sector 0x30000. Keep older
+        # operator profiles at their original envelope; never infer permission
+        # from an untrusted HEX length or widen through NV/CCFG.
+        app_end = 0x32000 if SOURCE == '98b882c49cdef2cb422822b8845bee3a4045765f' else 0x30000
+        need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
             sparse_receipt=proof, expected_sparse_receipt_sha256=sha(canonical(proof)),
