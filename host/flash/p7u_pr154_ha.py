@@ -175,12 +175,34 @@ def sealed_tree(root, manifest_name, expected, names=None):
     return json.loads(raw)
 
 
+def runtime_priority_qualification(c):
+    """Bind the new delivery to its genuine CI native ELF/priority seal."""
+    if SOURCE != '7ee955430f2a6dd06548b8ca862c973558c8db54': return None
+    raw=read(CANDIDATE/'b1-native-seal.json')
+    need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
+    native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
+    count=(q.get('task_num_priorities') or {}).get('value')
+    helper=q.get('linked_priority_helper') or {}
+    elf=(native.get('artifacts') or {}).get('elf') or {}
+    name=elf.get('file','')
+    need(native.get('schema')=='r4-b1-native-seal-v1' and native.get('source_sha')==SOURCE and
+         type(count) is int and 8<=count<=32 and q.get('base_priority')==4 and
+         q.get('pending_srsp_priority')==6 and helper.get('owner')=='npi_task.o' and
+         type(helper.get('address')) is int and type(helper.get('size')) is int and helper['size']>0 and
+         re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]*',name) is not None,
+         'SRSP_PRIORITY_NATIVE')
+    need(elf.get('sha256')==c['files'].get('native/'+name) and
+         sha(read(CANDIDATE/'native'/name))==elf['sha256'], 'SRSP_PRIORITY_ELF_BINDING')
+    return q
+
+
 def candidate():
     c = load(CANDIDATE/'candidate.json')
     need(sha(canonical(c)) == CANDIDATE_PIN and c['source_sha'] == SOURCE, 'FIRMWARE_PIN')
     for name in ('P7U-STOCK20260311-APP-ONLY.hex', 'P7U-STOCK20260311-AC000-HANDOFF.bin',
                  'profile.json', 'security-native-abi.json', 'handoff-receipt.json'):
         need(sha(read(CANDIDATE/name)) == c['files'][name], 'CANDIDATE_FILE')
+    runtime_priority_qualification(c)
     return c
 
 
@@ -724,7 +746,8 @@ async def deploy(package, pin, ha):
         # from an untrusted HEX length or widen through NV/CCFG.
         app_end = 0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
-            '85ce37c24802b0f16fec0afd00a1a0457656cd80') else 0x30000
+            '85ce37c24802b0f16fec0afd00a1a0457656cd80',
+            '7ee955430f2a6dd06548b8ca862c973558c8db54') else 0x30000
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],

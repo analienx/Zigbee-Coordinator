@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 
 INSTALLED = "899f179031aae74db2e48699900f1cf5722bb4de"
+QUALIFIED_SUCCESSORS = {"7ee955430f2a6dd06548b8ca862c973558c8db54": "85ce37c24802b0f16fec0afd00a1a0457656cd80"}
 PIN_FIELDS = ("candidate_pin", "previous_plan_pin", "previous_frozen_pin",
               "previous_snapshot_pin", "previous_journal_pin", "previous_candidate_pin",
               "input_pin")
@@ -28,12 +29,15 @@ def binding_values(raw, expected_pin, package):
          hashlib.sha256(raw).hexdigest() == expected_pin, "PIN")
     data=json.loads(raw)
     need(type(data) is dict and set(data) in (FIELDS,FIELDS|HOLD_FIELDS,FIELDS|HOLD_FIELDS|ATTACH_FIELDS) and data["schema"]=="p7u-paired-operation-v1", "FIELDS")
-    need(data["installed_source"]==INSTALLED and
+    installed=QUALIFIED_SUCCESSORS.get(data["source_sha"],INSTALLED)
+    need(data["installed_source"]==installed and
          re.fullmatch(r"[0-9a-f]{40}", data["source_sha"]) is not None, "SOURCES")
     need(package.get("firmware_source_sha")==data["source_sha"] and
          re.fullmatch(r"[0-9a-f]{40}",package.get("operator_source_sha", "")) is not None, "PACKAGE_SOURCE")
     host_source=package.get('paired_host_source_sha','')
     compatible=(host_source==data['source_sha'] or
+        (data['source_sha']=='7ee955430f2a6dd06548b8ca862c973558c8db54' and host_source=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
+         package.get('f2_wire_contract')=='R4D4_MINOR4_AND_R4D5_PAGED_V1') or
         (data['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and
          package.get('f2_wire_contract')=='R4D4_MINOR3_240_V1'))
     need(re.fullmatch(r'[0-9a-f]{40}',host_source) is not None and compatible and
@@ -41,7 +45,7 @@ def binding_values(raw, expected_pin, package):
     need(re.fullmatch(r"[0-9a-f]{32}", data["previous_operation"]) is not None, "PREVIOUS_OPERATION")
     need(all(isinstance(data[k],str) and re.fullmatch(r"[0-9a-f]{64}",data[k]) for k in PIN_FIELDS), "HASH_FIELDS")
     suffix=data["source_sha"][:12]
-    result={"SOURCE":data["source_sha"],"INSTALLED":INSTALLED,
+    result={"SOURCE":data["source_sha"],"INSTALLED":installed,
         "IMAGE":package["paired_host_image"],"CANDIDATE_PIN":data["candidate_pin"],
         "PAIRED_HOST_VERSION":"0.2.1-"+host_source[:12],
         "INPUT":Path("/share/p7u-paired-input-"+suffix),
