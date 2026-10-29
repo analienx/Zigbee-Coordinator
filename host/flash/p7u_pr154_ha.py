@@ -490,6 +490,27 @@ def bounded_reentry_provenance(ha, owner):
     return sha(canonical(evidence))
 
 
+def runtime_inventory_peers():
+    """Native-order identities independently known by original backup AND sealed DB."""
+    from p7u_usb_security_model import parse_backup
+    historical = parse_backup(load(INPUT/'historical-backup.json'))
+    raw = read(DATA/'database.db')
+    approval = load(DATA/'.p7u-approved.json')
+    need(approval.get('schema') == 'p7u-db-admission-v1' and
+         approval.get('database_sha256') == sha(raw), 'RUNTIME_INVENTORY_DB_PIN')
+    identities = set()
+    for line in raw.splitlines():
+        if not line.strip(): continue
+        row = json.loads(line)
+        need(type(row) is dict, 'RUNTIME_INVENTORY_ROW')
+        if row.get('type') not in ('Router', 'EndDevice'): continue
+        ieee = row.get('ieeeAddr')
+        need(type(ieee) is str and re.fullmatch('0x[0-9a-fA-F]{16}', ieee) is not None,
+             'RUNTIME_INVENTORY_IEEE')
+        identities.add(bytes.fromhex(ieee[2:]))
+    return frozenset(peer[::-1] for peer in historical.peers if peer in identities)
+
+
 def native_network_floor(sec, records, abi):
     nib = sec.get(records, 0, 0x21, abi['structs']['nwkIB_t']['size'])
     pan = sec.field(nib, abi, 'nwkIB_t', 'extendedPANID')
@@ -675,7 +696,9 @@ async def deploy(package, pin, ha):
                     'abi_sha256': sha(sec.abi_tool.canonical(abi)), 'reader_sha256': sha(read(reader)),
                     'profile_sha256': c['profile_sha256'], 'native_manifest_sha256': c['native_manifest_sha256']}
         security = sec.preflight(capture=current, baseline=old.snapshot, abi=abi, reader=reader,
-                                 bindings=bindings, runtime_upgrade=True)
+                                 bindings={**bindings, 'runtime_database_sha256': sha(read(DATA/'database.db')),
+                    'runtime_historical_backup_sha256': sha(read(INPUT/'historical-backup.json'))},
+                                 runtime_upgrade=True, runtime_inventory_peers=runtime_inventory_peers())
         durable(PRIVATE, 'security-receipt.json', security)
         need(security['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'NATIVE_SECURITY')
         records, counts = sec.read_private(reader, current)

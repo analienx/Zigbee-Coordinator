@@ -97,6 +97,19 @@ class Containment(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'ARCHIVE_HASH'): stage.install('a'*64, 'b'*64, 'c'*64)
             self.assertFalse((root/'install-intent.json').exists())
 
+    def test_runtime_inventory_requires_both_backup_and_protected_database(self):
+        # No arbitrary identity supplied by the caller is promoted into the set.
+        from types import SimpleNamespace
+        fake=SimpleNamespace(parse_backup=lambda raw:SimpleNamespace(peers={b'original':None,b'old-only':None}))
+        rows=op.canonical({'type':'Router','ieeeAddr':'0x'+b'original'.hex()})+b'\n'
+        rows+=op.canonical({'type':'EndDevice','ieeeAddr':'0x'+b'db-only!'.hex()})+b'\n'
+        def read(path):return rows if path.name=='database.db' else b'{}'
+        def load(path):return {'schema':'p7u-db-admission-v1','database_sha256':op.sha(rows)} if path.name=='.p7u-approved.json' else {}
+        with patch.dict(sys.modules,{'p7u_usb_security_model':fake}),patch.object(op,'read',side_effect=read),patch.object(op,'load',side_effect=load):
+            self.assertEqual(op.runtime_inventory_peers(),frozenset({b'original'[::-1]}))
+        with patch.dict(sys.modules,{'p7u_usb_security_model':fake}),patch.object(op,'read',side_effect=read),patch.object(op,'load',return_value={}):
+            with self.assertRaisesRegex(op.Hold,'RUNTIME_INVENTORY_DB_PIN'):op.runtime_inventory_peers()
+
     def test_counter_floor_uses_real_native_abi_field_names(self):
         from tests.test_p7u_stock20260311_security_preflight import security, synthetic_abi, formed
         abi = synthetic_abi(); records = formed(abi)
@@ -123,6 +136,7 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         self.inputs = self.root/'input'; self.inputs.mkdir()
         for name in ('installed-app.hex', 'installed-handoff.bin'): (self.inputs/name).write_bytes(b'oldpublic')
         (self.inputs/'historical-backup.json').write_text('{}')
+        (self.data/'database.db').write_text('{}')
         self.ha = Mock(); self.owner = {'image': op.IMAGE, 'id': 'one', 'running': True}
         self.ha.inspect.return_value = self.owner; self.ha.management.return_value = 'm'
         self.p = {'created_at': time.time(), 'owner': self.owner, 'management_sha256': 'm',
@@ -143,6 +157,7 @@ class Execution(unittest.IsolatedAsyncioTestCase):
         for name, value in [('check_plan', Mock(return_value=self.p)),
                             ('installed', Mock(return_value=(self.old, {}, {}, b'expected'))),
                             ('candidate', Mock(return_value={'profile_sha256': 'profile', 'native_manifest_sha256': 'manifest'})),
+                            ('runtime_inventory_peers', Mock(return_value=frozenset())),
                             ('modules', Mock(return_value=(self.t, self.sec, self.reconcile, self.factory, self.capture)))]:
             p = patch.object(op, name, value); p.start(); self.addCleanup(p.stop)
         p = patch.object(op.asyncio, 'sleep', AsyncMock()); p.start(); self.addCleanup(p.stop)

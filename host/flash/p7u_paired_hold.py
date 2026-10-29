@@ -50,8 +50,12 @@ def provenance(ns,ha,owner):
     need(pin==ns['PAIRED_ROM_HOLD_PLAN_PIN'] and p['operation_id']==root.name and
          p['source']==ns['SOURCE'] and p['installed']==ns['INSTALLED'] and
          p['candidate_pin']==ns['CANDIDATE_PIN'] and p['input_pin']==ns['PREVIOUS_INPUT_PIN'] and
-         p['owner']['running'] is True and p['owner']['image']==ns['IMAGE'] and
-         (dict(p['owner'],running=False)==owner or owner==absent) and
+         p['owner']['image']==ns['IMAGE'] and
+         ((p['owner']['running'] is True and
+           (dict(p['owner'],running=False)==owner or owner==absent)) or
+          (p['owner']==owner and p['owner']['running'] is False and
+           isinstance(p.get('quiescent_provenance_sha256'),str) and
+           re.fullmatch('[0-9a-f]{64}',p['quiescent_provenance_sha256']) is not None)) and
          owner['running'] is False and owner['image']==ns['IMAGE'] and
          not p.get('rom_continuation_sha256') and not p.get('bounded_reentry_sha256'),
          'PAIRED_READONLY_HOLD_PLAN')

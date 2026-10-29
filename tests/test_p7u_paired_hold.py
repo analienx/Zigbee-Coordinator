@@ -40,6 +40,21 @@ class ReadonlyHold(unittest.TestCase):
     def test_exact_zero_write_hold_can_prepare_a_new_rom_session(self):
         self.assertEqual(hold.provenance(self.ns,self.ha,self.owner),self.ns['PAIRED_ROM_HOLD_PIN'])
         self.ha.proof.assert_called_once_with(False)
+    def test_zero_write_hold_from_exact_quiescent_plan_is_supported(self):
+        self.plan.update(owner=self.owner,quiescent_provenance_sha256='f'*64)
+        self.pin=op.sha(op.canonical(self.plan))
+        for name in ('plan.json','execute-intent.json','bsl-entry-intent.json','hold.json'):
+            path=self.root/name
+            value=self.plan if name=='plan.json' else json.loads(path.read_bytes())
+            if name!='plan.json':value['plan_sha256']=self.pin
+            path.write_bytes(op.canonical(value))
+        self.ns['PAIRED_ROM_HOLD_PLAN_PIN']=self.pin;self.seal()
+        self.assertEqual(hold.provenance(self.ns,self.ha,self.owner),self.ns['PAIRED_ROM_HOLD_PIN'])
+        self.plan.pop('quiescent_provenance_sha256')
+        self.pin=op.sha(op.canonical(self.plan));(self.root/'plan.json').write_bytes(op.canonical(self.plan))
+        self.ns['PAIRED_ROM_HOLD_PLAN_PIN']=self.pin;self.seal()
+        with self.assertRaisesRegex(op.Hold,'HOLD_PLAN'):hold.provenance(self.ns,self.ha,self.owner)
+
     def test_admission_or_write_artifact_prevents_continuation(self):
         for name in ('admission.json','mutation-journal.jsonl','frozen-plan.json'):
             p=self.root/name;p.write_text('{}')
