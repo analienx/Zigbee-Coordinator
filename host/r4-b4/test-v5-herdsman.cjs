@@ -48,7 +48,12 @@ function adapterWithLink(chooser=pages) {
 const allowed={enabled:true,hostIdle:true,otaActive:false,stillAllowed:()=>true};
 test("V5 both pages use same one owner, 9-byte F2, no second serial",async()=>{
  const {owner,frames,znp}=adapterWithLink();
+ znp.b4F2ConsecutiveTimeouts=1;
+ znp.b4F2NextAllowedMs=0;
+ znp.b4F2ProgressAtTimeout=-1;
+ znp.b4F2OwnerProgress=0;
  const out=await owner.b4ReadHangFlightV5(allowed);
+ assert.equal(znp.b4F2ConsecutiveTimeouts,0);
  assert.equal(out?.abi,5);
  assert.equal(out?.pageSequence,17);
  assert.equal(out?.radioBootId,"0102030405060708");
@@ -64,6 +69,22 @@ test("V5 both pages use same one owner, 9-byte F2, no second serial",async()=>{
  assert.equal(znp.waitress.waiters.size,0);
  assert.equal(znp.b4IsDiagPoisoned(),false);
  assert.equal(owner.b4DiagInFlight,false);
+});
+test("V5 successful partial page must not erase prior timeout count",async()=>{
+ const {znp}=adapterWithLink();
+ // Prior timed-out probe; cooldown elapsed and normal owner progress advanced.
+ znp.b4F2ConsecutiveTimeouts=1;
+ znp.b4F2NextAllowedMs=0;
+ znp.b4F2ProgressAtTimeout=-1;
+ znp.b4F2OwnerProgress=0;
+ const nonce=Buffer.from("0102030405060708","hex");
+ const page1=await znp.b4ReadV5Page(1,nonce);
+ assert.equal(page1[5],1);
+ assert.equal(znp.b4F2ConsecutiveTimeouts,1);
+ const page2=await znp.b4ReadV5Page(2,nonce);
+ assert.equal(page2[5],2);
+ // Only the complete, validated adapter may acknowledge success.
+ assert.equal(znp.b4F2ConsecutiveTimeouts,1);
 });
 test("V5 bad page nonce or epoch quarantines, never exports stale evidence",async()=>{
  for(const kind of ["nonce","epoch","page"]){

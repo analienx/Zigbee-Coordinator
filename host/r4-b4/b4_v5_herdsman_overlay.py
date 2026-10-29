@@ -57,7 +57,9 @@ ZNP_METHOD=r'''
                     this.b4PoisonDiagSession();
                     throw new Error("B4 V5_INVALID_NATIVE_PAGE");
                 }
-                this.b4F2AcceptReply();
+                /* A page is not an accepted V5 diagnostic transaction.
+                 * Only the adapter may clear the shared timeout budget,
+                 * after BOTH pages and all invariants pass. */
                 return Buffer.from(data);
             } catch (error) {
                 this.waitress.b4Cancel(waiter.ID, "B4 v5 no stale waiter");
@@ -184,6 +186,10 @@ ADAPTER_METHOD=r'''
             if(events.length &&
                 (((a.readUInt32LE(28)-events[events.length-1].tick)>>>0)>=0x80000000))
                 throw new Error("B4 V5_TICK_HALF_RANGE_UNQUALIFIED");
+            /* Reset the V4-compatible timeout budget only after the entire
+             * nonce-bound two-page transaction is validated. In particular,
+             * a successful page1 must not forgive a page2 timeout. */
+            this.znp.b4F2AcceptReply();
             return {abi:5,pageSequence:a.readUInt32LE(24),
                 eventCount:counters.eventCount,counters,events,
                 firstAnomaly,preAnomaly,
