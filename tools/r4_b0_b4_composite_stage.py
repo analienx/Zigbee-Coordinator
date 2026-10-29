@@ -270,6 +270,20 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if srsp_reserve_c["status"] != "PASS":
         raise ValueError("V45_STATIC_SRSP_RESERVE_ACTUAL_C_FAILED")
 
+    # F2 v5 is opt-in LEN=9. The legacy LEN=8/minor4 handler stays untouched.
+    from r4_f2_v5_flight import apply as add_v5_flight
+    v5_flight=add_v5_flight(sdk)
+    for name in (TASK, MT, SYS):
+        earlier=(srsp_reserve["modified_sha256"][name] if name==TASK else
+                 f2_progress["modified_sha256"][name] if name==MT else
+                 srsp_service["modified_sha256"][name])
+        if v5_flight["before_sha256"][name] != earlier:
+            raise ValueError("F2_V5_SOURCE_CHAIN_DRIFT_"+name)
+    from r4_f2_v5_harness import exercise as exercise_v5
+    v5_actual_c=exercise_v5(sdk)
+    if v5_actual_c["status"] != "PASS":
+        raise ValueError("F2_V5_FLIGHT_SOURCE_C_FAILED")
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -309,8 +323,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != (srsp_reserve["modified_sha256"][name] if name == TASK else
-                                    srsp_service["modified_sha256"][name])):
+                afterhash[name] != v5_flight["modified_sha256"][name]):
             raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
@@ -333,7 +346,9 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for function in ("B4_V43_Request","B4_V43_Snapshot"):
         if function not in required:required.append(function)
     if "B4_V44_Snapshot" not in required: required.append("B4_V44_Snapshot")
-    for function in ("B4_V45_SendReservedSrsp", "B4_V45_QueueDynamicSrsp", "B4_V45_ReleaseReserved"):
+    for function in ("B4_V45_SendReservedSrsp", "B4_V45_QueueDynamicSrsp", "B4_V45_ReleaseReserved",
+                     "B4_V5_Record", "B4_V5_NpiPulse", "B4_V5_ReadPage1", "B4_V5_ReadPage2",
+                     "B4_SysReadOnlyDiagnosticsV5"):
         if function not in required: required.append(function)
     b1["post_b1_b3_b2_b4_source_composition"]="EXPLICIT_SEMANTIC_FUSION_STANDALONE_NATIVE_PENDING"
     b1["b2_pinned_commit"]=B2_SHA
@@ -363,6 +378,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "srsp_service_v44_actual_c":srsp_service_c,
         "srsp_reserve_v45":srsp_reserve,
         "srsp_reserve_v45_actual_c":srsp_reserve_c,
+        "f2_v5_flight":v5_flight,
+        "f2_v5_actual_c":v5_actual_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

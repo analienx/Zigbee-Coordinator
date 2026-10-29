@@ -43,6 +43,8 @@ jobs:
           python host/r4-b4/test-p7u-host-integrity.py -v
           python host/r4-b4/test-p7u-f2-acceptance.py -v
           python host/r4-b4/test-p7u-f2-freshness.py -v
+          python host/r4-b4/test-p7u-f2-v5-pages.py -v
+          python host/r4-b4/test-p7u-boundary-evidence.py -v
           python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding
           python host/r4-b4/test-p7u-passive-incidents.py -v
           python -m py_compile host/r4-b4/p7u_host_integrity.py
@@ -74,6 +76,7 @@ jobs:
             --receipt /tmp/b4-herdsman-v4-overlay.json
           PYTHONPATH=host/r4-b4 python host/recovery/p7u_herdsman_startup_hold.py --checkout "$B4_HERDSMAN_ROOT" --composition-receipt /tmp/b4-herdsman-v4-overlay.json --receipt /tmp/p7u-startup-hold.json
           python host/r4-b4/p7u_preservation_transport_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/p7u-preservation-transport.json
+          python host/r4-b4/b4_v5_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v5-overlay.json
       - name: Install exact herdsman package-manager version
         run: |
           npm install --global pnpm@10.33.0
@@ -91,7 +94,7 @@ jobs:
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
-          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-f2-boundary.cjs host/r4-b4/test-v44-service.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-v5-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-f2-boundary.cjs host/r4-b4/test-v44-service.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Adversarial no-serial worker durability tests (offline GH-hosted)
         run: |
@@ -108,6 +111,7 @@ jobs:
           python host/r4-b4/b4_z2m_ota_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_z2m_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-v4-z2m-ota-receipt.json
           python host/r4-b4/b4_v4_live_collector_overlay.py --checkout /tmp/b4-z2m-host --receipt /tmp/b4-z2m-collector-receipt.json
+          python host/r4-b4/b4_v5_live_collector_overlay.py --z2m /tmp/b4-z2m-host --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-z2m-v5-flight.json
       - name: TypeScript compile actual Z2M OTA+controller using patched herdsman private-owner API
         run: |
           set -euo pipefail

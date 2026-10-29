@@ -183,7 +183,7 @@ def analyze(rows: list[dict], *, now_ms: int, fresh_after_ms: int = 1_800_000,
             "FRESH" if age <= fresh_after_ms else "STALE"
         )
         mask = latest_valid.get("validityMask")
-        if type(mask) is not int or mask not in (0x2c, 0x3f, 0x00ffffec, 0x00ffffff):
+        if type(mask) is not int or mask not in (0x2c, 0x3f, 0x00ffffec, 0x00ffffff, 0x01ffffff):
             raise EvidenceHold("P7U_F2_EVIDENCE_HOLD_VALIDITY_MASK")
         native = {
             "sequence": latest_valid.get("sequence"),

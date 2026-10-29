@@ -251,6 +251,26 @@ class FreshnessTests(unittest.TestCase):
             analyze([f2(1000, 1, minor=2, validityMask=0x00ffffec,
                         mtLifecycle={**a, "rawPayload":123})], now_ms=2000)
 
+    def test_valid_minor4_mask_passes_initial_allowlist_and_strict_validation(self):
+        # Prior logic accepted 0x01ffffff in its minor4 branch but rejected
+        # exactly the same mask in its earlier general allowlist.
+        from f2_progress_contract import FIELDS as PROGRESS_FIELDS, CONGESTION_FIELDS
+        rec = f2(1000, 1, minor=4, validityMask=0x01ffffff,
+                 srspDepth=0, srspHighWater=0, asyncDepth=0, asyncHighWater=0,
+                 mtLifecycle={k: 0 for k in (
+                     "allProduced", "allEnqueued", "allAllocFailed", "allSendFailed",
+                     "allNpiReceived", "allFramedQueued", "allFramingFailed",
+                     "allTlSubmitted", "allTlRejected", "afDataProduced",
+                     "afDataEnqueued", "afDataAllocFailed", "afDataSendFailed",
+                     "afDataNpiReceived", "afDataFramedQueued", "afDataFramingFailed",
+                     "afDataTlSubmitted", "afDataTlRejected")},
+                 uartProgress={k: (10 if k == "tickPeriodUs" else 0)
+                               for k in PROGRESS_FIELDS},
+                 congestion={k: 0 for k in CONGESTION_FIELDS},
+                 radioEpochTag="source-only-example")
+        report = analyze([rec], now_ms=1000)
+        self.assertEqual(report["last_native"]["validity_mask"], 0x01ffffff)
+
     def test_future_clock_never_fabricates_freshness(self):
         q = analyze([f2(2_000)], now_ms=1_000)
         self.assertEqual(q["f2_freshness"], "CLOCK_UNCERTAIN")

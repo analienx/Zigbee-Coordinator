@@ -26,7 +26,7 @@ const allowed = new Set([
     "resetReason", "hostPackage", "firmwareSourceClaim", "failureClass",
     "submissionState", "timingQuality", "hostRunId", "ownerGeneration",
     "processUptimeMs", "hostTimeoutKind", "hostTimeoutAtMs", "hostTimeoutDropped",
-    "hostEvidence"
+    "hostEvidence", "flightV5"
 ]);
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const encode = (v) => Buffer.from(JSON.stringify(v) + "\n", "utf8");
@@ -39,7 +39,7 @@ function exists(file) {
 function sameRecord(entry) {
     hold(entry && typeof entry === "object" && !Array.isArray(entry), "RECORD_SHAPE");
     hold(Object.keys(entry).every(k => allowed.has(k)), "RECORD_FIELD");
-    hold(["VALID", "SKIPPED", "FAILED", "QUARANTINED", "OWNER_CLOSED"].includes(entry.kind), "KIND");
+    hold(["VALID", "SKIPPED", "FAILED", "QUARANTINED", "OWNER_CLOSED", "FLIGHT"].includes(entry.kind), "KIND");
     hold(Number.isSafeInteger(entry.utc) && entry.utc > 0, "UTC");
     hold(typeof entry.monotonicReceiveNs === "string" &&
         /^[0-9]{1,32}$/.test(entry.monotonicReceiveNs), "MONOTONIC");
@@ -47,6 +47,87 @@ function sameRecord(entry) {
         /^[a-f0-9-]{36}$/.test(entry.hostRunId), "RUN");
     hold(typeof entry.ownerGeneration === "string" &&
         /^[a-f0-9-]{36}$/.test(entry.ownerGeneration), "OWNER");
+    /* V5 flights share fsync/hash chain but are NOT legacy native VALID.
+     * Reject unknown nested keys, raw payloads, identity, nonce and boot. */
+    if (entry.kind === "FLIGHT") {
+        const keys=["schema","kind","utc","monotonicReceiveNs","hostRunId",
+                    "ownerGeneration","processUptimeMs","probeLatencyMs","flightV5",
+                    "radioEpochTag","radioEpochHardwareVerified","hostEvidence"];
+        hold(Object.keys(entry).length === keys.length &&
+             Object.keys(entry).every(k=>keys.includes(k)), "V5_FLIGHT_TOP_LEVEL");
+        const flight=entry.flightV5;
+        const exact=(x,keys)=>x && typeof x==="object" && !Array.isArray(x) &&
+            Object.keys(x).length===keys.length && Object.keys(x).every(k=>keys.includes(k));
+        const num=v=>Number.isSafeInteger(v) && v>=0 && v<=0xffffffff;
+        const fields=["npiWakes","npiLastTick","mtEntered","mtLastEnteredTick",
+            "mtExited","mtLastExitedTick","eventTotal","reserveUsed",
+            "reserveExhausted","reserveReleaseFault","reserveActive",
+            "allSrspProduced","allSrspAllocationFailed","allSrspFramingFailed",
+            "allSrspTlRejected","uartTxCallbackOk","uartTxCallbackError",
+            "uartRxBytes","validityFlags","eventCount","clockTickPeriodUs",
+            "npiRequests","uartWriteAccepted","uartWriteRejected","uartStateFlags",
+            "firstUartFaultKind","firstUartFaultTick","b1FirstFailure"];
+        hold(exact(flight,["abi","pageSequence","eventCount","counters","events","source",
+             "firstAnomaly","preAnomaly"]) &&
+            flight.abi===5 && flight.source==="RADIO_READ_ONLY" &&
+            num(flight.pageSequence) && flight.pageSequence>0 &&
+            num(flight.eventCount) && flight.eventCount<=16 &&
+            exact(flight.counters,fields) && fields.every(k=>num(flight.counters[k])) &&
+            flight.counters.eventCount===flight.eventCount &&
+            flight.counters.reserveActive<=3 &&
+            flight.counters.reserveUsed>=flight.counters.reserveActive &&
+            flight.counters.reserveReleaseFault<=flight.counters.reserveUsed &&
+            flight.counters.mtExited<=flight.counters.mtEntered &&
+            flight.counters.firstUartFaultKind<=5 &&
+            flight.counters.b1FirstFailure<=255 &&
+            (flight.counters.uartStateFlags&0xfff0)===0 &&
+            (flight.counters.firstUartFaultKind!==0 || flight.counters.firstUartFaultTick===0) &&
+            flight.counters.clockTickPeriodUs>0 &&
+            flight.counters.clockTickPeriodUs<=100000 &&
+            flight.counters.validityFlags<=7 &&
+            (flight.counters.validityFlags&2)===2 &&
+            flight.counters.eventCount===Math.min(flight.counters.eventTotal,16) &&
+            Array.isArray(flight.events) &&
+            flight.events.length===flight.eventCount, "V5_FLIGHT_COUNTERS");
+        hold(entry.radioEpochHardwareVerified===false &&
+            (entry.radioEpochTag===null ||
+             (typeof entry.radioEpochTag==="string" &&
+              /^[a-f0-9]{24}$/.test(entry.radioEpochTag))) &&
+            (entry.hostEvidence===null ||
+             (entry.hostEvidence!==undefined &&
+              typeof entry.hostEvidence==="object" &&
+              !Array.isArray(entry.hostEvidence))),
+            "V5_EPOCH_AND_PASSIVE_HOST");
+        const names=["AF","SYS","ZDO","OTHER"];
+        for(const event of flight.events) {
+            hold(exact(event,["tick","stage","subsystem","result"]) &&
+                num(event.tick) && num(event.result) && num(event.stage) &&
+                event.stage>=1 && event.stage<=9 &&
+                !(event.stage===8 && event.result===0) &&
+                names.includes(event.subsystem), "V5_FLIGHT_EVENT");
+        }
+        const validAnomaly=(event,required)=>event!==null &&
+            exact(event,["tick","stage","subsystem","result"]) &&
+            num(event.tick) && num(event.result) && num(event.stage) &&
+            event.stage>=1 && event.stage<=9 &&
+            !(event.stage===8 && event.result===0) &&
+            names.includes(event.subsystem) &&
+            (!required || ((event.stage===8 || event.stage===9) && event.result!==0));
+        if ((flight.counters.validityFlags&4)===4) {
+            hold(validAnomaly(flight.firstAnomaly,true) &&
+                (flight.preAnomaly===null || validAnomaly(flight.preAnomaly,false)),
+                "V5_FROZEN_ANOMALY");
+        } else {
+            hold(flight.firstAnomaly===null && flight.preAnomaly===null,
+                 "V5_UNQUALIFIED_ANOMALY");
+        }
+        hold(Number.isSafeInteger(entry.probeLatencyMs) &&
+            entry.probeLatencyMs>=0 && entry.probeLatencyMs<=30000 &&
+            Number.isSafeInteger(entry.processUptimeMs) &&
+            entry.processUptimeMs>=0, "V5_FLIGHT_TIMING");
+    } else {
+        hold(!Object.hasOwn(entry,"flightV5"),"V5_FLIGHT_ONLY");
+    }
     if (entry.kind === "VALID") {
         hold(entry.abi === 4 && Number.isSafeInteger(entry.sequence) &&
             entry.sequence > 0, "VALID_SEQUENCE");
