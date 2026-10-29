@@ -36,6 +36,7 @@ class Cases(unittest.TestCase):
         self.deps=(object(),object(),object(),object(),bytes(720896))
         self.ha=MagicMock()
         self.ha.inspect.return_value={"id":"new","image":"sha256:qualified","running":True}
+        self.ha.management.return_value="device"
         self.ns={"PRIVATE":self.home,"SOURCE":module.V6_SOURCE,
                  "IMAGE":"sha256:qualified","SERIAL":"/never/open/real/serial",
                  "Path":Path,
@@ -106,6 +107,7 @@ class Cases(unittest.TestCase):
 
     def test_success_only_ever_starts_one_owner(self):
         pin=self.planned()
+        self.ns["Path"]=lambda _:MagicMock(is_char_device=lambda:True)
         with patch.object(module,"_rom_observe",new=AsyncMock()) as rom:
             with patch.object(module.time,"sleep"):
                 result=module.execute(self.ns,self.home,"pin","sealed",pin,self.ha)
