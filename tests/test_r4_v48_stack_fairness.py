@@ -61,7 +61,7 @@ def extract_selector(src):
     cursor = ""
     if "b1_next_service" in selection:
         assert src.count("b1_next_service = (uint8_t)(idx + 1u);") == 1
-        cursor = ("        b1_next_service = (uint8_t)(idx + 1u);\\n"
+        cursor = ("        b1_next_service = (uint8_t)(idx + 1u);\n"
                   "        if (b1_next_service >= zstackTasksCnt) b1_next_service = 0u;")
     return selection, cursor
 
@@ -97,9 +97,11 @@ int main(void)
     with tempfile.TemporaryDirectory(prefix="p7u-v48-fairness-") as tmp:
         p = Path(tmp)
         (p / "scheduler.c").write_text(c)
-        subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                        str(p / "scheduler.c"), "-o", str(p / "scheduler")],
-                       check=True, capture_output=True, text=True)
+        compile_result = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                         str(p / "scheduler.c"), "-o", str(p / "scheduler")],
+                                        capture_output=True, text=True)
+        if compile_result.returncode:
+            raise AssertionError("HOSTED_C_COMPILE_FAILURE:\n" + compile_result.stderr)
         return subprocess.run([str(p / "scheduler")], capture_output=True,
                               text=True).returncode
 
@@ -116,7 +118,7 @@ class V48FairStackTest(unittest.TestCase):
         patched = patch_startup(DONOR)
         self.assertEqual(patched.count("b1_next_service = 0u;"), 2)
         self.assertIn("pTasksEvents[idx]", patched)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(RuntimeError, "ZDAPP_SOURCE_DRIFT"):
             patch_startup(patched)
 
 if __name__ == "__main__":
