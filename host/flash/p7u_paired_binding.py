@@ -14,6 +14,10 @@ QUALIFIED_SUCCESSORS = {
     "66ed700c2818c7a0963dad9160d55109009bbaac": "e3a0f3b7726adf1f6c182973f135665a5c3857e0",
 }
 OWNED_STAGE_PAIR=("66ed700c2818c7a0963dad9160d55109009bbaac","66ed700c2818c7a0963dad9160d55109009bbaac")
+# Host-only startup observability: independently compiled and released at exact
+# source. The radio ABI stays V6. Keep a fixed digest to prevent cross-pairing.
+V6_STARTUP_CAPTURE_HOST="2c2d96d6334b424f6364a982ad976a674b260e04"
+V6_STARTUP_CAPTURE_IMAGE="sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367"
 OWNED_STAGE_WIRE="R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1"
 PIN_FIELDS = ("candidate_pin", "previous_plan_pin", "previous_frozen_pin",
               "previous_snapshot_pin", "previous_journal_pin", "previous_candidate_pin",
@@ -46,7 +50,10 @@ def binding_values(raw, expected_pin, package):
         (data['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and
          package.get('f2_wire_contract')=='R4D4_MINOR3_240_V1'))
     if data['source_sha']==OWNED_STAGE_PAIR[0]:
-        compatible=((data['source_sha'],host_source)==OWNED_STAGE_PAIR and package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
+        original=((data['source_sha'],host_source)==OWNED_STAGE_PAIR)
+        instrumented=(host_source==V6_STARTUP_CAPTURE_HOST and
+                      package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE)
+        compatible=(original or instrumented) and package.get('f2_wire_contract')==OWNED_STAGE_WIRE
     need(re.fullmatch(r'[0-9a-f]{40}',host_source) is not None and compatible and
          re.fullmatch(r"sha256:[0-9a-f]{64}", package.get("paired_host_image", "")) is not None, "PAIRED_HOST")
     need(re.fullmatch(r"[0-9a-f]{32}", data["previous_operation"]) is not None, "PREVIOUS_OPERATION")
