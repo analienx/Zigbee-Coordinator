@@ -155,9 +155,11 @@ def install_stopped(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
     return _install_body(ns,root,plan,rendered,ha)
 
 
-def _install_body(ns,root,plan,rendered,ha):
+def _install_body(ns,root,plan,rendered,ha,published_root=None):
     need=ns["need"]
-    need(ns["load"](root/"publish-result.json")["pin"]==phase_pin,
+    phase_pin=ns["sha"](ns["canonical"](plan))
+    publication=published_root if published_root is not None else root
+    need(ns["load"](publication/"publish-result.json")["pin"]==phase_pin,
          "HOST_INSTALL_PUBLISH_PROOF")
     # Preserve the stopped owner's private startup evidence before replacement.
     owner=plan["old_owner"]
@@ -262,4 +264,4 @@ def continue_pre_mutation(ns,package,package_pin,writer_plan_pin,phase_pin,ha):
         "previous_mutation_attempts":0,
         "host_starts":0,"radio_actions":0,
     })
-    return _install_body(ns,root,plan,rendered,ha)
+    return _install_body(ns,root,plan,rendered,ha,published_root=previous)
