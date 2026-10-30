@@ -14,7 +14,7 @@ from tests.test_p7u_v50_stack_evidence import V50, e2, e3
 import p7u_hang_evidence_once as hang
 import p7u_paired_hold as hold
 import p7u_r4_startup_transport as transport
-from p7u_r4_startup_observer import Q0, Q3, Q4, Q5
+from p7u_r4_startup_observer import Q0, Q3, Q4, Q5, Q6, Q7
 from tests.test_p7u_v50_stack_evidence import e1
 
 
@@ -48,6 +48,13 @@ class Znp:
             if self.stuck:
                 raw[44] = 3; raw[40:44] = (700000).to_bytes(4, 'little')
             return bytes(raw)
+        if payload in (Q6, Q7):
+            t = bytearray(248); t[:6] = (b'B1E4' if payload == Q6 else b'B1E5') + b'\x01\xf8'
+            t[6] = 2; t[7] = 5 if payload == Q6 else 60; t[8:12] = bytes.fromhex(V50[:8])
+            t[16] = 2; t[36:38] = (950).to_bytes(2, 'little'); t[38] = 3
+            t[44:46] = (2500).to_bytes(2, 'little'); t[48:50] = (990).to_bytes(2, 'little')
+            t[50] = 3; t[56:58] = (2400).to_bytes(2, 'little')
+            return bytes(t)
         if payload == Q3:
             return e1(V50, 4, 6)
         if payload == Q0:
@@ -92,14 +99,19 @@ class HangEvidence(unittest.TestCase):
         self.assertEqual(value['status'], 'HANG_EVIDENCE_CAPTURED')
         self.assertEqual(value['classification'], 'STACK_SATURATED')
         self.assertEqual(value['mt_ping'], 'RESPONDED')
-        self.assertEqual(znp.sent, [(1, 241, Q5), (1, 241, Q4), (1, 241, Q3), (1, 241, Q0),
-                                    (1, 241, Q4), (1, 1, b'')])
+        self.assertEqual(znp.sent, [(1, 241, Q5), (1, 241, Q4), (1, 241, Q7), (1, 241, Q6),
+                                    (1, 241, Q3), (1, 241, Q0), (1, 241, Q4), (1, 1, b'')])
         stored = self.stored(value)
         self.assertEqual(stored['onset_record']['summary']['onset_top_service'], 2)
         self.assertGreater(stored['stack_profile']['stack_busy_percent'], 90)
+        coarse = stored['trend']['coarse_60min']
+        self.assertEqual([e['heap_low'] for e in coarse['entries']], [40000, 38400])
+        self.assertEqual(coarse['entries'][1]['busy_permille'], 990)
+        self.assertEqual(stored['trend']['fine_5min']['period_min'], 5)
         lines = (self.root / value['evidence_dir'] / 'evidence.jsonl').read_text().splitlines()
         self.assertEqual([json.loads(x)['response'] for x in lines],
-                         ['B1E3', 'B1E2', 'B1E1', 'B1S1', 'B1E2_LATER', 'SYS_PING'])
+                         ['B1E3', 'B1E2', 'B1E5', 'B1E4', 'B1E1', 'B1S1', 'B1E2_LATER',
+                          'SYS_PING'])
         intent = json.loads((self.root / value['evidence_dir'] / 'intent.json').read_text())
         self.assertFalse(intent['reset_authorized'] or intent['host_start_authorized'])
         self.ha.proof.assert_called_once_with(False)
@@ -117,7 +129,7 @@ class HangEvidence(unittest.TestCase):
     def test_stuck_dispatch_and_dead_mt_are_distinguished(self):
         self.assertEqual(self.invoke(Znp(stuck=True))['classification'], 'STACK_DISPATCH_STUCK')
         self.port.close.reset_mock()
-        value = self.invoke(Znp(fail_at=5, busy=False))
+        value = self.invoke(Znp(fail_at=7, busy=False))
         self.assertEqual(value['classification'], 'MT_PATH_UNRESPONSIVE')
         self.assertEqual(value['mt_ping'], 'NO_RESPONSE')
         self.assert_read_only()

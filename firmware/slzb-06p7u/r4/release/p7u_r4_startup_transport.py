@@ -15,8 +15,10 @@ Q2=b"B1Q1\x01\x08\x02\x00"
 Q3=b"B1Q1\x01\x08\x03\x00"
 Q4=b"B1Q1\x01\x08\x04\x00"
 Q5=b"B1Q1\x01\x08\x04\x01"
+Q6=b"B1Q1\x01\x08\x04\x02"
+Q7=b"B1Q1\x01\x08\x04\x03"
 EXPECTED={Q0:(b"B1S1",24),Q2:(b"B1P1",32),Q3:(b"B1E1",128),Q4:(b"B1E2",248),
-          Q5:(b"B1E3",248)}
+          Q5:(b"B1E3",248),Q6:(b"B1E4",248),Q7:(b"B1E5",248)}
 # V50 B1E2 sampling: every Nth RUNNING poll, then twice after terminal proof.
 # V51 B1E3 rides along with each RUNNING B1E2 and once after terminal proof.
 STACK_RUNNING_EVERY=4

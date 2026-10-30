@@ -5,7 +5,9 @@ it the V51 B1E3 onset record of the hours-long collapse. This captures it
 first: only after the sole Z2M owner is stopped and the TTY is proven
 quiescent, through the qualified StartupSerial/FramedZnp owner, with only
 B1Q1 read-only queries (answered by the priority-6 NPI owner, never the
-Stack task) and one final SYS_PING probing the MT/Stack path. Every reply is
+Stack task): the B1E3 onset record, B1E2 live Stack profile, B1E5/B1E4
+60-minute and 5-minute trend rings, B1E1 and B1S1, then one final SYS_PING
+probing the MT/Stack path. Every reply is
 fsynced before the next request. No reset, BSL entry, radio restart,
 startup request, NV access, host start or retry; a fresh directory per run.
 """
@@ -43,9 +45,10 @@ def capture(ns, package, package_pin, plan_pin, ha):
     started = ns["load"](ns["PRIVATE"] / "started-pending-serving.json")
     need(started.get("source") == ns["SOURCE"], "HANG_EVIDENCE_SOURCE_NOT_INSTALLED")
     ns["modules"](package)
-    from p7u_r4_startup_observer import (Q0, Q3, Q4, Q5, EvidenceError, checked, decode_e1,
-                                         decode_e2, decode_e3, onset_evidence_supported,
-                                         onset_summary, stack_profile)
+    from p7u_r4_startup_observer import (Q0, Q3, Q4, Q5, Q6, Q7, EvidenceError, checked,
+                                         decode_e1, decode_e2, decode_e3, decode_trend,
+                                         onset_evidence_supported, onset_summary,
+                                         stack_profile)
     from p7u_r4_startup_transport import FramedZnp, PrivateEvidenceJournal
     source = ns["SOURCE"]
     need(onset_evidence_supported(source), "HANG_EVIDENCE_REQUIRES_B1E3_SOURCE")
@@ -60,7 +63,7 @@ def capture(ns, package, package_pin, plan_pin, ha):
     root.mkdir(mode=0o700)
     ns["durable"](root, "intent.json", {
         "source": source, "plan_sha256": plan_pin, "package_pin": package_pin, "owner": owner,
-        "queries": ["B1E3", "B1E2", "B1E1", "B1S1", "B1E2", "SYS_PING"],
+        "queries": ["B1E3", "B1E2", "B1E5", "B1E4", "B1E1", "B1S1", "B1E2", "SYS_PING"],
         "reset_authorized": False, "bsl_authorized": False, "startup_authorized": False,
         "host_start_authorized": False, "at": time.time()})
     replies, failure, port, journal, znp = {}, None, None, None, None
@@ -78,7 +81,8 @@ def capture(ns, package, package_pin, plan_pin, ha):
             replies[name] = raw
 
         # Most valuable first: one timeout latches the transport unusable.
-        for name, query in (("B1E3", Q5), ("B1E2", Q4), ("B1E1", Q3), ("B1S1", Q0)):
+        for name, query in (("B1E3", Q5), ("B1E2", Q4), ("B1E5", Q7), ("B1E4", Q6),
+                            ("B1E1", Q3), ("B1S1", Q0)):
             ask(name, 1, 241, query)
         time.sleep(LIVE_GAP_SECONDS)
         ask("B1E2_LATER", 1, 241, Q4)
@@ -110,6 +114,10 @@ def capture(ns, package, package_pin, plan_pin, ha):
     e3 = decoded("B1E3", decode_e3)
     first = decoded("B1E2", decode_e2)
     later = decoded("B1E2_LATER", decode_e2)
+    coarse = decoded("B1E5", decode_trend)
+    fine = decoded("B1E4", decode_trend)
+    if coarse is not None or fine is not None:
+        result["trend"] = {"coarse_60min": coarse, "fine_5min": fine}
     e1 = decoded("B1E1", decode_e1)
     status = decoded("B1S1", lambda raw, src: checked(raw, b"B1S1", 24, src))
     live = later or first

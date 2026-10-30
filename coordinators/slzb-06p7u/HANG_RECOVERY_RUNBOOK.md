@@ -27,10 +27,11 @@
 It then sends, in this order, each reply fsynced to a fresh private `hang-evidence-*/evidence.jsonl` before the next request:
 1. B1E3, the onset record;
 2. B1E2;
-3. B1E1;
-4. B1S1;
-5. B1E2 again, 1 s later, for the live Stack CPU profile;
-6. one `SYS_PING`, which goes through MT, i.e. the Stack task.
+3. B1E5 and B1E4, the 17 x 60-minute and 17 x 5-minute trend rings;
+4. B1E1;
+5. B1S1;
+6. B1E2 again, 1 s later, for the live Stack CPU profile;
+7. one `SYS_PING`, which goes through MT, i.e. the Stack task.
 
 All B1Q1 queries are answered by the priority-6 NPI owner, never the Stack task. The capture never resets, enters BSL, restarts the radio, sends a startup request, touches NV or starts a host. A first timeout latches the transport and ends the capture; the partial result is still written.
 
@@ -50,6 +51,8 @@ What to read in the B1E3 onset record:
 - NV time per Stack service;
 - OSAL heap free, low-water and largest block;
 - Stack and NPI task stack high-water.
+
+The trend rings show the buildup before the hang, per bucket: Stack busy, top service, longest dispatch, NV time, heap low, MAC data requests and confirm failures. The 60-minute ring covers about 17 hours.
 
 Publish only sanitized counters. Keep the journal private.
 

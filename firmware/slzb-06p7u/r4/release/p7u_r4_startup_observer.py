@@ -13,14 +13,17 @@ Q2 = b"B1Q1\x01\x08\x02\x00"
 Q3 = b"B1Q1\x01\x08\x03\x00"
 Q4 = b"B1Q1\x01\x08\x04\x00"
 Q5 = b"B1Q1\x01\x08\x04\x01"
+Q6 = b"B1Q1\x01\x08\x04\x02"
+Q7 = b"B1Q1\x01\x08\x04\x03"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
 # V50 keeps the armed sole NPI owner at priority6 for the whole boot and
 # answers RAM-only B1E2 (op4) Stack-service evidence. Older firmware must
 # still report the original priority4 at READY and has no B1E2.
-V50_SOURCES = frozenset({"e31a07579e06cfde261b3531ae1061d47fd975f5"})
-# V51 (same NPI floor and B1E2) adds the B1E3 (op4 page1) onset record.
-V51_SOURCES = frozenset({"e31a07579e06cfde261b3531ae1061d47fd975f5"})
+V50_SOURCES = frozenset({"2b3d737bbd447215e1c10ddbc288be649c55e1b5"})
+# V51 (same NPI floor and B1E2) adds the B1E3 (op4 page1) onset record and
+# the B1E4/B1E5 (op4 page2/3) 5-minute and 60-minute trend rings.
+V51_SOURCES = frozenset({"2b3d737bbd447215e1c10ddbc288be649c55e1b5"})
 
 def expected_ready_npi_priority(source: str) -> int:
     return 6 if source in V50_SOURCES else 4
@@ -48,7 +51,8 @@ def checked(raw: bytes, tag: bytes, length: int, source: str):
     require(len(raw) == length and raw[:4] == tag
             and raw[4] == 1 and raw[5] == length,
             "RESPONSE_SCHEMA_INVALID_" + tag.decode())
-    require(raw[8:12] == bytes.fromhex(source[:8]) if tag in (b"B1E1", b"B1E2", b"B1E3")
+    require(raw[8:12] == bytes.fromhex(source[:8])
+            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5")
             else raw[12:16] == bytes.fromhex(source[:8]),
             "SOURCE_DIGEST_MISMATCH_" + tag.decode())
     return raw
@@ -177,6 +181,29 @@ def decode_e3(raw: bytes, source: str) -> dict:
             "boot_worst": dispatch(180),
             "task_stack": {"stack_used": uint16(raw, 240), "stack_size": uint16(raw, 242),
                            "npi_used": uint16(raw, 244), "npi_size": uint16(raw, 246)}}
+
+TREND_ENTRIES = 17
+
+def decode_trend(raw: bytes, source: str) -> dict:
+    """V51 B1E4 (17 x 5 min) or B1E5 (17 x 60 min) ring, oldest first."""
+    require(onset_evidence_supported(source), "ONSET_EVIDENCE_UNSUPPORTED_SOURCE")
+    tag = bytes(raw[:4])
+    require(tag in (b"B1E4", b"B1E5"), "TREND_EVIDENCE_TAG_INVALID")
+    checked(raw, tag, 248, source)
+    count = raw[6]
+    require(raw[7] == (5 if tag == b"B1E4" else 60) and count <= TREND_ENTRIES and
+            uint32(raw, 16) >= count and not any(raw[36 + 12 * count:248]),
+            "TREND_EVIDENCE_SCHEMA_INVALID")
+    def entry(offset):
+        return {"busy_permille": uint16(raw, offset),
+                "top_service": raw[offset + 2] - 1 if raw[offset + 2] else None,
+                "mac_cnf_failed": raw[offset + 3], "max_dispatch_ms": uint16(raw, offset + 4),
+                "nv_ms": uint16(raw, offset + 6),
+                "heap_low": uint16(raw, offset + 8) * 16 if uint16(raw, offset + 8) else None,
+                "mac_data_req": uint16(raw, offset + 10)}
+    return {"period_min": raw[7], "now": uint32(raw, 12), "pushed": uint32(raw, 16),
+            "partial_ticks": uint32(raw, 20), "partial": entry(24),
+            "entries": [entry(36 + 12 * i) for i in range(count)]}
 
 def onset_summary(e3: dict, tick_period_us: int) -> dict:
     """Human-scale view of a decoded B1E3 (needs the B1E2 tick period)."""
