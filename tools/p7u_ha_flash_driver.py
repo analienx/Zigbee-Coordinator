@@ -13,6 +13,8 @@ Replaces the per-version p7u_vNN_* scripts. Every phase records its pins in
   boot     ONE native boot, retained startup and source-bound observer
   finish   read-only completion after READY_OBSERVED_VERIFICATION_INCOMPLETE
   status   read-only operation status and decoded startup evidence
+  serving  read-only acceptance: fresh non-retained MQTT v5 (RH2) traffic from
+           >=3 existing device topics, through the running paired host
   hang     read-only hang evidence (B1E3/B1E2/B1E5/B1E4) before ROM recovery
 
 deploy/boot/finish write a local intent BEFORE contacting HA and refuse to
@@ -302,6 +304,37 @@ assert sha((newbind/"binding.json").read_bytes())==bindingpin
 print(json.dumps({"status":"BINDING_STAGED_NO_RADIO","input_pin":inputpin,"binding_pin":bindingpin}))
 '''
 
+# Runs on HA inside the running paired host: subscribe only, RH2, discard
+# retained and bridge topics, require last_seen after the subscription.
+SERVING = r'''import json,subprocess,time
+container="app_local_p7u_r4_native_host";image=%r
+def owner():return json.loads(subprocess.check_output(["docker","inspect",container]))[0]
+c=owner();assert c["State"]["Running"] and c["Image"]==image,"HOST_NOT_RUNNING_PAIRED_IMAGE"
+js=r"""
+const fs=require('fs'),yaml=require('js-yaml'),mqtt=require('mqtt');
+const cfg=yaml.load(fs.readFileSync('/config/zigbee2mqtt/configuration.yaml','utf8'));
+const start=Date.now();let connected=false,subscribed=false,seen=new Set(),messages=0,retained=0,done=false;
+const m=mqtt.connect(cfg.mqtt.server,{username:cfg.mqtt.user,password:cfg.mqtt.password,protocolVersion:5,clean:true,
+ clientId:'p7u_serving_ro_'+start,connectTimeout:5000,reconnectPeriod:0});
+function finish(error=null){if(done)return;done=true;console.log(JSON.stringify({connected,subscribed,
+ elapsedSeconds:(Date.now()-start)/1000,freshDevices:seen.size,freshNonretainedMessages:messages,retainedRejected:retained,
+ passed:connected&&subscribed&&seen.size>=3,error}));m.end(true);setTimeout(()=>process.exit(0),50);}
+m.on('connect',()=>{connected=true;m.subscribe('zigbee2mqtt/+',{qos:0,rh:2},e=>{if(e)finish('SUBSCRIBE');else subscribed=true;});});
+m.on('message',(topic,payload,packet)=>{if(packet.retain){retained++;return;}
+ if(!/^zigbee2mqtt\/[^/]+$/.test(topic)||topic==='zigbee2mqtt/bridge')return;
+ try{const d=JSON.parse(payload.toString());let t=d.last_seen;
+ if(typeof t==='string')t=Date.parse(t);else if(typeof t==='number'&&t<1e11)t*=1000;
+ if(typeof t!=='number'||!Number.isFinite(t)||t<start||t>Date.now()+5000)return;
+ seen.add(topic);messages++;if(seen.size>=3&&messages>=6)finish();}catch{}});
+m.on('error',()=>finish('MQTT_CONNECTION'));setTimeout(()=>finish(),90000);
+"""
+p=subprocess.run(["docker","exec","-i",container,"node","-"],input=js,capture_output=True,text=True,timeout=100)
+lines=[x for x in p.stdout.splitlines() if x.startswith("{")];after=owner()
+assert after["Id"]==c["Id"] and after["State"]["StartedAt"]==c["State"]["StartedAt"] and after["State"]["Running"]
+print(json.dumps({"utc":int(time.time()*1000),"rc":p.returncode,"owner":c["Id"][:12],"restarts":after["RestartCount"],
+ "evidence":json.loads(lines[-1]) if lines else None}))
+'''
+
 STARTUP_SUMMARY = r'''import json,pathlib
 op=pathlib.Path(%r);out={}
 for name in ("native-boot/startup-result.json","guarded-startup-recovery/startup-result.json",
@@ -321,7 +354,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("phase", choices=("fetch", "stage", "plan", "deploy", "boot", "finish",
-                                          "status", "hang"))
+                                          "status", "serving", "hang"))
     parser.add_argument("--workdir", required=True, help="local per-delivery state directory")
     parser.add_argument("--firmware")
     parser.add_argument("--installed", help="currently installed firmware source SHA")
@@ -341,6 +374,11 @@ def main():
         return d.plan(a)
     if a.phase == "status":
         return d.status(a)
+    if a.phase == "serving":
+        result = d.remote_python(SERVING % (HOST_IMAGE,), timeout=130)
+        d.save(serving_runs=d.state.get("serving_runs", []) + [result])
+        print(json.dumps(result, indent=2))
+        return 0 if (result.get("evidence") or {}).get("passed") else 1
     if a.phase == "deploy":
         return d.live("deploy", "deploy", 1500, require="plan_pin")
     if a.phase == "boot":
