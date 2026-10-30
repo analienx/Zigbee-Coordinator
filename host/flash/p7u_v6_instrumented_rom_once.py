@@ -193,10 +193,15 @@ def execute(ns,package,package_pin,write_pin,pin,ha):
         last=ha.info(ns["OWNER"])
         try:
             raw=json.loads(ns["run"](["docker","inspect","app_"+ns["OWNER"]]))[0]
+        except (OSError, ValueError, KeyError, IndexError):
+            raw=None
+        if raw is not None:
+            # A wrong image is an explicit security HOLD, not an
+            # 'observation unavailable' condition.
             need(raw["Image"]==IMAGE,"INSTRUMENTED_ROM_NEW_HOST_IMAGE")
             container={"id":raw["Id"][:12],"running":raw["State"]["Running"],
                        "exit_code":raw["State"]["ExitCode"]}
-        except Exception:
+        else:
             container={"observation":"unavailable"}
         try:log=ns["run"](["docker","logs","app_"+ns["OWNER"]],30)
         except Exception:log=b""
