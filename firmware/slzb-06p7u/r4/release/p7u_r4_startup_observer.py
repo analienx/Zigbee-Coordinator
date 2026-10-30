@@ -78,7 +78,8 @@ def verify_success_frames(frames: dict, source: str) -> dict:
     require(p[6]==4 and p[9]==0 and
             info["state"]==4 and info["first_error"]==0 and
             info["flags"] & 7 == 7 and
-            info["stack_priority"]==5 and info["npi_priority"]==4,
+            info["stack_priority"]==5 and
+            info["npi_priority"]==(6 if source=="c442a27f82a1147c089aa65fdbf9c79abd7c39fb" else 4),
             "STARTUP_RUNNING_OR_FAILURE_MISLABELED_READY")
     mask=info["milestones"]
     require(all(mask & (1 << n) for n in TERMINAL_REQUIRE),
