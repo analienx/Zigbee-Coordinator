@@ -35,7 +35,7 @@ class Tests(unittest.TestCase):
             "release_sha256":"test-manifest","archive_sha256":mod.ARCHIVE_SHA,
             "write_plan_pin":"write-plan","write_receipt_sha256":"verified-write",
             "database_sha256":"database","board_sha256":"board",
-            "package_pin":"package-pin","scope":"PUBLISH_PREBUILT_INSTALL_STOPPED_ONLY",
+            "package_pin":mod.FIRST_PUBLISH_PACKAGE_PIN,"scope":"PUBLISH_PREBUILT_INSTALL_STOPPED_ONLY",
             "radio_actions":0,"host_starts":0
         }
         self.ns={
@@ -107,6 +107,9 @@ class Tests(unittest.TestCase):
 
     def test_fresh_continuation_is_not_a_replay(self):
         pin=self.planned()
+        # New source/pin is independently sealed. Historical publisher plan
+        # continues to bind only the immutable original package.
+        self.payload["package_pin"]="new-sealed-package-pin"
         previous=self.root/mod.OP_ROOT
         self.durable(previous,"publish-intent.json",{"pin":pin})
         self.durable(previous,"publish-result.json",{"pin":pin})
@@ -131,6 +134,26 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(Hold,"HOST_INSTALL_CONTINUATION_ALREADY_CONSUMED"):
             mod.continue_pre_mutation(self.ns,self.root,"package-pin",
                                       "write-plan",pin,self.ha)
+
+    def test_continuation_rejects_unknown_original_publisher(self):
+        pin=self.planned()
+        previous=self.root/mod.OP_ROOT
+        self.durable(previous,"publish-intent.json",{"pin":pin})
+        self.durable(previous,"publish-result.json",{"pin":pin})
+        self.durable(previous,"prior-host.log",b"prior")
+        self.durable(previous,"backup-database-db.bin",b"unchanged")
+        p=self.ns["load"](previous/"plan.json")
+        p["package_pin"]="unknown-original-package"
+        (previous/"plan.json").write_bytes(self.ns["canonical"](p))
+        data=self.root/"data"
+        data.mkdir()
+        (data/"database.db").write_bytes(b"unchanged")
+        self.ns["DATA"]=data
+        self.ns["file_sha"]=lambda f:hashlib.sha256(f.read_bytes()).hexdigest()
+        wrong=self.ns["sha"](self.ns["canonical"](p))
+        with self.assertRaisesRegex(Hold,"HOST_INSTALL_CONTINUATION_PROVENANCE_OR_TTL"):
+            mod.continue_pre_mutation(self.ns,self.root,"new-pin","write-plan",wrong,self.ha)
+        self.assertFalse((self.root/(mod.OP_ROOT+"-continuation")).exists())
 
     def test_continuation_rejects_any_previous_install_intent(self):
         pin=self.planned()
