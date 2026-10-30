@@ -9,6 +9,7 @@ on:
       - 'tests/test_p7u_r4_adapter_provision.py'
       - 'tests/test_p7u_r4_operator.py'
       - 'tests/test_p7u_r4_startup_observer.py'
+      - 'tests/test_p7u_v50_stack_evidence.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py'
       - 'firmware/slzb-06p7u/r4/release/p7u_r4_startup_transport.py'
       - 'tests/test_p7u_r4_completion_observer.py'
@@ -32,7 +33,7 @@ jobs:
         run: |
           python --version
           python -m py_compile firmware/slzb-06p7u/r4/release/p7u_r4_operator.py firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py firmware/slzb-06p7u/r4/release/p7u_r4_startup_transport.py firmware/slzb-06p7u/r4/release/p7u_r4_adapter_provision.py
-          python -m unittest -v tests.test_p7u_r4_operator tests.test_p7u_r4_startup_observer tests.test_p7u_r4_completion_observer tests.test_p7u_r4_completion_source tests.test_p7u_r4_adapter_provision
+          python -m unittest -v tests.test_p7u_r4_operator tests.test_p7u_r4_startup_observer tests.test_p7u_v50_stack_evidence tests.test_p7u_r4_completion_observer tests.test_p7u_r4_completion_source tests.test_p7u_r4_adapter_provision
       - name: No operator script may touch an unapproved live radio in CI
         run: |
           python - <<'PY'
