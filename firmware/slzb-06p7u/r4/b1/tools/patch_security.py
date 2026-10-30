@@ -879,6 +879,44 @@ def patch_startup(source: str) -> str:
         '    }\n'
         '    MT_TaskInit( tmpServiceId );\n'
         '    b1_management_note_mt_registered();', 'MT actual registration lifecycle')
+    # V48: the donor starts each scan at index 0. On retained startup the
+    # continuously-ready NWK service (index 2 in the real NPI-enabled build)
+    # exhausted thousands of wakeups while ZDApp's INIT bit remained pending.
+    # Rotate *selection* among the original service handlers; do not dispatch
+    # INIT directly or bypass any ZDApp security/startup gate. One handler is
+    # still called per scheduler wake and the donor's critical sections remain.
+    source = replace_once(source,
+        "    while(1)\n    {\n      /* Block here until TIRTOS task gets an event */",
+        "    uint8_t b1_next_service = 0u;\n"
+        "    while(1)\n    {\n      /* Block here until TIRTOS task gets an event */",
+        "B1 fair dispatch cursor lifetime")
+    source = replace_once(source,
+        "      uint8_t idx = 0;\n\n"
+        "     // copy the priority-based round-robin scheduler from OSAL\n"
+        "      do {\n"
+        "        if (*(pTasksEvents[idx]))  // Task is highest priority that is ready.\n"
+        "        {\n"
+        "          break;\n"
+        "        }\n"
+        "      } while (++idx < zstackTasksCnt);",
+        "      uint8_t idx = b1_next_service;\n"
+        "      uint8_t b1_scanned = 0u;\n"
+        "      while (b1_scanned < zstackTasksCnt)\n"
+        "      {\n"
+        "        if (*(pTasksEvents[idx])) break;\n"
+        "        idx++;\n"
+        "        if (idx >= zstackTasksCnt) idx = 0u;\n"
+        "        b1_scanned++;\n"
+        "      }\n"
+        "      if (b1_scanned == zstackTasksCnt) idx = zstackTasksCnt;",
+        "B1 fair bounded wraparound service scan")
+    source = replace_once(source,
+        "      if (idx < zstackTasksCnt)\n      {\n        uint32_t events, key;",
+        "      if (idx < zstackTasksCnt)\n      {\n"
+        "        b1_next_service = (uint8_t)(idx + 1u);\n"
+        "        if (b1_next_service >= zstackTasksCnt) b1_next_service = 0u;\n"
+        "        uint32_t events, key;",
+        "B1 fair selector advancement before handler")
     # TI 8.33 dispatcher consumes one semaphore credit before selecting a
     # highest-ready service. Returned bits are ORed back, but the donor
     # forgot to restore any credit. A two-bit event can strand the second
