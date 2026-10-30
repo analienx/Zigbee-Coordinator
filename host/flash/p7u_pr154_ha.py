@@ -750,7 +750,8 @@ async def deploy(package, pin, ha):
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',
             'e3a0f3b7726adf1f6c182973f135665a5c3857e0',
-            '66ed700c2818c7a0963dad9160d55109009bbaac') else 0x30000
+            '66ed700c2818c7a0963dad9160d55109009bbaac',
+            '391d7a5b24d459f347a8ff2378c751ebcc7eec4b') else 0x30000
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
