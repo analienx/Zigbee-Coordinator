@@ -325,6 +325,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if startup_npi_c['status'] != 'PASS':
         raise ValueError('V47_BOUNDED_STARTUP_INGRESS_BEHAVIORAL_FAILURE')
 
+    # V48: the real V47 hardware kept NPI responsive but a posted
+    # ZDO_NETWORK_INIT remained pending while Stack dispatched >4k earlier
+    # services. Select the existing guarded ZDApp INIT/START task once when
+    # its event is already pending; do not post or forge another event.
+    from r4_retained_zdapp_fairness import apply as apply_zdapp_fairness
+    zdapp_fairness=apply_zdapp_fairness(sdk)
+    if zdapp_fairness['source_before_sha256'] != owned_stage['modified_sha256'][STACK]:
+        raise ValueError('V48_V47_STACK_PREIMAGE_HASH_DRIFT')
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -366,6 +375,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for name in (TASK,SYS):
         final_expected = (startup_npi['modified_sha256'][TASK] if name == TASK
                           else owned_stage['modified_sha256'][SYS])
+    if afterhash[STACK] != zdapp_fairness['source_modified_sha256']:
+        raise ValueError('V48_ZDAPP_FINAL_SOURCE_NOT_BOUND')
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
                 afterhash[name] != final_expected):
             raise ValueError("F2_V42_V47_SOURCE_RECEIPT_UNBOUND_"+name)
@@ -448,6 +459,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "owned_overdue_stage_actual_c":owned_stage_c,
         "v47_bounded_startup_ingress":startup_npi,
         "v47_startup_ingress_actual_c":startup_npi_c,
+        "v48_retained_zdapp_fairness":zdapp_fairness,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
