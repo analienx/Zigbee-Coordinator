@@ -165,6 +165,8 @@ try:
    result['rom_security_pass']=rom.get('all88_crc_verified') is True and rom.get('security_pass') is True
   probe=root/'postfailure-f2-readonly'/'result.json'
   if probe.is_file():result['post_failure_f2']=op.load(probe)
+  passive=root/'postfailure-usb-passive'/'result.json'
+  if passive.is_file():result['post_failure_usb_passive']=op.load(passive)
   results.append(result)
  print(json.dumps({'status':'READONLY_RECOVERY_STATUS','firmware_source':op.SOURCE,
                    'host_running':owner['running'],'host_image_matches':owner['image']==op.IMAGE,
