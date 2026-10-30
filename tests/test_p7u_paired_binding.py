@@ -41,7 +41,8 @@ class Binding(unittest.TestCase):
                 self.call(data,{**package,field:bad})
         data['source_sha']='e3a0f3b7726adf1f6c182973f135665a5c3857e0'
         data['installed_source']=binding.QUALIFIED_SUCCESSORS[data['source_sha']]
-        with self.assertRaisesRegex(ValueError,'PAIRED_HOST'):
+        # Incompatible firmware is rejected at the stricter package-source gate.
+        with self.assertRaisesRegex(ValueError,'PACKAGE_SOURCE'):
             self.call(data,package)
 
     def fixture(self):
