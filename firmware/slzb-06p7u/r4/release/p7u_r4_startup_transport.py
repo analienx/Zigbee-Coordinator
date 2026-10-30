@@ -48,6 +48,7 @@ class FramedZnp:
         self.unusable=False
         self.history=[]
         self._current=None
+        self.preboot_bad_fcs=0
 
     @staticmethod
     def frame(sub,cmd,payload):
@@ -59,7 +60,7 @@ class FramedZnp:
         for v in raw: fcs^=v
         return b"\xfe"+raw+bytes((fcs,))
 
-    def _next(self,deadline):
+    def _next(self,deadline,*,allow_preboot_fcs_resync=False):
         from p7u_r4_startup_observer import require
         while self.clock()<deadline:
             while self.buffer:
@@ -75,6 +76,13 @@ class FramedZnp:
                 del self.buffer[:size]
                 fcs=0
                 for v in wire[1:]:fcs^=v
+                if fcs!=0 and allow_preboot_fcs_resync and not self.outstanding:
+                    # Only before the first request and with an absolute fixed
+                    # deadline: ignore at most one corrupted unsolicited frame.
+                    # Never accept its contents as a valid reset indication.
+                    self.preboot_bad_fcs+=1
+                    require(self.preboot_bad_fcs<=1,"ZNP_PREBOOT_FCS_BUDGET_EXCEEDED")
+                    continue
                 require(fcs==0,"ZNP_CHECKSUM_MISMATCH")
                 return wire[2],wire[3],wire[4:-1]
             if self._current is not None:

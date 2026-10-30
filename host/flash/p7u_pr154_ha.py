@@ -180,7 +180,7 @@ def runtime_priority_qualification(c):
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                       '66ed700c2818c7a0963dad9160d55109009bbaac',
                       '250441cd17c55e25c78d97e041f056574355ade7',
-                      'c442a27f82a1147c089aa65fdbf9c79abd7c39fb'): return None
+                      'de107b1c9ab871bd640ade0f6a7708e5799473c3'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -755,7 +755,7 @@ async def deploy(package, pin, ha):
             '66ed700c2818c7a0963dad9160d55109009bbaac',
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
             '250441cd17c55e25c78d97e041f056574355ade7',
-            'c442a27f82a1147c089aa65fdbf9c79abd7c39fb') else 0x30000
+            'de107b1c9ab871bd640ade0f6a7708e5799473c3') else 0x30000
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],

@@ -142,6 +142,64 @@ class ReadonlyHold(unittest.TestCase):
         (package/'x').write_bytes(b'changed')
         with self.assertRaisesRegex(op.Hold,'FILE_PIN'):hold.verified_pair_package(ns,plan_pin)
 
+    def test_instrumented_v47_v48_v49_recovery_matches_typed_binding(self):
+        from tests.test_p7u_paired_binding import binding, Binding
+        for firmware in (
+            '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
+            '250441cd17c55e25c78d97e041f056574355ade7',
+            'de107b1c9ab871bd640ade0f6a7708e5799473c3',
+        ):
+            installed=binding.QUALIFIED_SUCCESSORS[firmware]
+            cases=[
+                ({}, {}, True),
+                ({'paired_host_source_sha':'f'*40}, {}, False),
+                ({'paired_host_image':'sha256:'+'0'*64}, {}, False),
+                ({'f2_wire_contract':'wrong'}, {}, False),
+                ({'firmware_source_sha':'f'*40}, {}, False),
+                ({}, {'installed':'0'*40}, False),
+            ]
+            for updates, plan_changes, accepted in cases:
+                with self.subTest(firmware=firmware,updates=updates,plan=plan_changes):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root=Path(tmp)
+                        operations=root/'operations';operations.mkdir(mode=0o700)
+                        private=operations/('1'*32);private.mkdir(mode=0o700)
+                        image=binding.V6_STARTUP_CAPTURE_IMAGE
+                        meta={'operator_source_sha':'6'*40,'firmware_source_sha':firmware,
+                              'paired_host_source_sha':binding.V6_STARTUP_CAPTURE_HOST,
+                              'paired_host_image':image,
+                              'f2_wire_contract':binding.OWNED_STAGE_WIRE,
+                              'files':{'x':op.sha(b'original')}}
+                        meta.update(updates);raw=op.canonical(meta);pin=op.sha(raw)
+                        package=root/('p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16])
+                        package.mkdir(mode=0o700)
+                        (package/'PACKAGE.json').write_bytes(raw)
+                        (package/'x').write_bytes(b'original')
+                        plan={'source':firmware,'installed':installed,'package_pin':pin,
+                              'owner':dict(self.owner,image=image)}
+                        plan.update(plan_changes)
+                        (private/'plan.json').write_bytes(op.canonical(plan))
+                        ns=dict(self.ns,SOURCE=firmware,PRIVATE=private,OPERATIONS=operations,
+                                sealed_tree=op.sealed_tree)
+                        if accepted:
+                            self.assertEqual(hold.verified_pair_package(
+                                ns,op.sha(op.canonical(plan))),package)
+                        else:
+                            with self.assertRaisesRegex(op.Hold,'WRITER_BINDING'):
+                                hold.verified_pair_package(ns,op.sha(op.canonical(plan)))
+                        # Prevent any divergence between package recovery and
+                        # initial typed delivery admission on the same host ABI.
+                        data,typed=Binding().fixture()
+                        data.update(source_sha=firmware,installed_source=plan['installed'])
+                        typed.update({k:meta[k] for k in
+                            ('firmware_source_sha','paired_host_source_sha',
+                             'paired_host_image','f2_wire_contract')})
+                        if accepted:
+                            self.assertEqual(Binding().call(data,typed)['SOURCE'],firmware)
+                        else:
+                            with self.assertRaises(ValueError):
+                                Binding().call(data,typed)
+
     def test_native_resume_accepts_only_exact_successor_host_wire_pair(self):
         fw='e3a0f3b7726adf1f6c182973f135665a5c3857e0'
         host='85ce37c24802b0f16fec0afd00a1a0457656cd80'

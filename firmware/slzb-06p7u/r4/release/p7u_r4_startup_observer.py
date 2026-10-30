@@ -16,7 +16,7 @@ TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 # V49 keeps the existing sole NPI owner at priority6 after admitted READY.
 # Older firmware must still report the original priority4 at READY.
 def expected_ready_npi_priority(source: str) -> int:
-    return 6 if source == "c442a27f82a1147c089aa65fdbf9c79abd7c39fb" else 4
+    return 6 if source == "de107b1c9ab871bd640ade0f6a7708e5799473c3" else 4
 
 class EvidenceError(RuntimeError):
     pass

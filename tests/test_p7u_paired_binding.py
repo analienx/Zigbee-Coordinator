@@ -64,7 +64,7 @@ class Binding(unittest.TestCase):
 
     def test_v49_exact_successor_to_v48_reuses_instrumented_host(self):
         data,package=self.fixture()
-        data.update(source_sha='c442a27f82a1147c089aa65fdbf9c79abd7c39fb',
+        data.update(source_sha='de107b1c9ab871bd640ade0f6a7708e5799473c3',
                     installed_source='250441cd17c55e25c78d97e041f056574355ade7')
         package.update(firmware_source_sha=data['source_sha'],
                        paired_host_source_sha=binding.V6_STARTUP_CAPTURE_HOST,
@@ -89,7 +89,7 @@ class Binding(unittest.TestCase):
         self.assertEqual(len(nodes),1)
         scope={}
         exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path),"exec"),scope)
-        self.assertEqual(scope["expected_ready_npi_priority"]("c442a27f82a1147c089aa65fdbf9c79abd7c39fb"),6)
+        self.assertEqual(scope["expected_ready_npi_priority"]("de107b1c9ab871bd640ade0f6a7708e5799473c3"),6)
         self.assertEqual(scope["expected_ready_npi_priority"]("250441cd17c55e25c78d97e041f056574355ade7"),4)
         self.assertEqual(scope["expected_ready_npi_priority"]("0"*40),4)
         self.assertIn('info["npi_priority"]==expected_ready_npi_priority(source)',src)

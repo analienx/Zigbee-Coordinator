@@ -118,7 +118,25 @@ def verified_pair_package(ns,plan_pin):
     ns['need'](len(matches)==1,'PAIRED_STARTUP_WRITER_PACKAGE')
     package=matches[0];meta=ns['sealed_tree'](package,'PACKAGE.json',pin)
     host=meta.get('paired_host_source_sha')
-    compatible=(host==ns['SOURCE'] or
+    # Keep recovery consistent with the *exact* source/image/wire successors
+    # admitted by p7u_paired_binding. A source-specific writer cannot be
+    # recovered by a different host or by a forged older wire contract.
+    instrumented_predecessors={
+        '391d7a5b24d459f347a8ff2378c751ebcc7eec4b':
+            '66ed700c2818c7a0963dad9160d55109009bbaac',
+        '250441cd17c55e25c78d97e041f056574355ade7':
+            '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
+        'de107b1c9ab871bd640ade0f6a7708e5799473c3':
+            '250441cd17c55e25c78d97e041f056574355ade7',
+    }
+    exact_instrumented=(ns['SOURCE'] in instrumented_predecessors and
+        p.get('installed')==instrumented_predecessors[ns['SOURCE']] and
+        host=='2c2d96d6334b424f6364a982ad976a674b260e04' and
+        meta.get('paired_host_image')==
+            'sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367' and
+        meta.get('f2_wire_contract')=='R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1')
+    compatible=((host==ns['SOURCE'] and ns['SOURCE'] not in instrumented_predecessors) or
+        exact_instrumented or
         (ns['SOURCE']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and
          host=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
          meta.get('f2_wire_contract')=='R4D4_MINOR4_AND_R4D5_PAGED_V1'))

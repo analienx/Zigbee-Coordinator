@@ -53,7 +53,7 @@ def main():
     v48_pair=(c['source_sha']=='250441cd17c55e25c78d97e041f056574355ade7' and
         host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
         host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
-    v49_pair=(c['source_sha']=='c442a27f82a1147c089aa65fdbf9c79abd7c39fb' and
+    v49_pair=(c['source_sha']=='de107b1c9ab871bd640ade0f6a7708e5799473c3' and
         host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
         host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
     assert host['source_sha']==c['source_sha'] or owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or v49_pair or priority_pair or (c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and host['source_sha']==c['source_sha']), 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
