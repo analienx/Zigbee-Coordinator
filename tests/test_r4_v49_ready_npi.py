@@ -50,7 +50,7 @@ class V49ReadyNpi(unittest.TestCase):
     def test_exact_sticky_ready_and_ordinary_90s_timeout(self):
         out=apply(self.p.parents[4])
         actual=self.p.read_text()
-        self.assertEqual(out["schema"],"p7u-v49-retained-ready-npi-owner-v1")
+        self.assertEqual(out["schema"],"p7u-v49-retained-ready-npi-owner-v2")
         self.assertFalse(out["flash_authorized"])
         self.assertEqual(actual.count(MARKER),1)
         self.assertIn("b1_startup_state() == B1_STARTUP_READY",actual)
@@ -71,7 +71,7 @@ int main(void)
     if (B4_V47_ActiveLocked(1u)!=0u) return 11;
     B4_V47_Armed=1u;
     if (B4_V47_ActiveLocked(1u)!=1u || !B4_V47_Armed) return 12;
-    if (B4_V47_ActiveLocked(0u)!=0u || B4_V47_Armed) return 13;
+    if (B4_V47_ActiveLocked(0u)!=0u || !B4_V47_Armed) return 13;
     B4_V47_Armed=1u; fake_tick=10u;
     if (B4_V47_ActiveLocked(0u)!=1u || !B4_V47_Armed) return 14;
     return 0;
@@ -85,6 +85,25 @@ int main(void)
         self.assertEqual(compile.returncode,0,compile.stderr)
         run=subprocess.run([str(root/"control")],capture_output=True,text=True)
         self.assertEqual(run.returncode,0,run.stderr)
+
+    def test_real_v47_to_v49_composed_refresh_compiled_and_mutants_killed(self):
+        # Use the actual V47 source transformer, not a string-built V49 fake.
+        from tests.test_r4_v47_startup_ingress import NPI, ZDO_BODY
+        from r4_startup_ingress_priority import apply as apply_v47, ZDO
+        from r4_ready_npi_priority_harness import exercise
+        root=self.p.parents[4]
+        self.p.write_text(NPI)
+        z=root/ZDO
+        z.parent.mkdir(parents=True,exist_ok=True)
+        z.write_text(ZDO_BODY)
+        apply_v47(root)
+        receipt=apply(root)
+        self.assertTrue(receipt["slow_start_ready_eligible_without_running_priority_extension"])
+        actual=exercise(root)
+        self.assertEqual(actual["status"],"PASS")
+        self.assertTrue(actual["compiled_actual_refresh"])
+        self.assertGreaterEqual(len(actual["negative_mutants_rejected"]),6)
+        self.assertFalse(actual["hardware_state9_proven"])
 
     def test_reapply_fails_closed_without_write(self):
         apply(self.p.parents[4])

@@ -342,6 +342,13 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     ready_npi=apply_ready_npi(sdk)
     if ready_npi['before_sha256'] != startup_npi['modified_sha256'][TASK]:
         raise ValueError('V49_V48_NPI_PREIMAGE_HASH_DRIFT')
+    # Compile the emitted TI Refresh function and reject genuine control-flow
+    # mutants, not merely look for source substrings. Native CI runs this on
+    # the full composed SDK before the two independent native builds.
+    from r4_ready_npi_priority_harness import exercise as exercise_ready_npi
+    ready_npi_c = exercise_ready_npi(sdk)
+    if ready_npi_c['status'] != 'PASS':
+        raise ValueError('V49_COMPOSED_REFRESH_ACTUAL_C_FAILED')
 
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
@@ -470,6 +477,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "v47_bounded_startup_ingress":startup_npi,
         "v47_startup_ingress_actual_c":startup_npi_c,
         "v48_retained_zdapp_fairness":zdapp_fairness,
+        "v49_actual_composed_refresh_c":ready_npi_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
