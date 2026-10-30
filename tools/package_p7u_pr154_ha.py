@@ -60,6 +60,7 @@ def main():
     shutil.copyfile('host/flash/p7u_paired_finish.py', dest.with_name('p7u_paired_finish.py'))
     shutil.copyfile('host/flash/p7u_paired_boot.py', dest.with_name('p7u_paired_boot.py'))
     shutil.copyfile('host/flash/p7u_v6_rom_recovery.py', dest.with_name('p7u_v6_rom_recovery.py'))
+    shutil.copyfile('host/flash/p7u_v6_recover_local.py', dest.with_name('p7u_v6_recover_local.py'))
     shutil.copyfile('host/r4-b4/f2_progress_contract.py', dest.with_name('f2_progress_contract.py'))
     if args.reader_package:
         (args.out/'security-reader-aarch64').write_bytes(qualified_reader(args.reader_package))

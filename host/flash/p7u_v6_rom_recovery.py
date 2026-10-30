@@ -6,14 +6,34 @@ the consumed native-boot action. It must run on the authorized HA host, never on
 GitHub-hosted runner. No secrets, flash payload or raw private evidence are exported.
 """
 import asyncio
+import gzip
+import hashlib
 import json
 import os
 import time
+import urllib.request
 import zlib
 
 V6_SOURCE = "66ed700c2818c7a0963dad9160d55109009bbaac"
 ROOT_NAME = "rom-recovery-v6"
 MAX_PLAN_AGE_SECONDS = 1800
+CONTROL_SOURCE_SHA256 = "2d50552d71bf55f8f87aeabece9f4dae01d589d9e2e88699ec0b15e8e8e600ed"
+
+
+def control_source(need):
+    """Check the installed OS and its actual opcode source before any action."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open("http://192.168.50.59/ha_info", timeout=8) as response:
+        info = json.load(response)["Info"]
+    need(info.get("sw_version") == "v3.4.3.dev1", "RECOVERY_CONTROL_OS")
+    with opener.open("http://192.168.50.59/js/httpApi.js", timeout=8) as response:
+        raw = response.read(65537)
+    need(len(raw) <= 65536, "RECOVERY_CONTROL_SOURCE_SIZE")
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    need(len(raw) <= 65536 and hashlib.sha256(raw).hexdigest() == CONTROL_SOURCE_SHA256,
+         "RECOVERY_CONTROL_SOURCE")
+    return CONTROL_SOURCE_SHA256
 
 
 def _checked(ns, package, plan_pin, ha):
@@ -46,6 +66,14 @@ def _checked(ns, package, plan_pin, ha):
     ha.proof(False)
     management = ha.management()
     need(management == write["management_sha256"], "RECOVERY_DEVICE_CHANGED")
+    control = control_source(need)
+    guard_file = ns["CANDIDATE"] / "host" / "p7u-startup-hold.json"
+    guard = ns["load"](guard_file)
+    need(guard.get("retained_only") is True
+         and guard.get("mandatory_readonly_f1") is True
+         and guard.get("restore_automatically_allowed") is False
+         and guard.get("virgin_commissioning_allowed") is False,
+         "RECOVERY_PROTECTED_HOST_STARTUP")
     info = ha.info(ns["OWNER"])
     need(
         info["state"] in ("error", "stopped")
@@ -67,6 +95,8 @@ def _checked(ns, package, plan_pin, ha):
         "image": ns["IMAGE"],
         "owner": owner,
         "management_sha256": management,
+        "control_source_sha256": control,
+        "host_startup_guard_sha256": ns["file_sha"](guard_file),
         "write_plan_sha256": plan_pin,
         "failed_boot_sha256": ns["file_sha"](
             private / "native-boot" / "startup-result.json"

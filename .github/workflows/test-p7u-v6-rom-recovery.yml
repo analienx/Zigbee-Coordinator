@@ -5,9 +5,11 @@ on:
     paths:
       - '.github/workflows/test-p7u-v6-rom-recovery.yml'
       - 'host/flash/p7u_v6_rom_recovery.py'
+      - 'host/flash/p7u_v6_recover_local.py'
       - 'host/flash/p7u_pr154_ha.py'
       - 'tools/package_p7u_pr154_ha.py'
       - 'tests/test_p7u_v6_rom_recovery.py'
+      - 'tests/test_p7u_v6_recover_local.py'
   workflow_dispatch:
 
 permissions:
@@ -27,10 +29,10 @@ jobs:
           python-version: '3.12'
       - name: Compile versioned operator modules
         run: |
-          python -m py_compile host/flash/p7u_v6_rom_recovery.py host/flash/p7u_pr154_ha.py tools/package_p7u_pr154_ha.py
+          python -m py_compile host/flash/p7u_v6_rom_recovery.py host/flash/p7u_v6_recover_local.py host/flash/p7u_pr154_ha.py tools/package_p7u_pr154_ha.py
       - name: Verify one-shot guards without live equipment
         run: |
-          python -m unittest -v tests.test_p7u_v6_rom_recovery
+          python -m unittest -v tests.test_p7u_v6_rom_recovery tests.test_p7u_v6_recover_local
       - name: Assert hosted job never has a live-operation step
         run: |
           python - <<'PY'
