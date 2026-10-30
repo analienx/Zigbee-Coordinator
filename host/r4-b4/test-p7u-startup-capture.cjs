@@ -45,6 +45,8 @@ test("startup capture is opt-in and observer errors cannot fail startup",async t
 });
 
 test("the real retained manager records the state-change wait without a second startup",async t=>{
+    const old=process.env.P7U_B4_STARTUP_CAPTURE;process.env.P7U_B4_STARTUP_CAPTURE="1";
+    t.after(()=>{if(old===undefined)delete process.env.P7U_B4_STARTUP_CAPTURE;else process.env.P7U_B4_STARTUP_CAPTURE=old;});
     let now=100000;t.mock.method(performance,"now",()=>now);t.mock.timers.enable({apis:["setTimeout"]});
     const phases=[],requests=[];let finish;
     const stateReady=new Promise(resolve=>{finish=resolve;});
@@ -60,6 +62,15 @@ test("the real retained manager records the state-change wait without a second s
     finish();await pending;
     assert.deepEqual(phases,["ZDO_START_OFFERED","ZDO_START_ACK","STATE_CHANGE_PENDING","STATE9_READY"]);
     assert.equal(requests.length,1);assert.equal(requests[0][1],"startupFromApp");
+});
+
+test("startup remains successful when optional trace callbacks throw",async ()=>{
+    const znp={requestWithReply:async()=>({payload:{devicestate:0}}),
+        waitFor:()=>({start:()=>({promise:Promise.resolve()})}),request:async()=>{},
+        b4StartupTrace:()=>{throw Error("evidence unavailable");}};
+    const manager=new ZnpAdapterManager({},znp,{});
+    manager.p7uRetainedNetworkValidated=true;manager.p7uRequireRetainedR4Status=async()=>{};
+    await manager.beginStartup();
 });
 
 test("state-change metadata includes only the parsed state, no frame payload",t=>{

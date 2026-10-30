@@ -200,25 +200,27 @@ def herdsman(root):
                 ZnpCommandStatus.SUCCESS,
                 ZnpCommandStatus.FAILURE,
             ]);
-            await started.start().promise;''','''            this.znp.b4StartupTrace("ZDO_START_OFFERED");
-            const b4StartupTimer=setTimeout(()=>this.znp.b4StartupTrace("STATE_CHANGE_PENDING"),4000);
-            b4StartupTimer.unref();
+            await started.start().promise;''','''            const b4Trace=(phase:string):void=>{try{this.znp.b4StartupTrace?.(phase);}catch{}};
+            b4Trace("ZDO_START_OFFERED");
+            const b4StartupTimer=process.env.P7U_B4_STARTUP_CAPTURE==="1" ?
+                setTimeout(()=>b4Trace("STATE_CHANGE_PENDING"),4000) : undefined;
+            b4StartupTimer?.unref();
             try {
                 await this.znp.request(Subsystem.ZDO, "startupFromApp", {startdelay: 100}, undefined, undefined, [
                     ZnpCommandStatus.SUCCESS,
                     ZnpCommandStatus.FAILURE,
                 ]);
-                this.znp.b4StartupTrace("ZDO_START_ACK");
+                b4Trace("ZDO_START_ACK");
                 await started.start().promise;
-                this.znp.b4StartupTrace("STATE9_READY");
+                b4Trace("STATE9_READY");
             } catch(error) {
-                this.znp.b4StartupTrace("STARTUP_FAILED");
+                b4Trace("STARTUP_FAILED");
                 throw error;
             } finally {
                 clearTimeout(b4StartupTimer);
             }''','STARTUP_ZDO_WAIT_TRACE')
     s=once(s,'            logger.debug("adapter is already running in coordinator mode", NS);',
-        '            this.znp.b4StartupTrace("ALREADY_COORDINATOR");\n            logger.debug("adapter is already running in coordinator mode", NS);','STARTUP_ALREADY_READY_TRACE')
+        '            try{this.znp.b4StartupTrace?.("ALREADY_COORDINATOR");}catch{}\n            logger.debug("adapter is already running in coordinator mode", NS);','STARTUP_ALREADY_READY_TRACE')
     files[p]=s
     p='src/adapter/z-stack/unpi/parser.ts';s=(root/p).read_text()
     s=once(s,'    public b4NoWireIngress() {',
