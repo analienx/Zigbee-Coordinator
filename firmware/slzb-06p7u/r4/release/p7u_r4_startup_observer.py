@@ -13,6 +13,11 @@ Q2 = b"B1Q1\x01\x08\x02\x00"
 Q3 = b"B1Q1\x01\x08\x03\x00"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
+# V49 keeps the existing sole NPI owner at priority6 after admitted READY.
+# Older firmware must still report the original priority4 at READY.
+def expected_ready_npi_priority(source: str) -> int:
+    return 6 if source == "c442a27f82a1147c089aa65fdbf9c79abd7c39fb" else 4
+
 class EvidenceError(RuntimeError):
     pass
 
@@ -79,7 +84,7 @@ def verify_success_frames(frames: dict, source: str) -> dict:
             info["state"]==4 and info["first_error"]==0 and
             info["flags"] & 7 == 7 and
             info["stack_priority"]==5 and
-            info["npi_priority"]==(6 if source=="c442a27f82a1147c089aa65fdbf9c79abd7c39fb" else 4),
+            info["npi_priority"]==expected_ready_npi_priority(source),
             "STARTUP_RUNNING_OR_FAILURE_MISLABELED_READY")
     mask=info["milestones"]
     require(all(mask & (1 << n) for n in TERMINAL_REQUIRE),
