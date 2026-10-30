@@ -29,7 +29,9 @@ CLIENT="source/ti/zstack/npi/npi_client_mt.c"
 MT="source/ti/zstack/mt/mt.c"
 MTZDO="source/ti/zstack/mt/mt_zdo.c"
 STACK="source/ti/zstack/startup/zstackstartup.c"
-COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO)
+ZMAC="source/ti/zstack/zmac/f8w/zmac.c"
+ZMAC_CB="source/ti/zstack/zmac/f8w/zmac_cb.c"
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO,ZMAC,ZMAC_CB)
 
 def outside_write_scope(sdk):
     """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
@@ -334,21 +336,26 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if zdapp_fairness['source_before_sha256'] != owned_stage['modified_sha256'][STACK]:
         raise ValueError('V48_V47_STACK_PREIMAGE_HASH_DRIFT')
 
-    # V49 actual hardware: V48 reached B1 READY, but post-READY NPI B1P1
-    # timed out before the external state9/marker proof. Preserve priority6
-    # for the SAME sleeping NPI owner only while the admitted retained B1
-    # transaction is READY; incomplete startup still expires after 90s.
-    from r4_ready_npi_priority import apply as apply_ready_npi
-    ready_npi=apply_ready_npi(sdk)
-    if ready_npi['before_sha256'] != startup_npi['modified_sha256'][TASK]:
-        raise ValueError('V49_V48_NPI_PREIMAGE_HASH_DRIFT')
-    # Compile the emitted TI Refresh function and reject genuine control-flow
-    # mutants, not merely look for source substrings. Native CI runs this on
-    # the full composed SDK before the two independent native builds.
-    from r4_ready_npi_priority_harness import exercise as exercise_ready_npi
-    ready_npi_c = exercise_ready_npi(sdk)
-    if ready_npi_c['status'] != 'PASS':
-        raise ValueError('V49_COMPOSED_REFRESH_ACTUAL_C_FAILED')
+    # V50 (supersedes unflashed V49): V47/V48 B1E1 show the priority5 Stack
+    # inside an NWK 0x2070 dispatch on every sample; the native priority4 NPI
+    # then answered zero bytes after V47's window closed. Keep the armed NPI
+    # owner above the Stack for the boot (HOLD deboosts), age starved Stack
+    # services, and expose per-service CPU and MAC counters as B1E2 op4.
+    source_sha=b1.get("source_sha")
+    from r4_v50_stack_service import apply as apply_v50
+    v50=apply_v50(sdk,source_sha)
+    for name,expected_hash in ((TASK,startup_npi['modified_sha256'][TASK]),
+                               (STACK,zdapp_fairness['source_modified_sha256']),
+                               (ZMAC,b1.get('modified_zmac_sha256')),
+                               (ZMAC_CB,b1.get('modified_zmac_cb_sha256'))):
+        if v50['before_sha256'][name] != expected_hash:
+            raise ValueError('V50_SOURCE_CHAIN_DRIFT_'+name)
+    # Compile the emitted NPI refresh, the real composed Stack loop and the
+    # B1E2 query, and reject behavior mutants on this exact composed SDK.
+    from r4_v50_stack_service_harness import exercise as exercise_v50
+    v50_c=exercise_v50(sdk,source_sha)
+    if v50_c['status'] != 'PASS':
+        raise ValueError('V50_COMPOSED_ACTUAL_C_FAILED')
 
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
@@ -388,12 +395,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if afterhash[name] != runtime_priority["modified_sha256"][name]:
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
-    if afterhash[STACK] != zdapp_fairness['source_modified_sha256']:
-        raise ValueError('V48_ZDAPP_FINAL_SOURCE_NOT_BOUND')
-    if afterhash[TASK] != ready_npi['modified_sha256']:
-        raise ValueError('V49_READY_NPI_FINAL_SOURCE_NOT_BOUND')
+    for name in (ZMAC,ZMAC_CB):
+        afterhash[name]=hashlib.sha256((sdk/name).read_bytes()).hexdigest()
+    beforehash[ZMAC]=b1.get('modified_zmac_sha256')
+    beforehash[ZMAC_CB]=b1.get('modified_zmac_cb_sha256')
+    for name in (TASK,STACK,ZMAC,ZMAC_CB):
+        if afterhash[name] != v50['modified_sha256'][name]:
+            raise ValueError('V50_FINAL_SOURCE_NOT_BOUND_'+name)
     if afterhash[SYS] != owned_stage['modified_sha256'][SYS]:
-        raise ValueError('V49_SYS_UNEXPECTED_SOURCE_DRIFT')
+        raise ValueError('V50_SYS_UNEXPECTED_SOURCE_DRIFT')
     for name in (TASK,SYS):
         if f2_progress['before_sha256'][name] != f2_causal['modified_sha256'][name]:
             raise ValueError("F2_V42_SOURCE_CHAIN_UNBOUND_"+name)
@@ -405,6 +415,10 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if b1.get("modified_mt_zdo_sha256") != startup_npi['before_sha256'][MTZDO]:
         raise ValueError("V47_MT_ZDO_B1_PREIMAGE_RECEIPT_UNBOUND")
     b1["modified_mt_zdo_sha256"]=afterhash[MTZDO]
+    # V50 adds RAM-only MAC counters to the B1-owned ZMac TUs; the native
+    # sealer re-checks modified_zmac_sha256 against the linked source.
+    b1["modified_zmac_sha256"]=afterhash[ZMAC]
+    b1["modified_zmac_cb_sha256"]=afterhash[ZMAC_CB]
     for name in (TASK,UART,SYS,MT,STACK):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
@@ -437,6 +451,9 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         required.append("B4_V46_RefreshNpiPriority")
     if "B4_V47_ArmStartupNpi" not in required:
         required.append("B4_V47_ArmStartupNpi")
+    for function in ("B4_V50_StackSnapshot","B4_V50_MacDataReqEnter",
+                     "B4_V50_MacDataReqDone","B4_V50_MacEvent"):
+        if function not in required:required.append(function)
     for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
                      'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
         if function not in required:required.append(function)
@@ -477,7 +494,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "v47_bounded_startup_ingress":startup_npi,
         "v47_startup_ingress_actual_c":startup_npi_c,
         "v48_retained_zdapp_fairness":zdapp_fairness,
-        "v49_actual_composed_refresh_c":ready_npi_c,
+        "v50_stack_service":v50,
+        "v50_stack_service_actual_c":v50_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

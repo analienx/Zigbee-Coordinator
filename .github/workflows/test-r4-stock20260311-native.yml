@@ -38,9 +38,10 @@ jobs:
       - name: V47 source-bound retained startup and priority regression
         run: |
           python -m py_compile tools/r4_startup_ingress_priority.py tools/r4_startup_ingress_priority_harness.py
+          python -m py_compile tools/r4_v50_stack_service.py tools/r4_v50_stack_service_harness.py
           python -m unittest -v tests.test_r4_v47_startup_ingress
           python -m unittest -v tests.test_r4_v48_retained_zdapp_fairness
-          python -m unittest -v tests.test_r4_v49_ready_npi
+          python -m unittest -v tests.test_r4_v50_stack_service
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
       - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants

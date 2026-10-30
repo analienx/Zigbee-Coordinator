@@ -24,6 +24,12 @@ def build(source:Path,out:Path,receipt:Path):
     for sig in mod.RF_GATED_SIGNATURES:
         mod.actual_function_body(c,sig)
     extracted=[mod.actual_function_body(c,sig) for sig in mod.SYMBOLS]
+    # Composite V50 adds RAM-only MAC counters (defined in zstackstartup.c)
+    # to ZMacDataReqSec. They never alter the submission; stub them here.
+    v50_hooks=any("B4_V50_MacDataReq" in body for body in extracted)
+    hooks=("void B4_V50_MacDataReqEnter(void) {}\n"
+           "void B4_V50_MacDataReqDone(uint8_t status) { (void)status; }\n"
+           if v50_hooks else "")
     bridge=r"""
 unsigned r4_mac_submitted(void) { return mock_mac_submissions; }
 uint8_t r4_mac_attempt_secured_and_nodata(void)
@@ -37,7 +43,7 @@ uint8_t r4_mac_attempt_secured_and_nodata(void)
     return result;
 }
 """
-    out.write_text(mod.PREAMBLE+"\n\n".join(extracted)+"\n"+bridge,encoding="utf-8")
+    out.write_text(mod.PREAMBLE+hooks+"\n\n".join(extracted)+"\n"+bridge,encoding="utf-8")
     data={
         "schema":"r4-source-bound-NWK-HOLD-to-real-TI-ZMac-v1",
         "actual_zmac_sha256":hashlib.sha256(c.encode()).hexdigest(),
@@ -45,6 +51,7 @@ uint8_t r4_mac_attempt_secured_and_nodata(void)
         "eight_entrypoint_source_inspection":True,
         "two_executed_public_zmac_C_functions":[mod.SYMBOLS[0],mod.SYMBOLS[1]],
         "same_b1_admission_instance":True,
+        "v50_mac_counter_hooks_stubbed":v50_hooks,
         "mac_boundary":"synthetic MAP_MAC, no physical ROM or queued RF",
         "source_ready":False,"flash_authorized":False,
     }
