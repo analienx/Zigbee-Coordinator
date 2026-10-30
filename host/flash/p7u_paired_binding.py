@@ -13,6 +13,7 @@ QUALIFIED_SUCCESSORS = {
     "e3a0f3b7726adf1f6c182973f135665a5c3857e0": "85ce37c24802b0f16fec0afd00a1a0457656cd80",
     "66ed700c2818c7a0963dad9160d55109009bbaac": "e3a0f3b7726adf1f6c182973f135665a5c3857e0",
     "391d7a5b24d459f347a8ff2378c751ebcc7eec4b": "66ed700c2818c7a0963dad9160d55109009bbaac",
+    "250441cd17c55e25c78d97e041f056574355ade7": "391d7a5b24d459f347a8ff2378c751ebcc7eec4b",
 }
 OWNED_STAGE_PAIR=("66ed700c2818c7a0963dad9160d55109009bbaac","66ed700c2818c7a0963dad9160d55109009bbaac")
 # Host-only startup observability: independently compiled and released at exact
