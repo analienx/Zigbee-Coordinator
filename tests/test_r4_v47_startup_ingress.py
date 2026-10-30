@@ -2,8 +2,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 
-from tools.r4_startup_ingress_priority import TASK, ZDO, apply
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
+from r4_startup_ingress_priority import TASK, ZDO, apply
 
 NPI="""/* B4_F2_V6_OWNED_STAGE */
 /* B4_V46_PENDING_SRSP_TASK_PRIORITY */
@@ -89,8 +91,8 @@ class TestV47(unittest.TestCase):
         original=self.zdo.read_text()
         apply(self.root)
         modified=self.zdo.read_text()
-        self.assertIn(original.split("  b1_evidence_milestone(B1_M_BDB_ENTRY")[0],
-                      modified)
+        self.assertIn("if (!b1_startup_begin()) return;",modified)
+        self.assertIn("if (!b1_startup_checkpoint(B1_PHASE_BDB)) return;",modified)
         self.assertEqual(modified.count("bdb_StartCommissioning(0)"),1)
         self.assertEqual(modified.count("b1_startup_checkpoint(B1_PHASE_BDB)"),1)
         self.assertEqual(modified.count("OsalPortTimers_stopTimer("),1)
