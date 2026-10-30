@@ -6,6 +6,7 @@ the new exactly captured initial SYS ping failure. No automatic retry.
 """
 import asyncio
 import json
+import os
 from pathlib import Path
 import time
 import zlib
@@ -104,6 +105,56 @@ def plan(ns,package,package_pin,write_pin,ha):
             "pin":ns["sha"](ns["canonical"](record))}
 
 
+def boot_and_verify_native_state9(ns,root,ha):
+    """Keep sole temporary UART owner from *before* APP reset through state 9.
+
+    A SYS_RESET_IND proves reset, not network readiness. Require the real
+    B1 checks, retained IEEE/key match, non-forming startup and state9 marker
+    from the existing source-qualified observer before any Z2M host start.
+    """
+    from p7u_r4_startup_transport import FramedZnp, PrivateEvidenceJournal
+    need=ns["need"]
+    port=None
+    evidence=None
+    try:
+        port=ns["StartupSerial"]()  # USB opens BEFORE the single APP boot.
+        znp=FramedZnp(port,source=V6)
+        evidence=PrivateEvidenceJournal(root/"startup-evidence.jsonl",V6)
+        os.chmod(root/"startup-evidence.jsonl",0o600)
+        ns["durable"](root,"app-boot-intent.json",{
+            "at":time.time(),"attempts":1,"usb_open_before_boot":True,
+            "rom_closed":True,"consumed_before_send":True,
+            "network_formation_authorized":False,
+        })
+        ha.restart_radio()
+        deadline=time.monotonic()+20
+        while True:
+            typ,command,data=znp._next(deadline)
+            if typ==0x41 and command==0x80:
+                need(len(data)==6,"INSTRUMENTED_ROM_FRESH_RESET_IND_SHAPE")
+                break
+        ns["durable"](root,"boot-ready.json",{
+            "fresh_reset_ind":True,"usb_open_before_boot":True,
+            "external_startup_requests":0,"at":time.time()
+        })
+        backup=ns["load"](ns["PRIVATE"]/"owner-backup-before-stop.json")
+        result=ns["resume_pristine"](
+            znp,root,backup,evidence,source=V6
+        )
+        need(result["status"]=="COORDINATOR_STATE9_MARKER_PASS",
+             "INSTRUMENTED_ROM_NATIVE_STATE9_NOT_PROVEN")
+        ns["durable"](root,"state9-accepted.json",{
+            "state9":True,"retained_network":True,"at":time.time(),
+            "startup_result_sha256":ns["file_sha"](root/"startup-result.json"),
+        })
+        return result
+    finally:
+        if evidence is not None:
+            evidence.close()
+        if port is not None:
+            port.close()
+
+
 def execute(ns,package,package_pin,write_pin,pin,ha):
     need=ns["need"]
     root=ns["PRIVATE"]/ROOT
@@ -127,7 +178,10 @@ def execute(ns,package,package_pin,write_pin,pin,ha):
         asyncio.run(rom._rom_observe(ns,root,ha,deps,p["crc32"]))
         ha.policy();ha.proof(False)
         need(ha.management()==p["board_sha256"],"INSTRUMENTED_ROM_BOARD_CHANGED")
-        rom._boot_observe_reset(ns,root,ha)
+        state9=boot_and_verify_native_state9(ns,root,ha)
+        need(state9["status"]=="COORDINATOR_STATE9_MARKER_PASS"
+             and (root/"state9-accepted.json").is_file(),
+             "INSTRUMENTED_ROM_STATE9_MANDATORY")
         ha.policy();ha.proof(False)
         ns["durable"](root,"host-start-intent.json",{
             "pin":pin,"at":time.time(),"consumed_before_send":True,
@@ -151,7 +205,7 @@ def execute(ns,package,package_pin,write_pin,pin,ha):
                 last["state"] in ("started","startup") else
                 "INSTRUMENTED_ROM_HOST_FAILED_HELD_NO_RETRY",
                 "host_ack":ack,"container":container,"log_bytes":len(log),
-                "radio_writes":0,"network_restore":False}
+                "native_state9":True,"radio_writes":0,"network_restore":False}
         ns["durable"](root,"result.json",result)
         return result
     except BaseException as error:
