@@ -55,6 +55,11 @@ def binding_values(raw, expected_pin, package):
         instrumented=(host_source==V6_STARTUP_CAPTURE_HOST and
                       package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE)
         compatible=(original or instrumented) and package.get('f2_wire_contract')==OWNED_STAGE_WIRE
+    if data['source_sha']=='391d7a5b24d459f347a8ff2378c751ebcc7eec4b':
+        compatible=(data['installed_source']=='66ed700c2818c7a0963dad9160d55109009bbaac' and
+                    host_source==V6_STARTUP_CAPTURE_HOST and
+                    package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE and
+                    package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
     need(re.fullmatch(r'[0-9a-f]{40}',host_source) is not None and compatible and
          re.fullmatch(r"sha256:[0-9a-f]{64}", package.get("paired_host_image", "")) is not None, "PAIRED_HOST")
     need(re.fullmatch(r"[0-9a-f]{32}", data["previous_operation"]) is not None, "PREVIOUS_OPERATION")
