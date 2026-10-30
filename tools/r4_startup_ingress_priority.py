@@ -41,7 +41,8 @@ __attribute__((noinline)) void B4_V46_RefreshNpiPriority(void);
 __attribute__((noinline)) void B4_V47_ArmStartupNpi(void)
 {
     /* Only B1's genuine ZDApp retained-event Stack task may arm. */
-    if (b1_startup_state() != B1_STARTUP_RUNNING) return;
+    if (b1_startup_state() != B1_STARTUP_RUNNING ||
+        b1_management_transport_unavailable()) return;
     unsigned int schedulerKey = Task_disable();
     uint32_t key = OsalPort_enterCS();
     if (Clock_tickPeriod != 0u &&
@@ -83,7 +84,8 @@ def apply(sdk):
         "    OsalPort_leaveCS(key);\n    /* Unsupported RTOS configurations preserve the original safe priority.",
         "    uint8_t startup = B4_V47_ActiveLocked();\n"
         "    OsalPort_leaveCS(key);\n"
-        "    if (startup && b1_startup_state() != B1_STARTUP_RUNNING)\n"
+        "    if (startup && (b1_startup_state() != B1_STARTUP_RUNNING ||\n"
+        "        b1_management_transport_unavailable()))\n"
         "        startup = 0u;\n"
         "    /* Unsupported RTOS configurations preserve the original safe priority.",
         "V47_WINDOW_IN_V46_OWNER")
