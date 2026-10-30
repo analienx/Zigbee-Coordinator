@@ -80,8 +80,8 @@ class Tests(unittest.TestCase):
   with self.assertRaisesRegex(Hold,"INSTRUMENTED_ROM_ALREADY_CONSUMED"):
    module.execute(self.ns,self.root,"new-package","write-pin",pin,self.ha)
  def test_native_state9_failure_blocks_supervisor_start(self):
-  pin=self.planned()
   self.old["board_sha256"]="expected-board"
+  pin=self.planned()
   self.ha.management.return_value="expected-board"
   with patch.object(module.rom,"_rom_observe",new=AsyncMock()) as observe:
    with patch.object(module,"boot_and_verify_native_state9",
