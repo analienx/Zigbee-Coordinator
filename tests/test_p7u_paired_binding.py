@@ -62,6 +62,23 @@ class Binding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'SOURCES'):
             self.call({**data,'installed_source':'66ed700c2818c7a0963dad9160d55109009bbaac'},package)
 
+    def test_v49_exact_successor_to_v48_reuses_instrumented_host(self):
+        data,package=self.fixture()
+        data.update(source_sha='c442a27f82a1147c089aa65fdbf9c79abd7c39fb',
+                    installed_source='250441cd17c55e25c78d97e041f056574355ade7')
+        package.update(firmware_source_sha=data['source_sha'],
+                       paired_host_source_sha=binding.V6_STARTUP_CAPTURE_HOST,
+                       paired_host_image=binding.V6_STARTUP_CAPTURE_IMAGE,
+                       f2_wire_contract=binding.OWNED_STAGE_WIRE)
+        self.assertEqual(self.call(data,package)['INSTALLED'],data['installed_source'])
+        for key,wrong in (('paired_host_image','sha256:'+'0'*64),
+                          ('paired_host_source_sha','f'*40),
+                          ('f2_wire_contract','unknown')):
+            with self.subTest(field=key),self.assertRaisesRegex(ValueError,'PAIRED_HOST'):
+                self.call(data,{**package,key:wrong})
+        with self.assertRaisesRegex(ValueError,'SOURCES'):
+            self.call({**data,'installed_source':'66ed700c2818c7a0963dad9160d55109009bbaac'},package)
+
     def fixture(self):
         value={"schema":"p7u-paired-operation-v1","source_sha":"a"*40,
                "installed_source":binding.INSTALLED,"previous_operation":"1"*32,
