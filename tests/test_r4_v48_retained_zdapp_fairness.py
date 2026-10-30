@@ -3,12 +3,19 @@ import tempfile
 import unittest
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
 from r4_retained_zdapp_fairness import apply, BEFORE, AFTER, STACK, MARKER
 
 class V48(unittest.TestCase):
     def setUp(self):
+        # Synthetic unit tests have no TI git worktree; the *native* pipeline
+        # independently verifies the immutable TI SHA and real patch anchor.
+        check=patch("r4_retained_zdapp_fairness.pinned_source",
+                    return_value=b"static void stackTaskFxn(UArg a0, UArg a1)")
+        check.start()
+        self.addCleanup(check.stop)
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
