@@ -12,6 +12,7 @@ INSTALLED = "899f179031aae74db2e48699900f1cf5722bb4de"
 QUALIFIED_SUCCESSORS = {
     "e3a0f3b7726adf1f6c182973f135665a5c3857e0": "85ce37c24802b0f16fec0afd00a1a0457656cd80",
     "66ed700c2818c7a0963dad9160d55109009bbaac": "e3a0f3b7726adf1f6c182973f135665a5c3857e0",
+    "391d7a5b24d459f347a8ff2378c751ebcc7eec4b": "66ed700c2818c7a0963dad9160d55109009bbaac",
 }
 OWNED_STAGE_PAIR=("66ed700c2818c7a0963dad9160d55109009bbaac","66ed700c2818c7a0963dad9160d55109009bbaac")
 # Host-only startup observability: independently compiled and released at exact
