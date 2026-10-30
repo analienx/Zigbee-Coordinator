@@ -21,6 +21,29 @@ class Binding(unittest.TestCase):
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'PAIRED_HOST'):self.call(data,bad)
         data['installed_source']=binding.INSTALLED
         with self.assertRaisesRegex(ValueError,'SOURCES'):self.call(data,package)
+    def test_v6_startup_capture_requires_exact_host_image_and_wire(self):
+        data, package = self.fixture()
+        data['source_sha'] = binding.OWNED_STAGE_PAIR[0]
+        data['installed_source'] = binding.QUALIFIED_SUCCESSORS[data['source_sha']]
+        package.update(firmware_source_sha=data['source_sha'],
+                       paired_host_source_sha=binding.V6_STARTUP_CAPTURE_HOST,
+                       paired_host_image=binding.V6_STARTUP_CAPTURE_IMAGE,
+                       f2_wire_contract=binding.OWNED_STAGE_WIRE)
+        result = self.call(data, package)
+        self.assertEqual(result['SOURCE'], data['source_sha'])
+        self.assertEqual(result['PAIRED_HOST_VERSION'],
+                         '0.2.1-' + binding.V6_STARTUP_CAPTURE_HOST[:12])
+        self.assertEqual(result['IMAGE'], binding.V6_STARTUP_CAPTURE_IMAGE)
+        for field, bad in (('paired_host_image','sha256:'+'0'*64),
+                           ('paired_host_source_sha','2'*40),
+                           ('f2_wire_contract','R4D4_MINOR4_AND_R4D5_PAGED_V1')):
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,'PAIRED_HOST'):
+                self.call(data,{**package,field:bad})
+        data['source_sha']='e3a0f3b7726adf1f6c182973f135665a5c3857e0'
+        data['installed_source']=binding.QUALIFIED_SUCCESSORS[data['source_sha']]
+        with self.assertRaisesRegex(ValueError,'PAIRED_HOST'):
+            self.call(data,package)
+
     def fixture(self):
         value={"schema":"p7u-paired-operation-v1","source_sha":"a"*40,
                "installed_source":binding.INSTALLED,"previous_operation":"1"*32,
