@@ -53,7 +53,10 @@ def main():
     v48_pair=(c['source_sha']=='250441cd17c55e25c78d97e041f056574355ade7' and
         host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
         host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
-    assert host['source_sha']==c['source_sha'] or owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or priority_pair or (c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and host['source_sha']==c['source_sha']), 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
+    v49_pair=(c['source_sha']=='c442a27f82a1147c089aa65fdbf9c79abd7c39fb' and
+        host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
+        host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
+    assert host['source_sha']==c['source_sha'] or owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or v49_pair or priority_pair or (c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and host['source_sha']==c['source_sha']), 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
     paired_image = host['profiles']['diagnostic']['image_id']
     import re
     assert re.fullmatch('sha256:[0-9a-f]{64}', paired_image)
@@ -100,7 +103,7 @@ def main():
     report = {'schema': 'p7u-r4-afbb7a8-ha-package-v1', 'operator_source_sha': source,
               'firmware_source_sha': c['source_sha'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'paired_host_image': paired_image, 'paired_host_source_sha': host['source_sha'],
-              'f2_wire_contract': ('R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1' if (owned_stage_pair or startup_capture_pair or v47_pair or v48_pair) else
+              'f2_wire_contract': ('R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1' if (owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or v49_pair) else
                                    'R4D4_MINOR4_AND_R4D5_PAGED_V1' if priority_pair else
                                    'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None),
               'arm64_reader': 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4',
