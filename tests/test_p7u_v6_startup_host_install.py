@@ -99,6 +99,46 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(Hold,"HOST_INSTALL_PHASE_ALREADY_CONSUMED"):
             mod.install_stopped(self.ns,self.root,"package-pin","write-plan",pin,self.ha)
 
+    def test_resume_must_prove_premutation_receipts(self):
+        pin=self.planned()
+        with self.assertRaisesRegex(Hold,"HOST_INSTALL_CONTINUATION_PREMUTATION_ONLY"):
+            mod.continue_pre_mutation(self.ns,self.root,"package-pin",
+                                      "write-plan",pin,self.ha)
+
+    def test_fresh_continuation_is_not_a_replay(self):
+        pin=self.planned()
+        previous=self.root/mod.OP_ROOT
+        self.durable(previous,"publish-intent.json",{"pin":pin})
+        self.durable(previous,"publish-result.json",{"pin":pin})
+        self.durable(previous,"prior-host.log",b"prior private failure")
+        self.durable(previous,"backup-database-db.bin",b"unchanged")
+        data=self.root/"data"
+        data.mkdir()
+        (data/"database.db").write_bytes(b"unchanged")
+        self.ns["DATA"]=data
+        self.ns["file_sha"]=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+        with patch.object(mod,"_install_body",return_value={"status":"PRE_MUTATION_TEST_ONLY"}) as run:
+            result=mod.continue_pre_mutation(self.ns,self.root,"package-pin",
+                                             "write-plan",pin,self.ha)
+        self.assertEqual(result["status"],"PRE_MUTATION_TEST_ONLY")
+        run.assert_called_once()
+        continuation=self.root/(mod.OP_ROOT+"-continuation")
+        intent=self.ns["load"](continuation/"continuation-intent.json")
+        self.assertTrue(intent["consumed_before_send"])
+        self.assertEqual(intent["previous_mutation_attempts"],0)
+        self.assertEqual(intent["radio_actions"],0)
+        with self.assertRaisesRegex(Hold,"HOST_INSTALL_CONTINUATION_ALREADY_CONSUMED"):
+            mod.continue_pre_mutation(self.ns,self.root,"package-pin",
+                                      "write-plan",pin,self.ha)
+
+    def test_continuation_rejects_any_previous_install_intent(self):
+        pin=self.planned()
+        previous=self.root/mod.OP_ROOT
+        self.durable(previous,"install-intent.json",{"consumed":True})
+        with self.assertRaisesRegex(Hold,"HOST_INSTALL_CONTINUATION_PREMUTATION_ONLY"):
+            mod.continue_pre_mutation(self.ns,self.root,"package-pin",
+                                      "write-plan",pin,self.ha)
+
     def test_schema_scope_exposes_no_automatic_start(self):
         pin=self.planned()
         plan=self.ns["load"](self.root/mod.OP_ROOT/"plan.json")
