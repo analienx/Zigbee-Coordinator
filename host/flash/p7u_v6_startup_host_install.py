@@ -152,6 +152,10 @@ def publish(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
 
 def install_stopped(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
     root,plan,rendered=_phase(ns,package,package_pin,writer_plan_pin,phase_pin,ha,"install")
+    return _install_body(ns,root,plan,rendered,ha)
+
+
+def _install_body(ns,root,plan,rendered,ha):
     need=ns["need"]
     need(ns["load"](root/"publish-result.json")["pin"]==phase_pin,
          "HOST_INSTALL_PUBLISH_PROOF")
@@ -165,7 +169,7 @@ def install_stopped(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
                  ".p7u-approved.json"):
         file=ns["DATA"]/name
         need(file.is_file() and not file.is_symlink(),"HOST_INSTALL_BACKUP_FILE")
-        ns["durable"](root,"backup-"+name.lstrip(".").replace(".","-")+".bin",file.read_bytes())
+        ns["durable"](root,"backup-"+name.lstrip(".").replace(".","-").replace("_","-")+".bin",file.read_bytes())
     ns["durable"](root,"old-config.bin",CONFIG.read_bytes())
     ns["durable"](root,"install-intent.json",
                   {"pin":phase_pin,"at":time.time(),"consumed_before_send":True,
@@ -216,3 +220,46 @@ def install_stopped(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
             "radio_actions":0,"host_starts":0}
     ns["durable"](root,"install-result.json",result)
     return result
+
+
+def continue_pre_mutation(ns,package,package_pin,writer_plan_pin,phase_pin,ha):
+    """New single-use operation after old receipt-name HOLD before mutation.
+
+    This is NOT a retry of the original install. It requires the exact
+    incomplete evidence set and a still-unmodified stopped host/config.
+    Both prior published-image receipts remain immutable and are bound by SHA.
+    """
+    need=ns["need"]
+    previous=ns["PRIVATE"]/OP_ROOT
+    ns["private_root"](previous)
+    names={p.name for p in previous.iterdir()}
+    need(names=={"plan.json","publish-intent.json","publish-result.json",
+                 "prior-host.log","backup-database-db.bin"},
+         "HOST_INSTALL_CONTINUATION_PREMUTATION_ONLY")
+    need(not (previous/"install-intent.json").exists(),
+         "HOST_INSTALL_CONTINUATION_AFTER_MUTATION_FORBIDDEN")
+    data,rendered=preflight(ns,package,package_pin,writer_plan_pin,ha)
+    plan=ns["load"](previous/"plan.json")
+    need(ns["sha"](ns["canonical"](plan))==phase_pin
+         and all(plan.get(k)==v for k,v in data.items())
+         and ns["load"](previous/"publish-result.json")["pin"]==phase_pin
+         and ns["file_sha"](previous/"backup-database-db.bin")==
+             ns["file_sha"](ns["DATA"]/"database.db")
+         and 0<=time.time()-plan["created_at"]<MAX_AGE,
+         "HOST_INSTALL_CONTINUATION_PROVENANCE_OR_TTL")
+    root=ns["PRIVATE"]/(OP_ROOT+"-continuation")
+    need(not root.exists() and not root.is_symlink(),
+         "HOST_INSTALL_CONTINUATION_ALREADY_CONSUMED")
+    root.mkdir(mode=0o700)
+    ns["durable"](root,"continuation-intent.json",{
+        "phase_pin":phase_pin,"at":time.time(),
+        "consumed_before_send":True,
+        "prior_plan_sha256":ns["file_sha"](previous/"plan.json"),
+        "prior_publish_result_sha256":ns["file_sha"](previous/"publish-result.json"),
+        "prior_log_sha256":ns["file_sha"](previous/"prior-host.log"),
+        "prior_database_sha256":ns["file_sha"](previous/"backup-database-db.bin"),
+        "failure_code":"P7U_DEPLOY_HOLD_RECEIPT_NAME",
+        "previous_mutation_attempts":0,
+        "host_starts":0,"radio_actions":0,
+    })
+    return _install_body(ns,root,plan,rendered,ha)
