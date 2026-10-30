@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 import tempfile
 import time
+import types
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 FILE=Path(__file__).resolve().parents[1]/"host/flash/p7u_v6_instrumented_rom_once.py"
 import sys
@@ -78,12 +79,72 @@ class Tests(unittest.TestCase):
   self.assertTrue((self.root/module.ROOT/"failure.json").is_file())
   with self.assertRaisesRegex(Hold,"INSTRUMENTED_ROM_ALREADY_CONSUMED"):
    module.execute(self.ns,self.root,"new-package","write-pin",pin,self.ha)
+ def test_native_state9_failure_blocks_supervisor_start(self):
+  pin=self.planned()
+  self.old["board_sha256"]="expected-board"
+  self.ha.management.return_value="expected-board"
+  with patch.object(module.rom,"_rom_observe",new=AsyncMock()) as observe:
+   with patch.object(module,"boot_and_verify_native_state9",
+                     side_effect=Hold("STATE9_NOT_PROVEN")):
+    with self.assertRaisesRegex(Hold,"STATE9_NOT_PROVEN"):
+     module.execute(self.ns,self.root,"new-package","write-pin",pin,self.ha)
+  observe.assert_awaited_once()
+  self.ha.owner_action.assert_not_called()
+  self.assertFalse((self.root/module.ROOT/"host-start-intent.json").exists())
+  self.assertTrue((self.root/module.ROOT/"failure.json").exists())
+
+ def test_boot_observer_requires_state9_and_closes_exclusive_port(self):
+  radio=MagicMock()
+  znp=MagicMock()
+  znp._next.return_value=(0x41,0x80,bytes(6))
+  def make_journal(path,source):
+   path.write_bytes(b"")
+   return MagicMock()
+  transport=types.SimpleNamespace(FramedZnp=lambda port,source:znp,
+                 PrivateEvidenceJournal=make_journal)
+  self.ns.update({"StartupSerial":lambda:radio,
+      "resume_pristine":lambda *args,**kwargs:{"status":"FAILED_STOP_NO_RETRY"}})
+  with patch.dict("sys.modules",{"p7u_r4_startup_transport":transport}):
+   with self.assertRaisesRegex(Hold,"INSTRUMENTED_ROM_NATIVE_STATE9_NOT_PROVEN"):
+    module.boot_and_verify_native_state9(self.ns,self.root,self.ha)
+  radio.close.assert_called_once()
+  self.ha.restart_radio.assert_called_once()
+  self.ha.owner_action.assert_not_called()
+  self.assertFalse((self.root/"state9-accepted.json").exists())
+  self.assertTrue((self.root/"app-boot-intent.json").exists())
+
+ def test_state9_acceptance_is_written_before_host_can_start(self):
+  radio=MagicMock()
+  znp=MagicMock()
+  znp._next.return_value=(0x41,0x80,bytes(6))
+  def make_journal(path,source):
+   path.write_bytes(b"")
+   return MagicMock()
+  def verify(znp,root,backup,evidence,source):
+   self.assertEqual(source,module.V6)
+   self.durable(root,"startup-result.json",{"status":"COORDINATOR_STATE9_MARKER_PASS"})
+   return {"status":"COORDINATOR_STATE9_MARKER_PASS"}
+  (self.root/"owner-backup-before-stop.json").write_bytes(b"{}")
+  self.ns.update({"StartupSerial":lambda:radio,
+      "resume_pristine":verify,
+      "file_sha":lambda p:hashlib.sha256(p.read_bytes()).hexdigest()})
+  transport=types.SimpleNamespace(FramedZnp=lambda port,source:znp,
+                 PrivateEvidenceJournal=make_journal)
+  with patch.dict("sys.modules",{"p7u_r4_startup_transport":transport}):
+   result=module.boot_and_verify_native_state9(self.ns,self.root,self.ha)
+  self.assertEqual(result["status"],"COORDINATOR_STATE9_MARKER_PASS")
+  self.assertTrue(self.ns["load"](self.root/"state9-accepted.json")["state9"])
+  radio.close.assert_called_once()
+  self.ha.restart_radio.assert_called_once()
+
  def test_no_write_or_restore_primitives_in_module(self):
   text=FILE.read_text()
   self.assertNotIn("rom.erase",text)
   self.assertNotIn("rom.write",text)
   self.assertNotIn("restore_backup",text)
-  self.assertIn("rom._boot_observe_reset",text)
+  self.assertIn("boot_and_verify_native_state9",text)
+  self.assertIn("COORDINATOR_STATE9_MARKER_PASS",text)
+  self.assertNotIn("rom._boot_observe_reset(ns,root,ha)",text)
   self.assertIn("rom._rom_observe",text)
 
 if __name__=="__main__":unittest.main()
