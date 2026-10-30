@@ -35,6 +35,10 @@ jobs:
         run: python -m unittest -v tests.test_r4_t6_migration_guard
       - name: Current layout, security, handoff and retained historical regression controls
         run: python -m unittest -v tests.test_r4_stock20260311_native tests.test_r4_stock20260311_handoff tests.test_r4_stock20260311_transition tests.test_p7u_stock20260311_security_preflight tests.test_p7u_stock20260311_security_abi tests.test_r4_t6_full_capacity tests.test_r4_m4f_asm_preprocessing tests.test_r4_final_source_snapshot tests.test_r4_full_nv4_app_only
+      - name: V47 source-bound retained startup and priority regression
+        run: |
+          python -m py_compile tools/r4_startup_ingress_priority.py tools/r4_startup_ingress_priority_harness.py
+          python -m unittest -v tests.test_r4_v47_startup_ingress
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
       - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
