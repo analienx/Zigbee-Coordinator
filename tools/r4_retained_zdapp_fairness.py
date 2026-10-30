@@ -13,9 +13,10 @@ Never synthesize, retry or re-post an event, change network state, NV or UART.
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
-from r4_uart_tx_liveness import once, pinned_source
+from r4_uart_tx_liveness import once, TI_SHA
 
 STACK="source/ti/zstack/startup/zstackstartup.c"
 MARKER="B4_V48_RETAINED_ZDAPP_DISPATCH_FAIRNESS"
@@ -70,7 +71,7 @@ def apply(sdk):
         "B1_RETAINED_STARTUP_EVENT" not in (sdk/"source/ti/zstack/stack/zdo/zd_app.c").read_text()):
         raise ValueError("V48_REQUIRES_EXACT_B1_V47_COMPOSED_SCHEDULER")
     # Do not accept a subtly changed or absent ready service selection.
-    native=pinned_source(sdk,STACK)
+    native=subprocess.check_output(['git','-C',str(sdk),'show',TI_SHA+':'+STACK])
     if b"static void stackTaskFxn" not in native:
         raise ValueError("V48_TI_SCHEDULER_NOT_PINNED")
     updated=once(s,BEFORE,AFTER,"V48_B1_READY_SELECTION")
