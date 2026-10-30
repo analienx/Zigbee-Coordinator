@@ -334,6 +334,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if zdapp_fairness['source_before_sha256'] != owned_stage['modified_sha256'][STACK]:
         raise ValueError('V48_V47_STACK_PREIMAGE_HASH_DRIFT')
 
+    # V49 actual hardware: V48 reached B1 READY, but post-READY NPI B1P1
+    # timed out before the external state9/marker proof. Preserve priority6
+    # for the SAME sleeping NPI owner only while the admitted retained B1
+    # transaction is READY; incomplete startup still expires after 90s.
+    from r4_ready_npi_priority import apply as apply_ready_npi
+    ready_npi=apply_ready_npi(sdk)
+    if ready_npi['before_sha256'] != startup_npi['modified_sha256'][TASK]:
+        raise ValueError('V49_V48_NPI_PREIMAGE_HASH_DRIFT')
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -372,14 +381,15 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if afterhash[name] != runtime_priority["modified_sha256"][name]:
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
-    for name in (TASK,SYS):
-        final_expected = (startup_npi['modified_sha256'][TASK] if name == TASK
-                          else owned_stage['modified_sha256'][SYS])
     if afterhash[STACK] != zdapp_fairness['source_modified_sha256']:
         raise ValueError('V48_ZDAPP_FINAL_SOURCE_NOT_BOUND')
-        if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != final_expected):
-            raise ValueError("F2_V42_V47_SOURCE_RECEIPT_UNBOUND_"+name)
+    if afterhash[TASK] != ready_npi['modified_sha256']:
+        raise ValueError('V49_READY_NPI_FINAL_SOURCE_NOT_BOUND')
+    if afterhash[SYS] != owned_stage['modified_sha256'][SYS]:
+        raise ValueError('V49_SYS_UNEXPECTED_SOURCE_DRIFT')
+    for name in (TASK,SYS):
+        if f2_progress['before_sha256'][name] != f2_causal['modified_sha256'][name]:
+            raise ValueError("F2_V42_SOURCE_CHAIN_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
     # The B1-owned guarded MT ZDO TU is modified only by this exact V47
