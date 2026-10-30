@@ -15,7 +15,7 @@ import urllib.request
 import zlib
 
 V6_SOURCE = "66ed700c2818c7a0963dad9160d55109009bbaac"
-ROOT_NAME = "rom-recovery-v6"
+ROOT_NAME = "rom-recovery-v6-open-first"
 MAX_PLAN_AGE_SECONDS = 1800
 CONTROL_SOURCE_SHA256 = "2d50552d71bf55f8f87aeabece9f4dae01d589d9e2e88699ec0b15e8e8e600ed"
 
@@ -63,6 +63,42 @@ def _checked(ns, package, plan_pin, ha):
         not owner["running"] and owner["image"] == ns["IMAGE"],
         "RECOVERY_SOLE_HOST_STOPPED",
     )
+    legacy = private / "rom-recovery-v6"
+    legacy_failure = None
+    if legacy.exists():
+        # The old operator omitted USB-open-first at APP handoff. A new,
+        # corrected operation is allowed only after its exact no-write ROM
+        # success and stopped protected-host ping failure. Never replay it.
+        failure = ns["load"](legacy / "failure.json")
+        rom = ns["load"](legacy / "rom-result.json")
+        start = ns["load"](legacy / "host-start-intent.json")
+        prior_plan = ns["load"](legacy / "plan.json")
+        need(failure.get("status") == "HELD_NO_AUTOMATIC_RETRY"
+             and not (legacy / "result.json").exists()
+             and prior_plan.get("source") == V6_SOURCE
+             and prior_plan.get("write_plan_sha256") == plan_pin
+             and prior_plan.get("image") == ns["IMAGE"]
+             and rom == {"chip_id": "0xf000", "read_only": True,
+                         "all88_crc_verified": True, "security_pass": True,
+                         "app_written": False, "nv_written": False, "ccfg_written": False}
+             and start.get("attempts") == 1
+             and start.get("consumed_before_send") is True
+             and not owner.get("absent") and owner.get("started_at"),
+             "RECOVERY_LEGACY_FAILURE_NOT_QUALIFIED")
+        from datetime import datetime
+        started = datetime.fromisoformat(owner["started_at"].replace("Z", "+00:00")).timestamp()
+        need(start["at"] <= started <= failure["at"], "RECOVERY_LEGACY_OWNER_EPOCH")
+        logs = ns["run"](["docker", "logs", "--since", owner["started_at"],
+                          "app_" + ns["OWNER"]])
+        need(b"P7U HOLD_EXISTING_NV: ping unavailable" in logs
+             and b"Zigbee2MQTT started!" not in logs,
+             "RECOVERY_LEGACY_FAILURE_SIGNATURE")
+        legacy_failure = {
+            "failure_sha256": ns["file_sha"](legacy / "failure.json"),
+            "rom_sha256": ns["file_sha"](legacy / "rom-result.json"),
+            "host_log_sha256": ns["sha"](logs),
+            "correction": "OPEN_USB_BEFORE_APP_BOOT_REQUIRE_FRESH_RESET_THEN_CLOSE",
+        }
     ha.proof(False)
     management = ha.management()
     need(management == write["management_sha256"], "RECOVERY_DEVICE_CHANGED")
@@ -108,6 +144,7 @@ def _checked(ns, package, plan_pin, ha):
         "nv_writes": 0,
         "ccfg_writes": 0,
         "external_startup_requests": 0,
+        "legacy_handoff_failure": legacy_failure,
     }
     return original, owner, evidence, (transition, security, factory, sparse, expected)
 
@@ -205,6 +242,32 @@ async def _rom_observe(ns, root, ha, dep, expected_crc):
         await rom.close()
 
 
+def _boot_observe_reset(ns, root, ha):
+    """Open USB BEFORE APP boot; never submit a command/startup on this port."""
+    from p7u_r4_startup_transport import FramedZnp
+    port = ns["StartupSerial"]()
+    try:
+        znp = FramedZnp(port, source=V6_SOURCE)
+        ns["durable"](
+            root, "app-boot-intent.json",
+            {"at": time.time(), "attempts": 1, "rom_closed": True,
+             "usb_already_open": True, "consumed_before_send": True},
+        )
+        ha.restart_radio()
+        deadline = time.monotonic() + 20
+        while True:
+            typ, command, data = znp._next(deadline)
+            if typ == 0x41 and command == 0x80:
+                ns["need"](len(data) == 6, "RECOVERY_RESET_IND_SHAPE")
+                break
+        ns["durable"](root, "boot-ready.json", {
+            "fresh_reset_ind": True, "usb_open_before_boot": True,
+            "external_startup_requests": 0, "at": time.time(),
+        })
+    finally:
+        port.close()
+
+
 def execute(ns, package, package_pin, write_plan_pin, recovery_plan_pin, ha):
     need = ns["need"]
     ns["sealed_tree"](package, "PACKAGE.json", package_pin)
@@ -239,13 +302,7 @@ def execute(ns, package, package_pin, write_plan_pin, recovery_plan_pin, ha):
             ha.management() == record["management_sha256"],
             "RECOVERY_BOARD_CHANGED_AFTER_ROM",
         )
-        ns["durable"](
-            root, "app-boot-intent.json",
-            {"at": time.time(), "attempts": 1, "rom_closed": True,
-             "consumed_before_send": True},
-        )
-        ha.restart_radio()
-        time.sleep(4)
+        _boot_observe_reset(ns, root, ha)
         need(
             ns["Path"](ns["SERIAL"]).is_char_device(),
             "RECOVERY_USB_NOT_RETURNED",

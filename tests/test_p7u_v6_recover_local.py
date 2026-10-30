@@ -8,7 +8,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import sys
+import types
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,6 +105,38 @@ class ControlBinding(unittest.TestCase):
         with patch.object(recovery.urllib.request, 'build_opener', return_value=self.source(data=b'changed')):
             with self.assertRaisesRegex(ValueError, 'RECOVERY_CONTROL_SOURCE'):
                 recovery.control_source(self.need)
+
+
+class AppHandoff(unittest.TestCase):
+    def observe(self, frames, error=None):
+        events = []
+        port = MagicMock()
+        port.close.side_effect = lambda: events.append('close')
+        observer = MagicMock()
+        observer._next.side_effect = error or frames
+        transport = types.SimpleNamespace(FramedZnp=MagicMock(return_value=observer))
+        ns = {'StartupSerial': lambda: events.append('open') or port,
+              'need': local.need,
+              'durable': lambda _root, name, value: events.append(name)}
+        ha = MagicMock()
+        ha.restart_radio.side_effect = lambda: events.append('boot')
+        return ns, ha, transport, events
+
+    def test_usb_open_precedes_boot_and_reset_precedes_handoff_close(self):
+        ns, ha, transport, events = self.observe([(0x41, 0x80, bytes(6))])
+        with patch.dict(sys.modules, {'p7u_r4_startup_transport': transport}):
+            recovery._boot_observe_reset(ns, Path('/private'), ha)
+        self.assertEqual(events, ['open', 'app-boot-intent.json', 'boot', 'boot-ready.json', 'close'])
+        transport.FramedZnp.return_value.request.assert_not_called()
+
+    def test_reset_timeout_closes_temporary_owner_without_another_boot(self):
+        ns, ha, transport, events = self.observe([], TimeoutError('no reset'))
+        with patch.dict(sys.modules, {'p7u_r4_startup_transport': transport}):
+            with self.assertRaises(TimeoutError):
+                recovery._boot_observe_reset(ns, Path('/private'), ha)
+        self.assertEqual(events, ['open', 'app-boot-intent.json', 'boot', 'close'])
+        ha.restart_radio.assert_called_once()
+        ha.owner_action.assert_not_called()
 
 
 if __name__ == '__main__':

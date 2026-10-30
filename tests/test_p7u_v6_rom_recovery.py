@@ -108,16 +108,25 @@ class Cases(unittest.TestCase):
     def test_success_only_ever_starts_one_owner(self):
         pin=self.planned()
         self.ns["Path"]=lambda _:MagicMock(is_char_device=lambda:True)
-        with patch.object(module,"_rom_observe",new=AsyncMock()) as rom:
+        with patch.object(module,"_rom_observe",new=AsyncMock()) as rom, \
+             patch.object(module,"_boot_observe_reset") as boot:
             with patch.object(module.time,"sleep"):
                 result=module.execute(self.ns,self.home,"pin","sealed",pin,self.ha)
         self.assertEqual(result["status"],"V6_ROM_ROUNDTRIP_HOST_RUNNING_PENDING_SERVING")
         rom.assert_awaited_once()
-        self.ha.restart_radio.assert_called_once()
+        boot.assert_called_once()
         self.ha.owner_action.assert_called_once_with("start")
         self.assertTrue((self.home/module.ROOT_NAME/"result.json").exists())
         with self.assertRaises(Hold):
             module.execute(self.ns,self.home,"pin","sealed",pin,self.ha)
+
+    def test_missing_reset_ind_never_starts_host(self):
+        pin=self.planned()
+        with patch.object(module,"_rom_observe",new=AsyncMock()), \
+             patch.object(module,"_boot_observe_reset",side_effect=TimeoutError("no reset")):
+            with self.assertRaises(TimeoutError):
+                module.execute(self.ns,self.home,"pin","sealed",pin,self.ha)
+        self.ha.owner_action.assert_not_called()
 
 
 if __name__=="__main__":

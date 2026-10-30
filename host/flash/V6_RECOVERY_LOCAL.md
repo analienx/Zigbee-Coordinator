@@ -31,14 +31,19 @@ held native boot, current stopped owner, control source, protected retained-only
 host startup and expected CRCs. It makes a fresh plan, expiring in 30 minutes.
 `execute` consumes it before the USB-open-first ROM round-trip, checks all88
 sector CRCs and fresh retained-security identity, returns to the unchanged V6
-application and starts its protected host once. Startup remains owned by that
-host; the recovery operator sends no external ZDO startup request.
+application with USB already open, requires a fresh SYS reset indication, closes
+that temporary observer, then starts its protected host once. Startup remains
+owned by that host; the recovery operator sends no external ZDO startup request.
 
 Every dispatch has an exclusive local receipt and remote consumed-before-send
 intents. A timeout/HOLD is **inspect, no replay**. Do not delete receipts or create
 a second state directory to evade a consumed recovery. Read-only `status` may be
 repeated; it reports the original write/boot operation. Recovery-specific outcome
-is in `execute-result.json` and the remote operation's `rom-recovery-v6` directory.
+is in `execute-result.json` and the remote operation's
+`rom-recovery-v6-open-first` directory. If the earlier `rom-recovery-v6` operator
+was used, the corrected operator additionally binds its preserved successful
+no-write ROM receipt and exact stopped-host ping failure. It creates one distinct
+operation for the corrected handoff; the consumed original operation stays sealed.
 
 A running host is provisional. Verify completed herdsman/Z2M startup, fresh
 non-retained MQTT reports from at least three devices, and genuine new native
