@@ -364,11 +364,19 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
     for name in (TASK,SYS):
+        final_expected = (startup_npi['modified_sha256'][TASK] if name == TASK
+                          else owned_stage['modified_sha256'][SYS])
         if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != owned_stage['modified_sha256'][name]):
-            raise ValueError("F2_V42_SOURCE_RECEIPT_UNBOUND_"+name)
+                afterhash[name] != final_expected):
+            raise ValueError("F2_V42_V47_SOURCE_RECEIPT_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
+    # The B1-owned guarded MT ZDO TU is modified only by this exact V47
+    # successor, whose preimage is sealed above; update the post-link B1
+    # receipt rather than weakening its live source-fingerprint check.
+    if b1.get("modified_mt_zdo_sha256") != startup_npi['before_sha256'][MTZDO]:
+        raise ValueError("V47_MT_ZDO_B1_PREIMAGE_RECEIPT_UNBOUND")
+    b1["modified_mt_zdo_sha256"]=afterhash[MTZDO]
     for name in (TASK,UART,SYS,MT,STACK):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
@@ -399,6 +407,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if function not in required: required.append(function)
     if "B4_V46_RefreshNpiPriority" not in required:
         required.append("B4_V46_RefreshNpiPriority")
+    if "B4_V47_ArmStartupNpi" not in required:
+        required.append("B4_V47_ArmStartupNpi")
     for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
                      'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
         if function not in required:required.append(function)
