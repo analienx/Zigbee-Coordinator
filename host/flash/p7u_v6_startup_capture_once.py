@@ -153,10 +153,13 @@ def execute(ns,package,package_pin,write_pin,pin,ha):
             last={"container":raw["Id"][:12],"running":raw["State"]["Running"],
                   "exit_code":raw["State"]["ExitCode"]}
             if raw["State"]["Running"]:running_seen=True
-            if running_seen and not raw["State"]["Running"]:break
-        except Exception:
-            # The old stopped container can be briefly removed while Supervisor
-            # creates the new one. This is a read-only inspection, not a retry.
+            if (running_seen and not raw["State"]["Running"]) or (
+                raw["Id"] != OLD_CONTAINER and not raw["State"]["Running"]
+                and raw["State"]["ExitCode"] not in (0,None)
+            ):break
+        except (ValueError, OSError, IndexError, KeyError):
+            # A temporary missing container is possible during recreation;
+            # fail-closed image/identity guards must NEVER be swallowed.
             pass
         time.sleep(1.0)
     logs=b""
