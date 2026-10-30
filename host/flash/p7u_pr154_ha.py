@@ -178,7 +178,8 @@ def sealed_tree(root, manifest_name, expected, names=None):
 def runtime_priority_qualification(c):
     """Bind the new delivery to its genuine CI native ELF/priority seal."""
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
-                      '66ed700c2818c7a0963dad9160d55109009bbaac'): return None
+                      '66ed700c2818c7a0963dad9160d55109009bbaac',
+                      '250441cd17c55e25c78d97e041f056574355ade7'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
