@@ -69,6 +69,7 @@ def main():
     shutil.copyfile('host/flash/p7u_v6_startup_host_config.py', dest.with_name('p7u_v6_startup_host_config.py'))
     shutil.copyfile('host/flash/p7u_v6_startup_host_install.py', dest.with_name('p7u_v6_startup_host_install.py'))
     shutil.copyfile('host/flash/p7u_v6_startup_capture_once.py', dest.with_name('p7u_v6_startup_capture_once.py'))
+    shutil.copyfile('host/flash/p7u_v6_instrumented_rom_once.py', dest.with_name('p7u_v6_instrumented_rom_once.py'))
     shutil.copyfile('host/r4-b4/f2_progress_contract.py', dest.with_name('f2_progress_contract.py'))
     if args.reader_package:
         (args.out/'security-reader-aarch64').write_bytes(qualified_reader(args.reader_package))
