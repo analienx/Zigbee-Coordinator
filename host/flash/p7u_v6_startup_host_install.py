@@ -24,6 +24,10 @@ TAG = "localhost:50144/p7u-r4-diagnostic:" + config.NEW_VERSION
 CONFIG = Path("/addons/local/p7u_r4_native_host/config.yaml")
 RELEASE_ROOT = Path("/share/p7u-v6-startup-host-2c2d96d6334b")
 MAX_AGE = 1800
+# The immutable first host-publish plan was sealed by this exact source.
+# A corrected continuation has a NEW sealed package pin and must not forge
+# the original one or treat an arbitrary older operator as qualified.
+FIRST_PUBLISH_PACKAGE_PIN = "b9a876e1fd34539e45bba88684bb9d7266cd48d0d3795c24f0e191a7311127b4"
 
 
 def _run(argv, timeout=45):
@@ -243,7 +247,8 @@ def continue_pre_mutation(ns,package,package_pin,writer_plan_pin,phase_pin,ha):
     data,rendered=preflight(ns,package,package_pin,writer_plan_pin,ha)
     plan=ns["load"](previous/"plan.json")
     need(ns["sha"](ns["canonical"](plan))==phase_pin
-         and all(plan.get(k)==v for k,v in data.items())
+         and plan.get("package_pin")==FIRST_PUBLISH_PACKAGE_PIN
+         and all(plan.get(k)==v for k,v in data.items() if k!="package_pin")
          and ns["load"](previous/"publish-result.json")["pin"]==phase_pin
          and ns["file_sha"](previous/"backup-database-db.bin")==
              ns["file_sha"](ns["DATA"]/"database.db")
