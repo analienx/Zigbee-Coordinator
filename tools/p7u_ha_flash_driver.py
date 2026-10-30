@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""One driver for a paired P7U firmware delivery, run from the workstation.
+
+Replaces the per-version p7u_vNN_* scripts. Every phase records its pins in
+<workdir>/state.json, so the next phase needs no retyped hashes:
+
+  fetch    download the exact-source native candidate and operator package
+           and verify every manifest hash (idempotent)
+  stage    copy both to HA /share and stage the predecessor-bound input and
+           binding from the installed operation's receipts (idempotent)
+  plan     new operation: read-only eligibility + live security admission
+  deploy   ONE protected APP-only write (+ paired AC000), all 88 CRCs
+  boot     ONE native boot, retained startup and source-bound observer
+  finish   read-only completion after READY_OBSERVED_VERIFICATION_INCOMPLETE
+  status   read-only operation status and decoded startup evidence
+  hang     read-only hang evidence (B1E3/B1E2/B1E5/B1E4) before ROM recovery
+
+deploy/boot/finish write a local intent BEFORE contacting HA and refuse to
+run again once their intent exists: an ambiguous outcome is inspected with
+`status`, never replayed. `hang` is read-only and may run once per incident
+(each run gets a fresh private directory on HA). After `boot` reports READY
+observed but a terminal read incomplete, `finish` completes read-only. The sealed HA operator keeps its own one-shot,
+NV/security and single-UART-owner guards; this driver adds none and removes
+none. Requires gh, ssh and scp with the `ha` alias.
+"""
+import argparse
+import hashlib
+import json
+import shlex
+import subprocess
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+REPO = "analienx/Zigbee-Coordinator"
+HOST_SOURCE = "2c2d96d6334b424f6364a982ad976a674b260e04"
+HOST_IMAGE = "sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367"
+OPERATIONS = "/share/p7u-r4-firmware-operations"
+
+
+def canon(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def sha(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+class Driver:
+    def __init__(self, workdir):
+        self.workdir = Path(workdir)
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        self.path = self.workdir / "state.json"
+        self.state = json.loads(self.path.read_text()) if self.path.exists() else {}
+
+    def save(self, **values):
+        self.state.update(values)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.state, indent=2, sort_keys=True))
+        tmp.replace(self.path)
+
+    def need(self, *keys):
+        missing = [k for k in keys if k not in self.state]
+        if missing:
+            sys.exit("STATE_MISSING " + ",".join(missing) + " (run the earlier phase)")
+        return [self.state[k] for k in keys]
+
+    @staticmethod
+    def ssh(command, timeout):
+        return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=10",
+                               "-o", "ServerAliveCountMax=60", "ha", command],
+                              capture_output=True, text=True, timeout=timeout)
+
+    def remote_python(self, code, timeout=120):
+        run = self.ssh("python3 -B -c " + shlex.quote(code), timeout)
+        if run.returncode:
+            sys.exit("HA_PYTHON_FAILED rc=%d\n%s\n%s" % (run.returncode, run.stdout[-2000:],
+                                                       run.stderr[-2000:]))
+        return json.loads(run.stdout.strip().splitlines()[-1])
+
+    # ---------------------------------------------------------------- fetch
+    def fetch(self, a):
+        fw, native_run, package_run = a.firmware, a.native_run, a.package_run
+        cand, pkg = self.workdir / "candidate", self.workdir / "operator"
+        for dest, run, prefix in ((cand, native_run, "p7u-stock20260311-candidate-" + fw),
+                                  (pkg, package_run, None)):
+            if not dest.exists():
+                name = prefix or self.package_artifact(package_run)
+                subprocess.run(["gh", "run", "download", str(run), "--repo", REPO, "--name", name,
+                                "--dir", str(dest)], check=True, timeout=300)
+        pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
+        cmeta = json.loads((cand / "candidate.json").read_bytes())
+        assert pmeta["firmware_source_sha"] == cmeta["source_sha"] == fw, "FIRMWARE_SOURCE"
+        assert pmeta["paired_host_source_sha"] == HOST_SOURCE, "HOST_SOURCE"
+        assert pmeta["paired_host_image"] == HOST_IMAGE, "HOST_IMAGE"
+        for root, files in ((pkg, pmeta["files"]), (cand, cmeta["files"])):
+            bad = [n for n, h in files.items()
+                   if not (root / n).is_file() or sha((root / n).read_bytes()) != h]
+            assert not bad, ("MANIFEST_HASH", root.name, bad[:5])
+        self.save(firmware=fw, installed=a.installed, previous_operation=a.previous_operation,
+                  operator_source=pmeta["operator_source_sha"],
+                  package_pin=sha((pkg / "PACKAGE.json").read_bytes()),
+                  candidate_pin=sha(canon(cmeta)), native_run=native_run, package_run=package_run)
+        print(json.dumps({"status": "FETCHED_AND_VERIFIED", "package_pin": self.state["package_pin"],
+                          "candidate_pin": self.state["candidate_pin"],
+                          "operator_source": self.state["operator_source"]}))
+
+    @staticmethod
+    def package_artifact(run):
+        out = subprocess.run(["gh", "api", "repos/%s/actions/runs/%s/artifacts" % (REPO, run),
+                              "--jq", ".artifacts[].name"], capture_output=True, text=True, check=True)
+        names = [n for n in out.stdout.split() if n.startswith("p7u-paired-operator-")]
+        assert len(names) == 1, ("PACKAGE_ARTIFACT", names)
+        return names[0]
+
+    # ---------------------------------------------------------------- stage
+    def stage(self, a):
+        fw, op_src, ppin, cpin, installed, prev = self.need(
+            "firmware", "operator_source", "package_pin", "candidate_pin", "installed",
+            "previous_operation")
+        package_dir = "/share/p7u-paired-operator-%s-%s" % (op_src[:12], ppin[:16])
+        stage_dir = "/share/p7u-paired-stage-" + fw[:12]
+        exists = self.remote_python(
+            "import json,os;print(json.dumps([os.path.exists(%r),os.path.exists(%r)]))"
+            % (package_dir, stage_dir))
+        if exists == [False, False]:
+            self.upload(package_dir, stage_dir, ppin, cpin)
+        else:
+            assert exists == [True, True], ("PARTIAL_STAGE_INSPECT", exists)
+        verified = self.remote_python(VERIFY_STAGE % (package_dir, stage_dir, ppin, cpin))
+        assert verified["status"] == "STAGE_VERIFIED", verified
+        binding = self.remote_python(STAGE_BINDING % {
+            "op": OPERATIONS + "/" + prev, "installed": installed, "source": fw,
+            "oldinput": "/share/p7u-paired-input-" + installed[:12],
+            "oldcand": "/share/p7u-paired-stage-" + installed[:12],
+            "newinput": "/share/p7u-paired-input-" + fw[:12],
+            "newbind": "/share/p7u-delivery-" + fw[:12], "fw": stage_dir})
+        self.save(package_dir=package_dir, stage_dir=stage_dir, input_pin=binding["input_pin"],
+                  binding="/share/p7u-delivery-%s/binding.json" % fw[:12],
+                  binding_pin=binding["binding_pin"])
+        print(json.dumps({"status": "STAGED", **{k: self.state[k] for k in (
+            "package_dir", "stage_dir", "input_pin", "binding_pin")}}))
+
+    def upload(self, package_dir, stage_dir, ppin, cpin):
+        pkg, cand = self.workdir / "operator", self.workdir / "candidate"
+        pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
+        cmeta = json.loads((cand / "candidate.json").read_bytes())
+        files = {"operator/PACKAGE.json": pkg / "PACKAGE.json",
+                 "candidate/candidate.json": cand / "candidate.json"}
+        files.update({"operator/" + n: pkg / n for n in pmeta["files"]})
+        files.update({"candidate/" + n: cand / n for n in cmeta["files"]})
+        tar = self.workdir / "sealed-stage.tar"
+        with tarfile.open(tar, "w") as arc:
+            for name, p in sorted(files.items()):
+                arc.add(p, arcname=name, recursive=False)
+        dest = "/share/.p7u-sealed-stage-%s.tar" % self.state["firmware"][:12]
+        subprocess.run(["scp", "-q", str(tar), "ha:" + dest], check=True, timeout=300)
+        out = self.remote_python(EXTRACT % (dest, package_dir, stage_dir, ppin, cpin), timeout=180)
+        assert out["status"] == "STAGED_SOURCE_BOUND_NO_RADIO", out
+
+    # ------------------------------------------------------------ operator
+    def operator(self, action, extra, timeout):
+        package_dir, ppin, binding, bpin = self.need("package_dir", "package_pin", "binding",
+                                                     "binding_pin")
+        args = ["python3", "-B", "-u", package_dir + "/source/host/flash/p7u_pr154_ha.py", action,
+                "--package", package_dir, "--package-pin", ppin, "--binding", binding,
+                "--binding-pin", bpin] + extra
+        started = time.time()
+        run = self.ssh(" ".join(shlex.quote(x) for x in args), timeout)
+        lines = [x for x in run.stdout.strip().splitlines() if x.startswith("{")]
+        result = json.loads(lines[-1]) if lines else {"status": "NO_JSON_RESULT"}
+        record = {"action": action, "rc": run.returncode, "result": result,
+                  "seconds": round(time.time() - started, 1), "stderr_tail": run.stderr[-1500:]}
+        (self.workdir / ("%s-%d.json" % (action, int(started)))).write_text(
+            json.dumps(record, indent=2))
+        print(json.dumps(record, indent=2))
+        return run.returncode, result
+
+    def op_args(self):
+        op, pin = self.need("operation_id", "plan_pin")
+        return ["--operation-id", op, "--plan-pin", pin]
+
+    def plan(self, a):
+        if "operation_id" in self.state and not a.new_plan:
+            sys.exit("PLAN_EXISTS %s (pass --new-plan only if it was never deployed)"
+                     % self.state["operation_id"])
+        if "deploy_intent" in self.state:
+            sys.exit("DEPLOY_ALREADY_ATTEMPTED: a new delivery needs a new workdir")
+        (input_pin,) = self.need("input_pin")
+        rc, result = self.operator("plan", ["--input-pin", input_pin], 300)
+        if rc == 0 and result.get("status") == "PREPARED_OWNER_UNCHANGED":
+            self.save(operation_id=result["operation_id"], plan_pin=result["plan_sha256"],
+                      plan_expires_at=result["expires_at"])
+        return rc
+
+    def live(self, phase, action, timeout, require=None):
+        if phase + "_intent" in self.state:
+            sys.exit(phase.upper() + "_CONSUMED: inspect with `status`; never replay")
+        if require and require not in self.state:
+            sys.exit(phase.upper() + "_REQUIRES_" + require.upper())
+        extra = self.op_args()
+        self.save(**{phase + "_intent": time.time()})
+        rc, result = self.operator(action, extra, timeout)
+        self.save(**{phase + "_result": result, phase + "_rc": rc})
+        return rc
+
+    def status(self, a):
+        rc, result = self.operator("status", ["--operation-id", self.need("operation_id")[0]], 120)
+        op = OPERATIONS + "/" + self.state["operation_id"]
+        summary = self.remote_python(STARTUP_SUMMARY % (op,), timeout=60)
+        print(json.dumps({"startup": summary}, indent=2))
+        return rc
+
+
+EXTRACT = r'''import json,hashlib,pathlib,os,tarfile
+src=pathlib.Path(%r);package=pathlib.Path(%r);candidate=pathlib.Path(%r);pin=%r;cpin=%r
+assert src.is_file() and not package.exists() and not candidate.exists()
+with tarfile.open(src,"r:") as ar:
+ members=ar.getmembers()
+ assert len(members)==len(set(x.name for x in members))
+ assert all(x.isfile() and x.size<=12000000 and not pathlib.PurePosixPath(x.name).is_absolute() and ".." not in pathlib.PurePosixPath(x.name).parts for x in members)
+ data={m.name:ar.extractfile(m).read() for m in members}
+assert hashlib.sha256(data["operator/PACKAGE.json"]).hexdigest()==pin
+p=json.loads(data["operator/PACKAGE.json"]);c=json.loads(data["candidate/candidate.json"])
+assert hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin
+assert set(data)=={"operator/PACKAGE.json","candidate/candidate.json"}|{"operator/"+x for x in p["files"]}|{"candidate/"+x for x in c["files"]}
+for part,manifest in (("operator",p),("candidate",c)):
+ assert all(hashlib.sha256(data[part+"/"+n]).hexdigest()==d for n,d in manifest["files"].items())
+for part,root in (("operator",package),("candidate",candidate)):
+ root.mkdir(mode=0o700)
+ for name,blob in data.items():
+  if not name.startswith(part+"/"):continue
+  target=root.joinpath(*pathlib.PurePosixPath(name[len(part)+1:]).parts)
+  target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+  with target.open("xb") as fh:
+   os.fchmod(fh.fileno(),0o700 if target.name=="security-reader-aarch64" else 0o600)
+   fh.write(blob);fh.flush();os.fsync(fh.fileno())
+os.unlink(src)
+print(json.dumps({"status":"STAGED_SOURCE_BOUND_NO_RADIO","files":len(data)}))
+'''
+
+VERIFY_STAGE = r'''import json,hashlib,pathlib
+package=pathlib.Path(%r);candidate=pathlib.Path(%r);pin=%r;cpin=%r
+raw=(package/"PACKAGE.json").read_bytes();p=json.loads(raw)
+c=json.loads((candidate/"candidate.json").read_bytes())
+assert hashlib.sha256(raw).hexdigest()==pin
+assert hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin
+for root,m in ((package,p),(candidate,c)):
+ bad=[n for n,d in m["files"].items() if hashlib.sha256((root/n).read_bytes()).hexdigest()!=d]
+ assert not bad,bad[:5]
+print(json.dumps({"status":"STAGE_VERIFIED"}))
+'''
+
+# Predecessor-bound input and binding from the installed operation's own
+# receipts (generalised from the V48 staging script). Re-running verifies.
+STAGE_BINDING = r'''from pathlib import Path
+import json,hashlib,os
+op=Path(%(op)r);oldinput=Path(%(oldinput)r);oldcand=Path(%(oldcand)r)
+newinput=Path(%(newinput)r);newbind=Path(%(newbind)r);fw=Path(%(fw)r)
+source=%(source)r;installed=%(installed)r
+canon=lambda obj:json.dumps(obj,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
+sha=lambda b:hashlib.sha256(b).hexdigest()
+plan=json.loads((op/"plan.json").read_bytes());frozen=json.loads((op/"frozen-plan.json").read_bytes())
+write=json.loads((op/"verified-write.json").read_bytes())
+cand=json.loads((oldcand/"candidate.json").read_bytes());target=json.loads((fw/"candidate.json").read_bytes())
+assert plan["source"]==installed and plan["operation_id"]==op.name
+assert frozen["source_sha"]==installed and frozen["candidate_sha256"]==sha(canon(cand))
+assert write["operation_plan_sha256"]==sha(canon(plan)) and frozen["plan_sha256"]==write["frozen_plan_sha256"]
+assert write["journal_sha256"]==sha((op/"mutation-journal.jsonl").read_bytes())
+assert frozen["capture_sha256"]==sha((op/"fresh-sparse-snapshot.bin").read_bytes())
+assert write["result"]["status"]=="APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL"
+assert set(write["result"]["written_sectors"])==set(frozen["program_order"])
+assert target["source_sha"]==source
+old_input=json.loads((oldinput/"INPUT.json").read_bytes())
+assert sha((oldinput/"INPUT.json").read_bytes())==plan["input_pin"]
+files={"installed-candidate.json":(oldcand/"candidate.json").read_bytes(),
+ "installed-app.hex":(oldcand/"P7U-STOCK20260311-APP-ONLY.hex").read_bytes(),
+ "installed-handoff.bin":(oldcand/"P7U-STOCK20260311-AC000-HANDOFF.bin").read_bytes(),
+ "installed-plan.json":(op/"frozen-plan.json").read_bytes(),"installed-result.json":canon(write["result"]),
+ "installed-before.bin":(op/"fresh-sparse-snapshot.bin").read_bytes(),
+ "management.json":(oldinput/"management.json").read_bytes(),
+ "historical-backup.json":(oldinput/"historical-backup.json").read_bytes()}
+assert set(files)==set(old_input["files"])
+assert sha(files["installed-app.hex"])==cand["app_hex_sha256"] and sha(files["installed-handoff.bin"])==cand["handoff_sha256"]
+doc={"files":{n:sha(d) for n,d in files.items()}};inputpin=sha(canon(doc))
+binding={"schema":"p7u-paired-operation-v1","source_sha":source,"installed_source":installed,
+ "previous_operation":op.name,"candidate_pin":sha(canon(target)),"previous_plan_pin":sha(canon(plan)),
+ "previous_frozen_pin":frozen["plan_sha256"],"previous_snapshot_pin":frozen["capture_sha256"],
+ "previous_journal_pin":write["journal_sha256"],"previous_candidate_pin":sha(canon(cand)),"input_pin":inputpin}
+bindingpin=sha(canon(binding))
+def put(root,name,raw):
+ with (root/name).open("xb") as out:
+  os.fchmod(out.fileno(),0o600);out.write(raw);out.flush();os.fsync(out.fileno())
+if not newinput.exists():
+ newinput.mkdir(mode=0o700)
+ for name,raw in {**files,"INPUT.json":canon(doc)}.items():put(newinput,name,raw)
+if not newbind.exists():
+ newbind.mkdir(mode=0o700);put(newbind,"binding.json",canon(binding))
+assert all((newinput/n).read_bytes()==r for n,r in {**files,"INPUT.json":canon(doc)}.items())
+assert sha((newbind/"binding.json").read_bytes())==bindingpin
+print(json.dumps({"status":"BINDING_STAGED_NO_RADIO","input_pin":inputpin,"binding_pin":bindingpin}))
+'''
+
+STARTUP_SUMMARY = r'''import json,pathlib
+op=pathlib.Path(%r);out={}
+for name in ("native-boot/startup-result.json","guarded-startup-recovery/startup-result.json",
+             "terminal-readonly-finish/terminal-result.json","native-boot/hold.json",
+             "verified-write.json","started-pending-serving.json"):
+ p=op/name
+ if p.is_file():
+  r=json.loads(p.read_text())
+  out[name]={k:r.get(k) for k in ("status","failure_category","incomplete_detail","ready_observed",
+   "frame_counts","stack_profile","onset_record","phase","error_type","source") if k in r}
+  if name=="verified-write.json":out[name]=r.get("result",{}).get("status")
+print(json.dumps(out))
+'''
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("phase", choices=("fetch", "stage", "plan", "deploy", "boot", "finish",
+                                          "status", "hang"))
+    parser.add_argument("--workdir", required=True, help="local per-delivery state directory")
+    parser.add_argument("--firmware")
+    parser.add_argument("--installed", help="currently installed firmware source SHA")
+    parser.add_argument("--previous-operation", help="operation that wrote --installed")
+    parser.add_argument("--native-run")
+    parser.add_argument("--package-run")
+    parser.add_argument("--new-plan", action="store_true")
+    a = parser.parse_args()
+    d = Driver(a.workdir)
+    if a.phase == "fetch":
+        if not all((a.firmware, a.installed, a.previous_operation, a.native_run, a.package_run)):
+            sys.exit("FETCH_ARGS --firmware --installed --previous-operation --native-run --package-run")
+        return d.fetch(a)
+    if a.phase == "stage":
+        return d.stage(a)
+    if a.phase == "plan":
+        return d.plan(a)
+    if a.phase == "status":
+        return d.status(a)
+    if a.phase == "deploy":
+        return d.live("deploy", "deploy", 1500, require="plan_pin")
+    if a.phase == "boot":
+        return d.live("boot", "boot-native", 300, require="deploy_result")
+    if a.phase == "finish":
+        return d.live("finish", "finish-native", 300, require="boot_result")
+    rc, result = d.operator("hang-evidence", d.op_args(), 120)
+    d.save(hang_runs=d.state.get("hang_runs", []) + [{"at": time.time(), "rc": rc,
+                                                      "result": result}])
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

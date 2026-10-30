@@ -25,17 +25,31 @@ def finish(ns,package,package_pin,plan_pin,ha):
     from p7u_paired_hold import verified_pair_package
     ns['sealed_tree'](package,'PACKAGE.json',package_pin)
     writer=verified_pair_package(ns,plan_pin);p=ns['verified_write'](writer,plan_pin)
+    need=ns['need']
+    # Either the guarded resume or the one native boot may have proven READY
+    # and then lost a terminal read (V48: B1P1 zero bytes). Both continue
+    # only through this read-only completion: never a reset or a startup.
     oldroot=ns['PRIVATE']/'guarded-startup-recovery'
+    native=not oldroot.exists()
+    if native:
+        oldroot=ns['PRIVATE']/'native-boot'
+        need((ns['PRIVATE']/'boot-intent.json').is_file() and
+             not (ns['PRIVATE']/'start-intent.json').exists() and
+             not (ns['PRIVATE']/'started-pending-serving.json').exists() and
+             ns['load'](oldroot/'hold.json').get('phase')=='NATIVE_BOOT','FINISH_NATIVE_BOOT_STATE')
     ns['private_root'](oldroot);prior=ns['load'](oldroot/'startup-result.json')
-    need=ns['need'];need(prior['status']=='FAILED_STOP_NO_RETRY' and prior['ready_observed'] is True and
+    need(prior['status']=='FAILED_STOP_NO_RETRY' and prior['ready_observed'] is True and
         prior['failure_category']=='READY_OBSERVED_VERIFICATION_INCOMPLETE','FINISH_NATIVE_NOT_READONLY_READY')
     ns['modules'](package)
     from p7u_r4_startup_observer import decode_e1
     from p7u_r4_startup_transport import FramedZnp,PrivateEvidenceJournal,observe_after_srsp
     info=decode_e1(bytes.fromhex(prior['frames']['B1E1']),ns['SOURCE'])
     need(info['state']==4 and info['first_error']==0 and info['flags']&7==7,'FINISH_NATIVE_PRIOR_NOT_READY')
-    failed=ha.inspect();need(not failed['running'] and failed['image']==ns['IMAGE'] and
-        failed==ns['load'](oldroot/'intent.json')['failed_owner'],'FINISH_NATIVE_OWNER_CHANGED')
+    failed=ha.inspect()
+    expected=(ns['load'](ns['PRIVATE']/'plan.json')['owner'] if native else
+              ns['load'](oldroot/'intent.json')['failed_owner'])
+    same=(failed.get('id')==expected.get('id') if native else failed==expected)
+    need(not failed['running'] and failed['image']==ns['IMAGE'] and same,'FINISH_NATIVE_OWNER_CHANGED')
     ha.policy();ha.proof(False);need(ha.management()==p['management_sha256'],'FINISH_NATIVE_BOARD')
     root=ns['PRIVATE']/'terminal-readonly-finish'
     need(not root.exists(),'FINISH_NATIVE_CONSUMED');root.mkdir(mode=0o700)
