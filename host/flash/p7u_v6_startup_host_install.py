@@ -165,7 +165,7 @@ def install_stopped(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
                  ".p7u-approved.json"):
         file=ns["DATA"]/name
         need(file.is_file() and not file.is_symlink(),"HOST_INSTALL_BACKUP_FILE")
-        ns["durable"](root,"backup-"+name.lstrip(".")+".bin",file.read_bytes())
+        ns["durable"](root,"backup-"+name.lstrip(".").replace(".","-")+".bin",file.read_bytes())
     ns["durable"](root,"old-config.bin",CONFIG.read_bytes())
     ns["durable"](root,"install-intent.json",
                   {"pin":phase_pin,"at":time.time(),"consumed_before_send":True,
@@ -199,6 +199,17 @@ def install_stopped(ns, package, package_pin, writer_plan_pin, phase_pin, ha):
          config.sha256(CONFIG.read_bytes())==plan["new_config_sha256"],
          "HOST_INSTALL_UPDATE_UNPROVEN_NO_RETRY")
     ha.proof(False)
+    # Installation must actually activate the new opt-in, not merely update
+    # a config file or Supervisor version label.
+    code = ("import json; e=json.load(open('/data/apps.json'))"
+            "['system']['local_p7u_r4_native_host']['environment'];"
+            " print(json.dumps({k:e.get(k) for k in "
+            "['P7U_B4_COLLECTOR','P7U_B4_FLIGHT_V5',"
+            "'P7U_B4_STAGE_V6','P7U_B4_STARTUP_CAPTURE']}))")
+    env=json.loads(_run(["docker","exec","hassio_supervisor","python3","-c",code]))
+    need(env=={"P7U_B4_COLLECTOR":"1","P7U_B4_FLIGHT_V5":"1",
+               "P7U_B4_STAGE_V6":"1","P7U_B4_STARTUP_CAPTURE":"1"},
+         "HOST_INSTALL_CAPTURE_NOT_ACTIVE")
     result={"status":"STARTUP_CAPTURE_HOST_INSTALLED_STOPPED",
             "host_source":HOST,"image":NEW_IMAGE,
             "config_sha256":plan["new_config_sha256"],
