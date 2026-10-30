@@ -122,6 +122,7 @@ class Tests(unittest.TestCase):
                                              "write-plan",pin,self.ha)
         self.assertEqual(result["status"],"PRE_MUTATION_TEST_ONLY")
         run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["published_root"], previous)
         continuation=self.root/(mod.OP_ROOT+"-continuation")
         intent=self.ns["load"](continuation/"continuation-intent.json")
         self.assertTrue(intent["consumed_before_send"])
