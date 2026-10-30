@@ -12,7 +12,7 @@ class V48(unittest.TestCase):
     def setUp(self):
         # Synthetic unit tests have no TI git worktree; the *native* pipeline
         # independently verifies the immutable TI SHA and real patch anchor.
-        check=patch("r4_retained_zdapp_fairness.pinned_source",
+        check=patch("r4_retained_zdapp_fairness.subprocess.check_output",
                     return_value=b"static void stackTaskFxn(UArg a0, UArg a1)")
         check.start()
         self.addCleanup(check.stop)
