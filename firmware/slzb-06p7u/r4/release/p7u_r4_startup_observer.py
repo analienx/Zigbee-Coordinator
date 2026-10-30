@@ -12,18 +12,24 @@ Q0 = b"B1Q1\x01\x08\x00\x00"
 Q2 = b"B1Q1\x01\x08\x02\x00"
 Q3 = b"B1Q1\x01\x08\x03\x00"
 Q4 = b"B1Q1\x01\x08\x04\x00"
+Q5 = b"B1Q1\x01\x08\x04\x01"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
 # V50 keeps the armed sole NPI owner at priority6 for the whole boot and
 # answers RAM-only B1E2 (op4) Stack-service evidence. Older firmware must
 # still report the original priority4 at READY and has no B1E2.
-V50_SOURCES = frozenset({"540d75a23d11587fb45fd892c5e9ae01ec0aab15"})
+V50_SOURCES = frozenset({"e31a07579e06cfde261b3531ae1061d47fd975f5"})
+# V51 (same NPI floor and B1E2) adds the B1E3 (op4 page1) onset record.
+V51_SOURCES = frozenset({"e31a07579e06cfde261b3531ae1061d47fd975f5"})
 
 def expected_ready_npi_priority(source: str) -> int:
     return 6 if source in V50_SOURCES else 4
 
 def stack_evidence_supported(source: str) -> bool:
     return source in V50_SOURCES
+
+def onset_evidence_supported(source: str) -> bool:
+    return source in V51_SOURCES
 
 class EvidenceError(RuntimeError):
     pass
@@ -42,7 +48,7 @@ def checked(raw: bytes, tag: bytes, length: int, source: str):
     require(len(raw) == length and raw[:4] == tag
             and raw[4] == 1 and raw[5] == length,
             "RESPONSE_SCHEMA_INVALID_" + tag.decode())
-    require(raw[8:12] == bytes.fromhex(source[:8]) if tag in (b"B1E1", b"B1E2")
+    require(raw[8:12] == bytes.fromhex(source[:8]) if tag in (b"B1E1", b"B1E2", b"B1E3")
             else raw[12:16] == bytes.fromhex(source[:8]),
             "SOURCE_DIGEST_MISMATCH_" + tag.decode())
     return raw
@@ -101,6 +107,98 @@ def decode_e2(raw: bytes, source: str) -> dict:
                     "data_ind": uint32(raw,64), "events": uint32(raw,68),
                     "last_req_failure": raw[76], "last_cnf_failure": raw[77]},
             "services": services}
+
+E3_READY, E3_SETTLED, E3_ONSET, E3_LONG = 0x01, 0x02, 0x04, 0x08
+E3_NV_HOOKED, E3_AFTER_CALM, E3_HEAP = 0x10, 0x20, 0x40
+NV_KINDS = {0: None, 1: "read", 2: "write", 3: "delete", 4: "compact"}
+
+def decode_e3(raw: bytes, source: str) -> dict:
+    """V51 B1E3: latched onset record. Evidence only, never acceptance.
+
+    Ticks use the B1E2 tick period. Thresholds are fixed in firmware: a
+    10 s window is saturated at >=90% Stack busy and calm below 50%; the
+    long-dispatch latch is >=1 s. Unlatched records must be all zero.
+    """
+    require(onset_evidence_supported(source), "ONSET_EVIDENCE_UNSUPPORTED_SOURCE")
+    checked(raw, b"B1E3", 248, source)
+    flags = raw[6]
+    zero = lambda a, b: not any(raw[a:b])
+    require(raw[7] == 10 and not flags & 0x80 and raw[117] == 0 and
+            raw[67] in NV_KINDS and raw[78] in NV_KINDS and
+            (flags & E3_ONSET or zero(100, 140)) and
+            (flags & E3_LONG or zero(140, 160)) and
+            (flags & E3_HEAP or zero(92, 100)) and
+            (flags & E3_READY or (zero(16, 52) and zero(160, 180))) and
+            not (flags & (E3_SETTLED | E3_ONSET | E3_LONG | E3_HEAP) and
+                 not flags & E3_READY) and
+            not (flags & E3_AFTER_CALM and not flags & E3_ONSET),
+            "ONSET_EVIDENCE_SCHEMA_INVALID")
+    def service(value):
+        return value - 1 if value else None
+    def dispatch(offset, present=True):
+        if not present:
+            return None
+        return {"end_tick": uint32(raw, offset), "ms": uint16(raw, offset + 4),
+                "service": service(raw[offset + 6]), "nv_ops": raw[offset + 7],
+                "input": uint32(raw, offset + 8), "returned": uint32(raw, offset + 12),
+                "nv_ticks": uint32(raw, offset + 16)}
+    onset = None
+    if flags & E3_ONSET:
+        onset = {"end_tick": uint32(raw, 100), "busy_ticks": uint32(raw, 104),
+                 "elapsed_ticks": uint32(raw, 108), "dispatches": uint32(raw, 112),
+                 "top_service": service(raw[116]), "mac_cnf_failed": uint16(raw, 118),
+                 "top_service_busy_ticks": uint32(raw, 120),
+                 "top_service_inputs": uint32(raw, 124), "nv_ticks": uint32(raw, 128),
+                 "mac_data_req": uint16(raw, 132), "mac_data_ind": uint16(raw, 134),
+                 "heap_free": uint32(raw, 136), "after_calm": bool(flags & E3_AFTER_CALM)}
+    return {"flags": flags, "ready": bool(flags & E3_READY),
+            "settled": bool(flags & E3_SETTLED), "nv_hooked": bool(flags & E3_NV_HOOKED),
+            "now": uint32(raw, 12), "windows": uint32(raw, 16),
+            "saturated_windows": uint32(raw, 20), "busy_windows": uint32(raw, 24),
+            "consecutive_saturated": uint16(raw, 28),
+            "max_consecutive_saturated": uint16(raw, 30),
+            "peak": {"busy_ticks": uint32(raw, 32), "elapsed_ticks": uint32(raw, 36),
+                     "end_tick": uint32(raw, 40)},
+            "ready_tick": uint32(raw, 44), "settle_tick": uint32(raw, 48),
+            "nv": {"reads": uint32(raw, 52), "writes": uint32(raw, 56),
+                   "deletes": uint16(raw, 60), "compactions": uint16(raw, 62),
+                   "failures": uint16(raw, 64), "last_failure": raw[66],
+                   "last_failure_kind": NV_KINDS[raw[67]], "ticks": uint32(raw, 68),
+                   "other_context_ticks": uint32(raw, 72), "longest_ms": uint16(raw, 76),
+                   "longest_kind": NV_KINDS[raw[78]], "longest_service": service(raw[79]),
+                   "service_ticks": [uint32(raw, 200 + 4 * i) for i in range(10)]},
+            "heap": {"total": uint32(raw, 80), "free": uint32(raw, 84),
+                     "largest_free": uint32(raw, 88),
+                     "low_water": uint32(raw, 92) if flags & E3_HEAP else None,
+                     "low_water_tick": uint32(raw, 96) if flags & E3_HEAP else None},
+            "onset": onset,
+            "first_long": dispatch(140, bool(flags & E3_LONG)),
+            "run_worst": dispatch(160, bool(flags & E3_READY)),
+            "boot_worst": dispatch(180),
+            "task_stack": {"stack_used": uint16(raw, 240), "stack_size": uint16(raw, 242),
+                           "npi_used": uint16(raw, 244), "npi_size": uint16(raw, 246)}}
+
+def onset_summary(e3: dict, tick_period_us: int) -> dict:
+    """Human-scale view of a decoded B1E3 (needs the B1E2 tick period)."""
+    ms = lambda ticks: ticks * tick_period_us // 1000
+    age = lambda tick: ms((e3["now"] - tick) & 0xffffffff) // 1000
+    onset = e3["onset"]
+    stack = e3["task_stack"]
+    pct = lambda used, size: round(100.0 * used / size, 1) if size else None
+    return {"ready_age_s": age(e3["ready_tick"]) if e3["ready"] else None,
+            "onset_age_s": age(onset["end_tick"]) if onset else None,
+            "onset_busy_percent": (round(100.0 * onset["busy_ticks"] / onset["elapsed_ticks"], 1)
+                                   if onset and onset["elapsed_ticks"] else None),
+            "onset_top_service": onset["top_service"] if onset else None,
+            "onset_nv_ms": ms(onset["nv_ticks"]) if onset else None,
+            "onset_after_calm": onset["after_calm"] if onset else None,
+            "saturated_windows": e3["saturated_windows"], "windows": e3["windows"],
+            "nv_ms": ms(e3["nv"]["ticks"]),
+            "nv_service_ms": [ms(t) for t in e3["nv"]["service_ticks"]],
+            "heap_free": e3["heap"]["free"], "heap_low_water": e3["heap"]["low_water"],
+            "heap_largest_free": e3["heap"]["largest_free"],
+            "stack_high_water_percent": pct(stack["stack_used"], stack["stack_size"]),
+            "npi_high_water_percent": pct(stack["npi_used"], stack["npi_size"])}
 
 def stack_profile(first: dict, last: dict) -> dict:
     """Deltas between two B1E2 samples. Evidence only, never acceptance."""

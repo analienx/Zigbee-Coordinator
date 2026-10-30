@@ -180,7 +180,7 @@ def runtime_priority_qualification(c):
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                       '66ed700c2818c7a0963dad9160d55109009bbaac',
                       '250441cd17c55e25c78d97e041f056574355ade7',
-                      '540d75a23d11587fb45fd892c5e9ae01ec0aab15'): return None
+                      'e31a07579e06cfde261b3531ae1061d47fd975f5'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -755,7 +755,7 @@ async def deploy(package, pin, ha):
             '66ed700c2818c7a0963dad9160d55109009bbaac',
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
             '250441cd17c55e25c78d97e041f056574355ade7',
-            '540d75a23d11587fb45fd892c5e9ae01ec0aab15') else 0x30000
+            'e31a07579e06cfde261b3531ae1061d47fd975f5') else 0x30000
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
@@ -871,6 +871,16 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
         need(not baseline['npi_armed'] and baseline['npi_priority'] in (4, 6) and
              baseline['stack_priority'] == 5 and not baseline['table_fallback'],
              'STARTUP_STACK_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q5, decode_e3, onset_evidence_supported
+    if onset_evidence_supported(source):
+        # V51 B1E3 likewise: NV timing hooks installed at Stack task entry,
+        # no READY phase, no window or latch before the one startup request.
+        raw = znp.request(1, 241, Q5, deadline=deadline)
+        evidence('B1E3', raw, dict(znp.history[-1]))
+        onset = decode_e3(raw, source)
+        need(onset['nv_hooked'] and not onset['ready'] and onset['windows'] == 0 and
+             onset['onset'] is None and onset['first_long'] is None,
+             'STARTUP_ONSET_EVIDENCE_NOT_PRISTINE')
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')
@@ -1093,7 +1103,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'startup-host-continue', 'startup-capture-plan', 'startup-capture-start', 'instrumented-rom-plan', 'instrumented-rom-execute', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'startup-host-continue', 'startup-capture-plan', 'startup-capture-start', 'instrumented-rom-plan', 'instrumented-rom-execute', 'hang-evidence', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1128,7 +1138,14 @@ def main():
                 result = operation_status()
             else:
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
-                if a.action in ('instrumented-rom-plan','instrumented-rom-execute'):
+                if a.action == 'hang-evidence':
+                    # Read-only incident capture before any ROM/BSL recovery.
+                    from p7u_hang_evidence_once import capture as hang_capture
+                    need(a.recovery_plan_pin is None and a.startup_host_pin is None and
+                         a.capture_plan_pin is None and a.instrumented_rom_pin is None,
+                         'HANG_EVIDENCE_ARGUMENT_SCOPE')
+                    result = hang_capture(globals(), a.package, a.package_pin, a.plan_pin, HA())
+                elif a.action in ('instrumented-rom-plan','instrumented-rom-execute'):
                     from p7u_v6_instrumented_rom_once import plan as instrumented_plan, execute as instrumented_execute
                     need(a.capture_plan_pin is None and a.recovery_plan_pin is None and
                          a.startup_host_pin is None, 'INSTRUMENTED_ROM_ARGUMENT_SCOPE')

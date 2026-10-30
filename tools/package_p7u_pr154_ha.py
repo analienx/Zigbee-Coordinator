@@ -53,7 +53,7 @@ def main():
     v48_pair=(c['source_sha']=='250441cd17c55e25c78d97e041f056574355ade7' and
         host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
         host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
-    v50_pair=(c['source_sha']=='540d75a23d11587fb45fd892c5e9ae01ec0aab15' and
+    v50_pair=(c['source_sha']=='e31a07579e06cfde261b3531ae1061d47fd975f5' and
         host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
         host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
     assert host['source_sha']==c['source_sha'] or owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or v50_pair or priority_pair or (c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and host['source_sha']==c['source_sha']), 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
@@ -79,6 +79,7 @@ def main():
     shutil.copyfile('host/flash/p7u_v6_startup_host_install.py', dest.with_name('p7u_v6_startup_host_install.py'))
     shutil.copyfile('host/flash/p7u_v6_startup_capture_once.py', dest.with_name('p7u_v6_startup_capture_once.py'))
     shutil.copyfile('host/flash/p7u_v6_instrumented_rom_once.py', dest.with_name('p7u_v6_instrumented_rom_once.py'))
+    shutil.copyfile('host/flash/p7u_hang_evidence_once.py', dest.with_name('p7u_hang_evidence_once.py'))
     shutil.copyfile('host/r4-b4/f2_progress_contract.py', dest.with_name('f2_progress_contract.py'))
     if args.reader_package:
         (args.out/'security-reader-aarch64').write_bytes(qualified_reader(args.reader_package))

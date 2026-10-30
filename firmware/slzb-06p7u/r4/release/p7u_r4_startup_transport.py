@@ -14,8 +14,11 @@ Q0=b"B1Q1\x01\x08\x00\x00"
 Q2=b"B1Q1\x01\x08\x02\x00"
 Q3=b"B1Q1\x01\x08\x03\x00"
 Q4=b"B1Q1\x01\x08\x04\x00"
-EXPECTED={Q0:(b"B1S1",24),Q2:(b"B1P1",32),Q3:(b"B1E1",128),Q4:(b"B1E2",248)}
+Q5=b"B1Q1\x01\x08\x04\x01"
+EXPECTED={Q0:(b"B1S1",24),Q2:(b"B1P1",32),Q3:(b"B1E1",128),Q4:(b"B1E2",248),
+          Q5:(b"B1E3",248)}
 # V50 B1E2 sampling: every Nth RUNNING poll, then twice after terminal proof.
+# V51 B1E3 rides along with each RUNNING B1E2 and once after terminal proof.
 STACK_RUNNING_EVERY=4
 STACK_POST_READY_GAP=1.0
 
@@ -165,17 +168,20 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
     save(name, data, detail) may fsync an append-only private receipt before
     ANY next query. The caller must not reissue the consumed startup.
     """
-    from p7u_r4_startup_observer import (decode_e1,decode_e2,checked,verify_success_frames,
-                                          stack_evidence_supported,stack_profile,
-                                          EvidenceError,require)
+    from p7u_r4_startup_observer import (decode_e1,decode_e2,decode_e3,checked,
+                                          verify_success_frames,stack_evidence_supported,
+                                          onset_evidence_supported,onset_summary,
+                                          stack_profile,EvidenceError,require)
     znp.source=source
     deadline=srsp_received+absolute_seconds
     frames={}
-    counts={"B1E1":0,"B1P1":0,"B1S1":0,"UTIL":0,"MARKER":0,"B1E2":0}
+    counts={"B1E1":0,"B1P1":0,"B1S1":0,"UTIL":0,"MARKER":0,"B1E2":0,"B1E3":0}
     e_snapshots=0
     ready=False
     stack=stack_evidence_supported(source)
+    onset=onset_evidence_supported(source)
     stack_samples=[]
+    onset_samples=[]
 
     def record(name,data):
         frames[name]=data.hex()
@@ -188,6 +194,12 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
         record("B1E2",raw)
         stack_samples.append(info)
         return info
+    def onset_sample(until):
+        raw=znp.request(1,241,Q5,deadline=until)
+        info=decode_e3(raw,source)
+        record("B1E3",raw)
+        onset_samples.append(info)
+        return info
     def outcome(category,status="FAILED_STOP_NO_RETRY"):
         result={"status":status,"failure_category":category,
                 "frames":dict(frames),"frame_counts":dict(counts),
@@ -197,6 +209,9 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
             result["stack_profile"]={
                 "whole_observation":stack_profile(stack_samples[0],stack_samples[-1]),
                 "last_interval":stack_profile(stack_samples[-2],stack_samples[-1])}
+        if onset_samples and stack_samples:
+            result["onset_record"]={"decoded":onset_samples[-1],
+                "summary":onset_summary(onset_samples[-1],stack_samples[-1]["tick_period_us"])}
         return result
 
     while znp.clock()<deadline:
@@ -207,6 +222,8 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
             e_snapshots+=1
             if stack and (e_snapshots-1)%STACK_RUNNING_EVERY==0:
                 stack_sample(deadline)
+                if onset:
+                    onset_sample(deadline)
         except (TimeoutError,OSError,EvidenceError,RuntimeError,ValueError):
             return outcome("DEADLINE_NOT_READY" if e_snapshots
                            else "OBSERVER_TIMEOUT_STATE_UNKNOWN")
@@ -253,5 +270,15 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
             # existing read-only completion (never a reset/restart) may follow.
             result=outcome("READY_OBSERVED_VERIFICATION_INCOMPLETE")
             result["incomplete_detail"]="POST_READY_STACK_EVIDENCE"
+            return result
+    if onset:
+        # UTIL state9 came from an MT dispatch that ended before MARKER's
+        # began, so the firmware has already latched READY by now.
+        try:
+            info=onset_sample(terminal)
+            require(info["ready"] and info["nv_hooked"],"ONSET_EVIDENCE_NOT_READY")
+        except (TimeoutError,OSError,EvidenceError,RuntimeError,ValueError):
+            result=outcome("READY_OBSERVED_VERIFICATION_INCOMPLETE")
+            result["incomplete_detail"]="POST_READY_ONSET_EVIDENCE"
             return result
     return outcome(None,"COORDINATOR_STATE9_MARKER_PASS")

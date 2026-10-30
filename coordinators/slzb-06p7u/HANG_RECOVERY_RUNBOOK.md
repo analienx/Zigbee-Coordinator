@@ -10,8 +10,48 @@
 
 1. **Confirm a hard ZNP hang**, not merely an offline device or mesh NO_ROUTE. Look for locally failing SYS/AF/ZDO SRSP, frozen response counters, real device freshness loss while the MQTT broker itself is healthy, and a hung or failed Z2M initialization. Record first/last response timestamps, host Waitress/adapter queue, and last *valid* F2 snapshot. A skipped F2 is not a diagnostic response.
 2. **Freeze evidence and ownership.** Privately hash/copy F2 journal, live logs, database.db, coordinator_backup.json, config and current NV/security/frame-counter baseline. Verify only one serial owner, no OTA/flash job, no Z2M/HA automation or recovery watchdog racing. Quiesce the single current production owner and show old/managed add-ons stopped/error and port holders zero. Never open ROM over a running Z2M UART.
-3. **Use ROM/BSL round-trip FIRST**, as detailed below. It is one bounded new incident operation, *not* an unattended watchdog action. Do not reuse consumed October 27 intent IDs/scripts.
-4. **Only if ROM reentry cannot recover:** inspect fresh ROM and current APP+paired AC000 provenance for a separate, explicitly authorized guarded APP flash; protect all NV4, CCFG, network keys, TCLK and monotonic counter floors. Do not blindly flash or use stock restore as a shortcut. If ROM is inaccessible, stop and diagnose the physical bridge. No broad erase, factory reset, re-pair, new PAN, or CMD_HARD_RESET=9.
+3. **Read the firmware's own hang record BEFORE the ROM round-trip (V51 and later).** The round-trip resets the chip and erases the RAM-only record of how the collapse began. With Z2M stopped and port holders zero, run the sealed operator **once**: `p7u_pr154_ha.py hang-evidence --operation-id <installed firmware's flash operation> --plan-pin <its write plan>` (plus the usual `--package/--package-pin/--binding/--binding-pin`). See [the capture details](#v51-read-only-hang-evidence) below. Continue with step 4 whatever it reports; never retry the capture.
+4. **Use ROM/BSL round-trip FIRST** among recovery actions, as detailed below. It is one bounded new incident operation, *not* an unattended watchdog action. Do not reuse consumed October 27 intent IDs/scripts.
+5. **Only if ROM reentry cannot recover:** inspect fresh ROM and current APP+paired AC000 provenance for a separate, explicitly authorized guarded APP flash; protect all NV4, CCFG, network keys, TCLK and monotonic counter floors. Do not blindly flash or use stock restore as a shortcut. If ROM is inaccessible, stop and diagnose the physical bridge. No broad erase, factory reset, re-pair, new PAN, or CMD_HARD_RESET=9.
+
+## V51 read-only hang evidence
+
+`hang-evidence` (`host/flash/p7u_hang_evidence_once.py`) refuses to open the USB by-id unless all of the following hold:
+- the installed source supports B1E3;
+- the operation's verified write and `started-pending-serving` name that source;
+- the HA policy shows no watchdog or automation;
+- the Z2M owner is stopped;
+- the inspector proves zero TTY holders;
+- the board identity matches.
+
+It then sends, in this order, each reply fsynced to a fresh private `hang-evidence-*/evidence.jsonl` before the next request:
+1. B1E3, the onset record;
+2. B1E2;
+3. B1E1;
+4. B1S1;
+5. B1E2 again, 1 s later, for the live Stack CPU profile;
+6. one `SYS_PING`, which goes through MT, i.e. the Stack task.
+
+All B1Q1 queries are answered by the priority-6 NPI owner, never the Stack task. The capture never resets, enters BSL, restarts the radio, sends a startup request, touches NV or starts a host. A first timeout latches the transport and ends the capture; the partial result is still written.
+
+`result.json` labels the state. The labels are evidence, not a recovery decision:
+
+| Label | Meaning |
+| --- | --- |
+| `NPI_OWNER_UNRESPONSIVE` | No B1 reply at all |
+| `STACK_DISPATCH_STUCK` | One Stack dispatch has been in progress for at least 6 s |
+| `STACK_SATURATED` | Stack task at least 90 % busy over the 1 s interval |
+| `MT_PATH_UNRESPONSIVE` | B1 queries answered, `SYS_PING` not |
+| `LOCAL_QUERIES_ANSWERED` | Everything answered locally |
+
+What to read in the B1E3 onset record:
+- the first post-READY 10 s window with the Stack at least 90 % busy: top service and its input events, NV time, MAC request/confirm-failure/indication deltas, free heap, and whether a calm window preceded it;
+- the first and the worst post-READY dispatch of at least 1 s, and the worst boot dispatch, each with the NV operations and NV time inside it;
+- NV time per Stack service;
+- OSAL heap free, low-water and largest block;
+- Stack and NPI task stack high-water.
+
+Publish only sanitized counters. Keep the journal private.
 
 ## The physically successful no-power-cycle procedure
 

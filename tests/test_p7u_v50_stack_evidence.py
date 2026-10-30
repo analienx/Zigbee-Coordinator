@@ -1,12 +1,13 @@
-"""V50 B1E2 decode and observer sampling; acceptance gates stay unchanged."""
+"""V50 B1E2 / V51 B1E3 decode and observer sampling; acceptance gates unchanged."""
 import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firmware/slzb-06p7u/r4/release"))
-from p7u_r4_startup_observer import (EvidenceError, Q0, Q2, Q3, Q4, V50_SOURCES,
-                                     decode_e2, stack_profile)
+from p7u_r4_startup_observer import (EvidenceError, Q0, Q2, Q3, Q4, Q5, V50_SOURCES,
+                                     V51_SOURCES, decode_e2, decode_e3, onset_summary,
+                                     stack_profile)
 from p7u_r4_startup_transport import observe_after_srsp
 from tests.test_p7u_r4_startup_observer import evidence as legacy_e1
 
@@ -28,6 +29,42 @@ def e2(source=V50, *, now=1000, busy=0, nwk=0, armed=True, npi=6, count=10):
     return bytes(raw)
 
 
+def e3(source=V50, *, ready=False, onset=False, long=False, now=5000000):
+    """V51 B1E3: NV hooks always installed at Stack task entry."""
+    raw = bytearray(248)
+    raw[:6] = b"B1E3\x01\xf8"
+    raw[7] = 10
+    raw[8:12] = bytes.fromhex(source[:8])
+    put = lambda offset, value: raw.__setitem__(slice(offset, offset + 4), value.to_bytes(4, "little"))
+    put16 = lambda offset, value: raw.__setitem__(slice(offset, offset + 2), value.to_bytes(2, "little"))
+    flags = 0x10
+    put(12, now); put(52, 400); put(56, 30); put(68, 250000); put(72, 50000)
+    put16(76, 900); raw[78] = 4; raw[79] = 3
+    put(80, 90000); put(84, 41000); put(88, 12000)
+    put(180, 1700000); put16(184, 15000); raw[186] = 6; raw[187] = 120
+    put(188, 0x10000); put(196, 180000)
+    put16(240, 1800); put16(242, 3072); put16(244, 700); put16(246, 1024)
+    if ready:
+        flags |= 0x01 | 0x02 | 0x40
+        put(16, 400); put(20, 3); put(24, 5); put16(28, 0); put16(30, 2)
+        put(32, 1000000); put(36, 1010000); put(40, 4000000)
+        put(44, 1800000); put(48, 1900000); put(92, 39000); put(96, 3990000)
+        put(160, 4100000); put16(164, 800); raw[166] = 3; raw[167] = 2
+        put(168, 0x2070); put(176, 30000)
+        put(200 + 4 * 2, 200000)
+    if onset:
+        flags |= 0x04 | 0x20
+        put(100, 4000000); put(104, 1000000); put(108, 1010000); put(112, 820)
+        raw[116] = 3; put16(118, 41); put(120, 960000); put(124, 0x2070)
+        put(128, 300000); put16(132, 610); put16(134, 77); put(136, 39500)
+    if long:
+        flags |= 0x08
+        put(140, 4500000); put16(144, 1200); raw[146] = 3; raw[147] = 9
+        put(148, 0x2070); put(156, 110000)
+    raw[6] = flags
+    return bytes(raw)
+
+
 def e1(source, state, npi):
     raw = bytearray(legacy_e1())
     raw[8:12] = bytes.fromhex(source[:8])
@@ -44,7 +81,8 @@ def e1(source, state, npi):
 
 class FakeZnp:
     """Scripted one-outstanding-request ZNP; records every operation."""
-    def __init__(self, source, *, running=6, fail_post_ready_e2=False):
+    def __init__(self, source, *, running=6, fail_post_ready_e2=False,
+                 fail_post_ready_e3=False, never_ready_e3=False):
         self.source = None
         self.now = 0.0
         self.history = []
@@ -53,6 +91,9 @@ class FakeZnp:
         self.e2_count = 0
         self.ready_sent = False
         self.fail_post_ready_e2 = fail_post_ready_e2
+        self.fail_post_ready_e3 = fail_post_ready_e3
+        self.never_ready_e3 = never_ready_e3
+        self.e3_count = 0
         self.src = source
 
     def clock(self):
@@ -75,6 +116,11 @@ class FakeZnp:
                 raise TimeoutError("ZNP_OUTSTANDING_RESPONSE_DEADLINE")
             return e2(self.src, now=1000 + 100000 * self.e2_count,
                       busy=95000 * self.e2_count, nwk=75 * self.e2_count)
+        if payload == Q5:
+            self.e3_count += 1
+            if self.ready_sent and self.fail_post_ready_e3:
+                raise TimeoutError("ZNP_OUTSTANDING_RESPONSE_DEADLINE")
+            return e3(self.src, ready=self.ready_sent and not self.never_ready_e3)
         if payload == Q2:
             p = bytearray(32); p[:6] = b"B1P1\x01\x20"; p[6] = 4
             p[12:16] = bytes.fromhex(self.src[:8]); return bytes(p)
@@ -117,10 +163,15 @@ class StackEvidence(unittest.TestCase):
         znp = FakeZnp(V50, running=6)
         result = observe_after_srsp(znp, V50, 0.0, sleep=lambda s: None)
         self.assertEqual(result["status"], "COORDINATOR_STATE9_MARKER_PASS")
-        # Polls 1 and 5 while RUNNING, then exactly two after terminal proof.
+        # Polls 1 and 5 while RUNNING, then exactly two after terminal proof;
+        # V51 B1E3 rides along while RUNNING and once after the B1E2 pair.
         self.assertEqual(result["frame_counts"]["B1E2"], 4)
-        order = [p for _, _, p in znp.sent if p in (Q0, Q2, Q4)]
-        self.assertEqual(order[-4:], [Q2, Q0, Q4, Q4])
+        self.assertEqual(result["frame_counts"]["B1E3"], 3)
+        order = [p for _, _, p in znp.sent if p in (Q0, Q2, Q4, Q5)]
+        self.assertEqual(order[:2], [Q4, Q5])
+        self.assertEqual(order[-5:], [Q2, Q0, Q4, Q4, Q5])
+        self.assertTrue(result["onset_record"]["decoded"]["ready"])
+        self.assertEqual(result["onset_record"]["summary"]["stack_high_water_percent"], 58.6)
         self.assertIn("stack_profile", result)
         self.assertGreater(result["stack_profile"]["last_interval"]["stack_busy_percent"], 90)
 
@@ -131,6 +182,56 @@ class StackEvidence(unittest.TestCase):
         self.assertEqual(result["failure_category"], "READY_OBSERVED_VERIFICATION_INCOMPLETE")
         self.assertEqual(result["incomplete_detail"], "POST_READY_STACK_EVIDENCE")
         self.assertEqual(result["frame_counts"]["UTIL"], 1)
+
+    def test_post_ready_onset_failure_is_readonly_incomplete(self):
+        for kwargs in ({"fail_post_ready_e3": True}, {"never_ready_e3": True}):
+            znp = FakeZnp(V50, running=2, **kwargs)
+            result = observe_after_srsp(znp, V50, 0.0, sleep=lambda s: None)
+            self.assertEqual(result["status"], "FAILED_STOP_NO_RETRY")
+            self.assertEqual(result["failure_category"], "READY_OBSERVED_VERIFICATION_INCOMPLETE")
+            self.assertEqual(result["incomplete_detail"], "POST_READY_ONSET_EVIDENCE")
+            self.assertEqual(result["frame_counts"]["MARKER"], 1)
+
+    def test_decode_e3_onset_record_and_summary(self):
+        self.assertEqual(V51_SOURCES, V50_SOURCES)
+        boot = decode_e3(e3(), V50)
+        self.assertTrue(boot["nv_hooked"])
+        self.assertFalse(boot["ready"])
+        self.assertIsNone(boot["onset"])
+        self.assertIsNone(boot["run_worst"])
+        self.assertEqual(boot["boot_worst"]["service"], 5)
+        self.assertEqual(boot["boot_worst"]["ms"], 15000)
+        self.assertEqual(boot["boot_worst"]["nv_ticks"], 180000)
+        self.assertEqual(boot["nv"]["longest_kind"], "compact")
+        self.assertEqual(boot["nv"]["longest_service"], 2)
+        rec = decode_e3(e3(ready=True, onset=True, long=True), V50)
+        self.assertEqual(rec["onset"]["top_service"], 2)
+        self.assertEqual(rec["onset"]["top_service_inputs"], 0x2070)
+        self.assertTrue(rec["onset"]["after_calm"])
+        self.assertEqual(rec["first_long"]["ms"], 1200)
+        self.assertEqual(rec["heap"]["low_water"], 39000)
+        summary = onset_summary(rec, 10)
+        self.assertEqual(summary["onset_busy_percent"], 99.0)
+        self.assertEqual(summary["onset_age_s"], 10)
+        self.assertEqual(summary["onset_nv_ms"], 3000)
+        self.assertEqual(summary["nv_service_ms"][2], 2000)
+        self.assertEqual(summary["npi_high_water_percent"], 68.4)
+
+    def test_decode_e3_rejects_inconsistent_latches(self):
+        bad = bytearray(e3()); bad[104] = 1  # onset bytes without an onset latch
+        with self.assertRaisesRegex(EvidenceError, "ONSET_EVIDENCE_SCHEMA_INVALID"):
+            decode_e3(bytes(bad), V50)
+        bad = bytearray(e3()); bad[6] |= 0x02  # settled before READY
+        with self.assertRaisesRegex(EvidenceError, "ONSET_EVIDENCE_SCHEMA_INVALID"):
+            decode_e3(bytes(bad), V50)
+        bad = bytearray(e3()); bad[16] = 1  # a rated window before READY
+        with self.assertRaisesRegex(EvidenceError, "ONSET_EVIDENCE_SCHEMA_INVALID"):
+            decode_e3(bytes(bad), V50)
+        bad = bytearray(e3()); bad[9] ^= 1
+        with self.assertRaisesRegex(EvidenceError, "SOURCE_DIGEST_MISMATCH_B1E3"):
+            decode_e3(bytes(bad), V50)
+        with self.assertRaisesRegex(EvidenceError, "ONSET_EVIDENCE_UNSUPPORTED_SOURCE"):
+            decode_e3(e3(V48), V48)
 
     def test_legacy_source_never_sends_op4(self):
         znp = FakeZnp(V48, running=3)
@@ -146,7 +247,9 @@ class StackEvidence(unittest.TestCase):
         result = observe_after_srsp(znp, V48, 0.0, sleep=lambda s: None)
         self.assertEqual(result["status"], "COORDINATOR_STATE9_MARKER_PASS")
         self.assertNotIn(Q4, [p for _, _, p in znp.sent])
+        self.assertNotIn(Q5, [p for _, _, p in znp.sent])
         self.assertEqual(result["frame_counts"]["B1E2"], 0)
+        self.assertEqual(result["frame_counts"]["B1E3"], 0)
 
 
 if __name__ == "__main__":

@@ -147,7 +147,7 @@ class ReadonlyHold(unittest.TestCase):
         for firmware in (
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
             '250441cd17c55e25c78d97e041f056574355ade7',
-            '540d75a23d11587fb45fd892c5e9ae01ec0aab15',
+            'e31a07579e06cfde261b3531ae1061d47fd975f5',
         ):
             installed=binding.QUALIFIED_SUCCESSORS[firmware]
             cases=[
