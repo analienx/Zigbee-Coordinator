@@ -38,8 +38,9 @@ owned by that host; the recovery operator sends no external ZDO startup request.
 Every dispatch has an exclusive local receipt and remote consumed-before-send
 intents. A timeout/HOLD is **inspect, no replay**. Do not delete receipts or create
 a second state directory to evade a consumed recovery. Read-only `status` may be
-repeated; it reports the original write/boot operation. Recovery-specific outcome
-is in `execute-result.json` and the remote operation's
+repeated; it reports both the current host state and the separate recovery
+receipts, including any post-failure F2 observation. Recovery-specific outcome
+is in `execute-result.json` when successful and the remote operation's
 `rom-recovery-v6-open-first` directory. If the earlier `rom-recovery-v6` operator
 was used, the corrected operator additionally binds its preserved successful
 no-write ROM receipt and exact stopped-host ping failure. It creates one distinct

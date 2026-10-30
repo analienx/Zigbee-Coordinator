@@ -127,6 +127,51 @@ need(sha((root/'PACKAGE.json').read_bytes())==plan['pin'],'STAGED_MANIFEST_PIN')
 print(json.dumps({'status':'SEALED_V6_RECOVERY_OPERATOR_STAGED','package':str(root),'package_pin':plan['pin'],'radio_actions':0,'service_actions':0}),flush=True)
 '''
 
+# Read the actual recovery receipts as well as the current host state. The
+# original flash operation's status alone cannot report a later recovery HOLD.
+STATUS = r'''
+import fcntl,importlib.util,json,os,pathlib,sys
+package=pathlib.Path(sys.argv[1]);package_pin=sys.argv[2]
+binding=pathlib.Path(sys.argv[3]);binding_pin=sys.argv[4]
+operation=sys.argv[5];write_pin=sys.argv[6]
+sys.dont_write_bytecode=True
+sys.path.insert(0,str(package/'source/host/flash'))
+spec=importlib.util.spec_from_file_location('p7u_status_operator',package/'source/host/flash/p7u_pr154_ha.py')
+op=importlib.util.module_from_spec(spec);spec.loader.exec_module(op)
+from p7u_paired_binding import binding_values
+from p7u_paired_hold import verified_pair_package
+lock=os.open('/share/p7u-lifecycle/private/exclusive-manager.lock',os.O_RDWR|os.O_NOFOLLOW)
+try:
+ fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ meta=op.sealed_tree(package,'PACKAGE.json',package_pin)
+ op.__dict__.update(binding_values(op.read(binding),binding_pin,meta))
+ _,op.PRIVATE=op.select_operation(operation)
+ writer=verified_pair_package(op.__dict__,write_pin)
+ op.verified_write(writer,write_pin)
+ owner=op.HA().inspect()
+ results=[]
+ for name in ('rom-recovery-v6','rom-recovery-v6-open-first'):
+  root=op.PRIVATE/name
+  if not root.exists():continue
+  op.private_root(root)
+  files={p.name for p in root.iterdir()}
+  result={'operation':name,'files':sorted(files),'status':'IN_PROGRESS_OR_UNKNOWN'}
+  if 'result.json' in files:result['status']=op.load(root/'result.json').get('status')
+  elif 'failure.json' in files:result['status']=op.load(root/'failure.json').get('status')
+  elif 'execute-intent.json' not in files:result['status']='PLANNED'
+  if 'boot-ready.json' in files:result['fresh_reset_ind']=op.load(root/'boot-ready.json').get('fresh_reset_ind')
+  if 'rom-result.json' in files:
+   rom=op.load(root/'rom-result.json')
+   result['rom_security_pass']=rom.get('all88_crc_verified') is True and rom.get('security_pass') is True
+  probe=root/'postfailure-f2-readonly'/'result.json'
+  if probe.is_file():result['post_failure_f2']=op.load(probe)
+  results.append(result)
+ print(json.dumps({'status':'READONLY_RECOVERY_STATUS','firmware_source':op.SOURCE,
+                   'host_running':owner['running'],'host_image_matches':owner['image']==op.IMAGE,
+                   'recovery_operations':results},sort_keys=True),flush=True)
+finally:os.close(lock)
+'''
+
 
 def prepare(args):
     folder, meta = checked_package(args.package_directory, args.package_pin)
@@ -185,22 +230,27 @@ def main():
     need(prepared.get("package") == config["package"] and
          prepared.get("package_pin") == config["package_pin"] and
          config.get("firmware_source") == V6, "LOCAL_PREPARE_RECEIPT")
-    action = "status" if args.action == "status" else "rom-recovery-" + args.action
+    if args.action == "status":
+        # This sends no UART, reset, startup or service request. The command
+        # source is fixed in this versioned launcher, and all argv are quoted.
+        command = ["python3", "-B", "-u", "-c", STATUS, config["package"],
+                   config["package_pin"], config["binding"], config["binding_pin"],
+                   config["operation_id"], config["plan_pin"]]
+        result = subprocess.run(SSH + [" ".join(shlex.quote(str(x)) for x in command)],
+                                capture_output=True, timeout=60)
+        print(result.stdout.decode("utf-8", "replace"), end="")
+        if result.stderr:
+            print(result.stderr.decode("utf-8", "replace"), file=__import__('sys').stderr, end="")
+        raise SystemExit(result.returncode)
+    action = "rom-recovery-" + args.action
     command = ["python3", "-B", "-u", config["package"] + "/source/host/flash/p7u_pr154_ha.py", action]
     for key in ("package", "package_pin", "binding", "binding_pin", "operation_id"):
         command += ["--" + key.replace("_", "-"), config[key]]
-    if args.action != "status":
-        command += ["--plan-pin", config["plan_pin"]]
+    command += ["--plan-pin", config["plan_pin"]]
     if args.action == "execute":
         plan = json.loads((state / "plan-result.json").read_bytes())
         need(plan.get("status") == "V6_ROM_RECOVERY_PLAN_READY", "RECOVERY_PLAN_NOT_READY")
         command += ["--recovery-plan-pin", plan["recovery_plan_sha256"]]
-    if args.action == "status":
-        # Read-only status may be repeated; mutation dispatches always use 'xb'.
-        result = subprocess.run(SSH + [" ".join(shlex.quote(str(x)) for x in command)],
-                                capture_output=True, timeout=60)
-        print(result.stdout.decode("utf-8", "replace"), end="")
-        raise SystemExit(result.returncode)
     dispatch(state, args.action, command)
 
 
