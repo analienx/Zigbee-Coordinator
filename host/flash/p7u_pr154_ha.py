@@ -1077,7 +1077,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'startup-host-continue', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1110,10 +1110,11 @@ def main():
                 result = operation_status()
             else:
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
-                if a.action in ('startup-host-plan','startup-host-publish','startup-host-install'):
+                if a.action in ('startup-host-plan','startup-host-publish','startup-host-install','startup-host-continue'):
                     from p7u_v6_startup_host_install import (
                         plan as host_plan, publish as host_publish,
-                        install_stopped as host_install)
+                        install_stopped as host_install,
+                        continue_pre_mutation as host_continue)
                     need(a.recovery_plan_pin is None, 'STARTUP_HOST_RECOVERY_PIN_FORBIDDEN')
                     if a.action == 'startup-host-plan':
                         need(a.startup_host_pin is None, 'STARTUP_HOST_PLAN_ARGUMENTS')
@@ -1122,8 +1123,9 @@ def main():
                         need(a.startup_host_pin is not None and
                              re.fullmatch('[0-9a-f]{64}',a.startup_host_pin) is not None,
                              'STARTUP_HOST_PLAN_PIN')
-                        action=(host_publish if a.action=='startup-host-publish'
-                                else host_install)
+                        action=({'startup-host-publish':host_publish,
+                                 'startup-host-install':host_install,
+                                 'startup-host-continue':host_continue}[a.action])
                         result=action(globals(),a.package,a.package_pin,
                                       a.plan_pin,a.startup_host_pin,HA())
                 elif a.action in ('rom-recovery-plan','rom-recovery-execute'):
