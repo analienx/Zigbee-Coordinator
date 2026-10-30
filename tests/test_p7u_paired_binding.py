@@ -62,9 +62,9 @@ class Binding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'SOURCES'):
             self.call({**data,'installed_source':'66ed700c2818c7a0963dad9160d55109009bbaac'},package)
 
-    def test_v49_exact_successor_to_v48_reuses_instrumented_host(self):
+    def test_v50_exact_successor_to_v48_reuses_instrumented_host(self):
         data,package=self.fixture()
-        data.update(source_sha='de107b1c9ab871bd640ade0f6a7708e5799473c3',
+        data.update(source_sha='540d75a23d11587fb45fd892c5e9ae01ec0aab15',
                     installed_source='250441cd17c55e25c78d97e041f056574355ade7')
         package.update(firmware_source_sha=data['source_sha'],
                        paired_host_source_sha=binding.V6_STARTUP_CAPTURE_HOST,
@@ -79,19 +79,24 @@ class Binding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'SOURCES'):
             self.call({**data,'installed_source':'66ed700c2818c7a0963dad9160d55109009bbaac'},package)
 
-    def test_v49_ready_observer_priority_is_exact_source_not_bypassed(self):
+    def test_v50_ready_observer_priority_is_exact_source_not_bypassed(self):
         import ast
         path=Path(__file__).resolve().parents[1]/"firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py"
         src=path.read_text()
         tree=ast.parse(src)
-        nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef)
-               and n.name=="expected_ready_npi_priority"]
-        self.assertEqual(len(nodes),1)
+        names=("V50_SOURCES","expected_ready_npi_priority","stack_evidence_supported")
+        nodes=[n for n in tree.body if
+               (isinstance(n,ast.FunctionDef) and n.name in names) or
+               (isinstance(n,ast.Assign) and any(getattr(t,"id",None) in names for t in n.targets))]
+        self.assertEqual(len(nodes),3)
         scope={}
         exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path),"exec"),scope)
-        self.assertEqual(scope["expected_ready_npi_priority"]("de107b1c9ab871bd640ade0f6a7708e5799473c3"),6)
+        self.assertEqual(scope["V50_SOURCES"],frozenset({"540d75a23d11587fb45fd892c5e9ae01ec0aab15"}))
+        self.assertEqual(scope["expected_ready_npi_priority"]("540d75a23d11587fb45fd892c5e9ae01ec0aab15"),6)
         self.assertEqual(scope["expected_ready_npi_priority"]("250441cd17c55e25c78d97e041f056574355ade7"),4)
         self.assertEqual(scope["expected_ready_npi_priority"]("0"*40),4)
+        self.assertTrue(scope["stack_evidence_supported"]("540d75a23d11587fb45fd892c5e9ae01ec0aab15"))
+        self.assertFalse(scope["stack_evidence_supported"]("250441cd17c55e25c78d97e041f056574355ade7"))
         self.assertIn('info["npi_priority"]==expected_ready_npi_priority(source)',src)
         for gate in ("UTIL_NOT_COORDINATOR_STATE9","CONFIGURED_MARKER_NOT_VERIFIED",
                      "RETAINED_TRANSACTION_MILESTONES_INCOMPLETE"):

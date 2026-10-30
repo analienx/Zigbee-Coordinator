@@ -11,12 +11,19 @@ import time
 Q0 = b"B1Q1\x01\x08\x00\x00"
 Q2 = b"B1Q1\x01\x08\x02\x00"
 Q3 = b"B1Q1\x01\x08\x03\x00"
+Q4 = b"B1Q1\x01\x08\x04\x00"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
-# V49 keeps the existing sole NPI owner at priority6 after admitted READY.
-# Older firmware must still report the original priority4 at READY.
+# V50 keeps the armed sole NPI owner at priority6 for the whole boot and
+# answers RAM-only B1E2 (op4) Stack-service evidence. Older firmware must
+# still report the original priority4 at READY and has no B1E2.
+V50_SOURCES = frozenset({"540d75a23d11587fb45fd892c5e9ae01ec0aab15"})
+
 def expected_ready_npi_priority(source: str) -> int:
-    return 6 if source == "de107b1c9ab871bd640ade0f6a7708e5799473c3" else 4
+    return 6 if source in V50_SOURCES else 4
+
+def stack_evidence_supported(source: str) -> bool:
+    return source in V50_SOURCES
 
 class EvidenceError(RuntimeError):
     pass
@@ -35,7 +42,7 @@ def checked(raw: bytes, tag: bytes, length: int, source: str):
     require(len(raw) == length and raw[:4] == tag
             and raw[4] == 1 and raw[5] == length,
             "RESPONSE_SCHEMA_INVALID_" + tag.decode())
-    require(raw[8:12] == bytes.fromhex(source[:8]) if tag == b"B1E1"
+    require(raw[8:12] == bytes.fromhex(source[:8]) if tag in (b"B1E1", b"B1E2")
             else raw[12:16] == bytes.fromhex(source[:8]),
             "SOURCE_DIGEST_MISMATCH_" + tag.decode())
     return raw
@@ -66,6 +73,55 @@ def decode_e1(raw: bytes, source: str) -> dict:
             "dispatch_exit": uint32(raw,116),
             "last_dispatch_input": uint32(raw,120),
             "last_dispatch_returned": uint32(raw,124)}
+
+def decode_e2(raw: bytes, source: str) -> dict:
+    """V50 B1E2: Stack selection/CPU, per-service and MAC counters (evidence)."""
+    require(stack_evidence_supported(source), "STACK_EVIDENCE_UNSUPPORTED_SOURCE")
+    checked(raw, b"B1E2", 248, source)
+    count = raw[6]
+    require(1 <= count <= 12 and raw[7] & 0x7f in (1, 2) and
+            raw[78:80] == b"\x00\x00" and uint32(raw,16) > 0,
+            "STACK_EVIDENCE_SCHEMA_INVALID")
+    require(all(uint32(raw,80+4*i) == 0 and uint32(raw,128+4*i) == 0 and
+                uint32(raw,176+4*i) == 0 and uint16(raw,224+2*i) == 0
+                for i in range(count, 12)), "STACK_EVIDENCE_UNUSED_SLOTS_INVALID")
+    services = [{"dispatches": uint32(raw,80+4*i), "busy_ticks": uint32(raw,128+4*i),
+                 "inputs": uint32(raw,176+4*i), "longest_ms": uint16(raw,224+2*i)}
+                for i in range(count)]
+    return {"now": uint32(raw,12), "tick_period_us": uint32(raw,16),
+            "wakes": uint32(raw,20), "empty": uint32(raw,24), "aged": uint32(raw,28),
+            "returned": uint32(raw,32), "busy_ticks": uint32(raw,36),
+            "current_age_ticks": uint32(raw,40),
+            "current_service": raw[44] - 1 if raw[44] else None,
+            "max_skip": raw[45], "npi_priority": raw[46], "stack_priority": raw[47],
+            "npi_armed": bool(raw[7] & 0x80), "npi_arm_tick": uint32(raw,72),
+            "table_fallback": bool(raw[7] & 2),
+            "mac": {"data_req": uint32(raw,48), "data_req_ok": uint32(raw,52),
+                    "data_cnf": uint32(raw,56), "data_cnf_failed": uint32(raw,60),
+                    "data_ind": uint32(raw,64), "events": uint32(raw,68),
+                    "last_req_failure": raw[76], "last_cnf_failure": raw[77]},
+            "services": services}
+
+def stack_profile(first: dict, last: dict) -> dict:
+    """Deltas between two B1E2 samples. Evidence only, never acceptance."""
+    elapsed = (last["now"] - first["now"]) & 0xffffffff
+    busy = (last["busy_ticks"] - first["busy_ticks"]) & 0xffffffff
+    if last["current_service"] is not None:
+        busy += last["current_age_ticks"]
+    services = []
+    for a, b in zip(first["services"], last["services"]):
+        services.append({"dispatches": (b["dispatches"] - a["dispatches"]) & 0xffffffff,
+                         "busy_ticks": (b["busy_ticks"] - a["busy_ticks"]) & 0xffffffff,
+                         "inputs": b["inputs"], "longest_ms": b["longest_ms"]})
+    mac = {k: (last["mac"][k] - first["mac"][k]) & 0xffffffff
+           for k in ("data_req","data_req_ok","data_cnf","data_cnf_failed","data_ind","events")}
+    return {"elapsed_ms": elapsed * last["tick_period_us"] // 1000,
+            "stack_busy_percent": round(100.0 * min(busy, elapsed) / elapsed, 1) if elapsed else None,
+            "wakes": (last["wakes"] - first["wakes"]) & 0xffffffff,
+            "aged": (last["aged"] - first["aged"]) & 0xffffffff,
+            "current_service": last["current_service"], "services": services, "mac": mac,
+            "last_req_failure": last["mac"]["last_req_failure"],
+            "last_cnf_failure": last["mac"]["last_cnf_failure"]}
 
 def verify_success_frames(frames: dict, source: str) -> dict:
     require(isinstance(frames, dict), "NO_RECORDED_TERMINAL_FRAMES")

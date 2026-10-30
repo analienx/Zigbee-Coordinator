@@ -180,7 +180,7 @@ def runtime_priority_qualification(c):
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                       '66ed700c2818c7a0963dad9160d55109009bbaac',
                       '250441cd17c55e25c78d97e041f056574355ade7',
-                      'de107b1c9ab871bd640ade0f6a7708e5799473c3'): return None
+                      '540d75a23d11587fb45fd892c5e9ae01ec0aab15'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -755,7 +755,7 @@ async def deploy(package, pin, ha):
             '66ed700c2818c7a0963dad9160d55109009bbaac',
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
             '250441cd17c55e25c78d97e041f056574355ade7',
-            'de107b1c9ab871bd640ade0f6a7708e5799473c3') else 0x30000
+            '540d75a23d11587fb45fd892c5e9ae01ec0aab15') else 0x30000
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
@@ -860,6 +860,17 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
          frames['B1S1'][6] == 1 and frames['B1S1'][7] == 0 and frames['B1S1'][10] == 0 and
          before['state'] == 0 and before['first_error'] == 0 and before['milestones'] == 0,
          'STARTUP_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q4, decode_e2, stack_evidence_supported
+    if stack_evidence_supported(source):
+        # V50 B1E2 is first exercised HERE, before the one retained startup
+        # request is consumed: an unarmed NPI owner (native 4, or 6 only
+        # while V46 services a pending SRSP) and the native Stack (5).
+        raw = znp.request(1, 241, Q4, deadline=deadline)
+        evidence('B1E2', raw, dict(znp.history[-1]))
+        baseline = decode_e2(raw, source)
+        need(not baseline['npi_armed'] and baseline['npi_priority'] in (4, 6) and
+             baseline['stack_priority'] == 5 and not baseline['table_fallback'],
+             'STARTUP_STACK_EVIDENCE_NOT_PRISTINE')
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')
