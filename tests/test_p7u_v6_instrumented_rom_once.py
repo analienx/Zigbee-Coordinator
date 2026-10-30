@@ -26,7 +26,8 @@ class Tests(unittest.TestCase):
   self.old={"source":module.V6,"host":module.HOST,"image":module.IMAGE,
    "scope":"ONE_USB_OPEN_FIRST_ROM_READONLY_SECURITY_APP_BOOT_AND_HOST_ONCE",
    "flash_writes":0,"nv_writes":0,"ccfg_writes":0,
-   "host_starts":1,"radio_boots":1,"rom_entries":1}
+   "host_starts":1,"radio_boots":1,"rom_entries":1,
+   "crc32":{"0":0,"704512":0,"712704":0}}
   self.ns={"PRIVATE":self.root,
            "need":lambda condition,why:condition or self.hold(why),
            "canonical":lambda x:json.dumps(x,sort_keys=True,separators=(',',':')).encode(),
