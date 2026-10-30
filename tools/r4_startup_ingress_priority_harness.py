@@ -62,6 +62,9 @@ int main(void){
     /* READY is real B1 state, not an assumed post-SRSP condition. */
     startup_state=4;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==4);
     startup_state=3;B4_V47_ArmStartupNpi();assert(npiTaskStruct.priority==6);
+    /* A terminal transport fault must deboost even INSIDE the 90s window. */
+    transport_hold=1;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==4);
+    transport_hold=0;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==6);
     tick+=361u;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==4);
     /* Fatal transport HOLD never extends or arms startup priority. */
     transport_hold=1;B4_V47_ArmStartupNpi();assert(npiTaskStruct.priority==4);
