@@ -27,8 +27,9 @@ UART="source/ti/zstack/npi/npi_tl_uart.c"
 TL="source/ti/zstack/npi/npi_tl.c"
 CLIENT="source/ti/zstack/npi/npi_client_mt.c"
 MT="source/ti/zstack/mt/mt.c"
+MTZDO="source/ti/zstack/mt/mt_zdo.c"
 STACK="source/ti/zstack/startup/zstackstartup.c"
-COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK)
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO)
 
 def outside_write_scope(sdk):
     """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
@@ -310,6 +311,20 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     owned_stage_c=exercise_owned_stage(sdk)
     if owned_stage_c['status']!='PASS':raise ValueError('V6_OWNED_STAGE_ACTUAL_C_FAILED')
 
+    # V47: bounded priority6 service for the existing NPI UART owner ONLY
+    # after the actual B1 deferred retained-start event. The B1 EOT barrier
+    # remains authoritative. This is a candidate, not a hardware fix claim.
+    from r4_startup_ingress_priority import apply as apply_startup_npi
+    startup_npi = apply_startup_npi(sdk)
+    if startup_npi['before_sha256'][TASK] != owned_stage['modified_sha256'][TASK]:
+        raise ValueError('V47_V6_NPI_PREIMAGE_HASH_DRIFT')
+    if startup_npi['before_sha256'][MTZDO] != b1.get('modified_mt_zdo_sha256'):
+        raise ValueError('V47_B1_GUARDED_STARTUP_PREIMAGE_HASH_DRIFT')
+    from r4_startup_ingress_priority_harness import exercise as exercise_startup_npi
+    startup_npi_c = exercise_startup_npi(sdk)
+    if startup_npi_c['status'] != 'PASS':
+        raise ValueError('V47_BOUNDED_STARTUP_INGRESS_BEHAVIORAL_FAILURE')
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -333,7 +348,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     # B1 native sealer's exact-Git-SHA invariants remain mandatory.
     beforehash={}
     afterhash={}
-    for name in (ZDO,NVO,TASK,UART,SYS,TL,MT,STACK):
+    for name in (ZDO,NVO,TASK,UART,SYS,TL,MT,STACK,MTZDO):
         earlier= b1.get("modified_zdapp_sha256") if name==ZDO else (
             b1.get("modified_nv_sha256") if name==NVO else (
             expected.get(name)))
@@ -421,6 +436,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "srsp_runtime_priority_actual_c":runtime_priority_c,
         "owned_overdue_stage":owned_stage,
         "owned_overdue_stage_actual_c":owned_stage_c,
+        "v47_bounded_startup_ingress":startup_npi,
+        "v47_startup_ingress_actual_c":startup_npi_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
