@@ -10,6 +10,47 @@ ZNP=r'''
     private b4WarningTimer:ReturnType<typeof setTimeout>|undefined;
     private b4PendingWarning:{id:number;subsystem:string;operation:string;started:number;budget:number;warning:number}|undefined;
     private readonly b4OperationHistory:Array<Record<string,unknown>>=[];
+    private b4StartupCaptureActive=false;
+    private b4StartupCaptureRecords=0;
+
+    /** Metadata-only startup capture using this same owner, with no new wire requests. */
+    public b4StartStartupCapture():void {
+        if(process.env.P7U_B4_STARTUP_CAPTURE!=="1")return;
+        try {
+            this.b4StartupCaptureActive=true;
+            this.b4SetFirstWarningSink((snapshot)=>{
+                if(!this.b4StartupCaptureActive || this.b4StartupCaptureRecords>=16)return;
+                const text=JSON.stringify(snapshot);
+                if(text.length>12000)return;
+                ++this.b4StartupCaptureRecords;
+                logger.info(`P7U_STARTUP_WARNING ${text}`,NS);
+            });
+            this.b4StartupTrace("OWNER_OPENING");
+        } catch {/* Optional evidence must not change startup. */}
+    }
+    public b4StartupTrace(phase:string,state:number|null=null):void {
+        if(!this.b4StartupCaptureActive || this.b4StartupCaptureRecords>=16 ||
+           !["OWNER_OPENING","OWNER_OPENED","OWNER_OPEN_FAILED","ZDO_START_OFFERED",
+             "ZDO_START_ACK","STATE_CHANGE_PENDING","STATE_CHANGE_IND","STATE9_READY",
+             "ALREADY_COORDINATOR","STARTUP_FAILED"].includes(phase))return;
+        try {
+            const ingress=this.unpiParser.b4NoWireIngress(),egress=this.unpiWriter.b4NoWireEgress();
+            const record={schema:"p7u-startup-trace-v1",phase,atMonoMs:Math.floor(performance.now()),
+                networkState:phase==="STATE_CHANGE_IND" && Number.isInteger(state) && state!==null &&
+                    state>=0 && state<=255 ? state : null,
+                ingressTiming:this.unpiParser.b4IngressTiming(),
+                rxRawBytes:ingress.rxRawBytes,parsedFrames:ingress.unpiParsedFrames,
+                parseErrors:ingress.unpiParseErrors,bufferedBytes:ingress.unpiBufferedBytes,
+                txQueuedBytes:egress.txQueuedBytes,txQueuedFrames:egress.txQueuedFrames,
+                queueDepth:this.queue.count,waiterMapEntries:this.waitress.b4PendingCount(),
+                recentOperations:this.b4OperationHistory.slice(-8).map(row=>({...row})),
+                scope:"HOST_OWNER_STREAM_NOT_PHYSICAL_UART"};
+            ++this.b4StartupCaptureRecords;
+            logger.info(`P7U_STARTUP_TRACE ${JSON.stringify(record)}`,NS);
+        } catch {/* Never alter the radio owner or startup result. */}
+        if(phase==="OWNER_OPEN_FAILED" || phase==="STATE9_READY" ||
+           phase==="ALREADY_COORDINATOR" || phase==="STARTUP_FAILED")this.b4StartupCaptureActive=false;
+    }
 
     public b4SetFirstWarningSink(sink:((snapshot:Record<string,unknown>)=>void)|undefined):void {
         this.b4WarningSink=sink;
@@ -117,6 +158,23 @@ def herdsman(root):
     root=checked(root,'0968f979d558874b17396c96b66382d4236bbdcd');files={}
     p='src/adapter/z-stack/znp/znp.ts';s=(root/p).read_text()
     s=once(s,'    public b4GetPassiveOwnerMetrics() {',ZNP+'    public b4GetPassiveOwnerMetrics() {','WARNING_STATE')
+    s=once(s,'''    public async open(): Promise<void> {
+        return isTcpPath(this.path) ? await this.openSocketPort() : await this.openSerialPort();
+    }''','''    public async open(): Promise<void> {
+        this.b4StartStartupCapture();
+        try {
+            const result=isTcpPath(this.path) ? await this.openSocketPort() : await this.openSerialPort();
+            this.b4StartupTrace("OWNER_OPENED");
+            return result;
+        } catch(error) {
+            this.b4StartupTrace("OWNER_OPEN_FAILED");
+            throw error;
+        }
+    }''','STARTUP_CAPTURE_BEFORE_OWNER_OPEN')
+    s=once(s,'            const object = ZpiObject.fromUnpiFrame(frame);',
+        '''            const object = ZpiObject.fromUnpiFrame(frame);
+            if(object.subsystem===Subsystem.ZDO && object.command.name==="stateChangeInd")
+                this.b4StartupTrace("STATE_CHANGE_IND",Number(object.payload.state));''','STARTUP_STATE_IND_FRAME')
     s=once(s,'        this.b4EnablePassiveForensics(typeof sink === "function");',
         '        this.b4EnablePassiveForensics(typeof sink === "function" || typeof this.b4WarningSink === "function");','WARNING_ENABLE_EITHER_SINK')
     s=once(s,'                const b4NormalAckStart = performance.now();',
@@ -136,6 +194,31 @@ def herdsman(root):
                 this.b4EndWarningOperation(b4ZdoWarningOperation,b4IsTimeout?"TIMEOUT":"ERROR");
                 this.b4RecordHostSreqTimeout(Subsystem.ZDO, cmd.name, timeouts.SREQ, error);''','WARNING_ERROR_ZDO')
     s=once(s,'        logger.info("closing", NS);','        this.b4SetFirstWarningSink(undefined);\n        this.b4PendingWarning=undefined;\n        logger.info("closing", NS);','WARNING_CLOSE')
+    files[p]=s
+    p='src/adapter/z-stack/adapter/manager.ts';s=(root/p).read_text()
+    s=once(s,'''            await this.znp.request(Subsystem.ZDO, "startupFromApp", {startdelay: 100}, undefined, undefined, [
+                ZnpCommandStatus.SUCCESS,
+                ZnpCommandStatus.FAILURE,
+            ]);
+            await started.start().promise;''','''            this.znp.b4StartupTrace("ZDO_START_OFFERED");
+            const b4StartupTimer=setTimeout(()=>this.znp.b4StartupTrace("STATE_CHANGE_PENDING"),4000);
+            b4StartupTimer.unref();
+            try {
+                await this.znp.request(Subsystem.ZDO, "startupFromApp", {startdelay: 100}, undefined, undefined, [
+                    ZnpCommandStatus.SUCCESS,
+                    ZnpCommandStatus.FAILURE,
+                ]);
+                this.znp.b4StartupTrace("ZDO_START_ACK");
+                await started.start().promise;
+                this.znp.b4StartupTrace("STATE9_READY");
+            } catch(error) {
+                this.znp.b4StartupTrace("STARTUP_FAILED");
+                throw error;
+            } finally {
+                clearTimeout(b4StartupTimer);
+            }''','STARTUP_ZDO_WAIT_TRACE')
+    s=once(s,'            logger.debug("adapter is already running in coordinator mode", NS);',
+        '            this.znp.b4StartupTrace("ALREADY_COORDINATOR");\n            logger.debug("adapter is already running in coordinator mode", NS);','STARTUP_ALREADY_READY_TRACE')
     files[p]=s
     p='src/adapter/z-stack/unpi/parser.ts';s=(root/p).read_text()
     s=once(s,'    public b4NoWireIngress() {',

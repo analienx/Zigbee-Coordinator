@@ -116,7 +116,7 @@ jobs:
           python host/r4-b4/b4_v5_live_collector_overlay.py --z2m /tmp/b4-z2m-host --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-z2m-v5-flight.json
           python host/r4-b4/b4_first_warning_overlay.py --z2m /tmp/b4-z2m-host --receipt /tmp/b4-z2m-first-warning.json
           python host/r4-b4/b4_v6_stage_overlay.py --z2m /tmp/b4-z2m-host --receipt /tmp/b4-z2m-v6-stage.json
-          B4_FIRST_WARNING_FIXTURE=/tmp/b4-first-warning-fixture.json node --test host/r4-b4/test-v5-capture-timing.cjs host/r4-b4/test-first-warning.cjs
+          B4_FIRST_WARNING_FIXTURE=/tmp/b4-first-warning-fixture.json node --test host/r4-b4/test-v5-capture-timing.cjs host/r4-b4/test-first-warning.cjs host/r4-b4/test-p7u-startup-capture.cjs
           B4_FIRST_WARNING_FIXTURE=/tmp/b4-first-warning-fixture.json python host/r4-b4/test-first-warning-export.py -v
           B4_V6_FIXTURE=/tmp/b4-v6-stage-fixture.json node --test host/r4-b4/test-v6-stage.cjs
           B4_V6_FIXTURE=/tmp/b4-v6-stage-fixture.json python host/r4-b4/test-v6-stage-export.py -v

@@ -29,6 +29,7 @@ map:
     read_only: false
 environment:
   P7U_B4_COLLECTOR: "1"
+  P7U_B4_STARTUP_CAPTURE: "0"
   P7U_APPROVED_DB_MANIFEST: /config/zigbee2mqtt/.p7u-approved.json
 options:
   data_path: /config/zigbee2mqtt
