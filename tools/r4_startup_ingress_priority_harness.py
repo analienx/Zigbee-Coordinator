@@ -16,6 +16,7 @@ from r4_startup_ingress_priority import ZDO, MARKER
 PREFIX = r"""
 #include <assert.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #define NPITASK_PRIORITY 4
 #define B1_STARTUP_RUNNING 3u
@@ -27,7 +28,7 @@ static unsigned int Task_numPriorities=8;
 static uint32_t Clock_tickPeriod=250000u;
 static uint32_t tick;
 static unsigned cs_depth, scheduler_depth, priority_changes;
-static uint8_t startup_state, transport_hold, pending_srsp;
+static uint8_t startup_state, transport_hold;
 typedef struct { uint8_t count; } FakeQueue;
 static FakeQueue queue_record;
 static FakeQueue* B4_V44_SrspQueue=&queue_record;
@@ -69,9 +70,9 @@ int main(void){
     startup_state=3;tick=0xfffffff0u;B4_V47_ArmStartupNpi();assert(npiTaskStruct.priority==6);
     tick+=361u;B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==4);
     /* V46 existing SRSP service remains intact outside startup. */
-    startup_state=0;pending_srsp=1;queue_record.count=1;
+    startup_state=0;queue_record.count=1;
     B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==6);
-    queue_record.count=0;pending_srsp=0;
+    queue_record.count=0;
     B4_V46_RefreshNpiPriority();assert(npiTaskStruct.priority==4);
     /* Fail safe when RTOS cannot represent priority 6. */
     Task_numPriorities=6;startup_state=3;
@@ -142,8 +143,8 @@ def exercise(sdk):
           "if (startup && (b1_startup_state() != B1_STARTUP_RUNNING ||\n        b1_management_transport_unavailable()))",
           "if (startup && (b1_startup_state() != B1_STARTUP_RUNNING ||\n        0))"),
       "unbounded_window":(
-          "B4_V47_WindowTicks) return 1u;",
-          "B4_V47_WindowTicks + 0xffffffffu) return 1u;"),
+          "#define B4_V47_STARTUP_US 90000000u",
+          "#define B4_V47_STARTUP_US 120000000u"),
     }
     for name,(old,new) in mutants.items():
         if code.count(old)!=1:raise ValueError("V47_MUTANT_ANCHOR_"+name)
