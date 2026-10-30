@@ -102,6 +102,7 @@ class Tests(unittest.TestCase):
    return MagicMock()
   transport=types.SimpleNamespace(FramedZnp=lambda port,source:znp,
                  PrivateEvidenceJournal=make_journal)
+  (self.root/"owner-backup-before-stop.json").write_bytes(b"{}")
   self.ns.update({"StartupSerial":lambda:radio,
       "resume_pristine":lambda *args,**kwargs:{"status":"FAILED_STOP_NO_RETRY"}})
   with patch.dict("sys.modules",{"p7u_r4_startup_transport":transport}):
