@@ -1077,13 +1077,16 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'startup-host-continue', 'startup-capture-plan', 'startup-capture-start', 'instrumented-rom-plan', 'instrumented-rom-execute', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
     parser.add_argument('--input-pin')
     parser.add_argument('--plan-pin')
     parser.add_argument('--recovery-plan-pin', help='Immutable fresh V6 ROM recovery plan SHA256')
+    parser.add_argument('--startup-host-pin', help='Immutable startup-capture host install plan SHA256')
+    parser.add_argument('--capture-plan-pin', help='Immutable instrumented one-shot host startup plan SHA256')
+    parser.add_argument('--instrumented-rom-pin', help='Immutable distinct no-write ROM round-trip plan SHA256')
     parser.add_argument('--binding', type=Path, required=True)
     parser.add_argument('--binding-pin', required=True)
     a = parser.parse_args()
@@ -1105,13 +1108,58 @@ def main():
             need(a.input_pin is None, 'EXECUTE_ARGUMENTS')
             operation_id, PRIVATE = select_operation(a.operation_id)
             if a.action == 'status':
-                need(a.plan_pin is None and a.recovery_plan_pin is None, 'STATUS_ARGUMENTS')
+                need(a.plan_pin is None and a.recovery_plan_pin is None and a.startup_host_pin is None and a.capture_plan_pin is None and a.instrumented_rom_pin is None, 'STATUS_ARGUMENTS')
                 result = operation_status()
             else:
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
-                if a.action in ('rom-recovery-plan','rom-recovery-execute'):
+                if a.action in ('instrumented-rom-plan','instrumented-rom-execute'):
+                    from p7u_v6_instrumented_rom_once import plan as instrumented_plan, execute as instrumented_execute
+                    need(a.capture_plan_pin is None and a.recovery_plan_pin is None and
+                         a.startup_host_pin is None, 'INSTRUMENTED_ROM_ARGUMENT_SCOPE')
+                    if a.action=='instrumented-rom-plan':
+                        need(a.instrumented_rom_pin is None,'INSTRUMENTED_ROM_PLAN_ARGS')
+                        result=instrumented_plan(globals(),a.package,a.package_pin,a.plan_pin,HA())
+                    else:
+                        need(a.instrumented_rom_pin is not None and
+                             re.fullmatch('[0-9a-f]{64}',a.instrumented_rom_pin) is not None,
+                             'INSTRUMENTED_ROM_PIN_ARGS')
+                        result=instrumented_execute(globals(),a.package,a.package_pin,
+                                 a.plan_pin,a.instrumented_rom_pin,HA())
+                elif a.action in ('startup-capture-plan','startup-capture-start'):
+                    from p7u_v6_startup_capture_once import plan as capture_plan, execute as capture_start
+                    need(a.startup_host_pin is None and a.recovery_plan_pin is None and
+                         a.instrumented_rom_pin is None, 'START_CAPTURE_UNEXPECTED_PLAN')
+                    if a.action=='startup-capture-plan':
+                        need(a.capture_plan_pin is None,'START_CAPTURE_PLAN_ARGS')
+                        result=capture_plan(globals(),a.package,a.package_pin,a.plan_pin,HA())
+                    else:
+                        need(a.capture_plan_pin is not None and
+                             re.fullmatch('[0-9a-f]{64}',a.capture_plan_pin) is not None,
+                             'START_CAPTURE_PIN_ARGS')
+                        result=capture_start(globals(),a.package,a.package_pin,
+                                             a.plan_pin,a.capture_plan_pin,HA())
+                elif a.action in ('startup-host-plan','startup-host-publish','startup-host-install','startup-host-continue'):
+                    from p7u_v6_startup_host_install import (
+                        plan as host_plan, publish as host_publish,
+                        install_stopped as host_install,
+                        continue_pre_mutation as host_continue)
+                    need(a.recovery_plan_pin is None and a.capture_plan_pin is None and a.instrumented_rom_pin is None, 'STARTUP_HOST_RECOVERY_PIN_FORBIDDEN')
+                    if a.action == 'startup-host-plan':
+                        need(a.startup_host_pin is None, 'STARTUP_HOST_PLAN_ARGUMENTS')
+                        result=host_plan(globals(),a.package,a.package_pin,a.plan_pin,HA())
+                    else:
+                        need(a.startup_host_pin is not None and
+                             re.fullmatch('[0-9a-f]{64}',a.startup_host_pin) is not None,
+                             'STARTUP_HOST_PLAN_PIN')
+                        action=({'startup-host-publish':host_publish,
+                                 'startup-host-install':host_install,
+                                 'startup-host-continue':host_continue}[a.action])
+                        result=action(globals(),a.package,a.package_pin,
+                                      a.plan_pin,a.startup_host_pin,HA())
+                elif a.action in ('rom-recovery-plan','rom-recovery-execute'):
                     from p7u_v6_rom_recovery import plan as rom_plan, execute as rom_execute
-                    need(a.action == 'rom-recovery-execute' or a.recovery_plan_pin is None,
+                    need(a.startup_host_pin is None and a.capture_plan_pin is None and a.instrumented_rom_pin is None and
+                         (a.action == 'rom-recovery-execute' or a.recovery_plan_pin is None),
                          'RECOVERY_PLAN_PHASE_ARGUMENTS')
                     if a.action == 'rom-recovery-plan':
                         result=rom_plan(globals(),a.package,a.package_pin,a.plan_pin,HA())
@@ -1122,7 +1170,7 @@ def main():
                         result=rom_execute(globals(),a.package,a.package_pin,
                                            a.plan_pin,a.recovery_plan_pin,HA())
                 else:
-                    need(a.recovery_plan_pin is None, 'UNEXPECTED_RECOVERY_PIN')
+                    need(a.recovery_plan_pin is None and a.startup_host_pin is None and a.capture_plan_pin is None and a.instrumented_rom_pin is None, 'UNEXPECTED_RECOVERY_PIN')
                     if a.action=='deploy': result=asyncio.run(deploy(a.package,a.plan_pin,HA()))
                     elif a.action=='boot': result=boot(a.package,a.plan_pin,HA())
                     elif a.action=='boot-native':

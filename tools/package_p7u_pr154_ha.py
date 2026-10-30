@@ -42,7 +42,12 @@ def main():
     assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == os.environ.get('HOST_SOURCE_SHA',c['source_sha'])
     priority_pair=(c['source_sha']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and host['source_sha']=='85ce37c24802b0f16fec0afd00a1a0457656cd80')
     owned_stage_pair=(c['source_sha']=='66ed700c2818c7a0963dad9160d55109009bbaac' and host['source_sha']=='66ed700c2818c7a0963dad9160d55109009bbaac')
-    assert host['source_sha']==c['source_sha'] or owned_stage_pair or priority_pair or c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de', 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
+    # This exact independently qualified host adds passive startup instrumentation
+    # but preserves the V6 radio wire ABI. No arbitrary host revision is accepted.
+    startup_capture_pair=(c['source_sha']=='66ed700c2818c7a0963dad9160d55109009bbaac' and
+        host['source_sha']=='2c2d96d6334b424f6364a982ad976a674b260e04' and
+        host['profiles']['diagnostic']['image_id']=='sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367')
+    assert host['source_sha']==c['source_sha'] or owned_stage_pair or startup_capture_pair or priority_pair or (c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' and host['source_sha']==c['source_sha']), 'UNQUALIFIED_F2_COMPATIBILITY_PAIR'
     paired_image = host['profiles']['diagnostic']['image_id']
     import re
     assert re.fullmatch('sha256:[0-9a-f]{64}', paired_image)
@@ -61,6 +66,10 @@ def main():
     shutil.copyfile('host/flash/p7u_paired_boot.py', dest.with_name('p7u_paired_boot.py'))
     shutil.copyfile('host/flash/p7u_v6_rom_recovery.py', dest.with_name('p7u_v6_rom_recovery.py'))
     shutil.copyfile('host/flash/p7u_v6_recover_local.py', dest.with_name('p7u_v6_recover_local.py'))
+    shutil.copyfile('host/flash/p7u_v6_startup_host_config.py', dest.with_name('p7u_v6_startup_host_config.py'))
+    shutil.copyfile('host/flash/p7u_v6_startup_host_install.py', dest.with_name('p7u_v6_startup_host_install.py'))
+    shutil.copyfile('host/flash/p7u_v6_startup_capture_once.py', dest.with_name('p7u_v6_startup_capture_once.py'))
+    shutil.copyfile('host/flash/p7u_v6_instrumented_rom_once.py', dest.with_name('p7u_v6_instrumented_rom_once.py'))
     shutil.copyfile('host/r4-b4/f2_progress_contract.py', dest.with_name('f2_progress_contract.py'))
     if args.reader_package:
         (args.out/'security-reader-aarch64').write_bytes(qualified_reader(args.reader_package))
@@ -85,7 +94,7 @@ def main():
     report = {'schema': 'p7u-r4-afbb7a8-ha-package-v1', 'operator_source_sha': source,
               'firmware_source_sha': c['source_sha'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'paired_host_image': paired_image, 'paired_host_source_sha': host['source_sha'],
-              'f2_wire_contract': ('R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1' if owned_stage_pair else
+              'f2_wire_contract': ('R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1' if (owned_stage_pair or startup_capture_pair) else
                                    'R4D4_MINOR4_AND_R4D5_PAGED_V1' if priority_pair else
                                    'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None),
               'arm64_reader': 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4',
