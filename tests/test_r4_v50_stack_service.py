@@ -1,4 +1,4 @@
-"""V50 Stack service floor, aging and B1E2 evidence on exact composed anchors."""
+"""V50 Stack service floor, aging, B1E2 evidence and V51 B1E3 onset record."""
 import shutil
 import sys
 import tempfile
@@ -8,7 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from r4_v50_stack_service import (apply, TASK, STACK, ZMAC, ZMAC_CB, FILES,
-                                  MARKER, NPI_MARKER, QUERY_MARKER, V47_DEBOOST)
+                                  MARKER, NPI_MARKER, QUERY_MARKER, ONSET_MARKER,
+                                  V47_DEBOOST)
 from r4_startup_ingress_priority import apply as apply_v47, ZDO
 from tests.test_r4_v47_startup_ingress import NPI, ZDO_BODY
 from tests import r4_v50_fixture as fixture
@@ -50,7 +51,11 @@ class V50StackService(unittest.TestCase):
 
     def test_service_floor_aging_evidence_and_mac_counters(self):
         receipt = apply(self.root, SHA)
-        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v1")
+        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v2")
+        self.assertEqual(receipt["b1e3_query"], "B1Q1 v1/8 op4 page1")
+        self.assertEqual((receipt["onset_window_ms"], receipt["onset_saturated_pct"],
+                          receipt["onset_calm_pct"], receipt["long_dispatch_ms"]),
+                         (10000, 90, 50, 1000))
         self.assertFalse(receipt["flash_authorized"])
         self.assertFalse(receipt["root_cause_proven"])
         self.assertFalse(receipt["changes_network_nv_or_security"])
@@ -70,6 +75,15 @@ class V50StackService(unittest.TestCase):
         self.assertLess(stack.index("B4_V48_RETAINED_ZDAPP_DISPATCH_FAIRNESS"),
                         stack.index("idx = B4_V50_SelectService();"))
         self.assertEqual(stack.count(MARKER), 1)
+        self.assertEqual(stack.count(ONSET_MARKER), 1)
+        # NV timing wrappers are installed at Stack task entry, before the
+        # first Stack NV read (restored-state validation) and stackInit.
+        self.assertLess(stack.index("    B4_V51_InstallNvHooks();"),
+                        stack.index("if (!b1_sec_validate_restored()) return;"))
+        self.assertIn("B4_V51_DispatchEnd(idx, returned, now, spent);", stack)
+        self.assertIn("devState == DEV_ZB_COORD", stack)
+        self.assertIn("B4_V51_OnsetSnapshot(stackEvidence);", task)
+        self.assertIn("pReq[10] <= 1u)", task)
         self.assertEqual(stack.count("Semaphore_post(stackSemHandle);"), 1)
         self.assertLess(stack.index("B4_V50_DispatchBegin(idx, events);"),
                         stack.index("events = (zstackTasksArr[idx])( 0U, events );"))
@@ -107,7 +121,11 @@ class V50StackService(unittest.TestCase):
         self.assertTrue(result["compiled_actual_stack_loop"])
         self.assertTrue(result["compiled_actual_npi_refresh"])
         self.assertTrue(result["compiled_actual_b1e2_query"])
-        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 18)
+        self.assertTrue(result["compiled_actual_b1e3_onset_record"])
+        self.assertTrue(result["compiled_actual_nv_timing_wrappers"])
+        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 36)
+        self.assertIn("stack:nv_second_install_wraps_wrappers", result["negative_mutants_rejected"])
+        self.assertIn("query:b1e3_page_rejected", result["negative_mutants_rejected"])
         self.assertFalse(result["nwk_storm_root_cause_proven"])
 
     def test_composite_binds_v50_instead_of_v49(self):

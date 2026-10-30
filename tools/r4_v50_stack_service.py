@@ -21,6 +21,12 @@ This stage changes no network/NV/security state and adds no UART owner:
   3. B1E2 (op4) RAM-only evidence answered by the NPI owner: per-service
      dispatch count, busy ticks, input masks and longest dispatch, plus
      selection and MAC data request/confirm/indication counters.
+  4. V51 B1E3 (op4 page1) onset record for the hours-later production hang:
+     the first post-READY saturated 10 s window (top service, its inputs,
+     NV time, MAC deltas, heap), first/worst post-READY >=1 s dispatches,
+     the worst boot dispatch, OSAL heap free/low-water/largest block, and
+     NV driver time per Stack service through transparent wrappers on the
+     existing pZStackCfg->nvFps table (identical arguments and results).
 """
 import hashlib
 import re
@@ -37,14 +43,21 @@ MARKER = "B4_V50_STACK_SERVICE_AGING_AND_EVIDENCE"
 NPI_MARKER = "B4_V50_ADMITTED_NPI_SERVICE_FLOOR"
 QUERY_MARKER = "B4_V50_STACK_SERVICE_EVIDENCE_QUERY"
 END_MARKER = "/* B4_V50_END_STACK_SERVICE_AGING_AND_EVIDENCE */"
+ONSET_MARKER = "B4_V51_ONSET_RECORD_AND_NV_TIMING"
 EVIDENCE_SIZE = 248
 AGE_LIMIT = 4
 MAX_SERVICES = 12
+WINDOW_MS = 10000
+LONG_MS = 1000
+SAT_PCT = 90
+CALM_PCT = 50
 
-NPI_DECLARATIONS = r"""/* B4_V50_STACK_SERVICE_EVIDENCE: B1E2 op4 reply layout is owned by
- * zstackstartup.c; the NPI owner adds the public source digest bytes. */
+NPI_DECLARATIONS = r"""/* B4_V50_STACK_SERVICE_EVIDENCE: B1E2 op4 page0 and B1E3 op4 page1
+ * layouts are owned by zstackstartup.c; the NPI owner adds the public
+ * source digest bytes. */
 #define B4_V50_EVIDENCE_SIZE 248u
 extern void B4_V50_StackSnapshot(uint8_t *out, uint8_t npiArmed, uint32_t npiArmTick);
+extern void B4_V51_OnsetSnapshot(uint8_t *out);
 static const uint8_t B4_V50_BuildDigest[4] = { @DIGEST@ };
 
 """
@@ -82,17 +95,21 @@ QUERY_ANCHOR = """    B4_V43_Request(0u, pReq);
     /* Strict, RAM-only op3 B1E1 and op2 B1P1 share original NPI owner."""
 
 QUERY = """    B4_V43_Request(0u, pReq);
-    /* B4_V50_STACK_SERVICE_EVIDENCE_QUERY: op4 -> B1E2 on this NPI owner.
-     * Answered here, never by the Stack task whose CPU use it reports. */
+    /* B4_V50_STACK_SERVICE_EVIDENCE_QUERY: op4 page0 -> B1E2, page1 -> B1E3
+     * on this NPI owner. Answered here, never by the Stack task whose CPU
+     * use it reports. */
     if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&
         pReq[2] == B1_STATUS_COMMAND && pReq[9] == 4u)
     {
         static uint8_t stackEvidence[B4_V50_EVIDENCE_SIZE]; /* static: bounded NPI stack */
         static const uint8_t prefix[6] = { 'B', '1', 'Q', '1', 1u, 8u };
         if (pReq[1] == 0x21u && memcmp(pReq + 3, prefix, sizeof(prefix)) == 0 &&
-            pReq[10] == 0u)
+            pReq[10] <= 1u)
         {
-            B4_V50_StackSnapshot(stackEvidence, B4_V47_Armed, B4_V47_StartTick);
+            if (pReq[10] == 0u)
+                B4_V50_StackSnapshot(stackEvidence, B4_V47_Armed, B4_V47_StartTick);
+            else
+                B4_V51_OnsetSnapshot(stackEvidence);
             memcpy(stackEvidence + 8, B4_V50_BuildDigest, sizeof(B4_V50_BuildDigest));
             MT_BuildAndSendZToolResponse(0x61u, B1_STATUS_COMMAND,
                                          B4_V50_EVIDENCE_SIZE, stackEvidence);
@@ -191,6 +208,342 @@ static void B4_V50_NoteSelection(uint8_t idx)
     OsalPort_leaveCS(key);
 }
 
+/* B4_V51_ONSET_RECORD_AND_NV_TIMING
+ * Production hangs develop over hours (27-Oct F2: AF timeouts rising ~14 h
+ * before the last reply), long after any startup observer closed. B1E3
+ * latches in RAM what the Stack was doing when it FIRST saturated after
+ * READY (devState DEV_ZB_COORD), the first and the worst post-READY >=1 s
+ * dispatches, the worst boot dispatch, OSAL heap free/low-water/largest
+ * block, and NV driver time per Stack service. NV timing wraps the existing
+ * pZStackCfg->nvFps members: same arguments, same results, same order.
+ * Nothing here posts, clears or reorders events or changes NV contents.
+ */
+#define B4_V51_WINDOW_MS 10000u
+#define B4_V51_LONG_MS 1000u
+#define B4_V51_SAT_PCT 90u
+#define B4_V51_CALM_PCT 50u
+#define B4_V51_NV_SERVICES 10u /* B1E3 room: this build has 10 services */
+#define B4_V51_READY 0x01u
+#define B4_V51_SETTLED 0x02u
+#define B4_V51_ONSET 0x04u
+#define B4_V51_LONG 0x08u
+#define B4_V51_NV_HOOKED 0x10u
+#define B4_V51_AFTER_CALM 0x20u
+#define B4_V51_HEAP 0x40u
+typedef struct
+{
+    uint32_t tick, ticks, input, returned, nv;
+    uint8_t service, nvOps;
+} B4_V51_Dispatch_t;
+typedef struct
+{
+    uint32_t tick, busy, elapsed, dispatches, svcBusy, svcInputs, nv, heap;
+    uint16_t macReq, macCnfFail, macInd;
+    uint8_t service;
+} B4_V51_Onset_t;
+typedef struct
+{
+    uint8_t flags, dispReady, dispNvOps, nvLongestKind, nvLongestSvc, nvLastFail, nvLastFailKind;
+    uint16_t consec, maxConsec, nvDeletes, nvCompacts, nvFails;
+    uint32_t winStart, winBusy, winDispatches, winNv, winMacReq, winMacCnfFail, winMacInd;
+    uint32_t winSvcBusy[B4_V50_MAX_SERVICES], winSvcInputs[B4_V50_MAX_SERVICES];
+    uint32_t windows, satWindows, busyWindows, peakBusy, peakElapsed, peakTick;
+    uint32_t readyTick, settleTick, heapLow, heapLowTick;
+    uint32_t nvReads, nvWrites, nvTicks, nvOther, nvLongest, dispNv, dispInput;
+    uint32_t svcNv[B4_V50_MAX_SERVICES];
+    B4_V51_Onset_t onset;
+    B4_V51_Dispatch_t firstLong, runWorst, bootWorst;
+} B4_V51_t;
+/* Same untagged member list as osal_port.c's ICall_heapStats_t, hence a
+ * compatible type across translation units (C11 6.2.7). */
+typedef struct
+{
+    uint32_t totalSize;
+    uint32_t totalFreeSize;
+    uint32_t largestFreeSize;
+} B4_V51_HeapStats_t;
+/* OSAL heapmgr instance in osal_port.c (rtos_heaposal.h template). */
+extern uint32_t heapmgrMemFreeTotal;
+extern void OsalPort_heapGetStats(B4_V51_HeapStats_t *stats);
+static B4_V51_t B4_V51;
+static NVINTF_nvFuncts_t B4_V51_Nv;
+
+static uint32_t B4_V51_MsTicks(uint32_t ms)
+{
+    uint32_t period = Clock_tickPeriod;
+    return period == 0u ? 0xFFFFFFFFu : (uint32_t)(((uint64_t)ms * 1000u) / period);
+}
+
+static void B4_V51_Sat16(uint16_t *value)
+{
+    if (*value != 0xFFFFu) ++*value;
+}
+
+static uint16_t B4_V51_Delta16(uint32_t now, uint32_t then)
+{
+    uint32_t delta = now - then;
+    return delta > 0xFFFFu ? 0xFFFFu : (uint16_t)delta;
+}
+
+/* Any task context. kind 1 read, 2 create/update/write, 3 delete, 4 compact.
+ * Time inside a Stack dispatch is charged to that service. */
+static void B4_V51_NvDone(uint8_t kind, uint32_t start, uint8_t status)
+{
+    B4_V51_t *v = &B4_V51;
+    uint32_t key = OsalPort_enterCS();
+    uint32_t spent = Clock_getTicks() - start;
+    uint8_t service = (Task_self() == stackTaskHndl) ? B4_V50_Current : 0u;
+    B4_V50_Sat(&v->nvTicks, spent);
+    if (kind == 1u) B4_V50_Sat(&v->nvReads, 1u);
+    else if (kind == 2u) B4_V50_Sat(&v->nvWrites, 1u);
+    else if (kind == 3u) B4_V51_Sat16(&v->nvDeletes);
+    else B4_V51_Sat16(&v->nvCompacts);
+    /* A read of an absent item (NOTFOUND) is ordinary lookup traffic. */
+    if (kind != 1u && status != 0u)
+    {
+        B4_V51_Sat16(&v->nvFails);
+        v->nvLastFail = status;
+        v->nvLastFailKind = kind;
+    }
+    if (spent > v->nvLongest)
+    {
+        v->nvLongest = spent;
+        v->nvLongestKind = kind;
+        v->nvLongestSvc = service;
+    }
+    if (service != 0u && service <= B4_V50_MAX_SERVICES)
+    {
+        B4_V50_Sat(&v->svcNv[service - 1u], spent);
+        B4_V50_Sat(&v->dispNv, spent);
+        B4_V50_Sat(&v->winNv, spent);
+        if (v->dispNvOps != 0xFFu) ++v->dispNvOps;
+    }
+    else
+        B4_V50_Sat(&v->nvOther, spent);
+    OsalPort_leaveCS(key);
+}
+
+static uint8_t B4_V51_NvReadItem(NVINTF_itemID_t id, uint16_t offset,
+                                 uint16_t length, void *buffer)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t status = B4_V51_Nv.readItem(id, offset, length, buffer);
+    B4_V51_NvDone(1u, start, status);
+    return status;
+}
+
+static uint8_t B4_V51_NvReadContItem(NVINTF_itemID_t id, uint16_t offset,
+                                     uint16_t rlength, void *rbuffer,
+                                     uint16_t clength, uint16_t coffset,
+                                     void *cbuffer, uint16_t *pSubId)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t status = B4_V51_Nv.readContItem(id, offset, rlength, rbuffer,
+                                            clength, coffset, cbuffer, pSubId);
+    B4_V51_NvDone(1u, start, status);
+    return status;
+}
+
+static uint32_t B4_V51_NvGetItemLen(NVINTF_itemID_t id)
+{
+    uint32_t start = Clock_getTicks();
+    uint32_t length = B4_V51_Nv.getItemLen(id);
+    B4_V51_NvDone(1u, start, 0u);
+    return length;
+}
+
+static uint8_t B4_V51_NvCreateItem(NVINTF_itemID_t id, uint32_t length, void *buffer)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t created = B4_V51_Nv.createItem(id, length, buffer);
+    B4_V51_NvDone(2u, start, created);
+    return created;
+}
+
+static uint8_t B4_V51_NvUpdateItem(NVINTF_itemID_t id, uint32_t length, void *buffer)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t updated = B4_V51_Nv.updateItem(id, length, buffer);
+    B4_V51_NvDone(2u, start, updated);
+    return updated;
+}
+
+static uint8_t B4_V51_NvWriteItem(NVINTF_itemID_t id, uint16_t length, void *buffer)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t written = B4_V51_Nv.writeItem(id, length, buffer);
+    B4_V51_NvDone(2u, start, written);
+    return written;
+}
+
+static uint8_t B4_V51_NvDeleteItem(NVINTF_itemID_t id)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t deleted = B4_V51_Nv.deleteItem(id);
+    B4_V51_NvDone(3u, start, deleted);
+    return deleted;
+}
+
+static uint8_t B4_V51_NvCompact(uint16_t minBytes)
+{
+    uint32_t start = Clock_getTicks();
+    uint8_t compacted = B4_V51_Nv.compactNV(minBytes);
+    B4_V51_NvDone(4u, start, compacted);
+    return compacted;
+}
+
+/* Stack task entry, once, before its first NV use. Only populated members
+ * are wrapped; each wrapper calls the saved original. The copy and the swap
+ * share one CS, so no task can reach a wrapper before its original is saved;
+ * later callers see either pointer, and both reach the same driver. */
+static void B4_V51_InstallNvHooks(void)
+{
+    NVINTF_nvFuncts_t *fps;
+    uint32_t key;
+    if ((B4_V51.flags & B4_V51_NV_HOOKED) != 0u || pZStackCfg == NULL) return;
+    key = OsalPort_enterCS();
+    fps = &pZStackCfg->nvFps;
+    B4_V51_Nv = *fps;
+    if (fps->readItem != NULL) fps->readItem = B4_V51_NvReadItem;
+    if (fps->readContItem != NULL) fps->readContItem = B4_V51_NvReadContItem;
+    if (fps->getItemLen != NULL) fps->getItemLen = B4_V51_NvGetItemLen;
+    if (fps->createItem != NULL) fps->createItem = B4_V51_NvCreateItem;
+    if (fps->updateItem != NULL) fps->updateItem = B4_V51_NvUpdateItem;
+    if (fps->writeItem != NULL) fps->writeItem = B4_V51_NvWriteItem;
+    if (fps->deleteItem != NULL) fps->deleteItem = B4_V51_NvDeleteItem;
+    if (fps->compactNV != NULL) fps->compactNV = B4_V51_NvCompact;
+    B4_V51.flags |= B4_V51_NV_HOOKED;
+    OsalPort_leaveCS(key);
+}
+
+static void B4_V51_Note(B4_V51_Dispatch_t *d, uint8_t idx, uint32_t now,
+                        uint32_t spent, uint32_t returned)
+{
+    d->tick = now;
+    d->ticks = spent;
+    d->input = B4_V51.dispInput;
+    d->returned = returned;
+    d->nv = B4_V51.dispNv;
+    d->service = (uint8_t)(idx + 1u);
+    d->nvOps = B4_V51.dispNvOps;
+}
+
+static void B4_V51_WindowReset(uint32_t now)
+{
+    B4_V51_t *v = &B4_V51;
+    uint8_t j;
+    v->winStart = now;
+    v->winBusy = 0u;
+    v->winDispatches = 0u;
+    v->winNv = 0u;
+    for (j = 0u; j < B4_V50_MAX_SERVICES; ++j)
+    {
+        v->winSvcBusy[j] = 0u;
+        v->winSvcInputs[j] = 0u;
+    }
+    v->winMacReq = B4_V50_MacReq;
+    v->winMacCnfFail = B4_V50_MacCnfFail;
+    v->winMacInd = B4_V50_MacInd;
+}
+
+/* Stack task, inside DispatchEnd's CS. Only post-READY windows are rated. */
+static void B4_V51_WindowRoll(uint32_t now)
+{
+    B4_V51_t *v = &B4_V51;
+    uint32_t elapsed = now - v->winStart;
+    uint64_t busy;
+    uint8_t sat, calm, top, j;
+    if (elapsed < B4_V51_MsTicks(B4_V51_WINDOW_MS)) return;
+    if ((v->flags & B4_V51_READY) != 0u)
+    {
+        busy = (uint64_t)v->winBusy * 100u;
+        sat = busy >= (uint64_t)elapsed * B4_V51_SAT_PCT;
+        calm = busy < (uint64_t)elapsed * B4_V51_CALM_PCT;
+        B4_V50_Sat(&v->windows, 1u);
+        if (!calm) B4_V50_Sat(&v->busyWindows, 1u);
+        if (sat)
+        {
+            B4_V50_Sat(&v->satWindows, 1u);
+            B4_V51_Sat16(&v->consec);
+            if (v->consec > v->maxConsec) v->maxConsec = v->consec;
+        }
+        else
+            v->consec = 0u;
+        if (v->peakElapsed == 0u ||
+            (uint64_t)v->winBusy * v->peakElapsed > (uint64_t)v->peakBusy * elapsed)
+        {
+            v->peakBusy = v->winBusy;
+            v->peakElapsed = elapsed;
+            v->peakTick = now;
+        }
+        if (calm && (v->flags & B4_V51_SETTLED) == 0u)
+        {
+            v->flags |= B4_V51_SETTLED;
+            v->settleTick = now;
+        }
+        if (sat && (v->flags & B4_V51_ONSET) == 0u)
+        {
+            for (top = 0u, j = 1u; j < B4_V50_MAX_SERVICES; ++j)
+                if (v->winSvcBusy[j] > v->winSvcBusy[top]) top = j;
+            if ((v->flags & B4_V51_SETTLED) != 0u) v->flags |= B4_V51_AFTER_CALM;
+            v->flags |= B4_V51_ONSET;
+            v->onset.tick = now;
+            v->onset.busy = v->winBusy;
+            v->onset.elapsed = elapsed;
+            v->onset.dispatches = v->winDispatches;
+            v->onset.service = (uint8_t)(top + 1u);
+            v->onset.svcBusy = v->winSvcBusy[top];
+            v->onset.svcInputs = v->winSvcInputs[top];
+            v->onset.nv = v->winNv;
+            v->onset.heap = heapmgrMemFreeTotal;
+            v->onset.macReq = B4_V51_Delta16(B4_V50_MacReq, v->winMacReq);
+            v->onset.macCnfFail = B4_V51_Delta16(B4_V50_MacCnfFail, v->winMacCnfFail);
+            v->onset.macInd = B4_V51_Delta16(B4_V50_MacInd, v->winMacInd);
+        }
+    }
+    B4_V51_WindowReset(now);
+}
+
+/* Stack task, inside DispatchEnd's CS, with the dispatch's own phase. */
+static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uint32_t spent)
+{
+    B4_V51_t *v = &B4_V51;
+    if (v->dispReady != 0u)
+    {
+        uint32_t heapFree = heapmgrMemFreeTotal;
+        if ((v->flags & B4_V51_HEAP) == 0u || heapFree < v->heapLow)
+        {
+            v->heapLow = heapFree;
+            v->heapLowTick = now;
+            v->flags |= B4_V51_HEAP;
+        }
+        if (spent > v->runWorst.ticks) B4_V51_Note(&v->runWorst, idx, now, spent, returned);
+        if ((v->flags & B4_V51_LONG) == 0u && spent >= B4_V51_MsTicks(B4_V51_LONG_MS))
+        {
+            B4_V51_Note(&v->firstLong, idx, now, spent, returned);
+            v->flags |= B4_V51_LONG;
+        }
+    }
+    else if (spent > v->bootWorst.ticks)
+        B4_V51_Note(&v->bootWorst, idx, now, spent, returned);
+    B4_V50_Sat(&v->winBusy, spent);
+    B4_V50_Sat(&v->winDispatches, 1u);
+    if (idx < B4_V50_MAX_SERVICES)
+    {
+        B4_V50_Sat(&v->winSvcBusy[idx], spent);
+        v->winSvcInputs[idx] |= v->dispInput;
+    }
+    if ((v->flags & B4_V51_READY) == 0u && devState == DEV_ZB_COORD)
+    {
+        /* Post-READY windows contain post-READY time only. */
+        v->flags |= B4_V51_READY;
+        v->readyTick = now;
+        B4_V51_WindowReset(now);
+    }
+    else
+        B4_V51_WindowRoll(now);
+}
+
 static void B4_V50_DispatchBegin(uint8_t idx, uint32_t events)
 {
     uint32_t key = OsalPort_enterCS();
@@ -201,13 +554,19 @@ static void B4_V50_DispatchBegin(uint8_t idx, uint32_t events)
         B4_V50_Sat(&B4_V50_Service[idx].dispatches, 1u);
         B4_V50_Service[idx].inputs |= events;
     }
+    /* B4_V51: per-dispatch NV attribution and boot/READY phase. */
+    B4_V51.dispNv = 0u;
+    B4_V51.dispNvOps = 0u;
+    B4_V51.dispInput = events;
+    B4_V51.dispReady = (uint8_t)(B4_V51.flags & B4_V51_READY);
     OsalPort_leaveCS(key);
 }
 
 static void B4_V50_DispatchEnd(uint8_t idx, uint32_t returned)
 {
     uint32_t key = OsalPort_enterCS();
-    uint32_t spent = Clock_getTicks() - B4_V50_Since;
+    uint32_t now = Clock_getTicks();
+    uint32_t spent = now - B4_V50_Since;
     B4_V50_Sat(&B4_V50_Busy, spent);
     if (idx < B4_V50_MAX_SERVICES)
     {
@@ -215,6 +574,7 @@ static void B4_V50_DispatchEnd(uint8_t idx, uint32_t returned)
         if (spent > B4_V50_Service[idx].longest) B4_V50_Service[idx].longest = spent;
     }
     if (returned != 0u) B4_V50_Sat(&B4_V50_Returned, 1u);
+    B4_V51_DispatchEnd(idx, returned, now, spent);
     B4_V50_Current = 0u;
     OsalPort_leaveCS(key);
 }
@@ -330,6 +690,103 @@ __attribute__((noinline)) void B4_V50_StackSnapshot(uint8_t *out, uint8_t npiArm
         out[225u + 2u * j] = (uint8_t)(longest >> 8u);
     }
 }
+
+static void B4_V51_Put16(uint8_t *out, uint16_t value)
+{
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8u);
+}
+
+static void B4_V51_PutDispatch(uint8_t *out, const B4_V51_Dispatch_t *d)
+{
+    B4_V50_Put32(out, d->tick);
+    B4_V51_Put16(out + 4u, B4_V50_Ms(d->ticks));
+    out[6] = d->service;
+    out[7] = d->nvOps;
+    B4_V50_Put32(out + 8u, d->input);
+    B4_V50_Put32(out + 12u, d->returned);
+    B4_V50_Put32(out + 16u, d->nv);
+}
+
+static uint16_t B4_V51_Clamp16(size_t value)
+{
+    return value > 0xFFFFu ? 0xFFFFu : (uint16_t)value;
+}
+
+/* NPI owner context only (single, non-reentrant caller), like B1E2. The heap
+ * walk runs under the heap manager's own lock BEFORE the one short CS copy;
+ * copies are static because the NPI task stack is only 1024 bytes. Task
+ * stack high-water needs TI-RTOS Task.initStackFlag (0 when unavailable). */
+__attribute__((noinline)) void B4_V51_OnsetSnapshot(uint8_t *out)
+{
+    static B4_V51_t s;
+    static Task_Stat stackStat, npiStat;
+    B4_V51_HeapStats_t heap = { 0u, 0u, 0u };
+    uint32_t key, now;
+    uint8_t j;
+    stackStat.used = 0u; stackStat.stackSize = 0u;
+    if (stackTaskHndl != NULL) Task_stat(stackTaskHndl, &stackStat);
+    Task_stat(Task_self(), &npiStat);
+    OsalPort_heapGetStats(&heap);
+    key = OsalPort_enterCS();
+    s = B4_V51;
+    now = Clock_getTicks();
+    OsalPort_leaveCS(key);
+    for (j = 0u; j < B4_V50_EVIDENCE_SIZE; ++j) out[j] = 0u;
+    out[0] = 'B'; out[1] = '1'; out[2] = 'E'; out[3] = '3';
+    out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE; out[6] = s.flags;
+    out[7] = (uint8_t)(B4_V51_WINDOW_MS / 1000u);
+    /* out[8..11]: public source digest, written by the NPI owner. */
+    B4_V50_Put32(out + 12u, now);
+    B4_V50_Put32(out + 16u, s.windows);
+    B4_V50_Put32(out + 20u, s.satWindows);
+    B4_V50_Put32(out + 24u, s.busyWindows);
+    B4_V51_Put16(out + 28u, s.consec);
+    B4_V51_Put16(out + 30u, s.maxConsec);
+    B4_V50_Put32(out + 32u, s.peakBusy);
+    B4_V50_Put32(out + 36u, s.peakElapsed);
+    B4_V50_Put32(out + 40u, s.peakTick);
+    B4_V50_Put32(out + 44u, s.readyTick);
+    B4_V50_Put32(out + 48u, s.settleTick);
+    B4_V50_Put32(out + 52u, s.nvReads);
+    B4_V50_Put32(out + 56u, s.nvWrites);
+    B4_V51_Put16(out + 60u, s.nvDeletes);
+    B4_V51_Put16(out + 62u, s.nvCompacts);
+    B4_V51_Put16(out + 64u, s.nvFails);
+    out[66] = s.nvLastFail;
+    out[67] = s.nvLastFailKind;
+    B4_V50_Put32(out + 68u, s.nvTicks);
+    B4_V50_Put32(out + 72u, s.nvOther);
+    B4_V51_Put16(out + 76u, B4_V50_Ms(s.nvLongest));
+    out[78] = s.nvLongestKind;
+    out[79] = s.nvLongestSvc;
+    B4_V50_Put32(out + 80u, heap.totalSize);
+    B4_V50_Put32(out + 84u, heap.totalFreeSize);
+    B4_V50_Put32(out + 88u, heap.largestFreeSize);
+    B4_V50_Put32(out + 92u, s.heapLow);
+    B4_V50_Put32(out + 96u, s.heapLowTick);
+    B4_V50_Put32(out + 100u, s.onset.tick);
+    B4_V50_Put32(out + 104u, s.onset.busy);
+    B4_V50_Put32(out + 108u, s.onset.elapsed);
+    B4_V50_Put32(out + 112u, s.onset.dispatches);
+    out[116] = s.onset.service;
+    B4_V51_Put16(out + 118u, s.onset.macCnfFail);
+    B4_V50_Put32(out + 120u, s.onset.svcBusy);
+    B4_V50_Put32(out + 124u, s.onset.svcInputs);
+    B4_V50_Put32(out + 128u, s.onset.nv);
+    B4_V51_Put16(out + 132u, s.onset.macReq);
+    B4_V51_Put16(out + 134u, s.onset.macInd);
+    B4_V50_Put32(out + 136u, s.onset.heap);
+    B4_V51_PutDispatch(out + 140u, &s.firstLong);
+    B4_V51_PutDispatch(out + 160u, &s.runWorst);
+    B4_V51_PutDispatch(out + 180u, &s.bootWorst);
+    for (j = 0u; j < B4_V51_NV_SERVICES && j < B4_V50_MAX_SERVICES; ++j)
+        B4_V50_Put32(out + 200u + 4u * j, s.svcNv[j]);
+    B4_V51_Put16(out + 240u, B4_V51_Clamp16(stackStat.used));
+    B4_V51_Put16(out + 242u, B4_V51_Clamp16(stackStat.stackSize));
+    B4_V51_Put16(out + 244u, B4_V51_Clamp16(npiStat.used));
+    B4_V51_Put16(out + 246u, B4_V51_Clamp16(npiStat.stackSize));
+}
 /* B4_V50_END_STACK_SERVICE_AGING_AND_EVIDENCE */
 """
 
@@ -366,6 +823,16 @@ V50_DISPATCH = """        B4_V6_StackPulse((uint32_t)idx+1u,0u);
         events = (zstackTasksArr[idx])( 0U, events );
         B4_V50_DispatchEnd(idx, events);
         B4_V6_StackPulse((uint32_t)idx+1u,1u);"""
+
+TASK_ENTRY = """static void stackTaskFxn(UArg a0, UArg a1)
+{
+    /* Task context: pZStackCfg is bound; NV mutex is initialized."""
+
+V51_TASK_ENTRY = """static void stackTaskFxn(UArg a0, UArg a1)
+{
+    /* B4_V51: transparent RAM-only NV timing, before the first Stack NV use. */
+    B4_V51_InstallNvHooks();
+    /* Task context: pZStackCfg is bound; NV mutex is initialized."""
 
 ZMAC_DECL = '#include "mac_api.h"\nextern int b1_nv_runtime_hold_active(void);'
 ZMAC_SIGNATURE = "uint8_t ZMacDataReqSec( ZMacDataReq_t *pData, applySecCB_t secCB )"
@@ -407,6 +874,7 @@ def apply(sdk, source_sha):
                  "V50_STACK_HELPERS_BEFORE_TASK")
     stack = once(stack, V48_ELSE, V50_ELSE, "V50_AGED_SELECTION_AFTER_V48")
     stack = once(stack, DISPATCH, V50_DISPATCH, "V50_DISPATCH_EVIDENCE")
+    stack = once(stack, TASK_ENTRY, V51_TASK_ENTRY, "V51_NV_HOOKS_AT_STACK_TASK_ENTRY")
 
     zmac = once(before[ZMAC], ZMAC_DECL, ZMAC_DECL +
                 "\nextern void B4_V50_MacDataReqEnter(void);"
@@ -435,12 +903,18 @@ def apply(sdk, source_sha):
             stack.count("idx = B4_V50_SelectService();") != 1 or
             stack.count("B4_V50_DispatchBegin(idx, events);") != 1 or
             stack.count("Semaphore_post(stackSemHandle);") != 1 or
+            stack.count(ONSET_MARKER) != 1 or
+            stack.count("    B4_V51_InstallNvHooks();") != 1 or
+            not (stack.index("    B4_V51_InstallNvHooks();") <
+                 stack.index("if (!b1_sec_validate_restored()) return;") <
+                 stack.index("    stackInit();")) or
+            task.count("B4_V51_OnsetSnapshot(stackEvidence);") != 1 or
             V47_DEBOOST in task or "B4_V47_Armed = 0u;" in task):
         raise ValueError("V50_SOURCE_SCOPE_DRIFT")
     for name in FILES:
         paths[name].write_text(after[name], encoding="utf-8", newline="")
     return {
-        "schema": "p7u-v50-stack-service-v1",
+        "schema": "p7u-v50-stack-service-v2",
         "supersedes_unflashed": "V49_READY_NPI_RETENTION",
         "root_cause_proven": False,
         "npi_priority_after_retained_arm": 6,
@@ -451,6 +925,15 @@ def apply(sdk, source_sha):
         "stack_evidence_services": MAX_SERVICES,
         "b1e2_size": EVIDENCE_SIZE,
         "b1e2_query": "B1Q1 v1/8 op4",
+        "b1e3_query": "B1Q1 v1/8 op4 page1",
+        "b1e3_size": EVIDENCE_SIZE,
+        "onset_window_ms": WINDOW_MS,
+        "onset_saturated_pct": SAT_PCT,
+        "onset_calm_pct": CALM_PCT,
+        "long_dispatch_ms": LONG_MS,
+        "onset_phase_boundary": "devState == DEV_ZB_COORD",
+        "nv_timing": "TRANSPARENT_NVFPS_WRAPPERS_SAME_ARGUMENTS_AND_RESULTS",
+        "heap_source": "OSAL_HEAPMGR_TOTAL_FREE_AND_GETSTATS",
         "source_digest_prefix": source_sha[:8],
         "changes_network_nv_or_security": False,
         "posts_or_clears_events": False,
