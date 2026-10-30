@@ -83,7 +83,7 @@ class V50StackService(unittest.TestCase):
         self.assertIn("B4_V51_DispatchEnd(idx, returned, now, spent);", stack)
         self.assertIn("devState == DEV_ZB_COORD", stack)
         self.assertIn("B4_V51_OnsetSnapshot(stackEvidence);", task)
-        self.assertIn("pReq[10] <= 1u)", task)
+        self.assertIn("pReq[10] <= 3u)", task)
         self.assertEqual(stack.count("Semaphore_post(stackSemHandle);"), 1)
         self.assertLess(stack.index("B4_V50_DispatchBegin(idx, events);"),
                         stack.index("events = (zstackTasksArr[idx])( 0U, events );"))
@@ -123,7 +123,7 @@ class V50StackService(unittest.TestCase):
         self.assertTrue(result["compiled_actual_b1e2_query"])
         self.assertTrue(result["compiled_actual_b1e3_onset_record"])
         self.assertTrue(result["compiled_actual_nv_timing_wrappers"])
-        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 36)
+        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 43)
         self.assertIn("stack:nv_second_install_wraps_wrappers", result["negative_mutants_rejected"])
         self.assertIn("query:b1e3_page_rejected", result["negative_mutants_rejected"])
         self.assertFalse(result["nwk_storm_root_cause_proven"])

@@ -222,6 +222,7 @@ static void reset_all(void)
     B4_V50_MacReq = B4_V50_MacReqOk = B4_V50_MacCnf = B4_V50_MacCnfFail = 0u;
     B4_V50_MacInd = B4_V50_MacEvents = 0u; B4_V50_MacReqLast = B4_V50_MacCnfLast = 0u;
     memset(&B4_V51, 0, sizeof(B4_V51));
+    memset(B4_V51_Trend, 0, sizeof(B4_V51_Trend));
     for (i = 0; i < NSERV; ++i) { extra[i] = 0u; heap_step[i] = 0u; nv_in[i] = 0u; }
     devState = DEV_HOLD; heapmgrMemFreeTotal = 50000u; nv_cost = 0u; nv_status = 0u;
 }
@@ -229,8 +230,8 @@ static void run_loop(void) { STACK_LOOP }
 int main(void)
 {
     uint8_t out[B4_V50_EVIDENCE_SIZE + 8u];
-    unsigned j;
-    uint32_t first_long_tick;
+    unsigned j, i;
+    uint32_t first_long_tick, ready_tick;
     /* 1. No starvation: exact TI lowest-index-first order, no aging. */
     reset_all(); set_event(4u, 1u); set_event(0u, 1u); set_event(2u, 1u); run_loop();
     assert(n_order == 3u && order[0] == 0u && order[1] == 2u && order[2] == 4u);
@@ -388,8 +389,50 @@ int main(void)
     assert(get16(out + 244) == 600u && get16(out + 246) == 1024u);
     for (j = B4_V50_EVIDENCE_SIZE; j < sizeof(out); ++j) assert(out[j] == 0xA5u);
     assert(cs_depth == 0u && credits == 0);
+    /* 9. Trend rings: twenty 5-minute buckets, each 30 s Stack busy (100
+     * permille), i MAC requests and one confirm failure, heap 50000-16i.
+     * The fine ring wraps (oldest first: buckets 4..20); the coarse ring
+     * pushed one 60-minute bucket (1..12) and holds 13..20 as partial. */
+    reset_all();
+    devState = DEV_ZB_COORD; set_event(4u, 1u); run_loop();
+    ready_tick = now_tick;
+    assert((B4_V51.flags & B4_V51_READY) != 0u && B4_V51_Trend[0].start == ready_tick);
+    for (i = 1u; i <= 20u; ++i)
+    {
+        unsigned k;
+        now_tick += 27000000u;
+        for (k = 0u; k < i; ++k) B4_V50_MacDataReqEnter();
+        B4_V50_MacEvent(1u, 0xE9u);
+        heapmgrMemFreeTotal = 50000u - 16u * i;
+        extra[3] = 2999990u; set_event(3u, 1u); run_loop();
+        assert(now_tick == ready_tick + 30000000u * i);
+    }
+    assert(B4_V51_Trend[0].pushed == 20u && B4_V51_Trend[0].count == 17u);
+    assert(B4_V51_Trend[1].pushed == 1u && B4_V51_Trend[1].count == 1u);
+    memset(out, 0xA5, sizeof(out));
+    B4_V51_TrendSnapshot(out, 0u);
+    assert(!memcmp(out, "B1E4", 4) && out[4] == 1u && out[5] == 248u && out[6] == 17u && out[7] == 5u);
+    assert(get32(out + 8) == 0u && get32(out + 12) == now_tick && get32(out + 16) == 20u);
+    assert(get32(out + 20) == 0u && get16(out + 24) == 0u && out[26] == 0u);
+    for (i = 0u; i < 17u; ++i)
+    {
+        const uint8_t *e = out + 36 + 12 * i;
+        assert(get16(e) == 100u && e[2] == 4u && e[3] == 1u && get16(e + 4) == 30000u);
+        assert(get16(e + 6) == 0u && get16(e + 8) == 3125u - (4u + i) && get16(e + 10) == 4u + i);
+    }
+    for (j = 240u; j < B4_V50_EVIDENCE_SIZE; ++j) assert(out[j] == 0u);
+    for (j = B4_V50_EVIDENCE_SIZE; j < sizeof(out); ++j) assert(out[j] == 0xA5u);
+    B4_V51_TrendSnapshot(out, 1u);
+    assert(!memcmp(out, "B1E5", 4) && out[6] == 1u && out[7] == 60u && get32(out + 16) == 1u);
+    assert(get32(out + 20) == 240000000u);
+    assert(get16(out + 24) == 100u && out[26] == 4u && out[27] == 8u && get16(out + 28) == 30000u);
+    assert(get16(out + 32) == 3125u - 20u && get16(out + 34) == 132u);
+    assert(get16(out + 36) == 100u && out[38] == 4u && out[39] == 12u && get16(out + 40) == 30000u);
+    assert(get16(out + 44) == 3125u - 12u && get16(out + 46) == 78u);
+    assert(get32(out + 48) == 0u);
+    assert(cs_depth == 0u && credits == 0);
     printf("V50_STACK_AGING_EVIDENCE_REAL_C_PASS\n");
-    printf("V51_ONSET_RECORD_NV_TIMING_REAL_C_PASS\n");
+    printf("V51_ONSET_RECORD_NV_TIMING_TREND_REAL_C_PASS\n");
     return 0;
 }
 """
@@ -445,7 +488,8 @@ STACK_MUTANTS = {
     "nv_notfound_read_counted_as_failure": (
         "    if (kind != 1u && status != 0u)", "    if (status != 0u)"),
     "ready_window_not_reset": (
-        "        v->readyTick = now;\n        B4_V51_WindowReset(now);", "        v->readyTick = now;"),
+        "        B4_V51_Trend[1].start = now;\n        B4_V51_WindowReset(now);",
+        "        B4_V51_Trend[1].start = now;"),
     "saturation_never_detected": (
         "        sat = busy >= (uint64_t)elapsed * B4_V51_SAT_PCT;", "        sat = 0u;"),
     "calm_never_detected": (
@@ -466,6 +510,18 @@ STACK_MUTANTS = {
         "    key = OsalPort_enterCS();\n    OsalPort_heapGetStats(&heap);\n"),
     "b1e3_stack_task_high_water_not_reported": (
         "    if (stackTaskHndl != NULL) Task_stat(stackTaskHndl, &stackStat);\n", ""),
+    "trend_never_pushed": (
+        "    if (span < B4_V51_MsTicks(periodMs)) return;", "    if (span < B4_V51_MsTicks(periodMs) * 1000u) return;"),
+    "trend_ring_not_oldest_first": (
+        "                        &t.ring[(t.head + B4_V51_TREND_ENTRIES - t.count + i) %",
+        "                        &t.ring[(i) %"),
+    "trend_heap_low_not_minimum": (
+        "(t->heapSeen == 0u || v->winHeapLow < t->heapLow)",
+        "(t->heapSeen == 0u || v->winHeapLow > t->heapLow)"),
+    "trend_coarse_level_ignored": (
+        "    t = B4_V51_Trend[level != 0u ? 1u : 0u];", "    t = B4_V51_Trend[0u];"),
+    "trend_window_max_dispatch_lost": (
+        "    if (spent > v->winMaxDispatch) v->winMaxDispatch = spent;\n", ""),
     "b1e3_service_nv_offset_shifted": (
         "        B4_V50_Put32(out + 200u + 4u * j, s.svcNv[j]);",
         "        B4_V50_Put32(out + 204u + 4u * j, s.svcNv[j]);"),
@@ -479,7 +535,8 @@ QUERY_STUB = r"""
 #define B1_STATUS_QUERY_SIZE 8u
 #define B1_STATUS_COMMAND 0xF1u
 typedef struct { uint8_t *pBuf; } NPIMSG_msg_t;
-static unsigned replies, deallocs, frees, snaps, onsets;
+static unsigned replies, deallocs, frees, snaps, onsets, trends;
+static uint8_t trend_level;
 static uint8_t last_c0, last_c1, last_len, last_payload[256], armed_seen;
 static uint32_t tick_seen;
 static void MT_BuildAndSendZToolResponse(uint8_t c0, uint8_t c1, uint8_t len, uint8_t *p)
@@ -496,6 +553,11 @@ void B4_V50_StackSnapshot(uint8_t *out, uint8_t npiArmed, uint32_t npiArmTick)
     ++snaps; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E2", 4);
     out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE; armed_seen = npiArmed; tick_seen = npiArmTick;
 }
+void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level)
+{
+    ++trends; trend_level = level; memset(out, 0, B4_V50_EVIDENCE_SIZE);
+    memcpy(out, level ? "B1E5" : "B1E4", 4); out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE;
+}
 void B4_V51_OnsetSnapshot(uint8_t *out)
 {
     ++onsets; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E3", 4);
@@ -508,7 +570,7 @@ static int consume(uint8_t *pReq)
 QUERY_BLOCK
     return 99;
 }
-static void clear(void) { replies = deallocs = frees = snaps = onsets = 0u; last_len = 0u; }
+static void clear(void) { replies = deallocs = frees = snaps = onsets = trends = 0u; last_len = 0u; trend_level = 9u; }
 int main(void)
 {
     static const uint8_t digest[4] = { DIGEST };
@@ -526,8 +588,14 @@ int main(void)
     clear(); assert(consume(frame) == 0 && snaps == 0u && onsets == 1u && replies == 1u);
     assert(last_c0 == 0x61u && last_c1 == 0xF1u && last_len == 248u && !memcmp(last_payload, "B1E3", 4));
     assert(!memcmp(last_payload + 8, digest, 4) && deallocs == 1u && frees == 1u);
+    /* Pages 2 and 3 are the V51 B1E4 (5 min) and B1E5 (60 min) trend rings. */
     memcpy(frame, ok, 16); frame[10] = 2u;
-    clear(); assert(consume(frame) == 0 && snaps == 0u && onsets == 0u && replies == 1u && last_c0 == 0x60u);
+    clear(); assert(consume(frame) == 0 && trends == 1u && trend_level == 0u && onsets == 0u && snaps == 0u);
+    assert(last_c0 == 0x61u && last_len == 248u && !memcmp(last_payload, "B1E4", 4) && !memcmp(last_payload + 8, digest, 4));
+    memcpy(frame, ok, 16); frame[10] = 3u;
+    clear(); assert(consume(frame) == 0 && trends == 1u && trend_level == 1u && !memcmp(last_payload, "B1E5", 4));
+    memcpy(frame, ok, 16); frame[10] = 4u;
+    clear(); assert(consume(frame) == 0 && snaps == 0u && onsets == 0u && trends == 0u && replies == 1u && last_c0 == 0x60u);
     /* AREQ form is dropped without any reply, like B1E1. */
     memcpy(frame, ok, 16); frame[1] = 0x41u;
     clear(); assert(consume(frame) == 0 && replies == 0u && snaps == 0u && deallocs == 1u);
@@ -535,7 +603,7 @@ int main(void)
     memcpy(frame, ok, 16); frame[9] = 3u; clear(); assert(consume(frame) == 99 && replies == 0u && deallocs == 0u);
     memcpy(frame, ok, 16); frame[9] = 2u; clear(); assert(consume(frame) == 99 && replies == 0u);
     memcpy(frame, ok, 16); frame[0] = 9u; clear(); assert(consume(frame) == 99 && replies == 0u);
-    printf("V50_B1E2_B1E3_NPI_QUERY_REAL_C_PASS\n");
+    printf("V50_B1E2_B1E3_B1E4_B1E5_NPI_QUERY_REAL_C_PASS\n");
     return 0;
 }
 """
@@ -548,7 +616,9 @@ QUERY_MUTANTS = {
                      "pReq[2] == B1_STATUS_COMMAND && pReq[9] == 3u)"),
     "length_unchecked": ("    if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&",
                          "    if ((pReq[1] & 0x1fu) == 1u &&"),
-    "b1e3_page_rejected": ("            pReq[10] <= 1u)", "            pReq[10] == 0u)"),
+    "b1e3_page_rejected": ("            pReq[10] <= 3u)", "            pReq[10] == 0u)"),
+    "trend_pages_rejected": ("            pReq[10] <= 3u)", "            pReq[10] <= 1u)"),
+    "trend_level_offset": ("(uint8_t)(pReq[10] - 2u)", "(uint8_t)(pReq[10] - 1u)"),
     "pages_swapped": ("            if (pReq[10] == 0u)\n", "            if (pReq[10] == 1u)\n"),
 }
 
@@ -665,6 +735,7 @@ def exercise(sdk, source_sha):
         "compiled_actual_b1e2_query": True,
         "compiled_actual_b1e3_onset_record": True,
         "compiled_actual_nv_timing_wrappers": True,
+        "compiled_actual_trend_rings": True,
         "negative_mutants_rejected": rejected,
         "hosted_model_only": True,
         "hardware_state9_proven": False,

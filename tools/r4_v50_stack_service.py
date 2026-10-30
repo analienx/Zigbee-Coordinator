@@ -27,6 +27,9 @@ This stage changes no network/NV/security state and adds no UART owner:
      the worst boot dispatch, OSAL heap free/low-water/largest block, and
      NV driver time per Stack service through transparent wrappers on the
      existing pZStackCfg->nvFps table (identical arguments and results).
+  5. V51 B1E4/B1E5 (op4 page2/3) post-READY trend rings, 17 x 5 min and
+     17 x 60 min: Stack busy, top service, longest dispatch, NV time, heap
+     low, MAC requests and confirm failures per bucket.
 """
 import hashlib
 import re
@@ -58,6 +61,7 @@ NPI_DECLARATIONS = r"""/* B4_V50_STACK_SERVICE_EVIDENCE: B1E2 op4 page0 and B1E3
 #define B4_V50_EVIDENCE_SIZE 248u
 extern void B4_V50_StackSnapshot(uint8_t *out, uint8_t npiArmed, uint32_t npiArmTick);
 extern void B4_V51_OnsetSnapshot(uint8_t *out);
+extern void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level);
 static const uint8_t B4_V50_BuildDigest[4] = { @DIGEST@ };
 
 """
@@ -95,21 +99,23 @@ QUERY_ANCHOR = """    B4_V43_Request(0u, pReq);
     /* Strict, RAM-only op3 B1E1 and op2 B1P1 share original NPI owner."""
 
 QUERY = """    B4_V43_Request(0u, pReq);
-    /* B4_V50_STACK_SERVICE_EVIDENCE_QUERY: op4 page0 -> B1E2, page1 -> B1E3
-     * on this NPI owner. Answered here, never by the Stack task whose CPU
-     * use it reports. */
+    /* B4_V50_STACK_SERVICE_EVIDENCE_QUERY: op4 page0 -> B1E2, page1 -> B1E3,
+     * page2/3 -> B1E4/B1E5 trend rings on this NPI owner. Answered here,
+     * never by the Stack task whose CPU use it reports. */
     if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&
         pReq[2] == B1_STATUS_COMMAND && pReq[9] == 4u)
     {
         static uint8_t stackEvidence[B4_V50_EVIDENCE_SIZE]; /* static: bounded NPI stack */
         static const uint8_t prefix[6] = { 'B', '1', 'Q', '1', 1u, 8u };
         if (pReq[1] == 0x21u && memcmp(pReq + 3, prefix, sizeof(prefix)) == 0 &&
-            pReq[10] <= 1u)
+            pReq[10] <= 3u)
         {
             if (pReq[10] == 0u)
                 B4_V50_StackSnapshot(stackEvidence, B4_V47_Armed, B4_V47_StartTick);
-            else
+            else if (pReq[10] == 1u)
                 B4_V51_OnsetSnapshot(stackEvidence);
+            else
+                B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));
             memcpy(stackEvidence + 8, B4_V50_BuildDigest, sizeof(B4_V50_BuildDigest));
             MT_BuildAndSendZToolResponse(0x61u, B1_STATUS_COMMAND,
                                          B4_V50_EVIDENCE_SIZE, stackEvidence);
@@ -223,6 +229,9 @@ static void B4_V50_NoteSelection(uint8_t idx)
 #define B4_V51_SAT_PCT 90u
 #define B4_V51_CALM_PCT 50u
 #define B4_V51_NV_SERVICES 10u /* B1E3 room: this build has 10 services */
+#define B4_V51_TREND_ENTRIES 17u
+#define B4_V51_FINE_MS 300000u     /* B1E4: 17 x 5 min  */
+#define B4_V51_COARSE_MS 3600000u  /* B1E5: 17 x 60 min */
 #define B4_V51_READY 0x01u
 #define B4_V51_SETTLED 0x02u
 #define B4_V51_ONSET 0x04u
@@ -245,7 +254,9 @@ typedef struct
 {
     uint8_t flags, dispReady, dispNvOps, nvLongestKind, nvLongestSvc, nvLastFail, nvLastFailKind;
     uint16_t consec, maxConsec, nvDeletes, nvCompacts, nvFails;
+    uint8_t winHeapSeen;
     uint32_t winStart, winBusy, winDispatches, winNv, winMacReq, winMacCnfFail, winMacInd;
+    uint32_t winMaxDispatch, winHeapLow;
     uint32_t winSvcBusy[B4_V50_MAX_SERVICES], winSvcInputs[B4_V50_MAX_SERVICES];
     uint32_t windows, satWindows, busyWindows, peakBusy, peakElapsed, peakTick;
     uint32_t readyTick, settleTick, heapLow, heapLowTick;
@@ -265,7 +276,23 @@ typedef struct
 /* OSAL heapmgr instance in osal_port.c (rtos_heaposal.h template). */
 extern uint32_t heapmgrMemFreeTotal;
 extern void OsalPort_heapGetStats(B4_V51_HeapStats_t *stats);
+/* Post-READY trend rings, fed from every rated 10 s window: the firmware
+ * keeps the hours-long history a host sampler could not (27-Oct F2 skipped
+ * 1097 of 1177 samples while the adapter queue was busy). */
+typedef struct
+{
+    uint16_t busyPermille, maxDispatchMs, nvMs, heapLow16, macReq;
+    uint8_t service, macCnfFail;
+} B4_V51_TrendEntry_t;
+typedef struct
+{
+    uint32_t start, busy, nv, maxDispatch, heapLow, macReq, macCnfFail, pushed;
+    uint32_t svcBusy[B4_V50_MAX_SERVICES];
+    uint8_t head, count, heapSeen;
+    B4_V51_TrendEntry_t ring[B4_V51_TREND_ENTRIES];
+} B4_V51_Trend_t;
 static B4_V51_t B4_V51;
+static B4_V51_Trend_t B4_V51_Trend[2];
 static NVINTF_nvFuncts_t B4_V51_Nv;
 
 static uint32_t B4_V51_MsTicks(uint32_t ms)
@@ -436,6 +463,8 @@ static void B4_V51_WindowReset(uint32_t now)
     v->winBusy = 0u;
     v->winDispatches = 0u;
     v->winNv = 0u;
+    v->winMaxDispatch = 0u;
+    v->winHeapSeen = 0u;
     for (j = 0u; j < B4_V50_MAX_SERVICES; ++j)
     {
         v->winSvcBusy[j] = 0u;
@@ -444,6 +473,58 @@ static void B4_V51_WindowReset(uint32_t now)
     v->winMacReq = B4_V50_MacReq;
     v->winMacCnfFail = B4_V50_MacCnfFail;
     v->winMacInd = B4_V50_MacInd;
+}
+
+static uint16_t B4_V50_Ms(uint32_t ticks); /* defined with the snapshots */
+
+static uint16_t B4_V51_Cap16(uint32_t value)
+{
+    return value > 0xFFFFu ? 0xFFFFu : (uint16_t)value;
+}
+
+/* One trend bucket from accumulated rated windows spanning `span` ticks. */
+static void B4_V51_TrendEntry(const B4_V51_Trend_t *t, uint32_t span, B4_V51_TrendEntry_t *e)
+{
+    uint64_t permille = span ? ((uint64_t)t->busy * 1000u) / span : 0u;
+    uint8_t top, j;
+    for (top = 0u, j = 1u; j < B4_V50_MAX_SERVICES; ++j)
+        if (t->svcBusy[j] > t->svcBusy[top]) top = j;
+    e->busyPermille = permille > 1000u ? 1000u : (uint16_t)permille;
+    e->service = t->busy ? (uint8_t)(top + 1u) : 0u;
+    e->macCnfFail = t->macCnfFail > 0xFFu ? 0xFFu : (uint8_t)t->macCnfFail;
+    e->maxDispatchMs = B4_V50_Ms(t->maxDispatch);
+    e->nvMs = B4_V50_Ms(t->nv);
+    e->heapLow16 = t->heapSeen ? B4_V51_Cap16(t->heapLow / 16u) : 0u;
+    e->macReq = B4_V51_Cap16(t->macReq);
+}
+
+/* Stack task, inside DispatchEnd's CS, for each rated post-READY window. */
+static void B4_V51_TrendFeed(B4_V51_Trend_t *t, uint32_t periodMs, uint32_t now)
+{
+    B4_V51_t *v = &B4_V51;
+    uint32_t span;
+    uint8_t j;
+    B4_V50_Sat(&t->busy, v->winBusy);
+    B4_V50_Sat(&t->nv, v->winNv);
+    if (v->winMaxDispatch > t->maxDispatch) t->maxDispatch = v->winMaxDispatch;
+    if (v->winHeapSeen != 0u && (t->heapSeen == 0u || v->winHeapLow < t->heapLow))
+    {
+        t->heapLow = v->winHeapLow;
+        t->heapSeen = 1u;
+    }
+    B4_V50_Sat(&t->macReq, B4_V50_MacReq - v->winMacReq);
+    B4_V50_Sat(&t->macCnfFail, B4_V50_MacCnfFail - v->winMacCnfFail);
+    for (j = 0u; j < B4_V50_MAX_SERVICES; ++j) B4_V50_Sat(&t->svcBusy[j], v->winSvcBusy[j]);
+    span = now - t->start;
+    if (span < B4_V51_MsTicks(periodMs)) return;
+    B4_V51_TrendEntry(t, span, &t->ring[t->head]);
+    t->head = (uint8_t)((t->head + 1u) % B4_V51_TREND_ENTRIES);
+    if (t->count < B4_V51_TREND_ENTRIES) ++t->count;
+    B4_V50_Sat(&t->pushed, 1u);
+    t->start = now;
+    t->busy = t->nv = t->maxDispatch = t->heapLow = t->macReq = t->macCnfFail = 0u;
+    t->heapSeen = 0u;
+    for (j = 0u; j < B4_V50_MAX_SERVICES; ++j) t->svcBusy[j] = 0u;
 }
 
 /* Stack task, inside DispatchEnd's CS. Only post-READY windows are rated. */
@@ -500,6 +581,8 @@ static void B4_V51_WindowRoll(uint32_t now)
             v->onset.macCnfFail = B4_V51_Delta16(B4_V50_MacCnfFail, v->winMacCnfFail);
             v->onset.macInd = B4_V51_Delta16(B4_V50_MacInd, v->winMacInd);
         }
+        B4_V51_TrendFeed(&B4_V51_Trend[0], B4_V51_FINE_MS, now);
+        B4_V51_TrendFeed(&B4_V51_Trend[1], B4_V51_COARSE_MS, now);
     }
     B4_V51_WindowReset(now);
 }
@@ -517,6 +600,11 @@ static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uin
             v->heapLowTick = now;
             v->flags |= B4_V51_HEAP;
         }
+        if (v->winHeapSeen == 0u || heapFree < v->winHeapLow)
+        {
+            v->winHeapLow = heapFree;
+            v->winHeapSeen = 1u;
+        }
         if (spent > v->runWorst.ticks) B4_V51_Note(&v->runWorst, idx, now, spent, returned);
         if ((v->flags & B4_V51_LONG) == 0u && spent >= B4_V51_MsTicks(B4_V51_LONG_MS))
         {
@@ -528,6 +616,7 @@ static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uin
         B4_V51_Note(&v->bootWorst, idx, now, spent, returned);
     B4_V50_Sat(&v->winBusy, spent);
     B4_V50_Sat(&v->winDispatches, 1u);
+    if (spent > v->winMaxDispatch) v->winMaxDispatch = spent;
     if (idx < B4_V50_MAX_SERVICES)
     {
         B4_V50_Sat(&v->winSvcBusy[idx], spent);
@@ -538,6 +627,8 @@ static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uin
         /* Post-READY windows contain post-READY time only. */
         v->flags |= B4_V51_READY;
         v->readyTick = now;
+        B4_V51_Trend[0].start = now;
+        B4_V51_Trend[1].start = now;
         B4_V51_WindowReset(now);
     }
     else
@@ -787,6 +878,49 @@ __attribute__((noinline)) void B4_V51_OnsetSnapshot(uint8_t *out)
     B4_V51_Put16(out + 244u, B4_V51_Clamp16(npiStat.used));
     B4_V51_Put16(out + 246u, B4_V51_Clamp16(npiStat.stackSize));
 }
+
+static void B4_V51_PutTrend(uint8_t *out, const B4_V51_TrendEntry_t *e)
+{
+    B4_V51_Put16(out, e->busyPermille);
+    out[2] = e->service;
+    out[3] = e->macCnfFail;
+    B4_V51_Put16(out + 4u, e->maxDispatchMs);
+    B4_V51_Put16(out + 6u, e->nvMs);
+    B4_V51_Put16(out + 8u, e->heapLow16);
+    B4_V51_Put16(out + 10u, e->macReq);
+}
+
+/* NPI owner context only. level 0: B1E4 (5 min), 1: B1E5 (60 min). The
+ * partial bucket covers completed windows since the last push; entries are
+ * oldest first. One short CS copy into static storage (1024 B NPI stack). */
+__attribute__((noinline)) void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level)
+{
+    static B4_V51_Trend_t t;
+    B4_V51_TrendEntry_t partial;
+    uint32_t key, now, rolled, span;
+    uint8_t ready, i, j;
+    key = OsalPort_enterCS();
+    t = B4_V51_Trend[level != 0u ? 1u : 0u];
+    rolled = B4_V51.winStart;
+    ready = (uint8_t)(B4_V51.flags & B4_V51_READY);
+    now = Clock_getTicks();
+    OsalPort_leaveCS(key);
+    for (j = 0u; j < B4_V50_EVIDENCE_SIZE; ++j) out[j] = 0u;
+    out[0] = 'B'; out[1] = '1'; out[2] = 'E'; out[3] = level != 0u ? '5' : '4';
+    out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE; out[6] = t.count;
+    out[7] = (uint8_t)((level != 0u ? B4_V51_COARSE_MS : B4_V51_FINE_MS) / 60000u);
+    /* out[8..11]: public source digest, written by the NPI owner. */
+    B4_V50_Put32(out + 12u, now);
+    B4_V50_Put32(out + 16u, t.pushed);
+    span = ready ? rolled - t.start : 0u;
+    B4_V50_Put32(out + 20u, span);
+    B4_V51_TrendEntry(&t, span, &partial);
+    B4_V51_PutTrend(out + 24u, &partial);
+    for (i = 0u; i < t.count; ++i)
+        B4_V51_PutTrend(out + 36u + 12u * i,
+                        &t.ring[(t.head + B4_V51_TREND_ENTRIES - t.count + i) %
+                                B4_V51_TREND_ENTRIES]);
+}
 /* B4_V50_END_STACK_SERVICE_AGING_AND_EVIDENCE */
 """
 
@@ -909,6 +1043,7 @@ def apply(sdk, source_sha):
                  stack.index("if (!b1_sec_validate_restored()) return;") <
                  stack.index("    stackInit();")) or
             task.count("B4_V51_OnsetSnapshot(stackEvidence);") != 1 or
+            task.count("B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));") != 1 or
             V47_DEBOOST in task or "B4_V47_Armed = 0u;" in task):
         raise ValueError("V50_SOURCE_SCOPE_DRIFT")
     for name in FILES:
@@ -931,6 +1066,7 @@ def apply(sdk, source_sha):
         "onset_saturated_pct": SAT_PCT,
         "onset_calm_pct": CALM_PCT,
         "long_dispatch_ms": LONG_MS,
+        "trend_queries": {"B1E4": "op4 page2 17x5min", "B1E5": "op4 page3 17x60min"},
         "onset_phase_boundary": "devState == DEV_ZB_COORD",
         "nv_timing": "TRANSPARENT_NVFPS_WRAPPERS_SAME_ARGUMENTS_AND_RESULTS",
         "heap_source": "OSAL_HEAPMGR_TOTAL_FREE_AND_GETSTATS",
