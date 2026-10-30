@@ -76,6 +76,7 @@ int main(void)
     uint32_t *pTasksEvents[7];
     const uint8_t zstackTasksCnt = 7u;
     uint8_t b1_next_service = 0u;
+    (void)b1_next_service;
     unsigned init_processed = 0u;
     for (unsigned i=0; i<7; ++i) pTasksEvents[i] = &word[i];
     word[2] = 0xa070u;  /* continuously ready NWK */
