@@ -10,6 +10,9 @@ import re
 NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar',
        'bsl-entry-intent.json','sparse-receipt.json','fresh-sparse-snapshot.bin','security-receipt.json'}
+# A sector-scope HOLD stops after BOTH security preflights PASSED, before
+# any erase/program: the same zero-write state plus the owner receipt.
+SCOPE_NAMES=NAMES|{'current-owner-security.json'}
 ATTACH_NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar','rom-reattach-intent.json'}
 
@@ -43,7 +46,8 @@ def fingerprint(root,owner,source,names=NAMES):
 
 def provenance(ns,ha,owner):
     need=ns['need'];load=ns['load'];root=ns['HELD_ROM'];ns['private_root'](root)
-    digest=fingerprint(root,owner,ns['SOURCE'])
+    scope=(root/'current-owner-security.json').exists()
+    digest=fingerprint(root,owner,ns['SOURCE'],SCOPE_NAMES if scope else NAMES)
     need(digest==ns['PAIRED_ROM_HOLD_PIN'],'PAIRED_READONLY_HOLD_PIN')
     p=load(root/'plan.json');pin=ns['sha'](ns['canonical'](p))
     absent={'id':None,'image':ns['IMAGE'],'started_at':None,'running':False,'absent':True}
@@ -62,12 +66,17 @@ def provenance(ns,ha,owner):
     need(load(root/'execute-intent.json')['plan_sha256']==pin and
          load(root/'bsl-entry-intent.json')=={'attempts':1,'plan_sha256':pin},'PAIRED_READONLY_HOLD_INTENTS')
     hold=load(root/'hold.json')
+    code='P7U_DEPLOY_HOLD_SECTOR_SCOPE' if scope else 'P7U_DEPLOY_HOLD_NATIVE_SECURITY'
     need(hold=={'automatic_boot':False,'automatic_retry':False,'error_type':'Hold',
-                'plan_sha256':pin,'safe_code':'P7U_DEPLOY_HOLD_NATIVE_SECURITY'},'PAIRED_READONLY_HOLD_REASON')
+                'plan_sha256':pin,'safe_code':code},'PAIRED_READONLY_HOLD_REASON')
     security=load(root/'security-receipt.json');sparse=load(root/'sparse-receipt.json')
     snapshot=ns['read'](root/'fresh-sparse-snapshot.bin')
-    need(len(snapshot)==720896 and security['status']=='HOLD' and security['reason_codes']==
-         ['ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED'] and
+    if scope:
+        need(load(root/'current-owner-security.json').get('status')=='PASS_CURRENT_OWNER_OFFLINE_ONLY',
+             'PAIRED_READONLY_HOLD_SECURITY')
+    expected=(('PASS_RETAINED_SECURITY_OFFLINE_ONLY',[]) if scope else
+              ('HOLD',['ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED']))
+    need(len(snapshot)==720896 and (security['status'],security['reason_codes'])==expected and
          all(security[k]==0 for k in ('write_attempts','erase_attempts','compaction_attempts')) and
          security['capture_sha256']==ns['sha'](snapshot) and
          sparse['status']=='SPARSE_ROM_CRC_WITH_FRESH_NV_READ_ONLY_NOT_FLASH_ADMISSION' and

@@ -24,9 +24,18 @@ class FlashDriver(unittest.TestCase):
     def test_no_assert_gates_in_driver_or_remote_snippets(self):
         tree = ast.parse((ROOT / "tools/p7u_ha_flash_driver.py").read_text())
         self.assertFalse([n for n in ast.walk(tree) if isinstance(n, ast.Assert)])
-        for name in ("EXTRACT", "VERIFY_STAGE", "STAGE_BINDING", "SERVING", "STARTUP_SUMMARY"):
+        for name in ("EXTRACT", "VERIFY_STAGE", "STAGE_BINDING", "SERVING", "STARTUP_SUMMARY", "HOLD_BINDING"):
             snippet = getattr(driver, name)
             self.assertIsNone(re.search(r"\bassert\b", snippet), name)
+        # Every remote need() call takes exactly (condition, reason).
+        fill = {"EXTRACT": tuple("abcde"), "VERIFY_STAGE": tuple("abcd"),
+                "SERVING": (driver.HOST_IMAGE,),
+                "STAGE_BINDING": {k: "x" for k in ("op", "installed", "source", "oldinput",
+                                                   "oldcand", "newinput", "newbind", "fw")}}
+        for name, args in fill.items():
+            for node in ast.walk(ast.parse(getattr(driver, name) % args)):
+                if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "need":
+                    self.assertEqual(len(node.args), 2, name + ":" + ast.unparse(node)[:80])
         self.assertIn("unknownTopicsRejected", driver.SERVING)
         self.assertIn("rh:2", driver.SERVING)
 

@@ -7,7 +7,9 @@ Replaces the per-version p7u_vNN_* scripts. Every phase records its pins in
   fetch    download the exact-source native candidate and operator package
            and verify every manifest hash (idempotent)
   stage    copy both to HA /share and stage the predecessor-bound input and
-           binding from the installed operation's receipts (idempotent)
+           binding from the installed operation's receipts (idempotent);
+           --continue-hold OP binds a zero-write HOLD (security or sector
+           scope) so the next plan continues WITHOUT a second BSL entry
   plan     new operation: read-only eligibility + live security admission
   deploy   ONE protected APP-only write (+ paired AC000), all 88 CRCs
   boot     ONE native boot, retained startup and source-bound observer
@@ -175,6 +177,14 @@ class Driver:
         self.save(package_dir=package_dir, stage_dir=stage_dir, input_pin=binding["input_pin"],
                   binding="/share/p7u-delivery-%s/binding.json" % fw[:12],
                   binding_pin=binding["binding_pin"])
+        if a.continue_hold:
+            hold(re.fullmatch("[0-9a-f]{32}", a.continue_hold) is not None, "HOLD_OPERATION_ID")
+            cont = self.remote_python(HOLD_BINDING % {
+                "package": package_dir, "base": self.state["binding"], "op": OPERATIONS + "/" + a.continue_hold,
+                "out": "/share/p7u-delivery-%s-cont-%s" % (fw[:12], a.continue_hold[:8])})
+            hold(cont.get("status") == "HOLD_CONTINUATION_BOUND_NO_RADIO", "HOLD_BINDING")
+            self.save(binding=cont["binding"], binding_pin=cont["binding_pin"],
+                      continued_hold=a.continue_hold, continued_hold_pin=cont["readonly_hold_pin"])
         print(json.dumps({"status": "STAGED", **{k: self.state[k] for k in (
             "package_dir", "stage_dir", "input_pin", "binding_pin")}}))
 
@@ -288,7 +298,7 @@ need(hashlib.sha256(raw).hexdigest()==pin,"VERIFY_STAGE_CHECK_3")
 need(hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin,"VERIFY_STAGE_CHECK_4")
 for root,m in ((package,p),(candidate,c)):
  bad=[n for n,d in m["files"].items() if hashlib.sha256((root/n).read_bytes()).hexdigest()!=d]
- need(not bad,bad[:5],"VERIFY_STAGE_CHECK_7")
+ need(not bad,"STAGE_MANIFEST_HASH "+",".join(bad[:5]))
 print(json.dumps({"status":"STAGE_VERIFIED"}))
 '''
 
@@ -381,6 +391,36 @@ print(json.dumps({"utc":int(time.time()*1000),"rc":p.returncode,"owner":c["Id"][
  "evidence":json.loads(lines[-1]) if lines else None}))
 '''
 
+# Fingerprint of a zero-write HOLD with the STAGED operator's own code and
+# the live (stopped) owner, exactly as plan()/deploy() will recompute it.
+HOLD_BINDING = r'''import json,hashlib,os,subprocess,sys
+from pathlib import Path
+def need(c,r):
+ if not c:raise SystemExit("HOLD "+r)
+package=Path(%(package)r);base=Path(%(base)r);op=Path(%(op)r);out=Path(%(out)r)
+sys.path.insert(0,str(package/"source/host/flash"))
+import p7u_paired_hold as hold
+canon=lambda o:json.dumps(o,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
+sha=lambda b:hashlib.sha256(b).hexdigest()
+binding=json.loads(base.read_bytes())
+need(set(binding)==set(json.loads(base.read_bytes())) and "readonly_hold_operation" not in binding,"BASE_BINDING")
+a=json.loads(subprocess.check_output(["docker","inspect","app_local_p7u_r4_native_host"]))[0]
+owner={"id":a["Id"],"image":a["Image"],"started_at":a["State"]["StartedAt"],"running":a["State"]["Running"]}
+need(owner["running"] is False,"OWNER_RUNNING")
+plan=json.loads((op/"plan.json").read_bytes())
+need(plan["source"]==binding["source_sha"] and plan["operation_id"]==op.name,"HELD_PLAN_SOURCE")
+names=hold.SCOPE_NAMES if (op/"current-owner-security.json").exists() else hold.NAMES
+pin=hold.fingerprint(op,owner,binding["source_sha"],names)
+binding.update(readonly_hold_operation=op.name,readonly_hold_plan_pin=sha(canon(plan)),readonly_hold_pin=pin)
+if not out.exists():
+ out.mkdir(mode=0o700)
+ with (out/"binding.json").open("xb") as f:
+  os.fchmod(f.fileno(),0o600);f.write(canon(binding));f.flush();os.fsync(f.fileno())
+need((out/"binding.json").read_bytes()==canon(binding),"HOLD_BINDING_CHANGED")
+print(json.dumps({"status":"HOLD_CONTINUATION_BOUND_NO_RADIO","binding":str(out/"binding.json"),
+ "binding_pin":sha(canon(binding)),"readonly_hold_pin":pin}))
+'''
+
 STARTUP_SUMMARY = r'''import json,pathlib
 op=pathlib.Path(%r);out={}
 for name in ("native-boot/startup-result.json","guarded-startup-recovery/startup-result.json",
@@ -408,6 +448,7 @@ def main():
     parser.add_argument("--native-run")
     parser.add_argument("--package-run")
     parser.add_argument("--new-plan", action="store_true")
+    parser.add_argument("--continue-hold", help="zero-write HOLD operation to continue (stage)")
     a = parser.parse_args()
     d = Driver(a.workdir)
     if a.phase == "fetch":

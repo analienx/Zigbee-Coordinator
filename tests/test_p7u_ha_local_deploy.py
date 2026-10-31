@@ -253,6 +253,30 @@ class Execution(unittest.IsolatedAsyncioTestCase):
                 await op.deploy(self.package, 'pin', self.ha)
         self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
 
+    def v52_frozen(self, *extra):
+        self.ready()
+        for sector in (0x30000, 0x32000) + extra: self.frozen.sectors[sector] = bytes(8192)
+
+    async def test_v52_exact_26_app_sectors_execute(self):
+        self.v52_frozen()
+        with patch.object(op, 'SOURCE', 'a70ae24ff45e708e13969cd341c9ecb494d1570f'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_awaited_once()
+
+    async def test_v52_cannot_add_app_nv_or_ccfg_beyond_its_envelope(self):
+        self.v52_frozen(0x34000, 0xA4000)
+        with patch.object(op, 'SOURCE', 'a70ae24ff45e708e13969cd341c9ecb494d1570f'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_not_awaited()
+
+    async def test_v52_requires_its_exact_last_app_sector(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        with patch.object(op, 'SOURCE', 'a70ae24ff45e708e13969cd341c9ecb494d1570f'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_not_awaited()
+
     async def test_v5_exact_additional_app_sector_is_required(self):
         self.ready()
         with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):

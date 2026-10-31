@@ -748,14 +748,16 @@ async def deploy(package, pin, ha):
         # Exact reviewed v4.5 and V5 images add only APP sector 0x30000. Keep older
         # operator profiles at their original envelope; never infer permission
         # from an untrusted HEX length or widen through NV/CCFG.
-        app_end = 0x32000 if SOURCE in (
+        # V52 (diagnostics + OSAL timer fix) is the first image to reach APP
+        # sector 0x32000: still plain application flash far below NV 0xA4000.
+        app_end = 0x34000 if SOURCE == 'a70ae24ff45e708e13969cd341c9ecb494d1570f' else (
+            0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',
             'e3a0f3b7726adf1f6c182973f135665a5c3857e0',
             '66ed700c2818c7a0963dad9160d55109009bbaac',
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
-            '250441cd17c55e25c78d97e041f056574355ade7',
-            'a70ae24ff45e708e13969cd341c9ecb494d1570f') else 0x30000
+            '250441cd17c55e25c78d97e041f056574355ade7') else 0x30000)
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],

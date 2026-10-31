@@ -70,6 +70,34 @@ class ReadonlyHold(unittest.TestCase):
         p=self.root/'security-receipt.json';v=json.loads(p.read_bytes());v['erase_attempts']=1
         p.write_bytes(op.canonical(v));self.seal()
         with self.assertRaisesRegex(op.Hold,'HOLD_SECURITY'):hold.provenance(self.ns,self.ha,self.owner)
+    def scope_hold(self):
+        hold_v=json.loads((self.root/'hold.json').read_bytes());hold_v['safe_code']='P7U_DEPLOY_HOLD_SECTOR_SCOPE'
+        (self.root/'hold.json').write_bytes(op.canonical(hold_v))
+        sec=json.loads((self.root/'security-receipt.json').read_bytes())
+        sec.update(status='PASS_RETAINED_SECURITY_OFFLINE_ONLY',reason_codes=[])
+        (self.root/'security-receipt.json').write_bytes(op.canonical(sec))
+        (self.root/'current-owner-security.json').write_bytes(op.canonical({'status':'PASS_CURRENT_OWNER_OFFLINE_ONLY'}))
+        self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,self.owner,self.plan['source'],hold.SCOPE_NAMES)
+    def test_zero_write_sector_scope_hold_after_passed_preflights_can_continue(self):
+        self.scope_hold()
+        self.assertEqual(hold.provenance(self.ns,self.ha,self.owner),self.ns['PAIRED_ROM_HOLD_PIN'])
+    def test_sector_scope_hold_needs_both_preflights_passed_and_zero_writes(self):
+        self.scope_hold()
+        for name,patch in (('current-owner-security.json',{'status':'HOLD'}),
+                           ('security-receipt.json',{'write_attempts':1})):
+            p=self.root/name;old=p.read_bytes();v=json.loads(old);v.update(patch)
+            p.write_bytes(op.canonical(v))
+            self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,self.owner,self.plan['source'],hold.SCOPE_NAMES)
+            with self.assertRaisesRegex(op.Hold,'HOLD_SECURITY'):hold.provenance(self.ns,self.ha,self.owner)
+            p.write_bytes(old)
+        for name in ('mutation-journal.jsonl','verified-write.json','frozen-plan.json'):
+            p=self.root/name;p.write_text('{}')
+            with self.assertRaisesRegex(ValueError,'FILE_SET'):hold.provenance(self.ns,self.ha,self.owner)
+            p.unlink()
+        hold_v=json.loads((self.root/'hold.json').read_bytes());hold_v['safe_code']='P7U_DEPLOY_HOLD_NATIVE_SECURITY'
+        (self.root/'hold.json').write_bytes(op.canonical(hold_v))
+        self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,self.owner,self.plan['source'],hold.SCOPE_NAMES)
+        with self.assertRaisesRegex(op.Hold,'HOLD_REASON'):hold.provenance(self.ns,self.ha,self.owner)
     def test_replaced_or_running_owner_is_rejected(self):
         for owner in (dict(self.owner,id='other'),dict(self.owner,running=True)):
             with self.assertRaisesRegex(op.Hold,'HOLD_PIN'):hold.provenance(self.ns,self.ha,owner)
