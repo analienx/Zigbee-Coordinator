@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Add low-rate V5 flights to the existing no-serial evidence worker.
+
+Apply AFTER: pinned V4 Z2M collector and V5 existing-owner herdsman overlay.
+Never installs, sends Zigbee traffic, starts a worker or opens serial itself.
+V5 is explicitly opt-in. Its first capture uses the first normal sampling
+opportunity. Busy skips leave it due, alternating with V4 to preserve bounded
+V4 admission. An attempted or successful pair is followed by four V4 slots.
+"""
+import argparse,hashlib,json,subprocess
+from pathlib import Path
+
+Z2M_SHA="62b02e2aa1997c574223b80c196677b63a25f4a7"
+HERDSMAN_SHA="0968f979d558874b17396c96b66382d4236bbdcd"
+CONTROLLER="lib/controller.ts"
+ZSTACK_CONTROLLER="src/controller/controller.ts"
+MARKER="P7U_F2_V5_OPTIN_DURABLE_FLIGHT"
+
+PROXY=r'''
+    /** P7U_F2_V5_OPTIN_DURABLE_FLIGHT: use current ZStackAdapter/Znp owner.
+     * Never construct new serial port, retry or bypass OTA/shutdown. */
+    public async b4ReadHangFlightV5FromExistingOwner(input: {
+        enabled: boolean; hostIdle: boolean; otaActive: boolean;
+        stillAllowed: () => boolean;
+    }) {
+        if (this.stopping || this.adapterDisconnected ||
+            typeof input?.stillAllowed !== "function" ||
+            !(this.adapter instanceof ZStackAdapter)) return undefined;
+        return await this.adapter.b4ReadHangFlightV5(input);
+    }
+
+'''
+
+Z2M_METHOD=r'''
+    /** P7U_F2_V5_OPTIN_DURABLE_FLIGHT: same v4 OTA gate and one ZNP owner.
+     * No extra diagnostics if OTA, shutdown or queue is busy. */
+    public async b4ProbeReadOnlyHangFlightV5(enabled = false) {
+        const herdsman=this.zigbee.zhController;
+        if (enabled !== true || !this.#b4Operational ||
+            !herdsman || herdsman.isStopping() ||
+            herdsman.isAdapterDisconnected()) return undefined;
+        const ota=[...this.extensions].find(
+            (extension): extension is ExtensionOTAUpdate =>
+                extension instanceof ExtensionOTAUpdate);
+        if (!ota) return undefined;
+        const stillAllowed=(): boolean =>
+            this.#b4Operational && ota.b4CanAcceptReadOnlyDiagnostics() &&
+            !herdsman.isStopping() && !herdsman.isAdapterDisconnected();
+        if (!stillAllowed()) return undefined;
+        return await herdsman.b4ReadHangFlightV5FromExistingOwner({
+            enabled:true,hostIdle:true,otaActive:false,stillAllowed,
+        });
+    }
+
+'''
+
+SAMPLE=r'''
+            /* Capture on the first normal sampling opportunity. A pre-wire
+             * skip leaves V5 due, with one intervening V4 slot so its bounded
+             * admission cannot be starved. Never add a timer or wire request
+             * after the normal V4 read. A submitted pair (including failure)
+             * consumes its opportunity; preserve cooldown/quarantine rules.
+             * The paired V5 data is committed as distinct FLIGHT record,
+             * not manufactured VALID minor4 and not part of V4 freshness.
+             * No request on an active OTA/busy/poisoned owner. */
+            if (process.env.P7U_B4_FLIGHT_V5 === "1" &&
+                this.#b4V5V4SlotsRemaining === 0 && !this.#b4V5YieldToV4) {
+                const flight=await this.b4ProbeReadOnlyHangFlightV5(true);
+                if (!this.#b4Operational) return;
+                const utc=Date.now();
+                /* Passive host evidence is sampled AFTER the paired F2,
+                 * not at the same radio tick. It opens no additional wire. */
+                const hostEvidence=this.zigbee.zhController?.b4NoWireOwnerSnapshotFromExistingOwner() ?? null;
+                const probeLatencyMs=Math.max(0,Math.round(performance.now()-probeStarted));
+                if (flight && "kind" in flight && flight.kind==="FAILED") {
+                    this.#b4Persist({
+                        schema:"p7u-b4-native-sample-v1",kind:"FAILED",utc,
+                        monotonicReceiveNs:process.hrtime.bigint().toString(),
+                        probeLatencyMs,reason:flight.reason,
+                        failureClass:flight.reason,
+                        submissionState:flight.submissionState,
+                        timingQuality:"HOST_TIMING_UNCERTAIN",
+                        sourceAbi:5,imageRuntimeAttested:false,
+                        hostEvidence,
+                    });
+                    if(flight.reason==="V5_PARTIAL_PAIR_OWNER_BUSY")this.#b4V5YieldToV4=true;
+                    else { this.#b4V5V4SlotsRemaining = 4; }
+                } else if (flight && "abi" in flight && flight.abi===5) {
+                    /* Token only crosses this in-process owner boundary.
+                     * Persist ONLY a keyed tag with the same secret as V4. */
+                    const {radioBootId,...flightV5}=flight;
+                    const radioEpochTag=radioBootId===null ? null :
+                        createHmac("sha256",this.#b4EpochKey)
+                            .update(radioBootId,"utf8").digest("hex").slice(0,24);
+                    this.#b4Persist({
+                        schema:"p7u-b4-native-sample-v1",kind:"FLIGHT",utc,
+                        monotonicReceiveNs:process.hrtime.bigint().toString(),
+                        probeLatencyMs,flightV5,radioEpochTag,
+                        radioEpochHardwareVerified:false,hostEvidence,
+                    });
+                    this.#b4V5V4SlotsRemaining = 4;
+                } else {
+                    this.#b4Persist({
+                        schema:"p7u-b4-native-sample-v1",kind:"SKIPPED",utc,
+                        monotonicReceiveNs:process.hrtime.bigint().toString(),
+                        reason:"HOST_OR_OTA_ADMISSION_SKIPPED",
+                        submissionState:"NONE",sourceAbi:5,
+                    });
+                    this.#b4V5YieldToV4 = true;
+                }
+                return;
+            }
+            if (process.env.P7U_B4_FLIGHT_V5 === "1") {
+                this.#b4V5YieldToV4 = false;
+                if (this.#b4V5V4SlotsRemaining > 0) --this.#b4V5V4SlotsRemaining;
+            }
+'''
+
+def once(src,old,new,label):
+    count=src.count(old)
+    if count!=1:raise ValueError("V5_DURABLE_DRIFT_"+label+":"+str(count))
+    return src.replace(old,new,1)
+
+def read_checked(root,relative):
+    path=root/relative
+    if path.is_symlink() or not path.is_file() or root.is_symlink():
+        raise ValueError("V5_DURABLE_UNTRUSTED_SOURCE_"+relative)
+    return path.read_text(encoding="utf-8")
+
+def apply(z2m,herdsman):
+    z2m,herdsman=Path(z2m).resolve(),Path(herdsman).resolve()
+    for root,expected in ((z2m,Z2M_SHA),(herdsman,HERDSMAN_SHA)):
+        if not str(root).startswith("/tmp/") or subprocess.check_output(
+            ["git","-C",str(root),"rev-parse","HEAD"],text=True).strip()!=expected:
+            raise ValueError("V5_DURABLE_PIN_DRIFT")
+    src=read_checked(z2m,CONTROLLER)
+    ctl=read_checked(herdsman,ZSTACK_CONTROLLER)
+    if (MARKER in src or
+        "P7U_B4_SAMPLED_SINGLE_OWNER_R4_V1" not in src or
+        "b4ReadHangFlightV5(input:" not in read_checked(
+             herdsman,"src/adapter/z-stack/adapter/zStackAdapter.ts") or
+        "b4ReadHangFlightV5FromExistingOwner" not in ctl):
+        raise ValueError("V5_DURABLE_REQUIRES_V4_V5_OWNERS")
+    src=once(src,"    #b4Schedule(delay = 60_000): void {",
+        Z2M_METHOD+"    #b4Schedule(delay = 60_000): void {","Z2M_METHOD")
+    src=once(src,
+        "    async #b4Sample(): Promise<void> {",
+        "    #b4V5V4SlotsRemaining = 0;\n    #b4V5YieldToV4 = false;\n    async #b4Sample(): Promise<void> {",
+        "V5_SAMPLING_COUNTER")
+    src=once(src,
+        "            const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();",
+        SAMPLE+"            const outcomeBefore = this.zigbee.zhController?.b4V4ReadOutcomeFromExistingOwner();",
+        "V5_SUBSTITUTE_F2_SAMPLE")
+    files={CONTROLLER:src}
+    (z2m/CONTROLLER).write_text(src,encoding="utf-8",newline="")
+    return {
+      "schema":"p7u-f2-v5-optin-durable-sampler-v1",
+      "v4_legacy_samples_unchanged":True,
+      "v5_first_normal_sampling_opportunity":True,
+      "v5_busy_skip_remains_due":True,
+      "v4_slot_after_v5_busy_skip":True,
+      "v4_slots_between_submitted_v5_pairs":4,
+      "additional_sample_timers":0,
+      "v5_optin_env":"P7U_B4_FLIGHT_V5",
+      "default_enabled":False,"one_serial_owner":True,
+      "worker_chain":"EXISTING_P7U_F2_WORKER_V2",
+      "live_installed":False,"radio_hardware_proven":False,
+      "files_sha256":{p:hashlib.sha256(v.encode()).hexdigest() for p,v in files.items()}
+    }
+
+if __name__=="__main__":
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--z2m",type=Path,required=True)
+    ap.add_argument("--herdsman",type=Path,required=True)
+    ap.add_argument("--receipt",type=Path,required=True)
+    a=ap.parse_args()
+    obj=apply(a.z2m,a.herdsman)
+    a.receipt.write_text(json.dumps(obj,indent=2,sort_keys=True)+"\n")
+    print(json.dumps(obj,sort_keys=True))

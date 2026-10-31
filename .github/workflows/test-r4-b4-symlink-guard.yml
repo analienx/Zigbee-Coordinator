@@ -1,0 +1,28 @@
+name: R4 B4 pinned host overlay containment (SOURCE ONLY)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/safe_checkout_files.py'
+      - 'host/r4-b4/herdsman_overlay.py'
+      - 'host/r4-b4/b4_v4_herdsman_overlay.py'
+      - 'host/r4-b4/b4_z2m_ota_overlay.py'
+      - 'host/r4-b4/b4_v4_z2m_overlay.py'
+      - 'tests/test_r4_b4_host_symlink_guard.py'
+      - '.github/workflows/test-r4-b4-symlink-guard.yml'
+permissions:
+  contents: read
+jobs:
+  b4-host-symlink-containment:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout immutable PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact review head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Adversarial symlink, ancestor, swap and hardlink tests (no network/host)
+        run: python -m unittest -v tests.test_r4_b4_host_symlink_guard

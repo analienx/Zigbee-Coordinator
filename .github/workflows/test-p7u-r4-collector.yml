@@ -1,0 +1,16 @@
+name: R4 P7U live-collector exact-source qualification
+
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/**'
+      - '.github/workflows/test-r4-b4-host.yml'
+      - '.github/workflows/test-p7u-r4-collector.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-host:
+    uses: ./.github/workflows/test-r4-b4-host.yml

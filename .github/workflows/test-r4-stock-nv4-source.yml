@@ -1,0 +1,197 @@
+name: P7U stock NV4 pinned source geometry (NO FLASH)
+
+on:
+  pull_request:
+    paths:
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py'
+      - 'firmware/slzb-06p7u/r4/qualification/p7u_stock_20260311_nv4_geometry.py'
+      - 'tests/test_p7u_stock_20260311_nv4_geometry.py'
+      - 'tests/test_r4_nv4_source_overlay.py'
+      - 'tests/test_r4_nv4_ti_host_clone.py'
+      - 'tests/test_r4_nv4_powercut_ti_host_clone.py'
+      - 'tests/test_r4_nv4_readonly_admission.py'
+      - 'tests/test_r4_nv_five_page_forensics.py'
+      - 'tests/test_r4_workflow_gate_deps.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_powercut_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_b1_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.c'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_admission.h'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_readonly_cli.c'
+      - 'firmware/slzb-06p7u/r4/qualification/nv_five_page_forensics.py'
+      - 'tests/test_r4_nv4_b1_bridge.py'
+      - 'tests/test_r4_nv4_b1_ti_host_clone.py'
+      - 'firmware/slzb-06p7u/r4/qualification/nv4_ti_compaction_powercut.py'
+      - 'tests/test_r4_nv4_ti_compaction_powercut.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/apply_b1.py'
+      - 'firmware/slzb-06p7u/r4/b1/tools/make_t5_security_harness.py'
+      - 'tests/test_r4_t5_security_reservations.py'
+      - '.github/workflows/test-r4-stock-nv4-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-nv4-source-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert checked-out commit is exact requested source
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          echo "NV4_SOURCE_COMMIT=$EXPECTED_SOURCE_SHA"
+      - name: Unit-test four matching native geometry anchors and independent C reader
+        run: python -m unittest -v tests.test_r4_nv4_source_overlay tests.test_p7u_stock_20260311_nv4_geometry tests.test_r4_nv4_readonly_admission tests.test_r4_nv4_ti_host_clone tests.test_r4_nv4_powercut_ti_host_clone tests.test_r4_nv4_ti_compaction_powercut tests.test_r4_nv4_b1_bridge tests.test_r4_nv4_b1_ti_host_clone tests.test_r4_nv_five_page_forensics tests.test_r4_workflow_gate_deps
+      - name: Fetch exact public TI 8.33 source inputs without any SDK installer
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          root = Path('/tmp/r4-stock-nv4-pinned')
+          root.mkdir(mode=0o700, exist_ok=False)
+          inputs = (
+              ('znp.syscfg', 'TexasInstruments/simplelink-zstack-examples',
+               '87ff5b638b632050228a7504f35cf3b95581c278',
+               'examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/znp.syscfg'),
+              ('p7.cmd', 'TexasInstruments/simplelink-lowpower-f2-sdk',
+               '3615ad5d3f4f271258d18a2f5ce1785064ff9a58',
+               'source/ti/zstack/boards/cc13x2x7_cc26x2x7/'
+               'cc13x2x7_cc26x2x7_tirtos7_ticlang.cmd'),
+              ('znp.projectspec', 'TexasInstruments/simplelink-zstack-examples',
+               '87ff5b638b632050228a7504f35cf3b95581c278',
+               'examples/rtos/LP_CC1352P7_4/zstack/znp/tirtos7/ticlang/'
+               'znp_LP_CC1352P7_4_tirtos7_ticlang.projectspec'),
+              ('nvocmp.c', 'TexasInstruments/simplelink-lowpower-f2-sdk',
+               '3615ad5d3f4f271258d18a2f5ce1785064ff9a58',
+               'source/ti/common/nv/nvocmp.c'),
+              ('crc.c', 'TexasInstruments/simplelink-lowpower-f2-sdk',
+               '3615ad5d3f4f271258d18a2f5ce1785064ff9a58',
+               'source/ti/common/nv/crc.c'),
+          )
+          for name, repo, sha, relative in inputs:
+              url = f'https://raw.githubusercontent.com/{repo}/{sha}/{relative}'
+              with urlopen(url, timeout=40) as response:
+                  raw = response.read(200000)
+              # Pinned nvocmp.c is 163,530 bytes; retain a bounded download
+              # yet allow the complete vendor source, not a truncated prefix.
+              if not 1000 < len(raw) < 190000:
+                  raise RuntimeError(f'TI source incomplete: {name}')
+              (root / name).write_bytes(raw)
+          PY
+      - name: Confirm exact upstream blobs and transform all compiler linker SysConfig fields
+        run: |
+          python firmware/slzb-06p7u/r4/qualification/nv4_source_overlay.py \
+            --syscfg /tmp/r4-stock-nv4-pinned/znp.syscfg \
+            --linker /tmp/r4-stock-nv4-pinned/p7.cmd \
+            --projectspec /tmp/r4-stock-nv4-pinned/znp.projectspec \
+            --receipt /tmp/r4-stock-nv4-pinned/receipt.json
+      - name: Confirm independent NV4 geometry and the flash gate stays closed
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/r4-stock-nv4-pinned')
+          report = json.loads((root/'receipt.json').read_text())
+          assert report['stock_nvs_range'] == ['0xA6000','0xAE000']
+          assert report['stock_nvs_page_count'] == 4
+          assert report['flash_authorized'] is False
+          project = (root/'znp.projectspec').read_text()
+          assert project.count('-DNVOCMP_NVPAGES=4') == 1
+          assert project.count('--define=NVOCMP_NVPAGES=4') == 1
+          sc = (root/'znp.syscfg').read_text()
+          assert 'NVS1.internalFlash.regionBase = 0xA6000;' in sc
+          assert 'NVS1.internalFlash.regionSize = 0x8000;' in sc
+          ld = (root/'p7.cmd').read_text()
+          assert '#define FLASH_SIZE              0xA6000' in ld
+          assert '#define FLASH_NV_BASE           0xA6000' in ld
+          assert '#define FLASH_NV_SIZE           0x8000' in ld
+          assert '#define FLASH_LAST_BASE         0xAE000' in ld
+          print('PINNED_LEGACY_NV4_SOURCE_GEOMETRY_PASS; FLASH STILL BLOCKED')
+          PY
+      - name: Correct source-only 20260311 stock NV4 base and forbid resident-boot overlap
+        run: |
+          python firmware/slzb-06p7u/r4/qualification/p7u_stock_20260311_nv4_geometry.py \
+            --syscfg /tmp/r4-stock-nv4-pinned/znp.syscfg \
+            --linker /tmp/r4-stock-nv4-pinned/p7.cmd \
+            --projectspec /tmp/r4-stock-nv4-pinned/znp.projectspec \
+            --prior-receipt /tmp/r4-stock-nv4-pinned/receipt.json \
+            --receipt /tmp/r4-stock-nv4-pinned/receipt-20260311.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/r4-stock-nv4-pinned')
+          receipt = json.loads((root / 'receipt-20260311.json').read_text())
+          assert receipt['nv_region'] == ['0xa4000', '0xac000']
+          assert receipt['app_ceiling'] == '0xa0000'
+          assert receipt['flash_authorized'] is False
+          assert receipt['native_compiled'] is False
+          syscfg = (root / 'znp.syscfg').read_text()
+          linker = (root / 'p7.cmd').read_text()
+          assert 'NVS1.internalFlash.regionBase = 0xA4000;' in syscfg
+          assert 'NVS1.internalFlash.regionSize = 0x8000;' in syscfg
+          assert '#define FLASH_SIZE              0xA0000' in linker
+          assert '#define FLASH_NV_BASE           0xA4000' in linker
+          assert '#define FLASH_NV_SIZE           0x8000' in linker
+          assert '#define FLASH_LAST_BASE         0xAE000' in linker
+          assert '#define FLASH_LAST_SIZE         0x2000' in linker
+          assert '-DNVOCMP_NVPAGES=4' in (root / 'znp.projectspec').read_text()
+          print('PINNED_20260311_NV4_SOURCE_REMAP_PASS; FLASH STILL BLOCKED')
+          PY
+      - name: Compile real TI 8.33 four-page NVOCMP initialization in RAM-only host clone
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+        run: python -m unittest -v tests.test_r4_nv4_ti_host_clone
+      - name: Execute real TI 8.33 four-page compaction and every NOR operation power cut in RAM
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+        run: python -m unittest -v tests.test_r4_nv4_ti_compaction_powercut
+      - name: Exhaust every byte boundary of genuine TI four-page NOR operations
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+        run: python -m unittest -v tests.test_r4_nv4_powercut_ti_host_clone
+      - name: Fetch real pinned B1/Z-Stack source dependencies into disposable SDK
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'firmware/slzb-06p7u/r4/b1/tools')
+          from run_hosted_tests import fetch_sources
+          fetch_sources(Path('/tmp/r4-stock-nv4-pinned/b1-sdk'))
+          PY
+      - name: Apply pinned B1 safety overlay then adapt its NV2 gate for existing P7U NV4
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'firmware/slzb-06p7u/r4/b1/tools')
+          from apply_b1 import overlay
+          overlay(Path('/tmp/r4-stock-nv4-pinned/b1-sdk'),
+                  Path('firmware/slzb-06p7u/r4/b1'))
+          PY
+          python firmware/slzb-06p7u/r4/qualification/nv4_b1_bridge.py \
+            --sdk /tmp/r4-stock-nv4-pinned/b1-sdk \
+            --nv-base 0xA4000 \
+            --receipt /tmp/r4-stock-nv4-pinned/b1-nv4-bridge.json
+      - name: Compile genuine TI B1 APS/TCLK reservation and TC300 index-edge fault matrix
+        env:
+          R4_T5_SECURITY_SOURCE: /tmp/r4-stock-nv4-pinned/b1-sdk/source/ti/zstack/stack/zdo/zd_sec_mgr.c
+        run: python -m unittest -v tests.test_r4_t5_security_reservations
+      - name: Compile genuine B1-patched TI multipage startup and reject corrupt NV4
+        env:
+          R4_TI_NVOCMP_SOURCE: /tmp/r4-stock-nv4-pinned/nvocmp.c
+          R4_TI_CRC_SOURCE: /tmp/r4-stock-nv4-pinned/crc.c
+          R4_B1_NV4_SOURCE: /tmp/r4-stock-nv4-pinned/b1-sdk/source/ti/common/nv/nvocmp.c
+          R4_B1_NV4_RECEIPT: /tmp/r4-stock-nv4-pinned/b1-nv4-bridge.json
+        run: python -m unittest -v tests.test_r4_nv4_b1_ti_host_clone

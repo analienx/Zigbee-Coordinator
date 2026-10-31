@@ -1,0 +1,224 @@
+name: R4 integrated actual TI checkpoint and sticky B1 HOLD C faults (NO FLASH)
+on:
+  pull_request:
+    paths:
+      - 'tools/r4_b1_b3_security_fuse.py'
+      - '.github/workflows/test-r4-security-fault-integration.yml'
+      - 'tools/r4_extract_nwk_save_hold.py'
+      - 'tools/r4_extract_zmac_for_checkpoint_hold.py'
+      - 'tests/r4_host/**'
+      - 'tools/r4_b0_b4_composite_stage.py'
+permissions:
+  contents: read
+jobs:
+  source-fusion:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact branch commit, no checkout auth persistence
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Checkout exact pinned TI 8.33 code and immutable B3 #123
+        run: |
+          set -Eeuo pipefail
+          git init -q /tmp/r4fusion-sdk
+          git -C /tmp/r4fusion-sdk remote add origin https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git
+          git -C /tmp/r4fusion-sdk fetch --depth 1 origin 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git -C /tmp/r4fusion-sdk checkout -q FETCH_HEAD
+          test "$(git -C /tmp/r4fusion-sdk rev-parse HEAD)" = 3615ad5d3f4f271258d18a2f5ce1785064ff9a58
+          git init -q /tmp/r4fusion-b3
+          git -C /tmp/r4fusion-b3 remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/r4fusion-b3 fetch --depth 1 origin b481e0beabf1966900644f69d7f5d024708ebf73
+          test "$(git -C /tmp/r4fusion-b3 rev-parse FETCH_HEAD)" = b481e0beabf1966900644f69d7f5d024708ebf73
+          git -C /tmp/r4fusion-b3 show b481e0beabf1966900644f69d7f5d024708ebf73:firmware/slzb-06p7u/r4/b3/tools/b3_source_overlay.py > /tmp/r4fusion-b3-overlay.py
+          mkdir -p /tmp/r4fusion-sdk/.b1-prerequisites
+          curl -fLsS --proto '=https' --tlsv1.2 --retry 3 \
+            https://raw.githubusercontent.com/Koenkk/zigbee-herdsman/0968f979d558874b17396c96b66382d4236bbdcd/src/adapter/z-stack/znp/definition.ts \
+            -o /tmp/r4fusion-sdk/.b1-prerequisites/herdsman-definition.ts
+      - name: B1 actual pinned TI source patch, then B3 fusion
+        env:
+          B1_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          python firmware/slzb-06p7u/r4/b1/tools/apply_b1.py --sdk /tmp/r4fusion-sdk --receipt /tmp/r4fusion-b1.json
+          python tools/r4_b1_b3_security_fuse.py --sdk /tmp/r4fusion-sdk \
+            --b3-script /tmp/r4fusion-b3-overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/r4fusion-b1.json \
+            --receipt /tmp/r4fusion-receipt.json
+          echo "Reconcile full B3 NVOCMP guard ordering and TC seed status ABI"
+          mkdir -p /tmp/r4b3-final-guards
+          git init -q /tmp/r4b3-final-repo
+          git -C /tmp/r4b3-final-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          git -C /tmp/r4b3-final-repo fetch --depth 1 origin d9f6ea1f463b7be4f72f8ecd22fd0eb4d64fc193
+          test "$(git -C /tmp/r4b3-final-repo rev-parse FETCH_HEAD)" = d9f6ea1f463b7be4f72f8ecd22fd0eb4d64fc193
+          git -C /tmp/r4b3-final-repo show d9f6ea1f463b7be4f72f8ecd22fd0eb4d64fc193:tools/r4_b3_nvocmp_compaction_fuse.py > /tmp/r4b3-final-guards/r4_b3_nvocmp_compaction_fuse.py
+          git -C /tmp/r4b3-final-repo show d9f6ea1f463b7be4f72f8ecd22fd0eb4d64fc193:tools/r4_b3_seed_status_fuse.py > /tmp/r4b3-final-guards/r4_b3_seed_status_fuse.py
+          python /tmp/r4b3-final-guards/r4_b3_nvocmp_compaction_fuse.py \
+            --sdk /tmp/r4fusion-sdk --b3-script /tmp/r4fusion-b3-overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/r4fusion-b1.json --receipt /tmp/r4b3-nvocmp-composed.json
+          python /tmp/r4b3-final-guards/r4_b3_seed_status_fuse.py \
+            --sdk /tmp/r4fusion-sdk --b3-script /tmp/r4fusion-b3-overlay.py \
+            --b3-git-sha b481e0beabf1966900644f69d7f5d024708ebf73 \
+            --b1-overlay-receipt /tmp/r4fusion-b1.json --receipt /tmp/r4b3-seed-composed.json
+          echo "Verify B2/B4 immutable source and one-owner composition atop B1/B3"
+          mkdir -p /tmp/r4composite-siblings
+          git init -q /tmp/r4composite-repo
+          git -C /tmp/r4composite-repo remote add origin https://github.com/analienx/Zigbee-Coordinator.git
+          # Fetch all immutable donor commits in one shallow transaction.
+          # Individual depth-1 fetches rewrote .git/shallow between Git actions
+          # and intermittently failed with "shallow file has changed".
+          git -C /tmp/r4composite-repo fetch --depth 1 origin d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b
+          for sha in d13a48f5226d42e247a17d9198d84c94a4415030 530a52631fbde274a2ae356c490bad71b47168a6 3231abb1f13210eb88afe13ff7b7f9f29709cd6b; do
+            git -C /tmp/r4composite-repo cat-file -e "$sha^{commit}"
+          done
+          git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_mto_fail_closed_overlay.py > /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py
+          git -C /tmp/r4composite-repo show 530a52631fbde274a2ae356c490bad71b47168a6:firmware/slzb-06p7u/r4/b2/tools/b2_mto_nv_guard.py > /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py
+          git -C /tmp/r4composite-repo show d13a48f5226d42e247a17d9198d84c94a4415030:tools/b2_compile_actual_mto_nv_timer.py > /tmp/r4composite-siblings/b2_compile_actual_mto_nv_timer.py
+          git -C /tmp/r4composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_native_patch.py > /tmp/r4composite-siblings/b4_native_patch.py
+          git -C /tmp/r4composite-repo show 3231abb1f13210eb88afe13ff7b7f9f29709cd6b:firmware/slzb-06p7u/r4/b4/b4_v4_native_patch.py > /tmp/r4composite-siblings/b4_v4_native_patch.py
+          python tools/r4_b0_b4_composite_stage.py \
+            --sdk /tmp/r4fusion-sdk --baseline /tmp/r4composite-siblings \
+            --b1-receipt /tmp/r4fusion-b1.json --fusion-receipt /tmp/r4fusion-receipt.json \
+            --b2-script /tmp/r4composite-siblings/b2_mto_fail_closed_overlay.py \
+            --b2-failure-script /tmp/r4composite-siblings/b2_mto_failure_guard_overlay.py \
+            --b4-v3-script /tmp/r4composite-siblings/b4_native_patch.py \
+            --b4-v4-script /tmp/r4composite-siblings/b4_v4_native_patch.py \
+            --b2-sha d13a48f5226d42e247a17d9198d84c94a4415030 \
+            --b2-failure-sha 530a52631fbde274a2ae356c490bad71b47168a6 \
+            --b4-sha 3231abb1f13210eb88afe13ff7b7f9f29709cd6b \
+            --receipt /tmp/r4composite-source.json
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          d=json.loads(Path('/tmp/r4fusion-receipt.json').read_text())
+          b=json.loads(Path('/tmp/r4fusion-b1.json').read_text())
+          assert d['source_ready'] is False and d['flash_authorized'] is False
+          assert d['b3_nwk_save_monotonic_and_B1_HOLD'] is True
+          assert set(d['changed']) == {'source/ti/zstack/stack/sys/zglobals.c', 'source/ti/zstack/stack/zdo/zd_app.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.c', 'source/ti/zstack/stack/zdo/zd_sec_mgr.h'}
+          c=json.loads(Path('/tmp/r4composite-source.json').read_text())
+          assert c['source_ready'] is False
+          assert c['b1_f1_and_b4_f0_f2_dispatch'] is True
+          nv=json.loads(Path('/tmp/r4b3-nvocmp-composed.json').read_text())
+          seed=json.loads(Path('/tmp/r4b3-seed-composed.json').read_text())
+          assert len(nv['reconciled_guards'])==3 and seed['checked_return_status'] is True
+          assert b['post_b1_security_fusion'] == 'B1_PLUS_SELECTED_B3_IMMUTABLE_INPUTS'
+          print('B1+B3 REAL TI SOURCE FUSION VERIFIED (native still required)')
+          PY
+      - name: Compile and execute genuine fused TI NWK SAVE C with actual B1 HOLD implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/r4-synthetic-stubs
+          git -C /tmp/r4fusion-b3 show b481e0beabf1966900644f69d7f5d024708ebf73:tests/b3_host/b3_nwk_stub.h > /tmp/r4-synthetic-stubs/b3_nwk_stub.h
+          test -s /tmp/r4-synthetic-stubs/b3_nwk_stub.h
+          python tools/r4_extract_nwk_save_hold.py \
+            --source /tmp/r4fusion-sdk/source/ti/zstack/stack/zdo/zd_app.c \
+            --out /tmp/r4-fused-nwk-save.c \
+            --receipt /tmp/r4-fused-nwk-save-receipt.json
+          python tools/r4_extract_zmac_for_checkpoint_hold.py \
+            --source /tmp/r4fusion-sdk/source/ti/zstack/zmac/f8w/zmac.c \
+            --out /tmp/r4-fused-zmac-admissions.c \
+            --receipt /tmp/r4-fused-zmac-admission-receipt.json
+          clang -std=c11 -g -O1 -Wall -Wextra -Werror \
+            -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
+            -fno-omit-frame-pointer -fsanitize=address,undefined \
+            -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/r4-fused-nwk-save.c \
+            /tmp/r4-fused-zmac-admissions.c \
+            tests/r4_host/r4_nwk_hold_test.c \
+            firmware/slzb-06p7u/r4/b1/b1_management.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/r4-nwk-checkpoint-host
+          for scenario in healthy backend-write-fail backend-read-fail \
+                          table-corrupt-success key-write-fail key-read-fail \
+                          key-corrupt-success counter-rollback generic-rollback \
+                          foreign-last-slot empty-last-slot; do
+            ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+              /tmp/r4-nwk-checkpoint-host "$scenario"
+          done
+          echo "ACTUAL FUSED TI SOURCE: 11 NWK checkpoint/sticky HOLD scenarios AND 2 real ZMac TX paths per scenario; NO physical radio." >> "$GITHUB_STEP_SUMMARY"
+      - name: Counter rollback guard removal MUST fail cross-phase actual-C security oracle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          original=Path('/tmp/r4-fused-nwk-save.c').read_text()
+          marker='if (nwkSecMaterialDesc.FrameCounter > keyItems.frameCounter)'
+          assert original.count(marker)==2
+          Path('/tmp/r4-fused-nwk-mutant.c').write_text(original.replace(marker,'if (0)'))
+          PY
+          clang -std=c11 -g -O1 -Wall -Wextra -Werror \
+            -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
+            -fno-omit-frame-pointer -fsanitize=address,undefined \
+            -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/r4-fused-nwk-mutant.c \
+            /tmp/r4-fused-zmac-admissions.c \
+            tests/r4_host/r4_nwk_hold_test.c \
+            firmware/slzb-06p7u/r4/b1/b1_management.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/r4-nwk-checkpoint-mutant
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            /tmp/r4-nwk-checkpoint-mutant counter-rollback) >/tmp/r4-nwk-mutant.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then echo "MUTANT SURVIVED: checkpoint rollback not caught"; exit 1; fi
+          grep -Ei 'Assertion|assertion' /tmp/r4-nwk-mutant.log
+          echo "Deliberate rollback guard removal KILLED by actual B1+B3 integration oracle." >> "$GITHUB_STEP_SUMMARY"
+      - name: Security key-checkpoint failure must latch B1 HOLD (mutation killed)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          original=Path('/tmp/r4-fused-nwk-save.c').read_text()
+          guard=(
+              "  else\n  {\n    b1_security_runtime_hold_latch();\n"
+              "    /* NWKKEY failed, was unreadable, or returned corrupt bytes. */\n"
+              "  }"
+          )
+          assert original.count(guard)==1, "one exact NWKKEY checkpoint HOLD failure guard"
+          Path('/tmp/r4-fused-nwk-no-key-hold-mutant.c').write_text(
+              original.replace(guard,"  else\n  {\n    /* deliberate missing B1 security latch */\n  }"))
+          PY
+          clang -std=c11 -g -O1 -Wall -Wextra -Werror \
+            -DB1_MANAGEMENT_HOST -DB1_MANAGEMENT_ENABLED \
+            -fno-omit-frame-pointer -fsanitize=address,undefined \
+            -I /tmp/r4-synthetic-stubs -I firmware/slzb-06p7u/r4/b1 \
+            /tmp/r4-fused-nwk-no-key-hold-mutant.c \
+            /tmp/r4-fused-zmac-admissions.c \
+            tests/r4_host/r4_nwk_hold_test.c \
+            firmware/slzb-06p7u/r4/b1/b1_management.c \
+            firmware/slzb-06p7u/r4/b1/b1_admission.c \
+            -o /tmp/r4-nwk-no-key-hold-mutant
+          set +e
+          (ulimit -c 0; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            /tmp/r4-nwk-no-key-hold-mutant key-write-fail) >/tmp/r4-nwk-key-hold-mutant.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -E "Assertion.*b1_management_get_hold_active|assertion.*b1_management_get_hold_active" /tmp/r4-nwk-key-hold-mutant.log
+          echo "NWKKEY failure-to-HOLD mutant KILLED by actual cross-phase TI C oracle." >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload only source receipts, no ELF
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r4-actual-C-HOLD-NOT-FLASH-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/r4fusion-receipt.json
+            /tmp/r4fusion-b1.json
+            /tmp/r4composite-source.json
+            /tmp/r4b3-nvocmp-composed.json
+            /tmp/r4b3-seed-composed.json
+            /tmp/r4-fused-nwk-save-receipt.json
+            /tmp/r4-fused-zmac-admission-receipt.json
+            /tmp/r4-nwk-mutant.log
+            /tmp/r4-nwk-key-hold-mutant.log
+          if-no-files-found: warn

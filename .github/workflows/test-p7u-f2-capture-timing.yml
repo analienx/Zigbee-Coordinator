@@ -1,0 +1,21 @@
+name: P7U first-opportunity F2 capture (NO LIVE ACTION)
+on:
+  pull_request:
+    paths:
+      - 'host/r4-b4/b4_v5_live_collector_overlay.py'
+      - 'host/r4-b4/test-v5-capture-timing.cjs'
+      - '.github/workflows/test-p7u-f2-capture-timing.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capture-timing:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - run: node --test host/r4-b4/test-v5-capture-timing.cjs

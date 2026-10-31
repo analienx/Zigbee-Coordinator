@@ -1,0 +1,98 @@
+name: P7U paired guarded operator package (NO LIVE ACTION)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/package-p7u-paired-operator.yml'
+      - 'host/flash/**'
+      - 'host/r4-b4/**'
+      - 'tools/package_p7u_pr154_ha.py'
+      - 'tests/test_p7u_hang_evidence.py'
+      - 'tools/p7u_ha_flash_driver.py'
+  workflow_dispatch:
+    inputs:
+      firmware_source:
+        description: Qualified paired firmware and host source SHA (operator may be repaired independently)
+        required: true
+      host_source:
+        description: Independently qualified compatible host source SHA (defaults to firmware source)
+        required: false
+      native_run:
+        description: Successful exact-source stock20260311 native run ID
+        required: true
+      host_run:
+        description: Successful exact-source deployable host release run ID
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPERATOR_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      FIRMWARE_SOURCE_SHA: ${{ inputs.firmware_source || '66ed700c2818c7a0963dad9160d55109009bbaac' }}
+      HOST_SOURCE_SHA: ${{ inputs.host_source || inputs.firmware_source || '66ed700c2818c7a0963dad9160d55109009bbaac' }}
+      NATIVE_RUN: ${{ inputs.native_run }}
+      HOST_RUN: ${{ inputs.host_run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Qualify operator and retained-state comparison without hardware
+        env:
+          PYTHONPATH: tests
+        run: |
+          python -m py_compile tools/p7u_ha_flash_driver.py host/flash/p7u_hang_evidence_once.py
+          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding tests.test_p7u_paired_hold tests.test_p7u_paired_finish tests.test_p7u_paired_boot tests.test_p7u_v6_rom_recovery tests.test_p7u_v6_recover_local tests.test_p7u_v6_startup_host_config tests.test_p7u_v6_startup_host_install tests.test_p7u_v6_startup_capture_once tests.test_p7u_v6_instrumented_rom_once tests.test_p7u_stock20260311_security_preflight tests.test_p7u_usb_sparse_transition tests.test_p7u_v50_stack_evidence tests.test_p7u_hang_evidence tests.test_p7u_ha_flash_driver tests.test_p7u_firmware_pin_consistency
+          python -m unittest discover -v -s firmware/slzb-06p7u/r4/release -p test_p7u_usb_current_owner_gate.py
+      - name: Bind only successful paired artifacts from this source
+        run: |
+          python - <<'PY'
+          import json,os,subprocess,time,re
+          from pathlib import Path
+          repo=os.environ['GITHUB_REPOSITORY']
+          for key,workflow,prefix,dest,sha in (
+            ('NATIVE_RUN','test-r4-stock20260311-native.yml','p7u-stock20260311-candidate-','candidate',os.environ['FIRMWARE_SOURCE_SHA']),
+            ('HOST_RUN','release-p7u-host.yml','p7u-deployable-host-release-','host',os.environ['HOST_SOURCE_SHA'])):
+              assert re.fullmatch('[0-9a-f]{40}',sha)
+              run_id=os.environ[key]
+              deadline=time.monotonic()+70*60
+              while not run_id:
+                  runs=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100']))['workflow_runs']
+                  matches=[r for r in runs if r['head_sha']==sha and r['path']=='.github/workflows/'+workflow]
+                  run=max(matches,key=lambda r:r['id']) if matches else None
+                  if run and run['status']=='completed':
+                      assert run['conclusion']=='success', workflow+' did not pass'
+                      run_id=str(run['id']);break
+                  assert time.monotonic()<deadline, 'paired exact-source artifact wait expired; check native/host workflow duration and trigger'
+                  print('Waiting for paired artifact '+workflow,flush=True);time.sleep(20)
+              assert run_id.isdecimal()
+              run=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run_id}']))
+              assert run['head_sha']==sha and run['conclusion']=='success' and run['status']=='completed'
+              assert run['path']=='.github/workflows/'+workflow
+              subprocess.run(['gh','run','download',run_id,'--repo',repo,'--name',prefix+sha,'--dir','/tmp/paired/'+dest],check=True)
+          # The security reader source/ABI remains byte identical to this
+          # previously native/QEMU-qualified static ARM64 reader package.
+          subprocess.run(['gh','run','download','40218192163','--repo',repo,
+            '--name','p7u-pr154-ha-operator-1b1298463bec29e0bef265e33cc6a80f8b6ffaac',
+            '--dir','/tmp/paired/reader'],check=True)
+          PY
+      - name: Package source-pinned fixed-device operator without hardware access
+        run: |
+          python tools/package_p7u_pr154_ha.py --candidate /tmp/paired/candidate \
+            --host-release /tmp/paired/host/RELEASE.json --reader-package /tmp/paired/reader \
+            --out /tmp/paired/operator
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p7u-paired-operator-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/paired/operator/
+          if-no-files-found: error

@@ -1,0 +1,47 @@
+#ifndef R4_B1_NV_ADMISSION_H
+#define R4_B1_NV_ADMISSION_H
+/* B1 read-only, bounded NV2 preflight. This is NOT an NV/security validity proof. */
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+
+#define B1_NV2_PAGE_SIZE 8192u
+#define B1_NV2_PAGE_COUNT 2u
+#define B1_NV2_REGION_SIZE (B1_NV2_PAGE_SIZE * B1_NV2_PAGE_COUNT)
+#define B1_NV2_DATA_OFFSET 16u
+#define B1_NV2_ITEM_HEADER_SIZE 7u
+/* Two linear reads plus one header read per minimum-size row, with margin. */
+#define B1_NV2_MAX_READS 4096u
+
+typedef int_fast16_t (*b1_nv_read_fn)(void *ctx, uint32_t offset,
+                                     uint8_t *dst, uint32_t length);
+typedef enum {
+    B1_NV_HOLD_NO_READER = 1,
+    B1_NV_HOLD_READ_FAILED = 2,
+    B1_NV_HOLD_UNKNOWN_LAYOUT = 3,
+    B1_NV_HOLD_MIXED_LAYOUT = 4,
+    B1_NV_HOLD_FACTORY_NOT_AUTHORIZED = 5,
+    B1_NV_FACTORY_AUTHORIZED = 6,
+    B1_NV2_HEADER_CANDIDATE = 7,
+    B1_NV_HOLD_ITEM_HEADER = 8,
+    B1_NV_HOLD_ITEM_CRC = 9,
+    B1_NV_HOLD_COMPACTION_HEADER = 10,
+    B1_NV_HOLD_SCAN_LIMIT = 11
+} b1_nv_probe_code;
+typedef struct {
+    b1_nv_probe_code code;
+    uint32_t first_fault_offset;
+    uint16_t reads;
+    uint8_t blank_pages;
+    uint8_t candidate_pages;
+} b1_nv_probe_result;
+
+/* Sticky, monotonically asserted on backend failures, never auto-cleared. */
+void b1_nv_runtime_hold_latch(void);
+int b1_nv_runtime_hold_active(void);
+/* Header-pair candidate ONLY, not a verified existing network or key. */
+int b1_nv_existing_header_candidate(void);
+
+b1_nv_probe_result b1_nv_probe(b1_nv_read_fn reader, void *ctx,
+                               bool factory_new_authorized);
+#endif
