@@ -10,11 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'host/r4-b4'), str(ROOT / 'host/flash'),
                 str(ROOT / 'firmware/slzb-06p7u/r4/release')]
 from tests.test_p7u_ha_local_deploy import op
-from tests.test_p7u_v50_stack_evidence import V50, e2, e3, e6
+from tests.test_p7u_v50_stack_evidence import V50, V53, e2, e3, e6, e7
 import p7u_hang_evidence_once as hang
 import p7u_paired_hold as hold
 import p7u_r4_startup_transport as transport
-from p7u_r4_startup_observer import Q0, Q3, Q4, Q5, Q6, Q7, Q8
+from p7u_r4_startup_observer import Q0, Q3, Q4, Q5, Q6, Q7, Q8, Q9
 from tests.test_p7u_v50_stack_evidence import e1
 
 
@@ -26,7 +26,8 @@ def b1s1(source):
 
 class Znp:
     """Scripted one-outstanding-request owner; a failure latches it unusable."""
-    def __init__(self, *, fail_at=None, stuck=False, busy=True, backlog=0):
+    def __init__(self, *, fail_at=None, stuck=False, busy=True, backlog=0, source=V50):
+        self.source = source
         self.sent, self.history, self.unsolicited = [], [], []
         self.fail_at, self.stuck, self.busy, self.e2 = fail_at, stuck, busy, 0
         self.backlog = backlog
@@ -41,27 +42,29 @@ class Znp:
             self.unusable = True
             raise TimeoutError('ZNP_OUTSTANDING_RESPONSE_DEADLINE')
         if payload == Q5:
-            return e3(V50, ready=True, onset=True, long=True)
+            return e3(self.source, ready=True, onset=True, long=True)
         if payload == Q4:
             self.e2 += 1
-            raw = bytearray(e2(V50, now=1000 + 100000 * self.e2,
+            raw = bytearray(e2(self.source, now=1000 + 100000 * self.e2,
                                busy=(95000 if self.busy else 1000) * self.e2, nwk=75 * self.e2))
             if self.stuck:
                 raw[44] = 3; raw[40:44] = (700000).to_bytes(4, 'little')
             return bytes(raw)
         if payload == Q8:
-            return e6(V50, deferred=self.backlog, stuck_ms=7000 if self.stuck else 0)
+            return e6(self.source, deferred=self.backlog, stuck_ms=7000 if self.stuck else 0)
+        if payload == Q9:
+            return e7(self.source)
         if payload in (Q6, Q7):
             t = bytearray(248); t[:6] = (b'B1E4' if payload == Q6 else b'B1E5') + b'\x01\xf8'
-            t[6] = 2; t[7] = 5 if payload == Q6 else 60; t[8:12] = bytes.fromhex(V50[:8])
+            t[6] = 2; t[7] = 5 if payload == Q6 else 60; t[8:12] = bytes.fromhex(self.source[:8])
             t[16] = 2; t[36:38] = (950).to_bytes(2, 'little'); t[38] = 3
             t[44:46] = (2500).to_bytes(2, 'little'); t[48:50] = (990).to_bytes(2, 'little')
             t[50] = 3; t[56:58] = (2400).to_bytes(2, 'little')
             return bytes(t)
         if payload == Q3:
-            return e1(V50, 4, 6)
+            return e1(self.source, 4, 6)
         if payload == Q0:
-            return b1s1(V50)
+            return b1s1(self.source)
         if (sub, cmd) == (1, 1):
             return b'\x79\x01'
         raise AssertionError((sub, cmd, payload))
@@ -95,6 +98,22 @@ class HangEvidence(unittest.TestCase):
         for name in ('owner_action', 'restart_radio', 'enter_bsl', 'boot_binding'):
             getattr(self.ha, name).assert_not_called()
         self.port.close.assert_called_once()
+
+    def test_v53_capture_reads_b1e7_after_b1e6_both_times(self):
+        (self.root / 'started-pending-serving.json').unlink()
+        op.durable(self.root, 'started-pending-serving.json', {'source': V53})
+        self.ns['SOURCE'] = V53
+        znp = Znp(source=V53)
+        value = self.invoke(znp)
+        self.assertEqual(value['status'], 'HANG_EVIDENCE_CAPTURED')
+        self.assertEqual(znp.sent, [(1, 241, Q5), (1, 241, Q8), (1, 241, Q9), (1, 241, Q4),
+                                    (1, 241, Q7), (1, 241, Q6), (1, 241, Q3), (1, 241, Q0),
+                                    (1, 241, Q4), (1, 241, Q8), (1, 241, Q9), (1, 1, b'')])
+        stored = self.stored(value)
+        self.assertEqual(stored['nv_cache']['later']['hit_ratio'], 0.9)
+        self.assertEqual(stored['nv_cache']['first']['hot_items'][0]['item'], 0x3A)
+        self.assertEqual(value['mt_ping'], 'RESPONDED')
+        self.assert_read_only()
 
     def test_full_capture_reads_onset_first_then_pings_mt(self):
         znp = Znp()

@@ -9,7 +9,9 @@ Replaces the per-version p7u_vNN_* scripts. Every phase records its pins in
   stage    copy both to HA /share and stage the predecessor-bound input and
            binding from the installed operation's receipts (idempotent);
            --continue-hold OP binds a zero-write HOLD (security or sector
-           scope) so the next plan continues WITHOUT a second BSL entry
+           scope) so the next plan continues WITHOUT a second BSL entry;
+           add --reattach-hold OP2 when that continuation then timed out on
+           ROM ACK (chip left BSL): exactly ONE fresh BSL entry, consumed once
   plan     new operation: read-only eligibility + live security admission
   deploy   ONE protected APP-only write (+ paired AC000), all 88 CRCs
   boot     ONE native boot, retained startup and source-bound observer
@@ -164,6 +166,10 @@ class Driver:
             % (package_dir, stage_dir))
         if exists == [False, False]:
             self.upload(package_dir, stage_dir, ppin, cpin)
+        elif exists == [False, True]:
+            # Same firmware already staged by an earlier delivery: upload only
+            # the new operator; VERIFY_STAGE below re-hashes BOTH trees.
+            self.upload(package_dir, stage_dir, ppin, cpin, candidate=False)
         else:
             hold(exists == [True, True], "PARTIAL_STAGE_INSPECT %s" % exists)
         verified = self.remote_python(VERIFY_STAGE % (package_dir, stage_dir, ppin, cpin))
@@ -179,30 +185,37 @@ class Driver:
                   binding_pin=binding["binding_pin"])
         if a.continue_hold:
             hold(re.fullmatch("[0-9a-f]{32}", a.continue_hold) is not None, "HOLD_OPERATION_ID")
+            attach = a.reattach_hold or ""
+            hold(attach == "" or re.fullmatch("[0-9a-f]{32}", attach) is not None, "ATTACH_OPERATION_ID")
             cont = self.remote_python(HOLD_BINDING % {
                 "package": package_dir, "base": self.state["binding"], "op": OPERATIONS + "/" + a.continue_hold,
-                "out": "/share/p7u-delivery-%s-cont-%s" % (fw[:12], a.continue_hold[:8])})
+                "attach": OPERATIONS + "/" + attach if attach else "",
+                "out": "/share/p7u-delivery-%s-cont-%s%s" % (fw[:12], a.continue_hold[:8],
+                                                             "-re-" + attach[:8] if attach else "")})
             hold(cont.get("status") == "HOLD_CONTINUATION_BOUND_NO_RADIO", "HOLD_BINDING")
             self.save(binding=cont["binding"], binding_pin=cont["binding_pin"],
                       continued_hold=a.continue_hold, continued_hold_pin=cont["readonly_hold_pin"])
         print(json.dumps({"status": "STAGED", **{k: self.state[k] for k in (
             "package_dir", "stage_dir", "input_pin", "binding_pin")}}))
 
-    def upload(self, package_dir, stage_dir, ppin, cpin):
+    def upload(self, package_dir, stage_dir, ppin, cpin, candidate=True):
         pkg, cand = self.workdir / "operator", self.workdir / "candidate"
         pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
         cmeta = json.loads((cand / "candidate.json").read_bytes())
-        files = {"operator/PACKAGE.json": pkg / "PACKAGE.json",
-                 "candidate/candidate.json": cand / "candidate.json"}
+        files = {"operator/PACKAGE.json": pkg / "PACKAGE.json"}
+        if candidate:
+            files["candidate/candidate.json"] = cand / "candidate.json"
         files.update({"operator/" + n: pkg / n for n in pmeta["files"]})
-        files.update({"candidate/" + n: cand / n for n in cmeta["files"]})
+        if candidate:
+            files.update({"candidate/" + n: cand / n for n in cmeta["files"]})
         tar = self.workdir / "sealed-stage.tar"
         with tarfile.open(tar, "w") as arc:
             for name, p in sorted(files.items()):
                 arc.add(p, arcname=name, recursive=False)
         dest = "/share/.p7u-sealed-stage-%s.tar" % self.state["firmware"][:12]
         subprocess.run(["scp", "-q", str(tar), "ha:" + dest], check=True, timeout=300)
-        out = self.remote_python(EXTRACT % (dest, package_dir, stage_dir, ppin, cpin), timeout=180)
+        out = self.remote_python(EXTRACT % (dest, package_dir, stage_dir, ppin, cpin, candidate),
+                                 timeout=180)
         hold(out.get("status") == "STAGED_SOURCE_BOUND_NO_RADIO", "STAGE_UPLOAD_NOT_BOUND")
 
     # ------------------------------------------------------------ operator
@@ -260,22 +273,23 @@ class Driver:
 
 
 EXTRACT = r'''import json,hashlib,pathlib,os,tarfile
-src=pathlib.Path(%r);package=pathlib.Path(%r);candidate=pathlib.Path(%r);pin=%r;cpin=%r
+src=pathlib.Path(%r);package=pathlib.Path(%r);candidate=pathlib.Path(%r);pin=%r;cpin=%r;with_candidate=%r
 def need(c,r):
  if not c:raise SystemExit("HOLD "+r)
-need(src.is_file() and not package.exists() and not candidate.exists(),"EXTRACT_CHECK_1")
+need(src.is_file() and not package.exists() and candidate.exists()!=with_candidate,"EXTRACT_TARGETS")
 with tarfile.open(src,"r:") as ar:
  members=ar.getmembers()
  need(len(members)==len(set(x.name for x in members)),"EXTRACT_CHECK_4")
  need(all(x.isfile() and x.size<=12000000 and not pathlib.PurePosixPath(x.name).is_absolute() and ".." not in pathlib.PurePosixPath(x.name).parts for x in members),"EXTRACT_CHECK_5")
  data={m.name:ar.extractfile(m).read() for m in members}
 need(hashlib.sha256(data["operator/PACKAGE.json"]).hexdigest()==pin,"EXTRACT_CHECK_7")
-p=json.loads(data["operator/PACKAGE.json"]);c=json.loads(data["candidate/candidate.json"])
+p=json.loads(data["operator/PACKAGE.json"])
+c=json.loads(data["candidate/candidate.json"] if with_candidate else (candidate/"candidate.json").read_bytes())
 need(hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin,"EXTRACT_CHECK_9")
-need(set(data)=={"operator/PACKAGE.json","candidate/candidate.json"}|{"operator/"+x for x in p["files"]}|{"candidate/"+x for x in c["files"]},"EXTRACT_CHECK_10")
-for part,manifest in (("operator",p),("candidate",c)):
+need(set(data)=={"operator/PACKAGE.json"}|{"operator/"+x for x in p["files"]}|({"candidate/candidate.json"}|{"candidate/"+x for x in c["files"]} if with_candidate else set()),"EXTRACT_MEMBER_SET")
+for part,manifest in (("operator",p),("candidate",c))[:2 if with_candidate else 1]:
  need(all(hashlib.sha256(data[part+"/"+n]).hexdigest()==d for n,d in manifest["files"].items()),"EXTRACT_CHECK_12")
-for part,root in (("operator",package),("candidate",candidate)):
+for part,root in (("operator",package),("candidate",candidate))[:2 if with_candidate else 1]:
  root.mkdir(mode=0o700)
  for name,blob in data.items():
   if not name.startswith(part+"/"):continue
@@ -397,7 +411,7 @@ HOLD_BINDING = r'''import json,hashlib,os,subprocess,sys
 from pathlib import Path
 def need(c,r):
  if not c:raise SystemExit("HOLD "+r)
-package=Path(%(package)r);base=Path(%(base)r);op=Path(%(op)r);out=Path(%(out)r)
+package=Path(%(package)r);base=Path(%(base)r);op=Path(%(op)r);out=Path(%(out)r);attach=%(attach)r
 sys.path.insert(0,str(package/"source/host/flash"))
 import p7u_paired_hold as hold
 canon=lambda o:json.dumps(o,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
@@ -412,6 +426,12 @@ need(plan["source"]==binding["source_sha"] and plan["operation_id"]==op.name,"HE
 names=hold.SCOPE_NAMES if (op/"current-owner-security.json").exists() else hold.NAMES
 pin=hold.fingerprint(op,owner,binding["source_sha"],names)
 binding.update(readonly_hold_operation=op.name,readonly_hold_plan_pin=sha(canon(plan)),readonly_hold_pin=pin)
+if attach:
+ at=Path(attach);aplan=json.loads((at/"plan.json").read_bytes())
+ need(aplan["source"]==binding["source_sha"] and aplan.get("rom_continuation_sha256")==pin,"ATTACH_PLAN_NOT_THIS_CONTINUATION")
+ need(not Path("/share/p7u-r4-firmware-operations/readonly-reentry-"+at.name).exists(),"REENTRY_ALREADY_CONSUMED")
+ binding.update(readonly_attach_operation=at.name,readonly_attach_plan_pin=sha(canon(aplan)),
+                readonly_attach_pin=hold.fingerprint(at,owner,binding["source_sha"],hold.ATTACH_NAMES))
 if not out.exists():
  out.mkdir(mode=0o700)
  with (out/"binding.json").open("xb") as f:
@@ -449,6 +469,7 @@ def main():
     parser.add_argument("--package-run")
     parser.add_argument("--new-plan", action="store_true")
     parser.add_argument("--continue-hold", help="zero-write HOLD operation to continue (stage)")
+    parser.add_argument("--reattach-hold", help="zero-write ROM attach-timeout HOLD of that continuation")
     a = parser.parse_args()
     d = Driver(a.workdir)
     if a.phase == "fetch":

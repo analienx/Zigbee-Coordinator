@@ -16,18 +16,22 @@ Q5 = b"B1Q1\x01\x08\x04\x01"
 Q6 = b"B1Q1\x01\x08\x04\x02"
 Q7 = b"B1Q1\x01\x08\x04\x03"
 Q8 = b"B1Q1\x01\x08\x04\x04"
+Q9 = b"B1Q1\x01\x08\x04\x05"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
 # V50 keeps the armed sole NPI owner at priority6 for the whole boot and
 # answers RAM-only B1E2 (op4) Stack-service evidence. Older firmware must
 # still report the original priority4 at READY and has no B1E2.
-V50_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"})
+V50_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f", "8ec1439786e3e98151d2796e6797675bb9ef5965"})
 # V51 (same NPI floor and B1E2) adds the B1E3 (op4 page1) onset record and
 # the B1E4/B1E5 (op4 page2/3) 5-minute and 60-minute trend rings.
-V51_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"})
+V51_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f", "8ec1439786e3e98151d2796e6797675bb9ef5965"})
 # V52 adds B1E6 (op4 page4): NPI->MT->UART progress, OSAL timer evidence and
 # the live in-flight Stack dispatch, and frees expired OSAL timers per dispatch.
-V52_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"})
+V52_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f", "8ec1439786e3e98151d2796e6797675bb9ef5965"})
+# V53 adds B1E7 (op4 page5): the NV read cache that removes the per-frame NV
+# storm, its counters and the costliest NV items (IDs/counts only, never data).
+V53_SOURCES = frozenset({"8ec1439786e3e98151d2796e6797675bb9ef5965"})
 
 def expected_ready_npi_priority(source: str) -> int:
     return 6 if source in V50_SOURCES else 4
@@ -40,6 +44,9 @@ def onset_evidence_supported(source: str) -> bool:
 
 def pipeline_evidence_supported(source: str) -> bool:
     return source in V52_SOURCES
+
+def nv_cache_evidence_supported(source: str) -> bool:
+    return source in V53_SOURCES
 
 class EvidenceError(RuntimeError):
     pass
@@ -59,7 +66,7 @@ def checked(raw: bytes, tag: bytes, length: int, source: str):
             and raw[4] == 1 and raw[5] == length,
             "RESPONSE_SCHEMA_INVALID_" + tag.decode())
     require(raw[8:12] == bytes.fromhex(source[:8])
-            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5", b"B1E6")
+            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5", b"B1E6", b"B1E7")
             else raw[12:16] == bytes.fromhex(source[:8]),
             "SOURCE_DIGEST_MISMATCH_" + tag.decode())
     return raw
@@ -264,6 +271,33 @@ def decode_e6(raw: bytes, source: str) -> dict:
                             "dispatches": uint32(raw, 224)},
             "nwk_dispatch_bits": {name: uint32(raw, 228 + 4 * i)
                                   for i, name in enumerate(NWK_STORM_BITS)}}
+
+E7_KINDS = {1: "read", 2: "write", 3: "delete"}
+
+def decode_e7(raw: bytes, source: str) -> dict:
+    """V53 B1E7: NV read-cache counters and the costliest NV items.
+
+    Item IDs, counts and driver ticks only; the page never carries NV bytes.
+    """
+    require(nv_cache_evidence_supported(source), "NV_CACHE_EVIDENCE_UNSUPPORTED_SOURCE")
+    checked(raw, b"B1E7", 248, source)
+    require(raw[7] == 8 and raw[6] <= 8 and not any(raw[224:248]), "NV_CACHE_EVIDENCE_SCHEMA_INVALID")
+    hot = []
+    for i in range(8):
+        e = raw[32 + 24 * i:56 + 24 * i]
+        if not e[7]:
+            require(not any(e), "NV_CACHE_EVIDENCE_SCHEMA_INVALID")
+            continue
+        require(e[7] == 1 and e[6] in E7_KINDS and not any(e[20:24]), "NV_CACHE_EVIDENCE_SCHEMA_INVALID")
+        hot.append({"system": e[0], "item": uint16(e, 2), "sub": uint16(e, 4),
+                    "kind": E7_KINDS[e[6]], "last_status": e[1], "count": uint32(e, 8),
+                    "ticks": uint32(e, 12), "max_ticks": uint32(e, 16)})
+    hot.sort(key=lambda h: -h["ticks"])
+    hits, misses = uint32(raw, 16), uint32(raw, 20)
+    return {"now": uint32(raw, 12), "lines_used": raw[6], "hits": hits, "misses": misses,
+            "inserts": uint32(raw, 24), "invalidations": uint32(raw, 28),
+            "hit_ratio": round(hits / (hits + misses), 4) if hits + misses else None,
+            "hot_items": hot}
 
 def onset_summary(e3: dict, tick_period_us: int) -> dict:
     """Human-scale view of a decoded B1E3 (needs the B1E2 tick period)."""

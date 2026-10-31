@@ -19,10 +19,13 @@ PINNED_FILES = ("host/flash/p7u_paired_binding.py", "host/flash/p7u_paired_hold.
 
 class FirmwarePinConsistency(unittest.TestCase):
     def test_single_current_source_for_every_evidence_generation(self):
-        self.assertEqual(len(observer.V52_SOURCES), 1)
+        # The newest generation is one exact source; it must also be in
+        # every older evidence set it still answers.
+        self.assertEqual(len(observer.V53_SOURCES), 1)
         self.assertEqual(observer.V50_SOURCES, observer.V51_SOURCES)
         self.assertEqual(observer.V51_SOURCES, observer.V52_SOURCES)
-        (current,) = observer.V52_SOURCES
+        self.assertLessEqual(observer.V53_SOURCES, observer.V52_SOURCES)
+        (current,) = observer.V53_SOURCES
         self.assertRegex(current, "^[0-9a-f]{40}$")
         self.assertEqual(observer.expected_ready_npi_priority(current), 6)
         for name in PINNED_FILES:

@@ -7,11 +7,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firmware/slzb-06p7u/r4/release"))
 from p7u_r4_startup_observer import (EvidenceError, Q0, Q2, Q3, Q4, Q5, Q8, V50_SOURCES,
                                      V51_SOURCES, V52_SOURCES, decode_e2, decode_e3,
-                                     decode_e6, onset_summary, stack_profile)
+                                     decode_e6, decode_e7, onset_summary, stack_profile, Q9,
+                                     V53_SOURCES, nv_cache_evidence_supported)
 from p7u_r4_startup_transport import observe_after_srsp
 from tests.test_p7u_r4_startup_observer import evidence as legacy_e1
 
-V50 = next(iter(V50_SOURCES))
+# Exact V52 source: the newer V53 is in the same sets but adds B1E7.
+V50 = "a70ae24ff45e708e13969cd341c9ecb494d1570f"
+V53 = "8ec1439786e3e98151d2796e6797675bb9ef5965"
 V48 = "250441cd17c55e25c78d97e041f056574355ade7"
 
 
@@ -26,6 +29,22 @@ def e2(source=V50, *, now=1000, busy=0, nwk=0, armed=True, npi=6, count=10):
     raw[46] = npi; raw[47] = 5
     put(80 + 4 * 2, nwk); put(128 + 4 * 2, busy); put(176 + 4 * 2, 0x2070)
     raw[224 + 4:226 + 4] = (13).to_bytes(2, "little")
+    return bytes(raw)
+
+
+def e7(source=V53, *, hits=900, misses=100, hot=((1, 0x3A, 0, 1, 100, 1000, 12),)):
+    """V53 B1E7: counters and hot NV items; never NV bytes."""
+    raw = bytearray(248)
+    raw[:6] = b"B1E7\x01\xf8"
+    raw[6] = 3; raw[7] = 8
+    raw[8:12] = bytes.fromhex(source[:8])
+    put = lambda offset, value: raw.__setitem__(slice(offset, offset + 4), value.to_bytes(4, "little"))
+    put(12, 777); put(16, hits); put(20, misses); put(24, 90); put(28, 4)
+    for i, (system, item, sub, kind, count, ticks, worst) in enumerate(hot):
+        e = 32 + 24 * i
+        raw[e] = system; raw[e + 2:e + 4] = item.to_bytes(2, "little")
+        raw[e + 4:e + 6] = sub.to_bytes(2, "little"); raw[e + 6] = kind; raw[e + 7] = 1
+        put(e + 8, count); put(e + 12, ticks); put(e + 16, worst)
     return bytes(raw)
 
 
@@ -305,6 +324,38 @@ class StackEvidence(unittest.TestCase):
         self.assertNotIn(Q8, [p for _, _, p in znp.sent])
         self.assertEqual(result["frame_counts"]["B1E2"], 0)
         self.assertEqual(result["frame_counts"]["B1E3"], 0)
+
+
+class NvCacheEvidence(unittest.TestCase):
+    def test_v53_is_newest_and_answers_every_older_page(self):
+        self.assertEqual(V53_SOURCES, frozenset({V53}))
+        self.assertTrue({V50, V53} <= V52_SOURCES == V51_SOURCES == V50_SOURCES)
+        self.assertTrue(nv_cache_evidence_supported(V53))
+        self.assertFalse(nv_cache_evidence_supported(V50))
+        self.assertEqual(Q9, b"B1Q1\x01\x08\x04\x05")
+
+    def test_decode_e7_counters_and_costliest_items_first(self):
+        raw = e7(hot=((1, 0x3A, 0, 1, 100, 1000, 12), (1, 0x21, 0, 2, 3, 5000, 2000)))
+        value = decode_e7(raw, V53)
+        self.assertEqual((value["hits"], value["misses"], value["hit_ratio"]), (900, 100, 0.9))
+        self.assertEqual([h["item"] for h in value["hot_items"]], [0x21, 0x3A])
+        self.assertEqual(value["hot_items"][1]["kind"], "read")
+        self.assertEqual(value["lines_used"], 3)
+
+    def test_decode_e7_rejects_wrong_source_schema_and_data_bytes(self):
+        with self.assertRaisesRegex(EvidenceError, "NV_CACHE_EVIDENCE_UNSUPPORTED_SOURCE"):
+            decode_e7(e7(V50), V50)
+        with self.assertRaisesRegex(EvidenceError, "SOURCE_DIGEST_MISMATCH_B1E7"):
+            decode_e7(e7(V50), V53)
+        bad = bytearray(e7()); bad[240] = 1
+        with self.assertRaisesRegex(EvidenceError, "NV_CACHE_EVIDENCE_SCHEMA_INVALID"):
+            decode_e7(bytes(bad), V53)
+        bad = bytearray(e7()); bad[32 + 24 + 9] = 1  # unused hot slot carries bytes
+        with self.assertRaisesRegex(EvidenceError, "NV_CACHE_EVIDENCE_SCHEMA_INVALID"):
+            decode_e7(bytes(bad), V53)
+        bad = bytearray(e7()); bad[38] = 9
+        with self.assertRaisesRegex(EvidenceError, "NV_CACHE_EVIDENCE_SCHEMA_INVALID"):
+            decode_e7(bytes(bad), V53)
 
 
 if __name__ == "__main__":

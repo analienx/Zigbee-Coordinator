@@ -180,7 +180,8 @@ def runtime_priority_qualification(c):
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                       '66ed700c2818c7a0963dad9160d55109009bbaac',
                       '250441cd17c55e25c78d97e041f056574355ade7',
-                      'a70ae24ff45e708e13969cd341c9ecb494d1570f'): return None
+                      'a70ae24ff45e708e13969cd341c9ecb494d1570f',
+                      '8ec1439786e3e98151d2796e6797675bb9ef5965'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -750,7 +751,9 @@ async def deploy(package, pin, ha):
         # from an untrusted HEX length or widen through NV/CCFG.
         # V52 (diagnostics + OSAL timer fix) is the first image to reach APP
         # sector 0x32000: still plain application flash far below NV 0xA4000.
-        app_end = 0x34000 if SOURCE == 'a70ae24ff45e708e13969cd341c9ecb494d1570f' else (
+        # V53 (NV read cache) stays inside that same exact 0x34000 envelope.
+        app_end = 0x34000 if SOURCE in ('a70ae24ff45e708e13969cd341c9ecb494d1570f',
+                                        '8ec1439786e3e98151d2796e6797675bb9ef5965') else (
             0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',
@@ -893,6 +896,13 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
         need(pipeline['timers']['probe_task'] is not None and
              pipeline['timers']['create_failures'] == 0,
              'STARTUP_PIPELINE_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q9, decode_e7, nv_cache_evidence_supported
+    if nv_cache_evidence_supported(source):
+        # V53 B1E7: the cache build answers page5 before startup (schema only;
+        # the boot NV reads already ran through the wrapper).
+        raw = znp.request(1, 241, Q9, deadline=deadline)
+        evidence('B1E7', raw, dict(znp.history[-1]))
+        need(decode_e7(raw, source)['misses'] > 0, 'STARTUP_NV_CACHE_EVIDENCE_NOT_PRISTINE')
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')

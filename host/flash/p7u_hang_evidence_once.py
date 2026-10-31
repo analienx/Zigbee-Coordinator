@@ -74,15 +74,17 @@ def capture(ns, package, package_pin, plan_pin, ha):
     started = ns["load"](ns["PRIVATE"] / "started-pending-serving.json")
     need(started.get("source") == ns["SOURCE"], "HANG_EVIDENCE_SOURCE_NOT_INSTALLED")
     ns["modules"](package)
-    from p7u_r4_startup_observer import (Q0, Q3, Q4, Q5, Q6, Q7, Q8, EvidenceError, checked,
-                                         decode_e1, decode_e2, decode_e3, decode_e6,
+    from p7u_r4_startup_observer import (Q0, Q3, Q4, Q5, Q6, Q7, Q8, Q9, EvidenceError, checked,
+                                         decode_e1, decode_e2, decode_e3, decode_e6, decode_e7,
                                          decode_trend, onset_evidence_supported,
-                                         onset_summary, pipeline_evidence_supported,
+                                         nv_cache_evidence_supported, onset_summary,
+                                         pipeline_evidence_supported,
                                          stack_profile)
     from p7u_r4_startup_transport import FramedZnp, PrivateEvidenceJournal
     source = ns["SOURCE"]
     need(onset_evidence_supported(source), "HANG_EVIDENCE_REQUIRES_B1E3_SOURCE")
     pipeline = pipeline_evidence_supported(source)
+    nvcache = nv_cache_evidence_supported(source)
     ha.policy()
     owner = ha.inspect()
     need(not owner["running"] and owner["image"] == ns["IMAGE"], "HANG_EVIDENCE_OWNER_RUNNING")
@@ -94,9 +96,9 @@ def capture(ns, package, package_pin, plan_pin, ha):
     root.mkdir(mode=0o700)
     ns["durable"](root, "intent.json", {
         "source": source, "plan_sha256": plan_pin, "package_pin": package_pin, "owner": owner,
-        "queries": (["B1E3"] + (["B1E6"] if pipeline else []) +
+        "queries": (["B1E3"] + (["B1E6"] if pipeline else []) + (["B1E7"] if nvcache else []) +
                     ["B1E2", "B1E5", "B1E4", "B1E1", "B1S1", "B1E2"] +
-                    (["B1E6"] if pipeline else []) + ["SYS_PING"]),
+                    (["B1E6"] if pipeline else []) + (["B1E7"] if nvcache else []) + ["SYS_PING"]),
         "reset_authorized": False, "bsl_authorized": False, "startup_authorized": False,
         "host_start_authorized": False, "at": time.time()})
     replies, failure, port, journal, znp = {}, None, None, None, None
@@ -114,7 +116,8 @@ def capture(ns, package, package_pin, plan_pin, ha):
             replies[name] = raw
 
         # Most valuable first: one timeout latches the transport unusable.
-        first = [("B1E3", Q5)] + ([("B1E6", Q8)] if pipeline else [])
+        first = ([("B1E3", Q5)] + ([("B1E6", Q8)] if pipeline else []) +
+                 ([("B1E7", Q9)] if nvcache else []))
         for name, query in first + [("B1E2", Q4), ("B1E5", Q7), ("B1E4", Q6),
                                     ("B1E1", Q3), ("B1S1", Q0)]:
             ask(name, 1, 241, query)
@@ -122,6 +125,8 @@ def capture(ns, package, package_pin, plan_pin, ha):
         ask("B1E2_LATER", 1, 241, Q4)
         if pipeline:
             ask("B1E6_LATER", 1, 241, Q8)
+        if nvcache:
+            ask("B1E7_LATER", 1, 241, Q9)
         ask("SYS_PING", 1, 1)
     except (TimeoutError, OSError, ValueError, RuntimeError) as error:
         failure = type(error).__name__ + ":" + str(error)[:96]
@@ -135,7 +140,8 @@ def capture(ns, package, package_pin, plan_pin, ha):
               "transport": list(znp.history) if znp is not None else [],
               "unsolicited_frames": len(znp.unsolicited) if znp is not None else 0,
               "mt_ping": "RESPONDED" if "SYS_PING" in replies else
-                         ("NO_RESPONSE" if ("B1E6_LATER" if pipeline else "B1E2_LATER") in replies
+                         ("NO_RESPONSE" if ("B1E7_LATER" if nvcache else
+                                           "B1E6_LATER" if pipeline else "B1E2_LATER") in replies
                           else "NOT_ATTEMPTED"),
               "decode_errors": {}}
 
@@ -155,6 +161,10 @@ def capture(ns, package, package_pin, plan_pin, ha):
     pipe_later = decoded("B1E6_LATER", decode_e6)
     if pipe_first is not None or pipe_later is not None:
         result["pipeline"] = {"first": pipe_first, "later": pipe_later}
+    cache_first = decoded("B1E7", decode_e7)
+    cache_later = decoded("B1E7_LATER", decode_e7)
+    if cache_first is not None or cache_later is not None:
+        result["nv_cache"] = {"first": cache_first, "later": cache_later}
     coarse = decoded("B1E5", decode_trend)
     fine = decoded("B1E4", decode_trend)
     if coarse is not None or fine is not None:
