@@ -469,7 +469,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         required.append("B4_V47_ArmStartupNpi")
     for function in ("B4_V50_StackSnapshot","B4_V50_MacDataReqEnter",
                      "B4_V50_MacDataReqDone","B4_V50_MacEvent","B4_V51_OnsetSnapshot",
-                     "B4_V51_TrendSnapshot","B4_V52_InflightSnapshot","B4_V52_TimerSnapshot",
+                     "B4_V51_TrendSnapshot","B4_V52_InflightSnapshot","B4_V52_TimerSnapshot","B4_V53_NvCacheSnapshot",
                      "B4_V52_TimerProbe"):
         if function not in required:required.append(function)
     for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',

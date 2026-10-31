@@ -51,7 +51,7 @@ class V50StackService(unittest.TestCase):
 
     def test_service_floor_aging_evidence_and_mac_counters(self):
         receipt = apply(self.root, SHA)
-        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v3")
+        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v4")
         self.assertEqual(receipt["b1e6_query"], "B1Q1 v1/8 op4 page4")
         self.assertEqual(receipt["expired_timer_free"], "STACK_TASK_AFTER_EVERY_DISPATCH")
         self.assertEqual(receipt["b1e3_query"], "B1Q1 v1/8 op4 page1")
@@ -85,7 +85,7 @@ class V50StackService(unittest.TestCase):
         self.assertIn("B4_V51_DispatchEnd(idx, returned, now, spent);", stack)
         self.assertIn("devState == DEV_ZB_COORD", stack)
         self.assertIn("B4_V51_OnsetSnapshot(stackEvidence);", task)
-        self.assertIn("pReq[10] <= 4u)", task)
+        self.assertIn("pReq[10] <= 5u)", task)
         self.assertIn("B4_V52_PipelineSnapshot(stackEvidence);", task)
         # V52: expired OSAL timers are freed after every dispatch and NWK's
         # timer starts are attributed per event bit.
@@ -133,7 +133,7 @@ class V50StackService(unittest.TestCase):
         self.assertTrue(result["compiled_actual_b1e2_query"])
         self.assertTrue(result["compiled_actual_b1e3_onset_record"])
         self.assertTrue(result["compiled_actual_nv_timing_wrappers"])
-        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 50)
+        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 58)
         self.assertTrue(result["compiled_actual_b1e6_inflight_and_timer_cleanup"])
         self.assertIn("stack:timer_cleanup_not_per_dispatch", result["negative_mutants_rejected"])
         self.assertIn("stack:nv_second_install_wraps_wrappers", result["negative_mutants_rejected"])

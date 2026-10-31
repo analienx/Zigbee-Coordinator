@@ -37,6 +37,14 @@ This stage changes no network/NV/security state and adds no UART owner:
      (op4 page4) gives the NPI->MT->UART progress counters, OSAL timer
      evidence and the LIVE in-flight dispatch, which no dispatch-end latch
      can report when a handler never returns.
+  7. V53: RAM read cache in front of the NV table. Hardware V52 (31 Oct):
+     ~72 received frames/s each cost one ~10 ms NVOCMP linear lookup
+     (ZDSecMgrReadKeyFromNv reads the NWK active key per secured frame) and
+     NWK spent 98% of its CPU inside NV. Successful reads of <=32 bytes are
+     served from RAM; every write/create/delete/compact/doNext/erase through
+     the same table invalidates the cache before and after the driver call,
+     and a read inserts only when no invalidation raced it. B1E7 (op4 page5)
+     reports hits/misses and per-item NV cost (item IDs only, never data).
 """
 import hashlib
 import re
@@ -71,6 +79,7 @@ extern void B4_V51_OnsetSnapshot(uint8_t *out);
 extern void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level);
 extern void B4_V52_TimerSnapshot(uint8_t *out);
 extern void B4_V52_InflightSnapshot(uint8_t *page);
+extern void B4_V53_NvCacheSnapshot(uint8_t *out);
 /* B4_V52 B1E6: 16..95 B4_V43 NPI->MT->UART progress, 96..199 OSAL timers,
  * 200..247 live in-flight Stack dispatch (owners write their own ranges). */
 static void B4_V52_PipelineSnapshot(uint8_t *out)
@@ -130,7 +139,7 @@ QUERY = """    B4_V43_Request(0u, pReq);
         static uint8_t stackEvidence[B4_V50_EVIDENCE_SIZE]; /* static: bounded NPI stack */
         static const uint8_t prefix[6] = { 'B', '1', 'Q', '1', 1u, 8u };
         if (pReq[1] == 0x21u && memcmp(pReq + 3, prefix, sizeof(prefix)) == 0 &&
-            pReq[10] <= 4u)
+            pReq[10] <= 5u)
         {
             if (pReq[10] == 0u)
                 B4_V50_StackSnapshot(stackEvidence, B4_V47_Armed, B4_V47_StartTick);
@@ -138,6 +147,8 @@ QUERY = """    B4_V43_Request(0u, pReq);
                 B4_V51_OnsetSnapshot(stackEvidence);
             else if (pReq[10] == 4u)
                 B4_V52_PipelineSnapshot(stackEvidence);
+            else if (pReq[10] == 5u)
+                B4_V53_NvCacheSnapshot(stackEvidence);
             else
                 B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));
             memcpy(stackEvidence + 8, B4_V50_BuildDigest, sizeof(B4_V50_BuildDigest));
@@ -327,6 +338,138 @@ static B4_V51_t B4_V51;
 static B4_V51_Trend_t B4_V51_Trend[2];
 static NVINTF_nvFuncts_t B4_V51_Nv;
 
+/* B4_V53_NV_READ_CACHE: see the stage docstring. This ZNP build has no NV
+ * writer outside pZStackCfg->nvFps (main.c skips sampleApp_task under
+ * ZNP_NPI), so table-level invalidation is complete. Cached bytes never
+ * leave this file; B1E7 reports counts and item IDs only. */
+#define B4_V53_CACHE_ENTRIES 8u
+#define B4_V53_CACHE_BYTES 32u
+#define B4_V53_HOT_ENTRIES 8u
+typedef struct
+{
+    NVINTF_itemID_t id;
+    uint16_t offset, length;
+    uint8_t used;
+    uint8_t data[B4_V53_CACHE_BYTES];
+} B4_V53_Line_t;
+typedef struct
+{
+    uint32_t count, ticks, maxTicks;
+    uint16_t itemID, subID;
+    uint8_t systemID, status, kind, used;
+} B4_V53_Hot_t;
+static B4_V53_Line_t B4_V53_Cache[B4_V53_CACHE_ENTRIES];
+static B4_V53_Hot_t B4_V53_Hot[B4_V53_HOT_ENTRIES];
+static uint32_t B4_V53_Gen, B4_V53_Hits, B4_V53_Misses, B4_V53_Inserts, B4_V53_Invalidations;
+static uint8_t B4_V53_Next;
+
+static uint8_t B4_V53_SameId(const NVINTF_itemID_t *a, const NVINTF_itemID_t *b)
+{
+    return a->systemID == b->systemID && a->itemID == b->itemID && a->subID == b->subID;
+}
+
+/* Any task. Before AND after every mutating driver call. */
+static void B4_V53_Invalidate(void)
+{
+    uint32_t key = OsalPort_enterCS();
+    uint8_t i, j;
+    ++B4_V53_Gen;
+    for (i = 0u; i < B4_V53_CACHE_ENTRIES; ++i)
+    {
+        if (!B4_V53_Cache[i].used) continue;
+        B4_V53_Cache[i].used = 0u;
+        for (j = 0u; j < B4_V53_CACHE_BYTES; ++j) B4_V53_Cache[i].data[j] = 0u;
+    }
+    B4_V50_Sat(&B4_V53_Invalidations, 1u);
+    OsalPort_leaveCS(key);
+}
+
+static uint32_t B4_V53_Generation(void)
+{
+    uint32_t key = OsalPort_enterCS();
+    uint32_t gen = B4_V53_Gen;
+    OsalPort_leaveCS(key);
+    return gen;
+}
+
+/* Exact (item, offset, length) match only; copies inside the CS. */
+static uint8_t B4_V53_Lookup(NVINTF_itemID_t id, uint16_t offset, uint16_t length, void *buffer)
+{
+    uint32_t key = OsalPort_enterCS();
+    uint8_t i, j, hit = 0u;
+    for (i = 0u; i < B4_V53_CACHE_ENTRIES && !hit; ++i)
+    {
+        B4_V53_Line_t *line = &B4_V53_Cache[i];
+        if (!line->used || !B4_V53_SameId(&line->id, &id) ||
+            line->offset != offset || line->length != length) continue;
+        for (j = 0u; j < length; ++j) ((uint8_t *)buffer)[j] = line->data[j];
+        hit = 1u;
+    }
+    B4_V50_Sat(hit ? &B4_V53_Hits : &B4_V53_Misses, 1u);
+    OsalPort_leaveCS(key);
+    return hit;
+}
+
+/* Insert a successful driver read only if no invalidation raced it. */
+static void B4_V53_Insert(NVINTF_itemID_t id, uint16_t offset, uint16_t length,
+                          const void *buffer, uint32_t gen)
+{
+    uint32_t key;
+    uint8_t j;
+    if (length == 0u || length > B4_V53_CACHE_BYTES || buffer == NULL) return;
+    key = OsalPort_enterCS();
+    if (gen == B4_V53_Gen)
+    {
+        B4_V53_Line_t *line = &B4_V53_Cache[B4_V53_Next];
+        B4_V53_Next = (uint8_t)((B4_V53_Next + 1u) % B4_V53_CACHE_ENTRIES);
+        line->id = id;
+        line->offset = offset;
+        line->length = length;
+        for (j = 0u; j < length; ++j) line->data[j] = ((const uint8_t *)buffer)[j];
+        line->used = 1u;
+        B4_V50_Sat(&B4_V53_Inserts, 1u);
+    }
+    OsalPort_leaveCS(key);
+}
+
+/* Per-item driver cost (cache hits excluded): the costliest items stay. */
+static void B4_V53_NoteItem(NVINTF_itemID_t id, uint8_t kind, uint32_t start, uint8_t status)
+{
+    uint32_t key = OsalPort_enterCS();
+    uint32_t spent = Clock_getTicks() - start;
+    B4_V53_Hot_t *slot = NULL;
+    uint8_t i;
+    for (i = 0u; i < B4_V53_HOT_ENTRIES && slot == NULL; ++i)
+        if (B4_V53_Hot[i].used && B4_V53_Hot[i].systemID == id.systemID &&
+            B4_V53_Hot[i].itemID == id.itemID && B4_V53_Hot[i].subID == id.subID &&
+            B4_V53_Hot[i].kind == kind)
+            slot = &B4_V53_Hot[i];
+    for (i = 0u; i < B4_V53_HOT_ENTRIES && slot == NULL; ++i)
+        if (!B4_V53_Hot[i].used) slot = &B4_V53_Hot[i];
+    if (slot == NULL)
+    {
+        B4_V53_Hot_t *least = &B4_V53_Hot[0];
+        for (i = 1u; i < B4_V53_HOT_ENTRIES; ++i)
+            if (B4_V53_Hot[i].ticks < least->ticks) least = &B4_V53_Hot[i];
+        if (spent > least->ticks) { slot = least; slot->count = slot->ticks = slot->maxTicks = 0u; }
+    }
+    if (slot != NULL)
+    {
+        if (!slot->used || slot->itemID != id.itemID || slot->subID != id.subID ||
+            slot->systemID != id.systemID || slot->kind != kind)
+        {
+            slot->count = slot->ticks = slot->maxTicks = 0u;
+            slot->systemID = id.systemID; slot->itemID = id.itemID; slot->subID = id.subID;
+            slot->kind = kind; slot->used = 1u;
+        }
+        B4_V50_Sat(&slot->count, 1u);
+        B4_V50_Sat(&slot->ticks, spent);
+        if (spent > slot->maxTicks) slot->maxTicks = spent;
+        slot->status = status;
+    }
+    OsalPort_leaveCS(key);
+}
+
 static uint32_t B4_V51_MsTicks(uint32_t ms)
 {
     uint32_t period = Clock_tickPeriod;
@@ -385,9 +528,13 @@ static void B4_V51_NvDone(uint8_t kind, uint32_t start, uint8_t status)
 static uint8_t B4_V51_NvReadItem(NVINTF_itemID_t id, uint16_t offset,
                                  uint16_t length, void *buffer)
 {
+    if (B4_V53_Lookup(id, offset, length, buffer)) return NVINTF_SUCCESS;
+    uint32_t gen = B4_V53_Generation();
     uint32_t start = Clock_getTicks();
     uint8_t status = B4_V51_Nv.readItem(id, offset, length, buffer);
     B4_V51_NvDone(1u, start, status);
+    B4_V53_NoteItem(id, 1u, start, status);
+    if (status == NVINTF_SUCCESS) B4_V53_Insert(id, offset, length, buffer, gen);
     return status;
 }
 
@@ -413,42 +560,73 @@ static uint32_t B4_V51_NvGetItemLen(NVINTF_itemID_t id)
 
 static uint8_t B4_V51_NvCreateItem(NVINTF_itemID_t id, uint32_t length, void *buffer)
 {
+    B4_V53_Invalidate();
     uint32_t start = Clock_getTicks();
     uint8_t created = B4_V51_Nv.createItem(id, length, buffer);
     B4_V51_NvDone(2u, start, created);
+    B4_V53_Invalidate();
+    B4_V53_NoteItem(id, 2u, start, created);
     return created;
 }
 
 static uint8_t B4_V51_NvUpdateItem(NVINTF_itemID_t id, uint32_t length, void *buffer)
 {
+    B4_V53_Invalidate();
     uint32_t start = Clock_getTicks();
     uint8_t updated = B4_V51_Nv.updateItem(id, length, buffer);
     B4_V51_NvDone(2u, start, updated);
+    B4_V53_Invalidate();
+    B4_V53_NoteItem(id, 2u, start, updated);
     return updated;
 }
 
 static uint8_t B4_V51_NvWriteItem(NVINTF_itemID_t id, uint16_t length, void *buffer)
 {
+    B4_V53_Invalidate();
     uint32_t start = Clock_getTicks();
     uint8_t written = B4_V51_Nv.writeItem(id, length, buffer);
     B4_V51_NvDone(2u, start, written);
+    B4_V53_Invalidate();
+    B4_V53_NoteItem(id, 2u, start, written);
     return written;
 }
 
 static uint8_t B4_V51_NvDeleteItem(NVINTF_itemID_t id)
 {
+    B4_V53_Invalidate();
     uint32_t start = Clock_getTicks();
     uint8_t deleted = B4_V51_Nv.deleteItem(id);
     B4_V51_NvDone(3u, start, deleted);
+    B4_V53_Invalidate();
+    B4_V53_NoteItem(id, 3u, start, deleted);
     return deleted;
 }
 
 static uint8_t B4_V51_NvCompact(uint16_t minBytes)
 {
+    B4_V53_Invalidate();
     uint32_t start = Clock_getTicks();
     uint8_t compacted = B4_V51_Nv.compactNV(minBytes);
     B4_V51_NvDone(4u, start, compacted);
+    B4_V53_Invalidate();
     return compacted;
+}
+
+/* Iteration may delete (NVINTF_DODELETE); erase removes everything. */
+static uint8_t B4_V53_NvDoNext(NVINTF_nvProxy_t *nvProxy)
+{
+    B4_V53_Invalidate();
+    uint8_t done = B4_V51_Nv.doNext(nvProxy);
+    B4_V53_Invalidate();
+    return done;
+}
+
+static uint8_t B4_V53_NvErase(void)
+{
+    B4_V53_Invalidate();
+    uint8_t erased = B4_V51_Nv.eraseNV();
+    B4_V53_Invalidate();
+    return erased;
 }
 
 /* Stack task entry, once, before its first NV use. Only populated members
@@ -471,6 +649,8 @@ static void B4_V51_InstallNvHooks(void)
     if (fps->writeItem != NULL) fps->writeItem = B4_V51_NvWriteItem;
     if (fps->deleteItem != NULL) fps->deleteItem = B4_V51_NvDeleteItem;
     if (fps->compactNV != NULL) fps->compactNV = B4_V51_NvCompact;
+    if (fps->doNext != NULL) fps->doNext = B4_V53_NvDoNext;
+    if (fps->eraseNV != NULL) fps->eraseNV = B4_V53_NvErase;
     B4_V51.flags |= B4_V51_NV_HOOKED;
     OsalPort_leaveCS(key);
 }
@@ -1007,6 +1187,46 @@ __attribute__((noinline)) void B4_V52_InflightSnapshot(uint8_t *page)
     for (j = 0u; j < 4u; ++j) B4_V50_Put32(page + 228u + 4u * j, bits[j]);
     for (j = 1u; j < 5u; ++j) page[243u + j] = epochs[j];
 }
+
+/* NPI owner context only: B1E7 = read-cache counters and the costliest NV
+ * items (system/item/sub IDs, kind, count, driver ticks); never data. */
+__attribute__((noinline)) void B4_V53_NvCacheSnapshot(uint8_t *out)
+{
+    static B4_V53_Hot_t hot[B4_V53_HOT_ENTRIES];
+    uint32_t key, now, hits, misses, inserts, invalidations;
+    uint8_t i, lines = 0u;
+    key = OsalPort_enterCS();
+    for (i = 0u; i < B4_V53_HOT_ENTRIES; ++i) hot[i] = B4_V53_Hot[i];
+    for (i = 0u; i < B4_V53_CACHE_ENTRIES; ++i) lines = (uint8_t)(lines + B4_V53_Cache[i].used);
+    hits = B4_V53_Hits; misses = B4_V53_Misses; inserts = B4_V53_Inserts;
+    invalidations = B4_V53_Invalidations;
+    now = Clock_getTicks();
+    OsalPort_leaveCS(key);
+    for (i = 0u; i < B4_V50_EVIDENCE_SIZE; ++i) out[i] = 0u;
+    out[0] = 'B'; out[1] = '1'; out[2] = 'E'; out[3] = '7';
+    out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE; out[6] = lines;
+    out[7] = (uint8_t)B4_V53_CACHE_ENTRIES;
+    /* out[8..11]: public source digest, written by the NPI owner. */
+    B4_V50_Put32(out + 12u, now);
+    B4_V50_Put32(out + 16u, hits);
+    B4_V50_Put32(out + 20u, misses);
+    B4_V50_Put32(out + 24u, inserts);
+    B4_V50_Put32(out + 28u, invalidations);
+    for (i = 0u; i < B4_V53_HOT_ENTRIES; ++i)
+    {
+        uint8_t *e = out + 32u + 24u * i;
+        if (!hot[i].used) continue;
+        e[0] = hot[i].systemID;
+        e[1] = hot[i].status;
+        B4_V51_Put16(e + 2u, hot[i].itemID);
+        B4_V51_Put16(e + 4u, hot[i].subID);
+        e[6] = hot[i].kind;
+        e[7] = 1u;
+        B4_V50_Put32(e + 8u, hot[i].count);
+        B4_V50_Put32(e + 12u, hot[i].ticks);
+        B4_V50_Put32(e + 16u, hot[i].maxTicks);
+    }
+}
 /* B4_V50_END_STACK_SERVICE_AGING_AND_EVIDENCE */
 """
 
@@ -1137,6 +1357,8 @@ def apply(sdk, source_sha):
             task.count("B4_V51_OnsetSnapshot(stackEvidence);") != 1 or
             task.count("B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));") != 1 or
             task.count("B4_V52_PipelineSnapshot(stackEvidence);") != 1 or
+            task.count("B4_V53_NvCacheSnapshot(stackEvidence);") != 1 or
+            stack.count("B4_V53_Invalidate();") != 14 or
             stack.count("OsalPortTimers_cleanUpTimers(); /* B4_V52") != 1 or
             stack.count("B4_V52_TimerProbe( tmpServiceId );") != 1 or
             "B4_V50_Sat(&B4_V50_Busy" in stack or
@@ -1145,7 +1367,7 @@ def apply(sdk, source_sha):
     for name in FILES:
         paths[name].write_text(after[name], encoding="utf-8", newline="")
     return {
-        "schema": "p7u-v50-stack-service-v3",
+        "schema": "p7u-v50-stack-service-v4",
         "supersedes_unflashed": "V49_READY_NPI_RETENTION",
         "root_cause_proven": False,
         "npi_priority_after_retained_arm": 6,
@@ -1167,6 +1389,8 @@ def apply(sdk, source_sha):
         "expired_timer_free": "STACK_TASK_AFTER_EVERY_DISPATCH",
         "busy_ticks": "MODULAR_DELTA_SAFE",
         "tick_wrap_epochs": True,
+        "nv_read_cache": {"entries": 8, "max_bytes": 32, "invalidation": "EVERY_TABLE_MUTATION_BEFORE_AND_AFTER",
+                          "evidence": "B1E7 op4 page5"},
         "onset_phase_boundary": "devState == DEV_ZB_COORD",
         "nv_timing": "TRANSPARENT_NVFPS_WRAPPERS_SAME_ARGUMENTS_AND_RESULTS",
         "heap_source": "OSAL_HEAPMGR_TOTAL_FREE_AND_GETSTATS",

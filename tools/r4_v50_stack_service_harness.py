@@ -144,11 +144,16 @@ typedef uint8_t (*NVINTF_readContItem)(NVINTF_itemID_t id, uint16_t offset, uint
                                        void *cbuffer, uint16_t *pSubId);
 typedef uint8_t (*NVINTF_writeItem)(NVINTF_itemID_t id, uint16_t length, void *buffer);
 typedef uint32_t (*NVINTF_getItemLen)(NVINTF_itemID_t id);
+typedef struct { uint8_t sysid; uint16_t itemid, subid; void *buffer; uint16_t len; uint8_t flag; } NVINTF_nvProxy_t;
+typedef uint8_t (*NVINTF_doNext)(NVINTF_nvProxy_t *nvProxy);
+typedef uint8_t (*NVINTF_eraseNV)(void);
+#define NVINTF_SUCCESS 0u
 typedef struct
 {
     NVINTF_initNV initNV; NVINTF_compactNV compactNV; NVINTF_createItem createItem;
     NVINTF_updateItem updateItem; NVINTF_deleteItem deleteItem; NVINTF_readItem readItem;
     NVINTF_readContItem readContItem; NVINTF_writeItem writeItem; NVINTF_getItemLen getItemLen;
+    NVINTF_doNext doNext; NVINTF_eraseNV eraseNV;
 } NVINTF_nvFuncts_t;
 typedef struct { NVINTF_nvFuncts_t nvFps; } zstack_Config_t;
 static zstack_Config_t stack_cfg;
@@ -174,8 +179,18 @@ static void nv_note(NVINTF_itemID_t id, uint32_t len, void *buf)
 static uint8_t fake_init(void *p) { (void)p; return 0u; }
 static uint8_t fake_update(NVINTF_itemID_t id, uint32_t length, void *buffer)
 { nv_note(id, length, buffer); return nv_status; }
+static unsigned race_invalidate;
+static void B4_V53_Invalidate(void);
 static uint8_t fake_read(NVINTF_itemID_t id, uint16_t offset, uint16_t length, void *buffer)
-{ nv_off = offset; nv_note(id, length, buffer); return nv_status; }
+{
+    nv_off = offset; nv_note(id, length, buffer);
+    if (buffer != NULL) memset(buffer, (int)(0x40u + nv_calls), length);
+    if (race_invalidate) { --race_invalidate; B4_V53_Invalidate(); } /* a write raced this read */
+    return nv_status;
+}
+static unsigned do_next_calls, erase_calls;
+static uint8_t fake_do_next(NVINTF_nvProxy_t *x) { (void)x; ++do_next_calls; return 0u; }
+static uint8_t fake_erase(void) { ++erase_calls; return 0u; }
 static uint32_t fake_len(NVINTF_itemID_t id) { nv_note(id, 0u, NULL); return 42u; }
 static uint8_t fake_delete(NVINTF_itemID_t id) { nv_note(id, 0u, NULL); return nv_status; }
 static uint8_t fake_compact(uint16_t minBytes)
@@ -234,6 +249,9 @@ static void reset_all(void)
     B4_V52_LastNow = 0u; B4_V52_Wraps = 0u; cleanup_calls = 0u;
     for (i = 0; i < NSERV; ++i) { extra[i] = 0u; heap_step[i] = 0u; nv_in[i] = 0u; }
     devState = DEV_HOLD; heapmgrMemFreeTotal = 50000u; nv_cost = 0u; nv_status = 0u;
+    memset(B4_V53_Cache, 0, sizeof(B4_V53_Cache)); memset(B4_V53_Hot, 0, sizeof(B4_V53_Hot));
+    B4_V53_Gen = B4_V53_Hits = B4_V53_Misses = B4_V53_Inserts = B4_V53_Invalidations = 0u;
+    B4_V53_Next = 0u; race_invalidate = 0u;
 }
 static void run_loop(void) { STACK_LOOP }
 int main(void)
@@ -306,7 +324,9 @@ int main(void)
     stack_cfg.nvFps.initNV = fake_init; stack_cfg.nvFps.updateItem = fake_update;
     stack_cfg.nvFps.readItem = fake_read; stack_cfg.nvFps.getItemLen = fake_len;
     stack_cfg.nvFps.deleteItem = fake_delete; stack_cfg.nvFps.compactNV = fake_compact;
+    stack_cfg.nvFps.doNext = fake_do_next; stack_cfg.nvFps.eraseNV = fake_erase;
     B4_V51_InstallNvHooks(); B4_V51_InstallNvHooks();
+    assert(stack_cfg.nvFps.doNext != fake_do_next && stack_cfg.nvFps.eraseNV != fake_erase);
     assert((B4_V51.flags & B4_V51_NV_HOOKED) != 0u && stack_cfg.nvFps.initNV == fake_init);
     assert(stack_cfg.nvFps.updateItem != fake_update && stack_cfg.nvFps.readItem != fake_read);
     assert(stack_cfg.nvFps.getItemLen != fake_len && stack_cfg.nvFps.deleteItem != fake_delete);
@@ -474,9 +494,62 @@ int main(void)
     B4_V52_InflightSnapshot(out);
     assert(out[202] == 1u && out[203] == 1u);
     assert(cs_depth == 0u && credits == 0);
+    /* 11. V53 read cache: a successful <=32-byte read is served from RAM
+     * until ANY mutation; a write racing a read can never insert stale
+     * bytes; NOTFOUND and long reads always go to the driver. */
+    reset_all();
+    {
+        NVINTF_itemID_t key = {1u, 0x0000u, 0x003Au}, other = {1u, 0x0000u, 0x003Bu};
+        uint8_t a[16], b[16], big[40], row[4] = {1u, 2u, 3u, 4u};
+        unsigned calls;
+        nv_status = 0u; nv_cost = 7u; calls = nv_calls;
+        assert(stack_cfg.nvFps.readItem(key, 2u, 16u, a) == 0u && nv_calls == calls + 1u);
+        memset(b, 0, sizeof(b));
+        assert(stack_cfg.nvFps.readItem(key, 2u, 16u, b) == 0u && nv_calls == calls + 1u);
+        assert(!memcmp(a, b, 16) && B4_V53_Hits == 1u && B4_V53_Misses == 1u && B4_V53_Inserts == 1u);
+        assert(stack_cfg.nvFps.readItem(key, 3u, 16u, b) == 0u && nv_calls == calls + 2u); /* other offset */
+        assert(stack_cfg.nvFps.updateItem(other, 4u, row) == 0u && B4_V53_Invalidations == 2u);
+        assert(stack_cfg.nvFps.readItem(key, 2u, 16u, b) == 0u && nv_calls == calls + 4u);
+        assert(memcmp(a, b, 16) != 0); /* fresh driver bytes after the write */
+        race_invalidate = 1u;
+        assert(stack_cfg.nvFps.readItem(other, 0u, 8u, b) == 0u && nv_calls == calls + 5u);
+        assert(stack_cfg.nvFps.readItem(other, 0u, 8u, b) == 0u && nv_calls == calls + 6u); /* not inserted */
+        assert(stack_cfg.nvFps.readItem(other, 0u, 8u, b) == 0u && nv_calls == calls + 6u); /* now cached */
+        nv_status = 10u;
+        assert(stack_cfg.nvFps.readItem(other, 1u, 4u, b) == 10u && stack_cfg.nvFps.readItem(other, 1u, 4u, b) == 10u);
+        assert(nv_calls == calls + 8u);
+        nv_status = 0u;
+        assert(stack_cfg.nvFps.readItem(key, 0u, 40u, big) == 0u && stack_cfg.nvFps.readItem(key, 0u, 40u, big) == 0u);
+        assert(nv_calls == calls + 10u);
+        calls = B4_V53_Invalidations;
+        assert(stack_cfg.nvFps.doNext(NULL) == 0u && stack_cfg.nvFps.eraseNV() == 0u && stack_cfg.nvFps.compactNV(1u) == 0u);
+        assert(do_next_calls == 1u && erase_calls == 1u && B4_V53_Invalidations == calls + 6u);
+        assert(stack_cfg.nvFps.deleteItem(other) == 0u && B4_V53_Invalidations == calls + 8u);
+        for (j = 0u; j < B4_V53_CACHE_ENTRIES; ++j) assert(!B4_V53_Cache[j].used);
+    }
+    memset(out, 0xA5, sizeof(out));
+    B4_V53_NvCacheSnapshot(out);
+    assert(!memcmp(out, "B1E7", 4) && out[4] == 1u && out[5] == 248u && out[6] == 0u && out[7] == 8u);
+    assert(get32(out + 8) == 0u && get32(out + 12) == now_tick);
+    assert(get32(out + 16) == B4_V53_Hits && get32(out + 20) == B4_V53_Misses && get32(out + 24) == B4_V53_Inserts);
+    assert(get32(out + 28) == B4_V53_Invalidations && B4_V53_Hits == 2u);
+    {
+        int found = 0;
+        for (j = 0u; j < 8u; ++j)
+        {
+            const uint8_t *e = out + 32 + 24 * j;
+            if (e[7] && e[0] == 1u && get16(e + 2) == 0u && get16(e + 4) == 0x3Au && e[6] == 1u)
+            { found = 1; assert(get32(e + 8) == 5u && get32(e + 12) == 35u && get32(e + 16) == 7u); }
+        }
+        assert(found);
+    }
+    for (j = 224u; j < B4_V50_EVIDENCE_SIZE; ++j) assert(out[j] == 0u);
+    for (j = B4_V50_EVIDENCE_SIZE; j < sizeof(out); ++j) assert(out[j] == 0xA5u);
+    assert(cs_depth == 0u && credits == 0);
     printf("V50_STACK_AGING_EVIDENCE_REAL_C_PASS\n");
     printf("V51_ONSET_RECORD_NV_TIMING_TREND_REAL_C_PASS\n");
     printf("V52_TIMER_CLEANUP_INFLIGHT_WRAP_REAL_C_PASS\n");
+    printf("V53_NV_READ_CACHE_REAL_C_PASS\n");
     return 0;
 }
 """
@@ -577,6 +650,21 @@ STACK_MUTANTS = {
         "    B4_V50_Put32(page + 204u, current ? input : 0u);", "    B4_V50_Put32(page + 204u, current ? 0u : input);"),
     "nwk_storm_bit_not_counted": (
         "        if (events & NWK_BCAST_TIMER_EVT) ++B4_V52_NwkBits[2];\n", ""),
+    "cache_not_invalidated_after_write": (
+        "    B4_V51_NvDone(2u, start, updated);\n    B4_V53_Invalidate();\n",
+        "    B4_V51_NvDone(2u, start, updated);\n"),
+    "cache_race_guard_removed": ("    if (gen == B4_V53_Gen)\n", "    if (gen != 0xFFFFFFFFu || gen == B4_V53_Gen)\n"),
+    "cache_stores_failed_reads": (
+        "    if (status == NVINTF_SUCCESS) B4_V53_Insert(", "    if (1) B4_V53_Insert("),
+    "cache_length_bound_removed": (
+        "    if (length == 0u || length > B4_V53_CACHE_BYTES || buffer == NULL) return;",
+        "    if (length == 0u || buffer == NULL) return;"),
+    "cache_ignores_offset": ("            line->offset != offset || line->length != length) continue;",
+                             "            (line->offset != offset && 0) || line->length != length) continue;"),
+    "do_next_not_invalidating": (
+        "    B4_V53_Invalidate();\n    uint8_t done = B4_V51_Nv.doNext(nvProxy);\n    B4_V53_Invalidate();\n",
+        "    uint8_t done = B4_V51_Nv.doNext(nvProxy);\n"),
+    "b1e7_hot_offset_shifted": ("        uint8_t *e = out + 32u + 24u * i;", "        uint8_t *e = out + 36u + 24u * i;"),
     "b1e3_service_nv_offset_shifted": (
         "        B4_V50_Put32(out + 200u + 4u * j, s.svcNv[j]);",
         "        B4_V50_Put32(out + 204u + 4u * j, s.svcNv[j]);"),
@@ -615,6 +703,8 @@ void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level)
     memcpy(out, level ? "B1E5" : "B1E4", 4); out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE;
 }
 void B4_V52_TimerSnapshot(uint8_t *out) { memset(out, 0x52, 104u); out[38] = 2u; }
+static unsigned caches;
+void B4_V53_NvCacheSnapshot(uint8_t *out) { ++caches; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E7", 4); }
 void B4_V52_InflightSnapshot(uint8_t *page) { page[12] = 0x77u; page[200] = 3u; memset(page + 201, 0x61, 47u); }
 void B4_V51_OnsetSnapshot(uint8_t *out)
 {
@@ -662,8 +752,11 @@ int main(void)
     for (i = 16u; i < 96u; ++i) assert(last_payload[i] == 0x43u);
     for (i = 96u; i < 200u; ++i) assert(last_payload[i] == (i == 134u ? 2u : 0x52u));
     for (i = 201u; i < 248u; ++i) assert(last_payload[i] == 0x61u);
-    memcpy(frame, ok, 16); frame[10] = 5u;
-    clear(); assert(consume(frame) == 0 && snaps == 0u && onsets == 0u && trends == 0u && replies == 1u && last_c0 == 0x60u);
+    memcpy(frame, ok, 16); frame[10] = 5u; caches = 0u;
+    clear(); assert(consume(frame) == 0 && caches == 1u && last_c0 == 0x61u && !memcmp(last_payload, "B1E7", 4));
+    assert(!memcmp(last_payload + 8, digest, 4) && trends == 0u && snaps == 0u && onsets == 0u);
+    memcpy(frame, ok, 16); frame[10] = 6u; caches = 0u;
+    clear(); assert(consume(frame) == 0 && caches == 0u && trends == 0u && replies == 1u && last_c0 == 0x60u);
     /* AREQ form is dropped without any reply, like B1E1. */
     memcpy(frame, ok, 16); frame[1] = 0x41u;
     clear(); assert(consume(frame) == 0 && replies == 0u && snaps == 0u && deallocs == 1u);
@@ -684,9 +777,10 @@ QUERY_MUTANTS = {
                      "pReq[2] == B1_STATUS_COMMAND && pReq[9] == 3u)"),
     "length_unchecked": ("    if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&",
                          "    if ((pReq[1] & 0x1fu) == 1u &&"),
-    "b1e3_page_rejected": ("            pReq[10] <= 4u)", "            pReq[10] == 0u)"),
-    "trend_pages_rejected": ("            pReq[10] <= 4u)", "            pReq[10] <= 1u)"),
-    "b1e6_page_rejected": ("            pReq[10] <= 4u)", "            pReq[10] <= 3u)"),
+    "b1e3_page_rejected": ("            pReq[10] <= 5u)", "            pReq[10] == 0u)"),
+    "trend_pages_rejected": ("            pReq[10] <= 5u)", "            pReq[10] <= 1u)"),
+    "b1e6_page_rejected": ("            pReq[10] <= 5u)", "            pReq[10] <= 3u)"),
+    "b1e7_page_rejected": ("            pReq[10] <= 5u)", "            pReq[10] <= 4u)"),
     "b1e6_progress_offset_shifted": ("    B4_V43_Snapshot(out + 16u);", "    B4_V43_Snapshot(out + 20u);"),
     "trend_level_offset": ("(uint8_t)(pReq[10] - 2u)", "(uint8_t)(pReq[10] - 1u)"),
     "pages_swapped": ("            if (pReq[10] == 0u)\n", "            if (pReq[10] == 1u)\n"),
@@ -807,6 +901,7 @@ def exercise(sdk, source_sha):
         "compiled_actual_nv_timing_wrappers": True,
         "compiled_actual_trend_rings": True,
         "compiled_actual_b1e6_inflight_and_timer_cleanup": True,
+        "compiled_actual_nv_read_cache": True,
         "negative_mutants_rejected": rejected,
         "hosted_model_only": True,
         "hardware_state9_proven": False,
