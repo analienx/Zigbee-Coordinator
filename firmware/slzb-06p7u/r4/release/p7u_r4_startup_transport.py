@@ -17,8 +17,10 @@ Q4=b"B1Q1\x01\x08\x04\x00"
 Q5=b"B1Q1\x01\x08\x04\x01"
 Q6=b"B1Q1\x01\x08\x04\x02"
 Q7=b"B1Q1\x01\x08\x04\x03"
+Q8=b"B1Q1\x01\x08\x04\x04"
 EXPECTED={Q0:(b"B1S1",24),Q2:(b"B1P1",32),Q3:(b"B1E1",128),Q4:(b"B1E2",248),
-          Q5:(b"B1E3",248),Q6:(b"B1E4",248),Q7:(b"B1E5",248)}
+          Q5:(b"B1E3",248),Q6:(b"B1E4",248),Q7:(b"B1E5",248),
+          Q8:(b"B1E6",248)}
 # V50 B1E2 sampling: every Nth RUNNING poll, then twice after terminal proof.
 # V51 B1E3 rides along with each RUNNING B1E2 and once after terminal proof.
 STACK_RUNNING_EVERY=4
@@ -170,20 +172,23 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
     save(name, data, detail) may fsync an append-only private receipt before
     ANY next query. The caller must not reissue the consumed startup.
     """
-    from p7u_r4_startup_observer import (decode_e1,decode_e2,decode_e3,checked,
+    from p7u_r4_startup_observer import (decode_e1,decode_e2,decode_e3,decode_e6,checked,
                                           verify_success_frames,stack_evidence_supported,
                                           onset_evidence_supported,onset_summary,
+                                          pipeline_evidence_supported,
                                           stack_profile,EvidenceError,require)
     znp.source=source
     deadline=srsp_received+absolute_seconds
     frames={}
-    counts={"B1E1":0,"B1P1":0,"B1S1":0,"UTIL":0,"MARKER":0,"B1E2":0,"B1E3":0}
+    counts={"B1E1":0,"B1P1":0,"B1S1":0,"UTIL":0,"MARKER":0,"B1E2":0,"B1E3":0,"B1E6":0}
     e_snapshots=0
     ready=False
     stack=stack_evidence_supported(source)
     onset=onset_evidence_supported(source)
+    pipeline=pipeline_evidence_supported(source)
     stack_samples=[]
     onset_samples=[]
+    pipeline_samples=[]
 
     def record(name,data):
         frames[name]=data.hex()
@@ -201,6 +206,10 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
         info=decode_e3(raw,source)
         record("B1E3",raw)
         onset_samples.append(info)
+        if pipeline:
+            raw=znp.request(1,241,Q8,deadline=until)
+            pipeline_samples.append(decode_e6(raw,source))
+            record("B1E6",raw)
         return info
     def outcome(category,status="FAILED_STOP_NO_RETRY"):
         result={"status":status,"failure_category":category,
@@ -211,6 +220,8 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
             result["stack_profile"]={
                 "whole_observation":stack_profile(stack_samples[0],stack_samples[-1]),
                 "last_interval":stack_profile(stack_samples[-2],stack_samples[-1])}
+        if pipeline_samples:
+            result["pipeline_record"]=pipeline_samples[-1]
         if onset_samples and stack_samples:
             result["onset_record"]={"decoded":onset_samples[-1],
                 "summary":onset_summary(onset_samples[-1],stack_samples[-1]["tick_period_us"])}

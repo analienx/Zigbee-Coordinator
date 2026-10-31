@@ -5,9 +5,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firmware/slzb-06p7u/r4/release"))
-from p7u_r4_startup_observer import (EvidenceError, Q0, Q2, Q3, Q4, Q5, V50_SOURCES,
-                                     V51_SOURCES, decode_e2, decode_e3, onset_summary,
-                                     stack_profile)
+from p7u_r4_startup_observer import (EvidenceError, Q0, Q2, Q3, Q4, Q5, Q8, V50_SOURCES,
+                                     V51_SOURCES, V52_SOURCES, decode_e2, decode_e3,
+                                     decode_e6, onset_summary, stack_profile)
 from p7u_r4_startup_transport import observe_after_srsp
 from tests.test_p7u_r4_startup_observer import evidence as legacy_e1
 
@@ -61,6 +61,35 @@ def e3(source=V50, *, ready=False, onset=False, long=False, now=5000000):
         flags |= 0x08
         put(140, 4500000); put16(144, 1200); raw[146] = 3; raw[147] = 9
         put(148, 0x2070); put(156, 110000)
+    raw[6] = flags
+    return bytes(raw)
+
+
+def e6(source=V50, *, deferred=0, stuck_ms=0, fault=0):
+    """V52 B1E6: B4_V43 progress, OSAL timers (NWK probe task 2), in-flight."""
+    raw = bytearray(248)
+    raw[:6] = b"B1E6\x01\xf8"
+    raw[8:12] = bytes.fromhex(source[:8])
+    put = lambda offset, value: raw.__setitem__(slice(offset, offset + 4), value.to_bytes(4, "little"))
+    put16 = lambda offset, value: raw.__setitem__(slice(offset, offset + 2), value.to_bytes(2, "little"))
+    put(12, 9000000)
+    for i, value in enumerate((40, 30, 30, 70, 0, 70, 0, 0, 0x02F10000, 900)):
+        put(16 + 4 * i, value)
+    put(16 + 4 * 10, fault); put(16 + 4 * 19, 10)
+    put(96, 5000); put(96 + 8, 9000); put(96 + 12, 4990); put(96 + 20, 4000); put(96 + 24, 4980)
+    put16(96 + 28, deferred); put16(96 + 30, max(deferred, 12)); put16(96 + 34, 9)
+    raw[96 + 38] = 2; raw[96 + 39] = 0xFF
+    for i in range(16):
+        put16(96 + 72 + 2 * i, 0xFFFF)
+    for bit, starts, minimum in ((4, 300, 1000), (6, 4000, 2)):
+        put16(96 + 40 + 2 * bit, starts); put16(96 + 72 + 2 * bit, minimum)
+    flags = 1
+    if stuck_ms:
+        flags |= 2
+        raw[200] = 3; raw[201] = 4; put(204, 0x2070); put(208, stuck_ms * 100); put(212, 50000)
+    put(216, 900000); put(220, 950000); put(224, 70)
+    for i, value in enumerate((60, 900, 4000, 800)):
+        put(228 + 4 * i, value)
     raw[6] = flags
     return bytes(raw)
 
@@ -121,6 +150,8 @@ class FakeZnp:
             if self.ready_sent and self.fail_post_ready_e3:
                 raise TimeoutError("ZNP_OUTSTANDING_RESPONSE_DEADLINE")
             return e3(self.src, ready=self.ready_sent and not self.never_ready_e3)
+        if payload == Q8:
+            return e6(self.src)
         if payload == Q2:
             p = bytearray(32); p[:6] = b"B1P1\x01\x20"; p[6] = 4
             p[12:16] = bytes.fromhex(self.src[:8]); return bytes(p)
@@ -167,9 +198,12 @@ class StackEvidence(unittest.TestCase):
         # V51 B1E3 rides along while RUNNING and once after the B1E2 pair.
         self.assertEqual(result["frame_counts"]["B1E2"], 4)
         self.assertEqual(result["frame_counts"]["B1E3"], 3)
+        self.assertEqual(result["frame_counts"]["B1E6"], 3)
+        self.assertEqual(result["pipeline_record"]["timers"]["probe_task"], 2)
         order = [p for _, _, p in znp.sent if p in (Q0, Q2, Q4, Q5)]
-        self.assertEqual(order[:2], [Q4, Q5])
-        self.assertEqual(order[-5:], [Q2, Q0, Q4, Q4, Q5])
+        order = [p for _, _, p in znp.sent if p in (Q0, Q2, Q4, Q5, Q8)]
+        self.assertEqual(order[:3], [Q4, Q5, Q8])
+        self.assertEqual(order[-6:], [Q2, Q0, Q4, Q4, Q5, Q8])
         self.assertTrue(result["onset_record"]["decoded"]["ready"])
         self.assertEqual(result["onset_record"]["summary"]["stack_high_water_percent"], 58.6)
         self.assertIn("stack_profile", result)
@@ -217,6 +251,26 @@ class StackEvidence(unittest.TestCase):
         self.assertEqual(summary["nv_service_ms"][2], 2000)
         self.assertEqual(summary["npi_high_water_percent"], 68.4)
 
+    def test_decode_e6_pipeline_timers_and_inflight(self):
+        self.assertEqual(V52_SOURCES, V50_SOURCES)
+        idle = decode_e6(e6(), V50)
+        self.assertIsNone(idle["inflight"]["service"])
+        self.assertEqual(idle["timers"]["nwk_bit_starts"], {4: 300, 6: 4000})
+        self.assertEqual(idle["timers"]["nwk_bit_min_timeout_ms"], {4: 1000, 6: 2})
+        self.assertEqual(idle["npi_mt_uart"]["last_command"], 0x02F1)
+        self.assertEqual(idle["nwk_dispatch_bits"]["NWK_BCAST_TIMER_EVT"], 4000)
+        stuck = decode_e6(e6(stuck_ms=7000), V50)
+        self.assertEqual((stuck["inflight"]["service"], stuck["inflight"]["input"]), (2, 0x2070))
+        self.assertEqual(stuck["inflight"]["age_ticks"], 700000)
+        bad = bytearray(e6()); bad[6] = 3  # in-flight flag without a service
+        with self.assertRaisesRegex(EvidenceError, "PIPELINE_EVIDENCE_SCHEMA_INVALID"):
+            decode_e6(bytes(bad), V50)
+        bad = bytearray(e6()); bad[208] = 1  # age without an in-flight service
+        with self.assertRaisesRegex(EvidenceError, "PIPELINE_EVIDENCE_SCHEMA_INVALID"):
+            decode_e6(bytes(bad), V50)
+        with self.assertRaisesRegex(EvidenceError, "PIPELINE_EVIDENCE_UNSUPPORTED_SOURCE"):
+            decode_e6(e6(V48), V48)
+
     def test_decode_e3_rejects_inconsistent_latches(self):
         bad = bytearray(e3()); bad[104] = 1  # onset bytes without an onset latch
         with self.assertRaisesRegex(EvidenceError, "ONSET_EVIDENCE_SCHEMA_INVALID"):
@@ -248,6 +302,7 @@ class StackEvidence(unittest.TestCase):
         self.assertEqual(result["status"], "COORDINATOR_STATE9_MARKER_PASS")
         self.assertNotIn(Q4, [p for _, _, p in znp.sent])
         self.assertNotIn(Q5, [p for _, _, p in znp.sent])
+        self.assertNotIn(Q8, [p for _, _, p in znp.sent])
         self.assertEqual(result["frame_counts"]["B1E2"], 0)
         self.assertEqual(result["frame_counts"]["B1E3"], 0)
 

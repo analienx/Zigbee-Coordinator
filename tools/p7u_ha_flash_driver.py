@@ -31,6 +31,7 @@ import json
 import shlex
 import subprocess
 import sys
+import re
 import tarfile
 import time
 from pathlib import Path
@@ -47,6 +48,25 @@ def canon(obj):
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def hold(ok, reason):
+    """Explicit fail-closed gate: unlike `assert`, never removed by `python -O`."""
+    if not ok:
+        sys.exit("HOLD " + reason)
+
+
+NATIVE_WORKFLOW = ".github/workflows/test-r4-stock20260311-native.yml"
+PACKAGE_WORKFLOW = ".github/workflows/package-p7u-paired-operator.yml"
+SERVING_READY = {"NATIVE_STATE9_F2_MINOR4_HOST_RUNNING_PENDING_SERVING",
+                 "NATIVE_STATE9_AND_F2_V43_VERIFIED_HOST_STARTED_PENDING_SERVING"}
+
+
+def run_meta(run):
+    out = subprocess.run(["gh", "api", "repos/%s/actions/runs/%s" % (REPO, run)],
+                         capture_output=True, text=True, timeout=60)
+    hold(out.returncode == 0, "RUN_METADATA_UNAVAILABLE " + str(run))
+    return json.loads(out.stdout)
 
 
 class Driver:
@@ -84,6 +104,19 @@ class Driver:
     # ---------------------------------------------------------------- fetch
     def fetch(self, a):
         fw, native_run, package_run = a.firmware, a.native_run, a.package_run
+        hold(re.fullmatch("[0-9a-f]{40}", fw or "") is not None, "FIRMWARE_SHA")
+        # Exact-source provenance BEFORE any download: the native candidate
+        # comes from the stock20260311 workflow at the firmware SHA, and the
+        # operator from an EXPLICIT workflow_dispatch package, never the
+        # automatic PR package (whose default firmware is an older source).
+        native = run_meta(native_run)
+        hold(native.get("path") == NATIVE_WORKFLOW and native.get("head_sha") == fw and
+             native.get("status") == "completed" and native.get("conclusion") == "success",
+             "NATIVE_RUN_NOT_EXACT_SUCCESS")
+        package = run_meta(package_run)
+        hold(package.get("path") == PACKAGE_WORKFLOW and package.get("event") == "workflow_dispatch" and
+             package.get("status") == "completed" and package.get("conclusion") == "success",
+             "PACKAGE_RUN_NOT_EXPLICIT_DISPATCH_SUCCESS")
         cand, pkg = self.workdir / "candidate", self.workdir / "operator"
         for dest, run, prefix in ((cand, native_run, "p7u-stock20260311-candidate-" + fw),
                                   (pkg, package_run, None)):
@@ -93,13 +126,14 @@ class Driver:
                                 "--dir", str(dest)], check=True, timeout=300)
         pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
         cmeta = json.loads((cand / "candidate.json").read_bytes())
-        assert pmeta["firmware_source_sha"] == cmeta["source_sha"] == fw, "FIRMWARE_SOURCE"
-        assert pmeta["paired_host_source_sha"] == HOST_SOURCE, "HOST_SOURCE"
-        assert pmeta["paired_host_image"] == HOST_IMAGE, "HOST_IMAGE"
+        hold(pmeta.get("firmware_source_sha") == cmeta.get("source_sha") == fw, "FIRMWARE_SOURCE")
+        hold(pmeta.get("operator_source_sha") == package.get("head_sha"), "OPERATOR_SOURCE")
+        hold(pmeta.get("paired_host_source_sha") == HOST_SOURCE, "HOST_SOURCE")
+        hold(pmeta.get("paired_host_image") == HOST_IMAGE, "HOST_IMAGE")
         for root, files in ((pkg, pmeta["files"]), (cand, cmeta["files"])):
             bad = [n for n, h in files.items()
                    if not (root / n).is_file() or sha((root / n).read_bytes()) != h]
-            assert not bad, ("MANIFEST_HASH", root.name, bad[:5])
+            hold(not bad, "MANIFEST_HASH %s %s" % (root.name, bad[:5]))
         self.save(firmware=fw, installed=a.installed, previous_operation=a.previous_operation,
                   operator_source=pmeta["operator_source_sha"],
                   package_pin=sha((pkg / "PACKAGE.json").read_bytes()),
@@ -113,7 +147,7 @@ class Driver:
         out = subprocess.run(["gh", "api", "repos/%s/actions/runs/%s/artifacts" % (REPO, run),
                               "--jq", ".artifacts[].name"], capture_output=True, text=True, check=True)
         names = [n for n in out.stdout.split() if n.startswith("p7u-paired-operator-")]
-        assert len(names) == 1, ("PACKAGE_ARTIFACT", names)
+        hold(len(names) == 1, "PACKAGE_ARTIFACT %s" % names)
         return names[0]
 
     # ---------------------------------------------------------------- stage
@@ -129,9 +163,9 @@ class Driver:
         if exists == [False, False]:
             self.upload(package_dir, stage_dir, ppin, cpin)
         else:
-            assert exists == [True, True], ("PARTIAL_STAGE_INSPECT", exists)
+            hold(exists == [True, True], "PARTIAL_STAGE_INSPECT %s" % exists)
         verified = self.remote_python(VERIFY_STAGE % (package_dir, stage_dir, ppin, cpin))
-        assert verified["status"] == "STAGE_VERIFIED", verified
+        hold(verified.get("status") == "STAGE_VERIFIED", "STAGE_NOT_VERIFIED")
         binding = self.remote_python(STAGE_BINDING % {
             "op": OPERATIONS + "/" + prev, "installed": installed, "source": fw,
             "oldinput": "/share/p7u-paired-input-" + installed[:12],
@@ -159,7 +193,7 @@ class Driver:
         dest = "/share/.p7u-sealed-stage-%s.tar" % self.state["firmware"][:12]
         subprocess.run(["scp", "-q", str(tar), "ha:" + dest], check=True, timeout=300)
         out = self.remote_python(EXTRACT % (dest, package_dir, stage_dir, ppin, cpin), timeout=180)
-        assert out["status"] == "STAGED_SOURCE_BOUND_NO_RADIO", out
+        hold(out.get("status") == "STAGED_SOURCE_BOUND_NO_RADIO", "STAGE_UPLOAD_NOT_BOUND")
 
     # ------------------------------------------------------------ operator
     def operator(self, action, extra, timeout):
@@ -217,18 +251,20 @@ class Driver:
 
 EXTRACT = r'''import json,hashlib,pathlib,os,tarfile
 src=pathlib.Path(%r);package=pathlib.Path(%r);candidate=pathlib.Path(%r);pin=%r;cpin=%r
-assert src.is_file() and not package.exists() and not candidate.exists()
+def need(c,r):
+ if not c:raise SystemExit("HOLD "+r)
+need(src.is_file() and not package.exists() and not candidate.exists(),"EXTRACT_CHECK_1")
 with tarfile.open(src,"r:") as ar:
  members=ar.getmembers()
- assert len(members)==len(set(x.name for x in members))
- assert all(x.isfile() and x.size<=12000000 and not pathlib.PurePosixPath(x.name).is_absolute() and ".." not in pathlib.PurePosixPath(x.name).parts for x in members)
+ need(len(members)==len(set(x.name for x in members)),"EXTRACT_CHECK_4")
+ need(all(x.isfile() and x.size<=12000000 and not pathlib.PurePosixPath(x.name).is_absolute() and ".." not in pathlib.PurePosixPath(x.name).parts for x in members),"EXTRACT_CHECK_5")
  data={m.name:ar.extractfile(m).read() for m in members}
-assert hashlib.sha256(data["operator/PACKAGE.json"]).hexdigest()==pin
+need(hashlib.sha256(data["operator/PACKAGE.json"]).hexdigest()==pin,"EXTRACT_CHECK_7")
 p=json.loads(data["operator/PACKAGE.json"]);c=json.loads(data["candidate/candidate.json"])
-assert hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin
-assert set(data)=={"operator/PACKAGE.json","candidate/candidate.json"}|{"operator/"+x for x in p["files"]}|{"candidate/"+x for x in c["files"]}
+need(hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin,"EXTRACT_CHECK_9")
+need(set(data)=={"operator/PACKAGE.json","candidate/candidate.json"}|{"operator/"+x for x in p["files"]}|{"candidate/"+x for x in c["files"]},"EXTRACT_CHECK_10")
 for part,manifest in (("operator",p),("candidate",c)):
- assert all(hashlib.sha256(data[part+"/"+n]).hexdigest()==d for n,d in manifest["files"].items())
+ need(all(hashlib.sha256(data[part+"/"+n]).hexdigest()==d for n,d in manifest["files"].items()),"EXTRACT_CHECK_12")
 for part,root in (("operator",package),("candidate",candidate)):
  root.mkdir(mode=0o700)
  for name,blob in data.items():
@@ -244,13 +280,15 @@ print(json.dumps({"status":"STAGED_SOURCE_BOUND_NO_RADIO","files":len(data)}))
 
 VERIFY_STAGE = r'''import json,hashlib,pathlib
 package=pathlib.Path(%r);candidate=pathlib.Path(%r);pin=%r;cpin=%r
+def need(c,r):
+ if not c:raise SystemExit("HOLD "+r)
 raw=(package/"PACKAGE.json").read_bytes();p=json.loads(raw)
 c=json.loads((candidate/"candidate.json").read_bytes())
-assert hashlib.sha256(raw).hexdigest()==pin
-assert hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin
+need(hashlib.sha256(raw).hexdigest()==pin,"VERIFY_STAGE_CHECK_3")
+need(hashlib.sha256(json.dumps(c,sort_keys=True,separators=(",",":")).encode()).hexdigest()==cpin,"VERIFY_STAGE_CHECK_4")
 for root,m in ((package,p),(candidate,c)):
  bad=[n for n,d in m["files"].items() if hashlib.sha256((root/n).read_bytes()).hexdigest()!=d]
- assert not bad,bad[:5]
+ need(not bad,bad[:5],"VERIFY_STAGE_CHECK_7")
 print(json.dumps({"status":"STAGE_VERIFIED"}))
 '''
 
@@ -258,6 +296,8 @@ print(json.dumps({"status":"STAGE_VERIFIED"}))
 # receipts (generalised from the V48 staging script). Re-running verifies.
 STAGE_BINDING = r'''from pathlib import Path
 import json,hashlib,os
+def need(c,r):
+ if not c:raise SystemExit("HOLD "+r)
 op=Path(%(op)r);oldinput=Path(%(oldinput)r);oldcand=Path(%(oldcand)r)
 newinput=Path(%(newinput)r);newbind=Path(%(newbind)r);fw=Path(%(fw)r)
 source=%(source)r;installed=%(installed)r
@@ -266,16 +306,16 @@ sha=lambda b:hashlib.sha256(b).hexdigest()
 plan=json.loads((op/"plan.json").read_bytes());frozen=json.loads((op/"frozen-plan.json").read_bytes())
 write=json.loads((op/"verified-write.json").read_bytes())
 cand=json.loads((oldcand/"candidate.json").read_bytes());target=json.loads((fw/"candidate.json").read_bytes())
-assert plan["source"]==installed and plan["operation_id"]==op.name
-assert frozen["source_sha"]==installed and frozen["candidate_sha256"]==sha(canon(cand))
-assert write["operation_plan_sha256"]==sha(canon(plan)) and frozen["plan_sha256"]==write["frozen_plan_sha256"]
-assert write["journal_sha256"]==sha((op/"mutation-journal.jsonl").read_bytes())
-assert frozen["capture_sha256"]==sha((op/"fresh-sparse-snapshot.bin").read_bytes())
-assert write["result"]["status"]=="APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL"
-assert set(write["result"]["written_sectors"])==set(frozen["program_order"])
-assert target["source_sha"]==source
+need(plan["source"]==installed and plan["operation_id"]==op.name,"STAGE_BINDING_CHECK_9")
+need(frozen["source_sha"]==installed and frozen["candidate_sha256"]==sha(canon(cand)),"STAGE_BINDING_CHECK_10")
+need(write["operation_plan_sha256"]==sha(canon(plan)) and frozen["plan_sha256"]==write["frozen_plan_sha256"],"STAGE_BINDING_CHECK_11")
+need(write["journal_sha256"]==sha((op/"mutation-journal.jsonl").read_bytes()),"STAGE_BINDING_CHECK_12")
+need(frozen["capture_sha256"]==sha((op/"fresh-sparse-snapshot.bin").read_bytes()),"STAGE_BINDING_CHECK_13")
+need(write["result"]["status"]=="APP_AND_AC000_CRC_VERIFIED_STILL_IN_BSL","STAGE_BINDING_CHECK_14")
+need(set(write["result"]["written_sectors"])==set(frozen["program_order"]),"STAGE_BINDING_CHECK_15")
+need(target["source_sha"]==source,"STAGE_BINDING_CHECK_16")
 old_input=json.loads((oldinput/"INPUT.json").read_bytes())
-assert sha((oldinput/"INPUT.json").read_bytes())==plan["input_pin"]
+need(sha((oldinput/"INPUT.json").read_bytes())==plan["input_pin"],"STAGE_BINDING_CHECK_18")
 files={"installed-candidate.json":(oldcand/"candidate.json").read_bytes(),
  "installed-app.hex":(oldcand/"P7U-STOCK20260311-APP-ONLY.hex").read_bytes(),
  "installed-handoff.bin":(oldcand/"P7U-STOCK20260311-AC000-HANDOFF.bin").read_bytes(),
@@ -283,8 +323,8 @@ files={"installed-candidate.json":(oldcand/"candidate.json").read_bytes(),
  "installed-before.bin":(op/"fresh-sparse-snapshot.bin").read_bytes(),
  "management.json":(oldinput/"management.json").read_bytes(),
  "historical-backup.json":(oldinput/"historical-backup.json").read_bytes()}
-assert set(files)==set(old_input["files"])
-assert sha(files["installed-app.hex"])==cand["app_hex_sha256"] and sha(files["installed-handoff.bin"])==cand["handoff_sha256"]
+need(set(files)==set(old_input["files"]),"STAGE_BINDING_CHECK_26")
+need(sha(files["installed-app.hex"])==cand["app_hex_sha256"] and sha(files["installed-handoff.bin"])==cand["handoff_sha256"],"STAGE_BINDING_CHECK_27")
 doc={"files":{n:sha(d) for n,d in files.items()}};inputpin=sha(canon(doc))
 binding={"schema":"p7u-paired-operation-v1","source_sha":source,"installed_source":installed,
  "previous_operation":op.name,"candidate_pin":sha(canon(target)),"previous_plan_pin":sha(canon(plan)),
@@ -299,8 +339,8 @@ if not newinput.exists():
  for name,raw in {**files,"INPUT.json":canon(doc)}.items():put(newinput,name,raw)
 if not newbind.exists():
  newbind.mkdir(mode=0o700);put(newbind,"binding.json",canon(binding))
-assert all((newinput/n).read_bytes()==r for n,r in {**files,"INPUT.json":canon(doc)}.items())
-assert sha((newbind/"binding.json").read_bytes())==bindingpin
+need(all((newinput/n).read_bytes()==r for n,r in {**files,"INPUT.json":canon(doc)}.items()),"STAGE_BINDING_CHECK_42")
+need(sha((newbind/"binding.json").read_bytes())==bindingpin,"STAGE_BINDING_CHECK_43")
 print(json.dumps({"status":"BINDING_STAGED_NO_RADIO","input_pin":inputpin,"binding_pin":bindingpin}))
 '''
 
@@ -308,20 +348,26 @@ print(json.dumps({"status":"BINDING_STAGED_NO_RADIO","input_pin":inputpin,"bindi
 # retained and bridge topics, require last_seen after the subscription.
 SERVING = r'''import json,subprocess,time
 container="app_local_p7u_r4_native_host";image=%r
+def need(c,r):
+ if not c:raise SystemExit("HOLD "+r)
 def owner():return json.loads(subprocess.check_output(["docker","inspect",container]))[0]
-c=owner();assert c["State"]["Running"] and c["Image"]==image,"HOST_NOT_RUNNING_PAIRED_IMAGE"
+c=owner();need(c["State"]["Running"] and c["Image"]==image,"HOST_NOT_RUNNING_PAIRED_IMAGE")
 js=r"""
 const fs=require('fs'),yaml=require('js-yaml'),mqtt=require('mqtt');
 const cfg=yaml.load(fs.readFileSync('/config/zigbee2mqtt/configuration.yaml','utf8'));
-const start=Date.now();let connected=false,subscribed=false,seen=new Set(),messages=0,retained=0,done=false;
+// Existing devices only: friendly names from the Z2M device registry.
+let reg=cfg.devices||{};if(typeof reg==='string')reg=yaml.load(fs.readFileSync('/config/zigbee2mqtt/'+reg,'utf8'))||{};
+const known=new Set(Object.values(reg).map(d=>d&&d.friendly_name).filter(Boolean));
+const start=Date.now();let connected=false,subscribed=false,seen=new Set(),messages=0,retained=0,unknown=0,done=false;
 const m=mqtt.connect(cfg.mqtt.server,{username:cfg.mqtt.user,password:cfg.mqtt.password,protocolVersion:5,clean:true,
  clientId:'p7u_serving_ro_'+start,connectTimeout:5000,reconnectPeriod:0});
 function finish(error=null){if(done)return;done=true;console.log(JSON.stringify({connected,subscribed,
  elapsedSeconds:(Date.now()-start)/1000,freshDevices:seen.size,freshNonretainedMessages:messages,retainedRejected:retained,
- passed:connected&&subscribed&&seen.size>=3,error}));m.end(true);setTimeout(()=>process.exit(0),50);}
+ unknownTopicsRejected:unknown,knownDevices:known.size,passed:connected&&subscribed&&known.size>0&&seen.size>=3,error}));m.end(true);setTimeout(()=>process.exit(0),50);}
 m.on('connect',()=>{connected=true;m.subscribe('zigbee2mqtt/+',{qos:0,rh:2},e=>{if(e)finish('SUBSCRIBE');else subscribed=true;});});
 m.on('message',(topic,payload,packet)=>{if(packet.retain){retained++;return;}
  if(!/^zigbee2mqtt\/[^/]+$/.test(topic)||topic==='zigbee2mqtt/bridge')return;
+ if(!known.has(topic.slice(12))){unknown++;return;}
  try{const d=JSON.parse(payload.toString());let t=d.last_seen;
  if(typeof t==='string')t=Date.parse(t);else if(typeof t==='number'&&t<1e11)t*=1000;
  if(typeof t!=='number'||!Number.isFinite(t)||t<start||t>Date.now()+5000)return;
@@ -330,7 +376,7 @@ m.on('error',()=>finish('MQTT_CONNECTION'));setTimeout(()=>finish(),90000);
 """
 p=subprocess.run(["docker","exec","-i",container,"node","-"],input=js,capture_output=True,text=True,timeout=100)
 lines=[x for x in p.stdout.splitlines() if x.startswith("{")];after=owner()
-assert after["Id"]==c["Id"] and after["State"]["StartedAt"]==c["State"]["StartedAt"] and after["State"]["Running"]
+need(after["Id"]==c["Id"] and after["State"]["StartedAt"]==c["State"]["StartedAt"] and after["State"]["Running"],"SERVING_CHECK_27")
 print(json.dumps({"utc":int(time.time()*1000),"rc":p.returncode,"owner":c["Id"][:12],"restarts":after["RestartCount"],
  "evidence":json.loads(lines[-1]) if lines else None}))
 '''
@@ -375,6 +421,10 @@ def main():
     if a.phase == "status":
         return d.status(a)
     if a.phase == "serving":
+        # Fresh MQTT alone is never acceptance: the sealed operator must have
+        # proven native coordinator state 9 and the configured marker first.
+        proven = [d.state.get(k, {}).get("status") for k in ("boot_result", "finish_result")]
+        hold(any(s in SERVING_READY for s in proven), "SERVING_WITHOUT_OPERATOR_STATE9_MARKER_PROOF")
         result = d.remote_python(SERVING % (HOST_IMAGE,), timeout=130)
         d.save(serving_runs=d.state.get("serving_runs", []) + [result])
         print(json.dumps(result, indent=2))

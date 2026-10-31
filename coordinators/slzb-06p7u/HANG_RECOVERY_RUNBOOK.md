@@ -26,12 +26,13 @@
 
 It then sends, in this order, each reply fsynced to a fresh private `hang-evidence-*/evidence.jsonl` before the next request:
 1. B1E3, the onset record;
-2. B1E2;
-3. B1E5 and B1E4, the 17 x 60-minute and 17 x 5-minute trend rings;
-4. B1E1;
-5. B1S1;
-6. B1E2 again, 1 s later, for the live Stack CPU profile;
-7. one `SYS_PING`, which goes through MT, i.e. the Stack task.
+2. B1E6 (V52): NPI→MT→UART progress counters, OSAL timer evidence and the live in-flight Stack dispatch;
+3. B1E2;
+4. B1E5 and B1E4, the 17 x 60-minute and 17 x 5-minute trend rings;
+5. B1E1;
+6. B1S1;
+7. B1E2 and B1E6 again, 1 s later, for the live Stack CPU profile and pipeline progress;
+8. one `SYS_PING`, which goes through MT, i.e. the Stack task.
 
 All B1Q1 queries are answered by the priority-6 NPI owner, never the Stack task. The capture never resets, enters BSL, restarts the radio, sends a startup request, touches NV or starts a host. A first timeout latches the transport and ends the capture; the partial result is still written.
 
@@ -40,10 +41,17 @@ All B1Q1 queries are answered by the priority-6 NPI owner, never the Stack task.
 | Label | Meaning |
 | --- | --- |
 | `NPI_OWNER_UNRESPONSIVE` | No B1 reply at all |
-| `STACK_DISPATCH_STUCK` | One Stack dispatch has been in progress for at least 6 s |
+| `STACK_DISPATCH_STUCK` | One Stack dispatch has been in progress for at least 6 s (B1E6 names its service, input events and NV time) |
+| `TIMER_ALLOCATION_FAILED` | An OSAL timer entry or Clock object could not be allocated |
+| `TIMER_FREE_BACKLOG` | At least 64 expired OSAL timers are still waiting to be freed |
+| `UART_OR_TRANSPORT_FAULT_LATCHED` | The NPI UART first-fault record is set |
+| `MT_HANDLER_NOT_PROGRESSING` | MT stayed inside a command across both samples |
+| `HEAP_EXHAUSTED_OR_FRAGMENTED` | Largest free heap block below 512 bytes |
 | `STACK_SATURATED` | Stack task at least 90 % busy over the 1 s interval |
 | `MT_PATH_UNRESPONSIVE` | B1 queries answered, `SYS_PING` not |
 | `LOCAL_QUERIES_ANSWERED` | Everything answered locally |
+
+`result.json` keeps every applicable label, most decisive first.
 
 What to read in the B1E3 onset record:
 - the first post-READY 10 s window with the Stack at least 90 % busy: top service and its input events, NV time, MAC request/confirm-failure/indication deltas, free heap, and whether a calm window preceded it;

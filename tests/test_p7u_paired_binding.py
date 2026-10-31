@@ -64,7 +64,7 @@ class Binding(unittest.TestCase):
 
     def test_v50_exact_successor_to_v48_reuses_instrumented_host(self):
         data,package=self.fixture()
-        data.update(source_sha='2b3d737bbd447215e1c10ddbc288be649c55e1b5',
+        data.update(source_sha='a70ae24ff45e708e13969cd341c9ecb494d1570f',
                     installed_source='250441cd17c55e25c78d97e041f056574355ade7')
         package.update(firmware_source_sha=data['source_sha'],
                        paired_host_source_sha=binding.V6_STARTUP_CAPTURE_HOST,
@@ -91,11 +91,11 @@ class Binding(unittest.TestCase):
         self.assertEqual(len(nodes),3)
         scope={}
         exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path),"exec"),scope)
-        self.assertEqual(scope["V50_SOURCES"],frozenset({"2b3d737bbd447215e1c10ddbc288be649c55e1b5"}))
-        self.assertEqual(scope["expected_ready_npi_priority"]("2b3d737bbd447215e1c10ddbc288be649c55e1b5"),6)
+        self.assertEqual(scope["V50_SOURCES"],frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"}))
+        self.assertEqual(scope["expected_ready_npi_priority"]("a70ae24ff45e708e13969cd341c9ecb494d1570f"),6)
         self.assertEqual(scope["expected_ready_npi_priority"]("250441cd17c55e25c78d97e041f056574355ade7"),4)
         self.assertEqual(scope["expected_ready_npi_priority"]("0"*40),4)
-        self.assertTrue(scope["stack_evidence_supported"]("2b3d737bbd447215e1c10ddbc288be649c55e1b5"))
+        self.assertTrue(scope["stack_evidence_supported"]("a70ae24ff45e708e13969cd341c9ecb494d1570f"))
         self.assertFalse(scope["stack_evidence_supported"]("250441cd17c55e25c78d97e041f056574355ade7"))
         self.assertIn('info["npi_priority"]==expected_ready_npi_priority(source)',src)
         for gate in ("UTIL_NOT_COORDINATOR_STATE9","CONFIGURED_MARKER_NOT_VERIFIED",

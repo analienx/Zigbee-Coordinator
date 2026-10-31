@@ -15,15 +15,19 @@ Q4 = b"B1Q1\x01\x08\x04\x00"
 Q5 = b"B1Q1\x01\x08\x04\x01"
 Q6 = b"B1Q1\x01\x08\x04\x02"
 Q7 = b"B1Q1\x01\x08\x04\x03"
+Q8 = b"B1Q1\x01\x08\x04\x04"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
 # V50 keeps the armed sole NPI owner at priority6 for the whole boot and
 # answers RAM-only B1E2 (op4) Stack-service evidence. Older firmware must
 # still report the original priority4 at READY and has no B1E2.
-V50_SOURCES = frozenset({"2b3d737bbd447215e1c10ddbc288be649c55e1b5"})
+V50_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"})
 # V51 (same NPI floor and B1E2) adds the B1E3 (op4 page1) onset record and
 # the B1E4/B1E5 (op4 page2/3) 5-minute and 60-minute trend rings.
-V51_SOURCES = frozenset({"2b3d737bbd447215e1c10ddbc288be649c55e1b5"})
+V51_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"})
+# V52 adds B1E6 (op4 page4): NPI->MT->UART progress, OSAL timer evidence and
+# the live in-flight Stack dispatch, and frees expired OSAL timers per dispatch.
+V52_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f"})
 
 def expected_ready_npi_priority(source: str) -> int:
     return 6 if source in V50_SOURCES else 4
@@ -33,6 +37,9 @@ def stack_evidence_supported(source: str) -> bool:
 
 def onset_evidence_supported(source: str) -> bool:
     return source in V51_SOURCES
+
+def pipeline_evidence_supported(source: str) -> bool:
+    return source in V52_SOURCES
 
 class EvidenceError(RuntimeError):
     pass
@@ -52,7 +59,7 @@ def checked(raw: bytes, tag: bytes, length: int, source: str):
             and raw[4] == 1 and raw[5] == length,
             "RESPONSE_SCHEMA_INVALID_" + tag.decode())
     require(raw[8:12] == bytes.fromhex(source[:8])
-            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5")
+            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5", b"B1E6")
             else raw[12:16] == bytes.fromhex(source[:8]),
             "SOURCE_DIGEST_MISMATCH_" + tag.decode())
     return raw
@@ -204,6 +211,59 @@ def decode_trend(raw: bytes, source: str) -> dict:
     return {"period_min": raw[7], "now": uint32(raw, 12), "pushed": uint32(raw, 16),
             "partial_ticks": uint32(raw, 20), "partial": entry(24),
             "entries": [entry(36 + 12 * i) for i in range(count)]}
+
+V43_FIELDS = ("sreq_admitted", "mt_entered", "mt_exited", "uart_submit_ok",
+              "uart_submit_failed", "uart_tx_complete", "uart_tx_failed", "uart_tx_short",
+              "flags", "rx_bytes", "first_fault_kind", "first_fault_status",
+              "first_fault_expected", "first_fault_actual", "first_fault_flags",
+              "first_fault_tick", "first_fault_command", "npi_wakes", "startup_state",
+              "tick_period_us")
+NWK_STORM_BITS = ("RTG_TIMER_EVENT", "NWK_DATABUF_SEND", "NWK_BCAST_TIMER_EVT",
+                  "NWK_BROADCAST_MSG_EVT")
+
+def decode_e6(raw: bytes, source: str) -> dict:
+    """V52 B1E6: NPI->MT->UART progress (B4_V43), OSAL timers, live dispatch.
+
+    Answered by the NPI owner, so it stays readable while a Stack handler
+    never returns. Evidence only, never acceptance.
+    """
+    require(pipeline_evidence_supported(source), "PIPELINE_EVIDENCE_UNSUPPORTED_SOURCE")
+    checked(raw, b"B1E6", 248, source)
+    flags, current = raw[6], raw[200]
+    require(raw[7] == 0 and not flags & ~3 and bool(flags & 1) == (raw[134] != 0xFF) and
+            bool(flags & 2) == (current != 0) and
+            (current or (raw[201] == 0 and not any(raw[204:216]))),
+            "PIPELINE_EVIDENCE_SCHEMA_INVALID")
+    v43 = {name: uint32(raw, 16 + 4 * i) for i, name in enumerate(V43_FIELDS)}
+    v43["first_fault_status"] = int.from_bytes(raw[60:64], "little", signed=True)
+    v43["npi_tx_active"] = bool(v43["flags"] & 1)
+    v43["transport_unavailable"] = bool(v43["flags"] & 2)
+    v43["mt_active"] = bool(v43["flags"] & 4)
+    v43["last_command"] = v43["flags"] >> 16
+    t = 96
+    timers = {"one_shot_starts": uint32(raw, t), "reload_starts": uint32(raw, t + 4),
+              "restarts": uint32(raw, t + 8), "expiries": uint32(raw, t + 12),
+              "create_failures": uint32(raw, t + 16), "cleanups": uint32(raw, t + 20),
+              "freed": uint32(raw, t + 24), "deferred": uint16(raw, t + 28),
+              "deferred_max": uint16(raw, t + 30), "freed_max": uint16(raw, t + 32),
+              "active": uint16(raw, t + 34), "active_max": uint16(raw, t + 36),
+              "probe_task": None if raw[t + 38] == 0xFF else raw[t + 38],
+              "last_failure_task": None if raw[t + 39] == 0xFF else raw[t + 39],
+              "nwk_bit_starts": {bit: uint16(raw, t + 40 + 2 * bit) for bit in range(16)
+                                 if uint16(raw, t + 40 + 2 * bit)},
+              "nwk_bit_min_timeout_ms": {bit: uint16(raw, t + 72 + 2 * bit) for bit in range(16)
+                                         if uint16(raw, t + 40 + 2 * bit)}}
+    inflight = {"service": current - 1 if current else None, "nv_ops": raw[201],
+                "input": uint32(raw, 204), "age_ticks": uint32(raw, 208),
+                "nv_ticks": uint32(raw, 212)}
+    return {"now": uint32(raw, 12), "tick_wraps": raw[202], "ready_epoch": raw[203],
+            "epochs": {"onset": raw[244], "first_long": raw[245], "heap_low": raw[246],
+                       "settle": raw[247]},
+            "npi_mt_uart": v43, "timers": timers, "inflight": inflight,
+            "open_window": {"busy_ticks": uint32(raw, 216), "elapsed_ticks": uint32(raw, 220),
+                            "dispatches": uint32(raw, 224)},
+            "nwk_dispatch_bits": {name: uint32(raw, 228 + 4 * i)
+                                  for i, name in enumerate(NWK_STORM_BITS)}}
 
 def onset_summary(e3: dict, tick_period_us: int) -> dict:
     """Human-scale view of a decoded B1E3 (needs the B1E2 tick period)."""

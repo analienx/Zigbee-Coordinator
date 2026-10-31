@@ -180,7 +180,7 @@ def runtime_priority_qualification(c):
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                       '66ed700c2818c7a0963dad9160d55109009bbaac',
                       '250441cd17c55e25c78d97e041f056574355ade7',
-                      '2b3d737bbd447215e1c10ddbc288be649c55e1b5'): return None
+                      'a70ae24ff45e708e13969cd341c9ecb494d1570f'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -755,7 +755,7 @@ async def deploy(package, pin, ha):
             '66ed700c2818c7a0963dad9160d55109009bbaac',
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
             '250441cd17c55e25c78d97e041f056574355ade7',
-            '2b3d737bbd447215e1c10ddbc288be649c55e1b5') else 0x30000
+            'a70ae24ff45e708e13969cd341c9ecb494d1570f') else 0x30000
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
@@ -881,6 +881,16 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
         need(onset['nv_hooked'] and not onset['ready'] and onset['windows'] == 0 and
              onset['onset'] is None and onset['first_long'] is None,
              'STARTUP_ONSET_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q8, decode_e6, pipeline_evidence_supported
+    if pipeline_evidence_supported(source):
+        # V52 B1E6: the NWK timer probe is registered in stackInit, and no
+        # OSAL timer allocation has failed before the one startup request.
+        raw = znp.request(1, 241, Q8, deadline=deadline)
+        evidence('B1E6', raw, dict(znp.history[-1]))
+        pipeline = decode_e6(raw, source)
+        need(pipeline['timers']['probe_task'] is not None and
+             pipeline['timers']['create_failures'] == 0,
+             'STARTUP_PIPELINE_EVIDENCE_NOT_PRISTINE')
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')

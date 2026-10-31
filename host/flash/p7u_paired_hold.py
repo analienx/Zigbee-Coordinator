@@ -126,7 +126,7 @@ def verified_pair_package(ns,plan_pin):
             '66ed700c2818c7a0963dad9160d55109009bbaac',
         '250441cd17c55e25c78d97e041f056574355ade7':
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
-        '2b3d737bbd447215e1c10ddbc288be649c55e1b5':
+        'a70ae24ff45e708e13969cd341c9ecb494d1570f':
             '250441cd17c55e25c78d97e041f056574355ade7',
     }
     exact_instrumented=(ns['SOURCE'] in instrumented_predecessors and
