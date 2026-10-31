@@ -124,6 +124,12 @@ static uint32_t ev[NSERV];
 static uint32_t *ev_ptr[NSERV];
 static uint32_t **pTasksEvents = ev_ptr;
 #define zdAppServiceEvents ev[5]
+#define nwkServiceEvents ev[2]
+#define RTG_TIMER_EVENT 0x0010u
+#define NWK_DATABUF_SEND 0x0020u
+#define NWK_BCAST_TIMER_EVT 0x0040u
+#define NWK_BROADCAST_MSG_EVT 0x2000u
+static unsigned cleanup_calls;
 static const uint8_t zstackTasksCnt = NSERV;
 /* nvintf.h / zstackconfig.h / zd_app.h shapes used by the V51 block. */
 typedef struct { uint8_t systemID; uint16_t itemID; uint16_t subID; } NVINTF_itemID_t;
@@ -179,6 +185,7 @@ void OsalPort_heapGetStats(B4_V51_HeapStats_t *stats)
     assert(cs_depth == 0u); /* the heap walk takes its own lock, never inside ours */
     stats->totalSize = 90000u; stats->totalFreeSize = heapmgrMemFreeTotal; stats->largestFreeSize = 1234u;
 }
+void OsalPortTimers_cleanUpTimers(void) { assert(cs_depth == 0u); ++cleanup_calls; }
 static void set_event(unsigned s, uint32_t bits) { ev[s] |= bits; Semaphore_post(stackSemHandle); }
 static uint32_t handle(uint8_t s, uint32_t events)
 {
@@ -223,6 +230,8 @@ static void reset_all(void)
     B4_V50_MacInd = B4_V50_MacEvents = 0u; B4_V50_MacReqLast = B4_V50_MacCnfLast = 0u;
     memset(&B4_V51, 0, sizeof(B4_V51));
     memset(B4_V51_Trend, 0, sizeof(B4_V51_Trend));
+    memset(B4_V52_NwkBits, 0, sizeof(B4_V52_NwkBits));
+    B4_V52_LastNow = 0u; B4_V52_Wraps = 0u; cleanup_calls = 0u;
     for (i = 0; i < NSERV; ++i) { extra[i] = 0u; heap_step[i] = 0u; nv_in[i] = 0u; }
     devState = DEV_HOLD; heapmgrMemFreeTotal = 50000u; nv_cost = 0u; nv_status = 0u;
 }
@@ -248,6 +257,10 @@ int main(void)
     assert(B4_V50_Service[2].longest == 1300u && (B4_V50_Service[2].inputs & 0x2070u) == 0x2070u);
     assert(B4_V50_Service[3].dispatches == 1u && B4_V50_Service[5].inputs == 0x10u);
     assert(B4_V50_Busy == 201u * 1300u + 20u);
+    /* V52: expired OSAL timers are freed after EVERY dispatch, never only
+     * when the last service (ZStack, timer cleanup) finally gets a turn. */
+    assert(cleanup_calls == n_order && n_order == 203u);
+    for (j = 0u; j < 4u; ++j) assert(B4_V52_NwkBits[j] == 201u);
     /* B1E2 layout from the same run, plus MAC counters. */
     B4_V50_MacDataReqEnter(); B4_V50_MacDataReqEnter(); B4_V50_MacDataReqEnter();
     B4_V50_MacDataReqDone(0u); B4_V50_MacDataReqDone(0xE1u);
@@ -431,8 +444,39 @@ int main(void)
     assert(get16(out + 44) == 3125u - 12u && get16(out + 46) == 78u);
     assert(get32(out + 48) == 0u);
     assert(cs_depth == 0u && credits == 0);
+    /* 10. V52: a handler that has not returned is visible LIVE (service,
+     * input, age, NV inside it); no dispatch-end latch can report it. */
+    reset_all();
+    B4_V50_DispatchBegin(2u, 0x2070u); now_tick += 700000u;
+    {
+        NVINTF_itemID_t id = {1u, 2u, 3u};
+        uint8_t row[2] = {0u, 0u};
+        current_task = stackTaskHndl; nv_cost = 250u; nv_status = 0u;
+        assert(stack_cfg.nvFps.updateItem(id, 2u, row) == 0u);
+        current_task = &npi_task;
+    }
+    memset(out, 0xA5, sizeof(out));
+    B4_V52_InflightSnapshot(out);
+    assert(out[200] == 3u && out[201] == 1u && get32(out + 204) == 0x2070u);
+    assert(get32(out + 208) == 700250u && get32(out + 212) == 250u && get32(out + 12) == now_tick);
+    assert(get32(out + 228) == 1u && get32(out + 228 + 4 * 2) == 1u && get32(out + 228 + 4 * 3) == 1u);
+    assert((B4_V51.flags & (B4_V51_ONSET | B4_V51_LONG)) == 0u && B4_V51.bootWorst.ticks == 0u);
+    B4_V50_DispatchEnd(2u, 0u);
+    B4_V52_InflightSnapshot(out);
+    assert(out[200] == 0u && get32(out + 204) == 0u && get32(out + 208) == 0u && get32(out + 212) == 0u);
+    assert(B4_V51.bootWorst.service == 3u && B4_V51.bootWorst.ticks == 700250u);
+    /* Busy ticks are modular (deltas stay valid); tick wraps are counted
+     * before the latches of the same dispatch, which keep the epoch. */
+    reset_all();
+    B4_V50_Busy = 0xFFFFFF00u; B4_V52_LastNow = 0xFFFFFFF0u; now_tick = 100u;
+    devState = DEV_ZB_COORD; extra[4] = 300u; set_event(4u, 1u); run_loop(); extra[4] = 0u;
+    assert(B4_V50_Busy == 54u && B4_V52_Wraps == 1u && B4_V51.readyEpoch == 1u);
+    B4_V52_InflightSnapshot(out);
+    assert(out[202] == 1u && out[203] == 1u);
+    assert(cs_depth == 0u && credits == 0);
     printf("V50_STACK_AGING_EVIDENCE_REAL_C_PASS\n");
     printf("V51_ONSET_RECORD_NV_TIMING_TREND_REAL_C_PASS\n");
+    printf("V52_TIMER_CLEANUP_INFLIGHT_WRAP_REAL_C_PASS\n");
     return 0;
 }
 """
@@ -461,7 +505,7 @@ STACK_MUTANTS = {
     "skip_never_incremented": (
         "                ++B4_V50_Skipped[j];", "                (void)B4_V50_Skipped[j];"),
     "service_busy_not_accumulated": (
-        "        B4_V50_Sat(&B4_V50_Service[idx].busy, spent);", "        (void)spent;"),
+        "        B4_V50_Service[idx].busy += spent; /* B4_V52: modular */", "        (void)spent;"),
     "returned_bits_not_counted": (
         "    if (returned != 0u) B4_V50_Sat(&B4_V50_Returned, 1u);", "    (void)returned;"),
     "empty_selection_not_counted": (
@@ -522,6 +566,17 @@ STACK_MUTANTS = {
         "    t = B4_V51_Trend[level != 0u ? 1u : 0u];", "    t = B4_V51_Trend[0u];"),
     "trend_window_max_dispatch_lost": (
         "    if (spent > v->winMaxDispatch) v->winMaxDispatch = spent;\n", ""),
+    "timer_cleanup_not_per_dispatch": (
+        "        OsalPortTimers_cleanUpTimers(); /* B4_V52: never wait for service 9 */\n", ""),
+    "busy_saturates_again": (
+        "    B4_V50_Busy += spent; /* B4_V52: modular; every consumer takes deltas */",
+        "    B4_V50_Sat(&B4_V50_Busy, spent);"),
+    "tick_wrap_not_counted": (
+        "    if (now < B4_V52_LastNow) ++B4_V52_Wraps;\n", ""),
+    "inflight_input_dropped": (
+        "    B4_V50_Put32(page + 204u, current ? input : 0u);", "    B4_V50_Put32(page + 204u, current ? 0u : input);"),
+    "nwk_storm_bit_not_counted": (
+        "        if (events & NWK_BCAST_TIMER_EVT) ++B4_V52_NwkBits[2];\n", ""),
     "b1e3_service_nv_offset_shifted": (
         "        B4_V50_Put32(out + 200u + 4u * j, s.svcNv[j]);",
         "        B4_V50_Put32(out + 204u + 4u * j, s.svcNv[j]);"),
@@ -544,6 +599,7 @@ static void MT_BuildAndSendZToolResponse(uint8_t c0, uint8_t c1, uint8_t len, ui
 static void OsalPort_msgDeallocate(uint8_t *p) { (void)p; ++deallocs; }
 static void OsalPort_free(void *p) { (void)p; ++frees; }
 static volatile uint8_t B4_V47_Armed = 1u;
+static void B4_V43_Snapshot(uint8_t *out) { memset(out, 0x43, 80u); }
 static uint32_t B4_V47_StartTick = 77u;
 """
 
@@ -558,6 +614,8 @@ void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level)
     ++trends; trend_level = level; memset(out, 0, B4_V50_EVIDENCE_SIZE);
     memcpy(out, level ? "B1E5" : "B1E4", 4); out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE;
 }
+void B4_V52_TimerSnapshot(uint8_t *out) { memset(out, 0x52, 104u); out[38] = 2u; }
+void B4_V52_InflightSnapshot(uint8_t *page) { page[12] = 0x77u; page[200] = 3u; memset(page + 201, 0x61, 47u); }
 void B4_V51_OnsetSnapshot(uint8_t *out)
 {
     ++onsets; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E3", 4);
@@ -576,6 +634,7 @@ int main(void)
     static const uint8_t digest[4] = { DIGEST };
     uint8_t ok[16] = {8u, 0x21u, 0xF1u, 'B', '1', 'Q', '1', 1u, 8u, 4u, 0u};
     uint8_t frame[16];
+    unsigned i;
     clear(); assert(consume(ok) == 0 && snaps == 1u && onsets == 0u && replies == 1u && deallocs == 1u && frees == 1u);
     assert(last_c0 == 0x61u && last_c1 == 0xF1u && last_len == 248u && !memcmp(last_payload, "B1E2", 4));
     assert(!memcmp(last_payload + 8, digest, 4) && armed_seen == 1u && tick_seen == 77u);
@@ -594,7 +653,16 @@ int main(void)
     assert(last_c0 == 0x61u && last_len == 248u && !memcmp(last_payload, "B1E4", 4) && !memcmp(last_payload + 8, digest, 4));
     memcpy(frame, ok, 16); frame[10] = 3u;
     clear(); assert(consume(frame) == 0 && trends == 1u && trend_level == 1u && !memcmp(last_payload, "B1E5", 4));
+    /* Page 4 is the V52 B1E6 NPI/MT/UART, OSAL timer and in-flight page. */
     memcpy(frame, ok, 16); frame[10] = 4u;
+    clear(); assert(consume(frame) == 0 && snaps == 0u && onsets == 0u && trends == 0u && replies == 1u);
+    assert(last_c0 == 0x61u && last_len == 248u && !memcmp(last_payload, "B1E6", 4) && last_payload[4] == 1u);
+    assert(last_payload[5] == 248u && last_payload[6] == 3u && last_payload[7] == 0u);
+    assert(!memcmp(last_payload + 8, digest, 4) && last_payload[12] == 0x77u && last_payload[200] == 3u);
+    for (i = 16u; i < 96u; ++i) assert(last_payload[i] == 0x43u);
+    for (i = 96u; i < 200u; ++i) assert(last_payload[i] == (i == 134u ? 2u : 0x52u));
+    for (i = 201u; i < 248u; ++i) assert(last_payload[i] == 0x61u);
+    memcpy(frame, ok, 16); frame[10] = 5u;
     clear(); assert(consume(frame) == 0 && snaps == 0u && onsets == 0u && trends == 0u && replies == 1u && last_c0 == 0x60u);
     /* AREQ form is dropped without any reply, like B1E1. */
     memcpy(frame, ok, 16); frame[1] = 0x41u;
@@ -603,7 +671,7 @@ int main(void)
     memcpy(frame, ok, 16); frame[9] = 3u; clear(); assert(consume(frame) == 99 && replies == 0u && deallocs == 0u);
     memcpy(frame, ok, 16); frame[9] = 2u; clear(); assert(consume(frame) == 99 && replies == 0u);
     memcpy(frame, ok, 16); frame[0] = 9u; clear(); assert(consume(frame) == 99 && replies == 0u);
-    printf("V50_B1E2_B1E3_B1E4_B1E5_NPI_QUERY_REAL_C_PASS\n");
+    printf("V50_B1E2_B1E3_B1E4_B1E5_B1E6_NPI_QUERY_REAL_C_PASS\n");
     return 0;
 }
 """
@@ -616,8 +684,10 @@ QUERY_MUTANTS = {
                      "pReq[2] == B1_STATUS_COMMAND && pReq[9] == 3u)"),
     "length_unchecked": ("    if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&",
                          "    if ((pReq[1] & 0x1fu) == 1u &&"),
-    "b1e3_page_rejected": ("            pReq[10] <= 3u)", "            pReq[10] == 0u)"),
-    "trend_pages_rejected": ("            pReq[10] <= 3u)", "            pReq[10] <= 1u)"),
+    "b1e3_page_rejected": ("            pReq[10] <= 4u)", "            pReq[10] == 0u)"),
+    "trend_pages_rejected": ("            pReq[10] <= 4u)", "            pReq[10] <= 1u)"),
+    "b1e6_page_rejected": ("            pReq[10] <= 4u)", "            pReq[10] <= 3u)"),
+    "b1e6_progress_offset_shifted": ("    B4_V43_Snapshot(out + 16u);", "    B4_V43_Snapshot(out + 20u);"),
     "trend_level_offset": ("(uint8_t)(pReq[10] - 2u)", "(uint8_t)(pReq[10] - 1u)"),
     "pages_swapped": ("            if (pReq[10] == 0u)\n", "            if (pReq[10] == 1u)\n"),
 }
@@ -736,6 +806,7 @@ def exercise(sdk, source_sha):
         "compiled_actual_b1e3_onset_record": True,
         "compiled_actual_nv_timing_wrappers": True,
         "compiled_actual_trend_rings": True,
+        "compiled_actual_b1e6_inflight_and_timer_cleanup": True,
         "negative_mutants_rejected": rejected,
         "hosted_model_only": True,
         "hardware_state9_proven": False,

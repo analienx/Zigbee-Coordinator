@@ -51,7 +51,9 @@ class V50StackService(unittest.TestCase):
 
     def test_service_floor_aging_evidence_and_mac_counters(self):
         receipt = apply(self.root, SHA)
-        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v2")
+        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v3")
+        self.assertEqual(receipt["b1e6_query"], "B1Q1 v1/8 op4 page4")
+        self.assertEqual(receipt["expired_timer_free"], "STACK_TASK_AFTER_EVERY_DISPATCH")
         self.assertEqual(receipt["b1e3_query"], "B1Q1 v1/8 op4 page1")
         self.assertEqual((receipt["onset_window_ms"], receipt["onset_saturated_pct"],
                           receipt["onset_calm_pct"], receipt["long_dispatch_ms"]),
@@ -83,7 +85,15 @@ class V50StackService(unittest.TestCase):
         self.assertIn("B4_V51_DispatchEnd(idx, returned, now, spent);", stack)
         self.assertIn("devState == DEV_ZB_COORD", stack)
         self.assertIn("B4_V51_OnsetSnapshot(stackEvidence);", task)
-        self.assertIn("pReq[10] <= 3u)", task)
+        self.assertIn("pReq[10] <= 4u)", task)
+        self.assertIn("B4_V52_PipelineSnapshot(stackEvidence);", task)
+        # V52: expired OSAL timers are freed after every dispatch and NWK's
+        # timer starts are attributed per event bit.
+        self.assertLess(stack.index("B4_V50_DispatchEnd(idx, events);"),
+                        stack.index("OsalPortTimers_cleanUpTimers(); /* B4_V52"))
+        self.assertLess(stack.index("    nwk_init( tmpServiceId );"),
+                        stack.index("    B4_V52_TimerProbe( tmpServiceId );"))
+        self.assertNotIn("B4_V50_Sat(&B4_V50_Busy", stack)
         self.assertEqual(stack.count("Semaphore_post(stackSemHandle);"), 1)
         self.assertLess(stack.index("B4_V50_DispatchBegin(idx, events);"),
                         stack.index("events = (zstackTasksArr[idx])( 0U, events );"))
@@ -123,10 +133,39 @@ class V50StackService(unittest.TestCase):
         self.assertTrue(result["compiled_actual_b1e2_query"])
         self.assertTrue(result["compiled_actual_b1e3_onset_record"])
         self.assertTrue(result["compiled_actual_nv_timing_wrappers"])
-        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 43)
+        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 50)
+        self.assertTrue(result["compiled_actual_b1e6_inflight_and_timer_cleanup"])
+        self.assertIn("stack:timer_cleanup_not_per_dispatch", result["negative_mutants_rejected"])
         self.assertIn("stack:nv_second_install_wraps_wrappers", result["negative_mutants_rejected"])
         self.assertIn("query:b1e3_page_rejected", result["negative_mutants_rejected"])
         self.assertFalse(result["nwk_storm_root_cause_proven"])
+
+    def test_v52_osal_timers_pristine_bound_compiled_and_mutants_rejected(self):
+        from r4_v52_osal_timers import (apply as apply_timers, TIMERS, PRISTINE_SHA256, MARKER as TM,
+                                        CB_APPEND)
+        path = self.root / TIMERS
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("drifted")
+        with self.assertRaisesRegex(ValueError, "V52_TIMERS_REQUIRES_PRISTINE_TI_3615AD5D"):
+            apply_timers(self.root)
+        pristine = ROOT / "tests/fixtures/ti_3615ad5d_osal_port_timers.c"
+        path.write_bytes(pristine.read_bytes())
+        import hashlib
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), PRISTINE_SHA256)
+        receipt = apply_timers(self.root)
+        text = path.read_text()
+        self.assertEqual(text.count(TM), 1)
+        self.assertNotIn(CB_APPEND, text)
+        self.assertEqual(receipt["swi_deferred_append"], "O1_PREPEND")
+        self.assertFalse(receipt["timer_timing_or_event_semantics_changed"])
+        with self.assertRaisesRegex(ValueError, "V52_TIMERS_ALREADY_APPLIED"):
+            apply_timers(self.root)
+        if shutil.which("cc") is None and shutil.which("gcc") is None:
+            raise unittest.SkipTest("hosted C compiler required (GitHub-hosted CI)")
+        from r4_v52_osal_timers_harness import exercise as exercise_timers
+        result = exercise_timers(self.root)
+        self.assertEqual(result["status"], "PASS")
+        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 10)
 
     def test_composite_binds_v50_instead_of_v49(self):
         composite = (ROOT / "tools/r4_b0_b4_composite_stage.py").read_text()
@@ -135,6 +174,9 @@ class V50StackService(unittest.TestCase):
         self.assertIn("exercise_v50(sdk,source_sha)", composite)
         self.assertIn('b1["modified_zmac_sha256"]=afterhash[ZMAC]', composite)
         self.assertIn("V50_FINAL_SOURCE_NOT_BOUND_", composite)
+        self.assertIn("apply_v52_timers(sdk)", composite)
+        self.assertIn("exercise_v52_timers(sdk)", composite)
+        self.assertIn('"modified_osal_port_timers_sha256"', composite)
 
 
 if __name__ == "__main__":

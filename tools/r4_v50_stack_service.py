@@ -30,6 +30,13 @@ This stage changes no network/NV/security state and adds no UART owner:
   5. V51 B1E4/B1E5 (op4 page2/3) post-READY trend rings, 17 x 5 min and
      17 x 60 min: Stack busy, top service, longest dispatch, NV time, heap
      low, MAC requests and confirm failures per bucket.
+  6. V52: the Stack task frees expired OSAL timers after EVERY dispatch
+     (r4_v52_osal_timers.py: TI deferred them to the last, first-starved
+     service); B1E2 busy ticks are modular (deltas stay valid past 11.9 h
+     of busy time); every latch records its 32-bit tick-wrap epoch; and B1E6
+     (op4 page4) gives the NPI->MT->UART progress counters, OSAL timer
+     evidence and the LIVE in-flight dispatch, which no dispatch-end latch
+     can report when a handler never returns.
 """
 import hashlib
 import re
@@ -62,6 +69,21 @@ NPI_DECLARATIONS = r"""/* B4_V50_STACK_SERVICE_EVIDENCE: B1E2 op4 page0 and B1E3
 extern void B4_V50_StackSnapshot(uint8_t *out, uint8_t npiArmed, uint32_t npiArmTick);
 extern void B4_V51_OnsetSnapshot(uint8_t *out);
 extern void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level);
+extern void B4_V52_TimerSnapshot(uint8_t *out);
+extern void B4_V52_InflightSnapshot(uint8_t *page);
+/* B4_V52 B1E6: 16..95 B4_V43 NPI->MT->UART progress, 96..199 OSAL timers,
+ * 200..247 live in-flight Stack dispatch (owners write their own ranges). */
+static void B4_V52_PipelineSnapshot(uint8_t *out)
+{
+    uint16_t j;
+    for (j = 0u; j < B4_V50_EVIDENCE_SIZE; ++j) out[j] = 0u;
+    out[0] = 'B'; out[1] = '1'; out[2] = 'E'; out[3] = '6';
+    out[4] = 1u; out[5] = (uint8_t)B4_V50_EVIDENCE_SIZE;
+    B4_V43_Snapshot(out + 16u);
+    B4_V52_TimerSnapshot(out + 96u);
+    B4_V52_InflightSnapshot(out);
+    out[6] = (uint8_t)((out[134] != 0xFFu ? 1u : 0u) | (out[200] != 0u ? 2u : 0u));
+}
 static const uint8_t B4_V50_BuildDigest[4] = { @DIGEST@ };
 
 """
@@ -100,7 +122,7 @@ QUERY_ANCHOR = """    B4_V43_Request(0u, pReq);
 
 QUERY = """    B4_V43_Request(0u, pReq);
     /* B4_V50_STACK_SERVICE_EVIDENCE_QUERY: op4 page0 -> B1E2, page1 -> B1E3,
-     * page2/3 -> B1E4/B1E5 trend rings on this NPI owner. Answered here,
+     * page2/3 -> B1E4/B1E5 trend rings, page4 -> B1E6 on this NPI owner. Answered here,
      * never by the Stack task whose CPU use it reports. */
     if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&
         pReq[2] == B1_STATUS_COMMAND && pReq[9] == 4u)
@@ -108,12 +130,14 @@ QUERY = """    B4_V43_Request(0u, pReq);
         static uint8_t stackEvidence[B4_V50_EVIDENCE_SIZE]; /* static: bounded NPI stack */
         static const uint8_t prefix[6] = { 'B', '1', 'Q', '1', 1u, 8u };
         if (pReq[1] == 0x21u && memcmp(pReq + 3, prefix, sizeof(prefix)) == 0 &&
-            pReq[10] <= 3u)
+            pReq[10] <= 4u)
         {
             if (pReq[10] == 0u)
                 B4_V50_StackSnapshot(stackEvidence, B4_V47_Armed, B4_V47_StartTick);
             else if (pReq[10] == 1u)
                 B4_V51_OnsetSnapshot(stackEvidence);
+            else if (pReq[10] == 4u)
+                B4_V52_PipelineSnapshot(stackEvidence);
             else
                 B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));
             memcpy(stackEvidence + 8, B4_V50_BuildDigest, sizeof(B4_V50_BuildDigest));
@@ -159,6 +183,13 @@ static uint8_t B4_V50_Current, B4_V50_MaxSkip;
 static uint32_t B4_V50_MacReq, B4_V50_MacReqOk, B4_V50_MacCnf, B4_V50_MacCnfFail;
 static uint32_t B4_V50_MacInd, B4_V50_MacEvents;
 static uint8_t B4_V50_MacReqLast, B4_V50_MacCnfLast;
+/* B4_V52: 10 us ticks wrap every ~11.9 h, inside an hours-long collapse.
+ * The Stack task counts wraps at each dispatch end; latches keep their
+ * epoch. NWK storm bits (nwk.h) present at dispatch, modular counts. */
+static uint32_t B4_V52_LastNow, B4_V52_NwkBits[4];
+static uint8_t B4_V52_Wraps;
+extern void OsalPortTimers_cleanUpTimers(void);
+extern void B4_V52_TimerProbe(uint8_t taskId);
 
 static void B4_V50_Sat(uint32_t *value, uint32_t add)
 {
@@ -253,6 +284,7 @@ typedef struct
 typedef struct
 {
     uint8_t flags, dispReady, dispNvOps, nvLongestKind, nvLongestSvc, nvLastFail, nvLastFailKind;
+    uint8_t readyEpoch, settleEpoch, onsetEpoch, longEpoch, heapEpoch;
     uint16_t consec, maxConsec, nvDeletes, nvCompacts, nvFails;
     uint8_t winHeapSeen;
     uint32_t winStart, winBusy, winDispatches, winNv, winMacReq, winMacCnfFail, winMacInd;
@@ -561,6 +593,7 @@ static void B4_V51_WindowRoll(uint32_t now)
         {
             v->flags |= B4_V51_SETTLED;
             v->settleTick = now;
+            v->settleEpoch = B4_V52_Wraps;
         }
         if (sat && (v->flags & B4_V51_ONSET) == 0u)
         {
@@ -569,6 +602,7 @@ static void B4_V51_WindowRoll(uint32_t now)
             if ((v->flags & B4_V51_SETTLED) != 0u) v->flags |= B4_V51_AFTER_CALM;
             v->flags |= B4_V51_ONSET;
             v->onset.tick = now;
+            v->onsetEpoch = B4_V52_Wraps;
             v->onset.busy = v->winBusy;
             v->onset.elapsed = elapsed;
             v->onset.dispatches = v->winDispatches;
@@ -598,6 +632,7 @@ static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uin
         {
             v->heapLow = heapFree;
             v->heapLowTick = now;
+            v->heapEpoch = B4_V52_Wraps;
             v->flags |= B4_V51_HEAP;
         }
         if (v->winHeapSeen == 0u || heapFree < v->winHeapLow)
@@ -609,6 +644,7 @@ static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uin
         if ((v->flags & B4_V51_LONG) == 0u && spent >= B4_V51_MsTicks(B4_V51_LONG_MS))
         {
             B4_V51_Note(&v->firstLong, idx, now, spent, returned);
+            v->longEpoch = B4_V52_Wraps;
             v->flags |= B4_V51_LONG;
         }
     }
@@ -627,6 +663,7 @@ static void B4_V51_DispatchEnd(uint8_t idx, uint32_t returned, uint32_t now, uin
         /* Post-READY windows contain post-READY time only. */
         v->flags |= B4_V51_READY;
         v->readyTick = now;
+        v->readyEpoch = B4_V52_Wraps;
         B4_V51_Trend[0].start = now;
         B4_V51_Trend[1].start = now;
         B4_V51_WindowReset(now);
@@ -650,6 +687,13 @@ static void B4_V50_DispatchBegin(uint8_t idx, uint32_t events)
     B4_V51.dispNvOps = 0u;
     B4_V51.dispInput = events;
     B4_V51.dispReady = (uint8_t)(B4_V51.flags & B4_V51_READY);
+    if (pTasksEvents[idx] == &nwkServiceEvents)
+    {
+        if (events & RTG_TIMER_EVENT) ++B4_V52_NwkBits[0];
+        if (events & NWK_DATABUF_SEND) ++B4_V52_NwkBits[1];
+        if (events & NWK_BCAST_TIMER_EVT) ++B4_V52_NwkBits[2];
+        if (events & NWK_BROADCAST_MSG_EVT) ++B4_V52_NwkBits[3];
+    }
     OsalPort_leaveCS(key);
 }
 
@@ -658,10 +702,12 @@ static void B4_V50_DispatchEnd(uint8_t idx, uint32_t returned)
     uint32_t key = OsalPort_enterCS();
     uint32_t now = Clock_getTicks();
     uint32_t spent = now - B4_V50_Since;
-    B4_V50_Sat(&B4_V50_Busy, spent);
+    if (now < B4_V52_LastNow) ++B4_V52_Wraps;
+    B4_V52_LastNow = now;
+    B4_V50_Busy += spent; /* B4_V52: modular; every consumer takes deltas */
     if (idx < B4_V50_MAX_SERVICES)
     {
-        B4_V50_Sat(&B4_V50_Service[idx].busy, spent);
+        B4_V50_Service[idx].busy += spent; /* B4_V52: modular */
         if (spent > B4_V50_Service[idx].longest) B4_V50_Service[idx].longest = spent;
     }
     if (returned != 0u) B4_V50_Sat(&B4_V50_Returned, 1u);
@@ -921,6 +967,46 @@ __attribute__((noinline)) void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level)
                         &t.ring[(t.head + B4_V51_TREND_ENTRIES - t.count + i) %
                                 B4_V51_TREND_ENTRIES]);
 }
+
+/* NPI owner context only: B1E6 now (12..15) and the live dispatch
+ * (200..247). It shows a handler that has NOT returned, which no
+ * dispatch-end latch (B1E3 windows, long dispatches) can ever finalize. */
+__attribute__((noinline)) void B4_V52_InflightSnapshot(uint8_t *page)
+{
+    uint32_t key, now, since, input, nv, winStart, winBusy, winDispatches, bits[4];
+    uint8_t current, nvOps, wraps, epochs[5], j;
+    key = OsalPort_enterCS();
+    now = Clock_getTicks();
+    current = B4_V50_Current;
+    since = B4_V50_Since;
+    input = B4_V51.dispInput;
+    nv = B4_V51.dispNv;
+    nvOps = B4_V51.dispNvOps;
+    winStart = B4_V51.winStart;
+    winBusy = B4_V51.winBusy;
+    winDispatches = B4_V51.winDispatches;
+    wraps = (uint8_t)(B4_V52_Wraps + (now < B4_V52_LastNow ? 1u : 0u));
+    epochs[0] = B4_V51.readyEpoch;
+    epochs[1] = B4_V51.onsetEpoch;
+    epochs[2] = B4_V51.longEpoch;
+    epochs[3] = B4_V51.heapEpoch;
+    epochs[4] = B4_V51.settleEpoch;
+    for (j = 0u; j < 4u; ++j) bits[j] = B4_V52_NwkBits[j];
+    OsalPort_leaveCS(key);
+    B4_V50_Put32(page + 12u, now);
+    page[200] = current;
+    page[201] = current ? nvOps : 0u;
+    page[202] = wraps;
+    page[203] = epochs[0];
+    B4_V50_Put32(page + 204u, current ? input : 0u);
+    B4_V50_Put32(page + 208u, current ? now - since : 0u);
+    B4_V50_Put32(page + 212u, current ? nv : 0u);
+    B4_V50_Put32(page + 216u, winBusy);
+    B4_V50_Put32(page + 220u, now - winStart);
+    B4_V50_Put32(page + 224u, winDispatches);
+    for (j = 0u; j < 4u; ++j) B4_V50_Put32(page + 228u + 4u * j, bits[j]);
+    for (j = 1u; j < 5u; ++j) page[243u + j] = epochs[j];
+}
 /* B4_V50_END_STACK_SERVICE_AGING_AND_EVIDENCE */
 """
 
@@ -956,7 +1042,12 @@ V50_DISPATCH = """        B4_V6_StackPulse((uint32_t)idx+1u,0u);
         B4_V50_DispatchBegin(idx, events);
         events = (zstackTasksArr[idx])( 0U, events );
         B4_V50_DispatchEnd(idx, events);
+        OsalPortTimers_cleanUpTimers(); /* B4_V52: never wait for service 9 */
         B4_V6_StackPulse((uint32_t)idx+1u,1u);"""
+
+NWK_INIT = "    nwk_init( tmpServiceId );\n"
+V52_NWK_INIT = ("    nwk_init( tmpServiceId );\n"
+                "    B4_V52_TimerProbe( tmpServiceId ); /* B4_V52: NWK timer evidence */\n")
 
 TASK_ENTRY = """static void stackTaskFxn(UArg a0, UArg a1)
 {
@@ -1009,6 +1100,7 @@ def apply(sdk, source_sha):
     stack = once(stack, V48_ELSE, V50_ELSE, "V50_AGED_SELECTION_AFTER_V48")
     stack = once(stack, DISPATCH, V50_DISPATCH, "V50_DISPATCH_EVIDENCE")
     stack = once(stack, TASK_ENTRY, V51_TASK_ENTRY, "V51_NV_HOOKS_AT_STACK_TASK_ENTRY")
+    stack = once(stack, NWK_INIT, V52_NWK_INIT, "V52_NWK_TIMER_PROBE")
 
     zmac = once(before[ZMAC], ZMAC_DECL, ZMAC_DECL +
                 "\nextern void B4_V50_MacDataReqEnter(void);"
@@ -1044,12 +1136,16 @@ def apply(sdk, source_sha):
                  stack.index("    stackInit();")) or
             task.count("B4_V51_OnsetSnapshot(stackEvidence);") != 1 or
             task.count("B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));") != 1 or
+            task.count("B4_V52_PipelineSnapshot(stackEvidence);") != 1 or
+            stack.count("OsalPortTimers_cleanUpTimers(); /* B4_V52") != 1 or
+            stack.count("B4_V52_TimerProbe( tmpServiceId );") != 1 or
+            "B4_V50_Sat(&B4_V50_Busy" in stack or
             V47_DEBOOST in task or "B4_V47_Armed = 0u;" in task):
         raise ValueError("V50_SOURCE_SCOPE_DRIFT")
     for name in FILES:
         paths[name].write_text(after[name], encoding="utf-8", newline="")
     return {
-        "schema": "p7u-v50-stack-service-v2",
+        "schema": "p7u-v50-stack-service-v3",
         "supersedes_unflashed": "V49_READY_NPI_RETENTION",
         "root_cause_proven": False,
         "npi_priority_after_retained_arm": 6,
@@ -1067,6 +1163,10 @@ def apply(sdk, source_sha):
         "onset_calm_pct": CALM_PCT,
         "long_dispatch_ms": LONG_MS,
         "trend_queries": {"B1E4": "op4 page2 17x5min", "B1E5": "op4 page3 17x60min"},
+        "b1e6_query": "B1Q1 v1/8 op4 page4",
+        "expired_timer_free": "STACK_TASK_AFTER_EVERY_DISPATCH",
+        "busy_ticks": "MODULAR_DELTA_SAFE",
+        "tick_wrap_epochs": True,
         "onset_phase_boundary": "devState == DEV_ZB_COORD",
         "nv_timing": "TRANSPARENT_NVFPS_WRAPPERS_SAME_ARGUMENTS_AND_RESULTS",
         "heap_source": "OSAL_HEAPMGR_TOTAL_FREE_AND_GETSTATS",
