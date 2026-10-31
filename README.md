@@ -8,7 +8,7 @@ This repository is intentionally **hardware-neutral at the top level**. Coordina
 
 | Coordinator ID | Hardware | Zigbee radio / stack | Role |
 |---|---|---|---|
-| `slzb-06p7u` | SMLIGHT SLZB-06P7U | TI CC2652P7 / Z-Stack ZNP | **Primary development/reliability target: R4 (not production-qualified)** |
+| `slzb-06p7u` | SMLIGHT SLZB-06P7U | TI CC2652P7 / Z-Stack ZNP | **Production coordinator on V53 firmware since 31 Oct 2026 (NV read storm fixed; not yet independently qualified). See [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md).** |
 | `mr4u-p10` | SMLIGHT SLZB-MR4U | TI CC2674P10 / Z-Stack | Preserved finalized P10 reference/fallback and historical diagnosis |
 | `sonoff-mg24` | SONOFF Dongle Max / Dongle-M | Silicon Labs EFR32MG24 / Ember | Previous production coordinator, rollback/reference platform and historical firmware experiments |
 | `slzb-06p7` | SMLIGHT SLZB-06P7 | TI P7-class / Z-Stack | Legacy historical entry; do not conflate with the SLZB-06P7U R4 board |
