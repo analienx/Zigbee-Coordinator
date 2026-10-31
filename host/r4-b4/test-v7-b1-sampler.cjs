@@ -12,7 +12,7 @@ const {ZStackAdapter}=mod("adapter/z-stack/adapter/zStackAdapter.js");
 const {Znp}=mod("adapter/z-stack/znp/znp.js");
 const {Frame}=mod("adapter/z-stack/unpi/frame.js");
 const {Subsystem,Type}=mod("adapter/z-stack/unpi/constants.js");
-const TAGS=["B1E2","B1E3","B1E4","B1E5","B1E6"];
+const TAGS=["B1E2","B1E3","B1E4","B1E5","B1E6","B1E7"];
 
 function page(tag,length=248){
  const b=Buffer.alloc(length);b.write(tag,0,"ascii");b[4]=1;b[5]=length&255;return b;
@@ -34,17 +34,17 @@ function link(reply=(p)=>page(TAGS[p])){
  return {znp,owner,frames,lines};
 }
 
-test("V7 slot reads B1E2+B1E6 every time and B1E3+B1E5 every 10th, journaled raw",async()=>{
+test("V7 slot reads B1E2+B1E6+B1E7 every time and B1E3+B1E5 every 10th, journaled raw",async()=>{
  const {owner,frames,lines}=link();
  const first=await owner.p7uB1Sample();
  assert.equal(first.outcome,"SAMPLED");
- assert.deepEqual(frames.map(f=>f.data[7]),[0,4,1,3]);
+ assert.deepEqual(frames.map(f=>f.data[7]),[0,4,5,1,3]);
  for(const f of frames)assert.deepEqual([...f.data.subarray(0,7)],[0x42,0x31,0x51,0x31,1,8,4]);
  const second=await owner.p7uB1Sample();
- assert.deepEqual(frames.slice(4).map(f=>f.data[7]),[0,4]);
+ assert.deepEqual(frames.slice(5).map(f=>f.data[7]),[0,4,5]);
  assert.equal(second.B1E2.slice(0,8),Buffer.from("B1E2").toString("hex"));
  const rows=lines();
- assert.equal(rows.length,2);assert.ok(rows[0].B1E3 && rows[0].B1E5 && rows[1].B1E6);
+ assert.equal(rows.length,2);assert.ok(rows[0].B1E3 && rows[0].B1E5 && rows[1].B1E6 && rows[1].B1E7);
 });
 
 test("V7 never puts a second SREQ in flight: it waits behind production on the same mutex",async()=>{
@@ -59,7 +59,7 @@ test("V7 never puts a second SREQ in flight: it waits behind production on the s
  await ping;
  const record=await sampling;
  assert.equal(record.outcome,"SAMPLED");
- assert.deepEqual(frames.slice(1).map(f=>f.data[7]),[0,4,1,3]);
+ assert.deepEqual(frames.slice(1).map(f=>f.data[7]),[0,4,5,1,3]);
 });
 
 test("V7 overlap and closing are journaled, never reported as zero samples",async()=>{

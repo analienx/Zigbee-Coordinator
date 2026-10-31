@@ -9,7 +9,8 @@ UART owner), so a slot waits its turn. The firmware answers B1Q1 op4 in its
 priority-6 NPI owner, not in the Stack task it reports on.
 
 Default OFF (P7U_B1_SAMPLER=1). Every P7U_B1_SAMPLER_MS (>= 30 s, default
-60 s): B1E2 (Stack/MAC) and B1E6 (NPI->MT->UART, OSAL timers, in-flight);
+60 s): B1E2 (Stack/MAC), B1E6 (NPI->MT->UART, OSAL timers, in-flight) and
+B1E7 (V53 NV read cache; IDs/counts only, an error field on older firmware);
 every 10th slot also B1E3 (onset) and B1E5 (60-minute trend). Raw pages are
 journaled (JSON lines, 8 MiB rotation); nothing is acted upon. A slot that
 cannot start because the previous one is still waiting is journaled as
@@ -36,7 +37,7 @@ PARSE_OLD = """            case ParameterType.BUFFER24: {
             }"""
 PARSE_NEW = """            case ParameterType.BUFFER24: {
                 // B4_V7_B1_EVIDENCE_SAMPLER: a B1Q1 F1 reply is the exact 24-byte
-                // B1S1 or a 248-byte op4 page (B1E2..B1E6). Startup still demands
+                // B1S1 or a 248-byte op4 page (B1E2..B1E7). Startup still demands
                 // exactly 24 bytes and the B1S1 tag before any network request.
                 const remaining = this.getBuffer().length - this.getPosition();
                 if (remaining !== 24 && remaining !== 248) {
@@ -82,8 +83,8 @@ STOP_NEW = """    /** B4_V7_B1_EVIDENCE_SAMPLER: see host/r4-b4/b4_v7_b1_sampler
             record.outcome = "OVERLAP_PREVIOUS_SLOT_STILL_WAITING";
         } else {
             this.p7uB1InFlight = true;
-            const tags = ["B1E2", "B1E3", "B1E4", "B1E5", "B1E6"];
-            const pages = slot % 10 === 1 ? [0, 4, 1, 3] : [0, 4];
+            const tags = ["B1E2", "B1E3", "B1E4", "B1E5", "B1E6", "B1E7"];
+            const pages = slot % 10 === 1 ? [0, 4, 5, 1, 3] : [0, 4, 5];
             try {
                 for (const page of pages) {
                     const tag = tags[page];
