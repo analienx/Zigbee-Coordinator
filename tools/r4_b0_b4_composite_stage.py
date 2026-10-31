@@ -29,7 +29,10 @@ CLIENT="source/ti/zstack/npi/npi_client_mt.c"
 MT="source/ti/zstack/mt/mt.c"
 MTZDO="source/ti/zstack/mt/mt_zdo.c"
 STACK="source/ti/zstack/startup/zstackstartup.c"
-COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO)
+ZMAC="source/ti/zstack/zmac/f8w/zmac.c"
+ZMAC_CB="source/ti/zstack/zmac/f8w/zmac_cb.c"
+TIMERS="source/ti/ti154stack/common/osal_port/osal_port_posix/osal_port_timers.c"
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO,ZMAC,ZMAC_CB,TIMERS)
 
 def outside_write_scope(sdk):
     """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
@@ -334,6 +337,37 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if zdapp_fairness['source_before_sha256'] != owned_stage['modified_sha256'][STACK]:
         raise ValueError('V48_V47_STACK_PREIMAGE_HASH_DRIFT')
 
+    # V50 (supersedes unflashed V49): V47/V48 B1E1 show the priority5 Stack
+    # inside an NWK 0x2070 dispatch on every sample; the native priority4 NPI
+    # then answered zero bytes after V47's window closed. Keep the armed NPI
+    # owner above the Stack for the boot (HOLD deboosts), age starved Stack
+    # services, and expose per-service CPU and MAC counters as B1E2 op4.
+    source_sha=b1.get("source_sha")
+    from r4_v50_stack_service import apply as apply_v50
+    v50=apply_v50(sdk,source_sha)
+    for name,expected_hash in ((TASK,startup_npi['modified_sha256'][TASK]),
+                               (STACK,zdapp_fairness['source_modified_sha256']),
+                               (ZMAC,b1.get('modified_zmac_sha256')),
+                               (ZMAC_CB,b1.get('modified_zmac_cb_sha256'))):
+        if v50['before_sha256'][name] != expected_hash:
+            raise ValueError('V50_SOURCE_CHAIN_DRIFT_'+name)
+    # Compile the emitted NPI refresh, the real composed Stack loop and the
+    # B1E2 query, and reject behavior mutants on this exact composed SDK.
+    from r4_v50_stack_service_harness import exercise as exercise_v50
+    v50_c=exercise_v50(sdk,source_sha)
+    if v50_c['status'] != 'PASS':
+        raise ValueError('V50_COMPOSED_ACTUAL_C_FAILED')
+    # V52: TI defers expired one-shot OSAL timer objects (heap entry + Clock)
+    # to the LAST Stack service and walks the whole deferred list in Clock Swi
+    # context per expiry. The Stack task now frees them after every dispatch
+    # (V50 stage) and timerCb prepends in O(1); pristine TI preimage only.
+    from r4_v52_osal_timers import apply as apply_v52_timers
+    v52_timers=apply_v52_timers(sdk)
+    from r4_v52_osal_timers_harness import exercise as exercise_v52_timers
+    v52_timers_c=exercise_v52_timers(sdk)
+    if v52_timers_c['status'] != 'PASS':
+        raise ValueError('V52_TIMERS_ACTUAL_C_FAILED')
+
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
     # and F1/F0/F2 separate SYS cases in the same disposable SDK.
@@ -372,14 +406,22 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         if afterhash[name] != runtime_priority["modified_sha256"][name]:
             raise ValueError("F2_V45_RESERVED_CLIENT_RECEIPT_UNBOUND_"+name)
         beforehash[name]=af_handoff["source_before_sha256"][name]
+    for name in (ZMAC,ZMAC_CB):
+        afterhash[name]=hashlib.sha256((sdk/name).read_bytes()).hexdigest()
+    beforehash[ZMAC]=b1.get('modified_zmac_sha256')
+    beforehash[ZMAC_CB]=b1.get('modified_zmac_cb_sha256')
+    for name in (TASK,STACK,ZMAC,ZMAC_CB):
+        if afterhash[name] != v50['modified_sha256'][name]:
+            raise ValueError('V50_FINAL_SOURCE_NOT_BOUND_'+name)
+    afterhash[TIMERS]=hashlib.sha256((sdk/TIMERS).read_bytes()).hexdigest()
+    beforehash[TIMERS]=v52_timers['before_sha256']
+    if afterhash[TIMERS] != v52_timers['modified_sha256']:
+        raise ValueError('V52_TIMERS_FINAL_SOURCE_NOT_BOUND')
+    if afterhash[SYS] != owned_stage['modified_sha256'][SYS]:
+        raise ValueError('V50_SYS_UNEXPECTED_SOURCE_DRIFT')
     for name in (TASK,SYS):
-        final_expected = (startup_npi['modified_sha256'][TASK] if name == TASK
-                          else owned_stage['modified_sha256'][SYS])
-    if afterhash[STACK] != zdapp_fairness['source_modified_sha256']:
-        raise ValueError('V48_ZDAPP_FINAL_SOURCE_NOT_BOUND')
-        if (f2_progress["before_sha256"][name] != f2_causal["modified_sha256"][name] or
-                afterhash[name] != final_expected):
-            raise ValueError("F2_V42_V47_SOURCE_RECEIPT_UNBOUND_"+name)
+        if f2_progress['before_sha256'][name] != f2_causal['modified_sha256'][name]:
+            raise ValueError("F2_V42_SOURCE_CHAIN_UNBOUND_"+name)
     b1["modified_zdapp_sha256"]=afterhash[ZDO]
     b1["modified_nv_sha256"]=afterhash[NVO]
     # The B1-owned guarded MT ZDO TU is modified only by this exact V47
@@ -388,6 +430,10 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     if b1.get("modified_mt_zdo_sha256") != startup_npi['before_sha256'][MTZDO]:
         raise ValueError("V47_MT_ZDO_B1_PREIMAGE_RECEIPT_UNBOUND")
     b1["modified_mt_zdo_sha256"]=afterhash[MTZDO]
+    # V50 adds RAM-only MAC counters to the B1-owned ZMac TUs; the native
+    # sealer re-checks modified_zmac_sha256 against the linked source.
+    b1["modified_zmac_sha256"]=afterhash[ZMAC]
+    b1["modified_zmac_cb_sha256"]=afterhash[ZMAC_CB]
     for name in (TASK,UART,SYS,MT,STACK):
         key=[k for k,v in bindings.items() if v==name][0]
         b1[key]=afterhash[name]
@@ -396,6 +442,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for key,name,value in (
             ("modified_npi_tl_liveness_sha256",TL,afterhash[TL]),
             ("modified_zstack_dispatch_stage_sha256",STACK,afterhash[STACK]),
+            ("modified_osal_port_timers_sha256",TIMERS,afterhash[TIMERS]),
             ("v6_clock_header_sha256","kernel/tirtos7/packages/ti/sysbios/knl/Clock.h",
              owned_stage['provider_sha256']['kernel/tirtos7/packages/ti/sysbios/knl/Clock.h']),
             ("v6_clock_source_sha256","kernel/tirtos7/packages/ti/sysbios/knl/Clock.c",
@@ -420,6 +467,11 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         required.append("B4_V46_RefreshNpiPriority")
     if "B4_V47_ArmStartupNpi" not in required:
         required.append("B4_V47_ArmStartupNpi")
+    for function in ("B4_V50_StackSnapshot","B4_V50_MacDataReqEnter",
+                     "B4_V50_MacDataReqDone","B4_V50_MacEvent","B4_V51_OnsetSnapshot",
+                     "B4_V51_TrendSnapshot","B4_V52_InflightSnapshot","B4_V52_TimerSnapshot","B4_V53_NvCacheSnapshot",
+                     "B4_V52_TimerProbe"):
+        if function not in required:required.append(function)
     for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
                      'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
         if function not in required:required.append(function)
@@ -460,6 +512,10 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "v47_bounded_startup_ingress":startup_npi,
         "v47_startup_ingress_actual_c":startup_npi_c,
         "v48_retained_zdapp_fairness":zdapp_fairness,
+        "v50_stack_service":v50,
+        "v50_stack_service_actual_c":v50_c,
+        "v52_osal_timers":v52_timers,
+        "v52_osal_timers_actual_c":v52_timers_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
