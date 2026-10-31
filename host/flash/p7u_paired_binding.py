@@ -14,6 +14,8 @@ QUALIFIED_SUCCESSORS = {
     "66ed700c2818c7a0963dad9160d55109009bbaac": "e3a0f3b7726adf1f6c182973f135665a5c3857e0",
     "391d7a5b24d459f347a8ff2378c751ebcc7eec4b": "66ed700c2818c7a0963dad9160d55109009bbaac",
     "250441cd17c55e25c78d97e041f056574355ade7": "391d7a5b24d459f347a8ff2378c751ebcc7eec4b",
+    "a70ae24ff45e708e13969cd341c9ecb494d1570f": "250441cd17c55e25c78d97e041f056574355ade7",
+    "8ec1439786e3e98151d2796e6797675bb9ef5965": "a70ae24ff45e708e13969cd341c9ecb494d1570f",
 }
 OWNED_STAGE_PAIR=("66ed700c2818c7a0963dad9160d55109009bbaac","66ed700c2818c7a0963dad9160d55109009bbaac")
 # Host-only startup observability: independently compiled and released at exact
@@ -63,6 +65,16 @@ def binding_values(raw, expected_pin, package):
                     package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
     if data['source_sha']=='250441cd17c55e25c78d97e041f056574355ade7':
         compatible=(data['installed_source']=='391d7a5b24d459f347a8ff2378c751ebcc7eec4b' and
+                    host_source==V6_STARTUP_CAPTURE_HOST and
+                    package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE and
+                    package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
+    if data['source_sha']=='a70ae24ff45e708e13969cd341c9ecb494d1570f':
+        compatible=(data['installed_source']=='250441cd17c55e25c78d97e041f056574355ade7' and
+                    host_source==V6_STARTUP_CAPTURE_HOST and
+                    package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE and
+                    package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
+    if data['source_sha']=='8ec1439786e3e98151d2796e6797675bb9ef5965':
+        compatible=(data['installed_source']=='a70ae24ff45e708e13969cd341c9ecb494d1570f' and
                     host_source==V6_STARTUP_CAPTURE_HOST and
                     package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE and
                     package.get('f2_wire_contract')==OWNED_STAGE_WIRE)

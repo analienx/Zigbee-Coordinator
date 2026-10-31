@@ -253,6 +253,30 @@ class Execution(unittest.IsolatedAsyncioTestCase):
                 await op.deploy(self.package, 'pin', self.ha)
         self.t.admit_sparse.assert_not_awaited(); self.t.execute.assert_not_awaited()
 
+    def v52_frozen(self, *extra):
+        self.ready()
+        for sector in (0x30000, 0x32000) + extra: self.frozen.sectors[sector] = bytes(8192)
+
+    async def test_v52_exact_26_app_sectors_execute(self):
+        self.v52_frozen()
+        with patch.object(op, 'SOURCE', 'a70ae24ff45e708e13969cd341c9ecb494d1570f'):
+            await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_awaited_once()
+
+    async def test_v52_cannot_add_app_nv_or_ccfg_beyond_its_envelope(self):
+        self.v52_frozen(0x34000, 0xA4000)
+        with patch.object(op, 'SOURCE', 'a70ae24ff45e708e13969cd341c9ecb494d1570f'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_not_awaited()
+
+    async def test_v52_requires_its_exact_last_app_sector(self):
+        self.ready(); self.frozen.sectors[0x30000] = bytes(8192)
+        with patch.object(op, 'SOURCE', 'a70ae24ff45e708e13969cd341c9ecb494d1570f'):
+            with self.assertRaisesRegex(op.Hold, 'SECTOR_SCOPE'):
+                await op.deploy(self.package, 'pin', self.ha)
+        self.t.execute.assert_not_awaited()
+
     async def test_v5_exact_additional_app_sector_is_required(self):
         self.ready()
         with patch.object(op, 'SOURCE', '85ce37c24802b0f16fec0afd00a1a0457656cd80'):
@@ -739,3 +763,34 @@ class RuntimePriorityNativeQualification(unittest.TestCase):
             self.assertEqual(op.runtime_priority_qualification(self.c)['task_num_priorities']['value'],8)
             self.q['task_num_priorities']['value']=7;self.save()
             with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):op.runtime_priority_qualification(self.c)
+
+
+class GuardManagerPolicy(unittest.TestCase):
+    """An uninstalled guard/manager passes; an installed one must be disarmed."""
+    host = {'boot': 'manual', 'watchdog': False, 'auto_update': False}
+
+    def run_policy(self, guard, manager):
+        ha = op.HA()
+        infos = {op.OWNER: self.host, 'local_p7u_r4_fallback': self.host,
+                 '45df7312_zigbee2mqtt': self.host, 'local_p7u_recovery': guard,
+                 'local_p7u_r4_lifecycle_manager': manager}
+        auto = lambda url, payload=None: {'entity_id': url.rsplit('/', 1)[1], 'state': 'off'}
+        with patch.object(ha, 'info', side_effect=infos.__getitem__), \
+             patch.object(ha, 'request', side_effect=auto):
+            ha.policy()
+
+    def test_uninstalled_guard_and_manager_pass(self):
+        gone = {'installed': False, 'options': {'enabled': False}, 'state': 'unknown'}
+        self.run_policy(gone, gone)
+
+    def test_installed_armed_guard_or_executing_manager_hold(self):
+        guard = {'options': {'enabled': True, 'dry_run': True, 'serial_owner_approved': False,
+                             'allow_private_http_fallback': False}, 'watchdog': False}
+        manager = {'options': {'execute': False}, 'state': 'stopped'}
+        with self.assertRaisesRegex(op.Hold, 'GUARD_POLICY'):
+            self.run_policy(guard, manager)
+        guard['options']['enabled'] = False
+        self.run_policy(guard, manager)
+        manager['options']['execute'] = True
+        with self.assertRaisesRegex(op.Hold, 'MANAGER_POLICY'):
+            self.run_policy(guard, manager)

@@ -179,7 +179,9 @@ def runtime_priority_qualification(c):
     """Bind the new delivery to its genuine CI native ELF/priority seal."""
     if SOURCE not in ('e3a0f3b7726adf1f6c182973f135665a5c3857e0',
                       '66ed700c2818c7a0963dad9160d55109009bbaac',
-                      '250441cd17c55e25c78d97e041f056574355ade7'): return None
+                      '250441cd17c55e25c78d97e041f056574355ade7',
+                      'a70ae24ff45e708e13969cd341c9ecb494d1570f',
+                      '8ec1439786e3e98151d2796e6797675bb9ef5965'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -295,11 +297,17 @@ class HA:
             a = self.info(slug)
             need(a['boot'] == 'manual' and a['watchdog'] is False and a['auto_update'] is False,
                  'HOST_POLICY')
-        g = self.info('local_p7u_recovery'); o = g['options']
-        need(o['enabled'] is False and o['dry_run'] is True and o['serial_owner_approved'] is False
-             and o['allow_private_http_fallback'] is False and g['watchdog'] is False, 'GUARD_POLICY')
+        # An uninstalled guard/manager cannot act at all: the strongest state.
+        # Supervisor still answers info for its local store entry, with
+        # installed=False and no runtime fields.
+        g = self.info('local_p7u_recovery')
+        if g.get('installed') is not False:
+            o = g['options']
+            need(o['enabled'] is False and o['dry_run'] is True and o['serial_owner_approved'] is False
+                 and o['allow_private_http_fallback'] is False and g['watchdog'] is False, 'GUARD_POLICY')
         m = self.info('local_p7u_r4_lifecycle_manager')
-        need(m['options']['execute'] is False and m['state'] in ('stopped', 'error'), 'MANAGER_POLICY')
+        need(m.get('installed') is False or
+             (m['options']['execute'] is False and m['state'] in ('stopped', 'error')), 'MANAGER_POLICY')
         for entity in ('automation.boot_deterministic_emqx_then_zigbee2mqtt',
                        'automation.zigbee2mqtt_mesh_communication_outage_alert'):
             a = self.request('http://supervisor/core/api/states/'+entity)
@@ -747,13 +755,18 @@ async def deploy(package, pin, ha):
         # Exact reviewed v4.5 and V5 images add only APP sector 0x30000. Keep older
         # operator profiles at their original envelope; never infer permission
         # from an untrusted HEX length or widen through NV/CCFG.
-        app_end = 0x32000 if SOURCE in (
+        # V52 (diagnostics + OSAL timer fix) is the first image to reach APP
+        # sector 0x32000: still plain application flash far below NV 0xA4000.
+        # V53 (NV read cache) stays inside that same exact 0x34000 envelope.
+        app_end = 0x34000 if SOURCE in ('a70ae24ff45e708e13969cd341c9ecb494d1570f',
+                                        '8ec1439786e3e98151d2796e6797675bb9ef5965') else (
+            0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',
             'e3a0f3b7726adf1f6c182973f135665a5c3857e0',
             '66ed700c2818c7a0963dad9160d55109009bbaac',
             '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
-            '250441cd17c55e25c78d97e041f056574355ade7') else 0x30000
+            '250441cd17c55e25c78d97e041f056574355ade7') else 0x30000)
         need(set(plan.sectors) == set(range(0, app_end, 8192)) | {0xAC000}, 'SECTOR_SCOPE')
         durable(PRIVATE, 'frozen-plan.json', plan.manifest)
         admission = await t.admit_sparse(rom, plan, expected_plan_sha256=plan.manifest['plan_sha256'],
@@ -858,6 +871,44 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
          frames['B1S1'][6] == 1 and frames['B1S1'][7] == 0 and frames['B1S1'][10] == 0 and
          before['state'] == 0 and before['first_error'] == 0 and before['milestones'] == 0,
          'STARTUP_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q4, decode_e2, stack_evidence_supported
+    if stack_evidence_supported(source):
+        # V50 B1E2 is first exercised HERE, before the one retained startup
+        # request is consumed: an unarmed NPI owner (native 4, or 6 only
+        # while V46 services a pending SRSP) and the native Stack (5).
+        raw = znp.request(1, 241, Q4, deadline=deadline)
+        evidence('B1E2', raw, dict(znp.history[-1]))
+        baseline = decode_e2(raw, source)
+        need(not baseline['npi_armed'] and baseline['npi_priority'] in (4, 6) and
+             baseline['stack_priority'] == 5 and not baseline['table_fallback'],
+             'STARTUP_STACK_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q5, decode_e3, onset_evidence_supported
+    if onset_evidence_supported(source):
+        # V51 B1E3 likewise: NV timing hooks installed at Stack task entry,
+        # no READY phase, no window or latch before the one startup request.
+        raw = znp.request(1, 241, Q5, deadline=deadline)
+        evidence('B1E3', raw, dict(znp.history[-1]))
+        onset = decode_e3(raw, source)
+        need(onset['nv_hooked'] and not onset['ready'] and onset['windows'] == 0 and
+             onset['onset'] is None and onset['first_long'] is None,
+             'STARTUP_ONSET_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q8, decode_e6, pipeline_evidence_supported
+    if pipeline_evidence_supported(source):
+        # V52 B1E6: the NWK timer probe is registered in stackInit, and no
+        # OSAL timer allocation has failed before the one startup request.
+        raw = znp.request(1, 241, Q8, deadline=deadline)
+        evidence('B1E6', raw, dict(znp.history[-1]))
+        pipeline = decode_e6(raw, source)
+        need(pipeline['timers']['probe_task'] is not None and
+             pipeline['timers']['create_failures'] == 0,
+             'STARTUP_PIPELINE_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q9, decode_e7, nv_cache_evidence_supported
+    if nv_cache_evidence_supported(source):
+        # V53 B1E7: the cache build answers page5 before startup (schema only;
+        # the boot NV reads already ran through the wrapper).
+        raw = znp.request(1, 241, Q9, deadline=deadline)
+        evidence('B1E7', raw, dict(znp.history[-1]))
+        need(decode_e7(raw, source)['misses'] > 0, 'STARTUP_NV_CACHE_EVIDENCE_NOT_PRISTINE')
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')
@@ -1080,7 +1131,7 @@ def rollback_start(package, pin, ha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'startup-host-continue', 'startup-capture-plan', 'startup-capture-start', 'instrumented-rom-plan', 'instrumented-rom-execute', 'status'))
+    parser.add_argument('action', choices=('plan', 'deploy', 'boot', 'boot-native', 'resume-native', 'finish-native', 'rom-recovery-plan', 'rom-recovery-execute', 'startup-host-plan', 'startup-host-publish', 'startup-host-install', 'startup-host-continue', 'startup-capture-plan', 'startup-capture-start', 'instrumented-rom-plan', 'instrumented-rom-execute', 'hang-evidence', 'status'))
     parser.add_argument('--operation-id', help='server-created 32-hex immutable operation ID')
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--package-pin', required=True)
@@ -1115,7 +1166,14 @@ def main():
                 result = operation_status()
             else:
                 need(a.plan_pin is not None, 'EXECUTE_ARGUMENTS')
-                if a.action in ('instrumented-rom-plan','instrumented-rom-execute'):
+                if a.action == 'hang-evidence':
+                    # Read-only incident capture before any ROM/BSL recovery.
+                    from p7u_hang_evidence_once import capture as hang_capture
+                    need(a.recovery_plan_pin is None and a.startup_host_pin is None and
+                         a.capture_plan_pin is None and a.instrumented_rom_pin is None,
+                         'HANG_EVIDENCE_ARGUMENT_SCOPE')
+                    result = hang_capture(globals(), a.package, a.package_pin, a.plan_pin, HA())
+                elif a.action in ('instrumented-rom-plan','instrumented-rom-execute'):
                     from p7u_v6_instrumented_rom_once import plan as instrumented_plan, execute as instrumented_execute
                     need(a.capture_plan_pin is None and a.recovery_plan_pin is None and
                          a.startup_host_pin is None, 'INSTRUMENTED_ROM_ARGUMENT_SCOPE')

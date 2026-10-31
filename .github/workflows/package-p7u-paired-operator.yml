@@ -7,6 +7,8 @@ on:
       - 'host/flash/**'
       - 'host/r4-b4/**'
       - 'tools/package_p7u_pr154_ha.py'
+      - 'tests/test_p7u_hang_evidence.py'
+      - 'tools/p7u_ha_flash_driver.py'
   workflow_dispatch:
     inputs:
       firmware_source:
@@ -49,7 +51,8 @@ jobs:
         env:
           PYTHONPATH: tests
         run: |
-          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding tests.test_p7u_paired_hold tests.test_p7u_paired_finish tests.test_p7u_paired_boot tests.test_p7u_v6_rom_recovery tests.test_p7u_v6_recover_local tests.test_p7u_v6_startup_host_config tests.test_p7u_v6_startup_host_install tests.test_p7u_v6_startup_capture_once tests.test_p7u_v6_instrumented_rom_once tests.test_p7u_stock20260311_security_preflight tests.test_p7u_usb_sparse_transition
+          python -m py_compile tools/p7u_ha_flash_driver.py host/flash/p7u_hang_evidence_once.py
+          python -m unittest -v tests.test_p7u_ha_local_deploy tests.test_p7u_paired_binding tests.test_p7u_paired_hold tests.test_p7u_paired_finish tests.test_p7u_paired_boot tests.test_p7u_v6_rom_recovery tests.test_p7u_v6_recover_local tests.test_p7u_v6_startup_host_config tests.test_p7u_v6_startup_host_install tests.test_p7u_v6_startup_capture_once tests.test_p7u_v6_instrumented_rom_once tests.test_p7u_stock20260311_security_preflight tests.test_p7u_usb_sparse_transition tests.test_p7u_v50_stack_evidence tests.test_p7u_hang_evidence tests.test_p7u_ha_flash_driver tests.test_p7u_firmware_pin_consistency
           python -m unittest discover -v -s firmware/slzb-06p7u/r4/release -p test_p7u_usb_current_owner_gate.py
       - name: Bind only successful paired artifacts from this source
         run: |

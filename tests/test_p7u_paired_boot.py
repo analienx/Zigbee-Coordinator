@@ -36,6 +36,7 @@ class NativeBoot(unittest.TestCase):
                 {'status':'COORDINATOR_STATE9_MARKER_PASS'})))
         op.durable(self.root,'owner-backup-before-stop.json',{})
         self.z=Mock();self.z._next.return_value=(0x41,0x80,bytes(6))
+        self.z.preboot_bad_fcs=0
         self.z.request.side_effect=lambda s,c,n,**kw:(self.events.append('f2') or wire(n))
     def invoke(self):
         with patch.object(transport,'FramedZnp',return_value=self.z):
@@ -51,6 +52,37 @@ class NativeBoot(unittest.TestCase):
         self.ha.owner_action.side_effect=TimeoutError()
         r=self.invoke();self.assertFalse(r['host_api_ack'])
         self.ha.owner_action.assert_called_once_with('start')
+    def test_single_corrupt_preboot_frame_is_bounded_and_never_accepted(self):
+        # One corrupt unsolicited frame must not consume an otherwise valid
+        # reset indication in the *same* boot. No reset/retry is performed.
+        class Socket:
+            def __init__(self, wire):
+                self.wire=wire
+            def settimeout(self, value):
+                pass
+            def recv(self, size):
+                result=self.wire;self.wire=b''
+                return result
+        payload=bytes(range(6))
+        raw=bytes((6,0x41,0x80))+payload
+        fcs=0
+        for value in raw:
+            fcs^=value
+        good=b'\xfe'+raw+bytes((fcs,))
+        bad=good[:-1]+bytes((fcs^1,))
+        import time
+        z=transport.FramedZnp(Socket(bad+good))
+        self.assertEqual(z._next(time.monotonic()+1,
+            allow_preboot_fcs_resync=True),(0x41,0x80,payload))
+        self.assertEqual(z.preboot_bad_fcs,1)
+        strict=transport.FramedZnp(Socket(bad+good))
+        with self.assertRaises(RuntimeError):
+            strict._next(time.monotonic()+1)
+        double=transport.FramedZnp(Socket(bad+bad+good))
+        with self.assertRaises(RuntimeError):
+            double._next(time.monotonic()+1,allow_preboot_fcs_resync=True)
+        self.assertEqual(double.preboot_bad_fcs,2)
+
     def test_bad_reset_shape_closes_uart_never_starts(self):
         self.z._next.return_value=(0x41,0x80,bytes(5))
         with self.assertRaisesRegex(op.Hold,'RESET_IND_SHAPE'):self.invoke()

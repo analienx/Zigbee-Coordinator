@@ -70,6 +70,34 @@ class ReadonlyHold(unittest.TestCase):
         p=self.root/'security-receipt.json';v=json.loads(p.read_bytes());v['erase_attempts']=1
         p.write_bytes(op.canonical(v));self.seal()
         with self.assertRaisesRegex(op.Hold,'HOLD_SECURITY'):hold.provenance(self.ns,self.ha,self.owner)
+    def scope_hold(self):
+        hold_v=json.loads((self.root/'hold.json').read_bytes());hold_v['safe_code']='P7U_DEPLOY_HOLD_SECTOR_SCOPE'
+        (self.root/'hold.json').write_bytes(op.canonical(hold_v))
+        sec=json.loads((self.root/'security-receipt.json').read_bytes())
+        sec.update(status='PASS_RETAINED_SECURITY_OFFLINE_ONLY',reason_codes=[])
+        (self.root/'security-receipt.json').write_bytes(op.canonical(sec))
+        (self.root/'current-owner-security.json').write_bytes(op.canonical({'status':'PASS_CURRENT_OWNER_OFFLINE_ONLY'}))
+        self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,self.owner,self.plan['source'],hold.SCOPE_NAMES)
+    def test_zero_write_sector_scope_hold_after_passed_preflights_can_continue(self):
+        self.scope_hold()
+        self.assertEqual(hold.provenance(self.ns,self.ha,self.owner),self.ns['PAIRED_ROM_HOLD_PIN'])
+    def test_sector_scope_hold_needs_both_preflights_passed_and_zero_writes(self):
+        self.scope_hold()
+        for name,patch in (('current-owner-security.json',{'status':'HOLD'}),
+                           ('security-receipt.json',{'write_attempts':1})):
+            p=self.root/name;old=p.read_bytes();v=json.loads(old);v.update(patch)
+            p.write_bytes(op.canonical(v))
+            self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,self.owner,self.plan['source'],hold.SCOPE_NAMES)
+            with self.assertRaisesRegex(op.Hold,'HOLD_SECURITY'):hold.provenance(self.ns,self.ha,self.owner)
+            p.write_bytes(old)
+        for name in ('mutation-journal.jsonl','verified-write.json','frozen-plan.json'):
+            p=self.root/name;p.write_text('{}')
+            with self.assertRaisesRegex(ValueError,'FILE_SET'):hold.provenance(self.ns,self.ha,self.owner)
+            p.unlink()
+        hold_v=json.loads((self.root/'hold.json').read_bytes());hold_v['safe_code']='P7U_DEPLOY_HOLD_NATIVE_SECURITY'
+        (self.root/'hold.json').write_bytes(op.canonical(hold_v))
+        self.ns['PAIRED_ROM_HOLD_PIN']=hold.fingerprint(self.root,self.owner,self.plan['source'],hold.SCOPE_NAMES)
+        with self.assertRaisesRegex(op.Hold,'HOLD_REASON'):hold.provenance(self.ns,self.ha,self.owner)
     def test_replaced_or_running_owner_is_rejected(self):
         for owner in (dict(self.owner,id='other'),dict(self.owner,running=True)):
             with self.assertRaisesRegex(op.Hold,'HOLD_PIN'):hold.provenance(self.ns,self.ha,owner)
@@ -141,6 +169,64 @@ class ReadonlyHold(unittest.TestCase):
         with self.assertRaisesRegex(op.Hold,'FORWARD_PLAN'):hold.verified_pair_package(ns,'bad-pin')
         (package/'x').write_bytes(b'changed')
         with self.assertRaisesRegex(op.Hold,'FILE_PIN'):hold.verified_pair_package(ns,plan_pin)
+
+    def test_instrumented_v47_v48_v49_recovery_matches_typed_binding(self):
+        from tests.test_p7u_paired_binding import binding, Binding
+        for firmware in (
+            '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
+            '250441cd17c55e25c78d97e041f056574355ade7',
+            'a70ae24ff45e708e13969cd341c9ecb494d1570f',
+        ):
+            installed=binding.QUALIFIED_SUCCESSORS[firmware]
+            cases=[
+                ({}, {}, True),
+                ({'paired_host_source_sha':'f'*40}, {}, False),
+                ({'paired_host_image':'sha256:'+'0'*64}, {}, False),
+                ({'f2_wire_contract':'wrong'}, {}, False),
+                ({'firmware_source_sha':'f'*40}, {}, False),
+                ({}, {'installed':'0'*40}, False),
+            ]
+            for updates, plan_changes, accepted in cases:
+                with self.subTest(firmware=firmware,updates=updates,plan=plan_changes):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root=Path(tmp)
+                        operations=root/'operations';operations.mkdir(mode=0o700)
+                        private=operations/('1'*32);private.mkdir(mode=0o700)
+                        image=binding.V6_STARTUP_CAPTURE_IMAGE
+                        meta={'operator_source_sha':'6'*40,'firmware_source_sha':firmware,
+                              'paired_host_source_sha':binding.V6_STARTUP_CAPTURE_HOST,
+                              'paired_host_image':image,
+                              'f2_wire_contract':binding.OWNED_STAGE_WIRE,
+                              'files':{'x':op.sha(b'original')}}
+                        meta.update(updates);raw=op.canonical(meta);pin=op.sha(raw)
+                        package=root/('p7u-paired-operator-'+meta['operator_source_sha'][:12]+'-'+pin[:16])
+                        package.mkdir(mode=0o700)
+                        (package/'PACKAGE.json').write_bytes(raw)
+                        (package/'x').write_bytes(b'original')
+                        plan={'source':firmware,'installed':installed,'package_pin':pin,
+                              'owner':dict(self.owner,image=image)}
+                        plan.update(plan_changes)
+                        (private/'plan.json').write_bytes(op.canonical(plan))
+                        ns=dict(self.ns,SOURCE=firmware,PRIVATE=private,OPERATIONS=operations,
+                                sealed_tree=op.sealed_tree)
+                        if accepted:
+                            self.assertEqual(hold.verified_pair_package(
+                                ns,op.sha(op.canonical(plan))),package)
+                        else:
+                            with self.assertRaisesRegex(op.Hold,'WRITER_BINDING'):
+                                hold.verified_pair_package(ns,op.sha(op.canonical(plan)))
+                        # Prevent any divergence between package recovery and
+                        # initial typed delivery admission on the same host ABI.
+                        data,typed=Binding().fixture()
+                        data.update(source_sha=firmware,installed_source=plan['installed'])
+                        typed.update({k:meta[k] for k in
+                            ('firmware_source_sha','paired_host_source_sha',
+                             'paired_host_image','f2_wire_contract')})
+                        if accepted:
+                            self.assertEqual(Binding().call(data,typed)['SOURCE'],firmware)
+                        else:
+                            with self.assertRaises(ValueError):
+                                Binding().call(data,typed)
 
     def test_native_resume_accepts_only_exact_successor_host_wire_pair(self):
         fw='e3a0f3b7726adf1f6c182973f135665a5c3857e0'

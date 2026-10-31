@@ -10,6 +10,9 @@ import re
 NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar',
        'bsl-entry-intent.json','sparse-receipt.json','fresh-sparse-snapshot.bin','security-receipt.json'}
+# A sector-scope HOLD stops after BOTH security preflights PASSED, before
+# any erase/program: the same zero-write state plus the owner receipt.
+SCOPE_NAMES=NAMES|{'current-owner-security.json'}
 ATTACH_NAMES={'plan.json','reader-baseline-check.json','owner-backup-before-stop.json',
        'execute-intent.json','hold.json','cold-backup.json','cold-before-flash.tar','rom-reattach-intent.json'}
 
@@ -43,7 +46,8 @@ def fingerprint(root,owner,source,names=NAMES):
 
 def provenance(ns,ha,owner):
     need=ns['need'];load=ns['load'];root=ns['HELD_ROM'];ns['private_root'](root)
-    digest=fingerprint(root,owner,ns['SOURCE'])
+    scope=(root/'current-owner-security.json').exists()
+    digest=fingerprint(root,owner,ns['SOURCE'],SCOPE_NAMES if scope else NAMES)
     need(digest==ns['PAIRED_ROM_HOLD_PIN'],'PAIRED_READONLY_HOLD_PIN')
     p=load(root/'plan.json');pin=ns['sha'](ns['canonical'](p))
     absent={'id':None,'image':ns['IMAGE'],'started_at':None,'running':False,'absent':True}
@@ -62,12 +66,17 @@ def provenance(ns,ha,owner):
     need(load(root/'execute-intent.json')['plan_sha256']==pin and
          load(root/'bsl-entry-intent.json')=={'attempts':1,'plan_sha256':pin},'PAIRED_READONLY_HOLD_INTENTS')
     hold=load(root/'hold.json')
+    code='P7U_DEPLOY_HOLD_SECTOR_SCOPE' if scope else 'P7U_DEPLOY_HOLD_NATIVE_SECURITY'
     need(hold=={'automatic_boot':False,'automatic_retry':False,'error_type':'Hold',
-                'plan_sha256':pin,'safe_code':'P7U_DEPLOY_HOLD_NATIVE_SECURITY'},'PAIRED_READONLY_HOLD_REASON')
+                'plan_sha256':pin,'safe_code':code},'PAIRED_READONLY_HOLD_REASON')
     security=load(root/'security-receipt.json');sparse=load(root/'sparse-receipt.json')
     snapshot=ns['read'](root/'fresh-sparse-snapshot.bin')
-    need(len(snapshot)==720896 and security['status']=='HOLD' and security['reason_codes']==
-         ['ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED'] and
+    if scope:
+        need(load(root/'current-owner-security.json').get('status')=='PASS_CURRENT_OWNER_OFFLINE_ONLY',
+             'PAIRED_READONLY_HOLD_SECURITY')
+    expected=(('PASS_RETAINED_SECURITY_OFFLINE_ONLY',[]) if scope else
+              ('HOLD',['ADDRESS_MANAGER_RETAINED_ROWS_CHANGED_NO_MIGRATION_AUTHORIZED']))
+    need(len(snapshot)==720896 and (security['status'],security['reason_codes'])==expected and
          all(security[k]==0 for k in ('write_attempts','erase_attempts','compaction_attempts')) and
          security['capture_sha256']==ns['sha'](snapshot) and
          sparse['status']=='SPARSE_ROM_CRC_WITH_FRESH_NV_READ_ONLY_NOT_FLASH_ADMISSION' and
@@ -118,7 +127,27 @@ def verified_pair_package(ns,plan_pin):
     ns['need'](len(matches)==1,'PAIRED_STARTUP_WRITER_PACKAGE')
     package=matches[0];meta=ns['sealed_tree'](package,'PACKAGE.json',pin)
     host=meta.get('paired_host_source_sha')
-    compatible=(host==ns['SOURCE'] or
+    # Keep recovery consistent with the *exact* source/image/wire successors
+    # admitted by p7u_paired_binding. A source-specific writer cannot be
+    # recovered by a different host or by a forged older wire contract.
+    instrumented_predecessors={
+        '391d7a5b24d459f347a8ff2378c751ebcc7eec4b':
+            '66ed700c2818c7a0963dad9160d55109009bbaac',
+        '250441cd17c55e25c78d97e041f056574355ade7':
+            '391d7a5b24d459f347a8ff2378c751ebcc7eec4b',
+        'a70ae24ff45e708e13969cd341c9ecb494d1570f':
+            '250441cd17c55e25c78d97e041f056574355ade7',
+        '8ec1439786e3e98151d2796e6797675bb9ef5965':
+            'a70ae24ff45e708e13969cd341c9ecb494d1570f',
+    }
+    exact_instrumented=(ns['SOURCE'] in instrumented_predecessors and
+        p.get('installed')==instrumented_predecessors[ns['SOURCE']] and
+        host=='2c2d96d6334b424f6364a982ad976a674b260e04' and
+        meta.get('paired_host_image')==
+            'sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367' and
+        meta.get('f2_wire_contract')=='R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1')
+    compatible=((host==ns['SOURCE'] and ns['SOURCE'] not in instrumented_predecessors) or
+        exact_instrumented or
         (ns['SOURCE']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and
          host=='85ce37c24802b0f16fec0afd00a1a0457656cd80' and
          meta.get('f2_wire_contract')=='R4D4_MINOR4_AND_R4D5_PAGED_V1'))

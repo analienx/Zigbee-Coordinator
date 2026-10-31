@@ -67,3 +67,31 @@ class Finish(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'NONCE'):self.invoke({'status':'COORDINATOR_STATE9_MARKER_PASS'})
         self.ha.owner_action.assert_not_called();self.ha.restart_radio.assert_not_called()
         self.port.close.assert_called_once()
+    def test_native_boot_ready_incomplete_finishes_readonly_then_starts_once(self):
+        import shutil
+        shutil.rmtree(self.root/'guarded-startup-recovery')
+        native=self.root/'native-boot';native.mkdir(mode=0o700)
+        op.durable(native,'startup-result.json',{'status':'FAILED_STOP_NO_RETRY','ready_observed':True,
+           'failure_category':'READY_OBSERVED_VERIFICATION_INCOMPLETE','frames':{'B1E1':evidence().hex()}})
+        op.durable(native,'hold.json',{'phase':'NATIVE_BOOT','automatic_retry':False})
+        op.durable(self.root,'boot-intent.json',{'attempts':1})
+        op.durable(self.root,'plan.json',{'owner':dict(self.failed,started_at='plan-time')})
+        value=self.invoke({'status':'COORDINATOR_STATE9_MARKER_PASS','frames':terminal()})
+        self.assertEqual(value['status'],'NATIVE_STATE9_AND_F2_V43_VERIFIED_HOST_STARTED_PENDING_SERVING')
+        self.ha.restart_radio.assert_not_called();self.ha.owner_action.assert_called_once_with('start')
+        self.assertTrue((self.root/'terminal-readonly-finish/terminal-result.json').is_file())
+    def test_native_boot_finish_refuses_started_or_other_owner(self):
+        import shutil
+        shutil.rmtree(self.root/'guarded-startup-recovery')
+        native=self.root/'native-boot';native.mkdir(mode=0o700)
+        op.durable(native,'startup-result.json',{'status':'FAILED_STOP_NO_RETRY','ready_observed':True,
+           'failure_category':'READY_OBSERVED_VERIFICATION_INCOMPLETE','frames':{'B1E1':evidence().hex()}})
+        op.durable(native,'hold.json',{'phase':'NATIVE_BOOT'})
+        op.durable(self.root,'boot-intent.json',{'attempts':1})
+        op.durable(self.root,'plan.json',{'owner':dict(self.failed,id='other')})
+        with self.assertRaisesRegex(op.Hold,'FINISH_NATIVE_OWNER_CHANGED'):
+            self.invoke({'status':'COORDINATOR_STATE9_MARKER_PASS'})
+        op.durable(self.root,'start-intent.json',{'attempts':1})
+        with self.assertRaisesRegex(op.Hold,'FINISH_NATIVE_BOOT_STATE'):
+            self.invoke({'status':'COORDINATOR_STATE9_MARKER_PASS'})
+        self.ha.owner_action.assert_not_called();self.ha.restart_radio.assert_not_called()

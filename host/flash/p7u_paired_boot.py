@@ -30,10 +30,11 @@ def boot_native(ns,package,package_pin,plan_pin,ha):
         ha.restart_radio()
         deadline=time.monotonic()+20
         while True:
-            typ,command,data=znp._next(deadline)
+            typ,command,data=znp._next(deadline,allow_preboot_fcs_resync=True)
             if typ==0x41 and command==0x80:
                 need(len(data)==6,'NATIVE_BOOT_RESET_IND_SHAPE');break
-        ns['durable'](root,'boot-ready.json',{'fresh_reset_ind':True,'no_request_before_reset_ind':True})
+        ns['durable'](root,'boot-ready.json',{'fresh_reset_ind':True,'no_request_before_reset_ind':True,
+            'preboot_bad_fcs':znp.preboot_bad_fcs})
         result=ns['resume_pristine'](znp,root,ns['load'](ns['PRIVATE']/'owner-backup-before-stop.json'),evidence)
         need(result['status']=='COORDINATOR_STATE9_MARKER_PASS','NATIVE_BOOT_STATE9')
         nonce=os.urandom(8)

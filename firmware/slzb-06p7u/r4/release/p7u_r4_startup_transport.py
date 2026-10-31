@@ -13,7 +13,18 @@ from pathlib import Path
 Q0=b"B1Q1\x01\x08\x00\x00"
 Q2=b"B1Q1\x01\x08\x02\x00"
 Q3=b"B1Q1\x01\x08\x03\x00"
-EXPECTED={Q0:(b"B1S1",24),Q2:(b"B1P1",32),Q3:(b"B1E1",128)}
+Q4=b"B1Q1\x01\x08\x04\x00"
+Q5=b"B1Q1\x01\x08\x04\x01"
+Q6=b"B1Q1\x01\x08\x04\x02"
+Q7=b"B1Q1\x01\x08\x04\x03"
+Q8=b"B1Q1\x01\x08\x04\x04"
+EXPECTED={Q0:(b"B1S1",24),Q2:(b"B1P1",32),Q3:(b"B1E1",128),Q4:(b"B1E2",248),
+          Q5:(b"B1E3",248),Q6:(b"B1E4",248),Q7:(b"B1E5",248),
+          Q8:(b"B1E6",248)}
+# V50 B1E2 sampling: every Nth RUNNING poll, then twice after terminal proof.
+# V51 B1E3 rides along with each RUNNING B1E2 and once after terminal proof.
+STACK_RUNNING_EVERY=4
+STACK_POST_READY_GAP=1.0
 
 class PrivateEvidenceJournal:
     """Crash-durable append-only private snapshots, never used as an ACK.
@@ -48,6 +59,7 @@ class FramedZnp:
         self.unusable=False
         self.history=[]
         self._current=None
+        self.preboot_bad_fcs=0
 
     @staticmethod
     def frame(sub,cmd,payload):
@@ -59,7 +71,7 @@ class FramedZnp:
         for v in raw: fcs^=v
         return b"\xfe"+raw+bytes((fcs,))
 
-    def _next(self,deadline):
+    def _next(self,deadline,*,allow_preboot_fcs_resync=False):
         from p7u_r4_startup_observer import require
         while self.clock()<deadline:
             while self.buffer:
@@ -75,6 +87,13 @@ class FramedZnp:
                 del self.buffer[:size]
                 fcs=0
                 for v in wire[1:]:fcs^=v
+                if fcs!=0 and allow_preboot_fcs_resync and not self.outstanding:
+                    # Only before the first request and with an absolute fixed
+                    # deadline: ignore at most one corrupted unsolicited frame.
+                    # Never accept its contents as a valid reset indication.
+                    self.preboot_bad_fcs+=1
+                    require(self.preboot_bad_fcs<=1,"ZNP_PREBOOT_FCS_BUDGET_EXCEEDED")
+                    continue
                 require(fcs==0,"ZNP_CHECKSUM_MISMATCH")
                 return wire[2],wire[3],wire[4:-1]
             if self._current is not None:
@@ -153,25 +172,60 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
     save(name, data, detail) may fsync an append-only private receipt before
     ANY next query. The caller must not reissue the consumed startup.
     """
-    from p7u_r4_startup_observer import (decode_e1,checked,verify_success_frames,
-                                          EvidenceError)
+    from p7u_r4_startup_observer import (decode_e1,decode_e2,decode_e3,decode_e6,checked,
+                                          verify_success_frames,stack_evidence_supported,
+                                          onset_evidence_supported,onset_summary,
+                                          pipeline_evidence_supported,
+                                          stack_profile,EvidenceError,require)
     znp.source=source
     deadline=srsp_received+absolute_seconds
     frames={}
-    counts={"B1E1":0,"B1P1":0,"B1S1":0,"UTIL":0,"MARKER":0}
+    counts={"B1E1":0,"B1P1":0,"B1S1":0,"UTIL":0,"MARKER":0,"B1E2":0,"B1E3":0,"B1E6":0}
     e_snapshots=0
     ready=False
+    stack=stack_evidence_supported(source)
+    onset=onset_evidence_supported(source)
+    pipeline=pipeline_evidence_supported(source)
+    stack_samples=[]
+    onset_samples=[]
+    pipeline_samples=[]
 
     def record(name,data):
         frames[name]=data.hex()
         counts[name]+=1
         if save is not None:
             save(name,data,dict(znp.history[-1]))
+    def stack_sample(until):
+        raw=znp.request(1,241,Q4,deadline=until)
+        info=decode_e2(raw,source)
+        record("B1E2",raw)
+        stack_samples.append(info)
+        return info
+    def onset_sample(until):
+        raw=znp.request(1,241,Q5,deadline=until)
+        info=decode_e3(raw,source)
+        record("B1E3",raw)
+        onset_samples.append(info)
+        if pipeline:
+            raw=znp.request(1,241,Q8,deadline=until)
+            pipeline_samples.append(decode_e6(raw,source))
+            record("B1E6",raw)
+        return info
     def outcome(category,status="FAILED_STOP_NO_RETRY"):
-        return {"status":status,"failure_category":category,
+        result={"status":status,"failure_category":category,
                 "frames":dict(frames),"frame_counts":dict(counts),
                 "snapshots":e_snapshots,"ready_observed":ready,
                 "transport":list(znp.history)}
+        if len(stack_samples)>=2:
+            result["stack_profile"]={
+                "whole_observation":stack_profile(stack_samples[0],stack_samples[-1]),
+                "last_interval":stack_profile(stack_samples[-2],stack_samples[-1])}
+        if pipeline_samples:
+            result["pipeline_record"]=pipeline_samples[-1]
+        if onset_samples and stack_samples:
+            result["onset_record"]={"decoded":onset_samples[-1],
+                "summary":onset_summary(onset_samples[-1],stack_samples[-1]["tick_period_us"])}
+        return result
 
     while znp.clock()<deadline:
         try:
@@ -179,6 +233,10 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
             info=decode_e1(raw,source)
             record("B1E1",raw)
             e_snapshots+=1
+            if stack and (e_snapshots-1)%STACK_RUNNING_EVERY==0:
+                stack_sample(deadline)
+                if onset:
+                    onset_sample(deadline)
         except (TimeoutError,OSError,EvidenceError,RuntimeError,ValueError):
             return outcome("DEADLINE_NOT_READY" if e_snapshots
                            else "OBSERVER_TIMEOUT_STATE_UNKNOWN")
@@ -209,4 +267,31 @@ def observe_after_srsp(znp,source,srsp_received,*,absolute_seconds=80.,sleep=tim
         verify_success_frames(frames,source)
     except (TimeoutError,OSError,EvidenceError,RuntimeError,ValueError):
         return outcome("READY_OBSERVED_VERIFICATION_INCOMPLETE")
+    if stack:
+        # Terminal proof frames are already captured. Two post-READY B1E2
+        # samples show whether the Stack is still saturated before any host
+        # owns the UART. The armed NPI owner must still answer at priority6.
+        try:
+            for index in range(2):
+                if index:
+                    sleep(min(STACK_POST_READY_GAP,max(0,terminal-znp.clock()-1.)))
+                info=stack_sample(terminal)
+                require(info["npi_armed"] and info["npi_priority"]==6 and
+                        info["stack_priority"]==5,"STACK_EVIDENCE_PRIORITY_INVALID")
+        except (TimeoutError,OSError,EvidenceError,RuntimeError,ValueError):
+            # Same category as any other incomplete terminal read, so only the
+            # existing read-only completion (never a reset/restart) may follow.
+            result=outcome("READY_OBSERVED_VERIFICATION_INCOMPLETE")
+            result["incomplete_detail"]="POST_READY_STACK_EVIDENCE"
+            return result
+    if onset:
+        # UTIL state9 came from an MT dispatch that ended before MARKER's
+        # began, so the firmware has already latched READY by now.
+        try:
+            info=onset_sample(terminal)
+            require(info["ready"] and info["nv_hooked"],"ONSET_EVIDENCE_NOT_READY")
+        except (TimeoutError,OSError,EvidenceError,RuntimeError,ValueError):
+            result=outcome("READY_OBSERVED_VERIFICATION_INCOMPLETE")
+            result["incomplete_detail"]="POST_READY_ONSET_EVIDENCE"
+            return result
     return outcome(None,"COORDINATOR_STATE9_MARKER_PASS")

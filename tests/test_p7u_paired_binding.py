@@ -62,6 +62,47 @@ class Binding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'SOURCES'):
             self.call({**data,'installed_source':'66ed700c2818c7a0963dad9160d55109009bbaac'},package)
 
+    def test_v50_exact_successor_to_v48_reuses_instrumented_host(self):
+        data,package=self.fixture()
+        data.update(source_sha='a70ae24ff45e708e13969cd341c9ecb494d1570f',
+                    installed_source='250441cd17c55e25c78d97e041f056574355ade7')
+        package.update(firmware_source_sha=data['source_sha'],
+                       paired_host_source_sha=binding.V6_STARTUP_CAPTURE_HOST,
+                       paired_host_image=binding.V6_STARTUP_CAPTURE_IMAGE,
+                       f2_wire_contract=binding.OWNED_STAGE_WIRE)
+        self.assertEqual(self.call(data,package)['INSTALLED'],data['installed_source'])
+        for key,wrong in (('paired_host_image','sha256:'+'0'*64),
+                          ('paired_host_source_sha','f'*40),
+                          ('f2_wire_contract','unknown')):
+            with self.subTest(field=key),self.assertRaisesRegex(ValueError,'PAIRED_HOST'):
+                self.call(data,{**package,key:wrong})
+        with self.assertRaisesRegex(ValueError,'SOURCES'):
+            self.call({**data,'installed_source':'66ed700c2818c7a0963dad9160d55109009bbaac'},package)
+
+    def test_v50_ready_observer_priority_is_exact_source_not_bypassed(self):
+        import ast
+        path=Path(__file__).resolve().parents[1]/"firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py"
+        src=path.read_text()
+        tree=ast.parse(src)
+        names=("V50_SOURCES","expected_ready_npi_priority","stack_evidence_supported")
+        nodes=[n for n in tree.body if
+               (isinstance(n,ast.FunctionDef) and n.name in names) or
+               (isinstance(n,ast.Assign) and any(getattr(t,"id",None) in names for t in n.targets))]
+        self.assertEqual(len(nodes),3)
+        scope={}
+        exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path),"exec"),scope)
+        self.assertEqual(scope["V50_SOURCES"],frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f",
+                                                          "8ec1439786e3e98151d2796e6797675bb9ef5965"}))
+        self.assertEqual(scope["expected_ready_npi_priority"]("a70ae24ff45e708e13969cd341c9ecb494d1570f"),6)
+        self.assertEqual(scope["expected_ready_npi_priority"]("250441cd17c55e25c78d97e041f056574355ade7"),4)
+        self.assertEqual(scope["expected_ready_npi_priority"]("0"*40),4)
+        self.assertTrue(scope["stack_evidence_supported"]("a70ae24ff45e708e13969cd341c9ecb494d1570f"))
+        self.assertFalse(scope["stack_evidence_supported"]("250441cd17c55e25c78d97e041f056574355ade7"))
+        self.assertIn('info["npi_priority"]==expected_ready_npi_priority(source)',src)
+        for gate in ("UTIL_NOT_COORDINATOR_STATE9","CONFIGURED_MARKER_NOT_VERIFIED",
+                     "RETAINED_TRANSACTION_MILESTONES_INCOMPLETE"):
+            self.assertIn(gate,src)
+
     def fixture(self):
         value={"schema":"p7u-paired-operation-v1","source_sha":"a"*40,
                "installed_source":binding.INSTALLED,"previous_operation":"1"*32,
