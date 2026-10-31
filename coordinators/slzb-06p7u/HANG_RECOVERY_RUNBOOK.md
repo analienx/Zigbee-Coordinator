@@ -27,12 +27,13 @@
 It then sends, in this order, each reply fsynced to a fresh private `hang-evidence-*/evidence.jsonl` before the next request:
 1. B1E3, the onset record;
 2. B1E6 (V52): NPI→MT→UART progress counters, OSAL timer evidence and the live in-flight Stack dispatch;
-3. B1E2;
-4. B1E5 and B1E4, the 17 x 60-minute and 17 x 5-minute trend rings;
-5. B1E1;
-6. B1S1;
-7. B1E2 and B1E6 again, 1 s later, for the live Stack CPU profile and pipeline progress;
-8. one `SYS_PING`, which goes through MT, i.e. the Stack task.
+3. B1E7 (V53): NV read-cache hits, misses and invalidations, and the eight NV items with the most driver time (IDs and counts only, never NV bytes);
+4. B1E2;
+5. B1E5 and B1E4, the 17 x 60-minute and 17 x 5-minute trend rings;
+6. B1E1;
+7. B1S1;
+8. B1E2, B1E6 and B1E7 again, 1 s later, for the live Stack CPU profile, pipeline progress and cache hit rate;
+9. one `SYS_PING`, which goes through MT, i.e. the Stack task.
 
 All B1Q1 queries are answered by the priority-6 NPI owner, never the Stack task. The capture never resets, enters BSL, restarts the radio, sends a startup request, touches NV or starts a host. A first timeout latches the transport and ends the capture; the partial result is still written.
 
@@ -59,6 +60,8 @@ What to read in the B1E3 onset record:
 - NV time per Stack service;
 - OSAL heap free, low-water and largest block;
 - Stack and NPI task stack high-water.
+
+What to read in B1E7 (V53): V52 evidence showed NWK spending ~98 % of its time in NV reads, about one 10 ms NVOCMP scan per received frame. V53 serves exact repeated reads from an 8-line RAM cache that every NV write, delete, compaction or erase clears. A healthy V53 shows a hit ratio well above 0.9 and few, short read entries in the hot list. A low hit ratio, or a write item that dominates the hot list, means the storm source has moved and the hot list names it.
 
 The trend rings show the buildup before the hang, per bucket: Stack busy, top service, longest dispatch, NV time, heap low, MAC data requests and confirm failures. The 60-minute ring covers about 17 hours.
 
