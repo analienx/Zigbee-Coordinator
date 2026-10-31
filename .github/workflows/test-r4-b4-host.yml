@@ -79,6 +79,7 @@ jobs:
           python host/r4-b4/b4_v5_herdsman_overlay.py --checkout "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v5-overlay.json
           python host/r4-b4/b4_first_warning_overlay.py --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-first-warning.json
           python host/r4-b4/b4_v6_stage_overlay.py --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v6-stage.json
+          python host/r4-b4/b4_v7_b1_sampler_overlay.py --herdsman "$B4_HERDSMAN_ROOT" --receipt /tmp/b4-herdsman-v7-b1-sampler.json
       - name: Install exact herdsman package-manager version
         run: |
           npm install --global pnpm@10.33.0
@@ -96,7 +97,7 @@ jobs:
       - name: Exercise genuine compiled UNPI/ZpiObject and ZStackAdapter code
         run: |
           set -euo pipefail
-          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-v5-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-f2-boundary.cjs host/r4-b4/test-v44-service.cjs host/r4-b4/test-owner-lifecycle.cjs host/recovery/test-p7u-herdsman-hold.cjs \
+          node --test host/r4-b4/test-herdsman-owner.cjs host/r4-b4/test-v4-herdsman.cjs host/r4-b4/test-v5-herdsman.cjs host/r4-b4/test-f2-resilience.cjs host/r4-b4/test-f2-boundary.cjs host/r4-b4/test-v44-service.cjs host/r4-b4/test-owner-lifecycle.cjs host/r4-b4/test-v7-b1-sampler.cjs host/recovery/test-p7u-herdsman-hold.cjs \
             | tee /tmp/b4-host-runtime-tests.tap
       - name: Adversarial no-serial worker durability tests (offline GH-hosted)
         run: |
