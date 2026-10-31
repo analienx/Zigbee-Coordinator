@@ -763,3 +763,34 @@ class RuntimePriorityNativeQualification(unittest.TestCase):
             self.assertEqual(op.runtime_priority_qualification(self.c)['task_num_priorities']['value'],8)
             self.q['task_num_priorities']['value']=7;self.save()
             with self.assertRaisesRegex(op.Hold,'SRSP_PRIORITY_NATIVE'):op.runtime_priority_qualification(self.c)
+
+
+class GuardManagerPolicy(unittest.TestCase):
+    """An uninstalled guard/manager passes; an installed one must be disarmed."""
+    host = {'boot': 'manual', 'watchdog': False, 'auto_update': False}
+
+    def run_policy(self, guard, manager):
+        ha = op.HA()
+        infos = {op.OWNER: self.host, 'local_p7u_r4_fallback': self.host,
+                 '45df7312_zigbee2mqtt': self.host, 'local_p7u_recovery': guard,
+                 'local_p7u_r4_lifecycle_manager': manager}
+        auto = lambda url, payload=None: {'entity_id': url.rsplit('/', 1)[1], 'state': 'off'}
+        with patch.object(ha, 'info', side_effect=infos.__getitem__), \
+             patch.object(ha, 'request', side_effect=auto):
+            ha.policy()
+
+    def test_uninstalled_guard_and_manager_pass(self):
+        gone = {'installed': False, 'options': {'enabled': False}, 'state': 'unknown'}
+        self.run_policy(gone, gone)
+
+    def test_installed_armed_guard_or_executing_manager_hold(self):
+        guard = {'options': {'enabled': True, 'dry_run': True, 'serial_owner_approved': False,
+                             'allow_private_http_fallback': False}, 'watchdog': False}
+        manager = {'options': {'execute': False}, 'state': 'stopped'}
+        with self.assertRaisesRegex(op.Hold, 'GUARD_POLICY'):
+            self.run_policy(guard, manager)
+        guard['options']['enabled'] = False
+        self.run_policy(guard, manager)
+        manager['options']['execute'] = True
+        with self.assertRaisesRegex(op.Hold, 'MANAGER_POLICY'):
+            self.run_policy(guard, manager)

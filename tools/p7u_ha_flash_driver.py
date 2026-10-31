@@ -19,7 +19,11 @@ Replaces the per-version p7u_vNN_* scripts. Every phase records its pins in
   status   read-only operation status and decoded startup evidence
   serving  read-only acceptance: fresh non-retained MQTT v5 (RH2) traffic from
            >=3 existing device topics, through the running paired host
-  hang     read-only hang evidence (B1E3/B1E2/B1E5/B1E4) before ROM recovery
+  hang     read-only hang evidence (B1E3/B1E2/B1E5/B1E4) before ROM recovery,
+           then restarts the paired host (one bounded retry) and checks it runs
+  repackage --package-run N: after a completed write, adopt a newer operator
+           package for the SAME firmware and host (read-only phases only;
+           the write, its plan and its binding stay exactly as they were)
 
 deploy/boot/finish write a local intent BEFORE contacting HA and refuse to
 run again once their intent exists: an ambiguous outcome is inspected with
@@ -198,8 +202,8 @@ class Driver:
         print(json.dumps({"status": "STAGED", **{k: self.state[k] for k in (
             "package_dir", "stage_dir", "input_pin", "binding_pin")}}))
 
-    def upload(self, package_dir, stage_dir, ppin, cpin, candidate=True):
-        pkg, cand = self.workdir / "operator", self.workdir / "candidate"
+    def upload(self, package_dir, stage_dir, ppin, cpin, candidate=True, pkg=None):
+        pkg, cand = pkg or self.workdir / "operator", self.workdir / "candidate"
         pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
         cmeta = json.loads((cand / "candidate.json").read_bytes())
         files = {"operator/PACKAGE.json": pkg / "PACKAGE.json"}
@@ -217,6 +221,60 @@ class Driver:
         out = self.remote_python(EXTRACT % (dest, package_dir, stage_dir, ppin, cpin, candidate),
                                  timeout=180)
         hold(out.get("status") == "STAGED_SOURCE_BOUND_NO_RADIO", "STAGE_UPLOAD_NOT_BOUND")
+
+    # ----------------------------------------------------------- repackage
+    def repackage(self, a):
+        """Newer operator, same firmware/host, for status/serving/hang only."""
+        fw, cpin = self.need("firmware", "candidate_pin")
+        hold("deploy_result" in self.state and "boot_result" in self.state, "REPACKAGE_BEFORE_BOOT")
+        package = run_meta(a.package_run)
+        hold(package.get("path") == PACKAGE_WORKFLOW and package.get("event") == "workflow_dispatch" and
+             package.get("status") == "completed" and package.get("conclusion") == "success",
+             "PACKAGE_RUN_NOT_EXPLICIT_DISPATCH_SUCCESS")
+        pkg = self.workdir / ("operator-" + a.package_run)
+        if not pkg.exists():
+            subprocess.run(["gh", "run", "download", str(a.package_run), "--repo", REPO, "--name",
+                            self.package_artifact(a.package_run), "--dir", str(pkg)],
+                           check=True, timeout=300)
+        pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
+        hold(pmeta.get("firmware_source_sha") == fw, "FIRMWARE_SOURCE")
+        hold(pmeta.get("operator_source_sha") == package.get("head_sha"), "OPERATOR_SOURCE")
+        hold(pmeta.get("paired_host_source_sha") == HOST_SOURCE, "HOST_SOURCE")
+        hold(pmeta.get("paired_host_image") == HOST_IMAGE, "HOST_IMAGE")
+        bad = [n for n, h in pmeta["files"].items()
+               if not (pkg / n).is_file() or sha((pkg / n).read_bytes()) != h]
+        hold(not bad, "MANIFEST_HASH %s" % bad[:5])
+        ppin = sha((pkg / "PACKAGE.json").read_bytes())
+        package_dir = "/share/p7u-paired-operator-%s-%s" % (pmeta["operator_source_sha"][:12], ppin[:16])
+        stage_dir = self.state["stage_dir"]
+        exists = self.remote_python(
+            "import json,os;print(json.dumps([os.path.exists(%r),os.path.exists(%r)]))"
+            % (package_dir, stage_dir))
+        if exists == [False, True]:
+            self.upload(package_dir, stage_dir, ppin, cpin, candidate=False, pkg=pkg)
+        else:
+            hold(exists == [True, True], "REPACKAGE_STAGE_INSPECT %s" % exists)
+        verified = self.remote_python(VERIFY_STAGE % (package_dir, stage_dir, ppin, cpin))
+        hold(verified.get("status") == "STAGE_VERIFIED", "STAGE_NOT_VERIFIED")
+        history = self.state.get("packages", []) + [{k: self.state[k] for k in (
+            "package_run", "package_pin", "package_dir", "operator_source")}]
+        self.save(packages=history, package_run=a.package_run, package_pin=ppin,
+                  package_dir=package_dir, operator_source=pmeta["operator_source_sha"])
+        print(json.dumps({"status": "REPACKAGED_READ_ONLY", "package_dir": package_dir,
+                          "operator_source": pmeta["operator_source_sha"]}))
+
+    def restart_host(self):
+        """After a read-only capture: start the paired host, one bounded retry."""
+        out = []
+        for attempt in range(2):
+            run = self.ssh("ha apps start local_p7u_r4_native_host >/dev/null 2>&1; sleep 40; "
+                           "docker inspect -f '{{.State.Status}} {{.Image}}' "
+                           "app_local_p7u_r4_native_host", 180)
+            state = run.stdout.split()
+            out.append(state)
+            if state == ["running", HOST_IMAGE]:
+                return {"host": "RUNNING", "attempts": attempt + 1}
+        return {"host": "NOT_RUNNING_INSPECT", "attempts": 2, "observed": out}
 
     # ------------------------------------------------------------ operator
     def operator(self, action, extra, timeout):
@@ -460,7 +518,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("phase", choices=("fetch", "stage", "plan", "deploy", "boot", "finish",
-                                          "status", "serving", "hang"))
+                                          "status", "serving", "hang", "repackage"))
     parser.add_argument("--workdir", required=True, help="local per-delivery state directory")
     parser.add_argument("--firmware")
     parser.add_argument("--installed", help="currently installed firmware source SHA")
@@ -478,6 +536,10 @@ def main():
         return d.fetch(a)
     if a.phase == "stage":
         return d.stage(a)
+    if a.phase == "repackage":
+        if not a.package_run:
+            sys.exit("REPACKAGE_ARGS --package-run")
+        return d.repackage(a)
     if a.phase == "plan":
         return d.plan(a)
     if a.phase == "status":
@@ -497,10 +559,17 @@ def main():
         return d.live("boot", "boot-native", 300, require="deploy_result")
     if a.phase == "finish":
         return d.live("finish", "finish-native", 300, require="boot_result")
+    # Runbook: stop the paired host (the capture refuses a running owner).
+    d.ssh("ha apps stop local_p7u_r4_native_host", 120)
     rc, result = d.operator("hang-evidence", d.op_args(), 120)
+    # The capture never starts a host; the incident still needs one. A
+    # backlog of radio frames can make the first host open time out, so
+    # one bounded retry (a plain start: no reset, no BSL, no NV).
+    restart = d.restart_host()
+    print(json.dumps(restart))
     d.save(hang_runs=d.state.get("hang_runs", []) + [{"at": time.time(), "rc": rc,
-                                                      "result": result}])
-    return rc
+                                                      "result": result, "restart": restart}])
+    return rc or (restart["host"] != "RUNNING")
 
 
 if __name__ == "__main__":

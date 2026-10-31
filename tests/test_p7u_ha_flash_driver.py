@@ -80,5 +80,39 @@ class FlashDriver(unittest.TestCase):
         self.assertIn("BOOT_CONSUMED", str(stop.exception))
 
 
+    def test_repackage_only_after_boot_and_only_explicit_dispatch(self):
+        self.d.save(firmware=FW, candidate_pin="1" * 64, deploy_result={"status": "X"})
+        with patch.object(driver, "run_meta") as meta:
+            with self.assertRaises(SystemExit) as stop:
+                self.d.repackage(SimpleNamespace(package_run=3))
+            meta.assert_not_called()
+        self.assertIn("REPACKAGE_BEFORE_BOOT", str(stop.exception))
+        self.d.save(boot_result={"status": "NATIVE_STATE9"})
+        pr = {"path": driver.PACKAGE_WORKFLOW, "event": "pull_request", "status": "completed",
+              "conclusion": "success"}
+        with patch.object(driver, "run_meta", return_value=pr),              patch.object(driver.subprocess, "run") as run:
+            with self.assertRaises(SystemExit) as stop:
+                self.d.repackage(SimpleNamespace(package_run=3))
+            run.assert_not_called()
+        self.assertIn("PACKAGE_RUN_NOT_EXPLICIT_DISPATCH_SUCCESS", str(stop.exception))
+
+    def test_hang_stops_host_captures_then_restarts_with_one_retry(self):
+        self.d.save(operation_id="f" * 32, plan_pin="1" * 64)
+        calls = []
+        outputs = iter(["", "exited " + driver.HOST_IMAGE, "running " + driver.HOST_IMAGE])
+
+        def ssh(command, timeout):
+            calls.append(command)
+            return SimpleNamespace(stdout=next(outputs), returncode=0)
+
+        with patch.object(sys, "argv", ["driver", "hang", "--workdir", str(self.d.workdir)]),              patch.object(driver.Driver, "ssh", side_effect=ssh),              patch.object(driver.Driver, "operator", return_value=(0, {"status": "OK"})) as op:
+            self.assertFalse(driver.main())
+        op.assert_called_once()
+        self.assertEqual(calls[0], "ha apps stop local_p7u_r4_native_host")
+        self.assertEqual(len(calls), 3)
+        state = driver.Driver(str(self.d.workdir)).state
+        self.assertEqual(state["hang_runs"][-1]["restart"], {"host": "RUNNING", "attempts": 2})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -297,11 +297,17 @@ class HA:
             a = self.info(slug)
             need(a['boot'] == 'manual' and a['watchdog'] is False and a['auto_update'] is False,
                  'HOST_POLICY')
-        g = self.info('local_p7u_recovery'); o = g['options']
-        need(o['enabled'] is False and o['dry_run'] is True and o['serial_owner_approved'] is False
-             and o['allow_private_http_fallback'] is False and g['watchdog'] is False, 'GUARD_POLICY')
+        # An uninstalled guard/manager cannot act at all: the strongest state.
+        # Supervisor still answers info for its local store entry, with
+        # installed=False and no runtime fields.
+        g = self.info('local_p7u_recovery')
+        if g.get('installed') is not False:
+            o = g['options']
+            need(o['enabled'] is False and o['dry_run'] is True and o['serial_owner_approved'] is False
+                 and o['allow_private_http_fallback'] is False and g['watchdog'] is False, 'GUARD_POLICY')
         m = self.info('local_p7u_r4_lifecycle_manager')
-        need(m['options']['execute'] is False and m['state'] in ('stopped', 'error'), 'MANAGER_POLICY')
+        need(m.get('installed') is False or
+             (m['options']['execute'] is False and m['state'] in ('stopped', 'error')), 'MANAGER_POLICY')
         for entity in ('automation.boot_deterministic_emqx_then_zigbee2mqtt',
                        'automation.zigbee2mqtt_mesh_communication_outage_alert'):
             a = self.request('http://supervisor/core/api/states/'+entity)
