@@ -1,5 +1,7 @@
 # slzb-06p7u — SMLIGHT SLZB-06P7U (primary engineering target)
 
+**Current state (31 October 2026):** V53 firmware is installed on the production coordinator, with the official Zigbee2MQTT app as its host. The NV read storm that caused the hangs is fixed. See the [status summary](STATUS_2026-10-31.md) for results, open items and what is still unqualified.
+
 ## Identity and scope
 
 - Hardware: SMLIGHT **SLZB-06P7U**, board R1.73 per R4 evidence.
