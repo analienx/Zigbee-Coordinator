@@ -578,14 +578,32 @@ def bounded_reentry_provenance(ha, owner):
     return sha(canonical(evidence))
 
 
+def runtime_database():
+    """The quiesced Zigbee2MQTT device database the inventory may trust."""
+    raw = read(DATA/'database.db')
+    if OFFICIAL_OWNER:
+        # No custom host writes .p7u-approved.json. deploy() archived DATA only
+        # after stopping the owner and proving no TTY holder (proof(False)), so
+        # an identical DB in that archive proves it is quiesced and unchanged.
+        cold = PRIVATE/'cold-before-flash.tar'
+        need(cold.is_file() and not cold.is_symlink(), 'RUNTIME_INVENTORY_NO_COLD_ARCHIVE')
+        with tarfile.open(cold, 'r:') as archive:
+            member = archive.getmember('zigbee2mqtt/database.db')
+            need(member.isfile(), 'RUNTIME_INVENTORY_ARCHIVE_MEMBER')
+            archived = archive.extractfile(member).read()
+        need(sha(archived) == sha(raw), 'RUNTIME_INVENTORY_DB_CHANGED_SINCE_QUIESCENCE')
+        return raw
+    approval = load(DATA/'.p7u-approved.json')
+    need(approval.get('schema') == 'p7u-db-admission-v1' and
+         approval.get('database_sha256') == sha(raw), 'RUNTIME_INVENTORY_DB_PIN')
+    return raw
+
+
 def runtime_inventory_peers():
     """Native-order identities independently known by original backup AND sealed DB."""
     from p7u_usb_security_model import parse_backup
     historical = parse_backup(load(INPUT/'historical-backup.json'))
-    raw = read(DATA/'database.db')
-    approval = load(DATA/'.p7u-approved.json')
-    need(approval.get('schema') == 'p7u-db-admission-v1' and
-         approval.get('database_sha256') == sha(raw), 'RUNTIME_INVENTORY_DB_PIN')
+    raw = runtime_database()
     identities = set()
     for line in raw.splitlines():
         if not line.strip(): continue

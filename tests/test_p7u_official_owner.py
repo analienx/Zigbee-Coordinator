@@ -167,6 +167,35 @@ class OperatorTests(unittest.TestCase):
             with self.assertRaisesRegex(self.op.Hold, "HOST_POLICY"):
                 self.op.HA().policy()
 
+    def test_runtime_db_admitted_from_quiesced_cold_archive(self):
+        import io, tarfile, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            data, private = Path(tmp) / "zigbee2mqtt", Path(tmp) / "op"
+            data.mkdir(); private.mkdir()
+            db = b'{"id":1,"type":"Router","ieeeAddr":"0x00124b0000000001"}\n'
+            (data / "database.db").write_bytes(db)
+            with tarfile.open(private / "cold-before-flash.tar", "x") as archive:
+                archive.add(data, arcname="zigbee2mqtt")
+            with patch.multiple(self.op, DATA=data, PRIVATE=private):
+                self.assertEqual(self.op.runtime_database(), db)
+                (data / "database.db").write_bytes(db + b'{"id":2}\n')
+                with self.assertRaisesRegex(self.op.Hold, "DB_CHANGED_SINCE_QUIESCENCE"):
+                    self.op.runtime_database()
+                (private / "cold-before-flash.tar").unlink()
+                with self.assertRaisesRegex(self.op.Hold, "NO_COLD_ARCHIVE"):
+                    self.op.runtime_database()
+
+    def test_legacy_mode_still_requires_custom_host_approval(self):
+        self.op.OFFICIAL_OWNER = False
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp); (data / "database.db").write_bytes(b"x\n")
+            (data / ".p7u-approved.json").write_text(json.dumps({"schema": "p7u-db-admission-v1",
+                                                                 "database_sha256": "0" * 64}))
+            with patch.object(self.op, "DATA", data):
+                with self.assertRaisesRegex(self.op.Hold, "RUNTIME_INVENTORY_DB_PIN"):
+                    self.op.runtime_database()
+
     def test_device_bound_admits_200(self):
         self.assertEqual((self.op.PEERS_MIN, self.op.PEERS_MAX), (100, 200))
 
