@@ -32,28 +32,61 @@ The repository suite on the result: **924 passed, 31 skipped, 0 failed**. No wor
 
 Before removal, a scan confirmed that no remaining code, test or workflow references any of these.
 
-## Remote steps — pending GitHub write access
+## Remote steps — results (1 Nov 2026)
 
-On 31 Oct and 1 Nov, pushes from the working session were refused (HTTP 403, "Claude doesn't have GitHub access to analienx/Zigbee-Coordinator for your organization"). The steps below are planned and **not yet done**.
+| Step | Result |
+|---|---|
+| Push the work branch | **Done** (`claude/p7u-firmware-review-lxb903`) |
+| Fast-forward `main` | **Done**: `d32a6582` → `9f72bcfc`, a plain fast-forward |
+| Close PRs #195 and #196 | **Done**: content is on `main` as the latest version |
+| Create provenance tags | **Not done**: the session's git policy refused every tag push (HTTP 403), even a tag whose commit is already on a branch. Create them from a normal clone (commands below). |
+| Delete the earlier-version P7U branches | **Not done**: the session's git policy refused ref deletion (HTTP 403). Delete them from a normal clone (command below). |
 
-1. Push the work branch and fast-forward `main` to it.
-2. Create the provenance tags:
+Planned tags (annotated). Each commit is already preserved by the PR ref named in its row, so creating the tags adds a second anchor and is not urgent:
 
-   | Tag | Commit | Why |
-   |---|---|---|
-   | `p7u-v53-firmware-source` | `8ec1439786e3e98151d2796e6797675bb9ef5965` | Source of the installed image |
-   | `p7u-v53-delivery` | `ed42122d8149af7643f0afa8137874f4b2d4a2fc` | Delivery that installed it |
-   | `archive/p7u-v53-paired-host-2c2d96d` | `2c2d96d6334b424f6364a982ad976a674b260e04` | `HOST_SOURCE` pinned by the flash driver |
-   | `archive/r4-donor-b2-mto-d13a48f` | `d13a48f5226d42e247a17d9198d84c94a4415030` | B2 donor fetched by SHA in the native workflow (PR #121 ref) |
-   | `archive/r4-donor-b2-failure-530a526` | `530a52631fbde274a2ae356c490bad71b47168a6` | B2 failure-guard donor (PR #114 ref) |
-   | `archive/r4-donor-b4-3231abb` | `3231abb1f13210eb88afe13ff7b7f9f29709cd6b` | B4 v3/v4 donor (PR #110/#120/#138 refs) |
+| Tag | Commit | Why |
+|---|---|---|
+| `p7u-v53-firmware-source` | `8ec1439786e3e98151d2796e6797675bb9ef5965` | Source of the installed image (PR #195 ref) |
+| `p7u-v53-delivery` | `ed42122d8149af7643f0afa8137874f4b2d4a2fc` | Delivery that installed it (PR #196 ref) |
+| `archive/p7u-v53-paired-host-2c2d96d` | `2c2d96d6334b424f6364a982ad976a674b260e04` | `HOST_SOURCE` pinned by the flash driver (PR #189/#197 refs) |
+| `archive/r4-donor-b2-mto-d13a48f` | `d13a48f5226d42e247a17d9198d84c94a4415030` | B2 donor fetched by SHA in the native workflow (PR #121 ref) |
+| `archive/r4-donor-b2-failure-530a526` | `530a52631fbde274a2ae356c490bad71b47168a6` | B2 failure-guard donor (PR #114 ref) |
+| `archive/r4-donor-b4-3231abb` | `3231abb1f13210eb88afe13ff7b7f9f29709cd6b` | B4 v3/v4 donor (PR #110/#120/#138 refs) |
 
-3. Close PRs #195 and #196. Their content is on `main` as the latest version.
-4. Delete every earlier-version P7U branch (below).
+```sh
+git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'
+git tag -a p7u-v53-firmware-source 8ec1439786e3e98151d2796e6797675bb9ef5965 -m "P7U R4 V53 installed firmware source"
+git tag -a p7u-v53-delivery ed42122d8149af7643f0afa8137874f4b2d4a2fc -m "P7U V53 delivery"
+git tag -a archive/p7u-v53-paired-host-2c2d96d 2c2d96d6334b424f6364a982ad976a674b260e04 -m "V53 paired host source"
+git tag -a archive/r4-donor-b2-mto-d13a48f d13a48f5226d42e247a17d9198d84c94a4415030 -m "B2 MTO donor"
+git tag -a archive/r4-donor-b2-failure-530a526 530a52631fbde274a2ae356c490bad71b47168a6 -m "B2 failure-guard donor"
+git tag -a archive/r4-donor-b4-3231abb 3231abb1f13210eb88afe13ff7b7f9f29709cd6b -m "B4 v3/v4 donor"
+git push origin --tags
+```
 
 ## P7U branches to delete
 
-Every tip below is also kept by at least one closed-PR ref, checked on 1 Nov, so deleting the branches loses no commit. A branch can be recreated with `git push origin <sha>:refs/heads/<name>`.
+Every tip below is also kept by at least one closed-PR ref, checked on 1 Nov, so deleting the branches loses no commit. All 27 tips were re-checked against this table before the attempted deletion; none had moved. A branch can be recreated with `git push origin <sha>:refs/heads/<name>`.
+
+To delete them from a normal clone, first confirm `main` is at or after `9f72bcfc`, then:
+
+```sh
+git push origin --delete \
+  fix/p7u-r4-v49-ready-npi-20261030 fix/p7u-v49-protected-delivery-20261030 \
+  fix/p7u-v48-protected-delivery-20261030 fix/p7u-v47-protected-delivery-20261030 \
+  fix/p7u-r4-v48-zdapp-fairness-20261030 fix/p7u-r4-v48-fair-stack-dispatch-20261030 \
+  fix/p7u-r4-v47-startup-ingress-20261030 fix/p7u-v6-startup-host-pair-20261030 \
+  fix/p7u-startup-evidence-20261030 fix/p7u-v7-b1-sampler-host-20261031 \
+  fix/p7u-v6-versioned-rom-recovery fix/p7u-v6-qualified-delivery-20261029 \
+  fix/p7u-f2-owned-overdue-stage-20261029 fix/p7u-f2-early-capture-overdue-stage-20261029 \
+  fix/p7u-v5-srsp-runtime-priority-20261029 feat/p7u-r4-f2-v5-flight-recorder-20261028 \
+  fix/p7u-v45-paired-delivery-20261029 fix/p7u-r4-v45-srsp-reserve-20261028 \
+  fix/p7u-r4-v44-srsp-service-20261028 fix/p7u-r4-real-tx-liveness-20261028 \
+  fix/p7u-r4-f2-seqlock-20261028 fix/p7u-r4-npi-rx-overflow-liveness-20261028 \
+  investigate/p7u-npi-real-txq-drain-20261028 investigation/p7u-r4-hang-causal-review-20261028 \
+  feature/p7u-f2-halfhour-evidence-20261028 fix/p7u-r4-v43-uart-tx-liveness-20261027 \
+  codex/p7u-shared-recovery-policy-20261022
+```
 
 | Branch | Tip | Kept by PR ref |
 |---|---|---|
