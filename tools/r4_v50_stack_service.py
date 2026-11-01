@@ -45,6 +45,9 @@ This stage changes no network/NV/security state and adds no UART owner:
      the same table invalidates the cache before and after the driver call,
      and a read inserts only when no invalidation raced it. B1E7 (op4 page5)
      reports hits/misses and per-item NV cost (item IDs only, never data).
+  8. V54: the cache honours B1's fail-closed NV/security HOLD (no hit, no
+     insert, cached bytes wiped; HOLD re-checked after the driver read),
+     never stores the TCLK seed, and never sees a NULL buffer or zero length.
 """
 import hashlib
 import re
@@ -525,16 +528,55 @@ static void B4_V51_NvDone(uint8_t kind, uint32_t start, uint8_t status)
     OsalPort_leaveCS(key);
 }
 
+/* B4_V54_CACHE_HOLD_AND_SECRET_GUARD
+ * 1. B1's fail-closed NV/security HOLD makes the driver refuse or zero every
+ *    read. A cache hit must not outlive it: while held, every read goes to
+ *    the driver, nothing is inserted, and any cached bytes are wiped.
+ *    The HOLD is re-checked after the driver read too, because B1's
+ *    NVOCMP_read zeroes the caller buffer when it latches a fault mid-read.
+ * 2. The TCLK seed derives every TC link key and is read only for
+ *    APS-secured traffic: it is never kept in this cache.
+ * 3. Arguments the driver rejects (NULL buffer, zero length) never reach
+ *    the cache; the driver returns its own BADPARAM. */
+extern int b1_nv_runtime_hold_active(void);
+#if !defined(NVINTF_SYSID_ZSTACK) || !defined(ZCD_NV_EX_LEGACY) || \
+    !defined(ZCD_NV_TCLK_SEED) || NVINTF_SYSID_ZSTACK != 1 || \
+    ZCD_NV_EX_LEGACY != 0x0000 || ZCD_NV_TCLK_SEED != 0x0101
+#error B4_V54_PINNED_NV_ITEM_IDS_DRIFT
+#endif
+static uint8_t B4_V54_Cacheable(NVINTF_itemID_t id, uint16_t length, const void *buffer)
+{
+    if (buffer == NULL || length == 0u) return 0u;
+    return !(id.systemID == NVINTF_SYSID_ZSTACK && id.itemID == ZCD_NV_EX_LEGACY &&
+             id.subID == ZCD_NV_TCLK_SEED);
+}
+
+static void B4_V54_PurgeHeld(void)
+{
+    uint8_t i, any = 0u;
+    uint32_t key = OsalPort_enterCS();
+    for (i = 0u; i < B4_V53_CACHE_ENTRIES; ++i) any |= B4_V53_Cache[i].used;
+    OsalPort_leaveCS(key);
+    if (any) B4_V53_Invalidate();
+}
+
 static uint8_t B4_V51_NvReadItem(NVINTF_itemID_t id, uint16_t offset,
                                  uint16_t length, void *buffer)
 {
-    if (B4_V53_Lookup(id, offset, length, buffer)) return NVINTF_SUCCESS;
+    uint8_t cacheable = B4_V54_Cacheable(id, length, buffer);
+    if (b1_nv_runtime_hold_active())
+    {
+        B4_V54_PurgeHeld();
+        cacheable = 0u;
+    }
+    if (cacheable && B4_V53_Lookup(id, offset, length, buffer)) return NVINTF_SUCCESS;
     uint32_t gen = B4_V53_Generation();
     uint32_t start = Clock_getTicks();
     uint8_t status = B4_V51_Nv.readItem(id, offset, length, buffer);
     B4_V51_NvDone(1u, start, status);
     B4_V53_NoteItem(id, 1u, start, status);
-    if (status == NVINTF_SUCCESS) B4_V53_Insert(id, offset, length, buffer, gen);
+    if (status == NVINTF_SUCCESS && cacheable && !b1_nv_runtime_hold_active())
+        B4_V53_Insert(id, offset, length, buffer, gen);
     return status;
 }
 
@@ -1358,7 +1400,10 @@ def apply(sdk, source_sha):
             task.count("B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));") != 1 or
             task.count("B4_V52_PipelineSnapshot(stackEvidence);") != 1 or
             task.count("B4_V53_NvCacheSnapshot(stackEvidence);") != 1 or
-            stack.count("B4_V53_Invalidate();") != 14 or
+            stack.count("B4_V53_Invalidate();") != 15 or
+            stack.count("B4_V54_CACHE_HOLD_AND_SECRET_GUARD") != 1 or
+            stack.count("if (b1_nv_runtime_hold_active())\n    {\n        B4_V54_PurgeHeld();") != 1 or
+            stack.count("cacheable && !b1_nv_runtime_hold_active())") != 1 or
             stack.count("OsalPortTimers_cleanUpTimers(); /* B4_V52") != 1 or
             stack.count("B4_V52_TimerProbe( tmpServiceId );") != 1 or
             "B4_V50_Sat(&B4_V50_Busy" in stack or
@@ -1367,7 +1412,7 @@ def apply(sdk, source_sha):
     for name in FILES:
         paths[name].write_text(after[name], encoding="utf-8", newline="")
     return {
-        "schema": "p7u-v50-stack-service-v4",
+        "schema": "p7u-v50-stack-service-v5",
         "supersedes_unflashed": "V49_READY_NPI_RETENTION",
         "root_cause_proven": False,
         "npi_priority_after_retained_arm": 6,
@@ -1390,7 +1435,10 @@ def apply(sdk, source_sha):
         "busy_ticks": "MODULAR_DELTA_SAFE",
         "tick_wrap_epochs": True,
         "nv_read_cache": {"entries": 8, "max_bytes": 32, "invalidation": "EVERY_TABLE_MUTATION_BEFORE_AND_AFTER",
-                          "evidence": "B1E7 op4 page5"},
+                          "evidence": "B1E7 op4 page5",
+                          "b1_hold": "NO_HIT_NO_INSERT_WIPE_AND_RECHECK_AFTER_READ",
+                          "never_cached": ["ZCD_NV_TCLK_SEED"],
+                          "argument_guard": "NULL_BUFFER_OR_ZERO_LENGTH_BYPASS"},
         "onset_phase_boundary": "devState == DEV_ZB_COORD",
         "nv_timing": "TRANSPARENT_NVFPS_WRAPPERS_SAME_ARGUMENTS_AND_RESULTS",
         "heap_source": "OSAL_HEAPMGR_TOTAL_FREE_AND_GETSTATS",

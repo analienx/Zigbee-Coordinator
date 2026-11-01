@@ -161,6 +161,12 @@ static zstack_Config_t *pZStackCfg = &stack_cfg;
 typedef enum { DEV_HOLD = 0, DEV_INIT = 1, DEV_ZB_COORD = 9 } devStates_t;
 static devStates_t devState = DEV_HOLD;
 static uint32_t heapmgrMemFreeTotal = 50000u;
+/* nvintf.h / zcomdef.h IDs pinned by the V54 cache guard, and B1's HOLD. */
+#define NVINTF_SYSID_ZSTACK 1
+#define ZCD_NV_EX_LEGACY 0x0000
+#define ZCD_NV_TCLK_SEED 0x0101
+static int nv_hold;
+int b1_nv_runtime_hold_active(void) { return nv_hold; }
 """
 
 STACK_HANDLERS = r"""
@@ -179,13 +185,15 @@ static void nv_note(NVINTF_itemID_t id, uint32_t len, void *buf)
 static uint8_t fake_init(void *p) { (void)p; return 0u; }
 static uint8_t fake_update(NVINTF_itemID_t id, uint32_t length, void *buffer)
 { nv_note(id, length, buffer); return nv_status; }
-static unsigned race_invalidate;
+static unsigned race_invalidate, hold_during_read;
 static void B4_V53_Invalidate(void);
 static uint8_t fake_read(NVINTF_itemID_t id, uint16_t offset, uint16_t length, void *buffer)
 {
     nv_off = offset; nv_note(id, length, buffer);
     if (buffer != NULL) memset(buffer, (int)(0x40u + nv_calls), length);
     if (race_invalidate) { --race_invalidate; B4_V53_Invalidate(); } /* a write raced this read */
+    /* B1's NVOCMP_read latching a fault mid-read: HOLD set, buffer zeroed. */
+    if (hold_during_read) { --hold_during_read; nv_hold = 1; if (buffer != NULL) memset(buffer, 0, length); }
     return nv_status;
 }
 static unsigned do_next_calls, erase_calls;
@@ -251,7 +259,7 @@ static void reset_all(void)
     devState = DEV_HOLD; heapmgrMemFreeTotal = 50000u; nv_cost = 0u; nv_status = 0u;
     memset(B4_V53_Cache, 0, sizeof(B4_V53_Cache)); memset(B4_V53_Hot, 0, sizeof(B4_V53_Hot));
     B4_V53_Gen = B4_V53_Hits = B4_V53_Misses = B4_V53_Inserts = B4_V53_Invalidations = 0u;
-    B4_V53_Next = 0u; race_invalidate = 0u;
+    B4_V53_Next = 0u; race_invalidate = 0u; nv_hold = 0; hold_during_read = 0u;
 }
 static void run_loop(void) { STACK_LOOP }
 int main(void)
@@ -546,10 +554,43 @@ int main(void)
     for (j = 224u; j < B4_V50_EVIDENCE_SIZE; ++j) assert(out[j] == 0u);
     for (j = B4_V50_EVIDENCE_SIZE; j < sizeof(out); ++j) assert(out[j] == 0xA5u);
     assert(cs_depth == 0u && credits == 0);
+    /* 12. V54: a B1 NV/security HOLD disables and wipes the cache (also when
+     * it latches inside the driver read); the TCLK seed is never cached;
+     * NULL buffers and zero lengths never touch cached lines. */
+    reset_all();
+    {
+        NVINTF_itemID_t key = {1u, 0x0000u, 0x003Au}, seed = {1u, 0x0000u, 0x0101u};
+        uint8_t a[16], b[16];
+        unsigned calls = nv_calls;
+        nv_status = 0u;
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, a) == 0u && nv_calls == calls + 1u);
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 1u); /* hit */
+        nv_hold = 1;
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 2u);
+        for (j = 0u; j < B4_V53_CACHE_ENTRIES; ++j) assert(!B4_V53_Cache[j].used);
+        for (j = 0u; j < B4_V53_CACHE_BYTES; ++j) assert(B4_V53_Cache[0].data[j] == 0u);
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 3u);
+        for (j = 0u; j < B4_V53_CACHE_ENTRIES; ++j) assert(!B4_V53_Cache[j].used);
+        nv_hold = 0; hold_during_read = 1u;
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 4u);
+        for (j = 0u; j < B4_V53_CACHE_ENTRIES; ++j) assert(!B4_V53_Cache[j].used);
+        nv_hold = 0;
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 5u); /* miss */
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 5u); /* hit */
+        assert(stack_cfg.nvFps.readItem(seed, 0u, 16u, a) == 0u && nv_calls == calls + 6u);
+        assert(stack_cfg.nvFps.readItem(seed, 0u, 16u, a) == 0u && nv_calls == calls + 7u);
+        for (j = 0u; j < B4_V53_CACHE_ENTRIES; ++j)
+            assert(!B4_V53_Cache[j].used || B4_V53_Cache[j].id.subID != 0x0101u);
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, NULL) == 0u && nv_calls == calls + 8u);
+        assert(stack_cfg.nvFps.readItem(key, 1u, 0u, b) == 0u && nv_calls == calls + 9u);
+        assert(stack_cfg.nvFps.readItem(key, 1u, 16u, b) == 0u && nv_calls == calls + 9u); /* still cached */
+    }
+    assert(cs_depth == 0u && credits == 0);
     printf("V50_STACK_AGING_EVIDENCE_REAL_C_PASS\n");
     printf("V51_ONSET_RECORD_NV_TIMING_TREND_REAL_C_PASS\n");
     printf("V52_TIMER_CLEANUP_INFLIGHT_WRAP_REAL_C_PASS\n");
     printf("V53_NV_READ_CACHE_REAL_C_PASS\n");
+    printf("V54_NV_CACHE_HOLD_SECRET_GUARD_REAL_C_PASS\n");
     return 0;
 }
 """
@@ -655,7 +696,8 @@ STACK_MUTANTS = {
         "    B4_V51_NvDone(2u, start, updated);\n"),
     "cache_race_guard_removed": ("    if (gen == B4_V53_Gen)\n", "    if (gen != 0xFFFFFFFFu || gen == B4_V53_Gen)\n"),
     "cache_stores_failed_reads": (
-        "    if (status == NVINTF_SUCCESS) B4_V53_Insert(", "    if (1) B4_V53_Insert("),
+        "    if (status == NVINTF_SUCCESS && cacheable && !b1_nv_runtime_hold_active())",
+        "    if (cacheable && !b1_nv_runtime_hold_active())"),
     "cache_length_bound_removed": (
         "    if (length == 0u || length > B4_V53_CACHE_BYTES || buffer == NULL) return;",
         "    if (length == 0u || buffer == NULL) return;"),
@@ -664,6 +706,15 @@ STACK_MUTANTS = {
     "do_next_not_invalidating": (
         "    B4_V53_Invalidate();\n    uint8_t done = B4_V51_Nv.doNext(nvProxy);\n    B4_V53_Invalidate();\n",
         "    uint8_t done = B4_V51_Nv.doNext(nvProxy);\n"),
+    "cache_ignores_b1_hold": (
+        "    if (b1_nv_runtime_hold_active())\n    {\n        B4_V54_PurgeHeld();\n        cacheable = 0u;\n    }\n", ""),
+    "held_cache_not_wiped": ("    if (any) B4_V53_Invalidate();", "    (void)any;"),
+    "cache_inserts_after_mid_read_hold": (
+        "cacheable && !b1_nv_runtime_hold_active())", "cacheable)"),
+    "cache_stores_tclk_seed": (
+        "    return !(id.systemID == NVINTF_SYSID_ZSTACK", "    return 1u || !(id.systemID == NVINTF_SYSID_ZSTACK"),
+    "null_buffer_reaches_cache": ("    if (buffer == NULL || length == 0u) return 0u;\n",
+                                  "    (void)length; (void)buffer;\n"),
     "b1e7_hot_offset_shifted": ("        uint8_t *e = out + 32u + 24u * i;", "        uint8_t *e = out + 36u + 24u * i;"),
     "b1e3_service_nv_offset_shifted": (
         "        B4_V50_Put32(out + 200u + 4u * j, s.svcNv[j]);",
@@ -902,6 +953,7 @@ def exercise(sdk, source_sha):
         "compiled_actual_trend_rings": True,
         "compiled_actual_b1e6_inflight_and_timer_cleanup": True,
         "compiled_actual_nv_read_cache": True,
+        "compiled_actual_nv_cache_hold_secret_guard": True,
         "negative_mutants_rejected": rejected,
         "hosted_model_only": True,
         "hardware_state9_proven": False,

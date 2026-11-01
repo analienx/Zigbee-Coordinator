@@ -51,7 +51,7 @@ class V50StackService(unittest.TestCase):
 
     def test_service_floor_aging_evidence_and_mac_counters(self):
         receipt = apply(self.root, SHA)
-        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v4")
+        self.assertEqual(receipt["schema"], "p7u-v50-stack-service-v5")
         self.assertEqual(receipt["b1e6_query"], "B1Q1 v1/8 op4 page4")
         self.assertEqual(receipt["expired_timer_free"], "STACK_TASK_AFTER_EVERY_DISPATCH")
         self.assertEqual(receipt["b1e3_query"], "B1Q1 v1/8 op4 page1")
