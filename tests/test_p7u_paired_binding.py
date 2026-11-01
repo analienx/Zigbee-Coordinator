@@ -92,7 +92,8 @@ class Binding(unittest.TestCase):
         scope={}
         exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path),"exec"),scope)
         self.assertEqual(scope["V50_SOURCES"],frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f",
-                                                          "8ec1439786e3e98151d2796e6797675bb9ef5965"}))
+                                                          "8ec1439786e3e98151d2796e6797675bb9ef5965",
+                                                          "20a2474a67c1d420b6614b3fcb2f7ed543b1420e"}))
         self.assertEqual(scope["expected_ready_npi_priority"]("a70ae24ff45e708e13969cd341c9ecb494d1570f"),6)
         self.assertEqual(scope["expected_ready_npi_priority"]("250441cd17c55e25c78d97e041f056574355ade7"),4)
         self.assertEqual(scope["expected_ready_npi_priority"]("0"*40),4)
