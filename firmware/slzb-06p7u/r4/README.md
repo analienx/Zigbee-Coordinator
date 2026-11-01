@@ -1,6 +1,6 @@
 # SLZB-06P7U R4 firmware — tree overview
 
-R4 is a stock-derived Z-Stack ZNP for the SLZB-06P7U (TI CC2652P7). The image currently on the production coordinator is **V53** (source `8ec1439`, tag `p7u-v53-firmware-source`), installed 31 October 2026. For its state, open items and review, see the coordinator folder:
+R4 is a stock-derived Z-Stack ZNP for the SLZB-06P7U (TI CC2652P7). The image currently on the production coordinator is **V54** (source `20a2474a`), installed 1 November 2026 over V53 (source `8ec1439`, tag `p7u-v53-firmware-source`). For its state, open items and review, see the coordinator folder:
 
 - [Status, 31 Oct 2026](../../../coordinators/slzb-06p7u/STATUS_2026-10-31.md)
 - [V53 long-term reliability review](../../../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md)
@@ -28,7 +28,7 @@ No modified TI source is stored here. The image is TI SimpleLink `lpf2-8.33.00.1
    - F2 v6 owned stage.
    - V47 startup ingress.
    - V48 ZDApp fairness.
-   - **V50–V53** (`tools/r4_v50_stack_service.py`), plus the **V54** NV-cache guard source candidate (not built natively or flashed).
+   - **V50–V53** (`tools/r4_v50_stack_service.py`), plus the **V54** NV-cache guard (`B4_V54_CACHE_HOLD_AND_SECRET_GUARD`, installed 1 Nov 2026).
    - **V52 timers** (`tools/r4_v52_osal_timers.py`).
 
    Every stage checks exact preimage hashes, then compiles the emitted C and rejects mutants (`tools/*_harness.py`).

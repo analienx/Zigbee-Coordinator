@@ -580,20 +580,21 @@ def main():
         return d.live("boot", "boot-native", 300, require="deploy_result")
     if a.phase == "finish":
         return d.live("finish", "finish-native", 300, require="boot_result")
-    # Runbook: stop the paired host (the capture refuses a running owner).
-    # Fail closed before touching anything unless the paired host this
-    # tooling targets is installed. Since 31 Oct 2026 production runs the
-    # official Zigbee2MQTT app, which this capture does not support yet:
-    # stopping/starting an absent app would leave the real owner running.
-    hold(d.owner()[0] == LEGACY_OWNER,
-         "HANG_UNSUPPORTED_WITH_OFFICIAL_OWNER: hang evidence is review finding F1; "
-         "use HANG_RECOVERY_RUNBOOK.md")
-    probe = d.ssh("docker inspect -f '{{.Image}}' app_local_p7u_r4_native_host", 60)
-    hold(probe.returncode == 0 and probe.stdout.strip() == HOST_IMAGE,
-         "HANG_PAIRED_HOST_NOT_INSTALLED: the production host is not the paired P7U "
-         "host; see the host-change note in HANG_RECOVERY_RUNBOOK.md")
-    stop = d.ssh("ha apps stop local_p7u_r4_native_host", 120)
-    hold(stop.returncode == 0, "HANG_PAIRED_HOST_STOP_FAILED")
+    # Runbook: stop the bound serial owner (the capture refuses a running
+    # owner and proves the TTY quiescent itself). Fail closed before touching
+    # anything unless the owner this delivery was bound to is the installed
+    # one: stopping an absent app would leave the real owner on the UART.
+    # The operator also requires the boot automation OFF (policy), and the
+    # official runner turns the auto-recovery automation off around this.
+    slug, image = d.owner()
+    hold(re.fullmatch("[a-z0-9_]+", slug) is not None and
+         re.fullmatch("sha256:[0-9a-f]{64}", image) is not None, "HANG_OWNER_PIN_SHAPE")
+    probe =d.ssh("docker inspect -f '{{.Image}}' app_%s" % slug, 60)
+    hold(probe.returncode == 0 and probe.stdout.strip() == image,
+         "HANG_BOUND_OWNER_NOT_INSTALLED: the production host is not the owner this "
+         "delivery was bound to; see HANG_RECOVERY_RUNBOOK.md")
+    stop = d.ssh("ha apps stop %s" % slug, 120)
+    hold(stop.returncode == 0, "HANG_OWNER_STOP_FAILED")
     rc, result = d.operator("hang-evidence", d.op_args(), 120)
     # The capture never starts a host; the incident still needs one. A
     # backlog of radio frames can make the first host open time out, so

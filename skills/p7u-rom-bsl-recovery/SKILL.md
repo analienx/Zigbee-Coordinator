@@ -12,11 +12,12 @@ before physical actions. Use existing task authorization; this skill grants no
 additional device permissions. Preserve a healthy running service during source,
 Git or skill maintenance.
 
-**Since 31 October 2026 the production host is the official Zigbee2MQTT app on
-V53 firmware.** The runbook's hang-evidence capture and custom-host start steps
-target the uninstalled `local_p7u_r4_native_host` and are not usable as written.
-Follow the host-change note at the top of the runbook. Never bypass an operator
-owner check to make a capture run.
+**Since 1 November 2026 the production host is the official Zigbee2MQTT app on
+V54 firmware.** Capture hang evidence with
+`tools/p7u_official_delivery.py hang --stop-z2m` (review F1). The runbook's
+custom-host start steps (sections C and D) are not re-qualified for the official
+app. Follow the host-change note at the top of the runbook. Never bypass an
+operator owner check to make a capture run.
 
 ## Select the operation
 

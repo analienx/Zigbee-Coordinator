@@ -131,23 +131,52 @@ class FlashDriver(unittest.TestCase):
         return calls, op, str(stop.exception)
 
     def test_hang_refuses_when_paired_host_is_not_installed(self):
-        # Official Zigbee2MQTT app in production: the custom host container is gone.
+        # Bound to the custom host, but production runs the official app.
         calls, op, message = self._hang_with([("", 1)])
-        self.assertIn("HANG_PAIRED_HOST_NOT_INSTALLED", message)
+        self.assertIn("HANG_BOUND_OWNER_NOT_INSTALLED", message)
         self.assertEqual(len(calls), 1)  # no stop, no capture, no restart
         op.assert_not_called()
 
     def test_hang_refuses_a_different_host_image(self):
         calls, op, message = self._hang_with([("sha256:" + "0" * 64 + "\n", 0)])
-        self.assertIn("HANG_PAIRED_HOST_NOT_INSTALLED", message)
+        self.assertIn("HANG_BOUND_OWNER_NOT_INSTALLED", message)
         self.assertEqual(len(calls), 1)
         op.assert_not_called()
 
     def test_hang_refuses_when_stop_fails(self):
         calls, op, message = self._hang_with([(driver.HOST_IMAGE, 0), ("", 1)])
-        self.assertIn("HANG_PAIRED_HOST_STOP_FAILED", message)
+        self.assertIn("HANG_OWNER_STOP_FAILED", message)
         self.assertEqual(len(calls), 2)
         op.assert_not_called()
+
+    def test_hang_with_official_owner_stops_and_restarts_that_app(self):
+        slug, image = "45df7312_zigbee2mqtt", "sha256:" + "2" * 64
+        self.d.save(owner_slug=slug, owner_image=image)
+        calls, op, message = self._hang_with([(image + "\n", 0), ("", 1)])
+        self.assertIn("docker inspect -f '{{.Image}}' app_" + slug, calls[0])
+        self.assertEqual(calls[1], "ha apps stop " + slug)
+        self.assertIn("HANG_OWNER_STOP_FAILED", message)
+        op.assert_not_called()
+        self.d.save(owner_slug=slug, owner_image=image)
+        outputs = iter([image + "\n", "", "running " + image])
+        seen = []
+
+        def ssh(command, timeout):
+            seen.append(command)
+            return SimpleNamespace(stdout=next(outputs), returncode=0)
+
+        with patch.object(sys, "argv", ["driver", "hang", "--workdir", str(self.d.workdir)]), \
+             patch.object(driver.Driver, "ssh", side_effect=ssh), \
+             patch.object(driver.Driver, "operator", return_value=(0, {"status": "OK"})) as op:
+            self.assertFalse(driver.main())
+        op.assert_called_once()
+        self.assertIn("ha apps start " + slug, seen[2])
+
+    def test_hang_refuses_malformed_owner_pins(self):
+        self.d.save(owner_slug="x; reboot", owner_image="sha256:" + "2" * 64)
+        calls, op, message = self._hang_with([])
+        self.assertIn("HANG_OWNER_PIN_SHAPE", message)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

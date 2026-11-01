@@ -6,14 +6,13 @@
 
 **Proven receipt:** [2026-10-27 #143](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051). **Diagnostics:** [#144](https://github.com/analienx/Zigbee-Coordinator/issues/144#issuecomment-6438518225).
 
-> **Host change, 31 October 2026 — read before use.** Production now runs V53 under the **official Zigbee2MQTT app**; the custom host `local_p7u_r4_native_host`, its owner inspector, Recovery Guard and lifecycle manager are uninstalled ([status](STATUS_2026-10-31.md)).
+> **Host change — read before use.** Production runs **V54** (installed 1 Nov 2026) under the **official Zigbee2MQTT app**. The custom host `local_p7u_r4_native_host`, its owner inspector, Recovery Guard and lifecycle manager are uninstalled ([status](STATUS_2026-11-01.md)).
 >
-> - **Step 3 (hang evidence) is unavailable.** `hang-evidence` checks ownership only through the uninstalled custom host and inspector, so it stops with a `HOLD` before opening the TTY. It cannot read the B1E3–B1E7 record ([review F1](REVIEW_V53_2026-10-31.md#f1--high-hang-evidence-and-the-flash-driver-only-work-with-the-retired-custom-host)). Do not work around its owner checks.
-> - **`p7u_ha_flash_driver.py hang` does not stop the official app.** It stops and restarts the uninstalled custom host without checking the result. Do not use it for an incident.
+> - **Step 3 (hang evidence) works with the official app** (review F1, adapted 1 Nov). Run `python tools/p7u_official_delivery.py hang --stop-z2m --workdir <installing delivery>`. It turns both Z2M automations off, stops the app, proves zero TTY holders, sends read-only B1Q1 queries, then restarts the app and turns the automations back on ([how](OFFICIAL_OWNER_DELIVERY.md#hang-evidence-review-f1)). Do not work around its owner checks.
 > - **Section B (ROM entry and read-only verification) does not depend on the host.** It still requires the official app stopped and zero port holders first.
-> - **Sections C and D name the custom host and its startup observer.** They have not been re-qualified for the official app. The status records that, after the 31 Oct capture, a plain start of the official app recovered from a ping timeout. That is an observation, not a qualified recovery step.
+> - **Sections C and D name the custom host and its startup observer.** They have not been re-qualified for the official app. Observed instead, several times on 31 Oct–1 Nov: an SLZB radio-only restart with Z2M stopped, then a plain start, resumed service. The HA automation `z2m_p7u_auto_recovery` does exactly that, up to 3 attempts. That is an observation, not a qualified recovery step.
 >
-> Adapting this tooling is open item 1 in the status. Until it is done, a hard hang needs explicit owner authorization for each step.
+> A hard hang beyond the evidence capture still needs explicit owner authorization for each step.
 
 ## First-response decision
 

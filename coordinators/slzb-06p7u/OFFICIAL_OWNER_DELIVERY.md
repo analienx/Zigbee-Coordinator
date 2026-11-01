@@ -1,6 +1,6 @@
 # P7U firmware delivery with the official Zigbee2MQTT app as owner
 
-Since 31 October 2026 the official Zigbee2MQTT app (`45df7312_zigbee2mqtt`, 2.14.2-1) is the only serial owner. The custom host, owner inspector and fallback containers take no part in a delivery. This document covers the `official-z2m-v1` owner mode and the runner that automates a delivery. It authorizes no hardware action.
+Since 31 October 2026 the official Zigbee2MQTT app (`45df7312_zigbee2mqtt`, 2.14.2-1) is the only serial owner. V54 was installed this way on 1 November 2026 (see the [status](STATUS_2026-11-01.md)). The custom host, owner inspector and fallback containers take no part in a delivery. This document covers the `official-z2m-v1` owner mode and the runner that automates a delivery. It authorizes no hardware action.
 
 ## What changed in the tooling
 
@@ -11,7 +11,8 @@ Since 31 October 2026 the official Zigbee2MQTT app (`45df7312_zigbee2mqtt`, 2.14
 | App policy | The owner must be manual boot with watchdog and auto-update off. Retired custom apps may stay installed only if they are stopped with manual boot. |
 | Backup size | The coordinator backup is admitted for 100–200 peers (previously 100–107). |
 | Package | `package-p7u-paired-operator.yml` with `owner_mode=official-z2m` takes no host release. |
-| Hang capture | Refuses explicitly with the official owner (review F1 is still open). |
+| Hang capture | Supported (review F1): `p7u_official_delivery.py hang --stop-z2m` stops the bound owner, proves the TTY quiescent and reads the hang record. See below. |
+| NV headroom | `preflight` reports the newest measured NV4 `active_records` (review F11): WARN from 960, BLOCK from 1,000, because boot admission refuses at 1,024. |
 
 ## Runner
 
@@ -23,9 +24,40 @@ python tools/p7u_official_delivery.py automation off                    # flash 
 python tools/p7u_official_delivery.py prepare --package-run <run>       # fetch, stage, plan (Z2M keeps running)
 python tools/p7u_official_delivery.py flash --authorize <operation id>  # deploy, boot, finish, serving
 python tools/p7u_official_delivery.py automation on                     # after serving is accepted
+python tools/p7u_official_delivery.py hang --stop-z2m --workdir <installing delivery>   # incident only
 ```
 
+Pass `--workdir` as a Windows path, for example `C:/Users/<you>/.p7u-deliveries/v55`. From Git Bash with `MSYS_NO_PATHCONV=1`, a `~/...` path reaches Python as `/c/Users/...` and the workdir lands under `C:\c\Users\...`.
+
+Turning the automations on or off is retried up to three times. Right after Zigbee2MQTT starts, Home Assistant can be busy with about 100 device discoveries, and its API times out.
+
 `flash` stops Zigbee2MQTT for the write and boot window. It then performs one protected APP+AC000 write and one native boot, starts Zigbee2MQTT, and checks for fresh MQTT device traffic. Each step runs once. An ambiguous result is inspected with `status`, never replayed.
+
+## Pinning a new firmware source
+
+The operator admits a firmware source only where it is pinned. Before packaging a new version, add its source SHA to all of these. Otherwise `deploy` holds with zero writes, which is what happened to V54's first attempt (`SECTOR_SCOPE`).
+
+- `QUALIFIED_SUCCESSORS` and `OFFICIAL_SOURCES` in `host/flash/p7u_paired_binding.py`.
+- The `app_end` envelope and `runtime_priority_qualification` in `host/flash/p7u_pr154_ha.py`. Check the candidate APP hex extent and its native priority seal first.
+- The V50–V53 evidence sets in `firmware/slzb-06p7u/r4/release/p7u_r4_startup_observer.py`, if the image keeps those evidence pages. This one matters most, because the boot check runs after the write.
+- The runner `DEFAULTS` in `tools/p7u_official_delivery.py`: firmware, installed source, previous operation, native run.
+
+`tests/test_p7u_firmware_pin_consistency.py` checks that the newest evidence generation is pinned consistently.
+
+## Hang evidence (review F1)
+
+Run this only for a confirmed hard ZNP hang, and before any radio restart or ROM/BSL recovery, because those erase the RAM record:
+
+```sh
+python tools/p7u_official_delivery.py hang --stop-z2m --workdir <workdir of the delivery that installed the running firmware>
+```
+
+1. Both automations are turned off, and Zigbee2MQTT is stopped.
+2. The operator proves that no process holds the TTY.
+3. It sends only read-only B1Q1 queries (B1E3 onset, B1E6, B1E7, B1E2, B1E5/B1E4, B1E1, B1S1) and one SYS_PING.
+4. Zigbee2MQTT is started again, with one bounded retry, and the automations are turned back on. This also happens when the capture fails.
+
+There is no reset, BSL entry, NV access or flash. The result is stored privately on HA under the operation directory. Then follow [the runbook](HANG_RECOVERY_RUNBOOK.md).
 
 ## Preflight blockers
 

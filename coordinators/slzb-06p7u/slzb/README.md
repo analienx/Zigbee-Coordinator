@@ -18,8 +18,17 @@
 - The ESP32 core is also the USB bridge to the radio, so Zigbee2MQTT sees the adapter disconnect and stops.
 - The HA automation `z2m_p7u_auto_recovery` ([`../ha/z2m_p7u_auto_recovery.yaml`](../ha/z2m_p7u_auto_recovery.yaml)) recovers it within about 2–5 minutes. It first tries a plain start, then the SLZB radio-only restart (available again because Ethernet is back) followed by a start.
 
+**Installed 1 Nov 2026 in dry run** (autostart on, running, log line `eth-watchdog: started (dry run)`). SLZB-OS needs `SLZB` and `NETWORK` imported explicitly. Without them the script fails to load with `'NETWORK' undeclared`.
+
 **Install.**
-1. On the SLZB web UI, open Scripts, create `eth_watchdog.be`, paste the file, and save. `#META {"start":1}` starts it at boot. Then start it once now.
+1. On the SLZB web UI, open Scripts, create `eth_watchdog.be`, paste the file, and save. `#META {"start":1}` starts it at boot. Then start it once now. The same is possible over the web UI's HTTP API:
+   ```sh
+   B=http://192.168.50.59
+   curl -F "file=@eth_watchdog.be;type=text/plain" "$B/script/save?filename=eth_watchdog.be"   # save
+   curl -d "param=2&filename=eth_watchdog.be&state=2" "$B/api2?action=11"                     # start (state 0 stops)
+   curl "$B/api2?action=11&param=0"                                                            # list: state 3 = running, waiting on its timer
+   curl "$B/api2?action=5" | grep eth_watchdog                                                 # log
+   ```
 2. Check the device time zone (Settings, Time) is Europe/Prague, because the window uses local time.
 3. Leave the dry run on for one night. In the morning the script console should show `Ethernet down` (about 23:28), then `DRY RUN would reboot now` (about 06:50, if Ethernet is still missing) or `Ethernet back` (if it recovered on its own).
 4. Set `DRY_RUN = false`, save, and restart the script.

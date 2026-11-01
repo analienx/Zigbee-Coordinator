@@ -1,23 +1,25 @@
 # slzb-06p7u — SMLIGHT SLZB-06P7U (primary engineering target)
 
-**Current state (31 October 2026):** V53 firmware is installed on the production coordinator, with the official Zigbee2MQTT app as its host. The NV read storm that caused the hangs is fixed. See the [status summary](STATUS_2026-10-31.md) for results, open items and what is still unqualified, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) for findings and next steps.
+**Current state (1 November 2026):** V54 firmware is installed on the production coordinator, with the official Zigbee2MQTT app as the only serial owner. V54 is V53, which fixed the NV read storm behind the hangs, plus guards on that NV read cache. See the [status summary](STATUS_2026-11-01.md) for the install, review follow-ups and open items, the [official-owner delivery guide](OFFICIAL_OWNER_DELIVERY.md) for how to flash, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) for findings.
 
-**Source of record (on `main` since 31 October 2026, latest version only):** `main` holds the V53 tree as one commit; earlier versions are not carried. The exact installed commits stay on GitHub through the PR #195/#196 refs and the tags listed below. A native rebuild from `main` embeds `main`'s commit prefix in the evidence digest, so to reproduce the installed image byte for byte, build at `8ec1439`.
+**Source of record (on `main`, latest version only):** `main` holds the V54 source and the official-owner delivery tooling. V53 stays retrievable through the PR #195/#196 refs and the tags below. A native rebuild embeds the build commit prefix in the evidence digest, so to reproduce an installed image byte for byte, build at its exact source commit.
 
 | What | Where |
 |---|---|
-| Installed firmware source | `8ec1439786e3` (PR #195; tag `p7u-v53-firmware-source`) |
-| Delivery that installed it | `ed42122d8149` (PR #196; tag `p7u-v53-delivery`) |
+| Installed firmware source | V54 `20a2474a67c1` (native run 41284426604) |
+| Delivery that installed it | official-owner runner [`tools/p7u_official_delivery.py`](../../tools/p7u_official_delivery.py), [guide](OFFICIAL_OWNER_DELIVERY.md) |
+| Previous firmware | V53 `8ec1439786e3` (PR #195; tag `p7u-v53-firmware-source`), delivered by `ed42122d8149` (PR #196; tag `p7u-v53-delivery`) |
 | Composition order of the image | [`tools/r4_b0_b4_composite_stage.py`](../../tools/r4_b0_b4_composite_stage.py), applied to TI SDK `3615ad5d` (`lpf2-8.33.00.16`) |
-| V50–V53 Stack service, evidence and NV read cache | [`tools/r4_v50_stack_service.py`](../../tools/r4_v50_stack_service.py) |
+| V50–V54 Stack service, evidence, NV read cache and cache guard | [`tools/r4_v50_stack_service.py`](../../tools/r4_v50_stack_service.py) |
 | V52 OSAL timers | [`tools/r4_v52_osal_timers.py`](../../tools/r4_v52_osal_timers.py) |
 | B1 NV/management safety | [`firmware/slzb-06p7u/r4/b1/`](../../firmware/slzb-06p7u/r4/b1/) |
 | Firmware tree overview | [`firmware/slzb-06p7u/r4/README.md`](../../firmware/slzb-06p7u/r4/README.md) |
 | Composed C, reproduced locally | [`tools/p7u_compose_source_locally.sh`](../../tools/p7u_compose_source_locally.sh) |
 | Flash driver and HA operator | [`tools/p7u_ha_flash_driver.py`](../../tools/p7u_ha_flash_driver.py), [`host/flash/`](../../host/flash/) |
+| HA auto-recovery and SLZB Ethernet watchdog | [`ha/`](ha/), [`slzb/`](slzb/) |
 | Retired custom host apps | [`host/r4-b4/`](../../host/r4-b4/), uninstalled on 31 Oct and kept as source of record |
 
-Being on `main` is **not** qualification. The acceptance gates below still apply to V53 and to any later image.
+Being on `main` is **not** qualification. The acceptance gates below still apply to V53, V54 and any later image.
 
 ## Identity and scope
 
@@ -34,7 +36,7 @@ Being on `main` is **not** qualification. The acceptance gates below still apply
 
 This is a **service-restoration** priority for a *confirmed local SRSP/ZNP hard hang*, subject to exact USB/MAC/OS source checks, sole serial ownership, private backups, fresh operator authority and durable single-shot journal. The separate firmware-first **engineering** investigation remains open; BSL success is a clue, not a proven root cause.
 
-**Host change (31 October 2026):** production now runs the official Zigbee2MQTT app. The runbook's hang-evidence capture and its custom-host start steps still target the uninstalled `local_p7u_r4_native_host`. The capture fails closed in that state and cannot read the firmware's hang record. Read the note at the top of the runbook before using it (review finding F1).
+**Host change (31 October 2026):** production runs the official Zigbee2MQTT app. Since 1 November the runbook's hang-evidence step works with it: `tools/p7u_official_delivery.py hang --stop-z2m` (review F1). Read the note at the top of the runbook before using it.
 
 ## Current work: R4, not the older P7 R2/R3 line
 

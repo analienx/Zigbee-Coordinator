@@ -15,6 +15,11 @@ delivery is a handful of commands. It adds no new radio, NV or flash path:
               APP+AC000 write, ONE native boot, Z2M start, MQTT serving check.
               Every step is once-only; nothing is retried or rolled back here.
   status      read-only operation status.
+  hang        --stop-z2m, with the --workdir of the delivery that installed the
+              running firmware: read-only hang evidence (review F1) BEFORE any
+              radio restart or ROM/BSL recovery. Automations off -> stop Z2M ->
+              TTY quiescence proof -> B1Q1 queries only -> Z2M start (one
+              bounded retry) -> automations on. No reset, BSL, NV or flash.
 
 Defaults pin the V54 delivery over the installed V53 operation.
 """
@@ -23,6 +28,7 @@ import json
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +45,8 @@ BOOT_AUTOMATION = "automation.boot_deterministic_emqx_then_zigbee2mqtt"
 # Restarts Zigbee2MQTT / resets the radio on its own: must be off while the operator owns the radio.
 RECOVERY_AUTOMATION = "automation.zigbee2mqtt_p7u_auto_recovery_3_attempts"
 WINDOW_AUTOMATIONS = (BOOT_AUTOMATION, RECOVERY_AUTOMATION)
+# F11 headroom: boot admission refuses at 1024 distinct active NV items.
+NV_WARN, NV_BLOCK = 960, 1000
 SERIAL = "/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00"
 
 # Runs on HA (SSH app, Supervisor token in env). Reads only; the serial scan is
@@ -82,6 +90,15 @@ except Exception as x:ok=False;w={"error":type(x).__name__}
 add("predecessor operation verified write",ok,O["previous_operation"])
 for d in ("/share/p7u-paired-input-"+O["installed"][:12],"/share/p7u-paired-stage-"+O["installed"][:12],"/share/p7u-lifecycle/private/exclusive-manager.lock"):
  add("exists "+d,os.path.exists(d),None)
+# Review F11: native boot admission refuses (B1 NV HOLD) at 1024 distinct
+# active NV items. Every flash reboots the radio, so leave a margin. The
+# newest operation's security receipt is the latest read-only measurement.
+try:
+ r=max(Path("/share/p7u-r4-firmware-operations").glob("*/security-receipt.json"),key=lambda f:f.stat().st_mtime)
+ nv=json.loads(r.read_text())["current_storage_counts"]["active_records"]
+ add("NV active records below boot cap 1024 (F11)",nv<O["nv_warn"],{"active_records":nv,"measured":r.parent.name[:8]},
+     "WARN" if nv<O["nv_block"] else "BLOCK")
+except Exception as x:add("NV active records below boot cap 1024 (F11)",False,type(x).__name__,"WARN")
 try:
  b=json.load(open("/homeassistant/zigbee2mqtt/coordinator_backup.json"));n=len(b.get("devices",[]))
 except Exception:n=-1
@@ -191,21 +208,37 @@ def restore_after_hold(work):
     return r
 
 
-def set_window_automations(work, value):
+def set_window_automations(work, value, attempts=3):
+    """Turning an automation on/off is idempotent, so a timed-out call is retried.
+
+    Right after Zigbee2MQTT starts, Home Assistant can be busy re-processing
+    ~100 device discoveries and its core API times out.
+    """
     ok = True
     for entity in WINDOW_AUTOMATIONS:
-        r = ssh_python(REMOTE_AUTOMATION % {"entity": entity, "svc": "turn_" + value})
+        r = {"entity": entity, "after": None}
+        for attempt in range(attempts):
+            try:
+                r = ssh_python(REMOTE_AUTOMATION % {"entity": entity, "svc": "turn_" + value},
+                               exit_on_error=False)
+            except (RuntimeError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
+                r = {"entity": entity, "after": None, "error": str(error)[-300:], "attempt": attempt + 1}
+            if r.get("after") == value:
+                break
+            time.sleep(20)
         with (Path(work) / "automation-log.jsonl").open("a") as f:
             f.write(json.dumps(r) + "\n")
         print(json.dumps(r))
-        ok = ok and r["after"] == value
+        ok = ok and r.get("after") == value
     return ok
 
 
-def ssh_python(code, timeout=180):
+def ssh_python(code, timeout=180, exit_on_error=True):
     # Script on stdin: Windows argv quoting would otherwise rewrite \" sequences.
     run = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "ha", "python3 -B -"],
                          input=code, capture_output=True, text=True, timeout=timeout)
+    if run.returncode and not exit_on_error:
+        raise RuntimeError("HA_PYTHON_FAILED rc=%d %s" % (run.returncode, run.stderr[-600:]))
     if run.returncode:
         sys.exit("HA_PYTHON_FAILED rc=%d\n%s\n%s" % (run.returncode, run.stdout[-1500:], run.stderr[-1500:]))
     return json.loads(run.stdout.strip().splitlines()[-1])
@@ -253,7 +286,7 @@ def run_preflight(a):
     cfg = {"owner": binding.OFFICIAL_OWNER, "version": binding.OFFICIAL_OWNER_VERSION,
            "image": binding.OFFICIAL_OWNER_IMAGE, "serial": SERIAL, "scan": scan,
            "boot_automation": BOOT_AUTOMATION, "recovery_automation": RECOVERY_AUTOMATION, "previous_operation": a.previous_operation,
-           "installed": a.installed, "min": lo, "max": hi}
+           "installed": a.installed, "min": lo, "max": hi, "nv_warn": NV_WARN, "nv_block": NV_BLOCK}
     checks += ssh_python(REMOTE_PREFLIGHT % {"cfg": json.dumps(cfg)})
     checks.append(prediction_check(Path(a.workdir), a.firmware))
     width = max(len(c["check"]) for c in checks)
@@ -280,11 +313,13 @@ def _operator_constant(name):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("phase", choices=("preflight", "automation", "prepare", "flash", "status"))
+    p.add_argument("phase", choices=("preflight", "automation", "prepare", "flash", "status", "hang"))
     p.add_argument("value", nargs="?", help="automation: off|on")
     p.add_argument("--workdir", default=str(Path.home() / ".p7u-deliveries" / "v54-official"))
     p.add_argument("--package-run")
     p.add_argument("--authorize", help="flash: the operation id printed by prepare")
+    p.add_argument("--stop-z2m", action="store_true",
+                   help="hang: confirm the ~1 minute Zigbee2MQTT stop for the read-only capture")
     for k, v in DEFAULTS.items():
         p.add_argument("--" + k.replace("_", "-"), default=v)
     a = p.parse_args()
@@ -298,6 +333,22 @@ def main():
         return 0 if set_window_automations(work, a.value) else 1
     if a.phase == "status":
         return driver(work, "status")
+    if a.phase == "hang":
+        if "boot_result" not in state(work):
+            sys.exit("HANG_REFUSED: --workdir must be the delivery that installed the running firmware")
+        if not a.stop_z2m:
+            sys.exit("HANG_REFUSED: pass --stop-z2m (stops Zigbee2MQTT for about a minute)")
+        if not set_window_automations(work, "off"):
+            set_window_automations(work, "on")
+            sys.exit("HANG_REFUSED: automations could not be turned off (nothing was stopped)")
+        try:
+            rc = driver(work, "hang")
+        finally:
+            # Always hand Zigbee back to the 3-attempt recovery automation.
+            set_window_automations(work, "on")
+        print("\nHANG EVIDENCE " + ("CAPTURED; Zigbee2MQTT restarted" if rc == 0 else
+              "INCOMPLETE rc=%d (see the driver output; follow HANG_RECOVERY_RUNBOOK.md)" % rc))
+        return rc
     if a.phase == "prepare":
         if not a.package_run:
             sys.exit("prepare needs --package-run (official-z2m operator package)")

@@ -30,11 +30,11 @@ See [`coordinators/README.md`](coordinators/README.md) and [`docs/COORDINATOR_RE
 
 **Current engineering priority (25 October 2026): repair and prove the R4 firmware/ZNP command-handling failure, not repeat stock restoration.** Root cause, source repair, exact-SHA native qualification and physical acceptance come before recovery work; restoration is a last-resort network-safety fallback and never closes a firmware incident. The firmware and previous image have both shown post-startup loss of replies, so distinguish firmware, ESP/USB and host causes instead of assuming a single image is responsible. See the [P7U firmware-first policy](coordinators/slzb-06p7u/FIRMWARE_FIRST_POLICY.md). This priority shift grants no new authorization to reset, flash, alter NV or pair devices.
 
-**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability. **V53 was installed on the production coordinator on 31 October 2026** under the repository's one-shot procedure. The qualification gates (independent review, physical qualification, rollback proof) are **not closed**, and any further flash still needs explicit owner authorization.
+**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability. **V54 was installed on the production coordinator on 1 November 2026** (over V53, installed 31 October) under the repository's one-shot procedure, with the official Zigbee2MQTT app as the only serial owner ([status](coordinators/slzb-06p7u/STATUS_2026-11-01.md)). The qualification gates (independent review, physical qualification, rollback proof) are **not closed**, and any further flash still needs explicit owner authorization.
 
 - [R4 master plan #85](https://github.com/analienx/Zigbee-Coordinator/issues/85) and [R4-00 provenance draft #86](https://github.com/analienx/Zigbee-Coordinator/pull/86).
 - [R4-01a diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [R4-B0 native build #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [R4-B1 NV safety #92](https://github.com/analienx/Zigbee-Coordinator/issues/92) and [draft PR #93](https://github.com/analienx/Zigbee-Coordinator/pull/93).
-- `main` holds the installed V53 firmware and delivery (source `8ec1439`, delivery `ed42122`) as one latest-version commit; earlier versions are not carried. `main` does not deploy anything by itself; no workflow on `main` touches hardware.
+- `main` holds the installed V54 source and the official-owner delivery tooling. V53 (source `8ec1439`, delivery `ed42122`) stays retrievable through its tags; earlier versions are not carried. `main` does not deploy anything by itself; no workflow on `main` touches hardware.
 - Vendor P7U ZNP `20260310` is a behavior/rollback reference, **not** proven source-equivalent or stable in a 100+-device mesh. Native CCS build success is not a physical acceptance.
 - Preserve the original coordinator identity, NV/security/counters, rollback evidence, and exactly one serial owner; no live firmware/recovery operation follows from these documentation updates.
 
@@ -44,7 +44,7 @@ See [P7U coordinator overview](coordinators/slzb-06p7u/README.md) and [coordinat
 
 ## Repository layout
 
-### P7U/R4 firmware (installed V53 lineage)
+### P7U/R4 firmware (installed V54 lineage)
 
 - `coordinators/slzb-06p7u/` — identity, safety gates, [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md), [review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md) and the hang runbook.
 - `firmware/slzb-06p7u/r4/` — B0/B1 sources, qualification, release, ROM writer and fixtures. [Overview](firmware/slzb-06p7u/r4/README.md).

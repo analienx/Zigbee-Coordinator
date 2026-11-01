@@ -10,6 +10,8 @@
 # Policy: at most ONE core reboot per Ethernet outage, and only when the
 # router should be back. A reboot drops the USB Zigbee link for a few minutes;
 # the HA automation z2m_p7u_auto_recovery restarts the radio and Zigbee2MQTT.
+import SLZB
+import NETWORK
 import TIMER
 import TIME
 import FS
