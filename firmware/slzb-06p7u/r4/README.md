@@ -28,7 +28,7 @@ No modified TI source is stored here. The image is TI SimpleLink `lpf2-8.33.00.1
    - F2 v6 owned stage.
    - V47 startup ingress.
    - V48 ZDApp fairness.
-   - **V50–V53** (`tools/r4_v50_stack_service.py`).
+   - **V50–V53** (`tools/r4_v50_stack_service.py`), plus the **V54** NV-cache guard source candidate (not built natively or flashed).
    - **V52 timers** (`tools/r4_v52_osal_timers.py`).
 
    Every stage checks exact preimage hashes, then compiles the emitted C and rejects mutants (`tools/*_harness.py`).
@@ -58,10 +58,14 @@ Host side, outside this tree:
 
 Files with a date in their name (for example `release/R4_FIRST_PHYSICAL_FLASH_INCIDENT_2026-10-17.md`, `release/P7U_TRANSPORT_AND_FLASH_QUICKSTART.md` from the Ethernet/stock period, and `docs/r4/b4/*_2026102*.md`) record the state at that date. They are kept for traceability. When one conflicts with the coordinator status or review, the newer coordinator documents win.
 
+## Reading the composed C
+
+`tools/p7u_compose_source_locally.sh <source-sha> /tmp/<out>` runs the source-composition part of the native workflow without the TI toolchain, including every stage's compile-and-mutate harness. It writes the reviewable patch of all changed TI files to `/tmp/<out>/b0out/r4-final-ti-source.patch`. With `8ec1439…` it reproduces the installed V53 source.
+
 ## Running the tests
 
 ```sh
 python -m pytest tests          # from the repository root
 ```
 
-As of 1 November 2026: 924 passed, 31 skipped. Harnesses that need the pinned TI SDK or the TI toolchain skip, or run only in the native workflows.
+As of 1 November 2026: 927 passed, 31 skipped. Harnesses that need the pinned TI SDK or the TI toolchain skip, or run only in the native workflows.
