@@ -93,6 +93,22 @@ for i,b in sorted(old["addresses"].items()):
     else: r.update(change="REPLACED",allowed=False)
     out.append(r)
 tail=[i for i in now["addresses"] if i not in old["addresses"] and i not in now["empty_addresses"]]
+# Trust-centre link-key table: which retained entries changed and how (names
+# and key attributes only; never key bytes, seed shifts or counter values).
+ATTR={0:"PROVISIONAL(install code)",1:"UNVERIFIED",2:"VERIFIED",0xfd:"DISTRIBUTED_DEFAULT",0xff:"DEFAULT"}
+tc=[]
+for ext in sorted(set(old["peers"])|set(now["peers"])):
+    b,a=old["peers"].get(ext),now["peers"].get(ext)
+    if b and a and all(b[k]==a[k] for k in ("index","key_metadata","key")):continue
+    e={"ieee":who(ext)["ieee"],"name":who(ext).get("name"),"in_z2m_db":who(ext).get("in_z2m_db")}
+    if b is None:e["change"]="TC_ENTRY_ADDED"
+    elif a is None:e["change"]="TC_ENTRY_REMOVED"
+    else:
+        mb,ma=b["key_metadata"],a["key_metadata"];n=("extAddr","keyAttributes","keyType","SeedShift","IcIndex")
+        e["change"]="TC_ENTRY_CHANGED";e["fields"]=[n[i] for i in range(5) if mb[i]!=ma[i]]+(["slot"] if b["index"]!=a["index"] else [])+(["install_code_key"] if b["key"]!=a["key"] else [])
+        e["keyAttributes"]="%%s -> %%s"%%(ATTR.get(mb[1][0],mb[1][0]),ATTR.get(ma[1][0],ma[1][0]))
+        e["keyType"]="%%d -> %%d"%%(mb[2][0],ma[2][0])
+    tc.append(e)
 verdict=sec.evaluate_records(rec_now,rec_old,abi,runtime_upgrade=True,runtime_inventory_peers=inventory,acknowledged_changes=ack_native)
 # Second gate: current-owner reconciliation (counter floor is proven separately by the operator).
 from p7u_usb_current_owner_gate import reconcile_current
@@ -118,7 +134,7 @@ print(json.dumps({"operation":op.name,"capture_mtime":int((op/"fresh-sparse-snap
   "slots":{"baseline":len(old["addresses"]),"now":len(now["addresses"]),"baseline_empty":len(old["empty_addresses"]),"now_empty":len(now["empty_addresses"])},
   "nv_active_records":{"baseline":cnt_old.get("active_records"),"now":cnt_now.get("active_records")},
   "runtime_inventory":len(inventory),"z2m_devices":len(dbdev),"backup_peers":len(hist.peers),
-  "new_tail_not_empty":tail,"changed_rows":out,"owner_gate":owner_gate,"acknowledged":acks,"fresh_backup":"live" if A["live"] else "operation"}))
+  "new_tail_not_empty":tail,"changed_rows":out,"owner_gate":owner_gate,"tc_changes":tc,"acknowledged":acks,"fresh_backup":"live" if A["live"] else "operation"}))
 '''
 
 
@@ -161,6 +177,10 @@ def main():
             ("refused: " + ",".join(x["refused_because"])) if x.get("refused_because") else
             ("now: z2m=%s backup=%s inventory=%s" % (n.get("in_z2m_db"), n.get("in_backup"), n.get("in_runtime_inventory"))
              if n.get("ieee") else "")))
+    print(chr(10) + "trust-centre link-key entries changed: %d (TC set before/now %s)" % (len(r["tc_changes"]), r["slots"]))
+    for e in r["tc_changes"]:
+        print("  %-17s %s %-34s %s %s %s" % (e["change"], e["ieee"], e["name"] or "-", ",".join(e.get("fields", [])),
+                                            e.get("keyAttributes", ""), ("keyType " + e["keyType"]) if e.get("keyType") else ""))
     g = r["owner_gate"]
     print("\nowner reconciliation: %s  %s" % (g["reason_codes"] or "PASS (counter floor checked at deploy)", g["counts"]))
     for label in ("new_since_reference", "missing_since_reference"):

@@ -74,6 +74,34 @@ class AddressGate(unittest.TestCase):
                           acks=frozenset({(GHOST, "NEW_PEER"), (KNOWN, "ASSOC_GAIN")}))
         self.assertFalse(r["semantic_checks_passed"])
 
+    def tc_gate(self, before, after, acks):
+        old, now = state({1: row(2, 1, KNOWN)}, []), state({1: row(2, 1, KNOWN)}, [])
+        old["peers"], now["peers"] = {KNOWN: before}, {KNOWN: after}
+        states = {"old": old, "now": now}
+        with patch.object(sec, "validate_abi", lambda abi: None), \
+             patch.object(sec, "inspect_state", lambda records, abi: states[records]):
+            return sec.evaluate_records("now", "old", ABI, runtime_upgrade=True, acknowledged_changes=acks)
+
+    @staticmethod
+    def tc(shift, attrs=2, index=7, ktype=0, ic=0, tx=10):
+        meta = (KNOWN, bytes((attrs,)), bytes((ktype,)), bytes((shift,)), bytes((ic,)))
+        return {"index": index, "key_metadata": meta, "key": None, "tx": tx, "rx": tx}
+
+    def test_key_reroll_only_with_acknowledgement_and_only_seed_shift(self):
+        self.assertEqual(self.tc_gate(self.tc(3), self.tc(9), frozenset())["reason_codes"],
+                         ["TC_RETAINED_KEY_OR_REFERENCE_CHANGED"])
+        r = self.tc_gate(self.tc(3), self.tc(9, tx=12), frozenset({(KNOWN, "KEY_REROLL")}))
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_key_rerolls"], 1)
+        for after in (self.tc(9, attrs=1), self.tc(9, index=8), self.tc(9, ktype=1), self.tc(9, ic=1),
+                      self.tc(9, tx=5)):
+            r = self.tc_gate(self.tc(3), after, frozenset({(KNOWN, "KEY_REROLL")}))
+            self.assertFalse(r["semantic_checks_passed"], after)
+        r = self.tc_gate(self.tc(3, attrs=1), self.tc(9, attrs=1), frozenset({(KNOWN, "KEY_REROLL")}))
+        self.assertFalse(r["semantic_checks_passed"])   # only VERIFIED keys
+        r = self.tc_gate(self.tc(3), self.tc(9), frozenset({(OTHER, "KEY_REROLL")}))
+        self.assertFalse(r["semantic_checks_passed"])
+
     def test_malformed_acknowledgements_fail_closed(self):
         for acks in (frozenset({(KNOWN, "ANYTHING")}), frozenset({(bytes(8), "NEW_PEER")}), {(KNOWN, "NEW_PEER")}):
             r = self.run_gate({1: row(2, 1, KNOWN)}, {1: row(2, 1, KNOWN)}, [], [], acks=acks)

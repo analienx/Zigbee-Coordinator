@@ -401,7 +401,7 @@ def inspect_state(records: dict, abi: dict) -> dict:
             "aps_opaque_tail": table[header_size + 3 * entry_size:]}
 
 
-def compare_retained(current: dict, baseline: dict) -> None:
+def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset()) -> None:
     # 6. Preserve network/seed/key epoch; no permissive key-rotation guess.
     require(current["identity"] == baseline["identity"] and
             current["active"] == baseline["active"] and current["seed"] == baseline["seed"] and
@@ -427,13 +427,22 @@ def compare_retained(current: dict, baseline: dict) -> None:
         require(current[category].keys() == baseline[category].keys(), code + "_RETAINED_SET_CHANGED")
         for identity, before in baseline[category].items():
             after = current[category][identity]
-            require(all(after[key] == value for key, value in before.items() if key not in ("tx", "rx")),
-                    code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
+            if category == "peers" and identity in key_rerolls:
+                # Owner-acknowledged re-derivation of a VERIFIED TC link key
+                # from the UNCHANGED seed (rejoin key update): only SeedShift
+                # may differ; same slot, attributes, type, install-code index.
+                mb, ma = before["key_metadata"], after["key_metadata"]
+                require(before["index"] == after["index"] and before["key"] is None and after["key"] is None and
+                        mb[1] == ma[1] == bytes((2,)) and all(mb[i] == ma[i] for i in (0, 1, 2, 4)),
+                        code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
+            else:
+                require(all(after[key] == value for key, value in before.items() if key not in ("tx", "rx")),
+                        code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
             require(after["tx"] >= before["tx"] and after["rx"] >= before["rx"],
                     code + "_PERSISTED_COUNTER_REGRESSION")
 
 
-ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN"})
+ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN", "KEY_REROLL"})
 
 
 def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrade=False,
@@ -518,7 +527,8 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                     acknowledged_gains += 1
                 addresses[index] = normalized
             comparison = dict(now, addresses=addresses)
-        compare_retained(comparison, old)
+        key_rerolls = frozenset(p for p, c in acknowledged_changes if c == "KEY_REROLL")
+        compare_retained(comparison, old, key_rerolls)
         return {"semantic_checks_passed": True, "reason_codes": [],
                 "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"]),
                 "comparison_scope": ('KNOWN_R4_RUNTIME_INVENTORY_BOUND_VACANT_FILL_ONLY' if materialized_addresses else
@@ -528,7 +538,9 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                 "runtime_association_releases": released_associations,
                 "runtime_inventory_bound_address_fills": materialized_addresses,
                 "acknowledged_address_fills": acknowledged_fills,
-                "acknowledged_association_gains": acknowledged_gains}
+                "acknowledged_association_gains": acknowledged_gains,
+                "acknowledged_key_rerolls": sum(old["peers"].get(p, {}).get("key_metadata") !=
+                                                now["peers"].get(p, {}).get("key_metadata") for p in key_rerolls)}
     except (Hold, KeyError, TypeError, IndexError, ValueError) as error:
         code = str(error) if isinstance(error, Hold) else "SECURITY_RECORD_OR_ABI_MALFORMED"
         return {"semantic_checks_passed": False, "reason_codes": [code]}

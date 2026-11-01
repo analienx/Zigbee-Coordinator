@@ -28,7 +28,7 @@ OFFICIAL_OWNER = "45df7312_zigbee2mqtt"
 OFFICIAL_OWNER_VERSION = "2.14.2-1"
 OFFICIAL_OWNER_IMAGE = "sha256:248c11bb7c6eb7fa6854edb23312f1356cb1650ed32c1ed7cebbf86322600e28"
 OFFICIAL_OWNER_IMAGE_REF = "ghcr.io/zigbee2mqtt/zigbee2mqtt-aarch64:2.14.2-1"
-ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN"})
+ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN", "KEY_REROLL"})
 
 
 def acknowledged(package):
