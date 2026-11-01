@@ -40,7 +40,7 @@ Before removal, a scan confirmed that no remaining code, test or workflow refere
 | Fast-forward `main` | **Done**: `d32a6582` → `9f72bcfc`, a plain fast-forward |
 | Close PRs #195 and #196 | **Done**: content is on `main` as the latest version |
 | Create provenance tags | **Done** (1 Nov, from a local clone): all six annotated tags below pushed and verified on `origin`; each peels to the commit in its row. |
-| Delete the earlier-version P7U branches | **Not done**: refused by the cloud session's git policy (HTTP 403), and again by the local session's permission policy on 1 Nov. All 27 tips were re-verified unchanged on 1 Nov and each is an ancestor of the PR ref named in its row. The owner must run the deletion (command below). |
+| Delete the earlier-version P7U branches | **Done** (1 Nov, from a local clone, on the owner's authorization): all 27 deleted in one atomic push, each leased to its re-verified tip. Every tip is an ancestor of the PR ref named in its row. The kept branches below are untouched. |
 
 Provenance tags (annotated). Each commit is also preserved by the PR ref named in its row:
 
@@ -66,9 +66,9 @@ git push origin --tags
 
 ## P7U branches to delete
 
-Every tip below is also kept by at least one closed-PR ref, checked on 1 Nov, so deleting the branches loses no commit. All 27 tips were re-checked against this table before the attempted deletion; none had moved. A branch can be recreated with `git push origin <sha>:refs/heads/<name>`.
+**Deleted on 1 Nov.** Every tip below is also kept by at least one closed-PR ref, checked on 1 Nov, so deleting the branches lost no commit. All 27 tips were re-checked against this table immediately before deletion; none had moved. A branch can be recreated with `git push origin <sha>:refs/heads/<name>` (full SHA from the PR ref).
 
-To delete them from a normal clone, first confirm `main` is at or after `9f72bcfc` and that each tip still matches the table, then:
+Command used (each delete was additionally leased to its verified tip and pushed with `--atomic`):
 
 ```sh
 git push origin --delete \
