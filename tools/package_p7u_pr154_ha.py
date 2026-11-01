@@ -31,13 +31,18 @@ def main():
     a = argparse.ArgumentParser(); a.add_argument('--candidate', type=Path, required=True)
     a.add_argument('--out', type=Path, required=True)
     a.add_argument('--reader-package', type=Path)
-    a.add_argument('--host-release', type=Path, required=True)
+    a.add_argument('--host-release', type=Path)
+    a.add_argument('--official-owner', action='store_true',
+                   help='the official Zigbee2MQTT app is the sole owner; no custom host release')
     args = a.parse_args()
+    assert args.official_owner != (args.host_release is not None), 'EXACTLY_ONE_OWNER_MODE'
     assert os.environ.get('GITHUB_ACTIONS') == 'true'
     source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     assert source == os.environ['OPERATOR_SOURCE_SHA']
     c = json.loads((args.candidate/'candidate.json').read_bytes())
     assert c['source_sha'] == os.environ['FIRMWARE_SOURCE_SHA']
+    if args.official_owner:
+        return package(args, c, source, official_owner(c))
     host = json.loads(args.host_release.read_bytes())
     assert host['schema'] == 'p7u-host-release-v1' and host['source_sha'] == os.environ.get('HOST_SOURCE_SHA',c['source_sha'])
     priority_pair=(c['source_sha']=='e3a0f3b7726adf1f6c182973f135665a5c3857e0' and host['source_sha']=='85ce37c24802b0f16fec0afd00a1a0457656cd80')
@@ -61,6 +66,25 @@ def main():
     paired_image = host['profiles']['diagnostic']['image_id']
     import re
     assert re.fullmatch('sha256:[0-9a-f]{64}', paired_image)
+    wire = ('R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1' if (owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or v50_pair) else
+            'R4D4_MINOR4_AND_R4D5_PAGED_V1' if priority_pair else
+            'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None)
+    return package(args, c, source, {'paired_host_image': paired_image,
+                                     'paired_host_source_sha': host['source_sha'], 'f2_wire_contract': wire})
+
+
+def official_owner(c):
+    """Pins for the official Zigbee2MQTT app owner, from the operator's own binding."""
+    import sys
+    sys.path.insert(0, 'host/flash')
+    import p7u_paired_binding as b
+    assert c['source_sha'] in b.OFFICIAL_SOURCES, 'FIRMWARE_NOT_QUALIFIED_FOR_OFFICIAL_OWNER'
+    return {'paired_host_mode': b.OFFICIAL_MODE, 'paired_host_slug': b.OFFICIAL_OWNER,
+            'paired_host_version': b.OFFICIAL_OWNER_VERSION, 'paired_host_image': b.OFFICIAL_OWNER_IMAGE,
+            'paired_host_source_sha': c['source_sha'], 'f2_wire_contract': b.OWNED_STAGE_WIRE}
+
+
+def package(args, c, source, owner):
     assert sha(args.candidate/'security-reader.c') == 'a8bbbf32add1cf79a2ddb2370f06ff8f1cdc53279dc5c953f595d5674aed25e7'
     args.out.mkdir(exist_ok=False)
     for directory in ('release', 'release/rom_writer', 'qualification', 'b0/tools', 'b1/tools'):
@@ -104,10 +128,7 @@ def main():
                     'pyserial==3.5', 'pyserial-asyncio==0.6'], check=True)
     report = {'schema': 'p7u-r4-afbb7a8-ha-package-v1', 'operator_source_sha': source,
               'firmware_source_sha': c['source_sha'], 'run_id': os.environ['GITHUB_RUN_ID'],
-              'paired_host_image': paired_image, 'paired_host_source_sha': host['source_sha'],
-              'f2_wire_contract': ('R4D4_MINOR4_R4D5_PAGED_AND_R4D6_OWNED_V1' if (owned_stage_pair or startup_capture_pair or v47_pair or v48_pair or v50_pair) else
-                                   'R4D4_MINOR4_AND_R4D5_PAGED_V1' if priority_pair else
-                                   'R4D4_MINOR3_240_V1' if c['source_sha']=='899f179031aae74db2e48699900f1cf5722bb4de' else None),
+              **owner,
               'arm64_reader': 'STATIC_AARCH64_QEMU_MATCHED_NATIVE_X86_ON_PUBLIC_NV4',
               'hardware_tested': False,
               'reader_origin_package': 'b18be817fde67a86d8efd6375efb93f8c40a44dcc2be7d8a40d2726f15ef402f' if args.reader_package else None,

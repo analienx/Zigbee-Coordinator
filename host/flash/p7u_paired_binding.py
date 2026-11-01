@@ -16,7 +16,18 @@ QUALIFIED_SUCCESSORS = {
     "250441cd17c55e25c78d97e041f056574355ade7": "391d7a5b24d459f347a8ff2378c751ebcc7eec4b",
     "a70ae24ff45e708e13969cd341c9ecb494d1570f": "250441cd17c55e25c78d97e041f056574355ade7",
     "8ec1439786e3e98151d2796e6797675bb9ef5965": "a70ae24ff45e708e13969cd341c9ecb494d1570f",
+    # V54: V53 plus the review's NV-cache guard (F3/F6/F7); native build run 41284426604.
+    "20a2474a67c1d420b6614b3fcb2f7ed543b1420e": "8ec1439786e3e98151d2796e6797675bb9ef5965",
 }
+# Official Zigbee2MQTT app as the sole serial owner (production since 31 Oct
+# 2026). No custom host, inspector or fallback container takes part. Pinned
+# exactly: a different app version or image is a different owner.
+OFFICIAL_MODE = "official-z2m-v1"
+OFFICIAL_SOURCES = frozenset({"20a2474a67c1d420b6614b3fcb2f7ed543b1420e"})
+OFFICIAL_OWNER = "45df7312_zigbee2mqtt"
+OFFICIAL_OWNER_VERSION = "2.14.2-1"
+OFFICIAL_OWNER_IMAGE = "sha256:248c11bb7c6eb7fa6854edb23312f1356cb1650ed32c1ed7cebbf86322600e28"
+OFFICIAL_OWNER_IMAGE_REF = "ghcr.io/zigbee2mqtt/zigbee2mqtt-aarch64:2.14.2-1"
 OWNED_STAGE_PAIR=("66ed700c2818c7a0963dad9160d55109009bbaac","66ed700c2818c7a0963dad9160d55109009bbaac")
 # Host-only startup observability: independently compiled and released at exact
 # source. The radio ABI stays V6. Keep a fixed digest to prevent cross-pairing.
@@ -78,6 +89,17 @@ def binding_values(raw, expected_pin, package):
                     host_source==V6_STARTUP_CAPTURE_HOST and
                     package.get("paired_host_image")==V6_STARTUP_CAPTURE_IMAGE and
                     package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
+    official = package.get('paired_host_mode') == OFFICIAL_MODE
+    if official or data['source_sha'] in OFFICIAL_SOURCES:
+        # Official-owner sources are never paired with a custom host, and the
+        # official mode is never accepted for any other firmware source.
+        compatible=(official and data['source_sha'] in OFFICIAL_SOURCES and
+                    data['installed_source']==QUALIFIED_SUCCESSORS[data['source_sha']] and
+                    host_source==data['source_sha'] and
+                    package.get('paired_host_slug')==OFFICIAL_OWNER and
+                    package.get('paired_host_version')==OFFICIAL_OWNER_VERSION and
+                    package.get('paired_host_image')==OFFICIAL_OWNER_IMAGE and
+                    package.get('f2_wire_contract')==OWNED_STAGE_WIRE)
     need(re.fullmatch(r'[0-9a-f]{40}',host_source) is not None and compatible and
          re.fullmatch(r"sha256:[0-9a-f]{64}", package.get("paired_host_image", "")) is not None, "PAIRED_HOST")
     need(re.fullmatch(r"[0-9a-f]{32}", data["previous_operation"]) is not None, "PREVIOUS_OPERATION")
@@ -95,6 +117,9 @@ def binding_values(raw, expected_pin, package):
         "PREVIOUS_JOURNAL_PIN":data["previous_journal_pin"],
         "PREVIOUS_CANDIDATE_PIN":data["previous_candidate_pin"],
         "PREVIOUS_INPUT_PIN":data["input_pin"]}
+    if official:
+        result.update(OWNER=OFFICIAL_OWNER, PAIRED_HOST_VERSION=OFFICIAL_OWNER_VERSION,
+                      OWNER_IMAGE_REF=OFFICIAL_OWNER_IMAGE_REF, OFFICIAL_OWNER=True)
     if HOLD_FIELDS.issubset(data):
         need(re.fullmatch(r"[0-9a-f]{32}",data["readonly_hold_operation"]) is not None and
              all(re.fullmatch(r"[0-9a-f]{64}",data[k]) is not None for k in ("readonly_hold_plan_pin","readonly_hold_pin")),"READONLY_HOLD_FIELDS")

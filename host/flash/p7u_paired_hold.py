@@ -26,8 +26,8 @@ def absent_owner(ns,ha):
     need(info['state'] in ('stopped','error') and info['version']==ns['PAIRED_HOST_VERSION'] and
          info['build'] is False and info['boot']=='manual' and info['watchdog'] is False,
          'PAIRED_ABSENT_OWNER_METADATA')
-    image=json.loads(ns['run'](['docker','image','inspect',
-         'localhost:50144/p7u-r4-diagnostic:'+ns['PAIRED_HOST_VERSION']]))
+    ref=ns.get('OWNER_IMAGE_REF') or 'localhost:50144/p7u-r4-diagnostic:'+ns['PAIRED_HOST_VERSION']
+    image=json.loads(ns['run'](['docker','image','inspect',ref]))
     need(len(image)==1 and image[0]['Id']==ns['IMAGE'],'PAIRED_ABSENT_OWNER_IMAGE')
     ha.proof(False)
     return {'id':None,'image':ns['IMAGE'],'started_at':None,'running':False,'absent':True}

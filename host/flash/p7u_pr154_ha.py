@@ -53,6 +53,19 @@ PREVIOUS_INPUT_PIN = '7cb008da1d39f4248e8eb9c5979ef0ab4c6a04323d028b485cd513f660
 INPUT_NAMES = {'installed-candidate.json', 'installed-app.hex', 'installed-handoff.bin',
                'installed-plan.json', 'installed-result.json', 'installed-before.bin',
                'management.json', 'historical-backup.json'}
+# Coordinator backup size admitted as "the same live network". The R4 profile
+# provisions for far more than today's ~107 peers; the cap only rejects an
+# implausible backup, not a growing network.
+PEERS_MIN, PEERS_MAX = 100, 200
+# Set by the paired binding when the official Zigbee2MQTT app is the owner.
+OFFICIAL_OWNER = False
+OWNER_IMAGE_REF = None
+LEGACY_SLUGS = ('local_p7u_r4_native_host', 'local_p7u_r4_fallback', 'local_p7u_r4_owner_inspector')
+# Read-only, host-PID-namespace scan of every open fd, run from the pinned
+# owner image itself (no network, removed on exit): "pid comm target cgroup".
+SERIAL_SCAN = ('for p in /proc/[0-9]*; do for f in $p/fd/*; do t=$(readlink $f 2>/dev/null); '
+               'case "$t" in /dev/tty*) c=$(grep -o "[0-9a-f]\\{64\\}" $p/cgroup 2>/dev/null | head -1); '
+               'echo "${p#/proc/} $(cat $p/comm) $t ${c:-host}";; esac; done; done')
 
 
 class Hold(RuntimeError):
@@ -222,7 +235,7 @@ class HA:
     def request(self, url, payload=None):
         root = 'http://supervisor/'
         slugs = (OWNER, 'local_p7u_r4_fallback', '45df7312_zigbee2mqtt',
-                 'local_p7u_recovery', 'local_p7u_r4_lifecycle_manager')
+                 'local_p7u_recovery', 'local_p7u_r4_lifecycle_manager') + LEGACY_SLUGS
         reads = {root+'addons/'+s+'/info' for s in slugs} | {
             root+'core/api/states/'+e for e in ('automation.boot_deterministic_emqx_then_zigbee2mqtt',
             'automation.zigbee2mqtt_mesh_communication_outage_alert', 'button.slzb_06p7u_zigbee_restart')}
@@ -248,7 +261,7 @@ class HA:
 
     def info(self, slug):
         need(slug in (OWNER, 'local_p7u_r4_fallback', '45df7312_zigbee2mqtt',
-                       'local_p7u_recovery', 'local_p7u_r4_lifecycle_manager'), 'ADDON_SCOPE')
+                       'local_p7u_recovery', 'local_p7u_r4_lifecycle_manager') + LEGACY_SLUGS, 'ADDON_SCOPE')
         a = self.request('http://supervisor/addons/'+slug+'/info')
         need(a['result'] == 'ok', 'ADDON_INFO'); return a['data']
 
@@ -268,6 +281,8 @@ class HA:
                 'running': a['State']['Running']}
 
     def proof(self, active):
+        if OFFICIAL_OWNER:
+            return self.official_proof(active)
         a = json.loads(run(['docker', 'inspect', 'app_local_p7u_r4_owner_inspector']))[0]
         need(a['Image'] == INSPECTOR_IMAGE and not a['State']['Running'], 'INSPECTOR_IMAGE')
         p = json.loads(run(['docker', 'start', '-a', 'app_local_p7u_r4_owner_inspector'], 40))
@@ -277,6 +292,32 @@ class HA:
         if not active:
             need(not p['tty_holders_pids'], 'TTY_NOT_QUIESCENT')
         return p
+
+    def official_proof(self, active):
+        """Exclusive-owner proof without any custom container.
+
+        Every process on the host that holds the coordinator TTY must belong
+        to the official owner's running container (active) or there must be
+        none at all (quiescent). Same result shape as the retired inspector.
+        """
+        tty = os.path.realpath(SERIAL)
+        need(re.fullmatch(r'/dev/tty(ACM|USB)[0-9]+', tty) is not None, 'TTY_PATH')
+        raw = run(['docker', 'run', '--rm', '--pid=host', '--privileged', '--network', 'none',
+                   '--entrypoint', 'sh', IMAGE, '-c', SERIAL_SCAN], 60).decode()
+        rows = [x.split() for x in raw.splitlines() if x.strip()]
+        need(all(len(r) == 4 for r in rows), 'TTY_SCAN_SHAPE')
+        holders = [r for r in rows if r[2] == tty]
+        owner_id = None
+        if active:
+            a = json.loads(run(['docker', 'inspect', 'app_'+OWNER]))[0]
+            need(a['State']['Running'] and a['Image'] == IMAGE, 'TTY_OWNER_NOT_RUNNING')
+            owner_id = a['Id']
+            need(holders and all(r[3] == owner_id for r in holders), 'TTY_OWNER')
+        else:
+            need(not holders, 'TTY_NOT_QUIESCENT')
+        return {'exclusive_owner_verified': True, 'serial_opened': False, 'tty': tty,
+                'tty_holders_pids': sorted(int(r[0]) for r in holders),
+                'slots': {'diagnostic': {'running': active, 'container_id': owner_id}}}
 
     def management(self):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -293,10 +334,24 @@ class HA:
         return sha(canonical(baseline))
 
     def policy(self):
-        for slug in (OWNER, 'local_p7u_r4_fallback', '45df7312_zigbee2mqtt'):
-            a = self.info(slug)
-            need(a['boot'] == 'manual' and a['watchdog'] is False and a['auto_update'] is False,
-                 'HOST_POLICY')
+        if OFFICIAL_OWNER:
+            a = self.info(OWNER)
+            need(a['version'] == PAIRED_HOST_VERSION and a['boot'] == 'manual' and
+                 a['watchdog'] is False and a['auto_update'] is False, 'HOST_POLICY')
+            # Retired custom apps may stay installed but can never start on
+            # their own; uninstalled or removed from the store is stronger.
+            for slug in LEGACY_SLUGS:
+                try:
+                    b = self.info(slug)
+                except Exception:
+                    continue
+                need(b.get('installed') is False or
+                     (b['state'] in ('stopped', 'error') and b['boot'] == 'manual'), 'LEGACY_APP_POLICY')
+        else:
+            for slug in (OWNER, 'local_p7u_r4_fallback', '45df7312_zigbee2mqtt'):
+                a = self.info(slug)
+                need(a['boot'] == 'manual' and a['watchdog'] is False and a['auto_update'] is False,
+                     'HOST_POLICY')
         # An uninstalled guard/manager cannot act at all: the strongest state.
         # Supervisor still answers info for its local store entry, with
         # installed=False and no runtime fields.
@@ -441,7 +496,7 @@ def quiescent_provenance(ha, owner):
     database = read(DATA/'database.db')
     from p7u_usb_security_model import parse_backup
     peers = parse_backup(json.loads(backup)).peers
-    need(100 <= len(peers) <= 107, 'QUIESCENT_BACKUP_IDENTITY')
+    need(PEERS_MIN <= len(peers) <= PEERS_MAX, 'QUIESCENT_BACKUP_IDENTITY')
     return sha(canonical({'owner': owner, 'addon_state': info['state'],
                           'backup_sha256': sha(backup), 'database_sha256': sha(database),
                           'verified_radio_image': False,
@@ -584,7 +639,7 @@ def plan(package, package_pin, input_pin, ha):
     rom_continuation = rom_hold_provenance(ha, owner) if HELD_ROM.exists() and not reentry else None
     backup = load(DATA/'coordinator_backup.json')
     from p7u_usb_security_model import parse_backup
-    now = parse_backup(backup); need(100 <= len(now.peers) <= 107, 'OWNER_BACKUP')
+    now = parse_backup(backup); need(PEERS_MIN <= len(now.peers) <= PEERS_MAX, 'OWNER_BACKUP')
     need(Path(SERIAL).is_char_device(), 'SERIAL_DEVICE')
     need(not PRIVATE.exists(), 'OPERATION_EXISTS')
     PRIVATE.mkdir(mode=0o700)

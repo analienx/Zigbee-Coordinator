@@ -29,7 +29,7 @@ class FlashDriver(unittest.TestCase):
             self.assertIsNone(re.search(r"\bassert\b", snippet), name)
         # Every remote need() call takes exactly (condition, reason).
         fill = {"EXTRACT": tuple("abcde") + (True,), "VERIFY_STAGE": tuple("abcd"),
-                "SERVING": (driver.HOST_IMAGE,),
+                "SERVING": ("app_" + driver.LEGACY_OWNER, driver.HOST_IMAGE),
                 "STAGE_BINDING": {k: "x" for k in ("op", "installed", "source", "oldinput",
                                                    "oldcand", "newinput", "newbind", "fw")}}
         for name, args in fill.items():

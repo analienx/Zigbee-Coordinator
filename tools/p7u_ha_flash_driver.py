@@ -48,6 +48,9 @@ REPO = "analienx/Zigbee-Coordinator"
 HOST_SOURCE = "2c2d96d6334b424f6364a982ad976a674b260e04"
 HOST_IMAGE = "sha256:d00b59b26e28872e4027f2eab16800b00560876ce592fd81bae503871ec96367"
 OPERATIONS = "/share/p7u-r4-firmware-operations"
+LEGACY_OWNER = "local_p7u_r4_native_host"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host" / "flash"))
+import p7u_paired_binding as binding  # noqa: E402  single source of the official-owner pins
 
 
 def canon(obj):
@@ -68,6 +71,19 @@ NATIVE_WORKFLOW = ".github/workflows/test-r4-stock20260311-native.yml"
 PACKAGE_WORKFLOW = ".github/workflows/package-p7u-paired-operator.yml"
 SERVING_READY = {"NATIVE_STATE9_F2_MINOR4_HOST_RUNNING_PENDING_SERVING",
                  "NATIVE_STATE9_AND_F2_V43_VERIFIED_HOST_STARTED_PENDING_SERVING"}
+
+
+def host_identity(pmeta, fw):
+    """Owner identity bound into the package: official app or legacy paired host."""
+    if pmeta.get("paired_host_mode") == binding.OFFICIAL_MODE:
+        hold(fw in binding.OFFICIAL_SOURCES and pmeta.get("paired_host_source_sha") == fw and
+             pmeta.get("paired_host_slug") == binding.OFFICIAL_OWNER and
+             pmeta.get("paired_host_version") == binding.OFFICIAL_OWNER_VERSION and
+             pmeta.get("paired_host_image") == binding.OFFICIAL_OWNER_IMAGE, "OFFICIAL_OWNER_PINS")
+        return binding.OFFICIAL_OWNER, binding.OFFICIAL_OWNER_IMAGE
+    hold(pmeta.get("paired_host_source_sha") == HOST_SOURCE, "HOST_SOURCE")
+    hold(pmeta.get("paired_host_image") == HOST_IMAGE, "HOST_IMAGE")
+    return LEGACY_OWNER, HOST_IMAGE
 
 
 def run_meta(run):
@@ -136,8 +152,7 @@ class Driver:
         cmeta = json.loads((cand / "candidate.json").read_bytes())
         hold(pmeta.get("firmware_source_sha") == cmeta.get("source_sha") == fw, "FIRMWARE_SOURCE")
         hold(pmeta.get("operator_source_sha") == package.get("head_sha"), "OPERATOR_SOURCE")
-        hold(pmeta.get("paired_host_source_sha") == HOST_SOURCE, "HOST_SOURCE")
-        hold(pmeta.get("paired_host_image") == HOST_IMAGE, "HOST_IMAGE")
+        slug, image = host_identity(pmeta, fw)
         for root, files in ((pkg, pmeta["files"]), (cand, cmeta["files"])):
             bad = [n for n, h in files.items()
                    if not (root / n).is_file() or sha((root / n).read_bytes()) != h]
@@ -145,7 +160,8 @@ class Driver:
         self.save(firmware=fw, installed=a.installed, previous_operation=a.previous_operation,
                   operator_source=pmeta["operator_source_sha"],
                   package_pin=sha((pkg / "PACKAGE.json").read_bytes()),
-                  candidate_pin=sha(canon(cmeta)), native_run=native_run, package_run=package_run)
+                  candidate_pin=sha(canon(cmeta)), native_run=native_run, package_run=package_run,
+                  owner_slug=slug, owner_image=image)
         print(json.dumps({"status": "FETCHED_AND_VERIFIED", "package_pin": self.state["package_pin"],
                           "candidate_pin": self.state["candidate_pin"],
                           "operator_source": self.state["operator_source"]}))
@@ -193,6 +209,7 @@ class Driver:
             hold(attach == "" or re.fullmatch("[0-9a-f]{32}", attach) is not None, "ATTACH_OPERATION_ID")
             cont = self.remote_python(HOLD_BINDING % {
                 "package": package_dir, "base": self.state["binding"], "op": OPERATIONS + "/" + a.continue_hold,
+                "container": "app_" + self.owner()[0],
                 "attach": OPERATIONS + "/" + attach if attach else "",
                 "out": "/share/p7u-delivery-%s-cont-%s%s" % (fw[:12], a.continue_hold[:8],
                                                              "-re-" + attach[:8] if attach else "")})
@@ -239,8 +256,7 @@ class Driver:
         pmeta = json.loads((pkg / "PACKAGE.json").read_bytes())
         hold(pmeta.get("firmware_source_sha") == fw, "FIRMWARE_SOURCE")
         hold(pmeta.get("operator_source_sha") == package.get("head_sha"), "OPERATOR_SOURCE")
-        hold(pmeta.get("paired_host_source_sha") == HOST_SOURCE, "HOST_SOURCE")
-        hold(pmeta.get("paired_host_image") == HOST_IMAGE, "HOST_IMAGE")
+        hold(host_identity(pmeta, fw) == self.owner(), "OWNER_CHANGED_ON_REPACKAGE")
         bad = [n for n, h in pmeta["files"].items()
                if not (pkg / n).is_file() or sha((pkg / n).read_bytes()) != h]
         hold(not bad, "MANIFEST_HASH %s" % bad[:5])
@@ -263,16 +279,20 @@ class Driver:
         print(json.dumps({"status": "REPACKAGED_READ_ONLY", "package_dir": package_dir,
                           "operator_source": pmeta["operator_source_sha"]}))
 
+    def owner(self):
+        """(slug, image) of the serial owner this delivery was fetched for."""
+        return (self.state.get("owner_slug", LEGACY_OWNER), self.state.get("owner_image", HOST_IMAGE))
+
     def restart_host(self):
-        """After a read-only capture: start the paired host, one bounded retry."""
+        """After a read-only capture: start the owner, one bounded retry."""
+        slug, image = self.owner()
         out = []
         for attempt in range(2):
-            run = self.ssh("ha apps start local_p7u_r4_native_host >/dev/null 2>&1; sleep 40; "
-                           "docker inspect -f '{{.State.Status}} {{.Image}}' "
-                           "app_local_p7u_r4_native_host", 180)
+            run = self.ssh("ha apps start %s >/dev/null 2>&1; sleep 40; "
+                           "docker inspect -f '{{.State.Status}} {{.Image}}' app_%s" % (slug, slug), 180)
             state = run.stdout.split()
             out.append(state)
-            if state == ["running", HOST_IMAGE]:
+            if state == ["running", image]:
                 return {"host": "RUNNING", "attempts": attempt + 1}
         return {"host": "NOT_RUNNING_INSPECT", "attempts": 2, "observed": out}
 
@@ -429,7 +449,7 @@ print(json.dumps({"status":"BINDING_STAGED_NO_RADIO","input_pin":inputpin,"bindi
 # Runs on HA inside the running paired host: subscribe only, RH2, discard
 # retained and bridge topics, require last_seen after the subscription.
 SERVING = r'''import json,subprocess,time
-container="app_local_p7u_r4_native_host";image=%r
+container=%r;image=%r
 def need(c,r):
  if not c:raise SystemExit("HOLD "+r)
 def owner():return json.loads(subprocess.check_output(["docker","inspect",container]))[0]
@@ -476,7 +496,7 @@ canon=lambda o:json.dumps(o,sort_keys=True,separators=(",",":"),allow_nan=False)
 sha=lambda b:hashlib.sha256(b).hexdigest()
 binding=json.loads(base.read_bytes())
 need(set(binding)==set(json.loads(base.read_bytes())) and "readonly_hold_operation" not in binding,"BASE_BINDING")
-a=json.loads(subprocess.check_output(["docker","inspect","app_local_p7u_r4_native_host"]))[0]
+a=json.loads(subprocess.check_output(["docker","inspect",%(container)r]))[0]
 owner={"id":a["Id"],"image":a["Image"],"started_at":a["State"]["StartedAt"],"running":a["State"]["Running"]}
 need(owner["running"] is False,"OWNER_RUNNING")
 plan=json.loads((op/"plan.json").read_bytes())
@@ -549,7 +569,8 @@ def main():
         # proven native coordinator state 9 and the configured marker first.
         proven = [d.state.get(k, {}).get("status") for k in ("boot_result", "finish_result")]
         hold(any(s in SERVING_READY for s in proven), "SERVING_WITHOUT_OPERATOR_STATE9_MARKER_PROOF")
-        result = d.remote_python(SERVING % (HOST_IMAGE,), timeout=130)
+        slug, image = d.owner()
+        result = d.remote_python(SERVING % ("app_" + slug, image), timeout=130)
         d.save(serving_runs=d.state.get("serving_runs", []) + [result])
         print(json.dumps(result, indent=2))
         return 0 if (result.get("evidence") or {}).get("passed") else 1
@@ -564,6 +585,9 @@ def main():
     # tooling targets is installed. Since 31 Oct 2026 production runs the
     # official Zigbee2MQTT app, which this capture does not support yet:
     # stopping/starting an absent app would leave the real owner running.
+    hold(d.owner()[0] == LEGACY_OWNER,
+         "HANG_UNSUPPORTED_WITH_OFFICIAL_OWNER: hang evidence is review finding F1; "
+         "use HANG_RECOVERY_RUNBOOK.md")
     probe = d.ssh("docker inspect -f '{{.Image}}' app_local_p7u_r4_native_host", 60)
     hold(probe.returncode == 0 and probe.stdout.strip() == HOST_IMAGE,
          "HANG_PAIRED_HOST_NOT_INSTALLED: the production host is not the paired P7U "
