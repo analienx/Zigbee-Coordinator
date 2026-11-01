@@ -39,10 +39,10 @@ Before removal, a scan confirmed that no remaining code, test or workflow refere
 | Push the work branch | **Done** (`claude/p7u-firmware-review-lxb903`) |
 | Fast-forward `main` | **Done**: `d32a6582` → `9f72bcfc`, a plain fast-forward |
 | Close PRs #195 and #196 | **Done**: content is on `main` as the latest version |
-| Create provenance tags | **Not done**: the session's git policy refused every tag push (HTTP 403), even a tag whose commit is already on a branch. Create them from a normal clone (commands below). |
-| Delete the earlier-version P7U branches | **Not done**: the session's git policy refused ref deletion (HTTP 403). Delete them from a normal clone (command below). |
+| Create provenance tags | **Done** (1 Nov, from a local clone): all six annotated tags below pushed and verified on `origin`; each peels to the commit in its row. |
+| Delete the earlier-version P7U branches | **Not done**: refused by the cloud session's git policy (HTTP 403), and again by the local session's permission policy on 1 Nov. All 27 tips were re-verified unchanged on 1 Nov and each is an ancestor of the PR ref named in its row. The owner must run the deletion (command below). |
 
-Planned tags (annotated). Each commit is already preserved by the PR ref named in its row, so creating the tags adds a second anchor and is not urgent:
+Provenance tags (annotated). Each commit is also preserved by the PR ref named in its row:
 
 | Tag | Commit | Why |
 |---|---|---|
@@ -68,7 +68,7 @@ git push origin --tags
 
 Every tip below is also kept by at least one closed-PR ref, checked on 1 Nov, so deleting the branches loses no commit. All 27 tips were re-checked against this table before the attempted deletion; none had moved. A branch can be recreated with `git push origin <sha>:refs/heads/<name>`.
 
-To delete them from a normal clone, first confirm `main` is at or after `9f72bcfc`, then:
+To delete them from a normal clone, first confirm `main` is at or after `9f72bcfc` and that each tip still matches the table, then:
 
 ```sh
 git push origin --delete \

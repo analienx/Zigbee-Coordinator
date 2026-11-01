@@ -2,12 +2,12 @@
 
 **Current state (31 October 2026):** V53 firmware is installed on the production coordinator, with the official Zigbee2MQTT app as its host. The NV read storm that caused the hangs is fixed. See the [status summary](STATUS_2026-10-31.md) for results, open items and what is still unqualified, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) for findings and next steps.
 
-**Source of record (on `main` since 31 October 2026, latest version only):** `main` holds the V53 tree as one commit; earlier versions are not carried. The exact installed commits stay on GitHub through the PR #195/#196 refs (tags listed below, once pushed). A native rebuild from `main` embeds `main`'s commit prefix in the evidence digest, so to reproduce the installed image byte for byte, build at `8ec1439`.
+**Source of record (on `main` since 31 October 2026, latest version only):** `main` holds the V53 tree as one commit; earlier versions are not carried. The exact installed commits stay on GitHub through the PR #195/#196 refs and the tags listed below. A native rebuild from `main` embeds `main`'s commit prefix in the evidence digest, so to reproduce the installed image byte for byte, build at `8ec1439`.
 
 | What | Where |
 |---|---|
-| Installed firmware source | `8ec1439786e3` (PR #195; tag `p7u-v53-firmware-source` once pushed) |
-| Delivery that installed it | `ed42122d8149` (PR #196; tag `p7u-v53-delivery` once pushed) |
+| Installed firmware source | `8ec1439786e3` (PR #195; tag `p7u-v53-firmware-source`) |
+| Delivery that installed it | `ed42122d8149` (PR #196; tag `p7u-v53-delivery`) |
 | Composition order of the image | [`tools/r4_b0_b4_composite_stage.py`](../../tools/r4_b0_b4_composite_stage.py), applied to TI SDK `3615ad5d` (`lpf2-8.33.00.16`) |
 | V50–V53 Stack service, evidence and NV read cache | [`tools/r4_v50_stack_service.py`](../../tools/r4_v50_stack_service.py) |
 | V52 OSAL timers | [`tools/r4_v52_osal_timers.py`](../../tools/r4_v52_osal_timers.py) |
