@@ -93,8 +93,12 @@ class AddressGate(unittest.TestCase):
         r = self.tc_gate(self.tc(3), self.tc(9, tx=12), frozenset({(KNOWN, "KEY_REROLL")}))
         self.assertTrue(r["semantic_checks_passed"], r)
         self.assertEqual(r["acknowledged_key_rerolls"], 1)
-        for after in (self.tc(9, attrs=1), self.tc(9, index=8), self.tc(9, ktype=1), self.tc(9, ic=1),
-                      self.tc(9, tx=5)):
+        # A re-derived key restarts its counters (new key, new counter space).
+        self.assertTrue(self.tc_gate(self.tc(3), self.tc(9, tx=0), frozenset({(KNOWN, "KEY_REROLL")}))["semantic_checks_passed"])
+        # Same key: counters must stay monotonic even when acknowledged.
+        self.assertEqual(self.tc_gate(self.tc(3), self.tc(3, tx=5), frozenset({(KNOWN, "KEY_REROLL")}))["reason_codes"],
+                         ["TC_PERSISTED_COUNTER_REGRESSION"])
+        for after in (self.tc(9, attrs=1), self.tc(9, index=8), self.tc(9, ktype=1), self.tc(9, ic=1)):
             r = self.tc_gate(self.tc(3), after, frozenset({(KNOWN, "KEY_REROLL")}))
             self.assertFalse(r["semantic_checks_passed"], after)
         r = self.tc_gate(self.tc(3, attrs=1), self.tc(9, attrs=1), frozenset({(KNOWN, "KEY_REROLL")}))

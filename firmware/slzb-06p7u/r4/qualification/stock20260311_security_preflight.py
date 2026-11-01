@@ -438,7 +438,11 @@ def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset()) -> 
             else:
                 require(all(after[key] == value for key, value in before.items() if key not in ("tx", "rx")),
                         code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
-            require(after["tx"] >= before["tx"] and after["rx"] >= before["rx"],
+            # A re-derived key starts a new counter space; every other entry
+            # (and an acknowledged entry whose key did NOT change) is monotonic.
+            rerolled = (category == "peers" and identity in key_rerolls and
+                        before["key_metadata"][3] != after["key_metadata"][3])
+            require(rerolled or (after["tx"] >= before["tx"] and after["rx"] >= before["rx"]),
                     code + "_PERSISTED_COUNTER_REGRESSION")
 
 

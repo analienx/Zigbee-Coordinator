@@ -99,7 +99,8 @@ ATTR={0:"PROVISIONAL(install code)",1:"UNVERIFIED",2:"VERIFIED",0xfd:"DISTRIBUTE
 tc=[]
 for ext in sorted(set(old["peers"])|set(now["peers"])):
     b,a=old["peers"].get(ext),now["peers"].get(ext)
-    if b and a and all(b[k]==a[k] for k in ("index","key_metadata","key")):continue
+    regressed=bool(b and a and (a["tx"]<b["tx"] or a["rx"]<b["rx"]))
+    if b and a and all(b[k]==a[k] for k in ("index","key_metadata","key")) and not regressed:continue
     e={"ieee":who(ext)["ieee"],"name":who(ext).get("name"),"in_z2m_db":who(ext).get("in_z2m_db")}
     if b is None:e["change"]="TC_ENTRY_ADDED"
     elif a is None:e["change"]="TC_ENTRY_REMOVED"
@@ -108,6 +109,8 @@ for ext in sorted(set(old["peers"])|set(now["peers"])):
         e["change"]="TC_ENTRY_CHANGED";e["fields"]=[n[i] for i in range(5) if mb[i]!=ma[i]]+(["slot"] if b["index"]!=a["index"] else [])+(["install_code_key"] if b["key"]!=a["key"] else [])
         e["keyAttributes"]="%%s -> %%s"%%(ATTR.get(mb[1][0],mb[1][0]),ATTR.get(ma[1][0],ma[1][0]))
         e["keyType"]="%%d -> %%d"%%(mb[2][0],ma[2][0])
+    if regressed:e["counter_regressed"]=[k for k in ("tx","rx") if a[k]<b[k]]
+    if b and a and all(b[k]==a[k] for k in ("index","key_metadata","key")):e["change"]="TC_COUNTER_ONLY"
     tc.append(e)
 verdict=sec.evaluate_records(rec_now,rec_old,abi,runtime_upgrade=True,runtime_inventory_peers=inventory,acknowledged_changes=ack_native)
 # Second gate: current-owner reconciliation (counter floor is proven separately by the operator).
@@ -180,7 +183,8 @@ def main():
     print(chr(10) + "trust-centre link-key entries changed: %d (TC set before/now %s)" % (len(r["tc_changes"]), r["slots"]))
     for e in r["tc_changes"]:
         print("  %-17s %s %-34s %s %s %s" % (e["change"], e["ieee"], e["name"] or "-", ",".join(e.get("fields", [])),
-                                            e.get("keyAttributes", ""), ("keyType " + e["keyType"]) if e.get("keyType") else ""))
+                                            e.get("keyAttributes", ""), ("keyType " + e["keyType"]) if e.get("keyType") else "") +
+              (("  COUNTER_REGRESSED " + ",".join(e["counter_regressed"])) if e.get("counter_regressed") else ""))
     g = r["owner_gate"]
     print("\nowner reconciliation: %s  %s" % (g["reason_codes"] or "PASS (counter floor checked at deploy)", g["counts"]))
     for label in ("new_since_reference", "missing_since_reference"):
