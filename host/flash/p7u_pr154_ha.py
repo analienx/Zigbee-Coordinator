@@ -60,6 +60,8 @@ PEERS_MIN, PEERS_MAX = 100, 200
 # Set by the paired binding when the official Zigbee2MQTT app is the owner.
 OFFICIAL_OWNER = False
 OWNER_IMAGE_REF = None
+ACKNOWLEDGED_CHANGES = frozenset()     # set by the paired binding from PACKAGE.json
+ACKNOWLEDGED_NEW_PEERS = frozenset()
 LEGACY_SLUGS = ('local_p7u_r4_native_host', 'local_p7u_r4_fallback', 'local_p7u_r4_owner_inspector')
 # Read-only, host-PID-namespace scan of every open fd, run from the pinned
 # owner image itself (no network, removed on exit): "pid comm target cgroup".
@@ -804,14 +806,16 @@ async def deploy(package, pin, ha):
         security = sec.preflight(capture=current, baseline=old.snapshot, abi=abi, reader=reader,
                                  bindings={**bindings, 'runtime_database_sha256': sha(read(DATA/'database.db')),
                     'runtime_historical_backup_sha256': sha(read(INPUT/'historical-backup.json'))},
-                                 runtime_upgrade=True, runtime_inventory_peers=runtime_inventory_peers())
+                                 runtime_upgrade=True, runtime_inventory_peers=runtime_inventory_peers(),
+                                 acknowledged_changes=ACKNOWLEDGED_CHANGES)
         durable(PRIVATE, 'security-receipt.json', security)
         need(security['status'] == 'PASS_RETAINED_SECURITY_OFFLINE_ONLY', 'NATIVE_SECURITY')
         records, counts = sec.read_private(reader, current)
         owner = reconcile(historical=load(INPUT/'historical-backup.json'), fresh=json.loads(backup),
             records=records, abi=abi, native_preflight_pass=True, candidate_semantics_pass=True,
             baseline_counter_floor=native_network_floor(sec, records, abi),
-            runtime_inventory_peers=runtime_inventory_peers())
+            runtime_inventory_peers=runtime_inventory_peers(),
+            acknowledged_new_peers=ACKNOWLEDGED_NEW_PEERS)
         durable(PRIVATE, 'current-owner-security.json', owner)
         need(owner['status'] == 'PASS_CURRENT_OWNER_OFFLINE_ONLY', 'CURRENT_OWNER_SECURITY')
         plan = t.prepare_upgrade(installed_plan=old, expected_installed_plan_sha256=old.manifest['plan_sha256'],

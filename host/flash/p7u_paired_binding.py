@@ -28,6 +28,21 @@ OFFICIAL_OWNER = "45df7312_zigbee2mqtt"
 OFFICIAL_OWNER_VERSION = "2.14.2-1"
 OFFICIAL_OWNER_IMAGE = "sha256:248c11bb7c6eb7fa6854edb23312f1356cb1650ed32c1ed7cebbf86322600e28"
 OFFICIAL_OWNER_IMAGE_REF = "ghcr.io/zigbee2mqtt/zigbee2mqtt-aarch64:2.14.2-1"
+ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN"})
+
+
+def acknowledged(package):
+    """Owner acknowledgements pinned in PACKAGE.json: [{"ieee": "0x..", "change": ..}]."""
+    acks = package.get("acknowledged_changes", [])
+    if not (type(acks) is list and len(acks) <= 32 and all(
+            type(a) is dict and set(a) == {"ieee", "change"} and a["change"] in ACK_CLASSES and
+            type(a["ieee"]) is str and re.fullmatch(r"0x[0-9a-f]{16}", a["ieee"]) and
+            a["ieee"] not in ("0x0000000000000000", "0xffffffffffffffff") for a in acks) and
+            len({(a["ieee"], a["change"]) for a in acks}) == len(acks)):
+        raise ValueError("PAIRED_BINDING_HOLD_ACKNOWLEDGED_CHANGES")
+    big = [(bytes.fromhex(a["ieee"][2:]), a["change"]) for a in acks]
+    return (frozenset((b[::-1], c) for b, c in big),               # native order, as in NV
+            frozenset(b for b, c in big if c == "NEW_PEER"))         # backup order
 OWNED_STAGE_PAIR=("66ed700c2818c7a0963dad9160d55109009bbaac","66ed700c2818c7a0963dad9160d55109009bbaac")
 # Host-only startup observability: independently compiled and released at exact
 # source. The radio ABI stays V6. Keep a fixed digest to prevent cross-pairing.
@@ -117,6 +132,8 @@ def binding_values(raw, expected_pin, package):
         "PREVIOUS_JOURNAL_PIN":data["previous_journal_pin"],
         "PREVIOUS_CANDIDATE_PIN":data["previous_candidate_pin"],
         "PREVIOUS_INPUT_PIN":data["input_pin"]}
+    native_acks, new_peers = acknowledged(package)
+    result.update(ACKNOWLEDGED_CHANGES=native_acks, ACKNOWLEDGED_NEW_PEERS=new_peers)
     if official:
         result.update(OWNER=OFFICIAL_OWNER, PAIRED_HOST_VERSION=OFFICIAL_OWNER_VERSION,
                       OWNER_IMAGE_REF=OFFICIAL_OWNER_IMAGE_REF, OFFICIAL_OWNER=True)

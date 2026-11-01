@@ -106,6 +106,102 @@ print(json.dumps({"entity":e,"before":before,"after":call("states/"+e)["state"]}
 '''
 
 
+# Zero-write deploy HOLD: put the household back on the UNCHANGED firmware.
+# Refuses unless the operation proves nothing was written. If the operator
+# entered the ROM bootloader, one SLZB radio-only restart boots the unchanged
+# APP (never BSL, flash, NV or ESP restart); then one plain Zigbee2MQTT start.
+REMOTE_RESTORE = r'''
+import json,os,subprocess,time,urllib.request
+from pathlib import Path
+O=json.loads(%(cfg)r);op=Path("/share/p7u-r4-firmware-operations")/O["operation"]
+def need(c,r):
+ if not c:print(json.dumps({"restored":False,"reason":r}));raise SystemExit(0)
+H={"Authorization":"Bearer "+os.environ["SUPERVISOR_TOKEN"],"Content-Type":"application/json"}
+def api(p,payload=None):
+ q=urllib.request.Request("http://supervisor/core/api/"+p,data=None if payload is None else json.dumps(payload).encode(),headers=H,method="GET" if payload is None else "POST")
+ return json.load(urllib.request.urlopen(q,timeout=60))
+need(op.is_dir() and (op/"hold.json").is_file(),"NO_HOLD_RECORD")
+need(not (op/"verified-write.json").exists() and not (op/"boot-intent.json").exists(),"WRITE_OR_BOOT_RECORDED_USE_RUNBOOK")
+s=op/"sparse-receipt.json"
+need(not s.exists() or json.loads(s.read_text()).get("status")=="SPARSE_ROM_CRC_WITH_FRESH_NV_READ_ONLY_NOT_FLASH_ADMISSION","CAPTURE_NOT_READ_ONLY")
+c="app_"+O["owner"]
+running=subprocess.run(["docker","inspect","-f","{{.State.Running}}",c],capture_output=True,text=True).stdout.strip()=="true"
+need(not running,"OWNER_ALREADY_RUNNING")
+bsl=(op/"bsl-entry-intent.json").exists()
+if bsl:
+ need(api("states/"+O["button"])["state"] not in ("unavailable","unknown"),"RADIO_RESTART_UNAVAILABLE")
+ api("services/button/press",{"entity_id":O["button"]});time.sleep(15)
+subprocess.run(["ha","apps","start",O["owner"]],capture_output=True,timeout=180)
+ok=False
+for _ in range(36):
+ time.sleep(5)
+ try:
+  if api("states/binary_sensor.zigbee2mqtt_bridge_online")["state"]=="on":ok=True;break
+ except Exception:pass
+print(json.dumps({"restored":ok,"radio_restart":bsl,"reason":None if ok else "BRIDGE_NOT_ONLINE_180S"}))
+'''
+
+
+def predict_security(work, firmware):
+    """Zero-outage prediction of BOTH retained-security gates (tools/p7u_addrmgr_diff.py).
+
+    Uses the newest NV capture for this firmware source and the live
+    Zigbee2MQTT coordinator backup, with the staged package's own modules and
+    acknowledgements. Returns (result, None) or (None, reason it could not run).
+    """
+    st = state(work)
+    if "package_dir" not in st:
+        return None, "no staged package yet"
+    sys.path.insert(0, str(ROOT / "tools"))
+    import p7u_addrmgr_diff as diff
+    args = {"ops": diff.ROOT_OPS, "operation": None, "source": firmware, "package": st["package_dir"],
+            "acks": None, "live": True, "stage": "/share/p7u-paired-stage-" + firmware[:12],
+            "input": "/share/p7u-paired-input-" + firmware[:12]}
+    run = subprocess.run(["ssh", "-o", "BatchMode=yes", "ha", "python3 -B -"], input=diff.REMOTE % {"args": json.dumps(args)},
+                         capture_output=True, text=True, timeout=300)
+    if run.returncode:
+        tail = (run.stderr.strip().splitlines() or ["?"])[-1]
+        return None, "prediction unavailable (%s)" % tail[:160]
+    return json.loads(run.stdout.strip().splitlines()[-1]), None
+
+
+def prediction_check(work, firmware):
+    r, why = predict_security(work, firmware)
+    if r is None:
+        return {"check": "predicted security gates", "result": "WARN", "detail": why}
+    refused = [("slot %d %s %s" % (x["slot"], x["change"], (x.get("now") or x.get("before") or {}).get("ieee")))
+               for x in r["changed_rows"] if not x["allowed"]]
+    owner = r["owner_gate"]["reason_codes"]
+    new = [d["ieee"] for d in r["owner_gate"]["new_since_reference"]]
+    ok = r["verdict"]["semantic_checks_passed"] and not owner
+    return {"check": "predicted security gates (capture %s, live backup)" % r["operation"][:8],
+            "result": "PASS" if ok else "BLOCK",
+            "detail": {"address_gate": r["verdict"]["reason_codes"], "refused_rows": refused,
+                       "owner_gate": owner, "new_since_reference": new, "acknowledged": r["acknowledged"],
+                       "hint": None if ok else "run tools/p7u_addrmgr_diff.py --live; acknowledge via the package workflow"}}
+
+
+def restore_after_hold(work):
+    st = state(work)
+    cfg = {"operation": st["operation_id"], "owner": st.get("owner_slug", binding.OFFICIAL_OWNER),
+           "button": "button.slzb_06p7u_zigbee_restart"}
+    r = ssh_python(REMOTE_RESTORE % {"cfg": json.dumps(cfg)}, timeout=420)
+    with (Path(work) / "restore-log.jsonl").open("a") as f:
+        f.write(json.dumps(r) + "\n")
+    return r
+
+
+def set_window_automations(work, value):
+    ok = True
+    for entity in WINDOW_AUTOMATIONS:
+        r = ssh_python(REMOTE_AUTOMATION % {"entity": entity, "svc": "turn_" + value})
+        with (Path(work) / "automation-log.jsonl").open("a") as f:
+            f.write(json.dumps(r) + "\n")
+        print(json.dumps(r))
+        ok = ok and r["after"] == value
+    return ok
+
+
 def ssh_python(code, timeout=180):
     # Script on stdin: Windows argv quoting would otherwise rewrite \" sequences.
     run = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "ha", "python3 -B -"],
@@ -159,6 +255,7 @@ def run_preflight(a):
            "boot_automation": BOOT_AUTOMATION, "recovery_automation": RECOVERY_AUTOMATION, "previous_operation": a.previous_operation,
            "installed": a.installed, "min": lo, "max": hi}
     checks += ssh_python(REMOTE_PREFLIGHT % {"cfg": json.dumps(cfg)})
+    checks.append(prediction_check(Path(a.workdir), a.firmware))
     width = max(len(c["check"]) for c in checks)
     for c in checks:
         print("%-5s  %-*s  %s" % (c["result"], width, c["check"], json.dumps(c["detail"])))
@@ -198,14 +295,7 @@ def main():
         if a.value not in ("off", "on"):
             sys.exit("automation off|on")
         work.mkdir(parents=True, exist_ok=True)
-        ok = True
-        for entity in WINDOW_AUTOMATIONS:
-            r = ssh_python(REMOTE_AUTOMATION % {"entity": entity, "svc": "turn_" + a.value})
-            with (work / "automation-log.jsonl").open("a") as f:
-                f.write(json.dumps(r) + "\n")
-            print(json.dumps(r))
-            ok = ok and r["after"] == a.value
-        return 0 if ok else 1
+        return 0 if set_window_automations(work, a.value) else 1
     if a.phase == "status":
         return driver(work, "status")
     if a.phase == "prepare":
@@ -225,6 +315,10 @@ def main():
             if rc:
                 return rc
         if "operation_id" not in state(work):
+            predicted = prediction_check(work, a.firmware)
+            print("%s  %s  %s" % (predicted["result"], predicted["check"], json.dumps(predicted["detail"])))
+            if predicted["result"] == "BLOCK":
+                sys.exit("PREPARE_REFUSED: the security gates would refuse this delivery (no outage taken)")
             rc = driver(work, "plan")
             if rc:
                 return rc
@@ -241,7 +335,18 @@ def main():
             if phase + "_intent" not in state(work):
                 rc = driver(work, phase)
                 if rc:
-                    print("\nSTOPPED after %s rc=%d. Inspect with: python tools/p7u_official_delivery.py status" % (phase, rc))
+                    print("\nSTOPPED after %s rc=%d." % (phase, rc))
+                    if phase == "deploy" and (state(work).get("deploy_result") or {}).get("status") == "HOLD":
+                        r = restore_after_hold(work)
+                        print("AUTO-RESTORE " + json.dumps(r))
+                        if r.get("restored"):
+                            set_window_automations(work, "on")
+                            print("Zigbee restored on the UNCHANGED firmware; nothing was written. Diagnose with "
+                                  "tools/p7u_addrmgr_diff.py; a retry needs a new --workdir and plan.")
+                        else:
+                            print("AUTO-RESTORE REFUSED/FAILED: follow HANG_RECOVERY_RUNBOOK.md (automations left off).")
+                    else:
+                        print("Not a zero-write deploy HOLD: no automatic action. Inspect with `status`.")
                     return rc
         boot = state(work).get("boot_result", {}).get("status", "")
         if boot == "READY_OBSERVED_VERIFICATION_INCOMPLETE" and "finish_intent" not in state(work):

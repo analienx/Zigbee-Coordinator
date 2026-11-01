@@ -32,6 +32,8 @@ def main():
     a.add_argument('--out', type=Path, required=True)
     a.add_argument('--reader-package', type=Path)
     a.add_argument('--host-release', type=Path)
+    a.add_argument('--acknowledged-changes', default='[]',
+                   help='owner acknowledgements, JSON [{"ieee":"0x..","change":"NEW_PEER|ASSOC_GAIN"}]')
     a.add_argument('--official-owner', action='store_true',
                    help='the official Zigbee2MQTT app is the sole owner; no custom host release')
     args = a.parse_args()
@@ -85,6 +87,12 @@ def official_owner(c):
 
 
 def package(args, c, source, owner):
+    import sys as _sys
+    _sys.path.insert(0, 'host/flash')
+    import p7u_paired_binding as _b
+    acks = sorted(json.loads(args.acknowledged_changes), key=lambda a: (a.get('ieee', ''), a.get('change', '')))
+    _b.acknowledged({'acknowledged_changes': acks})   # same validation the operator applies
+    owner = dict(owner, acknowledged_changes=acks)
     assert sha(args.candidate/'security-reader.c') == 'a8bbbf32add1cf79a2ddb2370f06ff8f1cdc53279dc5c953f595d5674aed25e7'
     args.out.mkdir(exist_ok=False)
     for directory in ('release', 'release/rom_writer', 'qualification', 'b0/tools', 'b1/tools'):

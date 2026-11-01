@@ -20,7 +20,8 @@ def reconcile_current(*, historical: dict, fresh: dict, records: dict, abi: dict
                       native_preflight_pass: bool = False,
                       candidate_semantics_pass: bool = False,
                       baseline_counter_floor: int | None = None,
-                      runtime_inventory_peers=frozenset()) -> dict:
+                      runtime_inventory_peers=frozenset(),
+                      acknowledged_new_peers=frozenset()) -> dict:
     report = {"schema": SCHEMA, "status": "HOLD",
               "flash_authorized": False, "nv_write_authorized": False,
               "replay_old_nv_authorized": False,
@@ -46,7 +47,13 @@ def reconcile_current(*, historical: dict, fresh: dict, records: dict, abi: dict
         # Do not normalize unknown or keyed historical devices away.
         check(len(old_ids) == 107, "HISTORICAL_REFERENCE_INVALID")
         check(len(missing) <= 1, "HISTORICAL_MISSING_PEER_LIMIT_EXCEEDED")
-        check(not extra, "CURRENT_UNEXPECTED_PEER")
+        # A device new since the historical reference is admitted only when the
+        # owner acknowledged that exact IEEE (pinned in the operator package).
+        ack_valid = (type(acknowledged_new_peers) is frozenset and
+                     all(type(p) is bytes and len(p) == 8 for p in acknowledged_new_peers))
+        check(ack_valid, "ACKNOWLEDGED_NEW_PEERS_INVALID")
+        check(not extra or (ack_valid and extra <= acknowledged_new_peers), "CURRENT_UNEXPECTED_PEER")
+        report["acknowledged_new_peers"] = len(extra & acknowledged_new_peers) if ack_valid else 0
         # A stale host backup can omit the one historically keyless,
         # non-child router whose address record has reappeared at runtime.
         # Admit only that exact bounded difference, independently bound to
