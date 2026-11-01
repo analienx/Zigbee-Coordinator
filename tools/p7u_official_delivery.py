@@ -6,8 +6,8 @@ delivery is a handful of commands. It adds no new radio, NV or flash path:
 
   preflight   READ-ONLY. GitHub runs, HA owner/serial/automation/button state,
               predecessor operation, backup size. Exit 0 only with no BLOCK.
-  automation  off|on the boot-time Z2M automation the operator requires OFF
-              for the flash window (a reversible HA setting, recorded).
+  automation  off|on the boot-time Z2M automation and the Z2M auto-recovery
+              automation, both OFF for the flash window (reversible, recorded).
   prepare     driver fetch + stage + plan. Read-only admission: Z2M keeps
               running; prints the operation id the flash must be authorized for.
   flash       --authorize <operation id>: deploy -> boot -> (finish) -> serving.
@@ -36,6 +36,9 @@ DEFAULTS = {"firmware": "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
             "previous_operation": "b66de81f093ee1556fc870831e10490c",
             "native_run": "41284426604"}
 BOOT_AUTOMATION = "automation.boot_deterministic_emqx_then_zigbee2mqtt"
+# Restarts Zigbee2MQTT / resets the radio on its own: must be off while the operator owns the radio.
+RECOVERY_AUTOMATION = "automation.zigbee2mqtt_p7u_auto_recovery_3_attempts"
+WINDOW_AUTOMATIONS = (BOOT_AUTOMATION, RECOVERY_AUTOMATION)
 SERIAL = "/dev/serial/by-id/usb-SMLIGHT_SMLIGHT_SLZB-06p7U_SLZB-06p7U115236-if00"
 
 # Runs on HA (SSH app, Supervisor token in env). Reads only; the serial scan is
@@ -66,7 +69,7 @@ scan=subprocess.run(["docker","run","--rm","--pid=host","--privileged","--networ
 holders=[l.split() for l in scan.stdout.splitlines() if len(l.split())==4 and l.split()[2]==tty]
 add("serial held only by owner",scan.returncode==0 and c is not None and holders and all(h[3]==c["Id"] for h in holders),
     {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
-for e,want,level in ((O["boot_automation"],"off","BLOCK"),("automation.zigbee2mqtt_mesh_communication_outage_alert","off","BLOCK"),
+for e,want,level in ((O["boot_automation"],"off","BLOCK"),(O["recovery_automation"],"off","BLOCK"),("automation.zigbee2mqtt_mesh_communication_outage_alert","off","BLOCK"),
                      ("button.slzb_06p7u_zigbee_restart","available","BLOCK")):
  try:st=api("core/api/states/"+e)["state"]
  except Exception as x:st="ERROR "+type(x).__name__
@@ -153,7 +156,7 @@ def run_preflight(a):
     lo, hi = _operator_constant("PEERS_MIN"), _operator_constant("PEERS_MAX")
     cfg = {"owner": binding.OFFICIAL_OWNER, "version": binding.OFFICIAL_OWNER_VERSION,
            "image": binding.OFFICIAL_OWNER_IMAGE, "serial": SERIAL, "scan": scan,
-           "boot_automation": BOOT_AUTOMATION, "previous_operation": a.previous_operation,
+           "boot_automation": BOOT_AUTOMATION, "recovery_automation": RECOVERY_AUTOMATION, "previous_operation": a.previous_operation,
            "installed": a.installed, "min": lo, "max": hi}
     checks += ssh_python(REMOTE_PREFLIGHT % {"cfg": json.dumps(cfg)})
     width = max(len(c["check"]) for c in checks)
@@ -194,12 +197,15 @@ def main():
     if a.phase == "automation":
         if a.value not in ("off", "on"):
             sys.exit("automation off|on")
-        r = ssh_python(REMOTE_AUTOMATION % {"entity": BOOT_AUTOMATION, "svc": "turn_" + a.value})
         work.mkdir(parents=True, exist_ok=True)
-        with (work / "automation-log.jsonl").open("a") as f:
-            f.write(json.dumps(r) + "\n")
-        print(json.dumps(r))
-        return 0 if r["after"] == a.value else 1
+        ok = True
+        for entity in WINDOW_AUTOMATIONS:
+            r = ssh_python(REMOTE_AUTOMATION % {"entity": entity, "svc": "turn_" + a.value})
+            with (work / "automation-log.jsonl").open("a") as f:
+                f.write(json.dumps(r) + "\n")
+            print(json.dumps(r))
+            ok = ok and r["after"] == a.value
+        return 0 if ok else 1
     if a.phase == "status":
         return driver(work, "status")
     if a.phase == "prepare":

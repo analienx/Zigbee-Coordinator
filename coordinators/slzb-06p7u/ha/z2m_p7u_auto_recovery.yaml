@@ -1,0 +1,140 @@
+- id: z2m_p7u_auto_recovery
+  alias: Zigbee2MQTT - P7U auto recovery (3 attempts)
+  description: >-
+    When the Zigbee2MQTT app has been stopped for 2 minutes (adapter disconnect,
+    "SRSP - SYS - ping" at start) outside a Home Assistant start, a shutdown or a
+    firmware window: prove an MQTT round trip, then up to 3 attempts - 1) plain
+    app start, 2-3) SLZB radio-only Zigbee restart with Zigbee2MQTT stopped, then
+    a plain start. Never BSL, flash, NV or ESP restart. A running app with an
+    offline bridge (possible hang) is only notified: use HANG_RECOVERY_RUNBOOK.
+    Turn this automation off for P7U flashing (p7u_official_delivery.py does).
+  mode: single
+  max_exceeded: silent
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.zigbee2mqtt_running
+      to: "off"
+      for: "00:02:00"
+      id: app_stopped
+    - trigger: state
+      entity_id: binary_sensor.zigbee2mqtt_bridge_online
+      to: "off"
+      for: "00:05:00"
+      id: bridge_offline
+  conditions:
+    - condition: state
+      entity_id: input_boolean.shutdown_in_progress
+      state: "off"
+    - condition: state
+      entity_id: script.unified_shutdown
+      state: "off"
+    - condition: template
+      value_template: >-
+        {{ state_attr('automation.boot_deterministic_emqx_then_zigbee2mqtt', 'current') | int(0) == 0 }}
+  actions:
+    - if:
+        - condition: template
+          value_template: >-
+            {{ trigger.id == 'bridge_offline' and is_state('binary_sensor.zigbee2mqtt_running', 'on') }}
+      then:
+        - action: persistent_notification.create
+          data:
+            notification_id: z2m_p7u_bridge_offline
+            title: Zigbee2MQTT bridge offline while the app runs
+            message: >-
+              Possible coordinator hang since {{ states.binary_sensor.zigbee2mqtt_bridge_online.last_changed }}.
+              No automatic reset was sent. Follow coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md.
+        - stop: Possible hang; notified only.
+    - variables:
+        nonce: "{{ now().timestamp() | int }}"
+    - repeat:
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: ha/healthcheck
+              payload: "{{ nonce }}"
+              retain: true
+          - wait_template: "{{ states('sensor.mqtt_healthcheck') == nonce | string }}"
+            timeout: "00:00:10"
+            continue_on_timeout: true
+        until:
+          - condition: template
+            value_template: "{{ states('sensor.mqtt_healthcheck') == nonce | string or repeat.index >= 3 }}"
+    - if:
+        - condition: template
+          value_template: "{{ states('sensor.mqtt_healthcheck') != nonce | string }}"
+      then:
+        - action: persistent_notification.create
+          data:
+            notification_id: z2m_p7u_recovery
+            title: Zigbee recovery skipped - MQTT down
+            message: The MQTT broker did not echo a health check, so Zigbee2MQTT was not touched.
+        - stop: MQTT round trip failed.
+    - repeat:
+        count: 3
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ repeat.index > 1 }}"
+            then:
+              - if:
+                  - condition: state
+                    entity_id: binary_sensor.zigbee2mqtt_running
+                    state: "on"
+                then:
+                  - action: hassio.app_stop
+                    continue_on_error: true
+                    data:
+                      app: 45df7312_zigbee2mqtt
+                  - wait_template: "{{ is_state('binary_sensor.zigbee2mqtt_running', 'off') }}"
+                    timeout: "00:01:00"
+                    continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ is_state('binary_sensor.zigbee2mqtt_running', 'off') and
+                         states('button.slzb_06p7u_zigbee_restart') not in ['unavailable', 'unknown'] }}
+                then:
+                  - action: button.press
+                    target:
+                      entity_id: button.slzb_06p7u_zigbee_restart
+                  - delay: "00:00:15"
+          - if:
+              - condition: state
+                entity_id: binary_sensor.zigbee2mqtt_running
+                state: "off"
+            then:
+              - action: hassio.app_start
+                continue_on_error: true
+                data:
+                  app: 45df7312_zigbee2mqtt
+          - wait_template: "{{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
+            timeout: "00:03:00"
+            continue_on_timeout: true
+          - if:
+              - condition: state
+                entity_id: binary_sensor.zigbee2mqtt_bridge_online
+                state: "on"
+            then:
+              - action: logbook.log
+                data:
+                  name: Zigbee watchdog
+                  entity_id: binary_sensor.zigbee2mqtt_bridge_online
+                  message: "Zigbee2MQTT recovered on attempt {{ repeat.index }} of 3."
+              - if:
+                  - condition: template
+                    value_template: "{{ repeat.index > 1 }}"
+                then:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: z2m_p7u_recovery
+                      title: Zigbee2MQTT recovered
+                      message: "Recovered on attempt {{ repeat.index }} of 3 (SLZB radio-only restart was needed)."
+              - stop: Zigbee2MQTT bridge is online.
+    - action: persistent_notification.create
+      data:
+        notification_id: z2m_p7u_recovery
+        title: Zigbee2MQTT did not recover
+        message: >-
+          Three attempts (start, then 2x SLZB radio-only restart + start) failed.
+          No bootloader, flash or NV action was taken. Check the SLZB and the Zigbee2MQTT log.

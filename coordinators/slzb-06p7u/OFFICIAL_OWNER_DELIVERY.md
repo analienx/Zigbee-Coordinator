@@ -30,4 +30,8 @@ python tools/p7u_official_delivery.py automation on                     # after 
 ## Preflight blockers
 
 - **SLZB management and `button.slzb_06p7u_zigbee_restart`.** The operator checks board identity over the SLZB web API and resets the radio into the new image with that button. Both need the board's network side (ESP32 Ethernet) online.
-- **`automation.boot_deterministic_emqx_then_zigbee2mqtt` must be off** for the window. The runner toggles it and logs the change in the delivery workdir.
+- **`automation.boot_deterministic_emqx_then_zigbee2mqtt` and `automation.zigbee2mqtt_p7u_auto_recovery_3_attempts` must be off** for the window, because both start Zigbee2MQTT and the second also resets the radio. The runner toggles both and logs the changes in the delivery workdir.
+
+## Recovery after an SLZB power cycle
+
+After a cold SLZB power-up (1 Nov 2026), Zigbee2MQTT failed twice with `SRSP - SYS - ping after 6000ms`. One SLZB radio-only restart (`button.slzb_06p7u_zigbee_restart`) with Zigbee2MQTT stopped, followed by a plain start, resumed the network. The HA automation `z2m_p7u_auto_recovery` does this: up to 3 attempts after the app has been stopped for 2 minutes. It never enters the bootloader, flashes or restarts the ESP. A running app with an offline bridge is only notified.
