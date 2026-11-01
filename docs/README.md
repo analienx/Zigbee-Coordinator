@@ -7,6 +7,7 @@ Repository-level documentation is organized by **coordinator scope**, even where
 - [Coordinator Registry](COORDINATOR_REGISTRY.md) — canonical hardware/stack/naming map.
 - Root [README](../README.md) — repository purpose, safety invariants and current focus.
 - [16 October 2026 branch-prune audit](BRANCH_PRUNE_AUDIT_2026-10-16.md) — verified pre-cleanup recovery bundle, deleted branches and retained R4/finalized P10 dependency refs.
+- [31 October 2026 branch-prune audit](BRANCH_PRUNE_AUDIT_2026-10-31.md) — V53 added to `main` as the latest version only, files and branches of earlier versions removed.
 
 ## Production service recovery: P7U hard hangs (start here)
 
@@ -16,9 +17,12 @@ Repository-level documentation is organized by **coordinator scope**, even where
 
 ## slzb-06p7u — PRIMARY P7U / CC2652P7 / R4
 
-- [P7U identity, R4 development and safety gates](../coordinators/slzb-06p7u/README.md)
+- [P7U identity, source map and safety gates](../coordinators/slzb-06p7u/README.md)
+- [Status, 31 Oct 2026: V53 installed under the official Zigbee2MQTT app](../coordinators/slzb-06p7u/STATUS_2026-10-31.md)
+- [V53 long-term reliability review](../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md)
+- [Firmware tree overview](../firmware/slzb-06p7u/r4/README.md) and the per-stage notes in [`r4/`](r4/) and [`r4/b4/`](r4/b4/)
 - [R4 master design #85](https://github.com/analienx/Zigbee-Coordinator/issues/85), [R4 provenance PR #86](https://github.com/analienx/Zigbee-Coordinator/pull/86), [diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [native B0 #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [NV safety B1 #92](https://github.com/analienx/Zigbee-Coordinator/issues/92)
-- Implementation lives under `firmware/slzb-06p7u/r4/` **on draft feature branches**. It is not yet accepted/merged into `main` or physically production-qualified.
+- Implementation is under `firmware/slzb-06p7u/r4/` and `tools/r4_*.py` on `main` since 31 Oct 2026. It is installed but **not yet production-qualified**.
 
 ## mr4u-p10 — RETAINED FINALIZED REFERENCE / CC2674P10 / Z-Stack
 
@@ -49,7 +53,7 @@ P009/P013/P015 implementation history primarily lives on historical branches rat
 
 ## slzb-06p7 — legacy coordinator ID (not the P7U R4 board)
 
-No active implementation docs for this **legacy ID** are on main; the **current P7U R4** implementation exists on separate unmerged branches.
+No active implementation docs for this **legacy ID** are on main. The **current P7U R4** implementation is under `firmware/slzb-06p7u/r4/` (the SLZB-06P7U, not this legacy ID).
 
 See [`coordinators/slzb-06p7/README.md`](../coordinators/slzb-06p7/README.md) for scope and future naming guidance.
 

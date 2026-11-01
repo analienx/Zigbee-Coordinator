@@ -1,6 +1,22 @@
 # slzb-06p7u — SMLIGHT SLZB-06P7U (primary engineering target)
 
-**Current state (31 October 2026):** V53 firmware is installed on the production coordinator, with the official Zigbee2MQTT app as its host. The NV read storm that caused the hangs is fixed. See the [status summary](STATUS_2026-10-31.md) for results, open items and what is still unqualified.
+**Current state (31 October 2026):** V53 firmware is installed on the production coordinator, with the official Zigbee2MQTT app as its host. The NV read storm that caused the hangs is fixed. See the [status summary](STATUS_2026-10-31.md) for results, open items and what is still unqualified, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) for findings and next steps.
+
+**Source of record (on `main` since 31 October 2026, latest version only):** `main` holds the V53 tree as one commit; earlier versions are not carried. The exact installed commits stay on GitHub through the PR #195/#196 refs (tags listed below, once pushed). A native rebuild from `main` embeds `main`'s commit prefix in the evidence digest, so to reproduce the installed image byte for byte, build at `8ec1439`.
+
+| What | Where |
+|---|---|
+| Installed firmware source | `8ec1439786e3` (PR #195; tag `p7u-v53-firmware-source` once pushed) |
+| Delivery that installed it | `ed42122d8149` (PR #196; tag `p7u-v53-delivery` once pushed) |
+| Composition order of the image | [`tools/r4_b0_b4_composite_stage.py`](../../tools/r4_b0_b4_composite_stage.py), applied to TI SDK `3615ad5d` (`lpf2-8.33.00.16`) |
+| V50–V53 Stack service, evidence and NV read cache | [`tools/r4_v50_stack_service.py`](../../tools/r4_v50_stack_service.py) |
+| V52 OSAL timers | [`tools/r4_v52_osal_timers.py`](../../tools/r4_v52_osal_timers.py) |
+| B1 NV/management safety | [`firmware/slzb-06p7u/r4/b1/`](../../firmware/slzb-06p7u/r4/b1/) |
+| Firmware tree overview | [`firmware/slzb-06p7u/r4/README.md`](../../firmware/slzb-06p7u/r4/README.md) |
+| Flash driver and HA operator | [`tools/p7u_ha_flash_driver.py`](../../tools/p7u_ha_flash_driver.py), [`host/flash/`](../../host/flash/) |
+| Retired custom host apps | [`host/r4-b4/`](../../host/r4-b4/), uninstalled on 31 Oct and kept as source of record |
+
+Being on `main` is **not** qualification. The acceptance gates below still apply to V53 and to any later image.
 
 ## Identity and scope
 
@@ -17,6 +33,8 @@
 
 This is a **service-restoration** priority for a *confirmed local SRSP/ZNP hard hang*, subject to exact USB/MAC/OS source checks, sole serial ownership, private backups, fresh operator authority and durable single-shot journal. The separate firmware-first **engineering** investigation remains open; BSL success is a clue, not a proven root cause.
 
+**Host change (31 October 2026):** production now runs the official Zigbee2MQTT app. The runbook's hang-evidence capture and its custom-host start steps still target the uninstalled `local_p7u_r4_native_host`. The capture fails closed in that state and cannot read the firmware's hang record. Read the note at the top of the runbook before using it (review finding F1).
+
 ## Current work: R4, not the older P7 R2/R3 line
 
 **Effective 25 October 2026: [Firmware-first priority policy](FIRMWARE_FIRST_POLICY.md).** Investigate and fix loss of local ZNP responses; do not divert the primary engineering effort into restoring old firmware. Verified restoration is a contingency for preserving the network, not a permanent correction. A recent R4 candidate and the prior restored image both showed startup-response loss; investigate shared transport and host state as well as source defects. Preserve every existing physical-change and retained-security gate.
@@ -26,7 +44,7 @@ This is a **service-restoration** priority for a *confirmed local SRSP/ZNP hard 
 - [R4-01a issue #87](https://github.com/analienx/Zigbee-Coordinator/issues/87) and [draft PR #88](https://github.com/analienx/Zigbee-Coordinator/pull/88): diagnostic-first contracts.
 - [R4-B0 issue #90](https://github.com/analienx/Zigbee-Coordinator/issues/90): native source build evidence, **not hardware approval**; preserve its branch and native build record.
 - [R4-B1 issue #92](https://github.com/analienx/Zigbee-Coordinator/issues/92) and [draft PR #93](https://github.com/analienx/Zigbee-Coordinator/pull/93): fail-closed NV with observable management path; explicitly partial and **DO NOT FLASH**.
-- Implementation prefix on R4 branches: `firmware/slzb-06p7u/r4/`. It is not on `main` while the relevant draft PRs remain unmerged.
+- Implementation: `firmware/slzb-06p7u/r4/` and the `tools/r4_*.py` stages, on `main` since 31 October 2026 as the latest version only. The draft PRs listed above are historical.
 
 The responding vendor firmware **20260310** is a behavioral/rollback reference only. Its source equivalence is unproven and it also exhibited loss of ZNP responsiveness under dense-mesh load. Do not label it a proven stable R4 donor.
 

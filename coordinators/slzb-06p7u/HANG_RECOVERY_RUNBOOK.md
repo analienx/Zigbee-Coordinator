@@ -6,6 +6,15 @@
 
 **Proven receipt:** [2026-10-27 #143](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051). **Diagnostics:** [#144](https://github.com/analienx/Zigbee-Coordinator/issues/144#issuecomment-6438518225).
 
+> **Host change, 31 October 2026 — read before use.** Production now runs V53 under the **official Zigbee2MQTT app**; the custom host `local_p7u_r4_native_host`, its owner inspector, Recovery Guard and lifecycle manager are uninstalled ([status](STATUS_2026-10-31.md)).
+>
+> - **Step 3 (hang evidence) is unavailable.** `hang-evidence` checks ownership only through the uninstalled custom host and inspector, so it stops with a `HOLD` before opening the TTY. It cannot read the B1E3–B1E7 record ([review F1](REVIEW_V53_2026-10-31.md#f1--high-hang-evidence-and-the-flash-driver-only-work-with-the-retired-custom-host)). Do not work around its owner checks.
+> - **`p7u_ha_flash_driver.py hang` does not stop the official app.** It stops and restarts the uninstalled custom host without checking the result. Do not use it for an incident.
+> - **Section B (ROM entry and read-only verification) does not depend on the host.** It still requires the official app stopped and zero port holders first.
+> - **Sections C and D name the custom host and its startup observer.** They have not been re-qualified for the official app. The status records that, after the 31 Oct capture, a plain start of the official app recovered from a ping timeout. That is an observation, not a qualified recovery step.
+>
+> Adapting this tooling is open item 1 in the status. Until it is done, a hard hang needs explicit owner authorization for each step.
+
 ## First-response decision
 
 1. **Confirm a hard ZNP hang**, not merely an offline device or mesh NO_ROUTE. Look for locally failing SYS/AF/ZDO SRSP, frozen response counters, real device freshness loss while the MQTT broker itself is healthy, and a hung or failed Z2M initialization. Record first/last response timestamps, host Waitress/adapter queue, and last *valid* F2 snapshot. A skipped F2 is not a diagnostic response.
@@ -89,7 +98,7 @@ Publish only sanitized counters. Keep the journal private.
 - After closing ROM, retained R4 that requires a native readiness handoff uses the qualified startup observer: open its temporary USB transport **before** application boot, with no Z2M owner. Write a fresh one-shot app-boot intent referencing the verified ROM receipt. Issue **one** identity-bound SMLIGHT Zigbee restart/application boot (qualified `CMD_ZB_RST=1`, or the matching verified native HA button).
 - Observe a fresh SYS reset indication before submitting requests. Through the source-qualified operator, verify pristine B1 checkpoints and retained coordinator IEEE/key identity, then request existing-network startup once with formation denied. Require source-bound native READY, coordinator state9 and terminal marker proof. If READY was already observed but terminal verification was incomplete, use the qualified read-only completion phase; do not reset or submit startup again.
 - Close the temporary startup UART before handing ownership to Z2M. A responding startup SRSP is request admission, not readiness: on 28-Oct it was followed by total status-response loss until ROM recovery. Do not repeat that request or silently substitute stock restore.
-- Resolve installed APP+AC000 provenance freshly. The 27-Oct recovery used source `4cfe317`; the 28-Oct recovery used verified source `899f179` and host `acaa002`. Neither recovery wrote firmware, NV or CCFG. Detailed [28-Oct delivery evidence](https://github.com/analienx/Zigbee-Coordinator/blob/56d022c56979990a3768373659844cfaac6de45d/docs/r4/b4/F2_V43_PAIRED_DELIVERY_20261027.md) remains source-pinned.
+- Resolve installed APP+AC000 provenance freshly. The 27-Oct recovery used source `4cfe317`; the 28-Oct recovery used verified source `899f179` and host `acaa002`. Neither recovery wrote firmware, NV or CCFG. Detailed [28-Oct delivery evidence](https://github.com/analienx/Zigbee-Coordinator/blob/56d022c56979990a3768373659844cfaac6de45d/docs/r4/b4/F2_V43_PAIRED_DELIVERY_20261027.md) remains source-pinned (an earlier-version note, not kept on `main`).
 
 ### D. Start exactly one host and prove **real serving**
 

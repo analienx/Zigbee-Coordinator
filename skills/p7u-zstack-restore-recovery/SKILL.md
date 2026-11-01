@@ -5,6 +5,8 @@ description: Recover the existing 107-device Zigbee2MQTT network on the single S
 
 # SLZB-06P7U existing-network restore and R4 handoff
 
+> **Historical (20 October 2026 stock-firmware incident).** The production P7U has since moved to R4 firmware over USB, and runs **V53 under the official Zigbee2MQTT app since 31 October 2026** ([status](../../coordinators/slzb-06p7u/STATUS_2026-10-31.md)). The Ethernet transport, the stock `20260311` boot-layout block and "STOP APP-only R4 flashing" below describe that earlier state. Keep the invariants and the restore-versus-startup distinction. For a hang on the current firmware use [p7u-rom-bsl-recovery](../p7u-rom-bsl-recovery/SKILL.md) and the [runbook](../../coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md).
+
 Scope this procedure to the household's **one** SLZB-06P7U (not MR4U/P10). Review [R4 hardware #103](https://github.com/analienx/Zigbee-Coordinator/issues/103), [B3 security #97](https://github.com/analienx/Zigbee-Coordinator/issues/97) and [R4 review #137](https://github.com/analienx/Zigbee-Coordinator/issues/137) before work. The [P10 recovery skill](../p10-zstack-restore-recovery/SKILL.md) offers a **comparison** for BDB mode 0 but its MR4U/USB radio details are not applicable.
 
 ## Invariants

@@ -12,7 +12,7 @@ no counter block, no NV writes, no RF side effects. B0 must keep:
 
 - Stock startup order, TI NPI ownership, UART2 completion semantics
   (per the R4-00 design memo's B0 profile; the memo was removed from `main`
-  on 31 Oct 2026 and remains in history at tag `p7u-v53-firmware-source`).
+  on 31 Oct 2026 and remains in history at commit `8ec1439` (PR #195)).
 - SYS_PING / SYS_VERSION + herdsman ABI reachable.
 - Single ZNP owner; MT/herdsman compatibility preserved.
 
@@ -136,7 +136,7 @@ radio ID, valid fields and coherent uptime/sequence.
 
 The pure offline reference model (R4-01a `r4_diag_reference.py`, verified
 only against synthetic fixtures) was removed from `main` on 31 Oct 2026; it
-remains in history at tag `p7u-v53-firmware-source`.
+remains in history at commit `8ec1439` (PR #195).
 V3 MT command ID allocation, TI source hooks, actual compiled ELF,
 entropy and field qualification remain separate future acceptance
 gates. This stage does NOT implement firmware/host diagnostics.

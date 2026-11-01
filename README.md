@@ -1,6 +1,6 @@
 # Zigbee Coordinator
 
-> **Current operational override (2026-10-20):** Active hardware for the R4 flash work is the **one SMLIGHT SLZB-06P7U R1.73 / CC2652P7**, currently restored to stock in **Ethernet mode**; its USB cable terminates at **Home Assistant**, *not* at the Windows Zephyrus. Keep Ethernet for remote BSL flash/readback (only with the guarded network transport) and switch to HA USB only after verified R4 boot. **GitHub Actions builds/tests first, native Windows only for direct hardware operations, never WSL.** Start with the [P7U transport and flash quickstart](firmware/slzb-06p7u/r4/release/P7U_TRANSPORT_AND_FLASH_QUICKSTART.md). The MR4U/P10 "current" statements below are historical and **do not describe the active Oct 2026 P7U task**.
+> **Current state (31 October 2026):** the production coordinator is the **SMLIGHT SLZB-06P7U R1.73 / CC2652P7** over **USB to Home Assistant**, running **R4 V53** firmware under the **official Zigbee2MQTT app**. The NV read storm behind the hangs is fixed; V53 is installed but **not yet qualified**. Read the [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md) and the [V53 reliability review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md). The firmware source and delivery tooling are on `main`, latest version only. **GitHub Actions builds and tests first; hardware operations only with explicit owner authorization.** The 20 October Ethernet/stock-firmware override is historical.
 
 Shared firmware, migration, recovery, diagnostics and acceptance tooling for the Zigbee coordinators used by this Home Assistant / Zigbee2MQTT installation.
 
@@ -22,17 +22,19 @@ See [`coordinators/README.md`](coordinators/README.md) and [`docs/COORDINATOR_RE
 
 **Priority #1 operational restoration:** [guarded TI ROM/BSL round-trip → unchanged existing R4 APP → one Zigbee2MQTT start → fresh device-MQTT verification](coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md). This physically **restored the sole SLZB-06P7U on 27 October 2026**, without a power cycle, reflash, NV/security replay or re-pairing, after both normal Zigbee-only and ESP-only restarts failed. [Dedicated operator/agent skill](skills/p7u-rom-bsl-recovery/SKILL.md).
 
+**Host change (31 October 2026):** the runbook's hang-evidence and custom-host steps target the now-uninstalled custom host; read the note at the top of the runbook first.
+
 **Distinguish priorities:** restore interrupted household service first via the proven, single-owner, one-shot method; continue **firmware-first source diagnosis/fix** separately. Recovery does not prove or close the defect. Never perform BSL while Z2M owns the radio, automatically replay consumed intents or use an unverified SMLIGHT control command.
 
 ## Current focus — P7U / R4
 
 **Current engineering priority (25 October 2026): repair and prove the R4 firmware/ZNP command-handling failure, not repeat stock restoration.** Root cause, source repair, exact-SHA native qualification and physical acceptance come before recovery work; restoration is a last-resort network-safety fallback and never closes a firmware incident. The firmware and previous image have both shown post-startup loss of replies, so distinguish firmware, ESP/USB and host causes instead of assuming a single image is responsible. See the [P7U firmware-first policy](coordinators/slzb-06p7u/FIRMWARE_FIRST_POLICY.md). This priority shift grants no new authorization to reset, flash, alter NV or pair devices.
 
-**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability; it is **not yet approved for physical production flashing**.
+**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability. **V53 was installed on the production coordinator on 31 October 2026** under the repository's one-shot procedure. The qualification gates (independent review, physical qualification, rollback proof) are **not closed**, and any further flash still needs explicit owner authorization.
 
 - [R4 master plan #85](https://github.com/analienx/Zigbee-Coordinator/issues/85) and [R4-00 provenance draft #86](https://github.com/analienx/Zigbee-Coordinator/pull/86).
 - [R4-01a diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [R4-B0 native build #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [R4-B1 NV safety #92](https://github.com/analienx/Zigbee-Coordinator/issues/92) and [draft PR #93](https://github.com/analienx/Zigbee-Coordinator/pull/93).
-- Active R4 work is on isolated `feat/p7u-r4-*`, `feat/r4-*`, and `review/p7u-r4-*` branches, not automatically deployed by `main`.
+- `main` holds the installed V53 firmware and delivery (source `8ec1439`, delivery `ed42122`) as one latest-version commit; earlier versions are not carried. `main` does not deploy anything by itself; no workflow on `main` touches hardware.
 - Vendor P7U ZNP `20260310` is a behavior/rollback reference, **not** proven source-equivalent or stable in a 100+-device mesh. Native CCS build success is not a physical acceptance.
 - Preserve the original coordinator identity, NV/security/counters, rollback evidence, and exactly one serial owner; no live firmware/recovery operation follows from these documentation updates.
 
@@ -42,10 +44,15 @@ See [P7U coordinator overview](coordinators/slzb-06p7u/README.md) and [coordinat
 
 ## Repository layout
 
-### P7U/R4 development (unmerged work)
+### P7U/R4 firmware (installed V53 lineage)
 
-- `firmware/slzb-06p7u/r4/` — R4 source/design/CI on preserved feature branches; refer to the R4 issue and PR chain for current status.
-- `coordinators/slzb-06p7u/` — primary target identity and safety gates.
+- `coordinators/slzb-06p7u/` — identity, safety gates, [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md), [review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md) and the hang runbook.
+- `firmware/slzb-06p7u/r4/` — B0/B1 sources, qualification, release, ROM writer and fixtures. [Overview](firmware/slzb-06p7u/r4/README.md).
+- `tools/r4_*.py` — the stages that turn TI SDK `3615ad5d` into the image, in the order set by `tools/r4_b0_b4_composite_stage.py`, plus their compile-and-mutate harnesses.
+- `tools/p7u_ha_flash_driver.py`, `host/flash/` — single flash driver and the sealed HA operator.
+- `host/r4-b4/`, `host/recovery/` — custom P7U host apps, uninstalled on 31 Oct 2026; kept as source of record.
+- `docs/r4/` — R4 design contracts and per-stage engineering notes (F2 v4.2–v6, V43–V45).
+- `tests/` — repository tests (`python -m pytest tests`).
 
 ### Retained P10 compatibility paths
 
