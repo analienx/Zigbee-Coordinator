@@ -99,7 +99,8 @@ class FlashDriver(unittest.TestCase):
     def test_hang_stops_host_captures_then_restarts_with_one_retry(self):
         self.d.save(operation_id="f" * 32, plan_pin="1" * 64)
         calls = []
-        outputs = iter(["", "exited " + driver.HOST_IMAGE, "running " + driver.HOST_IMAGE])
+        outputs = iter([driver.HOST_IMAGE + "\n", "", "exited " + driver.HOST_IMAGE,
+                        "running " + driver.HOST_IMAGE])
 
         def ssh(command, timeout):
             calls.append(command)
@@ -108,10 +109,45 @@ class FlashDriver(unittest.TestCase):
         with patch.object(sys, "argv", ["driver", "hang", "--workdir", str(self.d.workdir)]),              patch.object(driver.Driver, "ssh", side_effect=ssh),              patch.object(driver.Driver, "operator", return_value=(0, {"status": "OK"})) as op:
             self.assertFalse(driver.main())
         op.assert_called_once()
-        self.assertEqual(calls[0], "ha apps stop local_p7u_r4_native_host")
-        self.assertEqual(len(calls), 3)
+        self.assertIn("docker inspect", calls[0])
+        self.assertEqual(calls[1], "ha apps stop local_p7u_r4_native_host")
+        self.assertEqual(len(calls), 4)
         state = driver.Driver(str(self.d.workdir)).state
         self.assertEqual(state["hang_runs"][-1]["restart"], {"host": "RUNNING", "attempts": 2})
+
+    def _hang_with(self, responses):
+        self.d.save(operation_id="f" * 32, plan_pin="1" * 64)
+        calls = []
+        replies = iter(responses)
+
+        def ssh(command, timeout):
+            calls.append(command)
+            stdout, code = next(replies)
+            return SimpleNamespace(stdout=stdout, returncode=code)
+
+        with patch.object(sys, "argv", ["driver", "hang", "--workdir", str(self.d.workdir)]),              patch.object(driver.Driver, "ssh", side_effect=ssh),              patch.object(driver.Driver, "operator", return_value=(0, {"status": "OK"})) as op:
+            with self.assertRaises(SystemExit) as stop:
+                driver.main()
+        return calls, op, str(stop.exception)
+
+    def test_hang_refuses_when_paired_host_is_not_installed(self):
+        # Official Zigbee2MQTT app in production: the custom host container is gone.
+        calls, op, message = self._hang_with([("", 1)])
+        self.assertIn("HANG_PAIRED_HOST_NOT_INSTALLED", message)
+        self.assertEqual(len(calls), 1)  # no stop, no capture, no restart
+        op.assert_not_called()
+
+    def test_hang_refuses_a_different_host_image(self):
+        calls, op, message = self._hang_with([("sha256:" + "0" * 64 + "\n", 0)])
+        self.assertIn("HANG_PAIRED_HOST_NOT_INSTALLED", message)
+        self.assertEqual(len(calls), 1)
+        op.assert_not_called()
+
+    def test_hang_refuses_when_stop_fails(self):
+        calls, op, message = self._hang_with([(driver.HOST_IMAGE, 0), ("", 1)])
+        self.assertIn("HANG_PAIRED_HOST_STOP_FAILED", message)
+        self.assertEqual(len(calls), 2)
+        op.assert_not_called()
 
 
 if __name__ == "__main__":

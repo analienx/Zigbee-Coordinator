@@ -560,7 +560,16 @@ def main():
     if a.phase == "finish":
         return d.live("finish", "finish-native", 300, require="boot_result")
     # Runbook: stop the paired host (the capture refuses a running owner).
-    d.ssh("ha apps stop local_p7u_r4_native_host", 120)
+    # Fail closed before touching anything unless the paired host this
+    # tooling targets is installed. Since 31 Oct 2026 production runs the
+    # official Zigbee2MQTT app, which this capture does not support yet:
+    # stopping/starting an absent app would leave the real owner running.
+    probe = d.ssh("docker inspect -f '{{.Image}}' app_local_p7u_r4_native_host", 60)
+    hold(probe.returncode == 0 and probe.stdout.strip() == HOST_IMAGE,
+         "HANG_PAIRED_HOST_NOT_INSTALLED: the production host is not the paired P7U "
+         "host; see the host-change note in HANG_RECOVERY_RUNBOOK.md")
+    stop = d.ssh("ha apps stop local_p7u_r4_native_host", 120)
+    hold(stop.returncode == 0, "HANG_PAIRED_HOST_STOP_FAILED")
     rc, result = d.operator("hang-evidence", d.op_args(), 120)
     # The capture never starts a host; the incident still needs one. A
     # backlog of radio frames can make the first host open time out, so
