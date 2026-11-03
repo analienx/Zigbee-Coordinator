@@ -88,6 +88,7 @@ typedef struct { uint32_t txFrmCntr, rxFrmCntr; uint8_t pendingFlag, entryUsed; 
 typedef struct { uint8_t extAddr[8], dstExtAddr[8], seedShift, keyID, distributedKeyTry, defaultKeyTry; uint16_t keyNvId, keyNvSection; uint32_t frmCntr; } SSP_Info_t;
 typedef struct { uint16_t user, nwkAddr; } AddrMgrEntry_t;
 static uint8_t held, existing = TRUE, b1_sec_existing_network;
+static uint8_t b1_v56_keep_verified;
 static uint8_t fail_alloc;
 static uint8_t probe_during_security_preflight;
 static unsigned preflight_observation_count;
@@ -492,6 +493,42 @@ int main(int argc,char **argv)
     /* Idempotent: the next boot only adds the ordinary reservation. */
     APSME_TCLinkKeyInit(FALSE);
     assert(!held && tc[1].txFrmCntr==want+11u && TCLinkKeyRAMEntry[1].txFrmCntr==want+11u);
+  } else if(!strncmp(s,"tclk_v56_",9)) {
+    /* V56: only the pinned peer's exact regressed DEFAULT/12 row returns to
+     * VERIFIED/11; the fresh-join exemption arms only after the durable
+     * write and disarms on that peer's own TCLK request. */
+    static const uint8_t peer[8]={0xa4,0xb3,0xcd,0xcf,0x50,0x38,0xc1,0xa4};
+    uint8_t other[8];
+    memcpy(tc[1].extAddr,peer,8); tc[1].keyAttributes=ZG_DEFAULT_KEY; tc[1].SeedShift=12u;
+    tc[1].txFrmCntr=0x10400000u;
+    memcpy(other,peer,8); other[0]^=0x01;
+    if(!strcmp(s,"tclk_v56_other_peer")) tc[1].extAddr[7]^=0x01;
+    if(!strcmp(s,"tclk_v56_other_shift")) tc[1].SeedShift=13u;
+    if(!strcmp(s,"tclk_v56_verified")) tc[1].keyAttributes=ZG_VERIFIED_KEY;
+    if(!strcmp(s,"tclk_v56_write_fail")) write_fail_at=2u;
+    assert(b1_sec_validate_restored());
+    APSME_TCLinkKeyInit(FALSE);
+    if(!strcmp(s,"tclk_v56_write_fail")) {
+      assert(held && !b1_v56_keep_verified && !b1_v56_skip_fresh_reset(peer));
+    } else if(!strcmp(s,"tclk_v56_restore")) {
+      assert(!held && writes==2u && creates==0u);
+      assert(tc[1].keyAttributes==ZG_VERIFIED_KEY && tc[1].SeedShift==11u);
+      assert(tc[1].txFrmCntr==0x1040000Bu && TCLinkKeyRAMEntry[1].txFrmCntr==0x1040000Bu);
+      assert(b1_v56_skip_fresh_reset(peer) && !b1_v56_skip_fresh_reset(other));
+      b1_v56_key_requested(other);
+      assert(b1_v56_skip_fresh_reset(peer));
+      b1_v56_key_requested(peer);
+      assert(!b1_v56_skip_fresh_reset(peer));
+      /* Idempotent: the restored row is not re-armed on the next boot. */
+      APSME_TCLinkKeyInit(FALSE);
+      assert(!held && tc[1].keyAttributes==ZG_VERIFIED_KEY && tc[1].SeedShift==11u);
+      assert(!b1_v56_keep_verified && !b1_v56_skip_fresh_reset(peer));
+    } else {
+      uint8_t want_attr=!strcmp(s,"tclk_v56_verified") ? ZG_VERIFIED_KEY : ZG_DEFAULT_KEY;
+      uint8_t want_shift=!strcmp(s,"tclk_v56_other_shift") ? 13u : 12u;
+      assert(!held && tc[1].keyAttributes==want_attr && tc[1].SeedShift==want_shift);
+      assert(!b1_v56_keep_verified && !b1_v56_skip_fresh_reset(tc[1].extAddr));
+    }
   } else if(!strcmp(s,"tclk_checkpoint_backpressure")) {
     uint32_t last_sent=0;
     assert(b1_sec_validate_restored());
@@ -702,6 +739,10 @@ SIGNATURES = (
     'ZStatus_t ZDSecMgrDeviceRemoveByExtAddr( uint8_t *pAddr )',
     'ZStatus_t ZDSecMgrLinkKeySet( uint8_t* extAddr, uint8_t* key )',
     'static uint8_t ZDSecMgrWriteNV( void )',
+    'static uint8_t b1_v56_restore_peer(const uint8_t *extAddr)',
+    'static uint8_t b1_v56_restore_verified(const uint8_t *extAddr,\n                                       uint8_t *keyAttributes, uint8_t *seedShift)',
+    'static uint8_t b1_v56_skip_fresh_reset(const uint8_t *extAddr)',
+    'static void b1_v56_key_requested(const uint8_t *extAddr)',
     'void APSME_TCLinkKeyInit(uint8_t setDefault)',
     'void ZDSecMgrSaveApsLinkKey(void)',
     'void ZDSecMgrSaveTCLinkKey(void)',
@@ -723,6 +764,8 @@ SCENARIOS = (
     'save_tclk_positive', 'save_tclk_fail', 'save_tclk_readback', 'save_tclk_rollback',
     'tclk_checkpoint_backpressure',
     'tclk_restore_floor', 'tclk_restore_above_floor', 'tclk_restore_other_peer',
+    'tclk_v56_restore', 'tclk_v56_other_peer', 'tclk_v56_other_shift', 'tclk_v56_verified',
+    'tclk_v56_write_fail',
     'sync_valid', 'sync_max_replay', 'sync_bounds', 'sync_hold', 'sync_bad_attributes',
     'aps_key_pending', 'aps_key_bounds', 'aps_key_hold',
     'remove_positive', 'remove_table_fail', 'remove_table_readback',
@@ -761,11 +804,28 @@ MUTANTS = {
         '    {\n      memset(&row, 0, sizeof(row));\n      return;\n    }',
         '    (void)b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, i, sizeof(row), &row);'),
     'tclk_restore_any_peer': ('tclk_restore_other_peer',
-        '        if (OsalPort_memcmp(row.extAddr, b1_v55_restore_peer, Z_EXTADDR_LEN) &&',
-        '        if ((OsalPort_memcmp(row.extAddr, b1_v55_restore_peer, Z_EXTADDR_LEN) || TRUE) &&'),
+        '        if (b1_v56_restore_peer(row.extAddr) &&',
+        '        if ((b1_v56_restore_peer(row.extAddr) || TRUE) &&'),
     'tclk_restore_lowers': ('tclk_restore_above_floor',
         '            row.txFrmCntr < b1_v55_restore_floor)',
         '            TRUE)'),
+    'v56_restore_any_peer': ('tclk_v56_other_peer',
+        '  if (!b1_v56_restore_peer(extAddr) || *keyAttributes != ZG_DEFAULT_KEY ||',
+        '  if (*keyAttributes != ZG_DEFAULT_KEY ||'),
+    'v56_restore_any_shift': ('tclk_v56_other_shift',
+        '      *seedShift != 12u) return FALSE;',
+        '      FALSE) return FALSE;'),
+    'v56_skip_unarmed': ('tclk_v56_other_shift',
+        '  return (b1_v56_keep_verified && b1_v56_restore_peer(extAddr)) ? TRUE : FALSE;',
+        '  return b1_v56_restore_peer(extAddr);'),
+    'v56_never_disarmed': ('tclk_v56_restore',
+        '  if (b1_v56_restore_peer(extAddr)) b1_v56_keep_verified = FALSE;',
+        '  (void)extAddr;'),
+    'v56_arm_before_write': ('tclk_v56_write_fail',
+        '    if (!b1_sec_write_checked(ZCD_NV_EX_TCLK_TABLE, i, sizeof(row), &row)) return;\n'
+        '    if (restored) b1_v56_keep_verified = TRUE; /* only after a durable restore */',
+        '    if (restored) b1_v56_keep_verified = TRUE;\n'
+        '    if (!b1_sec_write_checked(ZCD_NV_EX_TCLK_TABLE, i, sizeof(row), &row)) return;'),
     'counter_wrap': ('load_wrap',
         '      if (TCLinkKeyRAMEntry[i].txFrmCntr == UINT32_MAX)',
         '      if (FALSE)'),
@@ -808,7 +868,9 @@ def main():
     # installation or the APS metadata writer; do not emit unused static C
     # functions into its -Werror translation unit.
     selected = (SIGNATURES if not a.tc300 else tuple(sig for sig in SIGNATURES
-                if not sig.startswith('static uint8_t ZDSecMgrWriteNV(')))
+                if not sig.startswith(('static uint8_t ZDSecMgrWriteNV(',
+                                       'static uint8_t b1_v56_skip_fresh_reset(',
+                                       'static void b1_v56_key_requested('))))
     functions = [extract_function(source, sig) for sig in selected]
     if any('b1_' not in f for f in functions
            if not f.startswith(('void ZDSecMgrEntryInit',

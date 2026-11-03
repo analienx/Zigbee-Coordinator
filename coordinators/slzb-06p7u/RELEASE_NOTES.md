@@ -2,6 +2,51 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
+## V56 (prepared 3 November 2026, not installed)
+
+Base: V55 `bb9720a7`. A single-device recovery build for the GL-SD-301P circle dimmer `0xa4c13850cfcdb3a4`. Nothing else changes.
+
+### Why V55 was not enough
+
+After V55, the dimmer still fails to join, in exactly the same way. Evidence from 3 Nov:
+
+- **The coordinator sends the network key every join.** In the 16:49 debug capture the dimmer associated twice, through KitchenSocketDishwasher and then BedroomSocketDoorL. Each time the coordinator raised `tcDeviceInd`. In TI's source that indication fires only after `ZDSecMgrSendNwkKey` succeeded.
+- **The key goes out under the default TCLK.** With the row at DEFAULT, `APSME_TCLinkKeyLoad` encrypts it under `ZCD_NV_TCLK_DEFAULT`. The row's RAM counter is at least `0x10400000`.
+- **The dimmer never accepts it.** It sends no announce and no leave. It retries with the next parent about 2–12 s later, which matches its 2 s key wait.
+- **The coordinator path is not the cause.**
+  - KitchenSocketLeft uses the same Telink SDK 3.7.2.0, the same `libzb_ed` and the same RX-on setup, and completes fresh joins on V54/V55.
+  - The dimmer's flashed node descriptor advertises RX-on (`0x88`), so its parents send the key directly.
+- **The dimmer holds its vendor-era key.**
+  - Every coordinator backup from 29 Aug to 1 Oct records the dimmer's row as VERIFIED at SeedShift 11, from the same seed the coordinator holds today.
+  - TI's fresh-join reset on 2 Nov changed the row to DEFAULT/12.
+  - The dimmer's own reset gesture never clears its stored key pair while it counts as factory-new.
+- **The host cannot install the key.** A host-side attempt with `APP_CNF bdbAddInstallCode` (key format) latched B1's fail-closed NV HOLD (`first_error 0x20`). That caused a 4-minute outage, cleared by a radio restart. It is correct B1 behaviour; key changes must come from the firmware.
+
+### Firmware
+
+1. **Key epoch restore for one device (B1 security, `zd_sec_mgr.c`).**
+   - **At boot:** `APSME_TCLinkKeyInit` puts that EUI's row back to VERIFIED/SeedShift 11, only when the row is exactly DEFAULT/12. The write goes through B1's checked NV write. A RAM-only arm is set only after that write is durable.
+   - **While armed:** TI's two fresh-join resets skip this EUI, both `ZDSecMgrDeviceJoinDirect` and `ZDSecMgrUpdateDeviceInd` (join through a parent). So the network key goes out under the shift-11 key the dimmer still holds. The V55 counter floor still applies.
+   - **Disarm:** the dimmer's TC link-key request (`ZDSecMgrTclkReq`) disarms it. That request proves the dimmer received the network key. TI then answers with the same shift-11 key and the normal verify follows.
+   - **No key material** is in the source. TI derives the key from the retained seed and the restored shift.
+   - **Later boots** re-arm only if the row has fallen back to DEFAULT/12. A completed recovery leaves it VERIFIED, so nothing re-arms.
+   - **Remove** in the next release once the dimmer is recovered.
+
+### Validation so far
+
+- B1 hosted suite on the real TI 8.33 sources (ASan/UBSan): 308 scenario passes, 43 compiled mutants rejected. That includes 5 new scenarios and 5 new compiled mutants.
+  - Scenarios: restore, other peer, other shift, already verified, write failure.
+  - Mutants: any peer, any shift, unarmed skip, never disarmed, arm before write.
+- Full local source composition passes. The final TI patch carries the three hooks: two fresh-join reset guards and the TCLK-request disarm.
+- Repository tests: 963 passed, 31 skipped.
+- Native build, package, install and live results: not yet.
+
+### After installing, check
+
+1. The dimmer's row reads VERIFIED/11 with TX at least `0x1040000B`. Read it with the read-only TCLK probe; never write.
+2. Power-cycle the dimmer (right relay of LivingRoomMainDimmer) with permit-join open. Expect a device announce and a completed interview.
+3. Then OTA the vendor image back.
+
 ## V55 (installed 3 November 2026, 16:33)
 
 Installed with operation `2b4a6c3e`, package run [41664445061](https://github.com/analienx/Zigbee-Coordinator/actions/runs/41664445061). The write, native boot and serving check passed.
