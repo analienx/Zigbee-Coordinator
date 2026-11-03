@@ -144,7 +144,7 @@ print(json.dumps({"operation":op.name,"capture_mtime":int((op/"fresh-sparse-snap
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--operation", help="held operation id (default: newest capture for --source)")
-    p.add_argument("--source", default="bb9720a7d502f80e28bdec683e625c754bb5cd1c")
+    p.add_argument("--source", default="08804f2946746104215d3db7d36092706a0dfcad")
     p.add_argument("--package", default="/share/p7u-paired-operator-161e412fe63d-d713cec81d878d38")
     p.add_argument("--json", action="store_true")
     p.add_argument("--ack", help='override package acknowledgements, JSON [{"ieee":"0x..","change":"NEW_PEER|ASSOC_GAIN"}]')

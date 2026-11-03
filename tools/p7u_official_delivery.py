@@ -21,7 +21,7 @@ delivery is a handful of commands. It adds no new radio, NV or flash path:
               TTY quiescence proof -> B1Q1 queries only -> Z2M start (one
               bounded retry) -> automations on. No reset, BSL, NV or flash.
 
-Defaults pin the V55 delivery over the installed V54 operation.
+Defaults pin the V56 delivery over the installed V55 operation.
 """
 import argparse
 import json
@@ -37,10 +37,10 @@ import p7u_paired_binding as binding  # noqa: E402
 
 REPO = "analienx/Zigbee-Coordinator"
 DRIVER = ROOT / "tools" / "p7u_ha_flash_driver.py"
-DEFAULTS = {"firmware": "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
-            "installed": "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
-            "previous_operation": "81a7bf7a50aa55d89b0e1f9b210ec099",
-            "native_run": "41657565904"}
+DEFAULTS = {"firmware": "08804f2946746104215d3db7d36092706a0dfcad",
+            "installed": "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
+            "previous_operation": "2b4a6c3e73ed68a3de2f9b37e31ad699",
+            "native_run": "41681908234"}
 BOOT_AUTOMATION = "automation.boot_deterministic_emqx_then_zigbee2mqtt"
 # Restarts Zigbee2MQTT / resets the radio on its own: must be off while the operator owns the radio.
 RECOVERY_AUTOMATION = "automation.zigbee2mqtt_p7u_auto_recovery_3_attempts"

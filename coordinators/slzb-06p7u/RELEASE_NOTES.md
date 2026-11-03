@@ -2,7 +2,7 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V56 (prepared 3 November 2026, not installed)
+## V56 (candidate, 3 November 2026; built natively, not installed)
 
 Base: V55 `bb9720a7`. A single-device recovery build for the GL-SD-301P circle dimmer `0xa4c13850cfcdb3a4`. Nothing else changes.
 
@@ -39,7 +39,9 @@ After V55, the dimmer still fails to join, in exactly the same way. Evidence fro
   - Mutants: any peer, any shift, unarmed skip, never disarmed, arm before write.
 - Full local source composition passes. The final TI patch carries the three hooks: two fresh-join reset guards and the TCLK-request disarm.
 - Repository tests: 963 passed, 31 skipped.
-- Native build, package, install and live results: not yet.
+- **Native build** [run 41681908234](https://github.com/analienx/Zigbee-Coordinator/actions/runs/41681908234) at source `08804f29`: both ARM builds and reproducibility pass.
+- Pinned as the official-owner successor of V55 (paired binding, startup observer, delivery defaults). With the pin applied, repository tests are 963 passed, 31 skipped.
+- Package, install and live results: not yet.
 
 ### After installing, check
 
