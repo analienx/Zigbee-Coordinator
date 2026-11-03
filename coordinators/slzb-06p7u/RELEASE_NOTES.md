@@ -2,7 +2,15 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V55 (candidate, 3 November 2026; built natively, not installed)
+## V55 (installed 3 November 2026, 16:33)
+
+Installed with operation `2b4a6c3e`, package run [41664445061](https://github.com/analienx/Zigbee-Coordinator/actions/runs/41664445061). The write, native boot and serving check passed.
+- **Held first attempt:** the first attempt (`a1aff3fe`) held with zero writes on `CURRENT_UNEXPECTED_PEER`. The package lacked V54's `NEW_PEER` acknowledgement for the IKEA RODRET leftover row `0x08fd52fffe0aa5a6`.
+- **Acknowledgements:** dimmer `FRESH_REJOIN`; KitchenSocketLeft and WorkRoomLedMainDimmer `FRESH_REJOIN`+`KEY_REROLL`; RODRET `NEW_PEER`.
+- **Verified after install:**
+  - Row 53 TX = `0x10400000`.
+  - Live evidence: source `bb9720a7`, READY 27 s after boot, no MAC refusals, no NPI/UART or NV faults, heap at least 87 KB free.
+- **Dimmer still not complete:** it joined again at 16:35 with new address 33850, but did not announce or answer the interview, and its row stays DEFAULT. Investigation continues on the dimmer side.
 
 Base: V54 `20a2474a`. Evidence and reasoning: [V54 review, 3 Nov](REVIEW_V54_2026-11-03.md).
 
