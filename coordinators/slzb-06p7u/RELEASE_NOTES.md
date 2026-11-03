@@ -2,6 +2,37 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
+## Next release (V57): drop the dimmer-specific code
+
+**Owner decision, 3 Nov 2026:** the next coordinator firmware carries no code specific to the GL-SD-301P dimmer `0xa4c13850cfcdb3a4`. V55 and V56 both added such code. Neither recovered the dimmer, because the failure is on the dimmer side (see V56). Its recovery continues outside the coordinator, with an nRF52840 802.15.4 sniffer, then a dimmer firmware fix or a wired reflash.
+
+Remove all of the following. The goal is TI's stock fresh-join behaviour plus the generic B1 guards, with no per-EUI branch anywhere.
+
+1. **`firmware/slzb-06p7u/r4/b1/tools/patch_security.py`**
+   - `TCLK_INIT` → `APSME_TCLinkKeyInit`:
+     - remove the V55 counter floor: the `b1_v55_restore_floor` constant, its `if (b1_v56_restore_peer(...) && row.txFrmCntr < ...)` raise, and the comment block;
+     - remove the V56 `restored` local, the `b1_v56_restore_verified(...)` call, and the `if (restored) b1_v56_keep_verified = TRUE;` arm.
+   - `SUPPORT`: remove the `B1_V56_KEY_EPOCH_RESTORE` block, i.e. `b1_v56_restore_peer`, `b1_v56_restore_verified`, `b1_v56_skip_fresh_reset` and `b1_v56_key_requested`.
+   - `patch()`:
+     - remove the five `b1_v56_*` forward declarations from the support-declarations string;
+     - remove the loop that adds `!b1_v56_skip_fresh_reset(...)` to `ZDSecMgrDeviceJoinDirect` and `ZDSecMgrUpdateDeviceInd`;
+     - remove the `b1_v56_key_requested(...)` insertion into `ZDSecMgrTclkReq`.
+2. **`make_security_harness.py`:**
+   - remove the `b1_v56_keep_verified` preamble variable, the four `b1_v56_*` entries in `SIGNATURES` and their exclusions in the TC300 `selected` filter;
+   - remove the `tclk_restore_*` and `tclk_v56_*` scenarios, both from `SCENARIOS` and from `MAIN`;
+   - remove the mutants `tclk_restore_any_peer`, `tclk_restore_lowers` and `v56_*`.
+3. **`run_hosted_tests.py`:** remove the matching mutant evidence entries (`tclk_restore_*` and `v56_*`).
+4. **Keep, because they are generic and not dimmer code:**
+   - the `FRESH_REJOIN` acknowledgement class (preflight and paired binding);
+   - `tools/p7u_live_evidence.py`;
+   - the T6 MAC queue sizes 50/80/50.
+5. **Verify before building:**
+   - `grep -rn "b1_v55\|b1_v56\|a4, 0xb3, 0xcd, 0xcf" firmware/` returns nothing;
+   - the composed TI patch differs from TI's stock `zd_sec_mgr.c` only by the pre-V55 B1 hunks;
+   - the hosted suite and the repository tests pass.
+6. **What changes on the coordinator:** nothing is written by the removal itself. Row 53 stays in NV as V56 left it (VERIFIED/11, TX ≥ `0x10400021`). Under stock TI behaviour, the dimmer's next fresh join resets that row to DEFAULT/12 with counters zeroed. Expect that, and acknowledge it as `FRESH_REJOIN` only if it shows up in the deploy capture.
+7. **Package acknowledgements:** list only changes since V56's pre-install capture (operation `d86dc87d`). Do not carry V55/V56 acks forward. An acknowledged row that only changed counters holds the deploy with `TC_RETAINED_KEY_OR_REFERENCE_CHANGED`, as V56's first attempt did.
+
 ## V56 (installed 3 November 2026, 20:51)
 
 Installed with operation `d86dc87d`, package run [41706438636](https://github.com/analienx/Zigbee-Coordinator/actions/runs/41706438636). The write, native boot and serving check passed.
@@ -42,7 +73,7 @@ After V55, the dimmer still fails to join, in exactly the same way. Evidence fro
    - **Disarm:** the dimmer's TC link-key request (`ZDSecMgrTclkReq`) disarms it. That request proves the dimmer received the network key. TI then answers with the same shift-11 key and the normal verify follows.
    - **No key material** is in the source. TI derives the key from the retained seed and the restored shift.
    - **Later boots** re-arm only if the row has fallen back to DEFAULT/12. A completed recovery leaves it VERIFIED, so nothing re-arms.
-   - **Remove** in the next release once the dimmer is recovered.
+   - **Remove in V57** (owner decision, 3 Nov): see "Next release (V57)" above.
 
 ### Validation so far
 
@@ -79,7 +110,7 @@ Base: V54 `20a2474a`. Evidence and reasoning: [V54 review, 3 Nov](REVIEW_V54_202
    - On boot, `APSME_TCLinkKeyInit` raises the outgoing APS frame counter of the TCLK row for `0xa4c13850cfcdb3a4` (GL-SD-301P circle dimmer) to at least `0x10400000`.
    - **Why:** TI's fresh-join reset zeroed that counter on 2 Nov, from about 269.48M. The device keeps its old replay high-water mark and drops every network key, so it cannot join.
    - **Scope:** only that row; only raises; RX unchanged. NV is written through B1's checked write, then RAM. Later boots only add the usual +11.
-   - **Remove** once the device runs firmware that clears stale key pairs.
+   - **Remove in V57** together with V56's restore: see "Next release (V57)" above.
 2. **MAC queues to field-proven sizes (T6 compiler options).**
    - `MAC_CFG_TX_DATA_MAX` 5 → 50, `MAC_CFG_TX_MAX` 8 → 80, `MAC_CFG_RX_MAX` 5 → 50. These are the values of the widely deployed community CC2652/CC1352P7 coordinator build.
    - **Why:** V54's B1E2 counters showed MAC data requests refused with `MAC_TRANSACTION_OVERFLOW` (20 in 9.4 h) on a 106-device network.
