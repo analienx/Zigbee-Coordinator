@@ -404,12 +404,14 @@ def inspect_state(records: dict, abi: dict) -> dict:
 def fresh_rejoin(before: dict, after: dict) -> bool:
     """TI ZDSecMgrDeviceJoinDirect on a non-TC-rejoin of a VERIFIED peer: the
     same slot becomes ZG_DEFAULT_KEY with SeedShift+1 (mod 16) and restarted
-    counters. Nothing else in the row may differ."""
+    counters. A peer may cycle (reset, re-verify, reset ...) several times
+    between two captures, so any changed SeedShift is that evidence; an
+    unchanged one is not. Nothing else in the row may differ."""
     mb, ma = before["key_metadata"], after["key_metadata"]
     return (before["index"] == after["index"] and before["key"] is None and after["key"] is None and
             mb[1] == bytes((2,)) and ma[1] == bytes((0xff,)) and
             all(mb[i] == ma[i] for i in (0, 2, 4)) and len(mb[3]) == len(ma[3]) == 1 and
-            ma[3][0] == (mb[3][0] + 1) & 0x0F)
+            ma[3] != mb[3] and ma[3][0] < 16)
 
 
 def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset(),
@@ -439,18 +441,19 @@ def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset(),
         require(current[category].keys() == baseline[category].keys(), code + "_RETAINED_SET_CHANGED")
         for identity, before in baseline[category].items():
             after = current[category][identity]
-            if category == "peers" and identity in key_rerolls:
-                # Owner-acknowledged re-derivation of a VERIFIED TC link key
-                # from the UNCHANGED seed (rejoin key update): only SeedShift
-                # may differ; same slot, attributes, type, install-code index.
+            if category == "peers" and identity in key_rerolls | fresh_rejoins:
+                # KEY_REROLL: owner-acknowledged re-derivation of a VERIFIED TC
+                # link key from the UNCHANGED seed (rejoin key update): only
+                # SeedShift may differ; same slot, attributes, type, IC index.
+                # FRESH_REJOIN: exactly TI's reset of that slot to the default
+                # key. A device acknowledged for both may match either, since
+                # it can re-verify or reset again before the capture.
                 mb, ma = before["key_metadata"], after["key_metadata"]
-                require(before["index"] == after["index"] and before["key"] is None and after["key"] is None and
-                        mb[1] == ma[1] == bytes((2,)) and all(mb[i] == ma[i] for i in (0, 1, 2, 4)),
-                        code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
-            elif category == "peers" and identity in fresh_rejoins:
-                # Owner-acknowledged fresh (non-TC-rejoin) join of a VERIFIED
-                # peer: exactly TI's reset of that slot to the default key.
-                require(fresh_rejoin(before, after), code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
+                reroll = (identity in key_rerolls and before["index"] == after["index"] and
+                          before["key"] is None and after["key"] is None and
+                          mb[1] == ma[1] == bytes((2,)) and all(mb[i] == ma[i] for i in (0, 1, 2, 4)))
+                fresh = identity in fresh_rejoins and fresh_rejoin(before, after)
+                require(reroll or fresh, code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
             else:
                 require(all(after[key] == value for key, value in before.items() if key not in ("tx", "rx")),
                         code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")

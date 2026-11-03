@@ -114,10 +114,12 @@ class AddressGate(unittest.TestCase):
         r = self.tc_gate(before, after, frozenset({(KNOWN, "FRESH_REJOIN")}))
         self.assertTrue(r["semantic_checks_passed"], r)
         self.assertEqual(r["acknowledged_fresh_rejoins"], 1)
-        # SeedShift wraps modulo 16 exactly as TI masks it.
-        self.assertTrue(self.tc_gate(self.tc(15), self.tc(0, attrs=0xff, tx=0),
-                                     frozenset({(KNOWN, "FRESH_REJOIN")}))["semantic_checks_passed"])
-        for wrong in (self.tc(13, attrs=0xff), self.tc(11, attrs=0xff), self.tc(12, attrs=2),
+        # SeedShift wraps modulo 16; several reset/re-verify cycles between
+        # captures (live KitchenSocketLeft: 13 -> 2) are still a fresh rejoin.
+        for shifted in (self.tc(0, attrs=0xff, tx=0), self.tc(2, attrs=0xff, tx=41)):
+            self.assertTrue(self.tc_gate(self.tc(13) if shifted["key_metadata"][3] == bytes((2,)) else self.tc(15),
+                                         shifted, frozenset({(KNOWN, "FRESH_REJOIN")}))["semantic_checks_passed"])
+        for wrong in (self.tc(11, attrs=0xff), self.tc(12, attrs=2),
                       self.tc(12, attrs=1), self.tc(12, attrs=0xff, index=8),
                       self.tc(12, attrs=0xff, ktype=1), self.tc(12, attrs=0xff, ic=1)):
             r = self.tc_gate(before, wrong, frozenset({(KNOWN, "FRESH_REJOIN")}))
@@ -131,6 +133,11 @@ class AddressGate(unittest.TestCase):
         r = self.tc_gate(before, after, frozenset({(KNOWN, "KEY_REROLL")}))
         self.assertFalse(r["semantic_checks_passed"])
         self.assertIn("FRESH_REJOIN", pb.ACK_CLASSES)
+        # A flapping device acknowledged for both classes passes in either state.
+        both = frozenset({(KNOWN, "FRESH_REJOIN"), (KNOWN, "KEY_REROLL")})
+        self.assertTrue(self.tc_gate(before, after, both)["semantic_checks_passed"])
+        self.assertTrue(self.tc_gate(before, self.tc(9, tx=3), both)["semantic_checks_passed"])
+        self.assertFalse(self.tc_gate(before, self.tc(12, attrs=0xff, ktype=1), both)["semantic_checks_passed"])
 
     def test_malformed_acknowledgements_fail_closed(self):
         for acks in (frozenset({(KNOWN, "ANYTHING")}), frozenset({(bytes(8), "NEW_PEER")}), {(KNOWN, "NEW_PEER")}):

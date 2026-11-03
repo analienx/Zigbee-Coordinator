@@ -24,7 +24,7 @@ Nothing else changes. The composed TI C differs from V54 only in item 1 and the 
 ### Delivery and tooling
 
 - **`FRESH_REJOIN` owner acknowledgement** (retained-security gate and paired binding).
-  - It admits exactly TI's reset of a VERIFIED peer's TC row on a fresh join: same slot, EUI, key type and install-code index; DEFAULT key; SeedShift+1; counters restarted.
+  - It admits exactly TI's reset of a VERIFIED peer's TC row on a fresh join: same slot, EUI, key type and install-code index; DEFAULT key; changed SeedShift (TI adds 1 per reset; a device can cycle several times); counters restarted.
   - The V55 package needs it for the dimmer, otherwise the deploy holds with `TC_RETAINED_KEY_OR_REFERENCE_CHANGED` and zero writes.
 - **`tools/p7u_live_evidence.py`**: reads the firmware's B1E1–B1E7 and B1S1 evidence through the running Zigbee2MQTT, with no outage and no NV, reset or radio action.
 
