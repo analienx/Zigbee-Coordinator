@@ -401,7 +401,19 @@ def inspect_state(records: dict, abi: dict) -> dict:
             "aps_opaque_tail": table[header_size + 3 * entry_size:]}
 
 
-def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset()) -> None:
+def fresh_rejoin(before: dict, after: dict) -> bool:
+    """TI ZDSecMgrDeviceJoinDirect on a non-TC-rejoin of a VERIFIED peer: the
+    same slot becomes ZG_DEFAULT_KEY with SeedShift+1 (mod 16) and restarted
+    counters. Nothing else in the row may differ."""
+    mb, ma = before["key_metadata"], after["key_metadata"]
+    return (before["index"] == after["index"] and before["key"] is None and after["key"] is None and
+            mb[1] == bytes((2,)) and ma[1] == bytes((0xff,)) and
+            all(mb[i] == ma[i] for i in (0, 2, 4)) and len(mb[3]) == len(ma[3]) == 1 and
+            ma[3][0] == (mb[3][0] + 1) & 0x0F)
+
+
+def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset(),
+                     fresh_rejoins=frozenset()) -> None:
     # 6. Preserve network/seed/key epoch; no permissive key-rotation guess.
     require(current["identity"] == baseline["identity"] and
             current["active"] == baseline["active"] and current["seed"] == baseline["seed"] and
@@ -435,18 +447,22 @@ def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset()) -> 
                 require(before["index"] == after["index"] and before["key"] is None and after["key"] is None and
                         mb[1] == ma[1] == bytes((2,)) and all(mb[i] == ma[i] for i in (0, 1, 2, 4)),
                         code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
+            elif category == "peers" and identity in fresh_rejoins:
+                # Owner-acknowledged fresh (non-TC-rejoin) join of a VERIFIED
+                # peer: exactly TI's reset of that slot to the default key.
+                require(fresh_rejoin(before, after), code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
             else:
                 require(all(after[key] == value for key, value in before.items() if key not in ("tx", "rx")),
                         code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
             # A re-derived key starts a new counter space; every other entry
             # (and an acknowledged entry whose key did NOT change) is monotonic.
-            rerolled = (category == "peers" and identity in key_rerolls and
+            rerolled = (category == "peers" and identity in key_rerolls | fresh_rejoins and
                         before["key_metadata"][3] != after["key_metadata"][3])
             require(rerolled or (after["tx"] >= before["tx"] and after["rx"] >= before["rx"]),
                     code + "_PERSISTED_COUNTER_REGRESSION")
 
 
-ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN", "KEY_REROLL"})
+ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN", "KEY_REROLL", "FRESH_REJOIN"})
 
 
 def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrade=False,
@@ -532,7 +548,8 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                 addresses[index] = normalized
             comparison = dict(now, addresses=addresses)
         key_rerolls = frozenset(p for p, c in acknowledged_changes if c == "KEY_REROLL")
-        compare_retained(comparison, old, key_rerolls)
+        fresh_rejoins = frozenset(p for p, c in acknowledged_changes if c == "FRESH_REJOIN")
+        compare_retained(comparison, old, key_rerolls, fresh_rejoins)
         return {"semantic_checks_passed": True, "reason_codes": [],
                 "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"]),
                 "comparison_scope": ('KNOWN_R4_RUNTIME_INVENTORY_BOUND_VACANT_FILL_ONLY' if materialized_addresses else
@@ -544,7 +561,9 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                 "acknowledged_address_fills": acknowledged_fills,
                 "acknowledged_association_gains": acknowledged_gains,
                 "acknowledged_key_rerolls": sum(old["peers"].get(p, {}).get("key_metadata") !=
-                                                now["peers"].get(p, {}).get("key_metadata") for p in key_rerolls)}
+                                                now["peers"].get(p, {}).get("key_metadata") for p in key_rerolls),
+                "acknowledged_fresh_rejoins": sum(old["peers"].get(p, {}).get("key_metadata") !=
+                                                  now["peers"].get(p, {}).get("key_metadata") for p in fresh_rejoins)}
     except (Hold, KeyError, TypeError, IndexError, ValueError) as error:
         code = str(error) if isinstance(error, Hold) else "SECURITY_RECORD_OR_ABI_MALFORMED"
         return {"semantic_checks_passed": False, "reason_codes": [code]}

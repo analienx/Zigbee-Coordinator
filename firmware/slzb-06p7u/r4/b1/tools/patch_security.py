@@ -321,6 +321,15 @@ TCLK_INIT = r'''void APSME_TCLinkKeyInit(uint8_t setDefault)
 {
   uint16_t i;
   uint8_t empty[Z_EXTADDR_LEN] = {0};
+  /* B1_V55_TCLK_RESTORE: one peer's outgoing TC counter, restored upward.
+   * TI's fresh-join reset (ZDSecMgrDeviceJoinDirect) zeroed this row's TX
+   * counter on 2 Nov 2026 while the device kept a key pair for this TC with
+   * its old receive high-water mark (about 269.48M at the V54 baseline), so it
+   * drops every network key as a replay. Only raises, only this EUI-64
+   * (0xa4c13850cfcdb3a4, NV order LSB first); idempotent on later boots. */
+  static const uint8_t b1_v55_restore_peer[Z_EXTADDR_LEN] =
+    { 0xa4, 0xb3, 0xcd, 0xcf, 0x50, 0x38, 0xc1, 0xa4 };
+  const uint32_t b1_v55_restore_floor = 0x10400000u;
   if (b1_nv_runtime_hold_active()) return;
   if (b1_sec_existing_network && setDefault)
   {
@@ -357,6 +366,9 @@ TCLK_INIT = r'''void APSME_TCLinkKeyInit(uint8_t setDefault)
           return;
         }
         row.txFrmCntr += (uint32_t)MAX_TCLK_FRAMECOUNTER_CHANGES + 1u;
+        if (OsalPort_memcmp(row.extAddr, b1_v55_restore_peer, Z_EXTADDR_LEN) &&
+            row.txFrmCntr < b1_v55_restore_floor)
+          row.txFrmCntr = b1_v55_restore_floor;
       }
       else continue; /* An unused optional slot needs no persistence write. */
     }

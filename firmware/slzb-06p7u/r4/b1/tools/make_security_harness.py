@@ -474,6 +474,24 @@ int main(int argc,char **argv)
     if(s[0]=='a') { ZDSecMgrRestoreFromNV(); assert(ApsLinkKeyRAMEntry[0].txFrmCntr==0 && restored[0].ami==INVALID_NODE_ADDR); }
     else { APSME_TCLinkKeyInit(FALSE); assert(TCLinkKeyRAMEntry[0].txFrmCntr==0 && !TCLinkKeyRAMEntry[0].entryUsed); }
     assert(held && writes==1);
+  } else if(!strncmp(s,"tclk_restore_",13)) {
+    /* V55: only the pinned peer's TX counter is raised, never lowered. */
+    static const uint8_t peer[8]={0xa4,0xb3,0xcd,0xcf,0x50,0x38,0xc1,0xa4};
+    memcpy(tc[1].extAddr,peer,8); tc[1].keyAttributes=ZG_DEFAULT_KEY;
+    tc[1].txFrmCntr=20u; tc[1].rxFrmCntr=7u;
+    if(!strcmp(s,"tclk_restore_above_floor")) tc[1].txFrmCntr=0x10400005u;
+    if(!strcmp(s,"tclk_restore_other_peer")) tc[1].extAddr[7]^=0x01;
+    assert(b1_sec_validate_restored());
+    APSME_TCLinkKeyInit(FALSE);
+    assert(!held && writes==2u && creates==0u);
+    assert(tc[0].txFrmCntr==211u && TCLinkKeyRAMEntry[0].txFrmCntr==211u);
+    uint32_t want=!strcmp(s,"tclk_restore_floor") ? 0x10400000u :
+                  !strcmp(s,"tclk_restore_above_floor") ? 0x10400010u : 31u;
+    assert(tc[1].txFrmCntr==want && TCLinkKeyRAMEntry[1].txFrmCntr==want);
+    assert(tc[1].rxFrmCntr==7u && TCLinkKeyRAMEntry[1].rxFrmCntr==7u && TCLinkKeyRAMEntry[1].entryUsed);
+    /* Idempotent: the next boot only adds the ordinary reservation. */
+    APSME_TCLinkKeyInit(FALSE);
+    assert(!held && tc[1].txFrmCntr==want+11u && TCLinkKeyRAMEntry[1].txFrmCntr==want+11u);
   } else if(!strcmp(s,"tclk_checkpoint_backpressure")) {
     uint32_t last_sent=0;
     assert(b1_sec_validate_restored());
@@ -704,6 +722,7 @@ SCENARIOS = (
     'save_aps_positive', 'save_aps_fail', 'save_aps_readback', 'save_aps_rollback',
     'save_tclk_positive', 'save_tclk_fail', 'save_tclk_readback', 'save_tclk_rollback',
     'tclk_checkpoint_backpressure',
+    'tclk_restore_floor', 'tclk_restore_above_floor', 'tclk_restore_other_peer',
     'sync_valid', 'sync_max_replay', 'sync_bounds', 'sync_hold', 'sync_bad_attributes',
     'aps_key_pending', 'aps_key_bounds', 'aps_key_hold',
     'remove_positive', 'remove_table_fail', 'remove_table_readback',
@@ -741,6 +760,12 @@ MUTANTS = {
         '    if (!b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, i, sizeof(row), &row))\n'
         '    {\n      memset(&row, 0, sizeof(row));\n      return;\n    }',
         '    (void)b1_sec_write_checked(ZCD_NV_EX_APS_KEY_DATA_TABLE, i, sizeof(row), &row);'),
+    'tclk_restore_any_peer': ('tclk_restore_other_peer',
+        '        if (OsalPort_memcmp(row.extAddr, b1_v55_restore_peer, Z_EXTADDR_LEN) &&',
+        '        if ((OsalPort_memcmp(row.extAddr, b1_v55_restore_peer, Z_EXTADDR_LEN) || TRUE) &&'),
+    'tclk_restore_lowers': ('tclk_restore_above_floor',
+        '            row.txFrmCntr < b1_v55_restore_floor)',
+        '            TRUE)'),
     'counter_wrap': ('load_wrap',
         '      if (TCLinkKeyRAMEntry[i].txFrmCntr == UINT32_MAX)',
         '      if (FALSE)'),

@@ -517,6 +517,8 @@ def main():
                     "unbounded_tclk_transmit": "APSME_TCLinkKeyLoad(1,&si)==ZSecNoKey",
                     "replay_highwater_wrap": "result==ZSecOldFrmCount",
                     "aps_key_checkpoint_bypass": "status==NV_OPER_FAILED",
+                    "tclk_restore_any_peer": "tc[0].txFrmCntr==211u",
+                    "tclk_restore_lowers": "tc[1].txFrmCntr==want",
                     "readback": "ApsLinkKeyRAMEntry[0].txFrmCntr==0"}[name]
         mutation(generated["security"], before, after, "mutant_security_" + name,
                  evidence, (scenario,), admission=False)

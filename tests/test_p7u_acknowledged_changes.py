@@ -106,6 +106,32 @@ class AddressGate(unittest.TestCase):
         r = self.tc_gate(self.tc(3), self.tc(9), frozenset({(OTHER, "KEY_REROLL")}))
         self.assertFalse(r["semantic_checks_passed"])
 
+    def test_fresh_rejoin_only_with_acknowledgement_and_only_ti_reset(self):
+        # VERIFIED -> DEFAULT (0xff), SeedShift + 1, counters restarted.
+        before, after = self.tc(11, tx=269480145), self.tc(12, attrs=0xff, tx=31)
+        self.assertEqual(self.tc_gate(before, after, frozenset())["reason_codes"],
+                         ["TC_RETAINED_KEY_OR_REFERENCE_CHANGED"])
+        r = self.tc_gate(before, after, frozenset({(KNOWN, "FRESH_REJOIN")}))
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_fresh_rejoins"], 1)
+        # SeedShift wraps modulo 16 exactly as TI masks it.
+        self.assertTrue(self.tc_gate(self.tc(15), self.tc(0, attrs=0xff, tx=0),
+                                     frozenset({(KNOWN, "FRESH_REJOIN")}))["semantic_checks_passed"])
+        for wrong in (self.tc(13, attrs=0xff), self.tc(11, attrs=0xff), self.tc(12, attrs=2),
+                      self.tc(12, attrs=1), self.tc(12, attrs=0xff, index=8),
+                      self.tc(12, attrs=0xff, ktype=1), self.tc(12, attrs=0xff, ic=1)):
+            r = self.tc_gate(before, wrong, frozenset({(KNOWN, "FRESH_REJOIN")}))
+            self.assertFalse(r["semantic_checks_passed"], wrong)
+        # Only a VERIFIED key is reset by TI; another device's ack does not apply.
+        r = self.tc_gate(self.tc(11, attrs=0xff), self.tc(12, attrs=0xff), frozenset({(KNOWN, "FRESH_REJOIN")}))
+        self.assertFalse(r["semantic_checks_passed"])
+        r = self.tc_gate(before, after, frozenset({(OTHER, "FRESH_REJOIN")}))
+        self.assertFalse(r["semantic_checks_passed"])
+        # A KEY_REROLL acknowledgement does not cover a reset to the default key.
+        r = self.tc_gate(before, after, frozenset({(KNOWN, "KEY_REROLL")}))
+        self.assertFalse(r["semantic_checks_passed"])
+        self.assertIn("FRESH_REJOIN", pb.ACK_CLASSES)
+
     def test_malformed_acknowledgements_fail_closed(self):
         for acks in (frozenset({(KNOWN, "ANYTHING")}), frozenset({(bytes(8), "NEW_PEER")}), {(KNOWN, "NEW_PEER")}):
             r = self.run_gate({1: row(2, 1, KNOWN)}, {1: row(2, 1, KNOWN)}, [], [], acks=acks)
