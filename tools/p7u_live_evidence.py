@@ -120,8 +120,8 @@ def summary(d):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--source", default=sorted(binding.OFFICIAL_SOURCES)[-1],
-                   help="installed firmware source SHA (evidence pages are digest-bound)")
+    p.add_argument("--source", help="installed firmware source SHA (default: the official-owner "
+                   "source whose 4-byte digest the evidence pages carry)")
     p.add_argument("--out", type=Path, help="also write the full decoded evidence here")
     a = p.parse_args()
     container = "app_" + binding.OFFICIAL_OWNER
@@ -135,8 +135,15 @@ def main():
     if not run.get("result_file"):
         raise SystemExit("no evidence file (extension save status %r)" % run.get("save"))
     raw = json.loads(ssh(f"cat {REMOTE_DIR}/evidence.json"))
-    decoded, errors = decode(raw["replies"], a.source)
-    result = {"result": raw["result"], "error": raw.get("error"), "taken_at": raw["started"],
+    source = a.source
+    if source is None:
+        digest = raw["replies"].get("B1E2", "")[16:24]  # B1E2 bytes 8..11 = source digest
+        matches = [s for s in binding.OFFICIAL_SOURCES if digest and s.startswith(digest)]
+        if len(matches) != 1:
+            raise SystemExit("installed source digest %r matches no single official source; pass --source" % digest)
+        source = matches[0]
+    decoded, errors = decode(raw["replies"], source)
+    result = {"result": raw["result"], "error": raw.get("error"), "taken_at": raw["started"], "source": source,
               "replies": sorted(raw["replies"]), "decode_errors": errors, "summary": summary(decoded)}
     if a.out:
         a.out.write_text(json.dumps({**result, "decoded": decoded, "raw": raw}, indent=1, default=str))

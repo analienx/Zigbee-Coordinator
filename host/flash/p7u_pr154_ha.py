@@ -197,7 +197,8 @@ def runtime_priority_qualification(c):
                       '250441cd17c55e25c78d97e041f056574355ade7',
                       'a70ae24ff45e708e13969cd341c9ecb494d1570f',
                       '8ec1439786e3e98151d2796e6797675bb9ef5965',
-                      '20a2474a67c1d420b6614b3fcb2f7ed543b1420e'): return None
+                      '20a2474a67c1d420b6614b3fcb2f7ed543b1420e',
+                      'bb9720a7d502f80e28bdec683e625c754bb5cd1c'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -837,9 +838,11 @@ async def deploy(package, pin, ha):
         # sector 0x32000: still plain application flash far below NV 0xA4000.
         # V53 (NV read cache) stays inside that same exact 0x34000 envelope.
         # V54 (V53 + cache HOLD/secret guard) keeps the same 0x34000 envelope.
+        # V55 (V54 + TC counter restore, MAC queue sizes) keeps it too.
         app_end = 0x34000 if SOURCE in ('a70ae24ff45e708e13969cd341c9ecb494d1570f',
                                         '8ec1439786e3e98151d2796e6797675bb9ef5965',
-                                        '20a2474a67c1d420b6614b3fcb2f7ed543b1420e') else (
+                                        '20a2474a67c1d420b6614b3fcb2f7ed543b1420e',
+                                        'bb9720a7d502f80e28bdec683e625c754bb5cd1c') else (
             0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',

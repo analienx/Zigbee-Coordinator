@@ -2,7 +2,7 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V55 (candidate, 3 November 2026; not built natively, not installed)
+## V55 (candidate, 3 November 2026; built natively, not installed)
 
 Base: V54 `20a2474a`. Evidence and reasoning: [V54 review, 3 Nov](REVIEW_V54_2026-11-03.md).
 
@@ -32,7 +32,12 @@ Nothing else changes. The composed TI C differs from V54 only in item 1 and the 
 
 - B1 hosted suite on the real TI 8.33 sources (ASan/UBSan): 309 passes, 37 compiled mutants rejected, including the new restore scenarios and mutants.
 - Full local source composition: every stage and harness passes.
-- Repository tests: 961 passed, 31 skipped before the MAC change. The T6 and acknowledgement tests pass after it.
+- Repository tests: 963 passed, 31 skipped.
+- **Native build** [run 41657565904](https://github.com/analienx/Zigbee-Coordinator/actions/runs/41657565904) at source `bb9720a7`: both ARM builds, reproducibility and `audit-native` pass.
+  - APP image ends at 0x34000, the same envelope as V54.
+  - The linked OSAL heap is unchanged at 97,434 B.
+  - Effective defines are `MAC_CFG_TX_DATA_MAX=50`, `MAC_CFG_TX_MAX=80`, `MAC_CFG_RX_MAX=50`.
+  - The priority seal is unchanged (8 task priorities).
 
 ### After installing, check
 
