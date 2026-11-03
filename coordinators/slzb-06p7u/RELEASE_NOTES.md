@@ -2,7 +2,19 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V56 (candidate, 3 November 2026; built natively, not installed)
+## V56 (installed 3 November 2026, 20:51)
+
+Installed with operation `d86dc87d`, package run [41706438636](https://github.com/analienx/Zigbee-Coordinator/actions/runs/41706438636). The write, native boot and serving check passed.
+- **Held first attempt:** the first attempt (`22d80e69`, package 41702532412) held with zero writes on `TC_RETAINED_KEY_OR_REFERENCE_CHANGED`.
+  - It carried V55's `FRESH_REJOIN`/`KEY_REROLL` acks. Against the V55 pre-install capture, those rows had only counter increases. An acknowledged row must show the acknowledged change, so the gate refused it.
+  - The retry carried only RODRET `NEW_PEER`. Acks must describe changes since the predecessor's capture, not be carried forward.
+- **Verified after install:** live evidence source `08804f29`, READY 27 s after boot, no MAC refusals, no NV failures. Row 53 reads VERIFIED/SeedShift 11.
+- **Dimmer test, 20:53:**
+  - The dimmer associated once, via parent 0x240B, and the coordinator sent the network key.
+  - The row stayed VERIFIED/11, so the exemption held and the key went out under the shift-11 key.
+  - The dimmer still did not announce, and the interview failed on the node descriptor.
+- **Conclusion:** the dimmer rejects the network key under both the default TCLK and its vendor-era key. The stale-key hypothesis is not supported. The remaining causes are on the dimmer: delivery or processing of the key frame. They need a sniffer, a second coordinator, or a wired reflash to resolve.
+
 
 Base: V55 `bb9720a7`. A single-device recovery build for the GL-SD-301P circle dimmer `0xa4c13850cfcdb3a4`. Nothing else changes.
 
