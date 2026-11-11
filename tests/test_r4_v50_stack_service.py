@@ -31,6 +31,17 @@ static uint8_t NPITask_sendBufToStack( NPIMSG_msg_t *pMsg )
     }
     return msgStatus;
 }
+
+/* TI 3615ad5d transport RX callback excerpt (V57 arrival hook anchor). */
+static void NPITask_transportRXCallBack(int size)
+{
+    if ( size < NPIRxBuf_GetRxBufAvail() )
+    {
+        NPIRxBuf_Read(size);
+        TRANSPORT_RX_ISR_EVENT_FLAG = NPITASK_TRANSPORT_RX_EVENT;
+        Semaphore_post(npiSemHandle);
+    }
+}
 """
 
 
@@ -85,7 +96,10 @@ class V50StackService(unittest.TestCase):
         self.assertIn("B4_V51_DispatchEnd(idx, returned, now, spent);", stack)
         self.assertIn("devState == DEV_ZB_COORD", stack)
         self.assertIn("B4_V51_OnsetSnapshot(stackEvidence);", task)
-        self.assertIn("pReq[10] <= 5u)", task)
+        self.assertIn("pReq[10] <= 6u)", task)
+        self.assertIn("B4_V57_RxFrameSnapshot(stackEvidence);", task)
+        self.assertLess(task.index("B4_V57_RxArrived(NPIRxBuf_GetRxBufCount());"),
+                        task.index("        NPIRxBuf_Read(size);"))
         self.assertIn("B4_V52_PipelineSnapshot(stackEvidence);", task)
         # V52: expired OSAL timers are freed after every dispatch and NWK's
         # timer starts are attributed per event bit.

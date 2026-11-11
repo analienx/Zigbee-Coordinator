@@ -2,9 +2,86 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## Next release (V57): drop the dimmer-specific code
+## V57 (source candidate, 11 November 2026): cold-start RX resync, no dimmer code
 
-**Owner decision, 3 Nov 2026:** the next coordinator firmware carries no code specific to the GL-SD-301P dimmer `0xa4c13850cfcdb3a4`. V55 and V56 both added such code. Neither recovered the dimmer, because the failure is on the dimmer side (see V56). Its recovery continues outside the coordinator, with an nRF52840 802.15.4 sniffer, then a dimmer firmware fix or a wired reflash.
+Base: V56 `08804f29`. Two changes. Not built natively, not pinned, not flashed.
+
+### Why
+
+On 4 of the last 11 mornings (1, 2, 10 and 11 Nov), after the nightly host and SLZB power cut, Zigbee2MQTT got no `SYS_PING` reply on its first three starts and started on the fourth, 9.5–11 minutes after power-on. The 11 Nov 16:41 live evidence (V56, `p7u_live_evidence.py`) shows:
+- **No reset:** uptime equals the host's to within 11 s.
+- **No firmware fault:** no NPI/UART fault, no HOLD, no timer, heap or NV failure.
+- **Everything else healthy:** Stack 2.5 % busy, NV cache 99.9 % hit, no MAC refusals.
+- **READY at 697 s**, i.e. only when the fourth start's startup request arrived.
+
+So the radio was running and receiving, but did not answer three starts' worth of host bytes. No radio restart happened in between: the SLZB integration was still unreachable.
+
+TI's MT frame parser (`npi_frame_mt.c`, `NPIFrame_collectFrameData`) explains that exactly:
+- **No inter-byte timeout:** after any `0xFE` it takes the next byte as a length and waits, for any time, for length + 3 more bytes.
+- **No length bound:** it also accepts lengths 251–255.
+- **Effect:** one stray `0xFE` plus one byte on the RX line at power-on swallows the host's next frames. Each Zigbee2MQTT start sends 36 bytes (ping, `0xEF`, ping, three pings), so a stray length of about 105–120 swallows three starts and releases the fourth on every bad morning.
+
+This fits all four mornings. It is not proven: the stray bytes were never captured. A stall that always ends just before the fourth start is not excluded. V57 records what the parser discards, so the next bad morning settles it.
+
+### Firmware
+
+1. **RX frame resync (new stage `tools/r4_v57_npi_rx_resync.py`, `npi_frame_mt.c`).**
+   - **Idle resync:** the transport RX callback now reports each chunk's arrival (`B4_V57_RxArrived`, V50 stage, before TI's unchanged copy). If a chunk arrives into an empty parser buffer more than 500 ms after the previous one, the partial frame collected before it is freed and the parser hunts for a start-of-frame again.
+     - A frame without such a gap is never touched, however late the NPI task runs.
+     - A gap that finds unparsed bytes is ignored (TI behaviour).
+     - TI's bulk data read stops at a reported gap.
+   - **Length bound:** a length above `MT_RPC_DATA_MAX` (250, checked against TI's `mt_rpc.h`) is not a length. It ends the candidate frame; a repeated `0xFE` starts the next one.
+   - **B1E8 evidence (op4 page6, NPI owner, RAM only):** valid frames, FCS failures, resyncs, rejected lengths, discarded bytes, allocation failures, idle gaps, first valid frame and first resync ticks, the first resync's parser state (length, CMD0/1, bytes collected), the live parser state, and the first eight bytes discarded before this boot's first valid frame. Host-to-radio bytes only, never NV data.
+   - **Unchanged:** a correctly framed byte stream, every other evidence page, NV, security, scheduling.
+2. **Dimmer code removed (owner decision, 3 Nov).**
+   - `patch_security.py`, `make_security_harness.py` and `run_hosted_tests.py` are restored byte for byte to V54 (`20a2474a`), the last pre-V55 source.
+   - In the composed source, `zd_sec_mgr.c` loses the V55 counter floor and every V56 hook, and its two fresh-join conditions are TI's again. `grep b1_v55|b1_v56|0xa4, 0xb3, 0xcd` finds nothing in `firmware/` or in the composed file.
+
+Kept, because they are generic and not dimmer code:
+- the `FRESH_REJOIN` acknowledgement class;
+- `tools/p7u_live_evidence.py`, which now also reads B1E8 when the firmware has it (older firmware's RPC error ends only that page);
+- the T6 MAC queues 50/80/50.
+
+### What changes on the coordinator
+
+- **Nothing is written** by either change.
+- **Row 53** stays in NV as V56 left it (VERIFIED/11, TX ≥ `0x10400021`). Under stock TI behaviour the dimmer's next fresh join resets it to DEFAULT/12 with counters zeroed. Acknowledge that as `FRESH_REJOIN` only if it shows up in the deploy capture.
+- **Package acknowledgements:** list only changes since V56's pre-install capture (operation `d86dc87d`). Do not carry V55/V56 acks forward.
+
+### Validation so far (local, not hosted evidence)
+
+- **Full local source composition** (`tools/p7u_compose_source_locally.sh`, every stage and harness): passes. The composed patch covers 36 TI files.
+- **Composed V56 → V57 changes:**
+  - `zd_sec_mgr.c`: dimmer code removed;
+  - `npi_frame_mt.c`: new;
+  - `npi_task.c`: arrival hook, page6 query, digest;
+  - `nvocmp.c`: digest only.
+- **V57 RX harness on the emitted `npi_frame_mt.c`** (ASan/UBSan), 11 scenarios:
+  - the field replay (stray SOF + length, ping minutes later: answered);
+  - split frames with and without an idle gap, including across the tick wrap;
+  - a gap with unparsed bytes;
+  - resync in every parser state, with exact allocation accounting;
+  - the gap race inside TI's bulk read;
+  - length bound and repeated SOF, plus the longest real frame;
+  - FCS rejection, discarded-byte capture, allocation failure;
+  - the B1E8 layout.
+  - 18 compiled mutants rejected.
+- **V50 query harness:** page6 answers B1E8, page7 is rejected; 2 new mutants.
+- **Repository tests:** 963 passed, 31 skipped (before the B1E8 decoder tests were added).
+
+### Before any flash
+
+1. Commit, then a native build at the V57 source SHA (both ARM builds, reproducibility, `audit-native`). The hosted B1 suite must pass there.
+2. Pinning checklist ([OFFICIAL_OWNER_DELIVERY.md](OFFICIAL_OWNER_DELIVERY.md#pinning-a-new-firmware-source)), including V57 in the V50–V53 evidence sets and in `V57_SOURCES` (B1E8) in the startup observer.
+3. Package with acknowledgements since `d86dc87d`, preflight, prepare.
+4. The owner authorizes the operation id.
+5. After the flash:
+   - read live evidence once and check B1E8 shows `resyncs` 0 and the first valid frame at Zigbee2MQTT's start;
+   - after every following morning start, read it again before any radio restart. A non-zero `resyncs` with a first-resync length near 105–120 confirms the cause; `boot_discarded` shows the stray bytes.
+
+### Original removal plan (owner decision, 3 Nov 2026), now done
+
+The next coordinator firmware carries no code specific to the GL-SD-301P dimmer `0xa4c13850cfcdb3a4`. V55 and V56 both added such code. Neither recovered the dimmer, because the failure is on the dimmer side (see V56). Its recovery continues outside the coordinator, with an nRF52840 802.15.4 sniffer, then a dimmer firmware fix or a wired reflash.
 
 Remove all of the following. The goal is TI's stock fresh-join behaviour plus the generic B1 guards, with no per-EUI branch anywhere.
 

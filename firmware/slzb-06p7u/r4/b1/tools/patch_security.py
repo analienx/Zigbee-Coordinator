@@ -263,46 +263,9 @@ static uint8_t b1_sec_write_checked(uint16_t table, uint16_t index,
   if (!okay) b1_security_runtime_hold_latch();
   return okay;
 }
-
-/* B1_V56_KEY_EPOCH_RESTORE: one-device recovery for 0xa4c13850cfcdb3a4
- * (NV order LSB first). Its row was VERIFIED at SeedShift 11 in every
- * coordinator backup from 2026-08-29 to 2026-10-01. TI's fresh-join reset
- * turned it into DEFAULT/12 on 2026-11-02, but the device kept the shift-11
- * key and does not accept a network key under the default TCLK. At boot only
- * that exact regressed state is put back. Until the device next requests its
- * TC link key (proof it received the network key), TI's fresh-join reset is
- * skipped for this EUI so the network key is sent under the shift-11 key.
- * The arm is RAM-only and per boot. No key material is stored here: TI
- * derives the key from the retained seed and the restored shift. */
-static uint8_t b1_v56_restore_peer(const uint8_t *extAddr)
-{
-  static const uint8_t peer[Z_EXTADDR_LEN] =
-    { 0xa4, 0xb3, 0xcd, 0xcf, 0x50, 0x38, 0xc1, 0xa4 };
-  return OsalPort_memcmp(extAddr, peer, Z_EXTADDR_LEN) ? TRUE : FALSE;
-}
-
-static uint8_t b1_v56_restore_verified(const uint8_t *extAddr,
-                                       uint8_t *keyAttributes, uint8_t *seedShift)
-{
-  if (!b1_v56_restore_peer(extAddr) || *keyAttributes != ZG_DEFAULT_KEY ||
-      *seedShift != 12u) return FALSE;
-  *keyAttributes = ZG_VERIFIED_KEY;
-  *seedShift = 11u;
-  return TRUE;
-}
-
-static uint8_t b1_v56_skip_fresh_reset(const uint8_t *extAddr)
-{
-  return (b1_v56_keep_verified && b1_v56_restore_peer(extAddr)) ? TRUE : FALSE;
-}
-
-static void b1_v56_key_requested(const uint8_t *extAddr)
-{
-  if (b1_v56_restore_peer(extAddr)) b1_v56_keep_verified = FALSE;
-}
 '''
 
-RESTORE_APS =r'''static void ZDSecMgrRestoreFromNV( void )
+RESTORE_APS = r'''static void ZDSecMgrRestoreFromNV( void )
 {
   nvDeviceListHdr_t hdr = {0};
   uint8_t tc[Z_EXTADDR_LEN] = {0};
@@ -358,14 +321,6 @@ TCLK_INIT = r'''void APSME_TCLinkKeyInit(uint8_t setDefault)
 {
   uint16_t i;
   uint8_t empty[Z_EXTADDR_LEN] = {0};
-  /* B1_V55_TCLK_RESTORE: one peer's outgoing TC counter, restored upward.
-   * TI's fresh-join reset (ZDSecMgrDeviceJoinDirect) zeroed this row's TX
-   * counter on 2 Nov 2026 while the device kept a key pair for this TC with
-   * its old receive high-water mark (about 269.48M at the V54 baseline), so it
-   * drops every network key as a replay. Only raises, only this EUI-64
-   * (b1_v56_restore_peer); idempotent on later boots. V56 also restores the
-   * same row's key epoch (b1_v56_restore_verified). */
-  const uint32_t b1_v55_restore_floor = 0x10400000u;
   if (b1_nv_runtime_hold_active()) return;
   if (b1_sec_existing_network && setDefault)
   {
@@ -375,7 +330,6 @@ TCLK_INIT = r'''void APSME_TCLinkKeyInit(uint8_t setDefault)
   for (i = 0; i < gZDSECMGR_TC_DEVICE_MAX; ++i)
   {
     APSME_TCLinkKeyNVEntry_t row = {0};
-    uint8_t restored = FALSE;
     row.keyAttributes = ZG_DEFAULT_KEY;
     if (!b1_sec_existing_network)
     {
@@ -403,15 +357,10 @@ TCLK_INIT = r'''void APSME_TCLinkKeyInit(uint8_t setDefault)
           return;
         }
         row.txFrmCntr += (uint32_t)MAX_TCLK_FRAMECOUNTER_CHANGES + 1u;
-        if (b1_v56_restore_peer(row.extAddr) &&
-            row.txFrmCntr < b1_v55_restore_floor)
-          row.txFrmCntr = b1_v55_restore_floor;
-        restored = b1_v56_restore_verified(row.extAddr, &row.keyAttributes, &row.SeedShift);
       }
       else continue; /* An unused optional slot needs no persistence write. */
     }
     if (!b1_sec_write_checked(ZCD_NV_EX_TCLK_TABLE, i, sizeof(row), &row)) return;
-    if (restored) b1_v56_keep_verified = TRUE; /* only after a durable restore */
     TCLinkKeyRAMEntry[i].txFrmCntr = row.txFrmCntr;
     TCLinkKeyRAMEntry[i].rxFrmCntr = row.rxFrmCntr;
     TCLinkKeyRAMEntry[i].entryUsed = !OsalPort_memcmp(row.extAddr, empty, Z_EXTADDR_LEN);
@@ -671,12 +620,7 @@ def patch(source: str) -> str:
         'extern int b1_nv_existing_header_candidate(void);\n'
         'extern void b1_security_runtime_hold_latch(void);\n'
         'static uint8_t b1_sec_existing_network;\n'
-        'static uint8_t b1_sec_write_checked(uint16_t, uint16_t, uint16_t, void *);\n'
-        'static uint8_t b1_v56_keep_verified;\n'
-        'static uint8_t b1_v56_restore_peer(const uint8_t *);\n'
-        'static uint8_t b1_v56_restore_verified(const uint8_t *, uint8_t *, uint8_t *);\n'
-        'static uint8_t b1_v56_skip_fresh_reset(const uint8_t *);\n'
-        'static void b1_v56_key_requested(const uint8_t *);',
+        'static uint8_t b1_sec_write_checked(uint16_t, uint16_t, uint16_t, void *);',
         'security support declarations')
     replacements = [
         ('static void ZDSecMgrRestoreFromNV( void )', RESTORE_APS),
@@ -692,29 +636,6 @@ def patch(source: str) -> str:
     ]
     for signature, replacement in replacements:
         source = replace_once(source, extract_function(source, signature), replacement, signature)
-    # V56: both TI fresh-join resets (direct child and Update Device via a
-    # parent) honour the armed one-device key epoch restore; the TCLK request
-    # handler disarms it once that device proves it holds the network key.
-    for signature, comment, indent, label in (
-        ('ZStatus_t ZDSecMgrDeviceJoinDirect( ZDSecMgrDevice_t* device )',
-         '//... and found and it was verified, then allow it to join in a fresh state by erasing the key entry',
-         '        ', 'direct-join fresh reset keeps restored epoch'),
-        ('void ZDSecMgrUpdateDeviceInd( ZDO_UpdateDeviceInd_t* ind )',
-         '//If found and it was verified, then allow it to join in a fresh state by erasing the key entry',
-         '      ', 'update-device fresh reset keeps restored epoch')):
-        before = (indent + comment + '\n' + indent +
-                  'if((found == TRUE) && (TCLKDevEntry.keyAttributes == ZG_VERIFIED_KEY))')
-        after = (indent + comment + '\n' + indent +
-                 'if((found == TRUE) && (TCLKDevEntry.keyAttributes == ZG_VERIFIED_KEY) &&\n' +
-                 indent + '   !b1_v56_skip_fresh_reset(TCLKDevEntry.extAddr))')
-        body = extract_function(source, signature)
-        source = replace_once(source, body, replace_once(body, before, after, label), label)
-    tclk_req = extract_function(source, 'void ZDSecMgrTclkReq( ZDO_RequestKeyInd_t* ind )')
-    source = replace_once(source, tclk_req, replace_once(tclk_req,
-        '    if(found)\n    {\n      //Generate key from the seed, which would be the unique key\n',
-        '    if(found)\n    {\n      b1_v56_key_requested(TCLKDevEntry.extAddr);\n'
-        '      //Generate key from the seed, which would be the unique key\n',
-        'TCLK request disarms restored epoch'), 'TCLK request disarms restored epoch')
     source = replace_once(source,
         'static void ZDSecMgrUpdateNV( uint16_t index );',
         'static uint8_t ZDSecMgrUpdateNV( uint16_t index );',

@@ -87,7 +87,8 @@ def decode(replies, source):
                      ("B1E2_LATER", observer.decode_e2), ("B1E3", observer.decode_e3),
                      ("B1E4", observer.decode_trend), ("B1E5", observer.decode_trend),
                      ("B1E6", observer.decode_e6), ("B1E6_LATER", observer.decode_e6),
-                     ("B1E7", observer.decode_e7), ("B1E7_LATER", observer.decode_e7)):
+                     ("B1E7", observer.decode_e7), ("B1E7_LATER", observer.decode_e7),
+                     ("B1E8", observer.decode_e8)):
         if name in raw:
             try:
                 out[name] = fn(raw[name], source)
@@ -115,7 +116,20 @@ def summary(d):
                                                          "transport_unavailable")},
             "timers": {k: e6["timers"][k] for k in ("create_failures", "deferred_max", "active_max")},
             "nv": {k: e3["nv"][k] for k in ("reads", "writes", "compactions", "failures", "longest_ms")},
-            "nv_cache_hit_ratio": d.get("B1E7", {}).get("hit_ratio")}
+            "nv_cache_hit_ratio": d.get("B1E7", {}).get("hit_ratio"),
+            "rx_frames": rx_summary(d.get("B1E8"), ms)}
+
+
+def rx_summary(e8, ms):
+    """V57 B1E8: did the host's first frames reach the parser cleanly?"""
+    if not e8:
+        return None
+    at = lambda tick: round(ms(tick) / 1000, 1) if tick else None
+    return {k: e8[k] for k in ("frames_ok", "fcs_failures", "resyncs", "oversize_lengths",
+                               "discarded_bytes", "first_resync", "boot_discarded",
+                               "parser_state")} | {
+        "first_valid_frame_after_boot_s": at(e8["first_ok_tick"]),
+        "first_resync_after_boot_s": at(e8["first_resync_tick"])}
 
 
 def main():
@@ -144,7 +158,8 @@ def main():
         source = matches[0]
     decoded, errors = decode(raw["replies"], source)
     result = {"result": raw["result"], "error": raw.get("error"), "taken_at": raw["started"], "source": source,
-              "replies": sorted(raw["replies"]), "decode_errors": errors, "summary": summary(decoded)}
+              "replies": sorted(raw["replies"]), "optional_missing": raw.get("optional_missing", []),
+              "decode_errors": errors, "summary": summary(decoded)}
     if a.out:
         a.out.write_text(json.dumps({**result, "decoded": decoded, "raw": raw}, indent=1, default=str))
     print(json.dumps(result, indent=1, default=str))

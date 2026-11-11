@@ -373,3 +373,57 @@ class NvCacheEvidence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def e8(source, *, ok=3, resyncs=1, junk=b"\x7c", state=0):
+    """V57 B1E8: RX frame resync evidence; inbound bytes only, never NV data."""
+    raw = bytearray(248)
+    raw[:6] = b"B1E8\x01\xf8"
+    raw[6] = (1 if ok else 0) | (2 if resyncs else 0) | (4 if state else 0)
+    raw[8:12] = bytes.fromhex(source[:8])
+    put = lambda offset, value: raw.__setitem__(slice(offset, offset + 4), value.to_bytes(4, "little"))
+    put(12, 9000000); put(16, ok); put(20, 1); put(24, resyncs); put(32, len(junk)); put(40, 4)
+    put(44, 6970000 if ok else 0)
+    if resyncs:
+        put(48, 6960000); put(52, 6960000)
+        raw[60] = 3; raw[61] = 0x7C
+    raw[65] = state; raw[66] = len(junk); raw[67] = 250
+    raw[68:68 + len(junk)] = junk
+    raw[76:78] = (500).to_bytes(2, "little")
+    return bytes(raw)
+
+
+class V57RxFrameEvidence(unittest.TestCase):
+    V57 = "57" * 20
+
+    def setUp(self):
+        import p7u_r4_startup_observer as observer
+        self.observer = observer
+        saved = observer.V57_SOURCES
+        observer.V57_SOURCES = frozenset({self.V57})
+        self.addCleanup(setattr, observer, "V57_SOURCES", saved)
+
+    def test_decode_e8_first_resync_and_boot_bytes(self):
+        value = self.observer.decode_e8(e8(self.V57), self.V57)
+        self.assertEqual((value["frames_ok"], value["resyncs"], value["fcs_failures"]), (3, 1, 1))
+        self.assertEqual(value["first_resync"], {"state": "LEN", "length": 0x7C, "cmd0": 0,
+                                                 "cmd1": 0, "collected": 0})
+        self.assertEqual((value["boot_discarded"], value["parser_state"]), ("7c", "SOP"))
+        self.assertEqual((value["length_max"], value["idle_ms"]), (250, 500))
+        self.assertEqual(self.observer.Q10, b"B1Q1\x01\x08\x04\x06")
+
+    def test_decode_e8_rejects_older_source_and_schema_drift(self):
+        for source in (V53, V54, V55, V56):
+            with self.assertRaisesRegex(EvidenceError, "RX_FRAME_EVIDENCE_UNSUPPORTED_SOURCE"):
+                self.observer.decode_e8(e8(source), source)
+        with self.assertRaisesRegex(EvidenceError, "SOURCE_DIGEST_MISMATCH_B1E8"):
+            self.observer.decode_e8(e8(V56), self.V57)
+        for offset, value in ((7, 1), (6, 0), (67, 249), (76, 0), (100, 1), (70, 1), (65, 6)):
+            bad = bytearray(e8(self.V57)); bad[offset] = value
+            with self.assertRaisesRegex(EvidenceError, "RX_FRAME_EVIDENCE_SCHEMA_INVALID"):
+                self.observer.decode_e8(bytes(bad), self.V57)
+        clean = e8(self.V57, resyncs=0)
+        self.assertIsNone(self.observer.decode_e8(clean, self.V57)["first_resync"])
+        bad = bytearray(clean); bad[61] = 5  # first-resync record without a resync
+        with self.assertRaisesRegex(EvidenceError, "RX_FRAME_EVIDENCE_SCHEMA_INVALID"):
+            self.observer.decode_e8(bytes(bad), self.V57)
