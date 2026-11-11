@@ -995,6 +995,12 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
         raw = znp.request(1, 241, Q9, deadline=deadline)
         evidence('B1E7', raw, dict(znp.history[-1]))
         need(decode_e7(raw, source)['misses'] > 0, 'STARTUP_NV_CACHE_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q10, rx_frame_evidence_supported
+    if rx_frame_evidence_supported(source):
+        # V57 B1E8: recorded before the startup request (what the parser
+        # discarded around this boot). Evidence only, never a gate.
+        raw = znp.request(1, 241, Q10, deadline=deadline)
+        evidence('B1E8', raw, dict(znp.history[-1]))
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')

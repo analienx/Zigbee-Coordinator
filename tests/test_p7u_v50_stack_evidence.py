@@ -371,11 +371,7 @@ class NvCacheEvidence(unittest.TestCase):
             decode_e7(bytes(bad), V53)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-def e8(source, *, ok=3, resyncs=1, junk=b"\x7c", state=0):
+def e8(source, *, ok=3, resyncs=1, junk=b"\xfe\x7c", state=0):
     """V57 B1E8: RX frame resync evidence; inbound bytes only, never NV data."""
     raw = bytearray(248)
     raw[:6] = b"B1E8\x01\xf8"
@@ -386,7 +382,7 @@ def e8(source, *, ok=3, resyncs=1, junk=b"\x7c", state=0):
     put(44, 6970000 if ok else 0)
     if resyncs:
         put(48, 6960000); put(52, 6960000)
-        raw[60] = 3; raw[61] = 0x7C
+        raw[60] = 1; raw[61] = 0x7C  # CMD1: SOF and length collected
     raw[65] = state; raw[66] = len(junk); raw[67] = 250
     raw[68:68 + len(junk)] = junk
     raw[76:78] = (500).to_bytes(2, "little")
@@ -406,9 +402,9 @@ class V57RxFrameEvidence(unittest.TestCase):
     def test_decode_e8_first_resync_and_boot_bytes(self):
         value = self.observer.decode_e8(e8(self.V57), self.V57)
         self.assertEqual((value["frames_ok"], value["resyncs"], value["fcs_failures"]), (3, 1, 1))
-        self.assertEqual(value["first_resync"], {"state": "LEN", "length": 0x7C, "cmd0": 0,
+        self.assertEqual(value["first_resync"], {"state": "CMD1", "length": 0x7C, "cmd0": 0,
                                                  "cmd1": 0, "collected": 0})
-        self.assertEqual((value["boot_discarded"], value["parser_state"]), ("7c", "SOP"))
+        self.assertEqual((value["boot_discarded"], value["parser_state"]), ("fe7c", "SOP"))
         self.assertEqual((value["length_max"], value["idle_ms"]), (250, 500))
         self.assertEqual(self.observer.Q10, b"B1Q1\x01\x08\x04\x06")
 
@@ -424,6 +420,17 @@ class V57RxFrameEvidence(unittest.TestCase):
                 self.observer.decode_e8(bytes(bad), self.V57)
         clean = e8(self.V57, resyncs=0)
         self.assertIsNone(self.observer.decode_e8(clean, self.V57)["first_resync"])
+        for offset, value in ((60, 0), (62, 0x21), (64, 1)):  # SOP, or fields CMD1 has not collected
+            bad = bytearray(e8(self.V57)); bad[offset] = value
+            with self.assertRaisesRegex(EvidenceError, "RX_FRAME_EVIDENCE_SCHEMA_INVALID"):
+                self.observer.decode_e8(bytes(bad), self.V57)
+        bad = bytearray(e8(self.V57)); bad[60] = 3  # LEN state cannot carry a length
+        with self.assertRaisesRegex(EvidenceError, "RX_FRAME_EVIDENCE_SCHEMA_INVALID"):
+            self.observer.decode_e8(bytes(bad), self.V57)
         bad = bytearray(clean); bad[61] = 5  # first-resync record without a resync
         with self.assertRaisesRegex(EvidenceError, "RX_FRAME_EVIDENCE_SCHEMA_INVALID"):
             self.observer.decode_e8(bytes(bad), self.V57)
+
+
+if __name__ == "__main__":
+    unittest.main()

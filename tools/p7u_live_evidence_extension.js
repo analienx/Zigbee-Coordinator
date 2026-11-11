@@ -6,7 +6,9 @@
 // the NPI owner) that host/flash/p7u_hang_evidence_once.py uses, inside
 // herdsman's own ZNP request mutex: one serial owner, never two outstanding
 // SREQs. No NV access, reset, BSL, radio or retry; stops at the first missing
-// reply. Herdsman logs one harmless "CommandID 241 ... not found" per reply
+// reply, except that an optional page older firmware rejects with an MT RPC
+// error is only listed as missing. Herdsman logs one harmless
+// "CommandID 241 ... not found" per reply
 // (and "CommandID 0 from subsystem 0" for an optional page older firmware
 // rejects).
 const fs = require('node:fs');
@@ -71,6 +73,9 @@ class P7uLiveEvidence {
                     try {
                         await ask(name, payload);
                     } catch (error) {
+                        // Only an RPC rejection (older firmware) is optional;
+                        // a timeout on firmware that has the page is a failure.
+                        if (!/^rejected /.test(String(error && error.message))) throw error;
                         out.optional_missing = (out.optional_missing || []).concat([name]);
                     }
                 }

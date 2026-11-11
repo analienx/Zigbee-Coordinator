@@ -39,7 +39,10 @@ class V57NpiRxResync(unittest.TestCase):
         self.assertEqual((receipt["idle_resync_ms"], receipt["length_bound"]), (500, 250))
         self.assertEqual((IDLE_MS, LEN_MAX), (500, 250))
         self.assertEqual(receipt["b1e8_query"], "B1Q1 v1/8 op4 page6")
-        self.assertFalse(receipt["valid_frame_stream_behaviour_changed"])
+        self.assertEqual(receipt["valid_frame_stream_behaviour_changed"],
+                         "ONLY_A_FRAME_WITH_A_500MS_GAP_INSIDE_IT")
+        self.assertEqual(receipt["failed_frame_rescan"], "NOT_DONE_STALE_COMMANDS_MUST_NOT_RUN_LATE")
+        self.assertIn("#if !defined(MT_RPC_DATA_MAX) || (MT_RPC_DATA_MAX != 250)", text)
         self.assertFalse(receipt["changes_network_nv_or_security"])
         self.assertFalse(receipt["flash_authorized"])
         self.assertNotIn(LOOP_HEAD, text)
@@ -86,9 +89,10 @@ class V57NpiRxResync(unittest.TestCase):
         result = exercise(self.root)
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["output"], "V57_NPI_RX_FRAME_RESYNC_REAL_C_PASS")
-        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 18)
+        self.assertGreaterEqual(len(result["negative_mutants_rejected"]), 23)
         for name in ("resync_removed", "partial_frame_leaked", "bulk_read_crosses_gap",
-                     "length_bound_removed", "gap_ignores_unparsed_bytes"):
+                     "length_bound_removed", "gap_ignores_unparsed_bytes",
+                     "resync_discard_not_recorded", "fcs_discard_not_recorded"):
             self.assertIn("npi_rx:" + name, result["negative_mutants_rejected"])
         self.assertFalse(result["rx_line_garbage_source_proven"])
 

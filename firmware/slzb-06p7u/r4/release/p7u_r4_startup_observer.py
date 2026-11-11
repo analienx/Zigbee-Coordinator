@@ -330,7 +330,9 @@ def decode_e8(raw: bytes, source: str) -> dict:
 
     Counters, ticks, parser states and at most the first eight inbound bytes
     discarded before this boot's first valid frame (host-to-radio traffic,
-    never NV data). Answered by the NPI owner.
+    never NV data). Discarded means not delivered in a valid frame: stray
+    bytes and the bytes of a frame dropped by a resync, a rejected length, an
+    allocation failure or an FCS failure. Answered by the NPI owner.
     """
     require(rx_frame_evidence_supported(source), "RX_FRAME_EVIDENCE_UNSUPPORTED_SOURCE")
     checked(raw, b"B1E8", 248, source)
@@ -345,6 +347,16 @@ def decode_e8(raw: bytes, source: str) -> dict:
             raw[67] == 250 and uint16(raw, 76) == 500 and not any(raw[78:248]) and
             (v["resyncs"] > 0 or not any(raw[60:65])),
             "RX_FRAME_EVIDENCE_SCHEMA_INVALID")
+    if v["resyncs"]:
+        # The firmware records a resync only outside SOP, and each field only
+        # from the parser state that has collected it (see the V57 stage).
+        state, length, cmd0, cmd1, collected = raw[60:65]
+        require(state != 0 and
+                (state != 3 or not (length or cmd0 or cmd1 or collected)) and
+                (state != 1 or not (cmd0 or cmd1 or collected)) and
+                (state != 2 or not (cmd1 or collected)) and
+                (state not in (4, 5) or collected <= length),
+                "RX_FRAME_EVIDENCE_SCHEMA_INVALID")
     first = None
     if v["resyncs"]:
         first = {"state": E8_STATES[raw[60]], "length": raw[61], "cmd0": raw[62],

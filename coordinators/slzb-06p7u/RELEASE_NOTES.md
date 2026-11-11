@@ -33,8 +33,11 @@ This fits the evidence closely. It is not proven: the stray bytes were never cap
      - A gap that finds unparsed bytes is ignored (TI behaviour).
      - TI's bulk data read stops at a reported gap.
    - **Length bound:** a length above `MT_RPC_DATA_MAX` (250, checked against TI's `mt_rpc.h`) is not a length. It ends the candidate frame; a repeated `0xFE` starts the next one.
-   - **B1E8 evidence (op4 page6, NPI owner, RAM only):** valid frames, FCS failures, resyncs, rejected lengths, discarded bytes, allocation failures, idle gaps, first valid frame and first resync ticks, the first resync's parser state (length, CMD0/1, bytes collected), the live parser state, and the first eight bytes discarded before this boot's first valid frame. Host-to-radio bytes only, never NV data.
-   - **Unchanged:** a correctly framed byte stream, every other evidence page, NV, security, scheduling.
+   - **B1E8 evidence (op4 page6, NPI owner, RAM only):** valid frames, FCS failures, resyncs, rejected lengths, discarded bytes, allocation failures, idle gaps, first valid frame and first resync ticks, the first resync's parser state (length, CMD0/1, bytes collected), the live parser state, and the first eight bytes discarded before this boot's first valid frame. "Discarded" means every byte not delivered in a valid frame: stray bytes, and the bytes of a frame dropped by a resync, a rejected length, an allocation failure or an FCS failure. So the field case shows up as `boot_discarded` `fe54…` and a first resync in state `CMD1`. Host-to-radio bytes only, never NV data.
+   - **Unchanged:** every other evidence page, NV, security, scheduling, and a correctly framed byte stream, with two deliberate exceptions:
+     - a frame whose own bytes are 500 ms or more apart is dropped (herdsman writes each frame at once, over USB);
+     - a length above 250 is refused (herdsman cannot build one: `MaxDataSize` 250).
+   - **Not done on purpose:** rescanning a failed frame's bytes for a later `0xFE`. Those are frames the host already timed out on, and running them late could execute a stale command.
 2. **Dimmer code removed (owner decision, 3 Nov).**
    - `patch_security.py`, `make_security_harness.py` and `run_hosted_tests.py` are restored byte for byte to V54 (`20a2474a`), the last pre-V55 source.
    - In the composed source, `zd_sec_mgr.c` loses the V55 counter floor and every V56 hook, and its two fresh-join conditions are TI's again. `grep b1_v55|b1_v56|0xa4, 0xb3, 0xcd` finds nothing in `firmware/` or in the composed file.
@@ -58,7 +61,7 @@ Kept, because they are generic and not dimmer code:
   - `npi_frame_mt.c`: new;
   - `npi_task.c`: arrival hook, page6 query, digest;
   - `nvocmp.c`: digest only.
-- **V57 RX harness on the emitted `npi_frame_mt.c`** (ASan/UBSan), 12 scenarios:
+- **V57 RX harness on the emitted `npi_frame_mt.c`** (ASan/UBSan), 12 scenarios, with discarded-byte accounting checked in each:
   - the field replay: 11 Nov's exact byte sequence (stray SOF + length 84, then Zigbee2MQTT's 5-byte pings minutes later) gets the very first ping answered;
   - a stray SOF + length, ping minutes later: answered;
   - split frames with and without an idle gap, including across the tick wrap;
@@ -68,9 +71,18 @@ Kept, because they are generic and not dimmer code:
   - length bound and repeated SOF, plus the longest real frame;
   - FCS rejection, discarded-byte capture, allocation failure;
   - the B1E8 layout.
-  - 18 compiled mutants rejected.
+  - 23 compiled mutants rejected.
 - **V50 query harness:** page6 answers B1E8, page7 is rejected; 2 new mutants.
-- **Repository tests:** 963 passed, 31 skipped (before the B1E8 decoder tests were added).
+- **Repository tests:** 970 passed, 31 skipped.
+- **Code review (11 Nov):** 10 findings. Fixed:
+  - B1E8 now counts and keeps the bytes of dropped frames, so the stray bytes become visible;
+  - the decoder refuses first-resync records the firmware cannot produce;
+  - the live evidence tool fails on a B1E8 timeout and treats only older firmware's rejection as optional;
+  - the `MT_RPC_DATA_MAX` guard fails the build if the macro is missing;
+  - the hang capture and the post-flash boot check read B1E8;
+  - the receipt states the two deliberate behaviour changes;
+  - the decoder tests now run when the test file is run directly.
+  - Declined, with reasons: the failed-frame rescan (above) and a micro-optimization of the RX hook.
 
 ### Before any flash
 

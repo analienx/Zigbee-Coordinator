@@ -194,6 +194,7 @@ int main(void)
         assert(B4_V57_Rx.firstCmd1 == (n >= 4u ? 0x01u : 0u));
         assert(B4_V57_Rx.firstCollected == (n >= 5u ? n - 4u : 0u));
         assert(allocs == (n >= 2u ? 2u : 1u) && frees == allocs);
+        assert(B4_V57_Rx.junk == n && B4_V57_Rx.bootJunkCount == n && !memcmp(B4_V57_Rx.bootJunk, prefix, n));
     }
     /* ... including the FCS state (all data collected, FCS never came). */
     {
@@ -204,6 +205,7 @@ int main(void)
         late_ping(); run();
         expect_ping(1u);
         assert(B4_V57_Rx.firstState == NPIFRAMEMT_FCS_STATE && B4_V57_Rx.firstCollected == 1u && live_n == 0u);
+        assert(B4_V57_Rx.junk == 5u && B4_V57_Rx.bootJunkCount == 5u && !memcmp(B4_V57_Rx.bootJunk, nofcs, 5u));
     }
 
     /* 6. A gap reported while TI's bulk data read is about to count the
@@ -227,7 +229,8 @@ int main(void)
         expect_ping(2u); assert(B4_V57_Rx.oversize == 2u && allocs == 2u);
         feed(twice, sizeof(twice)); run();
         assert(delivered == 3u && last_n == 3u && last[0] == 0u && last[1] == 0x21u && last[2] == 0x02u);
-        assert(B4_V57_Rx.oversize == 3u && B4_V57_Rx.resyncs == 0u && B4_V57_Rx.junk == 0u);
+        assert(B4_V57_Rx.oversize == 3u && B4_V57_Rx.resyncs == 0u && B4_V57_Rx.junk == 5u);
+        assert(B4_V57_Rx.bootJunkCount == 2u && B4_V57_Rx.bootJunk[0] == 0xFEu && B4_V57_Rx.bootJunk[1] == 0xFFu);
     }
     /* The longest real frame (250 data bytes) still passes. */
     fresh(700u);
@@ -245,6 +248,7 @@ int main(void)
         expect_ping(1u);
         assert(B4_V57_Rx.fcsFail == 1u && B4_V57_Rx.lastFcsTick == now_ticks && live_n == 0u);
         assert(allocs == 2u && frees == 2u && B4_V57_Rx.framesOk == 1u);
+        assert(B4_V57_Rx.junk == 7u && B4_V57_Rx.bootJunkCount == 7u && !memcmp(B4_V57_Rx.bootJunk, bad, 7u));
     }
 
     /* 9. Discarded bytes: all counted, the first eight kept only until
@@ -265,6 +269,7 @@ int main(void)
     fresh(700u);
     fail_alloc = 1u; feed(PING, 7u); NPIFrame_collectFrameData();
     assert(state == NPIFRAMEMT_SOP_STATE && B4_V57_Rx.allocFail == 1u && delivered == 0u && live_n == 0u);
+    assert(B4_V57_Rx.junk == 2u && B4_V57_Rx.bootJunk[0] == 0xFEu && B4_V57_Rx.bootJunk[1] == 0x02u);
     NPIFrame_collectFrameData();
     assert(NPIRxBuf_GetRxBufCount() == 0u && delivered == 0u);
     feed(PING, 7u); run(); expect_ping(1u);
@@ -286,12 +291,15 @@ int main(void)
     assert(!memcmp(out, "B1E8", 4) && out[4] == 1u && out[5] == 248u && out[6] == 7u && out[7] == 0u);
     assert(get32(out + 8) == 0u && get32(out + 12) == now_ticks);
     assert(get32(out + 16) == 1u && get32(out + 20) == 1u && get32(out + 24) == 1u && get32(out + 28) == 0u);
-    assert(get32(out + 32) == 2u && get32(out + 36) == 0u && get32(out + 40) == B4_V57_GapSeq);
+    assert(get32(out + 32) == 11u && get32(out + 36) == 0u && get32(out + 40) == B4_V57_GapSeq);
     assert(get32(out + 44) == now_ticks - 10000u && get32(out + 48) == 90000u + 6000000u);
     assert(get32(out + 52) == get32(out + 48) && get32(out + 56) == now_ticks - 20000u);
     assert(out[60] == NPIFRAMEMT_CMD_STATE1 && out[61] == 0x7Cu && out[62] == 0u && out[63] == 0u && out[64] == 0u);
-    assert(out[65] == NPIFRAMEMT_CMD_STATE2 && out[66] == 2u && out[67] == 250u);
-    assert(out[68] == 0x41u && out[69] == 0x42u && out[70] == 0u && out[76] == 0xF4u && out[77] == 0x01u);
+    assert(out[65] == NPIFRAMEMT_CMD_STATE2 && out[66] == 8u && out[67] == 250u);
+    {   /* stray FE 7C (resync), junk 41 42, then the bad frame's first 4 bytes */
+        static const uint8_t kept[8] = { 0xFE, 0x7C, 0x41, 0x42, 0xFE, 0x02, 0x21, 0x01 };
+        assert(!memcmp(out + 68, kept, 8u) && out[76] == 0xF4u && out[77] == 0x01u);
+    }
     for (i = 78u; i < 248u; ++i) assert(out[i] == 0u);
     for (i = 248u; i < sizeof(out); ++i) assert(out[i] == 0xEEu);
     late_ping(); run(); expect_ping(2u); assert(live_n == 0u);
@@ -311,7 +319,8 @@ int main(void)
         assert(B4_V57_Rx.resyncs == 1u && B4_V57_Rx.firstLen == 84u && live_n == 0u);
         advance_ms(250u); feed(&skip, 1u); run();   /* harmless junk, as in TI */
         advance_ms(1000u); feed(ping5, 5u); run();
-        assert(delivered == 2u && B4_V57_Rx.junk == 1u && B4_V57_Rx.bootJunkCount == 0u);
+        assert(delivered == 2u && B4_V57_Rx.junk == 3u && B4_V57_Rx.bootJunkCount == 2u);
+        assert(B4_V57_Rx.bootJunk[0] == 0xFEu && B4_V57_Rx.bootJunk[1] == 84u);
     }
 
     printf("V57_NPI_RX_FRAME_RESYNC_REAL_C_PASS\n");
@@ -345,8 +354,14 @@ MUTANTS = {
         "                    state = (ch == MT_SOF) ? NPIFRAMEMT_LEN_STATE : NPIFRAMEMT_SOP_STATE;\n",
         "                    state = NPIFRAMEMT_SOP_STATE;\n"),
     "boot_junk_after_first_frame": (
-        "                    if (!B4_V57_Rx.seenOk && B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK)\n",
-        "                    if (B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK)\n"),
+        "    if (!B4_V57_Rx.seenOk && B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK)\n",
+        "    if (B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK)\n"),
+    "resync_discard_not_recorded": ("    B4_V57_DiscardCollected(0u); /* resync */\n", ""),
+    "fcs_discard_not_recorded": ("                    B4_V57_DiscardCollected(1u); /* FCS */\n", ""),
+    "oversize_discard_not_recorded": (
+        "                    B4_V57_DiscardCollected(0u); /* oversize: the SOF */\n", ""),
+    "discard_skips_data_bytes": ("        n = (uint16_t)(n + tempDataLen);\n", ""),
+    "discard_without_fcs": ("    if (withFcs) { B4_V57_Keep(FSC_Token); ++n; }\n", ""),
     "first_resync_overwritten": ("    if (B4_V57_Rx.resyncs == 0u)\n    {\n", "    {\n"),
     "fcs_failure_not_counted": ("                    B4_V57_Inc(&B4_V57_Rx.fcsFail);\n", ""),
     "alloc_failure_not_counted": ("                    B4_V57_Inc(&B4_V57_Rx.allocFail);\n", ""),

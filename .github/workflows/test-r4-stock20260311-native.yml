@@ -12,6 +12,8 @@ on:
       - 'host/recovery/**'
       - 'tests/test_r4_*.py'
       - 'tests/test_p7u_stock20260311_*.py'
+      - 'tests/test_p7u_v50_stack_evidence.py'
+      - 'tests/fixtures/ti_3615ad5d_*.c'
   workflow_dispatch:
 
 permissions:

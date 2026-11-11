@@ -28,7 +28,9 @@ on both mornings is not excluded. The stray bytes were not captured, so this
 stage also records what the parser discards (B1E8): the next bad morning
 tells the two apart.
 
-This stage changes nothing for a correctly framed byte stream:
+For a correctly framed byte stream this stage changes nothing, with one
+deliberate exception: a frame whose own bytes are more than 500 ms apart,
+which no host on this USB link produces (herdsman writes each frame at once).
   1. Idle resync. The transport RX callback (npi_task.c, V50 stage) reports
      every chunk's arrival. If a chunk arrives into an EMPTY parser buffer
      more than 500 ms after the previous chunk, whatever the parser had
@@ -38,11 +40,19 @@ This stage changes nothing for a correctly framed byte stream:
      and a gap that finds unparsed bytes is ignored (TI behaviour).
   2. Length bound. A length byte above MT_RPC_DATA_MAX is not a length. It
      ends that candidate frame at once; if it is itself 0xFE it is taken as
-     the next start-of-frame.
+     the next start-of-frame. MT frames carry at most MT_RPC_DATA_MAX data
+     bytes, and zigbee-herdsman cannot build a longer one (MaxDataSize 250).
   3. RAM-only evidence, answered by the NPI owner as B1E8 (op4 page6): valid
      frames, FCS failures, idle resyncs, rejected lengths, discarded bytes,
      the first resync's parser state, and the first eight bytes discarded
-     before this boot's first valid frame. Inbound bytes only, never NV data.
+     before this boot's first valid frame. "Discarded" means every byte not
+     delivered in a valid frame: stray bytes outside a frame and the bytes of
+     a frame dropped by a resync, a rejected length, an allocation failure or
+     an FCS failure. Inbound bytes only, never NV data.
+
+Not done on purpose: rescanning a failed frame's bytes for a later 0xFE.
+Those bytes are frames the host has already timed out on; dispatching them
+late could execute a stale command (an NV write, a data request).
 """
 import hashlib
 from pathlib import Path
@@ -77,7 +87,7 @@ STATE = r"""
  * an aligned 32-bit load. */
 #define B4_V57_IDLE_MS 500u
 #define B4_V57_LEN_MAX 250u /* MT_RPC_DATA_MAX */
-#if defined(MT_RPC_DATA_MAX) && (MT_RPC_DATA_MAX != 250)
+#if !defined(MT_RPC_DATA_MAX) || (MT_RPC_DATA_MAX != 250)
 #error B4_V57 length bound requires MT_RPC_DATA_MAX == 250
 #endif
 #define B4_V57_EVIDENCE_SIZE 248u
@@ -98,6 +108,47 @@ static uint8_t B4_V57_Arrived = 0u;
 static void B4_V57_Inc(uint32_t *value)
 {
     if (*value != 0xFFFFFFFFu) ++*value;
+}
+
+/* NPI task: bytes not delivered in a valid frame. All are counted; the
+ * first eight are kept until this boot's first valid frame. */
+static void B4_V57_Keep(uint8_t b)
+{
+    if (!B4_V57_Rx.seenOk && B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK)
+        B4_V57_Rx.bootJunk[B4_V57_Rx.bootJunkCount++] = b;
+}
+
+static void B4_V57_Discarded(uint32_t count)
+{
+    B4_V57_Rx.junk = (count > 0xFFFFFFFFu - B4_V57_Rx.junk) ? 0xFFFFFFFFu : B4_V57_Rx.junk + count;
+}
+
+/* NPI task: the frame collected so far is dropped (state != SOP). It holds
+ * SOF, then LEN from CMD1 on, CMD0 from CMD2 on, CMD1 and tempDataLen data
+ * bytes from DATA on, and the FCS when withFcs. */
+static void B4_V57_DiscardCollected(uint8_t withFcs)
+{
+    uint8_t head[4];
+    uint16_t n = 1u, j;
+    head[0] = MT_SOF;
+    if (state != NPIFRAMEMT_LEN_STATE)
+    {
+        head[n++] = LEN_Token;
+        if (state != NPIFRAMEMT_CMD_STATE1)
+        {
+            head[n++] = pMsg[MTRPC_POS_CMD0];
+            if (state != NPIFRAMEMT_CMD_STATE2) head[n++] = pMsg[MTRPC_POS_CMD1];
+        }
+    }
+    for (j = 0u; j < n; ++j) B4_V57_Keep(head[j]);
+    if (n == 4u)
+    {
+        for (j = 0u; j < tempDataLen && B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK; ++j)
+            B4_V57_Keep(pMsg[MTRPC_FRAME_HDR_SZ + j]);
+        n = (uint16_t)(n + tempDataLen);
+    }
+    if (withFcs) { B4_V57_Keep(FSC_Token); ++n; }
+    B4_V57_Discarded(n);
 }
 
 /* Transport RX callback, before TI copies the chunk into the parser buffer.
@@ -145,6 +196,7 @@ static void B4_V57_ResyncAfterGap(void)
     }
     B4_V57_Inc(&B4_V57_Rx.resyncs);
     B4_V57_Rx.lastResyncTick = now;
+    B4_V57_DiscardCollected(0u); /* resync */
     /* LEN_STATE has not allocated yet; every later state owns pMsg. */
     if (state != NPIFRAMEMT_LEN_STATE) OsalPort_msgDeallocate(pMsg);
     pMsg = NULL;
@@ -213,9 +265,8 @@ SOP_NEW = ("                if (ch == MT_SOF)\n"
            "                else\n"
            "                {\n"
            "                    /* B4_V57: evidence only; TI discards the byte. */\n"
-           "                    B4_V57_Inc(&B4_V57_Rx.junk);\n"
-           "                    if (!B4_V57_Rx.seenOk && B4_V57_Rx.bootJunkCount < B4_V57_BOOT_JUNK)\n"
-           "                        B4_V57_Rx.bootJunk[B4_V57_Rx.bootJunkCount++] = ch;\n"
+           "                    B4_V57_Keep(ch);\n"
+           "                    B4_V57_Discarded(1u);\n"
            "                }\n"
            "                break;\n")
 
@@ -227,6 +278,8 @@ LEN_NEW = ("            case NPIFRAMEMT_LEN_STATE:\n"
            "                    /* B4_V57: no MT frame is this long, so this is not a\n"
            "                     * length. A repeated SOF starts the next candidate. */\n"
            "                    B4_V57_Inc(&B4_V57_Rx.oversize);\n"
+           "                    B4_V57_DiscardCollected(0u); /* oversize: the SOF */\n"
+           "                    if (ch != MT_SOF) { B4_V57_Keep(ch); B4_V57_Discarded(1u); }\n"
            "                    state = (ch == MT_SOF) ? NPIFRAMEMT_LEN_STATE : NPIFRAMEMT_SOP_STATE;\n"
            "                    break;\n"
            "                }\n"
@@ -240,6 +293,9 @@ ALLOC_FAIL = ("                else\n"
 ALLOC_FAIL_NEW = ("                else\n"
                   "                {\n"
                   "                    B4_V57_Inc(&B4_V57_Rx.allocFail);\n"
+                  "                    B4_V57_DiscardCollected(0u); /* alloc: the SOF */\n"
+                  "                    B4_V57_Keep(ch);\n"
+                  "                    B4_V57_Discarded(1u);\n"
                   "                    state = NPIFRAMEMT_SOP_STATE;\n"
                   "                    return;\n"
                   "                }\n")
@@ -264,7 +320,8 @@ FCS_OK_NEW = ("                    B4_V57_Inc(&B4_V57_Rx.framesOk);\n"
 
 FCS_BAD = ("                    /* deallocate the msg */\n"
            "                    OsalPort_msgDeallocate(pMsg);\n")
-FCS_BAD_NEW = FCS_BAD + ("                    B4_V57_Inc(&B4_V57_Rx.fcsFail);\n"
+FCS_BAD_NEW = ("                    B4_V57_DiscardCollected(1u); /* FCS */\n" + FCS_BAD +
+               "                    B4_V57_Inc(&B4_V57_Rx.fcsFail);\n"
                          "                    B4_V57_Rx.lastFcsTick = Clock_getTicks();\n")
 
 
@@ -312,7 +369,10 @@ def apply(sdk):
         "b1e8_query": "B1Q1 v1/8 op4 page6",
         "b1e8_size": EVIDENCE_SIZE,
         "arrival_hook_owner": "V50_STAGE_NPI_TASK_TRANSPORT_RX_CALLBACK",
-        "valid_frame_stream_behaviour_changed": False,
+        "valid_frame_stream_behaviour_changed": "ONLY_A_FRAME_WITH_A_500MS_GAP_INSIDE_IT",
+        "frames_above_mt_rpc_data_max": "REFUSED_HERDSMAN_CANNOT_SEND_THEM",
+        "failed_frame_rescan": "NOT_DONE_STALE_COMMANDS_MUST_NOT_RUN_LATE",
+        "discarded_bytes": "EVERY_BYTE_NOT_DELIVERED_IN_A_VALID_FRAME",
         "changes_network_nv_or_security": False,
         "root_cause_proven": False,
         "flash_authorized": False,
