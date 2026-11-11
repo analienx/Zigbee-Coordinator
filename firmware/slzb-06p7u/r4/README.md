@@ -1,7 +1,8 @@
 # SLZB-06P7U R4 firmware — tree overview
 
-R4 is a stock-derived Z-Stack ZNP for the SLZB-06P7U (TI CC2652P7). The image currently on the production coordinator is **V54** (source `20a2474a`), installed 1 November 2026 over V53 (source `8ec1439`, tag `p7u-v53-firmware-source`). For its state, open items and review, see the coordinator folder:
+R4 is a stock-derived Z-Stack ZNP for the SLZB-06P7U (TI CC2652P7). The image currently on the production coordinator is **V56** (source `08804f29`), installed 3 November 2026 over V55, V54 (source `20a2474a`) and V53 (source `8ec1439`, tag `p7u-v53-firmware-source`). The **V57** candidate (branch `feat/p7u-v57`) adds the MT frame parser resync and drops the dimmer-specific code. For state, open items and review, see the coordinator folder:
 
+- [Status, 11 Nov 2026](../../../coordinators/slzb-06p7u/STATUS_2026-11-11.md) and [release notes](../../../coordinators/slzb-06p7u/RELEASE_NOTES.md)
 - [Status, 31 Oct 2026](../../../coordinators/slzb-06p7u/STATUS_2026-10-31.md)
 - [V53 long-term reliability review](../../../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md)
 - [Safety and acceptance gates](../../../coordinators/slzb-06p7u/README.md)
@@ -30,6 +31,7 @@ No modified TI source is stored here. The image is TI SimpleLink `lpf2-8.33.00.1
    - V48 ZDApp fairness.
    - **V50–V53** (`tools/r4_v50_stack_service.py`), plus the **V54** NV-cache guard (`B4_V54_CACHE_HOLD_AND_SECRET_GUARD`, installed 1 Nov 2026).
    - **V52 timers** (`tools/r4_v52_osal_timers.py`).
+   - **V57 MT frame parser resync** (`tools/r4_v57_npi_rx_resync.py`, applied after V52; its arrival hook and the B1E8 query live in the V50 stage). Drops a stale partial frame after a 500 ms idle gap, refuses lengths above 250 and records the discarded bytes. Candidate only.
 
    Every stage checks exact preimage hashes, then compiles the emitted C and rejects mutants (`tools/*_harness.py`).
 5. **Native build and seal** — `.github/workflows/test-r4-stock20260311-native.yml`, `qualification/build_native.py`, `b1/tools/seal_native.py`.
@@ -60,7 +62,7 @@ Files with a date in their name (for example `release/R4_FIRST_PHYSICAL_FLASH_IN
 
 ## Reading the composed C
 
-`tools/p7u_compose_source_locally.sh <source-sha> /tmp/<out>` runs the source-composition part of the native workflow without the TI toolchain, including every stage's compile-and-mutate harness. It writes the reviewable patch of all changed TI files to `/tmp/<out>/b0out/r4-final-ti-source.patch`. With `8ec1439…` it reproduces the installed V53 source.
+`tools/p7u_compose_source_locally.sh <source-sha> /tmp/<out>` runs the source-composition part of the native workflow without the TI toolchain, including every stage's compile-and-mutate harness. It writes the reviewable patch of all changed TI files to `/tmp/<out>/b0out/r4-final-ti-source.patch`. With `8ec1439…` it reproduces the V53 source and with `08804f29…` the installed V56 source.
 
 ## Running the tests
 
@@ -68,4 +70,4 @@ Files with a date in their name (for example `release/R4_FIRST_PHYSICAL_FLASH_IN
 python -m pytest tests          # from the repository root
 ```
 
-As of 1 November 2026: 927 passed, 31 skipped. Harnesses that need the pinned TI SDK or the TI toolchain skip, or run only in the native workflows.
+As of 11 November 2026 (V57 candidate): 970 passed, 31 skipped. Harnesses that need the pinned TI SDK or the TI toolchain skip, or run only in the native workflows.
