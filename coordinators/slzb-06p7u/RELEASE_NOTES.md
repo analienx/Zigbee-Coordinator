@@ -2,9 +2,15 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V57 (source candidate, 11 November 2026): cold-start RX resync, no dimmer code
+## V57 (candidate, 11 November 2026): cold-start RX resync, no dimmer code
 
-Base: V56 `08804f29`. Two changes. Not built natively, not pinned, not flashed.
+Base: V56 `08804f29`. Source `eb59b6773dd0fe328c1194647c00e8a070d18a22`. Two changes. Natively built and pinned; not flashed.
+
+- **Native build** [run 43065927955](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43065927955) at `eb59b677`: both ARM builds, byte-identical reproducibility, hosted B1 suite, herdsman integration, all passing.
+  - The APP code ends at `0x33293`, inside the same `0x34000` envelope as V53–V56, with 3.4 KiB free.
+  - The priority seal is unchanged (8 task priorities, NPI 4, pending SRSP 6). `B4_V57_RxArrived` and `B4_V57_RxFrameSnapshot` are linked and bound in the native seal.
+- **Pinned** as the official-owner successor of V56: paired binding, PR154 envelope and priority list, startup observer sets including `V57_SOURCES` (B1E8), delivery defaults (installed V56, previous operation `d86dc87d`, native run) and the address-manager diff default.
+- **Acknowledgements for the package** (owner decision, 11 Nov): `NEW_PEER` for `0x583bc2fffeedf4fd` (LivingRooomCircleDimmer, Sunricher HK-LN-DIM-A), `0xa4c13810ae3bffff` (buttLivingRoomMainDimmer, SONOFF SNZB-01M) and `0x08fd52fffe0aa5a6` (IKEA RODRET leftover row). No row changed its TC link key since V56's capture.
 
 ### Why
 
@@ -86,8 +92,8 @@ Kept, because they are generic and not dimmer code:
 
 ### Before any flash
 
-1. Commit, then a native build at the V57 source SHA (both ARM builds, reproducibility, `audit-native`). The hosted B1 suite must pass there.
-2. Pinning checklist ([OFFICIAL_OWNER_DELIVERY.md](OFFICIAL_OWNER_DELIVERY.md#pinning-a-new-firmware-source)), including V57 in the V50–V53 evidence sets and in `V57_SOURCES` (B1E8) in the startup observer.
+1. ~~Native build at the V57 source SHA~~: done, run 43065927955.
+2. ~~Pinning checklist~~: done (see above).
 3. Package with acknowledgements since `d86dc87d`, preflight, prepare.
 4. The owner authorizes the operation id.
 5. After the flash:

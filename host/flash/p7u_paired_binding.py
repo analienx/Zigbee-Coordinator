@@ -22,13 +22,15 @@ QUALIFIED_SUCCESSORS = {
     "bb9720a7d502f80e28bdec683e625c754bb5cd1c": "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
     # V56: V55 plus the dimmer TC key epoch restore (VERIFIED/11); native run 41681908234.
     "08804f2946746104215d3db7d36092706a0dfcad": "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
+    # V57: V56 minus the dimmer code, plus the MT frame parser RX resync and B1E8; native run 43065927955.
+    "eb59b6773dd0fe328c1194647c00e8a070d18a22": "08804f2946746104215d3db7d36092706a0dfcad",
 }
 # Official Zigbee2MQTT app as the sole serial owner (production since 31 Oct
 # 2026). No custom host, inspector or fallback container takes part. Pinned
 # exactly: a different app version or image is a different owner.
 OFFICIAL_MODE = "official-z2m-v1"
 OFFICIAL_SOURCES = frozenset({"20a2474a67c1d420b6614b3fcb2f7ed543b1420e", "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
-                              "08804f2946746104215d3db7d36092706a0dfcad"})
+                              "08804f2946746104215d3db7d36092706a0dfcad", "eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 OFFICIAL_OWNER = "45df7312_zigbee2mqtt"
 OFFICIAL_OWNER_VERSION = "2.14.2-1"
 OFFICIAL_OWNER_IMAGE = "sha256:248c11bb7c6eb7fa6854edb23312f1356cb1650ed32c1ed7cebbf86322600e28"

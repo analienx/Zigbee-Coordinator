@@ -19,6 +19,7 @@ V53 = "8ec1439786e3e98151d2796e6797675bb9ef5965"
 V54 = "20a2474a67c1d420b6614b3fcb2f7ed543b1420e"
 V55 = "bb9720a7d502f80e28bdec683e625c754bb5cd1c"
 V56 = "08804f2946746104215d3db7d36092706a0dfcad"
+V57 = "eb59b6773dd0fe328c1194647c00e8a070d18a22"
 V48 = "250441cd17c55e25c78d97e041f056574355ade7"
 
 
@@ -332,8 +333,8 @@ class StackEvidence(unittest.TestCase):
 
 class NvCacheEvidence(unittest.TestCase):
     def test_v53_and_v54_answer_every_older_page(self):
-        self.assertEqual(V53_SOURCES, frozenset({V53, V54, V55, V56}))
-        self.assertTrue({V50, V53, V54, V55, V56} <= V52_SOURCES == V51_SOURCES == V50_SOURCES)
+        self.assertEqual(V53_SOURCES, frozenset({V53, V54, V55, V56, V57}))
+        self.assertTrue({V50, V53, V54, V55, V56, V57} <= V52_SOURCES == V51_SOURCES == V50_SOURCES)
         self.assertTrue(nv_cache_evidence_supported(V53))
         # V54 only guards the V53 cache: READY at priority 6 with every evidence page.
         self.assertTrue(nv_cache_evidence_supported(V54))
@@ -344,6 +345,11 @@ class NvCacheEvidence(unittest.TestCase):
         # V56 changes no evidence page either.
         self.assertTrue(nv_cache_evidence_supported(V56))
         self.assertEqual(expected_ready_npi_priority(V56), 6)
+        # V57 keeps every page and is the only source that answers B1E8.
+        import p7u_r4_startup_observer as observer
+        self.assertTrue(nv_cache_evidence_supported(V57))
+        self.assertEqual(expected_ready_npi_priority(V57), 6)
+        self.assertEqual(observer.V57_SOURCES, frozenset({V57}))
         self.assertFalse(nv_cache_evidence_supported(V50))
         self.assertEqual(Q9, b"B1Q1\x01\x08\x04\x05")
 

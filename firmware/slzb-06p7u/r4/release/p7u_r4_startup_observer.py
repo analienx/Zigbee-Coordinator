@@ -26,33 +26,37 @@ TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 V50_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f", "8ec1439786e3e98151d2796e6797675bb9ef5965",
                          "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
                          "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
-                         "08804f2946746104215d3db7d36092706a0dfcad"})
+                         "08804f2946746104215d3db7d36092706a0dfcad",
+                         "eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 # V51 (same NPI floor and B1E2) adds the B1E3 (op4 page1) onset record and
 # the B1E4/B1E5 (op4 page2/3) 5-minute and 60-minute trend rings.
 V51_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f", "8ec1439786e3e98151d2796e6797675bb9ef5965",
                          "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
                          "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
-                         "08804f2946746104215d3db7d36092706a0dfcad"})
+                         "08804f2946746104215d3db7d36092706a0dfcad",
+                         "eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 # V52 adds B1E6 (op4 page4): NPI->MT->UART progress, OSAL timer evidence and
 # the live in-flight Stack dispatch, and frees expired OSAL timers per dispatch.
 V52_SOURCES = frozenset({"a70ae24ff45e708e13969cd341c9ecb494d1570f", "8ec1439786e3e98151d2796e6797675bb9ef5965",
                          "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
                          "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
-                         "08804f2946746104215d3db7d36092706a0dfcad"})
+                         "08804f2946746104215d3db7d36092706a0dfcad",
+                         "eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 # V53 adds B1E7 (op4 page5): the NV read cache that removes the per-frame NV
 # storm, its counters and the costliest NV items (IDs/counts only, never data).
 # V54 keeps every V50-V53 behaviour and only guards that cache (B1 HOLD, TCLK seed).
 # V55 keeps every V50-V54 evidence page unchanged (TC counter restore, MAC queues).
 # V56 keeps them too (one-device TC key epoch restore).
+# V57 keeps every page and adds B1E8 (see V57_SOURCES).
 V53_SOURCES = frozenset({"8ec1439786e3e98151d2796e6797675bb9ef5965",
                          "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
                          "bb9720a7d502f80e28bdec683e625c754bb5cd1c",
-                         "08804f2946746104215d3db7d36092706a0dfcad"})
+                         "08804f2946746104215d3db7d36092706a0dfcad",
+                         "eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 
 # V57 adds B1E8 (op4 page6): the MT frame parser's RX resync after an idle
 # gap, rejected lengths and the bytes discarded before the first valid frame.
-# Filled in by the V57 pinning checklist once a native build exists.
-V57_SOURCES = frozenset()
+V57_SOURCES = frozenset({"eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 
 def expected_ready_npi_priority(source: str) -> int:
     return 6 if source in V50_SOURCES else 4
