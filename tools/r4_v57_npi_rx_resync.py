@@ -15,15 +15,18 @@ existed. Nothing is answered until that many bytes have been sent.
 
 Field evidence (10 and 11 Nov 2026, V56; 1 and 2 Nov, V53/V54): after a
 simultaneous host and SLZB power-on the radio answered no SYS_PING on the
-first three Zigbee2MQTT starts (36 host bytes each: ping, 0xEF, ping, then
-three pings) and answered on the fourth, with no radio restart in between.
-The live B1E pages read on 11 Nov show the firmware up since power-on
-(uptime = host uptime) with no NPI/UART fault, HOLD or reset. That fits a
-swallow bounded by a byte count (a stray SOF and a length of roughly
-105..120). It does not exclude a time-bounded stall that happened to end
-before the fourth start on every bad morning. The stray bytes were not
-captured, so this stage also records what the parser discards (B1E8): the
-next bad morning tells the two apart.
+first three Zigbee2MQTT starts and answered on the fourth, with no radio
+restart in between. Each start sends 26 bytes: a 5-byte ping (250 ms), 0xEF,
+a ping (250 ms), then up to three pings (6 s each). On 11 Nov the fourth
+start's two quick pings also went unanswered and its first 6 s ping was
+answered. Replayed into TI's unmodified parser, exactly that pattern
+follows from one stray SOF plus a length of 82..86 before the first start,
+and from no other length. The live B1E pages read on 11 Nov show the
+firmware up since power-on (uptime = host uptime) with no NPI/UART fault,
+HOLD or reset. A stall that ended within the same 1.5 s of the fourth start
+on both mornings is not excluded. The stray bytes were not captured, so this
+stage also records what the parser discards (B1E8): the next bad morning
+tells the two apart.
 
 This stage changes nothing for a correctly framed byte stream:
   1. Idle resync. The transport RX callback (npi_task.c, V50 stage) reports

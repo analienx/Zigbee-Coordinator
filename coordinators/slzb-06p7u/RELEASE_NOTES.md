@@ -19,9 +19,11 @@ So the radio was running and receiving, but did not answer three starts' worth o
 TI's MT frame parser (`npi_frame_mt.c`, `NPIFrame_collectFrameData`) explains that exactly:
 - **No inter-byte timeout:** after any `0xFE` it takes the next byte as a length and waits, for any time, for length + 3 more bytes.
 - **No length bound:** it also accepts lengths 251–255.
-- **Effect:** one stray `0xFE` plus one byte on the RX line at power-on swallows the host's next frames. Each Zigbee2MQTT start sends 36 bytes (ping, `0xEF`, ping, three pings), so a stray length of about 105–120 swallows three starts and releases the fourth on every bad morning.
+- **Effect:** one stray `0xFE` plus one byte on the RX line at power-on swallows the host's next frames.
+- **Byte count:** each Zigbee2MQTT start sends 26 bytes: a 5-byte ping (250 ms timeout), `0xEF`, a ping (250 ms), then up to three pings (6 s each). On 11 Nov the fourth start's two quick pings also went unanswered and its first 6 s ping was answered. On the good morning of 5 Nov the very first ping was answered.
+- **Replay:** fed into TI's unmodified parser, one stray `0xFE` plus a length of 82–86 before the first start gives exactly that pattern, and no other length does.
 
-This fits all four mornings. It is not proven: the stray bytes were never captured. A stall that always ends just before the fourth start is not excluded. V57 records what the parser discards, so the next bad morning settles it.
+This fits the evidence closely. It is not proven: the stray bytes were never captured. A stall that ended within the same 1.5 s of the fourth start on both mornings is not excluded. V57 records what the parser discards, so the next bad morning settles it.
 
 ### Firmware
 
@@ -56,8 +58,9 @@ Kept, because they are generic and not dimmer code:
   - `npi_frame_mt.c`: new;
   - `npi_task.c`: arrival hook, page6 query, digest;
   - `nvocmp.c`: digest only.
-- **V57 RX harness on the emitted `npi_frame_mt.c`** (ASan/UBSan), 11 scenarios:
-  - the field replay (stray SOF + length, ping minutes later: answered);
+- **V57 RX harness on the emitted `npi_frame_mt.c`** (ASan/UBSan), 12 scenarios:
+  - the field replay: 11 Nov's exact byte sequence (stray SOF + length 84, then Zigbee2MQTT's 5-byte pings minutes later) gets the very first ping answered;
+  - a stray SOF + length, ping minutes later: answered;
   - split frames with and without an idle gap, including across the tick wrap;
   - a gap with unparsed bytes;
   - resync in every parser state, with exact allocation accounting;
@@ -77,7 +80,7 @@ Kept, because they are generic and not dimmer code:
 4. The owner authorizes the operation id.
 5. After the flash:
    - read live evidence once and check B1E8 shows `resyncs` 0 and the first valid frame at Zigbee2MQTT's start;
-   - after every following morning start, read it again before any radio restart. A non-zero `resyncs` with a first-resync length near 105–120 confirms the cause; `boot_discarded` shows the stray bytes.
+   - after every following morning start, read it again before any radio restart. A non-zero `resyncs` with a first-resync length near 82–86 (state `CMD1`) confirms the cause; `boot_discarded` shows the stray bytes.
 
 ### Original removal plan (owner decision, 3 Nov 2026), now done
 

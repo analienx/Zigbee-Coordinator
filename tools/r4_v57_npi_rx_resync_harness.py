@@ -296,6 +296,24 @@ int main(void)
     for (i = 248u; i < sizeof(out); ++i) assert(out[i] == 0xEEu);
     late_ping(); run(); expect_ping(2u); assert(live_n == 0u);
 
+    /* 12. The exact field byte sequence of 11 Nov: a stray SOF and length 84
+     *     at power-on, then Zigbee2MQTT's start (5-byte pings: 250 ms ping,
+     *     0xEF, 250 ms ping, 6 s ping). TI's parser answers only the fourth
+     *     start's first 6 s ping; V57 answers the very first ping. */
+    {
+        static const uint8_t ping5[5] = { 0xFE, 0x00, 0x21, 0x01, 0x20 };
+        static const uint8_t power_on[2] = { 0xFE, 84u };
+        static const uint8_t skip = 0xEF;
+        fresh(0u);
+        advance_ms(900u); feed(power_on, 2u); run();
+        advance_ms(276000u); feed(ping5, 5u); run();
+        assert(delivered == 1u && last_n == 3u && !memcmp(last, ping5 + 1, 3u));
+        assert(B4_V57_Rx.resyncs == 1u && B4_V57_Rx.firstLen == 84u && live_n == 0u);
+        advance_ms(250u); feed(&skip, 1u); run();   /* harmless junk, as in TI */
+        advance_ms(1000u); feed(ping5, 5u); run();
+        assert(delivered == 2u && B4_V57_Rx.junk == 1u && B4_V57_Rx.bootJunkCount == 0u);
+    }
+
     printf("V57_NPI_RX_FRAME_RESYNC_REAL_C_PASS\n");
     return 0;
 }
