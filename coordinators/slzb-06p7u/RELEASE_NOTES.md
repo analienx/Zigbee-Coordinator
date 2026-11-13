@@ -2,9 +2,9 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V57 (candidate, 11 November 2026): cold-start RX resync, no dimmer code
+## V57 (installed 13 November 2026): cold-start RX resync, no dimmer code
 
-Base: V56 `08804f29`. Source `eb59b6773dd0fe328c1194647c00e8a070d18a22`. Two changes. Natively built and pinned; not flashed.
+Base: V56 `08804f29`. Source `eb59b6773dd0fe328c1194647c00e8a070d18a22`. Two changes. Natively built and pinned. **Installed and initially serving on 13 November 2026** through operator run [43502721394](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43502721394) after a zero-write security-HOLD continuation. Protected APP+AC000 CRC and all 88 ROM CRCs passed; native state9, official Zigbee2MQTT startup and fresh traffic from 3 devices (6 messages) passed. NV/CCFG untouched. B1E8 initial live read: 243 valid frames, 0 resyncs/FCS errors/discarded bytes. Repeated cold-start qualification is still open. See [status](STATUS_2026-11-13.md).
 
 - **Native build** [run 43065927955](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43065927955) at `eb59b677`: both ARM builds, byte-identical reproducibility, hosted B1 suite, herdsman integration, all passing.
   - The APP code ends at `0x33293`, inside the same `0x34000` envelope as V53–V56, with 3.4 KiB free.

@@ -1,15 +1,15 @@
 # slzb-06p7u — SMLIGHT SLZB-06P7U (primary engineering target)
 
-**Current state (11 November 2026):** V56 firmware is installed on the production coordinator (since 3 Nov), with the official Zigbee2MQTT app as the only serial owner. V56 is V54 plus larger MAC queues (V55) and a one-device dimmer recovery that did not work. See the [status summary](STATUS_2026-11-11.md) for health, the open cold-start problem and open items, the [official-owner delivery guide](OFFICIAL_OWNER_DELIVERY.md) for how to flash, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) and [V54 review](REVIEW_V54_2026-11-03.md) for findings.
+**Current state (13 November 2026):** V57 firmware is installed on the production coordinator (since 13 Nov), with the official Zigbee2MQTT app as the only serial owner. V57 retains the MAC queue and NV-cache improvements, adds MT RX resynchronization and removes the unsuccessful V55/V56 device-specific dimmer workaround. See the [status summary](STATUS_2026-11-13.md) for health, the open cold-start problem and open items, the [official-owner delivery guide](OFFICIAL_OWNER_DELIVERY.md) for how to flash, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) and [V54 review](REVIEW_V54_2026-11-03.md) for findings.
 
-**V57 candidate (source only, branch `feat/p7u-v57`):** fixes the likely cause of the intermittent cold-start `SYS_PING` failures (the MT frame parser waits without limit after a stray `0xFE`), adds the B1E8 evidence page, and removes all dimmer-specific code. See the [release notes](RELEASE_NOTES.md). It is not built natively, not pinned and not flashed.
+**V57 installed (native source `eb59b677`, original branch `feat/p7u-v57`):** targets the likely cause of the intermittent cold-start `SYS_PING` failures (the MT frame parser waits without limit after a stray `0xFE`), adds the B1E8 evidence page, and removes all dimmer-specific code. See the [release notes](RELEASE_NOTES.md). It passed native CI, source pinning, protected APP/AC000 flash, native state9 and live device serving on 13 November 2026; repeated cold-boot acceptance remains open.
 
-**Source of record:** `main` holds the V54 source and the official-owner delivery tooling; the installed V56 is `feat/p7u-v56` and the V57 candidate is `feat/p7u-v57`. V53 stays retrievable through the PR #195/#196 refs and the tags below. A native rebuild embeds the build commit prefix in the evidence digest, so to reproduce an installed image byte for byte, build at its exact source commit.
+**Source of record:** `main` holds the V54 source and the official-owner delivery tooling; the previously installed V56 is `feat/p7u-v56` and the installed V57 source is `feat/p7u-v57` (delivered by the corrected operator). V53 stays retrievable through the PR #195/#196 refs and the tags below. A native rebuild embeds the build commit prefix in the evidence digest, so to reproduce an installed image byte for byte, build at its exact source commit.
 
 | What | Where |
 |---|---|
-| Installed firmware source | V56 `08804f2946746104215d3db7d36092706a0dfcad` (native run 41681908234, branch `feat/p7u-v56`) |
-| Candidate | V57 on branch `feat/p7u-v57` (source only) |
+| Installed firmware source | **V57** `eb59b6773dd0fe328c1194647c00e8a070d18a22` (native run 43065927955; operator run 43502721394) |
+| Previously installed | V56 `08804f2946746104215d3db7d36092706a0dfcad`; previous operation retained for traceability |
 | Delivery that installed it | official-owner runner [`tools/p7u_official_delivery.py`](../../tools/p7u_official_delivery.py), [guide](OFFICIAL_OWNER_DELIVERY.md) |
 | Previous firmware | V55 `bb9720a7`, V54 `20a2474a67c1` (native run 41284426604), V53 `8ec1439786e3` (PR #195; tag `p7u-v53-firmware-source`), delivered by `ed42122d8149` (PR #196; tag `p7u-v53-delivery`) |
 | Composition order of the image | [`tools/r4_b0_b4_composite_stage.py`](../../tools/r4_b0_b4_composite_stage.py), applied to TI SDK `3615ad5d` (`lpf2-8.33.00.16`) |
@@ -23,7 +23,7 @@
 | HA auto-recovery and SLZB Ethernet watchdog | [`ha/`](ha/), [`slzb/`](slzb/) |
 | Retired custom host apps | [`host/r4-b4/`](../../host/r4-b4/), uninstalled on 31 Oct and kept as source of record |
 
-Being on `main` is **not** qualification. The acceptance gates below still apply to V53, V54, V56 and any later image.
+Being on `main` is **not** qualification. The long-term acceptance gates still apply to V53–V57 and any later image.
 
 ## Firmware features
 
@@ -45,7 +45,7 @@ What the R4 image does beyond TI's stock ZNP, by layer. Each layer has a compile
 | **V53** | NV read cache: ends the per-frame NV read storm behind the hangs; B1E7 shows hits and per-item NV cost | V53 |
 | **V54** | Cache guards: no hit or insert during HOLD, TCLK seed never cached, NULL/zero-length reads bypass | V54 |
 | **V55** | MAC queues 50/80/50 (TI default 5/8/5), `FRESH_REJOIN` delivery acknowledgement | V55 |
-| **V57** | MT frame parser resync after an idle gap, length bound, B1E8 evidence (candidate, not installed) | V57 |
+| **V57** | MT frame parser resync after an idle gap, length bound, B1E8 evidence (**installed 13 Nov; cold-start follow-up open**) | V57 |
 
 Host and operations around the firmware:
 

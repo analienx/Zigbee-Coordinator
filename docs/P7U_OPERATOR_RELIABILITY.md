@@ -33,6 +33,10 @@ The offline native-security gate now recognizes only these precisely classified 
 - When a transfer result is ambiguous, inspect `status`; never replay consumed execute/BSL/write/boot commands.
 - No broad erase, security-counter inflation, identity cloning, new PAN or device re-pairing is part of this feature.
 
+## Physical outcome and follow-up
+
+The corrected admission predicted **PASS** from the immutable 13 November NV capture. The staged continuation produced a fresh operation whose APP+AC000 CRC/88 ROM CRC verification, state9 boot, 3-device serving proof and live B1E8 evidence all passed. The official owner and HA automations were restored to normal operation **without any intermediate V56 or stock reflash**. See [V57 status](../coordinators/slzb-06p7u/STATUS_2026-11-13.md). Later cold starts are still required to confirm the V57 parser hypothesis.
+
 ## Operator-only release checklist
 
 1. Add synthetic tests for each newly admitted transition *and* its malicious or inconsistent variant.

@@ -39,6 +39,61 @@ class FlashDriver(unittest.TestCase):
         self.assertIn("unknownTopicsRejected", driver.SERVING)
         self.assertIn("rh:2", driver.SERVING)
 
+    def test_hold_binding_accepts_verified_absent_official_owner(self):
+        # A stopped Home Assistant add-on normally has no Docker container.
+        # The continuation must prove Supervisor state and the retained image,
+        # not invent an old container ID or start a second serial owner.
+        import contextlib
+        import io
+        import json
+        import os
+        from types import ModuleType
+
+        root = self.d.workdir
+        package = root / "pkg"
+        package.mkdir()
+        meta = {"paired_host_mode": "official-z2m-v1",
+                "paired_host_slug": "45df7312_zigbee2mqtt",
+                "paired_host_version": "2.14.2-1",
+                "paired_host_image": driver.HOST_IMAGE}
+        (package / "PACKAGE.json").write_text(json.dumps(meta))
+        base = root / "binding.json"
+        base.write_text(json.dumps({"source_sha": FW}))
+        op = root / ("b" * 32)
+        op.mkdir()
+        (op / "plan.json").write_text(json.dumps({"source": FW, "operation_id": op.name}))
+        out = root / "output"
+        fake_hold = ModuleType("p7u_paired_hold")
+        fake_hold.NAMES = {"hold.json"}
+        fake_hold.SCOPE_NAMES = {"hold.json", "current-owner-security.json"}
+        fingerprints = []
+        def fingerprint(path, owner, source, names):
+            fingerprints.append(owner)
+            return "f" * 64
+        fake_hold.fingerprint = fingerprint
+        absent = SimpleNamespace(returncode=1, stdout="",
+                                 stderr="Error: No such object: app_45df7312_zigbee2mqtt")
+        state = {"state": "stopped", "version": "2.14.2-1", "boot": "manual",
+                 "watchdog": False, "auto_update": False}
+        def response(request, timeout=15):
+            return io.BytesIO(json.dumps({"data": state}).encode())
+        params = {"package": str(package), "base": str(base), "op": str(op),
+                  "out": str(out), "attach": "", "container": "app_45df7312_zigbee2mqtt"}
+        code = driver.HOLD_BINDING % params
+        with patch.dict(sys.modules, {"p7u_paired_hold": fake_hold}), \
+             patch.dict(os.environ, {"SUPERVISOR_TOKEN": "synthetic"}), \
+             patch("subprocess.run", return_value=absent), \
+             patch("subprocess.check_output", return_value=json.dumps([{"Id": driver.HOST_IMAGE}]).encode()), \
+             patch("urllib.request.urlopen", side_effect=response), \
+             patch("os.fchmod", create=True, return_value=None), \
+             contextlib.redirect_stdout(io.StringIO()):
+            exec(code, {"__name__": "__main__"})
+        self.assertEqual(fingerprints, [{"id": None, "image": driver.HOST_IMAGE,
+                                        "started_at": None, "running": False, "absent": True}])
+        result = json.loads((out / "binding.json").read_text())
+        self.assertEqual(result["readonly_hold_operation"], op.name)
+        self.assertEqual(result["readonly_hold_pin"], "f" * 64)
+
     def fetch(self, native, package):
         args = SimpleNamespace(firmware=FW, native_run=1, package_run=2, installed="b" * 40,
                                previous_operation="c" * 32)

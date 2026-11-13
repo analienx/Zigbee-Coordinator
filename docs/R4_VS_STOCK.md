@@ -1,6 +1,6 @@
 # R4 on SLZB-06P7U: what changed compared with stock ZNP
 
-> **Scope:** SMLIGHT **SLZB-06P7U R1.73** with TI **CC2652P7**, not MR4U/P10 or SONOFF/MG24. R4 is a source-modified, stock-derived Z-Stack ZNP for this particular board and Zigbee2MQTT installation. This is a **technical feature comparison**, not a vendor-certified head-to-head benchmark or a promise of zero future hangs.
+> **Scope:** SMLIGHT **SLZB-06P7U R1.73** with TI **CC2652P7**, not MR4U/P10 or SONOFF/MG24. R4 is a source-modified, stock-derived Z-Stack ZNP for this particular board and Zigbee2MQTT installation. This is a **technical feature comparison**, not a vendor-certified head-to-head benchmark or a promise of zero future hangs. **V57 was physically installed 13 November 2026;** first-serving proof passed, repeated cold-start acceptance remains open.
 
 [Project home](../../README.md) · [P7U implementation](../../coordinators/slzb-06p7u/README.md) · [Release notes](../../coordinators/slzb-06p7u/RELEASE_NOTES.md) · [Delivery procedure](../../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md) · [Evidence and status](../../coordinators/slzb-06p7u/STATUS_2026-11-11.md)
 

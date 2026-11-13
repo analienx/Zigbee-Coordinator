@@ -496,9 +496,33 @@ canon=lambda o:json.dumps(o,sort_keys=True,separators=(",",":"),allow_nan=False)
 sha=lambda b:hashlib.sha256(b).hexdigest()
 binding=json.loads(base.read_bytes())
 need(set(binding)==set(json.loads(base.read_bytes())) and "readonly_hold_operation" not in binding,"BASE_BINDING")
-a=json.loads(subprocess.check_output(["docker","inspect",%(container)r]))[0]
-owner={"id":a["Id"],"image":a["Image"],"started_at":a["State"]["StartedAt"],"running":a["State"]["Running"]}
-need(owner["running"] is False,"OWNER_RUNNING")
+# Home Assistant removes an add-on's container on STOP. Do not require
+# the last running container to survive a deliberate, immutable HOLD.
+# The sealed operator independently rechecks this same absent-owner proof.
+container=%(container)r
+meta=json.loads((package/"PACKAGE.json").read_bytes())
+inspect=subprocess.run(["docker","inspect",container],capture_output=True,text=True,timeout=20)
+if inspect.returncode==0:
+ objects=json.loads(inspect.stdout)
+ need(len(objects)==1,"OWNER_CONTAINER_COUNT")
+ a=objects[0]
+ owner={"id":a["Id"],"image":a["Image"],"started_at":a["State"]["StartedAt"],"running":a["State"]["Running"]}
+else:
+ need(inspect.returncode==1 and inspect.stdout.strip() in ("","[]") and
+      inspect.stderr.strip().lower().endswith("no such object: "+container),"OWNER_CONTAINER_UNKNOWN")
+ need(meta.get("paired_host_mode")=="official-z2m-v1" and
+      container=="app_"+meta.get("paired_host_slug",""),"OFFICIAL_STOPPED_OWNER_ONLY")
+ import urllib.request
+ req=urllib.request.Request("http://supervisor/addons/"+meta["paired_host_slug"]+"/info",
+             headers={"Authorization":"Bearer "+os.environ["SUPERVISOR_TOKEN"]})
+ state=json.load(urllib.request.urlopen(req,timeout=15))["data"]
+ need(state.get("state") in ("stopped","error") and state.get("version")==meta["paired_host_version"] and
+      state.get("boot")=="manual" and state.get("watchdog") is False and state.get("auto_update") is False,
+      "STOPPED_OWNER_POLICY")
+ image=json.loads(subprocess.check_output(["docker","image","inspect",meta["paired_host_image"]],timeout=20))
+ need(len(image)==1 and image[0]["Id"]==meta["paired_host_image"],"STOPPED_OWNER_IMAGE")
+ owner={"id":None,"image":meta["paired_host_image"],"started_at":None,"running":False,"absent":True}
+need(owner["running"] is False and owner["image"]==meta["paired_host_image"],"OWNER_RUNNING_OR_IMAGE_CHANGED")
 plan=json.loads((op/"plan.json").read_bytes())
 need(plan["source"]==binding["source_sha"] and plan["operation_id"]==op.name,"HELD_PLAN_SOURCE")
 names=hold.SCOPE_NAMES if (op/"current-owner-security.json").exists() else hold.NAMES
