@@ -401,21 +401,23 @@ def inspect_state(records: dict, abi: dict) -> dict:
             "aps_opaque_tail": table[header_size + 3 * entry_size:]}
 
 
-def fresh_rejoin(before: dict, after: dict) -> bool:
+def fresh_rejoin(before: dict, after: dict, *, relocated: bool = False) -> bool:
     """TI ZDSecMgrDeviceJoinDirect on a non-TC-rejoin of a VERIFIED peer: the
     same slot becomes ZG_DEFAULT_KEY with SeedShift+1 (mod 16) and restarted
     counters. A peer may cycle (reset, re-verify, reset ...) several times
     between two captures, so any changed SeedShift is that evidence; an
     unchanged one is not. Nothing else in the row may differ."""
     mb, ma = before["key_metadata"], after["key_metadata"]
-    return (before["index"] == after["index"] and before["key"] is None and after["key"] is None and
+    return ((before["index"] == after["index"] or relocated) and
+            before["key"] is None and after["key"] is None and
             mb[1] == bytes((2,)) and ma[1] == bytes((0xff,)) and
             all(mb[i] == ma[i] for i in (0, 2, 4)) and len(mb[3]) == len(ma[3]) == 1 and
             ma[3] != mb[3] and ma[3][0] < 16)
 
 
 def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset(),
-                     fresh_rejoins=frozenset()) -> None:
+                     fresh_rejoins=frozenset(), default_epochs=frozenset(),
+                     tc_relocations=frozenset(), newly_keyed_peers=frozenset()) -> None:
     # 6. Preserve network/seed/key epoch; no permissive key-rotation guess.
     require(current["identity"] == baseline["identity"] and
             current["active"] == baseline["active"] and current["seed"] == baseline["seed"] and
@@ -435,37 +437,54 @@ def compare_retained(current: dict, baseline: dict, key_rerolls=frozenset(),
     for identity, floor in baseline["materials"].items():
         require(identity in current["materials"] and current["materials"][identity] >= floor,
                 "NETWORK_MATERIAL_REMOVED_OR_COUNTER_REGRESSED")
-    # 8. Existing peers/APS mappings and key metadata must restore unchanged;
-    # new/deleted peers require a separately reviewed baseline, never truncation.
-    for category, code in (("peers", "TC"), ("aps", "APS")):
-        require(current[category].keys() == baseline[category].keys(), code + "_RETAINED_SET_CHANGED")
-        for identity, before in baseline[category].items():
-            after = current[category][identity]
-            if category == "peers" and identity in key_rerolls | fresh_rejoins:
-                # KEY_REROLL: owner-acknowledged re-derivation of a VERIFIED TC
-                # link key from the UNCHANGED seed (rejoin key update): only
-                # SeedShift may differ; same slot, attributes, type, IC index.
-                # FRESH_REJOIN: exactly TI's reset of that slot to the default
-                # key. A device acknowledged for both may match either, since
-                # it can re-verify or reset again before the capture.
-                mb, ma = before["key_metadata"], after["key_metadata"]
-                reroll = (identity in key_rerolls and before["index"] == after["index"] and
-                          before["key"] is None and after["key"] is None and
-                          mb[1] == ma[1] == bytes((2,)) and all(mb[i] == ma[i] for i in (0, 1, 2, 4)))
-                fresh = identity in fresh_rejoins and fresh_rejoin(before, after)
-                require(reroll or fresh, code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
-            else:
-                require(all(after[key] == value for key, value in before.items() if key not in ("tx", "rx")),
-                        code + "_RETAINED_KEY_OR_REFERENCE_CHANGED")
-            # A re-derived key starts a new counter space; every other entry
-            # (and an acknowledged entry whose key did NOT change) is monotonic.
-            rerolled = (category == "peers" and identity in key_rerolls | fresh_rejoins and
-                        before["key_metadata"][3] != after["key_metadata"][3])
-            require(rerolled or (after["tx"] >= before["tx"] and after["rx"] >= before["rx"]),
-                    code + "_PERSISTED_COUNTER_REGRESSION")
+    # 8. Existing TC entries cannot disappear; separately approved NEW_PEER
+    # permits *additional* entries only. APS remains byte-for-byte strict.
+    # TC slots are storage locations, not key identities. A move is accepted
+    # only when the exact existing IEEE is separately approved TC_RELOCATE and
+    # every key field is validated under the existing epoch/rejoin rules.
+    require(current["peers"].keys() == baseline["peers"].keys() | newly_keyed_peers,
+            "TC_RETAINED_SET_CHANGED")
+    require(current["aps"].keys() == baseline["aps"].keys(), "APS_RETAINED_SET_CHANGED")
+    for identity, before in baseline["peers"].items():
+        after = current["peers"][identity]
+        moved = before["index"] != after["index"]
+        require(not moved or identity in tc_relocations,
+                "TC_RETAINED_KEY_OR_REFERENCE_CHANGED")
+        metadata_changed = before["key_metadata"] != after["key_metadata"]
+        if metadata_changed:
+            mb, ma = before["key_metadata"], after["key_metadata"]
+            invariant = (before["key"] is None and after["key"] is None and
+                         all(mb[i] == ma[i] for i in (0, 2, 4)) and
+                         len(mb[3]) == len(ma[3]) == 1 and
+                         mb[3] != ma[3] and ma[3][0] < 16)
+            # All three transitions derive a different link-key epoch from
+            # the unchanged seed. Never infer an acknowledgement from bytes.
+            reroll = (identity in key_rerolls and invariant and
+                      mb[1] == ma[1] == bytes((2,)))
+            fresh = (identity in fresh_rejoins and
+                     fresh_rejoin(before, after, relocated=moved and identity in tc_relocations))
+            default = (identity in default_epochs and invariant and
+                       mb[1] == ma[1] == bytes((0xff,)))
+            require(reroll or fresh or default, "TC_RETAINED_KEY_OR_REFERENCE_CHANGED")
+            epoch_changed = True
+        else:
+            require(before["key"] == after["key"],
+                    "TC_RETAINED_KEY_OR_REFERENCE_CHANGED")
+            epoch_changed = False
+        # A seed-shift change starts a distinct derived-key counter space.
+        # Pure TC slot movement without a changed epoch retains replay floors.
+        require(epoch_changed or
+                (after["tx"] >= before["tx"] and after["rx"] >= before["rx"]),
+                "TC_PERSISTED_COUNTER_REGRESSION")
+    for identity, before in baseline["aps"].items():
+        after = current["aps"][identity]
+        require(all(after[key] == value for key, value in before.items()
+                    if key not in ("tx", "rx")), "APS_RETAINED_KEY_OR_REFERENCE_CHANGED")
+        require(after["tx"] >= before["tx"] and after["rx"] >= before["rx"],
+                "APS_PERSISTED_COUNTER_REGRESSION")
 
 
-ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN", "KEY_REROLL", "FRESH_REJOIN"})
+ACK_CLASSES = frozenset({"NEW_PEER", "ASSOC_GAIN", "KEY_REROLL", "FRESH_REJOIN", "TC_DEFAULT_EPOCH", "TC_RELOCATE"})
 
 
 def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrade=False,
@@ -480,6 +499,7 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
         materialized_addresses = 0
         acknowledged_fills = 0
         acknowledged_gains = 0
+        retired_vacant_rows = 0
         # Owner acknowledgements: the "migration authorized" path. Exact native
         # IEEE + change class, pinned in the operator package; never inferred.
         require(type(acknowledged_changes) is frozenset and
@@ -507,6 +527,16 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                 # This is comparison only: never edit either capture or NV.
                 peer = field(after, abi, 'AddrMgrEntry_t', 'extAddr')
                 old_peer = field(before, abi, 'AddrMgrEntry_t', 'extAddr')
+                # The TI storage allocator may replace an unreferenced,
+                # explicitly vacant entry with the all-FF empty sentinel.
+                # No live identity is introduced, and no other bytes of a
+                # populated entry can be ignored.
+                if (index in old['empty_addresses'] and
+                    after == b"\xff" * len(after) and
+                    index not in old['aps'] and index not in now['aps']):
+                    addresses[index] = before
+                    retired_vacant_rows += 1
+                    continue
                 if peer != old_peer and index in old['empty_addresses']:
                     user_offset, user_width = abi['structs']['AddrMgrEntry_t']['fields']['user']
                     require(user_width == 1, 'NATIVE_ABI_WIDTH_MISMATCH')
@@ -552,7 +582,21 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
             comparison = dict(now, addresses=addresses)
         key_rerolls = frozenset(p for p, c in acknowledged_changes if c == "KEY_REROLL")
         fresh_rejoins = frozenset(p for p, c in acknowledged_changes if c == "FRESH_REJOIN")
-        compare_retained(comparison, old, key_rerolls, fresh_rejoins)
+        default_epochs = frozenset(p for p, c in acknowledged_changes if c == "TC_DEFAULT_EPOCH")
+        relocations = frozenset(p for p, c in acknowledged_changes if c == "TC_RELOCATE")
+        additions = now["peers"].keys() - old["peers"].keys()
+        new_ack = frozenset(p for p, c in acknowledged_changes if c == "NEW_PEER")
+        require(additions <= new_ack, "TC_RETAINED_SET_CHANGED")
+        # Every new keyed TC peer must map to one real secure address-manager
+        # identity in the *current* snapshot. A mere package acknowledgement
+        # never creates an identity or a TC key.
+        for peer in additions:
+            matches = [row for row in now["addresses"].values()
+                       if field(row, abi, "AddrMgrEntry_t", "extAddr") == peer and
+                       number(row, abi, "AddrMgrEntry_t", "user") & 2]
+            require(len(matches) == 1, "TC_NEW_PEER_ADDRESS_MISMATCH")
+        compare_retained(comparison, old, key_rerolls, fresh_rejoins,
+                         default_epochs, relocations, frozenset(additions))
         return {"semantic_checks_passed": True, "reason_codes": [],
                 "tc_live_peers": len(now["peers"]), "aps_live_entries": len(now["aps"]),
                 "comparison_scope": ('KNOWN_R4_RUNTIME_INVENTORY_BOUND_VACANT_FILL_ONLY' if materialized_addresses else
@@ -563,6 +607,14 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                 "runtime_inventory_bound_address_fills": materialized_addresses,
                 "acknowledged_address_fills": acknowledged_fills,
                 "acknowledged_association_gains": acknowledged_gains,
+                "retired_vacant_rows": retired_vacant_rows,
+                "acknowledged_new_tc_peers": len(additions),
+                "acknowledged_tc_relocations": sum(
+                    now["peers"][p]["index"] != old["peers"][p]["index"]
+                    for p in relocations if p in now["peers"] and p in old["peers"]),
+                "acknowledged_default_epochs": sum(
+                    old["peers"].get(p, {}).get("key_metadata") != now["peers"].get(p, {}).get("key_metadata")
+                    for p in default_epochs),
                 "acknowledged_key_rerolls": sum(old["peers"].get(p, {}).get("key_metadata") !=
                                                 now["peers"].get(p, {}).get("key_metadata") for p in key_rerolls),
                 "acknowledged_fresh_rejoins": sum(old["peers"].get(p, {}).get("key_metadata") !=

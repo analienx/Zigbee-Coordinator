@@ -28,7 +28,10 @@ if A["operation"]:
 else:
     held=[p for p in ops.iterdir() if (p/"fresh-sparse-snapshot.bin").is_file() and (p/"plan.json").is_file()
           and json.loads((p/"plan.json").read_text()).get("source")==A["source"]]
-    op=max(held,key=lambda p:(p/"fresh-sparse-snapshot.bin").stat().st_mtime)
+    op=max(held,key=lambda p:(p/"fresh-sparse-snapshot.bin").stat().st_mtime,default=None)
+    if op is None:
+        print(json.dumps({"status":"NO_FRESH_NV_CAPTURE","source":A["source"]}))
+        raise SystemExit(0)
 pkg=Path(A["package"]);root=pkg/"source/firmware/slzb-06p7u/r4"
 sys.dont_write_bytecode=True
 sys.path[:0]=[str(pkg/"vendor"),str(root/"release"),str(root/"release/rom_writer"),str(root/"qualification"),str(root/"b0/tools")]
@@ -83,8 +86,10 @@ for i,b in sorted(old["addresses"].items()):
         if ua==ub: r.update(change="SHORT_ADDRESS" if short else "OTHER_BYTES",allowed=short)
         elif ub&2 and ub&1 and not ua&1 and (ua|1)==ub: r.update(change="ASSOC_RELEASE"+("+SHORT" if short else ""),allowed=True)
         else: r.update(change="FLAGS_CHANGED"+("+SHORT" if short else ""),allowed=False)
+    elif i in old["empty_addresses"] and a==b"\xff"*len(a) and i not in old["aps"] and i not in now["aps"]:
+        r.update(change="VACANT_RETIRED_ALL_FF",allowed=True)
     elif i in old["empty_addresses"]:
-        why=[k for k,ok in (("user_0_to_2",ub==0 and ua==2),("in_runtime_inventory",ea in inventory),
+        why=[k for k,ok in (("user_0_to_2",ub==0 and ua==2),("known_or_acknowledged",ea in inventory or (ea,"NEW_PEER") in ack_native),
              ("not_in_aps",i not in old["aps"] and i not in now["aps"]),
              ("unique",sum(F(x,"extAddr")==ea for x in now["addresses"].values())==1 and
                        all(F(x,"extAddr")!=ea for x in old["addresses"].values()))) if not ok]
