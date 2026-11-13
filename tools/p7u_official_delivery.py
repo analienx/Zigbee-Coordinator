@@ -63,6 +63,24 @@ def info(slug):
  try:return api("addons/"+slug+"/info")["data"]
  except Exception:return None
 a=info(O["owner"]) or {}
+cont=O.get("continued_hold")
+if cont:
+ op=Path("/share/p7u-r4-firmware-operations")/cont
+ try:
+  plan=json.loads((op/"plan.json").read_text())
+  hold=json.loads((op/"hold.json").read_text())
+  security=json.loads((op/"security-receipt.json").read_text())
+  zero=(op.is_dir() and op.name==cont and plan.get("operation_id")==cont and
+        plan.get("source")==O["firmware"] and plan.get("installed")==O["installed"] and
+        hold.get("safe_code")=="P7U_DEPLOY_HOLD_NATIVE_SECURITY" and
+        hold.get("automatic_boot") is False and hold.get("automatic_retry") is False and
+        security.get("status")=="HOLD" and
+        all(security.get(k)==0 for k in ("write_attempts","erase_attempts","compaction_attempts")) and
+        (op/"bsl-entry-intent.json").is_file() and (op/"fresh-sparse-snapshot.bin").is_file() and
+        not any((op/n).exists() for n in ("verified-write.json","boot-intent.json")))
+ except Exception:zero=False
+ add("immutable zero-write security HOLD",zero,{"operation":cont[:8],"source":O["firmware"][:12]})
+ add("owner stopped for BSL continuation",a.get("state") in ("stopped","error"),a.get("state"))
 add("owner app pinned",a.get("version")==O["version"] and a.get("boot")=="manual" and a.get("watchdog") is False and a.get("auto_update") is False,
     {k:a.get(k) for k in ("state","version","boot","watchdog","auto_update")})
 for s in ("local_p7u_r4_native_host","local_p7u_r4_fallback","local_p7u_r4_owner_inspector"):
@@ -71,12 +89,26 @@ for s in ("local_p7u_r4_native_host","local_p7u_r4_fallback","local_p7u_r4_owner
      None if b is None else {k:b.get(k) for k in ("installed","state","boot")})
 try:c=json.loads(subprocess.check_output(["docker","inspect","app_"+O["owner"]]))[0]
 except Exception:c=None
-add("owner container image",c is not None and c["Image"]==O["image"],None if c is None else {"running":c["State"]["Running"],"image":c["Image"][:19]})
+if cont:
+ try:
+  image_ids=json.loads(subprocess.check_output(["docker","image","inspect",O["image"]],timeout=20))
+  image_ok=len(image_ids)==1 and image_ids[0]["Id"]==O["image"]
+ except Exception:image_ok=False
+ add("pinned owner image retained",image_ok,{"image":O["image"][:19]})
+ add("owner cannot still run",c is None or (not c["State"]["Running"] and c["Image"]==O["image"]),
+     None if c is None else {"running":c["State"]["Running"],"image":c["Image"][:19]})
+else:
+ add("owner container image",c is not None and c["Image"]==O["image"] and c["State"]["Running"],
+     None if c is None else {"running":c["State"]["Running"],"image":c["Image"][:19]})
 tty=os.path.realpath(O["serial"])
 scan=subprocess.run(["docker","run","--rm","--pid=host","--privileged","--network","none","--entrypoint","sh",O["image"],"-c",O["scan"]],capture_output=True,text=True,timeout=90)
 holders=[l.split() for l in scan.stdout.splitlines() if len(l.split())==4 and l.split()[2]==tty]
-add("serial held only by owner",scan.returncode==0 and c is not None and holders and all(h[3]==c["Id"] for h in holders),
-    {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
+if cont:
+ add("serial quiescent for HOLD continuation",scan.returncode==0 and not holders,
+     {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
+else:
+ add("serial held only by owner",scan.returncode==0 and c is not None and holders and all(h[3]==c["Id"] for h in holders),
+     {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
 for e,want,level in ((O["boot_automation"],"off","BLOCK"),(O["recovery_automation"],"off","BLOCK"),("automation.zigbee2mqtt_mesh_communication_outage_alert","off","BLOCK"),
                      ("button.slzb_06p7u_zigbee_restart","available","BLOCK")):
  try:st=api("core/api/states/"+e)["state"]
@@ -294,7 +326,9 @@ def run_preflight(a):
     cfg = {"owner": binding.OFFICIAL_OWNER, "version": binding.OFFICIAL_OWNER_VERSION,
            "image": binding.OFFICIAL_OWNER_IMAGE, "serial": SERIAL, "scan": scan,
            "boot_automation": BOOT_AUTOMATION, "recovery_automation": RECOVERY_AUTOMATION, "previous_operation": a.previous_operation,
-           "installed": a.installed, "min": lo, "max": hi, "nv_warn": NV_WARN, "nv_block": NV_BLOCK}
+           "installed": a.installed, "firmware": a.firmware,
+           "continued_hold": a.continue_hold, "min": lo, "max": hi,
+           "nv_warn": NV_WARN, "nv_block": NV_BLOCK}
     checks += ssh_python(REMOTE_PREFLIGHT % {"cfg": json.dumps(cfg)})
     checks.append(prediction_check(Path(a.workdir), a.firmware))
     width = max(len(c["check"]) for c in checks)
@@ -328,6 +362,7 @@ def main():
     p.add_argument("value", nargs="?", help="automation: off|on")
     p.add_argument("--workdir", default=str(Path.home() / ".p7u-deliveries" / "v54-official"))
     p.add_argument("--package-run")
+    p.add_argument("--continue-hold", help="prepare: immutable zero-write security HOLD ID for guarded BSL continuation")
     p.add_argument("--authorize", help="flash: the operation id printed by prepare")
     p.add_argument("--on-hold", choices=("restore","preserve"), default="restore",
                    help="zero-write HOLD: restore prior service (default) or preserve BSL for a guarded continuation; neither retries flash")
@@ -375,7 +410,7 @@ def main():
             if rc:
                 return rc
         if "binding_pin" not in state(work):
-            rc = driver(work, "stage")
+            rc = driver(work, "stage", *(["--continue-hold", a.continue_hold] if a.continue_hold else []))
             if rc:
                 return rc
         if "operation_id" not in state(work):

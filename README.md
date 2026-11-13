@@ -1,6 +1,23 @@
 # Zigbee Coordinator
 
-> **Current state (11 November 2026):** the production coordinator is the **SMLIGHT SLZB-06P7U R1.73 / CC2652P7** over **USB to Home Assistant**, running **R4 V56** firmware under the **official Zigbee2MQTT app**. The NV read storm behind the hangs is fixed; V56 is installed but **not yet qualified**. An intermittent cold-start failure (4 of the last 11 mornings) has a likely cause and a source fix in the **V57 candidate** (branch `feat/p7u-v57`, not yet built or flashed). Read the [status](coordinators/slzb-06p7u/STATUS_2026-11-11.md), the [release notes](coordinators/slzb-06p7u/RELEASE_NOTES.md) and the [V53 reliability review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md). The firmware source and delivery tooling are on `main`, latest version only. **GitHub Actions builds and tests first; hardware operations only with explicit owner authorization.** The 20 October Ethernet/stock-firmware override is historical.
+**A reliability-engineered Zigbee ZNP firmware and delivery platform for dense, real-world meshes.** This repository investigates and fixes coordinator firmware faults rather than treating a reboot or stock-firmware rollback as proof of repair.
+
+## R4 at a glance — why it differs from stock ZNP
+
+| Engineering improvement | Value to this installation |
+|---|---|
+| **Eliminated the measured NV-read storm (V53)** | Live V56 evidence: **99.92% NV cache hits**, instead of repeatedly scanning NV for each inbound frame |
+| **Prioritized ZNP replies (V43–V50)** | Protects SRSP responsiveness when the Zigbee stack is under sustained load |
+| **Hardened persistence and security (B1/V54)** | Read-back verified NV, observable fail-closed HOLD, preserved network identity, keys and replay floors |
+| **Reduced timer/queue pressure (V52/V55)** | O(1) OSAL timer enqueue, expired-timer cleanup and larger MAC queues; **0 refused requests out of 91,708** in one V56 sample |
+| **Explained failures with evidence (V51–V57)** | Onset/heap/timer/NV/trend telemetry and MT parser-resync records, rather than guessing from Zigbee2MQTT logs alone |
+| **Guarded, reproducible deployment** | Exact-source GitHub Actions artifacts, exclusive serial ownership, protected flash sectors, immutable single-shot journals and verified MQTT service |
+
+**Important:** the original NV-read hang mechanism has been addressed, but “no hangs ever” is not a proven guarantee. The separate intermittent cold-start problem remains the subject of the V57 parser-resynchronization candidate.
+
+[**R4 vs. stock — architecture and evidence**](docs/R4_VS_STOCK.md) · [**Firmware feature matrix**](coordinators/slzb-06p7u/README.md#firmware-features) · [**Operator reliability and fail-closed continuation**](docs/P7U_OPERATOR_RELIABILITY.md) · [**Release notes**](coordinators/slzb-06p7u/RELEASE_NOTES.md)
+
+> **Current state (13 November 2026; last physically confirmed firmware V56):** the production coordinator is the **SMLIGHT SLZB-06P7U R1.73 / CC2652P7** over **USB to Home Assistant**, running **R4 V56** firmware under the **official Zigbee2MQTT app**. The NV read storm behind the hangs is fixed; V56 is installed but **not yet qualified**. An intermittent cold-start failure (4 of the last 11 mornings) has a likely cause and a source fix in the **V57 candidate** (native V57 build passed and is source-pinned; the 13 Nov operator attempt stopped at a zero-write security HOLD before installation). Read the [status](coordinators/slzb-06p7u/STATUS_2026-11-11.md), the [release notes](coordinators/slzb-06p7u/RELEASE_NOTES.md) and the [V53 reliability review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md). The installed V56 source, natively built V57 source and official-owner operator are pinned by exact Git SHAs; the repair is developed on a separate reviewed branch. `main` does not automatically deploy firmware. **GitHub Actions builds and tests first; hardware operations only with explicit owner authorization.** The 20 October Ethernet/stock-firmware override is historical.
 
 Shared firmware, migration, recovery, diagnostics and acceptance tooling for the Zigbee coordinators used by this Home Assistant / Zigbee2MQTT installation.
 
