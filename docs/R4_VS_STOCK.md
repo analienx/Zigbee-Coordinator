@@ -1,8 +1,8 @@
 # R4 on SLZB-06P7U: what changed compared with stock ZNP
 
-> **Scope:** SMLIGHT **SLZB-06P7U R1.73** with TI **CC2652P7**, not MR4U/P10 or SONOFF/MG24. R4 is a source-modified, stock-derived Z-Stack ZNP for this particular board and Zigbee2MQTT installation. This is a **technical feature comparison**, not a vendor-certified head-to-head benchmark or a promise of zero future hangs. **V57 was physically installed 13 November 2026;** first-serving proof passed, repeated cold-start acceptance remains open.
+> **Scope:** SMLIGHT **SLZB-06P7U R1.73** with TI **CC2652P7**, not MR4U/P10 or SONOFF/MG24. R4 is a source-modified, stock-derived Z-Stack ZNP for this particular board and Zigbee2MQTT installation. This is a **technical feature comparison**, not a vendor-certified head-to-head benchmark or a promise of zero future hangs. **V57 was physically installed 13 November 2026;** first-serving proof and the first observed 14 November morning startup passed. Extended/cold-start acceptance remains open.
 
-[Project home](../../README.md) · [P7U implementation](../../coordinators/slzb-06p7u/README.md) · [Release notes](../../coordinators/slzb-06p7u/RELEASE_NOTES.md) · [Delivery procedure](../../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md) · [Evidence and status](../../coordinators/slzb-06p7u/STATUS_2026-11-11.md)
+[Project home](../README.md) · [P7U implementation](../coordinators/slzb-06p7u/README.md) · [Release notes](../coordinators/slzb-06p7u/RELEASE_NOTES.md) · [Delivery procedure](../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md) · [14 Nov live field evidence](../coordinators/slzb-06p7u/STATUS_2026-11-14.md)
 
 ## Why this fork exists
 
@@ -47,6 +47,12 @@ flowchart TB
 
 **Important distinction:** V55/V56 included a device-specific dimmer experiment that did not repair the device; **V57 removes those special cases** and returns that security behavior to TI's baseline. This fork does **not** bypass Zigbee trust-center security to force a device online.
 
+## The critical reliability fix: V53 stopped repeated NV reads
+
+Under heavy traffic, Z-Stack repeatedly performed expensive persistent-NV reads (a **read storm**) on the frame-handling hot path. V53 added a bounded, guarded, invalidation-aware in-RAM read cache; V54 closes the HOLD and sensitive-seed safety gaps. This is a **source-level mechanism correction**, not a queue-size increase that merely postpones overload.
+
+**Physical confirmation:** V56 measured **99.92%** NV cache hits; V57 on 14 November measured **2,514,627 hits / 2,798 misses (99.89%)** across 1,177,678 MAC data indications, with 3.5% average stack busy and no sampled saturation. The new NV cache does not prove all future stalls impossible; it **directly addresses the previously identified NV storm**, which makes it the strongest evidence-backed improvement over the older firmware path in this installation. [Deep V53 review](../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md).
+
 ## Measurement, not marketing
 
 The 11 November 2026 V56 live evidence recorded:
@@ -61,7 +67,7 @@ The 11 November 2026 V56 live evidence recorded:
 
 Those figures are from R4 **V56**, *not* a controlled same-hardware stock-versus-R4 trial. They support a major improvement in this installation but do not establish that every possible ZNP hang has been eliminated.
 
-**Unresolved until physically measured:** the separate intermittent cold-start incident (4 of 11 mornings, as of 11 November). V57 specifically instruments and attempts to fix the suspected MT parser issue. The missing power-on stray bytes were never captured; the parser explanation is a strong replay-supported hypothesis, not proof. Record B1E8 on successive real cold starts before calling this solved.
+**New V57 physical data, 14 November:** verified single host startup (06:09:17 → 06:09:39 Prague) with no rejected first SYS_PING attempts in the inspected startup; **6 h 12 min** uptime, **32,087 valid MT frames**, **zero FCS errors**, **five runtime resyncs** and **363 discarded bytes**. The first resync occurred about five hours into the runtime, *not at boot*. First-day success narrows but does not close the previous intermittent cold-start fault. MAC request admission was **0 / 79,752 refused**, while **9,320 MAC confirmations failed** (~11.7%) and device-level route/ZCL errors persist. Read the [detailed field audit](../coordinators/slzb-06p7u/STATUS_2026-11-14.md).
 
 ## Diagnostics: why R4 is easier to investigate
 
@@ -82,7 +88,7 @@ The repo ships a dedicated **guarded delivery pipeline** rather than asking an o
 5. Read-back CRC, native boot, verified Zigbee2MQTT startup and fresh device traffic. Ambiguous writes are **never** automatically retried.
 6. Zero-write HOLD can restore service to the *unchanged* firmware; post-write failures require explicit investigation.
 
-GitHub Actions do **not** directly flash the household coordinator. The actual operation is initiated on an authorized machine using [the delivery runner](../../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md).
+GitHub Actions do **not** directly flash the household coordinator. The actual operation is initiated on an authorized machine using [the delivery runner](../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md).
 
 ## What R4 does *not* claim
 
@@ -96,13 +102,13 @@ GitHub Actions do **not** directly flash the household coordinator. The actual o
 
 | Concern | Implementation / evidence |
 |---|---|
-| Firmware composition | [R4 composite stage](../../tools/r4_b0_b4_composite_stage.py) |
-| Scheduling, NV cache and telemetry | [V50–V54 stage](../../tools/r4_v50_stack_service.py) |
-| Timer implementation | [V52 stage](../../tools/r4_v52_osal_timers.py) |
-| MT RX resync | [V57 stage](../../tools/r4_v57_npi_rx_resync.py) |
-| B1 protected NV | [B1 source tree](../../firmware/slzb-06p7u/r4/b1/) |
-| Official-owner flashing | [Delivery tool](../../tools/p7u_official_delivery.py) |
+| Firmware composition | [R4 composite stage](../tools/r4_b0_b4_composite_stage.py) |
+| Scheduling, NV cache and telemetry | [V50–V54 stage](../tools/r4_v50_stack_service.py) |
+| Timer implementation | [V52 stage](../tools/r4_v52_osal_timers.py) |
+| MT RX resync | [V57 stage, source-pinned](https://github.com/analienx/Zigbee-Coordinator/blob/eb59b6773dd0fe328c1194647c00e8a070d18a22/tools/r4_v57_npi_rx_resync.py) |
+| B1 protected NV | [B1 source tree](../firmware/slzb-06p7u/r4/b1/) |
+| Official-owner flashing | [Delivery tool](../tools/p7u_official_delivery.py) |
 | Native validation | [Native workflow](../../.github/workflows/test-r4-stock20260311-native.yml) |
-| Physical events | [P7U release notes](../../coordinators/slzb-06p7u/RELEASE_NOTES.md) |
+| Physical events | [P7U release notes](../coordinators/slzb-06p7u/RELEASE_NOTES.md) |
 
 **Maintenance rule:** update the evidence row and installed-version status after *physical verification*, not merely after a successful build or a newly pushed commit.

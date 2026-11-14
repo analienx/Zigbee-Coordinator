@@ -64,3 +64,5 @@ See [`coordinators/slzb-06p7/README.md`](../coordinators/slzb-06p7/README.md) fo
 The existing `P10_*` documentation names and `p10_*` Python/test paths are intentionally retained to preserve the finalized P10 evidence and avoid breaking working tooling and cross-references.
 
 New work should prefer explicit coordinator IDs in branch names and new top-level artifact names.
+
+- [R4 V57: 14 November live reliability audit](../coordinators/slzb-06p7u/STATUS_2026-11-14.md) — 106 devices, 57 routers, precise per-page diagnostics, parser resyncs and caveats.

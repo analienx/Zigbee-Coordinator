@@ -25,6 +25,8 @@
 
 Being on `main` is **not** qualification. The long-term acceptance gates still apply to V53–V57 and any later image.
 
+**14 Nov production audit:** [V57 live evidence: 106 devices (57 routers), 6h12m uptime, 99.89% NV cache, zero MAC-request refusals and five parser resyncs](STATUS_2026-11-14.md). The most important reliability correction is **V53's NV-read storm fix**; independent long-duration comparison with stock is still outstanding.
+
 ## Firmware features
 
 What the R4 image does beyond TI's stock ZNP, by layer. Each layer has a compile-and-mutate harness; being listed is not qualification.
