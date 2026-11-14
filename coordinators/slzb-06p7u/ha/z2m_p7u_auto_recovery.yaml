@@ -1,11 +1,16 @@
 - id: z2m_p7u_auto_recovery
   alias: Zigbee2MQTT - P7U auto recovery (3 attempts)
   description: >-
-    When the Zigbee2MQTT app has been stopped for 2 minutes (adapter disconnect,
+    When the Zigbee2MQTT app has been stopped for 1 minute (adapter disconnect,
     "SRSP - SYS - ping" at start) outside a Home Assistant start, a shutdown or a
     firmware window: prove an MQTT round trip, then up to 3 attempts - 1) plain
     app start, 2-3) SLZB radio-only Zigbee restart with Zigbee2MQTT stopped, then
-    a plain start. Never BSL, flash, NV or ESP restart. A running app with an
+    a plain start. A start that exits is not waited out. After an SLZB power-on
+    the radio can stay silent until a radio reset (3 Nov 2026: 9 min until the
+    first press, then READY in 37 s), and the SLZB integration reconnects only
+    every 600 s after an Ethernet outage, so an unavailable restart button is
+    first brought back by reloading that config entry. Never BSL, flash, NV or
+    ESP restart. A running app with an
     offline bridge (possible hang) is only notified: use HANG_RECOVERY_RUNBOOK.
     Turn this automation off for P7U flashing (p7u_official_delivery.py does).
   mode: single
@@ -14,7 +19,7 @@
     - trigger: state
       entity_id: binary_sensor.zigbee2mqtt_running
       to: "off"
-      for: "00:02:00"
+      for: "00:01:00"
       id: app_stopped
     - trigger: state
       entity_id: binary_sensor.zigbee2mqtt_bridge_online
@@ -92,6 +97,19 @@
               - if:
                   - condition: template
                     value_template: >-
+                      {{ states('button.slzb_06p7u_zigbee_restart') in ['unavailable', 'unknown'] }}
+                then:
+                  - action: homeassistant.reload_config_entry
+                    continue_on_error: true
+                    data:
+                      entry_id: 01M5N792N9YAY9BFQT972WPQ3J
+                  - wait_template: >-
+                      {{ states('button.slzb_06p7u_zigbee_restart') not in ['unavailable', 'unknown'] }}
+                    timeout: "00:01:30"
+                    continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: >-
                       {{ is_state('binary_sensor.zigbee2mqtt_running', 'off') and
                          states('button.slzb_06p7u_zigbee_restart') not in ['unavailable', 'unknown'] }}
                 then:
@@ -108,7 +126,12 @@
                 continue_on_error: true
                 data:
                   app: 45df7312_zigbee2mqtt
-          - wait_template: "{{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') }}"
+          # A failed start exits after about 20 s (SYS ping); a good one is
+          # online after about 35 s. Do not wait 3 minutes on an exited app.
+          - delay: "00:00:20"
+          - wait_template: >-
+              {{ is_state('binary_sensor.zigbee2mqtt_bridge_online', 'on') or
+                 is_state('binary_sensor.zigbee2mqtt_running', 'off') }}
             timeout: "00:03:00"
             continue_on_timeout: true
           - if:

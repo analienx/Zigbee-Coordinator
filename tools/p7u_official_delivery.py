@@ -21,7 +21,7 @@ delivery is a handful of commands. It adds no new radio, NV or flash path:
               TTY quiescence proof -> B1Q1 queries only -> Z2M start (one
               bounded retry) -> automations on. No reset, BSL, NV or flash.
 
-Defaults pin the V54 delivery over the installed V53 operation.
+Defaults pin the V57 delivery over the installed V56 operation.
 """
 import argparse
 import json
@@ -37,10 +37,10 @@ import p7u_paired_binding as binding  # noqa: E402
 
 REPO = "analienx/Zigbee-Coordinator"
 DRIVER = ROOT / "tools" / "p7u_ha_flash_driver.py"
-DEFAULTS = {"firmware": "20a2474a67c1d420b6614b3fcb2f7ed543b1420e",
-            "installed": "8ec1439786e3e98151d2796e6797675bb9ef5965",
-            "previous_operation": "b66de81f093ee1556fc870831e10490c",
-            "native_run": "41284426604"}
+DEFAULTS = {"firmware": "eb59b6773dd0fe328c1194647c00e8a070d18a22",
+            "installed": "08804f2946746104215d3db7d36092706a0dfcad",
+            "previous_operation": "d86dc87d89f0058ea9ce28e0c816f16f",
+            "native_run": "43065927955"}
 BOOT_AUTOMATION = "automation.boot_deterministic_emqx_then_zigbee2mqtt"
 # Restarts Zigbee2MQTT / resets the radio on its own: must be off while the operator owns the radio.
 RECOVERY_AUTOMATION = "automation.zigbee2mqtt_p7u_auto_recovery_3_attempts"
@@ -63,6 +63,24 @@ def info(slug):
  try:return api("addons/"+slug+"/info")["data"]
  except Exception:return None
 a=info(O["owner"]) or {}
+cont=O.get("continued_hold")
+if cont:
+ op=Path("/share/p7u-r4-firmware-operations")/cont
+ try:
+  plan=json.loads((op/"plan.json").read_text())
+  hold=json.loads((op/"hold.json").read_text())
+  security=json.loads((op/"security-receipt.json").read_text())
+  zero=(op.is_dir() and op.name==cont and plan.get("operation_id")==cont and
+        plan.get("source")==O["firmware"] and plan.get("installed")==O["installed"] and
+        hold.get("safe_code")=="P7U_DEPLOY_HOLD_NATIVE_SECURITY" and
+        hold.get("automatic_boot") is False and hold.get("automatic_retry") is False and
+        security.get("status")=="HOLD" and
+        all(security.get(k)==0 for k in ("write_attempts","erase_attempts","compaction_attempts")) and
+        (op/"bsl-entry-intent.json").is_file() and (op/"fresh-sparse-snapshot.bin").is_file() and
+        not any((op/n).exists() for n in ("verified-write.json","boot-intent.json")))
+ except Exception:zero=False
+ add("immutable zero-write security HOLD",zero,{"operation":cont[:8],"source":O["firmware"][:12]})
+ add("owner stopped for BSL continuation",a.get("state") in ("stopped","error"),a.get("state"))
 add("owner app pinned",a.get("version")==O["version"] and a.get("boot")=="manual" and a.get("watchdog") is False and a.get("auto_update") is False,
     {k:a.get(k) for k in ("state","version","boot","watchdog","auto_update")})
 for s in ("local_p7u_r4_native_host","local_p7u_r4_fallback","local_p7u_r4_owner_inspector"):
@@ -71,16 +89,33 @@ for s in ("local_p7u_r4_native_host","local_p7u_r4_fallback","local_p7u_r4_owner
      None if b is None else {k:b.get(k) for k in ("installed","state","boot")})
 try:c=json.loads(subprocess.check_output(["docker","inspect","app_"+O["owner"]]))[0]
 except Exception:c=None
-add("owner container image",c is not None and c["Image"]==O["image"],None if c is None else {"running":c["State"]["Running"],"image":c["Image"][:19]})
+if cont:
+ try:
+  image_ids=json.loads(subprocess.check_output(["docker","image","inspect",O["image"]],timeout=20))
+  image_ok=len(image_ids)==1 and image_ids[0]["Id"]==O["image"]
+ except Exception:image_ok=False
+ add("pinned owner image retained",image_ok,{"image":O["image"][:19]})
+ add("owner cannot still run",c is None or (not c["State"]["Running"] and c["Image"]==O["image"]),
+     None if c is None else {"running":c["State"]["Running"],"image":c["Image"][:19]})
+else:
+ add("owner container image",c is not None and c["Image"]==O["image"] and c["State"]["Running"],
+     None if c is None else {"running":c["State"]["Running"],"image":c["Image"][:19]})
 tty=os.path.realpath(O["serial"])
 scan=subprocess.run(["docker","run","--rm","--pid=host","--privileged","--network","none","--entrypoint","sh",O["image"],"-c",O["scan"]],capture_output=True,text=True,timeout=90)
 holders=[l.split() for l in scan.stdout.splitlines() if len(l.split())==4 and l.split()[2]==tty]
-add("serial held only by owner",scan.returncode==0 and c is not None and holders and all(h[3]==c["Id"] for h in holders),
-    {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
+if cont:
+ add("serial quiescent for HOLD continuation",scan.returncode==0 and not holders,
+     {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
+else:
+ add("serial held only by owner",scan.returncode==0 and c is not None and holders and all(h[3]==c["Id"] for h in holders),
+     {"tty":tty,"holders":[(h[0],h[1],h[3][:12]) for h in holders]})
 for e,want,level in ((O["boot_automation"],"off","BLOCK"),(O["recovery_automation"],"off","BLOCK"),("automation.zigbee2mqtt_mesh_communication_outage_alert","off","BLOCK"),
                      ("button.slzb_06p7u_zigbee_restart","available","BLOCK")):
  try:st=api("core/api/states/"+e)["state"]
  except Exception as x:st="ERROR "+type(x).__name__
+ # A real HA button often reports 'unknown' until first pressed. Its
+ # entity and service remain available; only 'unavailable' or lookup
+ # errors mean the restart action is not usable.
  add(e+" "+want,st!="unavailable" and not st.startswith("ERROR") if want=="available" else st==want,st,level)
 op=Path("/share/p7u-r4-firmware-operations")/O["previous_operation"]
 try:
@@ -146,7 +181,9 @@ running=subprocess.run(["docker","inspect","-f","{{.State.Running}}",c],capture_
 need(not running,"OWNER_ALREADY_RUNNING")
 bsl=(op/"bsl-entry-intent.json").exists()
 if bsl:
- need(api("states/"+O["button"])["state"] not in ("unavailable","unknown"),"RADIO_RESTART_UNAVAILABLE")
+ button=api("states/"+O["button"])
+ need(button.get("entity_id")==O["button"] and button.get("state")!="unavailable" and
+      isinstance(button.get("attributes"),dict),"RADIO_RESTART_UNAVAILABLE")
  api("services/button/press",{"entity_id":O["button"]});time.sleep(15)
 subprocess.run(["ha","apps","start",O["owner"]],capture_output=True,timeout=180)
 ok=False
@@ -168,7 +205,7 @@ def predict_security(work, firmware):
     """
     st = state(work)
     if "package_dir" not in st:
-        return None, "no staged package yet"
+        return None, "not yet staged; no fresh NV capture to compare"
     sys.path.insert(0, str(ROOT / "tools"))
     import p7u_addrmgr_diff as diff
     args = {"ops": diff.ROOT_OPS, "operation": None, "source": firmware, "package": st["package_dir"],
@@ -178,8 +215,11 @@ def predict_security(work, firmware):
                          capture_output=True, text=True, timeout=300)
     if run.returncode:
         tail = (run.stderr.strip().splitlines() or ["?"])[-1]
-        return None, "prediction unavailable (%s)" % tail[:160]
-    return json.loads(run.stdout.strip().splitlines()[-1]), None
+        return None, "read-only prediction unavailable (%s)" % tail[:160]
+    result = json.loads(run.stdout.strip().splitlines()[-1])
+    if result.get("status") == "NO_FRESH_NV_CAPTURE":
+        return None, "no fresh NV capture yet; native security admission runs before the first write"
+    return result, None
 
 
 def prediction_check(work, firmware):
@@ -286,14 +326,19 @@ def run_preflight(a):
     cfg = {"owner": binding.OFFICIAL_OWNER, "version": binding.OFFICIAL_OWNER_VERSION,
            "image": binding.OFFICIAL_OWNER_IMAGE, "serial": SERIAL, "scan": scan,
            "boot_automation": BOOT_AUTOMATION, "recovery_automation": RECOVERY_AUTOMATION, "previous_operation": a.previous_operation,
-           "installed": a.installed, "min": lo, "max": hi, "nv_warn": NV_WARN, "nv_block": NV_BLOCK}
+           "installed": a.installed, "firmware": a.firmware,
+           "continued_hold": a.continue_hold, "min": lo, "max": hi,
+           "nv_warn": NV_WARN, "nv_block": NV_BLOCK}
     checks += ssh_python(REMOTE_PREFLIGHT % {"cfg": json.dumps(cfg)})
     checks.append(prediction_check(Path(a.workdir), a.firmware))
     width = max(len(c["check"]) for c in checks)
     for c in checks:
         print("%-5s  %-*s  %s" % (c["result"], width, c["check"], json.dumps(c["detail"])))
     blocks = [c["check"] for c in checks if c["result"] == "BLOCK"]
-    print("\nPREFLIGHT " + ("READY" if not blocks else "BLOCKED: " + "; ".join(blocks)))
+    warnings = [c["check"] for c in checks if c["result"] == "WARN"]
+    summary = "BLOCKED: " + "; ".join(blocks) if blocks else (
+        "READY_WITH_WARNINGS: " + "; ".join(warnings) if warnings else "READY")
+    print("\nPREFLIGHT " + summary)
     return 1 if blocks else 0
 
 
@@ -317,7 +362,10 @@ def main():
     p.add_argument("value", nargs="?", help="automation: off|on")
     p.add_argument("--workdir", default=str(Path.home() / ".p7u-deliveries" / "v54-official"))
     p.add_argument("--package-run")
+    p.add_argument("--continue-hold", help="prepare: immutable zero-write security HOLD ID for guarded BSL continuation")
     p.add_argument("--authorize", help="flash: the operation id printed by prepare")
+    p.add_argument("--on-hold", choices=("restore","preserve"), default="restore",
+                   help="zero-write HOLD: restore prior service (default) or preserve BSL for a guarded continuation; neither retries flash")
     p.add_argument("--stop-z2m", action="store_true",
                    help="hang: confirm the ~1 minute Zigbee2MQTT stop for the read-only capture")
     for k, v in DEFAULTS.items():
@@ -362,7 +410,7 @@ def main():
             if rc:
                 return rc
         if "binding_pin" not in state(work):
-            rc = driver(work, "stage")
+            rc = driver(work, "stage", *(["--continue-hold", a.continue_hold] if a.continue_hold else []))
             if rc:
                 return rc
         if "operation_id" not in state(work):
@@ -387,6 +435,11 @@ def main():
                 rc = driver(work, phase)
                 if rc:
                     print("\nSTOPPED after %s rc=%d." % (phase, rc))
+                    if (phase == "deploy" and (state(work).get("deploy_result") or {}).get("status") == "HOLD"
+                            and a.on_hold == "preserve"):
+                        print("ZERO-WRITE HOLD preserved for the operator's immutable continuation; "
+                              "do not repeat this operation, use a NEW workdir with --continue-hold.")
+                        return rc
                     if phase == "deploy" and (state(work).get("deploy_result") or {}).get("status") == "HOLD":
                         r = restore_after_hold(work)
                         print("AUTO-RESTORE " + json.dumps(r))

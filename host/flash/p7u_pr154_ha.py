@@ -197,7 +197,10 @@ def runtime_priority_qualification(c):
                       '250441cd17c55e25c78d97e041f056574355ade7',
                       'a70ae24ff45e708e13969cd341c9ecb494d1570f',
                       '8ec1439786e3e98151d2796e6797675bb9ef5965',
-                      '20a2474a67c1d420b6614b3fcb2f7ed543b1420e'): return None
+                      '20a2474a67c1d420b6614b3fcb2f7ed543b1420e',
+                      'bb9720a7d502f80e28bdec683e625c754bb5cd1c',
+                      '08804f2946746104215d3db7d36092706a0dfcad',
+                      'eb59b6773dd0fe328c1194647c00e8a070d18a22'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -837,9 +840,15 @@ async def deploy(package, pin, ha):
         # sector 0x32000: still plain application flash far below NV 0xA4000.
         # V53 (NV read cache) stays inside that same exact 0x34000 envelope.
         # V54 (V53 + cache HOLD/secret guard) keeps the same 0x34000 envelope.
+        # V55 (V54 + TC counter restore, MAC queue sizes) keeps it too.
+        # V56 (V55 + one-device TC key epoch restore) keeps it too.
+        # V57 (V56 - dimmer code + MT frame parser RX resync) keeps it too.
         app_end = 0x34000 if SOURCE in ('a70ae24ff45e708e13969cd341c9ecb494d1570f',
                                         '8ec1439786e3e98151d2796e6797675bb9ef5965',
-                                        '20a2474a67c1d420b6614b3fcb2f7ed543b1420e') else (
+                                        '20a2474a67c1d420b6614b3fcb2f7ed543b1420e',
+                                        'bb9720a7d502f80e28bdec683e625c754bb5cd1c',
+                                        '08804f2946746104215d3db7d36092706a0dfcad',
+                                        'eb59b6773dd0fe328c1194647c00e8a070d18a22') else (
             0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',
@@ -989,6 +998,12 @@ def resume_pristine(znp, root, owner, evidence, *, source=None):
         raw = znp.request(1, 241, Q9, deadline=deadline)
         evidence('B1E7', raw, dict(znp.history[-1]))
         need(decode_e7(raw, source)['misses'] > 0, 'STARTUP_NV_CACHE_EVIDENCE_NOT_PRISTINE')
+    from p7u_r4_startup_observer import Q10, rx_frame_evidence_supported
+    if rx_frame_evidence_supported(source):
+        # V57 B1E8: recorded before the startup request (what the parser
+        # discarded around this boot). Evidence only, never a gate.
+        raw = znp.request(1, 241, Q10, deadline=deadline)
+        evidence('B1E8', raw, dict(znp.history[-1]))
     def legacy(item):
         raw = znp.request(1, 8, item.to_bytes(2, 'little')+bytes(1), deadline=deadline)
         need(len(raw) >= 2 and raw[0] == 0 and len(raw) == raw[1]+2, 'STARTUP_NV_READ')

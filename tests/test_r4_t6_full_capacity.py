@@ -44,13 +44,43 @@ def native_symbols():
     return symbols
 
 
+class MacQueueStageTests(unittest.TestCase):
+    """V55: TI's pinned 5/8/5 MAC queue defines are rewritten in place, once."""
+    TI_OPTS = ("-DMAC_CFG_APP_PENDING_QUEUE=TRUE\n-DMAC_CFG_TX_DATA_MAX=5\n"
+               "-DMAC_CFG_TX_MAX=8\n-DMAC_CFG_RX_MAX=5\n\n-DOSAL_NV_EXTENDED\n")
+
+    def stage(self, text):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            opts = Path(temporary) / "Stack" / "Config" / "znp_cnf.opts"
+            opts.parent.mkdir(parents=True)
+            routing = "".join(f"-D{k}={v}\n" for k, v in capacity.ROUTING.items())
+            opts.write_text(text + routing)
+            report = capacity.stage_opts(opts, capacity.full.DEFAULT_PROFILE, Path(temporary) / "r.json")
+            return opts.read_text(), report
+
+    def test_ti_defaults_become_v55_queues_exactly_once(self):
+        result, report = self.stage(self.TI_OPTS)
+        found = capacity.parse_defines(result)
+        for name, value in capacity.MAC_QUEUES.items():
+            self.assertEqual(found[name], [value])
+        self.assertEqual(report["mac_queues"], capacity.MAC_QUEUES)
+        self.assertIn("-DMAC_CFG_APP_PENDING_QUEUE=TRUE", result)
+
+    def test_unexpected_or_duplicate_ti_queue_defines_are_refused(self):
+        for text in (self.TI_OPTS.replace("TX_DATA_MAX=5", "TX_DATA_MAX=6"),
+                     self.TI_OPTS + "-DMAC_CFG_RX_MAX=5\n",
+                     self.TI_OPTS.replace("-DMAC_CFG_TX_MAX=8\n", "")):
+            with self.assertRaisesRegex(ValueError, "TI_MAC_QUEUE_DEFINE_NOT_PINNED"):
+                self.stage(text)
+
+
 class FullCapacityAuditTests(unittest.TestCase):
     def audit(self, symbols, *, aps_define=3):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             opts = root / "znp_cnf.opts"
             defines = {**capacity.ROUTING, **capacity.DEFINES,
-                       **capacity.NV_FLASH_SAFETY,
+                       **capacity.NV_FLASH_SAFETY, **capacity.MAC_QUEUES,
                        "ZDSECMGR_DEVICE_MAX": aps_define}
             opts.write_text("".join(f"-D{name}={value}\n"
                                     for name, value in defines.items()))
@@ -61,6 +91,7 @@ class FullCapacityAuditTests(unittest.TestCase):
                 "result_sha256": capacity.digest(opts.read_bytes()),
                 "new_compiler_defines": capacity.DEFINES,
                 "nvocmp_brownout_flash_guard": capacity.NV_FLASH_SAFETY,
+                "mac_queues": capacity.MAC_QUEUES,
             }
             opts_receipt = root / "opts.json"
             opts_receipt.write_text(json.dumps(admitted))

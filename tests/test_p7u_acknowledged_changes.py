@@ -106,10 +106,115 @@ class AddressGate(unittest.TestCase):
         r = self.tc_gate(self.tc(3), self.tc(9), frozenset({(OTHER, "KEY_REROLL")}))
         self.assertFalse(r["semantic_checks_passed"])
 
+    def test_fresh_rejoin_only_with_acknowledgement_and_only_ti_reset(self):
+        # VERIFIED -> DEFAULT (0xff), SeedShift + 1, counters restarted.
+        before, after = self.tc(11, tx=269480145), self.tc(12, attrs=0xff, tx=31)
+        self.assertEqual(self.tc_gate(before, after, frozenset())["reason_codes"],
+                         ["TC_RETAINED_KEY_OR_REFERENCE_CHANGED"])
+        r = self.tc_gate(before, after, frozenset({(KNOWN, "FRESH_REJOIN")}))
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_fresh_rejoins"], 1)
+        # SeedShift wraps modulo 16; several reset/re-verify cycles between
+        # captures (live KitchenSocketLeft: 13 -> 2) are still a fresh rejoin.
+        for shifted in (self.tc(0, attrs=0xff, tx=0), self.tc(2, attrs=0xff, tx=41)):
+            self.assertTrue(self.tc_gate(self.tc(13) if shifted["key_metadata"][3] == bytes((2,)) else self.tc(15),
+                                         shifted, frozenset({(KNOWN, "FRESH_REJOIN")}))["semantic_checks_passed"])
+        for wrong in (self.tc(11, attrs=0xff), self.tc(12, attrs=2),
+                      self.tc(12, attrs=1), self.tc(12, attrs=0xff, index=8),
+                      self.tc(12, attrs=0xff, ktype=1), self.tc(12, attrs=0xff, ic=1)):
+            r = self.tc_gate(before, wrong, frozenset({(KNOWN, "FRESH_REJOIN")}))
+            self.assertFalse(r["semantic_checks_passed"], wrong)
+        # Only a VERIFIED key is reset by TI; another device's ack does not apply.
+        r = self.tc_gate(self.tc(11, attrs=0xff), self.tc(12, attrs=0xff), frozenset({(KNOWN, "FRESH_REJOIN")}))
+        self.assertFalse(r["semantic_checks_passed"])
+        r = self.tc_gate(before, after, frozenset({(OTHER, "FRESH_REJOIN")}))
+        self.assertFalse(r["semantic_checks_passed"])
+        # A KEY_REROLL acknowledgement does not cover a reset to the default key.
+        r = self.tc_gate(before, after, frozenset({(KNOWN, "KEY_REROLL")}))
+        self.assertFalse(r["semantic_checks_passed"])
+        self.assertIn("FRESH_REJOIN", pb.ACK_CLASSES)
+        # A flapping device acknowledged for both classes passes in either state.
+        both = frozenset({(KNOWN, "FRESH_REJOIN"), (KNOWN, "KEY_REROLL")})
+        self.assertTrue(self.tc_gate(before, after, both)["semantic_checks_passed"])
+        self.assertTrue(self.tc_gate(before, self.tc(9, tx=3), both)["semantic_checks_passed"])
+        self.assertFalse(self.tc_gate(before, self.tc(12, attrs=0xff, ktype=1), both)["semantic_checks_passed"])
+
     def test_malformed_acknowledgements_fail_closed(self):
         for acks in (frozenset({(KNOWN, "ANYTHING")}), frozenset({(bytes(8), "NEW_PEER")}), {(KNOWN, "NEW_PEER")}):
             r = self.run_gate({1: row(2, 1, KNOWN)}, {1: row(2, 1, KNOWN)}, [], [], acks=acks)
             self.assertEqual(r["reason_codes"], ["ACKNOWLEDGED_CHANGES_INVALID"])
+
+
+    def test_all_ff_vacant_capacity_is_not_a_new_peer(self):
+        before = {108: EMPTY}
+        after = {108: bytes([255]) * len(EMPTY)}
+        r = self.run_gate(before, after, [108], [108])
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["retired_vacant_rows"], 1)
+        # An apparently vacant row containing a nonempty payload must hold.
+        bad = bytearray(after[108]); bad[-1] = 1
+        self.assertFalse(self.run_gate(before, {108: bytes(bad)}, [108], [108])["semantic_checks_passed"])
+
+    def test_default_key_epoch_needs_exact_ieee_ack(self):
+        prior = self.tc(5, attrs=0xff, tx=300)
+        updated = self.tc(8, attrs=0xff, tx=2)
+        self.assertFalse(self.tc_gate(prior, updated, frozenset())["semantic_checks_passed"])
+        allow = frozenset({(KNOWN, "TC_DEFAULT_EPOCH")})
+        r = self.tc_gate(prior, updated, allow)
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_default_epochs"], 1)
+        self.assertFalse(self.tc_gate(prior, updated, frozenset({(OTHER, "TC_DEFAULT_EPOCH")}))["semantic_checks_passed"])
+        self.assertFalse(self.tc_gate(prior, self.tc(5, attrs=0xff, tx=1), allow)["semantic_checks_passed"])
+        self.assertFalse(self.tc_gate(prior, self.tc(8, attrs=1, tx=2), allow)["semantic_checks_passed"])
+
+    def test_verified_key_reroll_with_tc_slot_move_requires_both_acks(self):
+        prior = self.tc(7, attrs=2, index=79, tx=1000)
+        updated = self.tc(8, attrs=2, index=114, tx=0)
+        reroll = (KNOWN, "KEY_REROLL")
+        move = (KNOWN, "TC_RELOCATE")
+        for acks in (frozenset(), frozenset({reroll}), frozenset({move}),
+                     frozenset({reroll, (OTHER, "TC_RELOCATE")})):
+            self.assertFalse(self.tc_gate(prior, updated, acks)["semantic_checks_passed"], acks)
+        r = self.tc_gate(prior, updated, frozenset({reroll, move}))
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_tc_relocations"], 1)
+        self.assertFalse(self.tc_gate(prior, self.tc(8, attrs=1, index=114, tx=0),
+                                      frozenset({reroll, move}))["semantic_checks_passed"])
+
+    def test_plain_tc_slot_move_must_preserve_counters_and_metadata(self):
+        prior = self.tc(2, attrs=2, index=79, tx=500)
+        moved = self.tc(2, attrs=2, index=114, tx=501)
+        self.assertTrue(self.tc_gate(prior, moved,
+                                     frozenset({(KNOWN, "TC_RELOCATE")}))["semantic_checks_passed"])
+        bad = self.tc(2, attrs=2, index=114, tx=0)
+        self.assertFalse(self.tc_gate(prior, bad, frozenset({(KNOWN, "TC_RELOCATE")}))["semantic_checks_passed"])
+
+    def test_new_tc_peer_requires_new_peer_ack_and_matching_address(self):
+        old = state({0: EMPTY}, {0})
+        updated = state({0: row(2, 0x3333, KNOWN)}, set())
+        updated["peers"] = {KNOWN: self.tc(0, attrs=0xff)}
+        def gate(cur, acks):
+            states = {"old": old, "now": cur}
+            with patch.object(sec, "validate_abi", lambda abi: None),                  patch.object(sec, "inspect_state", lambda records, abi: states[records]):
+                return sec.evaluate_records("now", "old", ABI, runtime_upgrade=True,
+                    runtime_inventory_peers=frozenset(), acknowledged_changes=acks)
+        self.assertFalse(gate(updated, frozenset())["semantic_checks_passed"])
+        r = gate(updated, frozenset({(KNOWN, "NEW_PEER")}))
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_new_tc_peers"], 1)
+        wrong = state({0: row(2, 0x3333, OTHER)}, set())
+        wrong["peers"] = dict(updated["peers"])
+        self.assertFalse(gate(wrong, frozenset({(KNOWN, "NEW_PEER"), (OTHER, "NEW_PEER")}))["semantic_checks_passed"])
+
+    def test_tc_remove_stays_forbidden_even_with_approvals(self):
+        prior = self.tc(2, attrs=2, index=79, tx=50)
+        old = state({0: row(2, 0x3333, KNOWN)}, set())
+        now = state({0: row(2, 0x3333, KNOWN)}, set())
+        old["peers"] = {KNOWN: prior}
+        with patch.object(sec, "validate_abi", lambda abi: None),              patch.object(sec, "inspect_state", lambda records, abi: {"old":old,"now":now}[records]):
+            result = sec.evaluate_records("now","old",ABI,runtime_upgrade=True,
+                acknowledged_changes=frozenset({(KNOWN,"NEW_PEER"),(KNOWN,"TC_RELOCATE")}))
+        self.assertEqual(result["reason_codes"], ["TC_RETAINED_SET_CHANGED"])
 
 
 def backup(peers):

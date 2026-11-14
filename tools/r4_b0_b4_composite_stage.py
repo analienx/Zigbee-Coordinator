@@ -32,7 +32,8 @@ STACK="source/ti/zstack/startup/zstackstartup.c"
 ZMAC="source/ti/zstack/zmac/f8w/zmac.c"
 ZMAC_CB="source/ti/zstack/zmac/f8w/zmac_cb.c"
 TIMERS="source/ti/ti154stack/common/osal_port/osal_port_posix/osal_port_timers.c"
-COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO,ZMAC,ZMAC_CB,TIMERS)
+FRAME="source/ti/zstack/npi/npi_frame_mt.c"
+COMPOSITE_WRITES=(ZDO,NVO,TASK,UART,SYS,TL,CLIENT,MT,STACK,MTZDO,ZMAC,ZMAC_CB,TIMERS,FRAME)
 
 def outside_write_scope(sdk):
     """Fingerprint all preexisting SDK changes outside this stage's allowlist."""
@@ -367,6 +368,18 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     v52_timers_c=exercise_v52_timers(sdk)
     if v52_timers_c['status'] != 'PASS':
         raise ValueError('V52_TIMERS_ACTUAL_C_FAILED')
+    # V57: TI's MT frame parser waits without limit for LEN+3 bytes after any
+    # 0xFE, so one stray SOF on the RX line swallows the host's next frames
+    # (cold-start SYS_PING failures, 1/2/10/11 Nov 2026). The parser now drops
+    # a stale partial frame after an idle gap, refuses impossible lengths and
+    # reports what it discarded as B1E8; pristine TI preimage only. The V50
+    # stage above already emitted the arrival hook and the page6 query.
+    from r4_v57_npi_rx_resync import apply as apply_v57_rx
+    v57_rx=apply_v57_rx(sdk)
+    from r4_v57_npi_rx_resync_harness import exercise as exercise_v57_rx
+    v57_rx_c=exercise_v57_rx(sdk)
+    if v57_rx_c['status'] != 'PASS' or v57_rx_c['frame_sha256'] != v57_rx['modified_sha256']:
+        raise ValueError('V57_NPI_RX_ACTUAL_C_FAILED')
 
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
@@ -417,6 +430,10 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     beforehash[TIMERS]=v52_timers['before_sha256']
     if afterhash[TIMERS] != v52_timers['modified_sha256']:
         raise ValueError('V52_TIMERS_FINAL_SOURCE_NOT_BOUND')
+    afterhash[FRAME]=hashlib.sha256((sdk/FRAME).read_bytes()).hexdigest()
+    beforehash[FRAME]=v57_rx['before_sha256']
+    if afterhash[FRAME] != v57_rx['modified_sha256']:
+        raise ValueError('V57_NPI_RX_FINAL_SOURCE_NOT_BOUND')
     if afterhash[SYS] != owned_stage['modified_sha256'][SYS]:
         raise ValueError('V50_SYS_UNEXPECTED_SOURCE_DRIFT')
     for name in (TASK,SYS):
@@ -443,6 +460,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
             ("modified_npi_tl_liveness_sha256",TL,afterhash[TL]),
             ("modified_zstack_dispatch_stage_sha256",STACK,afterhash[STACK]),
             ("modified_osal_port_timers_sha256",TIMERS,afterhash[TIMERS]),
+            ("modified_npi_frame_resync_sha256",FRAME,afterhash[FRAME]),
             ("v6_clock_header_sha256","kernel/tirtos7/packages/ti/sysbios/knl/Clock.h",
              owned_stage['provider_sha256']['kernel/tirtos7/packages/ti/sysbios/knl/Clock.h']),
             ("v6_clock_source_sha256","kernel/tirtos7/packages/ti/sysbios/knl/Clock.c",
@@ -470,7 +488,7 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for function in ("B4_V50_StackSnapshot","B4_V50_MacDataReqEnter",
                      "B4_V50_MacDataReqDone","B4_V50_MacEvent","B4_V51_OnsetSnapshot",
                      "B4_V51_TrendSnapshot","B4_V52_InflightSnapshot","B4_V52_TimerSnapshot","B4_V53_NvCacheSnapshot",
-                     "B4_V52_TimerProbe"):
+                     "B4_V52_TimerProbe","B4_V57_RxArrived","B4_V57_RxFrameSnapshot"):
         if function not in required:required.append(function)
     for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
                      'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
@@ -516,6 +534,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "v50_stack_service_actual_c":v50_c,
         "v52_osal_timers":v52_timers,
         "v52_osal_timers_actual_c":v52_timers_c,
+        "v57_npi_rx_resync":v57_rx,
+        "v57_npi_rx_resync_actual_c":v57_rx_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,

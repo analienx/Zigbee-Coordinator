@@ -75,6 +75,49 @@ class Runner(unittest.TestCase):
              patch.object(runner.time, "sleep"):
             self.assertFalse(runner.set_window_automations(self.work, "off"))
 
+    def test_preserve_zero_write_hold_never_autorestarts_radio(self):
+        operation = "a" * 32
+        (self.work / "state.json").write_text(json.dumps({"operation_id": operation, "plan_pin": "f" * 64}))
+
+        def attempted(work, phase, *arguments):
+            self.assertEqual(phase, "deploy")
+            (self.work / "state.json").write_text(json.dumps({
+                "operation_id": operation, "deploy_result": {"status": "HOLD",
+                    "reason": "P7U_DEPLOY_HOLD_NATIVE_SECURITY"}}))
+            return 1
+
+        with patch.object(runner, "driver", side_effect=attempted) as drv, \
+             patch.object(runner, "restore_after_hold") as restore, \
+             patch.object(runner, "set_window_automations") as auto:
+            self.assertEqual(self.main("flash", "--authorize", operation,
+                                       "--on-hold", "preserve"), 1)
+            drv.assert_called_once()
+            restore.assert_not_called()
+            auto.assert_not_called()
+
+    def test_preflight_carries_explicit_held_operation_and_checks_pins(self):
+        from argparse import Namespace
+        fw = runner.DEFAULTS["firmware"]
+        hold_op = "a" * 32
+        a = Namespace(firmware=fw, installed=runner.DEFAULTS["installed"],
+                      previous_operation=runner.DEFAULTS["previous_operation"],
+                      native_run=runner.DEFAULTS["native_run"], package_run="123456",
+                      continue_hold=hold_op, workdir=str(self.work))
+        def gh(run):
+            if run == a.native_run:
+                return {"head_sha": fw, "conclusion": "success",
+                        "path": ".github/workflows/test-r4-stock20260311-native.yml"}
+            return {"conclusion": "success", "event": "workflow_dispatch",
+                    "path": ".github/workflows/package-p7u-paired-operator.yml"}
+        with patch.object(runner, "gh_run", side_effect=gh), \
+             patch.object(runner, "ssh_python", return_value=[{"check": "immutable zero-write security HOLD",
+                 "result": "PASS", "detail": {"operation": hold_op[:8]}}]) as remote, \
+             patch.object(runner, "prediction_check", return_value={"check": "NV prediction",
+                 "result": "WARN", "detail": "capture not staged"}):
+            self.assertEqual(runner.run_preflight(a), 0)
+        sent = remote.call_args.args[0]
+        self.assertIn(hold_op, sent)
+        self.assertIn("continued_hold", sent)
 
 if __name__ == "__main__":
     unittest.main()
