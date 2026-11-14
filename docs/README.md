@@ -18,6 +18,8 @@ Repository-level documentation is organized by **coordinator scope**, even where
 ## slzb-06p7u — PRIMARY P7U / CC2652P7 / R4
 
 - [P7U identity, source map and safety gates](../coordinators/slzb-06p7u/README.md)
+- [Status, 11 Nov 2026: V56 installed, cold-start problem and the V57 candidate](../coordinators/slzb-06p7u/STATUS_2026-11-11.md)
+- [Release notes (V57 candidate, V56, V55)](../coordinators/slzb-06p7u/RELEASE_NOTES.md)
 - [Status, 31 Oct 2026: V53 installed under the official Zigbee2MQTT app](../coordinators/slzb-06p7u/STATUS_2026-10-31.md)
 - [V53 long-term reliability review](../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md)
 - [Firmware tree overview](../firmware/slzb-06p7u/r4/README.md) and the per-stage notes in [`r4/`](r4/) and [`r4/b4/`](r4/b4/)
@@ -62,3 +64,5 @@ See [`coordinators/slzb-06p7/README.md`](../coordinators/slzb-06p7/README.md) fo
 The existing `P10_*` documentation names and `p10_*` Python/test paths are intentionally retained to preserve the finalized P10 evidence and avoid breaking working tooling and cross-references.
 
 New work should prefer explicit coordinator IDs in branch names and new top-level artifact names.
+
+- [R4 V57: 14 November live reliability audit](../coordinators/slzb-06p7u/STATUS_2026-11-14.md) — 106 devices, 57 routers, precise per-page diagnostics, parser resyncs and caveats.

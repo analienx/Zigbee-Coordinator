@@ -1,6 +1,27 @@
 # Zigbee Coordinator
 
-> **Current state (31 October 2026):** the production coordinator is the **SMLIGHT SLZB-06P7U R1.73 / CC2652P7** over **USB to Home Assistant**, running **R4 V53** firmware under the **official Zigbee2MQTT app**. The NV read storm behind the hangs is fixed; V53 is installed but **not yet qualified**. Read the [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md) and the [V53 reliability review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md). The firmware source and delivery tooling are on `main`, latest version only. **GitHub Actions builds and tests first; hardware operations only with explicit owner authorization.** The 20 October Ethernet/stock-firmware override is historical.
+**A reliability-engineered Zigbee ZNP firmware and delivery platform for dense, real-world meshes.** Built from TI Z-Stack and deployed on a production **SLZB-06P7U** with **106 joined devices** (57 routers in the 14 November snapshot). We fix firmware/transport defects rather than mistake a reboot or stock rollback for a repair.
+
+**The documentation tracks the production coordinator; the exact installed V57 source is pinned at [`eb59b677`](https://github.com/analienx/Zigbee-Coordinator/tree/eb59b6773dd0fe328c1194647c00e8a070d18a22) and the latest guarded-operator changes are on [the dedicated review branch](https://github.com/analienx/Zigbee-Coordinator/tree/fix/p7u-v57-runtime-security-admission). The `main` branch does not implicitly install firmware or certify an image.**
+
+**Production V57 field result (14 Nov 2026):** one successful morning startup; **6 h 12 min** with no observed coordinator hard hang, **99.89% NV cache hits**, **0 / 79,752 MAC request refusals**, no UART/NV/timer errors, and **5 MT frame resynchronizations**. Router/link delivery errors remain; this is **measured field evidence, not a guarantee of zero hangs or a controlled comparison with stock**. [Read the full evidence](coordinators/slzb-06p7u/STATUS_2026-11-14.md).
+
+## R4 at a glance — why it differs from stock ZNP
+
+| Engineering improvement | Value to this installation |
+|---|---|
+| **Eliminated the measured NV-read storm (V53)** | Live V56 evidence: **99.92% NV cache hits**, instead of repeatedly scanning NV for each inbound frame |
+| **Prioritized ZNP replies (V43–V50)** | Protects SRSP responsiveness when the Zigbee stack is under sustained load |
+| **Hardened persistence and security (B1/V54)** | Read-back verified NV, observable fail-closed HOLD, preserved network identity, keys and replay floors |
+| **Reduced timer/queue pressure (V52/V55)** | O(1) OSAL timer enqueue, expired-timer cleanup and larger MAC queues; **0 refused requests out of 91,708** in one V56 sample |
+| **Explained failures with evidence (V51–V57)** | Onset/heap/timer/NV/trend telemetry and MT parser-resync records, rather than guessing from Zigbee2MQTT logs alone |
+| **Guarded, reproducible deployment** | Exact-source GitHub Actions artifacts, exclusive serial ownership, protected flash sectors, immutable single-shot journals and verified MQTT service |
+
+**Why the observed reliability improved:** **V53 removed the pathological per-frame NV-read storm** through a guarded cache; V57 adds UART/MT parser recovery for a separate startup failure class. **R4 V57 is installed and currently serving, but a permanent zero-hang guarantee and stock-versus-R4 controlled benchmark have not been established.** See the [14 November physical field audit](coordinators/slzb-06p7u/STATUS_2026-11-14.md).
+
+[**R4 vs. stock — architecture and evidence**](docs/R4_VS_STOCK.md) · [**Firmware feature matrix**](coordinators/slzb-06p7u/README.md#firmware-features) · [**Operator reliability and fail-closed continuation**](docs/P7U_OPERATOR_RELIABILITY.md) · [**Release notes**](coordinators/slzb-06p7u/RELEASE_NOTES.md)
+
+> **Current state (14 November 2026; V57 physically installed, serving after the first observed morning cold start):** the production coordinator is the **SMLIGHT SLZB-06P7U R1.73 / CC2652P7** over **USB to Home Assistant**, running **R4 V57** firmware under the **official Zigbee2MQTT app**. The NV read storm behind the hangs is fixed; V57 has passed protected flash, native retained-network boot and fresh-device MQTT service checks; extended cold-start qualification remains open. A formerly intermittent cold-start failure (4 of the 11 mornings examined before V57) has a replay-supported suspected cause and a new parser-recovery path in **V57**, installed 13 November after a fully verified zero-write-HOLD continuation. Its first observed morning boot succeeded; source and diagnostics remain under investigation. Read the [status](coordinators/slzb-06p7u/STATUS_2026-11-13.md), the [release notes](coordinators/slzb-06p7u/RELEASE_NOTES.md) and the [V53 reliability review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md). The installed V56 source, natively built V57 source and official-owner operator are pinned by exact Git SHAs; the repair is developed on a separate reviewed branch. `main` does not automatically deploy firmware. **GitHub Actions builds and tests first; hardware operations only with explicit owner authorization.** The 20 October Ethernet/stock-firmware override is historical.
 
 Shared firmware, migration, recovery, diagnostics and acceptance tooling for the Zigbee coordinators used by this Home Assistant / Zigbee2MQTT installation.
 
@@ -10,7 +31,7 @@ This repository is intentionally **hardware-neutral at the top level**. Coordina
 
 | Coordinator ID | Hardware | Zigbee radio / stack | Role |
 |---|---|---|---|
-| `slzb-06p7u` | SMLIGHT SLZB-06P7U | TI CC2652P7 / Z-Stack ZNP | **Production coordinator on V53 firmware since 31 Oct 2026 (NV read storm fixed; not yet independently qualified). See [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md).** |
+| `slzb-06p7u` | SMLIGHT SLZB-06P7U | TI CC2652P7 / Z-Stack ZNP | **Production coordinator on V57 since 13 Nov 2026 (14 Nov: 57 routers / 49 end devices, 6 h 12 min session and one clean host start). See [field evidence](coordinators/slzb-06p7u/STATUS_2026-11-14.md).** |
 | `mr4u-p10` | SMLIGHT SLZB-MR4U | TI CC2674P10 / Z-Stack | Preserved finalized P10 reference/fallback and historical diagnosis |
 | `sonoff-mg24` | SONOFF Dongle Max / Dongle-M | Silicon Labs EFR32MG24 / Ember | Previous production coordinator, rollback/reference platform and historical firmware experiments |
 | `slzb-06p7` | SMLIGHT SLZB-06P7 | TI P7-class / Z-Stack | Legacy historical entry; do not conflate with the SLZB-06P7U R4 board |
@@ -30,11 +51,12 @@ See [`coordinators/README.md`](coordinators/README.md) and [`docs/COORDINATOR_RE
 
 **Current engineering priority (25 October 2026): repair and prove the R4 firmware/ZNP command-handling failure, not repeat stock restoration.** Root cause, source repair, exact-SHA native qualification and physical acceptance come before recovery work; restoration is a last-resort network-safety fallback and never closes a firmware incident. The firmware and previous image have both shown post-startup loss of replies, so distinguish firmware, ESP/USB and host causes instead of assuming a single image is responsible. See the [P7U firmware-first policy](coordinators/slzb-06p7u/FIRMWARE_FIRST_POLICY.md). This priority shift grants no new authorization to reset, flash, alter NV or pair devices.
 
-**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability. **V54 was installed on the production coordinator on 1 November 2026** (over V53, installed 31 October) under the repository's one-shot procedure, with the official Zigbee2MQTT app as the only serial owner ([status](coordinators/slzb-06p7u/STATUS_2026-11-01.md)). The qualification gates (independent review, physical qualification, rollback proof) are **not closed**, and any further flash still needs explicit owner authorization.
+**Primary engineering target as of 16 October 2026: `slzb-06p7u` (SMLIGHT SLZB-06P7U, CC2652P7).** The P7U R4 design aims at an observable, network-safe ZNP with dense-mesh reliability. **V57 was installed on the production coordinator on 13 November 2026** (after V56, V55, V54 and V53 installed in October–November) under the repository's one-shot procedure, with the official Zigbee2MQTT app as the only serial owner ([status](coordinators/slzb-06p7u/STATUS_2026-11-13.md)). The qualification gates (independent review, physical qualification, rollback proof) are **not closed**, and any further flash still needs explicit owner authorization.
 
 - [R4 master plan #85](https://github.com/analienx/Zigbee-Coordinator/issues/85) and [R4-00 provenance draft #86](https://github.com/analienx/Zigbee-Coordinator/pull/86).
 - [R4-01a diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [R4-B0 native build #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [R4-B1 NV safety #92](https://github.com/analienx/Zigbee-Coordinator/issues/92) and [draft PR #93](https://github.com/analienx/Zigbee-Coordinator/pull/93).
-- `main` holds the installed V54 source and the official-owner delivery tooling. V53 (source `8ec1439`, delivery `ed42122`) stays retrievable through its tags; earlier versions are not carried. `main` does not deploy anything by itself; no workflow on `main` touches hardware.
+- **Features of the image:** B1 fail-closed NV, observable HOLD management and security guards; SRSP service and priority layers (V43–V50); onset, trend and timer evidence pages (V51/V52); the NV read cache that ended the NV read storm (V53) and its guards (V54); MAC queues 50/80/50 (V55); and, in installed V57, the MT frame parser resync and B1E8 evidence. The full table is in the [P7U overview](coordinators/slzb-06p7u/README.md#firmware-features).
+- V53–V56 remain pinned by their historical SHA/branches; V57's exact firmware source is `eb59b677` and the corrected operator is being reviewed on `fix/p7u-v57-runtime-security-admission`. V53 (source `8ec1439`, delivery `ed42122`) stays retrievable through its tags; earlier versions are not carried. `main` does not deploy anything by itself; no workflow on `main` touches hardware.
 - Vendor P7U ZNP `20260310` is a behavior/rollback reference, **not** proven source-equivalent or stable in a 100+-device mesh. Native CCS build success is not a physical acceptance.
 - Preserve the original coordinator identity, NV/security/counters, rollback evidence, and exactly one serial owner; no live firmware/recovery operation follows from these documentation updates.
 
@@ -44,15 +66,15 @@ See [P7U coordinator overview](coordinators/slzb-06p7u/README.md) and [coordinat
 
 ## Repository layout
 
-### P7U/R4 firmware (installed V54 lineage)
+### P7U/R4 firmware (installed V57 lineage)
 
-- `coordinators/slzb-06p7u/` — identity, safety gates, [status](coordinators/slzb-06p7u/STATUS_2026-10-31.md), [review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md) and the hang runbook.
+- `coordinators/slzb-06p7u/` — identity, safety gates, [status](coordinators/slzb-06p7u/STATUS_2026-11-13.md), [release notes](coordinators/slzb-06p7u/RELEASE_NOTES.md), [review](coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md) and the hang runbook.
 - `firmware/slzb-06p7u/r4/` — B0/B1 sources, qualification, release, ROM writer and fixtures. [Overview](firmware/slzb-06p7u/r4/README.md).
 - `tools/r4_*.py` — the stages that turn TI SDK `3615ad5d` into the image, in the order set by `tools/r4_b0_b4_composite_stage.py`, plus their compile-and-mutate harnesses.
 - `tools/p7u_ha_flash_driver.py`, `host/flash/` — single flash driver and the sealed HA operator.
 - `host/r4-b4/`, `host/recovery/` — custom P7U host apps, uninstalled on 31 Oct 2026; kept as source of record.
 - `docs/r4/` — R4 design contracts and per-stage engineering notes (F2 v4.2–v6, V43–V45).
-- `tests/` — repository tests (`python -m pytest tests`).
+- `tests/` — repository tests (`python -m pytest tests`); 970 passed, 31 skipped at the V57 native candidate; operator-specific hosted tests and physical checks are tracked separately.
 
 ### Retained P10 compatibility paths
 
