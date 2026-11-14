@@ -108,7 +108,7 @@ GitHub Actions do **not** directly flash the household coordinator. The actual o
 | MT RX resync | [V57 stage, source-pinned](https://github.com/analienx/Zigbee-Coordinator/blob/eb59b6773dd0fe328c1194647c00e8a070d18a22/tools/r4_v57_npi_rx_resync.py) |
 | B1 protected NV | [B1 source tree](../firmware/slzb-06p7u/r4/b1/) |
 | Official-owner flashing | [Delivery tool](../tools/p7u_official_delivery.py) |
-| Native validation | [Native workflow](../../.github/workflows/test-r4-stock20260311-native.yml) |
+| Native validation | [Native workflow](../.github/workflows/test-r4-stock20260311-native.yml) |
 | Physical events | [P7U release notes](../coordinators/slzb-06p7u/RELEASE_NOTES.md) |
 
 **Maintenance rule:** update the evidence row and installed-version status after *physical verification*, not merely after a successful build or a newly pushed commit.
