@@ -14,6 +14,7 @@ on:
       - 'tests/test_p7u_stock20260311_*.py'
       - 'tests/test_p7u_v50_stack_evidence.py'
       - 'tests/fixtures/ti_3615ad5d_*.c'
+      - 'tests/fixtures/v57_composed_*.c'
   workflow_dispatch:
 
 permissions:
@@ -40,11 +41,13 @@ jobs:
       - name: V47 source-bound retained startup and priority regression
         run: |
           python -m py_compile tools/r4_startup_ingress_priority.py tools/r4_startup_ingress_priority_harness.py
-          python -m py_compile tools/r4_v50_stack_service.py tools/r4_v50_stack_service_harness.py tools/r4_v52_osal_timers.py tools/r4_v52_osal_timers_harness.py tools/r4_v57_npi_rx_resync.py tools/r4_v57_npi_rx_resync_harness.py
+          python -m py_compile tools/r4_v50_stack_service.py tools/r4_v50_stack_service_harness.py tools/r4_v52_osal_timers.py tools/r4_v52_osal_timers_harness.py tools/r4_v57_npi_rx_resync.py tools/r4_v57_npi_rx_resync_harness.py tools/r4_v58_route_uart_evidence.py tools/r4_v58_route_uart_evidence_harness.py
           python -m unittest -v tests.test_r4_v47_startup_ingress
           python -m unittest -v tests.test_r4_v48_retained_zdapp_fairness
           python -m unittest -v tests.test_r4_v50_stack_service
           python -m unittest -v tests.test_r4_v57_npi_rx_resync
+          python -m unittest -v tests.test_r4_v58_route_uart_evidence
+          python -m unittest -v tests.test_r4_t6_full_capacity
       - name: Compile pinned actual TI bodies and execute fault and mutation controls
         run: python firmware/slzb-06p7u/r4/b1/tools/run_hosted_tests.py --out /tmp/b1-hosted
       - name: Pinned four-page TI NVOCMP logical-end, CRC/status and collision mutants
@@ -709,7 +712,7 @@ jobs:
           import json
           from pathlib import Path
           result=json.loads(Path('/tmp/b0out/b2-linked/B2_BASELINE_ELF_SYMBOLS.json').read_text())
-          expected={'source_routes':192,'neighbors':64,'nwk_routes':128}
+          expected={'source_routes':192,'neighbors':64,'nwk_routes':128,'route_requests':40}
           for name,size in expected.items():
               observed=result['tables'][name]
               assert observed['status']=='HOSTED_NATIVE_LINKED', (name,observed)

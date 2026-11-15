@@ -51,6 +51,8 @@ This stage changes no network/NV/security state and adds no UART owner:
   9. V57: op4 page6 answers B1E8, the MT frame parser's RX resync evidence
      (tools/r4_v57_npi_rx_resync.py), and the transport RX callback reports
      each chunk's arrival to that parser before TI's unchanged copy.
+ 10. V58: op4 page7 answers B1E9, route-discovery refusals and UART RX
+     errors (tools/r4_v58_route_uart_evidence.py, mt_zdo.c and npi_tl_uart.c).
 """
 import hashlib
 import re
@@ -90,6 +92,9 @@ extern void B4_V53_NvCacheSnapshot(uint8_t *out);
  * B1E8 evidence (op4 page6) and the RX-arrival hook used below. */
 extern void B4_V57_RxFrameSnapshot(uint8_t *out);
 extern void B4_V57_RxArrived(uint16_t pending);
+/* B4_V58: mt_zdo.c owns B1E9 (op4 page7): extRouteDisc results, route
+ * discovery table occupancy and the UART RX error counters. */
+extern void B4_V58_RouteUartSnapshot(uint8_t *out);
 /* B4_V52 B1E6: 16..95 B4_V43 NPI->MT->UART progress, 96..199 OSAL timers,
  * 200..247 live in-flight Stack dispatch (owners write their own ranges). */
 static void B4_V52_PipelineSnapshot(uint8_t *out)
@@ -142,7 +147,8 @@ QUERY_ANCHOR = """    B4_V43_Request(0u, pReq);
 QUERY = """    B4_V43_Request(0u, pReq);
     /* B4_V50_STACK_SERVICE_EVIDENCE_QUERY: op4 page0 -> B1E2, page1 -> B1E3,
      * page2/3 -> B1E4/B1E5 trend rings, page4 -> B1E6, page5 -> B1E7 and
-     * page6 -> B1E8 (V57 RX frame resync) on this NPI owner. Answered here,
+     * page6 -> B1E8 (V57 RX frame resync) and page7 -> B1E9 (V58 route
+     * discovery and UART RX errors) on this NPI owner. Answered here,
      * never by the Stack task whose CPU use it reports. */
     if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&
         pReq[2] == B1_STATUS_COMMAND && pReq[9] == 4u)
@@ -150,7 +156,7 @@ QUERY = """    B4_V43_Request(0u, pReq);
         static uint8_t stackEvidence[B4_V50_EVIDENCE_SIZE]; /* static: bounded NPI stack */
         static const uint8_t prefix[6] = { 'B', '1', 'Q', '1', 1u, 8u };
         if (pReq[1] == 0x21u && memcmp(pReq + 3, prefix, sizeof(prefix)) == 0 &&
-            pReq[10] <= 6u)
+            pReq[10] <= 7u)
         {
             if (pReq[10] == 0u)
                 B4_V50_StackSnapshot(stackEvidence, B4_V47_Armed, B4_V47_StartTick);
@@ -162,6 +168,8 @@ QUERY = """    B4_V43_Request(0u, pReq);
                 B4_V53_NvCacheSnapshot(stackEvidence);
             else if (pReq[10] == 6u)
                 B4_V57_RxFrameSnapshot(stackEvidence);
+            else if (pReq[10] == 7u)
+                B4_V58_RouteUartSnapshot(stackEvidence);
             else
                 B4_V51_TrendSnapshot(stackEvidence, (uint8_t)(pReq[10] - 2u));
             memcpy(stackEvidence + 8, B4_V50_BuildDigest, sizeof(B4_V50_BuildDigest));
@@ -1418,6 +1426,8 @@ def apply(sdk, source_sha):
             task.count("B4_V52_PipelineSnapshot(stackEvidence);") != 1 or
             task.count("B4_V53_NvCacheSnapshot(stackEvidence);") != 1 or
             task.count("B4_V57_RxFrameSnapshot(stackEvidence);") != 1 or
+            task.count("B4_V58_RouteUartSnapshot(stackEvidence);") != 1 or
+            task.count("            pReq[10] <= 7u)") != 1 or
             task.count("B4_V57_RxArrived(NPIRxBuf_GetRxBufCount());") != 1 or
             not (task.index("extern void B4_V57_RxArrived(uint16_t pending);") <
                  task.index("B4_V57_RxArrived(NPIRxBuf_GetRxBufCount());") <
@@ -1462,6 +1472,7 @@ def apply(sdk, source_sha):
                           "never_cached": ["ZCD_NV_TCLK_SEED"],
                           "argument_guard": "NULL_BUFFER_OR_ZERO_LENGTH_BYPASS"},
         "b1e8_query": "B1Q1 v1/8 op4 page6",
+        "b1e9_query": "B1Q1 v1/8 op4 page7",
         "rx_arrival_hook": "B4_V57_RxArrived_BEFORE_NPIRxBuf_Read",
         "onset_phase_boundary": "devState == DEV_ZB_COORD",
         "nv_timing": "TRANSPARENT_NVFPS_WRAPPERS_SAME_ARGUMENTS_AND_RESULTS",

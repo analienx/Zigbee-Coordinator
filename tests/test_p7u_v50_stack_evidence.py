@@ -438,5 +438,74 @@ class V57RxFrameEvidence(unittest.TestCase):
             self.observer.decode_e8(bytes(bad), self.V57)
 
 
+def e9(source, *, calls=12, ok=9, full=2, other=1, overruns=3):
+    """V58 B1E9: route-discovery results/occupancy and UART RX errors."""
+    raw = bytearray(248)
+    raw[:6] = b"B1E9\x01\xf8"
+    raw[6] = (1 if full else 0) | (2 if other else 0) | (4 if overruns else 0) | 8
+    raw[8:12] = bytes.fromhex(source[:8])
+    put = lambda offset, value: raw.__setitem__(slice(offset, offset + 4), value.to_bytes(4, "little"))
+    put(12, 9000000); put(16, calls); put(20, ok); put(24, full); put(28, other)
+    if full:
+        put(32, 5000000); put(36, 8000000)
+        raw[41] = 40; raw[48:50] = (0x0cdd).to_bytes(2, "little")
+    if other:
+        raw[40] = 0xC2
+    raw[42], raw[43], raw[44], raw[45], raw[46], raw[47] = 40, 40, 7, 9, 40, 10
+    if overruns:
+        put(52, overruns); put(56, overruns); put(72, 3000000); put(76, 7000000)
+    put(60, 1)  # one framing error
+    return bytes(raw)
+
+
+class V58RouteUartEvidence(unittest.TestCase):
+    V58 = "58" * 20
+
+    def setUp(self):
+        import p7u_r4_startup_observer as observer
+        self.observer = observer
+        saved = observer.V58_SOURCES
+        observer.V58_SOURCES = frozenset({self.V58})
+        self.addCleanup(setattr, observer, "V58_SOURCES", saved)
+
+    def test_decode_e9_refusals_occupancy_and_uart_errors(self):
+        value = self.observer.decode_e9(e9(self.V58), self.V58)
+        rd, ua = value["route_discovery"], value["uart_rx"]
+        self.assertEqual((rd["calls"], rd["ok"], rd["table_full"], rd["other"]), (12, 9, 2, 1))
+        self.assertEqual((rd["live_at_last_full"], rd["last_full_dst"], rd["last_other_status"]),
+                         (40, 0x0cdd, 0xC2))
+        self.assertEqual((rd["live_now"], rd["nonzero_entries_now"], rd["capacity"]), (7, 9, 40))
+        self.assertEqual((ua["overrun_events"], ua["framing_errors"]), (3, 1))
+        self.assertEqual(self.observer.Q11, b"B1Q1\x01\x08\x04\x07")
+        # V58 keeps B1E8.
+        self.assertTrue(self.observer.rx_frame_evidence_supported(self.V58))
+
+    def test_decode_e9_clean_page_reports_no_refusal(self):
+        value = self.observer.decode_e9(e9(self.V58, calls=4, ok=4, full=0, other=0, overruns=0),
+                                        self.V58)
+        self.assertIsNone(value["route_discovery"]["live_at_last_full"])
+        self.assertIsNone(value["route_discovery"]["last_full_dst"])
+        self.assertEqual(value["uart_rx"]["overrun_events"], 0)
+
+    def test_decode_e9_rejects_older_source_and_schema_drift(self):
+        for source in (V56, V57):
+            with self.assertRaisesRegex(EvidenceError, "ROUTE_UART_EVIDENCE_UNSUPPORTED_SOURCE"):
+                self.observer.decode_e9(e9(source), source)
+        with self.assertRaisesRegex(EvidenceError, "SOURCE_DIGEST_MISMATCH_B1E9"):
+            self.observer.decode_e9(e9(V57), self.V58)
+        for offset, value in ((7, 1), (6, 0), (6, 31), (46, 8), (47, 8), (44, 41), (45, 6),
+                              (41, 41), (50, 1), (100, 1), (16, 13)):
+            with self.subTest(offset=offset, value=value):
+                bad = bytearray(e9(self.V58)); bad[offset] = value
+                with self.assertRaisesRegex(EvidenceError, "ROUTE_UART_EVIDENCE_SCHEMA_INVALID"):
+                    self.observer.decode_e9(bytes(bad), self.V58)
+        clean = e9(self.V58, calls=4, ok=4, full=0, other=0, overruns=0)
+        for offset, value in ((32, 1), (41, 3), (48, 1), (40, 5), (56, 2), (72, 1)):
+            with self.subTest(clean_offset=offset):
+                bad = bytearray(clean); bad[offset] = value
+                with self.assertRaisesRegex(EvidenceError, "ROUTE_UART_EVIDENCE_SCHEMA_INVALID"):
+                    self.observer.decode_e9(bytes(bad), self.V58)
+
+
 if __name__ == "__main__":
     unittest.main()

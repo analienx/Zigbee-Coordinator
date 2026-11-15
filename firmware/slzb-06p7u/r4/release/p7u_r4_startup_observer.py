@@ -18,6 +18,7 @@ Q7 = b"B1Q1\x01\x08\x04\x03"
 Q8 = b"B1Q1\x01\x08\x04\x04"
 Q9 = b"B1Q1\x01\x08\x04\x05"
 Q10 = b"B1Q1\x01\x08\x04\x06"
+Q11 = b"B1Q1\x01\x08\x04\x07"
 TERMINAL_REQUIRE = (0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,18,19,20,21,22)
 
 # V50 keeps the armed sole NPI owner at priority6 for the whole boot and
@@ -58,6 +59,11 @@ V53_SOURCES = frozenset({"8ec1439786e3e98151d2796e6797675bb9ef5965",
 # gap, rejected lengths and the bytes discarded before the first valid frame.
 V57_SOURCES = frozenset({"eb59b6773dd0fe328c1194647c00e8a070d18a22"})
 
+# V58 adds B1E9 (op4 page7): ZDO extRouteDisc results with route-discovery
+# table occupancy, and UART RX overrun/framing/break/parity counters.
+# Filled in by the V58 pinning checklist once a native build exists.
+V58_SOURCES = frozenset()
+
 def expected_ready_npi_priority(source: str) -> int:
     return 6 if source in V50_SOURCES else 4
 
@@ -74,7 +80,10 @@ def nv_cache_evidence_supported(source: str) -> bool:
     return source in V53_SOURCES
 
 def rx_frame_evidence_supported(source: str) -> bool:
-    return source in V57_SOURCES
+    return source in V57_SOURCES | V58_SOURCES
+
+def route_uart_evidence_supported(source: str) -> bool:
+    return source in V58_SOURCES
 
 class EvidenceError(RuntimeError):
     pass
@@ -94,7 +103,7 @@ def checked(raw: bytes, tag: bytes, length: int, source: str):
             and raw[4] == 1 and raw[5] == length,
             "RESPONSE_SCHEMA_INVALID_" + tag.decode())
     require(raw[8:12] == bytes.fromhex(source[:8])
-            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5", b"B1E6", b"B1E7", b"B1E8")
+            if tag in (b"B1E1", b"B1E2", b"B1E3", b"B1E4", b"B1E5", b"B1E6", b"B1E7", b"B1E8", b"B1E9")
             else raw[12:16] == bytes.fromhex(source[:8]),
             "SOURCE_DIGEST_MISMATCH_" + tag.decode())
     return raw
@@ -368,6 +377,50 @@ def decode_e8(raw: bytes, source: str) -> dict:
     return {"now": uint32(raw, 12), **v, "first_resync": first,
             "parser_state": E8_STATES[raw[65]], "boot_discarded": raw[68:68 + count].hex(),
             "length_max": raw[67], "idle_ms": uint16(raw, 76)}
+
+E9_RREQ_CAPACITY = 40
+E9_RREQ_ENTRY_BYTES = 10
+
+def decode_e9(raw: bytes, source: str) -> dict:
+    """V58 B1E9: ZDO extRouteDisc results and UART RX errors.
+
+    Counters, ticks, table occupancy and the last refused NWK short address
+    (no IEEE address, no key, no NV data). Live route-discovery entries are
+    expiryTime != 0; entries with any non-zero byte are reported beside them
+    because TI's closed NWK library owns the table. Answered by the NPI owner.
+    """
+    require(route_uart_evidence_supported(source), "ROUTE_UART_EVIDENCE_UNSUPPORTED_SOURCE")
+    checked(raw, b"B1E9", 248, source)
+    rd = ("calls", "ok", "table_full", "other", "first_full_tick", "last_full_tick")
+    ua = ("overrun_events", "driver_overrun_count", "framing_errors", "break_errors",
+          "parity_errors", "first_overrun_tick", "last_overrun_tick")
+    r = {name: uint32(raw, 16 + 4 * i) for i, name in enumerate(rd)}
+    u = {name: uint32(raw, 52 + 4 * i) for i, name in enumerate(ua)}
+    last_other, live_at_full, max_before, max_after, live, nonzero, cap, entry = raw[40:48]
+    flags, dst = raw[6], uint16(raw, 48)
+    saturated = 0xFFFFFFFF in (r["calls"], r["ok"], r["table_full"], r["other"])
+    require(raw[7] == 0 and not flags & ~15 and
+            bool(flags & 1) == (r["table_full"] > 0) and bool(flags & 2) == (r["other"] > 0) and
+            bool(flags & 4) == (u["overrun_events"] > 0) and
+            bool(flags & 8) == (u["framing_errors"] + u["break_errors"] + u["parity_errors"] > 0) and
+            (saturated or r["ok"] + r["table_full"] + r["other"] == r["calls"]) and
+            cap == E9_RREQ_CAPACITY and entry == E9_RREQ_ENTRY_BYTES and
+            max(live_at_full, max_before, max_after, live) <= cap and live <= nonzero <= cap and
+            live_at_full <= max_before and
+            (r["table_full"] > 0 or not (r["first_full_tick"] or r["last_full_tick"] or
+                                         live_at_full or dst)) and
+            (r["other"] > 0 or last_other == 0) and
+            (u["overrun_events"] > 0 or not (u["driver_overrun_count"] or
+                                             u["first_overrun_tick"] or u["last_overrun_tick"])) and
+            raw[50:52] == b"\0\0" and not any(raw[80:248]),
+            "ROUTE_UART_EVIDENCE_SCHEMA_INVALID")
+    return {"now": uint32(raw, 12), "route_discovery": {**r,
+            "last_other_status": last_other if r["other"] else None,
+            "live_at_last_full": live_at_full if r["table_full"] else None,
+            "last_full_dst": dst if r["table_full"] else None,
+            "max_live_before_request": max_before, "max_live_after_request": max_after,
+            "live_now": live, "nonzero_entries_now": nonzero, "capacity": cap},
+            "uart_rx": u}
 
 def onset_summary(e3: dict, tick_period_us: int) -> dict:
     """Human-scale view of a decoded B1E3 (needs the B1E2 tick period)."""

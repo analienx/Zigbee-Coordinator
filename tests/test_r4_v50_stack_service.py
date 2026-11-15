@@ -96,7 +96,8 @@ class V50StackService(unittest.TestCase):
         self.assertIn("B4_V51_DispatchEnd(idx, returned, now, spent);", stack)
         self.assertIn("devState == DEV_ZB_COORD", stack)
         self.assertIn("B4_V51_OnsetSnapshot(stackEvidence);", task)
-        self.assertIn("pReq[10] <= 6u)", task)
+        self.assertIn("pReq[10] <= 7u)", task)
+        self.assertIn("B4_V58_RouteUartSnapshot(stackEvidence);", task)
         self.assertIn("B4_V57_RxFrameSnapshot(stackEvidence);", task)
         self.assertLess(task.index("B4_V57_RxArrived(NPIRxBuf_GetRxBufCount());"),
                         task.index("        NPIRxBuf_Read(size);"))

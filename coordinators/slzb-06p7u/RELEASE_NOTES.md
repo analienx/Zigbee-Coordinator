@@ -2,6 +2,61 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
+## V58 (candidate, 15 November 2026): route-discovery table 40, B1E9 route and UART evidence
+
+Base: V57 `eb59b677` (installed). Branch `feat/p7u-v58`. Not natively built, not pinned, not flashed.
+
+### Why
+
+Host log for V57's first 37.5 h (13 Nov 21:38 → 15 Nov 11:19, official Zigbee2MQTT 2.14.2-1): 30 errors and 34 warnings in total, so the mesh is mostly healthy. Two coordinator-side findings stand out:
+
+1. **Route-discovery refusals.** All 6 `0xC7 NWK_TABLE_FULL` errors are the SRSP of `ZDO extRouteDisc`. Zigbee-herdsman sends that only after a unicast has already failed, as its recovery step, so the refusal is the recovery failing.
+   - 5 of the 6 targeted **HallBulb1 / HallBulb2** (Innr RB 287 C, LQI 29–47) during automation brightness bursts. The bulbs were reporting to the coordinator in the same minute, so they were not offline.
+   - The V57 native image links TI's default **`rtDiscTable[8]`** (`gMAX_RREQ_ENTRIES` = 8, 80 B). B2 P1 raised only the ordinary route (128), source route (192) and neighbor (64) tables. The broadcast table is also TI's default, 9 entries.
+2. **Host bytes lost inside the radio.** On 14 Nov ([status](STATUS_2026-11-14.md)) V57's parser resynced 5 times at runtime, 363 bytes discarded. The first was in `DATA` state with 67 of 75 bytes collected: bytes of a real host frame never reached the parser.
+   - The NPI UART runs at 115200 baud with no flow control, a 32-byte DMA read buffer (`UART_ISR_BUF_SIZE`) and a 32-byte UART2 ring buffer (generated `uart2RxRingBuffer0[32]`).
+   - TI's UART2 driver counts overruns only when `UART2_EVENT_OVERRUN` is in the event mask. The ZNP mask holds `TX_FINISHED` only, so overruns are invisible today.
+
+Neither cause is proven. V58 fixes the first with a TI-supported build setting and measures both.
+
+### Firmware
+
+1. **Route-discovery table 8 → 40** (`tools/r4_t6_full_capacity.py`, compiler define `MAX_RREQ_ENTRIES=40`).
+   - Same value as the widely deployed community coordinator build. Costs 32 × 10 B = 320 B of static RAM, taken from the OSAL heap span.
+   - TI's closed NWK library reads the limit through `gMAX_RREQ_ENTRIES`; no TI routing code changes.
+   - The native audit proves it from the linked ELF: `rtDiscTable` 400 B, `gMAX_RREQ_ENTRIES` = 40 (1-byte scalar), entry ABI 10 B. A pre-existing `MAX_RREQ_ENTRIES` define refuses the build.
+2. **B1E9 evidence (op4 page7, NPI owner, RAM only)** (new stage `tools/r4_v58_route_uart_evidence.py`).
+   - `mt_zdo.c`, `MT_ZdoExtRouteDisc`: calls and results (SUCCESS, `0xC7`, other), first/last refusal tick, the last refused NWK short address, and route-discovery table occupancy sampled before each request, at the last refusal and after it. A refusal with every entry live confirms a full discovery table; one with free entries points at another NWK table.
+   - `npi_tl_uart.c`: the existing single UART2 event callback also receives `OVERRUN`, `FRAMING`, `BREAK` and `PARITY` and counts them, with the driver's accumulated overrun count and first/last overrun ticks.
+   - Counters, ticks, occupancy and one short address only: no IEEE address, no key, no NV data.
+3. **Unchanged:** the route-discovery request, its status and its SRSP; UART `TX_FINISHED` handling and the B1 startup EOT fan-out; every other evidence page; NV, security, scheduling.
+   - **One deliberate behaviour change:** with the overrun event enabled, TI's driver drains the hardware FIFO after an overrun (`UART2CC26X2_hwiIntFxn`). Those bytes belong to a frame that has already lost bytes; V57's parser resync then hunts for the next start-of-frame, as it does today.
+   - **Not changed on purpose:** the UART buffer sizes and `MAX_BCAST`. Larger buffers are the next step if B1E9 shows overruns; more broadcast entries add broadcast traffic on an already busy channel.
+
+"Live" route-discovery entries are `expiryTime != 0` (TI `rtg.h`). TI's closed library owns the table, so the count of entries with any non-zero byte is reported beside it until field data confirms the criterion.
+
+### Validation so far (local)
+
+- **Full local source composition** (`tools/p7u_compose_source_locally.sh` at `f7d73d9a`, every stage and harness): passes, 36 TI files, patch `3f412d60`.
+- **Composed pre-images:** V58 binds to the exact V57 composed `mt_zdo.c` (`f75ac285…`) and `npi_tl_uart.c` (`abef0660…`). Both hashes are in the receipts of the installed V57 native build (run 43065927955).
+- **V58 harness on the emitted C** (ASan/UBSan): request and SRSP unchanged; success, refusal and other-status accounting; occupancy before/after with expiring entries; stale-byte entries not counted live; UART RX errors counted and never reaching the TX/B1 path; B1E9 layout. 12 compiled mutants rejected.
+- **V50 query harness:** page7 answers B1E9, page8 is rejected; 3 new mutants.
+- **T6 capacity tests:** the define is added once and refused if pre-existing; the linked audit refuses 8 entries, a wrong entry ABI or a missing scalar.
+- **Host:** observer `decode_e9` with schema checks; live evidence reads B1E9 as an optional page (V57 and older reject page7).
+
+### Before any flash
+
+1. Native build at the V58 source SHA, then the pinning checklist (`V58_SOURCES`, paired binding, PR154 envelope, delivery defaults).
+2. Package with acknowledgements since V57's pre-install capture only, preflight, prepare.
+3. The owner authorizes the operation id.
+4. After the flash, read live evidence after the next automation burst on the hall bulbs: `route_uart.route_discovery.table_full` with `live_at_last_full` near 40, or no refusals at all, settles finding 1; `uart_rx.overrun_events` settles finding 2.
+
+### Host-side recommendations (no firmware, owner's choice)
+
+- **Zigbee2MQTT keeps about 2 hours of logs.** Routine `MQTT publish` info lines fill the rotation, so the 14 Nov resync window was already gone. `advanced.log_namespaced_levels: {"z2m:mqtt": warning}` keeps errors for days.
+- **Hall bulbs:** both are commanded within the same second by the brightness automation. A Zigbee group for them sends one groupcast instead of two unicasts and, on failure, two route discoveries.
+- **Channel 11 overlaps Wi-Fi channel 1.** The last MAC failure code sampled on 15 Nov was `0xE1` (channel access failure). Checking the router's 2.4 GHz channel changes nothing on the Zigbee side.
+
 ## V57 (installed 13 November 2026): cold-start RX resync, no dimmer code
 
 **14 November field follow-up:** official Zigbee2MQTT started 06:09:17–06:09:39 in one observed attempt, then the V57 radio served for **6 h 12 min** on a verified **106-device mesh (57 routers + 49 end devices)**. Native evidence: **99.89% NV cache hits**, **0 / 79,752 MAC request refusals**, zero NPI TX, NV and timer failures, and zero sampled stack saturation. The V57 parser did **5** runtime resyncs (363 bytes discarded), all first observed well *after* the successful startup. Device/link delivery errors and 9,320 failed MAC confirmations remain. The NV-storm correction from V53 is the primary evidence-backed source of the reduced hang pressure; V57 cold-start improvement is promising, **not yet long-term-proven**. [Full reproducible audit](STATUS_2026-11-14.md).

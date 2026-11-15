@@ -24,9 +24,10 @@ const q = (page, sub) => Buffer.from([0x42, 0x31, 0x51, 0x31, 0x01, 0x08, page, 
 const FIRST = [['B1E3', q(4, 1)], ['B1E6', q(4, 4)], ['B1E7', q(4, 5)], ['B1E2', q(4, 0)],
     ['B1E5', q(4, 3)], ['B1E4', q(4, 2)], ['B1E1', q(3, 0)], ['B1S1', q(0, 0)]];
 const LATER = [['B1E2_LATER', q(4, 0)], ['B1E6_LATER', q(4, 4)], ['B1E7_LATER', q(4, 5)]];
-// V57+: optional. Older firmware rejects page6 with an MT RPC error
-// (SRSP RES0 cmd 0, data {3, 0x21, 0xF1}); that ends only this page.
-const OPTIONAL = [['B1E8', q(4, 6)]];
+// V57+ (B1E8, page6) and V58+ (B1E9, page7): optional. Older firmware
+// rejects the page with an MT RPC error (SRSP RES0 cmd 0, data
+// {3, 0x21, 0xF1}); that ends only that page.
+const OPTIONAL = [['B1E8', q(4, 6)], ['B1E9', q(4, 7)]];
 
 class P7uLiveEvidence {
     constructor(zigbee, mqtt, state, publishEntityState, eventBus,

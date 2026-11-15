@@ -88,7 +88,7 @@ def decode(replies, source):
                      ("B1E4", observer.decode_trend), ("B1E5", observer.decode_trend),
                      ("B1E6", observer.decode_e6), ("B1E6_LATER", observer.decode_e6),
                      ("B1E7", observer.decode_e7), ("B1E7_LATER", observer.decode_e7),
-                     ("B1E8", observer.decode_e8)):
+                     ("B1E8", observer.decode_e8), ("B1E9", observer.decode_e9)):
         if name in raw:
             try:
                 out[name] = fn(raw[name], source)
@@ -117,7 +117,8 @@ def summary(d):
             "timers": {k: e6["timers"][k] for k in ("create_failures", "deferred_max", "active_max")},
             "nv": {k: e3["nv"][k] for k in ("reads", "writes", "compactions", "failures", "longest_ms")},
             "nv_cache_hit_ratio": d.get("B1E7", {}).get("hit_ratio"),
-            "rx_frames": rx_summary(d.get("B1E8"), ms)}
+            "rx_frames": rx_summary(d.get("B1E8"), ms),
+            "route_uart": route_uart_summary(d.get("B1E9"), ms)}
 
 
 def rx_summary(e8, ms):
@@ -130,6 +131,24 @@ def rx_summary(e8, ms):
                                "parser_state")} | {
         "first_valid_frame_after_boot_s": at(e8["first_ok_tick"]),
         "first_resync_after_boot_s": at(e8["first_resync_tick"])}
+
+
+def route_uart_summary(e9, ms):
+    """V58 B1E9: route-discovery refusals with table occupancy; UART RX errors."""
+    if not e9:
+        return None
+    at = lambda tick: round(ms(tick) / 1000, 1) if tick else None
+    rd, ua = e9["route_discovery"], e9["uart_rx"]
+    return {"route_discovery": {k: rd[k] for k in (
+                "calls", "ok", "table_full", "other", "last_other_status", "live_at_last_full",
+                "max_live_before_request", "max_live_after_request", "live_now",
+                "nonzero_entries_now", "capacity")} | {
+                "first_full_after_boot_s": at(rd["first_full_tick"]),
+                "last_full_after_boot_s": at(rd["last_full_tick"])},
+            "uart_rx": {k: ua[k] for k in ("overrun_events", "driver_overrun_count",
+                                           "framing_errors", "break_errors", "parity_errors")} | {
+                "first_overrun_after_boot_s": at(ua["first_overrun_tick"]),
+                "last_overrun_after_boot_s": at(ua["last_overrun_tick"])}}
 
 
 def main():

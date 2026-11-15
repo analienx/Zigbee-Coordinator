@@ -380,6 +380,20 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     v57_rx_c=exercise_v57_rx(sdk)
     if v57_rx_c['status'] != 'PASS' or v57_rx_c['frame_sha256'] != v57_rx['modified_sha256']:
         raise ValueError('V57_NPI_RX_ACTUAL_C_FAILED')
+    # V58: every 0xC7 in the 13-15 Nov field log was a ZDO extRouteDisc
+    # refusal, and V57's runtime resyncs show host bytes lost inside the
+    # radio. Count extRouteDisc results with route-discovery occupancy
+    # (mt_zdo.c) and UART RX overrun/framing/break/parity events
+    # (npi_tl_uart.c) as B1E9; the V50 stage above emitted the page7 query.
+    # Bound to the exact V57 composed preimages of both files.
+    from r4_v58_route_uart_evidence import apply as apply_v58
+    v58=apply_v58(sdk)
+    from r4_v58_route_uart_evidence_harness import exercise as exercise_v58
+    v58_c=exercise_v58(sdk)
+    if (v58_c['status'] != 'PASS' or
+            v58_c['mt_zdo_sha256'] != v58['modified_sha256'][MTZDO] or
+            v58_c['npi_tl_uart_sha256'] != v58['modified_sha256'][UART]):
+        raise ValueError('V58_ROUTE_UART_ACTUAL_C_FAILED')
 
     # The conditional HOLD admission was source/C tested in B1 #122.
     # Enable only after verifying the EXACT canonical B4 F2 linked handler
@@ -434,6 +448,9 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     beforehash[FRAME]=v57_rx['before_sha256']
     if afterhash[FRAME] != v57_rx['modified_sha256']:
         raise ValueError('V57_NPI_RX_FINAL_SOURCE_NOT_BOUND')
+    for name in (MTZDO,UART):
+        if afterhash[name] != v58['modified_sha256'][name]:
+            raise ValueError('V58_FINAL_SOURCE_NOT_BOUND_'+name)
     if afterhash[SYS] != owned_stage['modified_sha256'][SYS]:
         raise ValueError('V50_SYS_UNEXPECTED_SOURCE_DRIFT')
     for name in (TASK,SYS):
@@ -488,7 +505,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
     for function in ("B4_V50_StackSnapshot","B4_V50_MacDataReqEnter",
                      "B4_V50_MacDataReqDone","B4_V50_MacEvent","B4_V51_OnsetSnapshot",
                      "B4_V51_TrendSnapshot","B4_V52_InflightSnapshot","B4_V52_TimerSnapshot","B4_V53_NvCacheSnapshot",
-                     "B4_V52_TimerProbe","B4_V57_RxArrived","B4_V57_RxFrameSnapshot"):
+                     "B4_V52_TimerProbe","B4_V57_RxArrived","B4_V57_RxFrameSnapshot",
+                     "B4_V58_RouteUartSnapshot","B4_V58_UartRead"):
         if function not in required:required.append(function)
     for function in ('B4_V6_MtBegin','B4_V6_MtClaim','B4_V6_MtEnd','B4_V6_StackPulse','B4_V6_UartPulse',
                      'B4_V6_Checkpoint','B4_V6_Read','B4_SysReadOnlyDiagnosticsV6'):
@@ -536,6 +554,8 @@ def run(sdk,baseline,b1receipt,fusionreceipt,b2script,b2failurescript,b4v3script
         "v52_osal_timers_actual_c":v52_timers_c,
         "v57_npi_rx_resync":v57_rx,
         "v57_npi_rx_resync_actual_c":v57_rx_c,
+        "v58_route_uart_evidence":v58,
+        "v58_route_uart_evidence_actual_c":v58_c,
         "uart_tx_liveness_fix":tx_liveness,
         "uart_tx_liveness_actual_c":tx_c,
         "ti_uart2_callback_ownership":ti_callback_source,
