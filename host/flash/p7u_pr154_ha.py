@@ -200,7 +200,8 @@ def runtime_priority_qualification(c):
                       '20a2474a67c1d420b6614b3fcb2f7ed543b1420e',
                       'bb9720a7d502f80e28bdec683e625c754bb5cd1c',
                       '08804f2946746104215d3db7d36092706a0dfcad',
-                      'eb59b6773dd0fe328c1194647c00e8a070d18a22'): return None
+                      'eb59b6773dd0fe328c1194647c00e8a070d18a22',
+                      '1e7944e16de49237beb14647660676a927e1c4b5'): return None
     raw=read(CANDIDATE/'b1-native-seal.json')
     need(sha(raw)==c['files'].get('b1-native-seal.json'), 'SRSP_PRIORITY_SEAL_PIN')
     native=json.loads(raw); q=native.get('srsp_runtime_priority') or {}
@@ -843,12 +844,14 @@ async def deploy(package, pin, ha):
         # V55 (V54 + TC counter restore, MAC queue sizes) keeps it too.
         # V56 (V55 + one-device TC key epoch restore) keeps it too.
         # V57 (V56 - dimmer code + MT frame parser RX resync) keeps it too.
+        # V58 (V57 + route-discovery table 40 + B1E9) keeps it too (0x3359f).
         app_end = 0x34000 if SOURCE in ('a70ae24ff45e708e13969cd341c9ecb494d1570f',
                                         '8ec1439786e3e98151d2796e6797675bb9ef5965',
                                         '20a2474a67c1d420b6614b3fcb2f7ed543b1420e',
                                         'bb9720a7d502f80e28bdec683e625c754bb5cd1c',
                                         '08804f2946746104215d3db7d36092706a0dfcad',
-                                        'eb59b6773dd0fe328c1194647c00e8a070d18a22') else (
+                                        'eb59b6773dd0fe328c1194647c00e8a070d18a22',
+                                        '1e7944e16de49237beb14647660676a927e1c4b5') else (
             0x32000 if SOURCE in (
             '98b882c49cdef2cb422822b8845bee3a4045765f',
             '85ce37c24802b0f16fec0afd00a1a0457656cd80',
