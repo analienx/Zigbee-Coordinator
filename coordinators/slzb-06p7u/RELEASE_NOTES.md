@@ -4,7 +4,15 @@ Newest first. Being listed here is not qualification: the gates in [`README.md`]
 
 ## V58 (candidate, 15 November 2026): route-discovery table 40, B1E9 route and UART evidence
 
-Base: V57 `eb59b677` (installed). Branch `feat/p7u-v58`. Not natively built, not pinned, not flashed.
+Base: V57 `eb59b677` (installed). Source `1e7944e16de49237beb14647660676a927e1c4b5`, branch `feat/p7u-v58`. Natively built, pinned and packaged; not flashed.
+
+- **Native build** [run 43708299735](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43708299735) at `1e7944e1`: both ARM builds, byte-identical reproducibility, hosted B1 suite, herdsman integration and the candidate join, all passing. (Run 43706318149 at `8e2f16f3` built both replicas but its join step still expected the V57 capacity set; fixed in `1e7944e1`, workflow only.)
+  - Linked from the ELF: `rtDiscTable` 40 entries / 400 B; every other table unchanged.
+  - The APP code ends at `0x3359f` (V57: `0x33293`, +780 B), inside the `0x34000` envelope with 2.6 KiB free.
+- **Pinned** (`c6257bba`) as the official-owner successor of V57: paired binding, PR154 envelope and priority list, observer source sets plus `V58_SOURCES` (B1E9), delivery defaults (installed V57, previous operation `1c676e6b`, native run) and the address-manager diff default.
+- **Operator package** [run 43713083378](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43713083378), owner acknowledgement (15 Nov): `NEW_PEER` for `0x08fd52fffe0aa59e` (buttLivingRoomCircle, IKEA RODRET, paired after V57's pre-install capture).
+- **Preflight (15 Nov):** firmware, package, sole serial owner, predecessor write, NV headroom (893 records) and backup peers (111) pass. Blocked only by the SLZB network interface (management unreachable, restart button unavailable) and by the two automations, which are switched off for the flash window only.
+- **Repository tests:** 989 passed, 31 skipped.
 
 ### Why
 
@@ -46,8 +54,8 @@ Neither cause is proven. V58 fixes the first with a TI-supported build setting a
 
 ### Before any flash
 
-1. Native build at the V58 source SHA, then the pinning checklist (`V58_SOURCES`, paired binding, PR154 envelope, delivery defaults).
-2. Package with acknowledgements since V57's pre-install capture only, preflight, prepare.
+1. ~~Native build, pinning checklist, package~~: done (see above).
+2. SLZB network back, automations off, then `prepare` (fresh capture, security prediction, operation id).
 3. The owner authorizes the operation id.
 4. After the flash, read live evidence after the next automation burst on the hall bulbs: `route_uart.route_discovery.table_full` with `live_at_last_full` near 40, or no refusals at all, settles finding 1; `uart_rx.overrun_events` settles finding 2.
 
