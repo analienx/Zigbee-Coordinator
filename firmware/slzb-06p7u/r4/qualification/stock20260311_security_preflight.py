@@ -543,7 +543,12 @@ def evaluate_records(current: dict, baseline: dict, abi: dict, *, runtime_upgrad
                     mask = set(range(offset, offset+width)) | {user_offset}
                     ext_offset, ext_width = abi['structs']['AddrMgrEntry_t']['fields']['extAddr']
                     mask.update(range(ext_offset, ext_offset+ext_width))
-                    require(before[user_offset] == 0 and after[user_offset] == 2 and
+                    # Both vacant representations accepted by empty_addresses
+                    # (user=0 serialized vacancy, or the all-FF TI default,
+                    # whose user byte is 0xFF) may be filled. Every other
+                    # condition below is unchanged.
+                    vacant = before[user_offset] == 0 or before == b"\xff" * len(before)
+                    require(vacant and after[user_offset] == 2 and
                             real(peer) and (peer in runtime_inventory_peers or
                                             (peer, "NEW_PEER") in acknowledged_changes) and
                             index not in old['aps'] and index not in now['aps'] and

@@ -69,6 +69,25 @@ class AddressGate(unittest.TestCase):
         r = self.run_gate(before, after, [107], [], acks=frozenset({(GHOST, "ASSOC_GAIN")}))
         self.assertFalse(r["semantic_checks_passed"])
 
+    def test_vacant_fill_of_all_ff_default_row(self):
+        # Live V58 hold (op 19ad31a4): slot 110 was the all-FF TI default and
+        # now holds an acknowledged RODRET; padding stays 0xFF.
+        ff = b"\xff" * 12
+        fill = bytes((2, 0xFF)) + (0x05EC).to_bytes(2, "little") + GHOST
+        before, after = {110: ff}, {110: fill}
+        self.assertFalse(self.run_gate(before, after, [110], [])["semantic_checks_passed"])
+        r = self.run_gate(before, after, [110], [], acks=frozenset({(GHOST, "NEW_PEER")}))
+        self.assertTrue(r["semantic_checks_passed"], r)
+        self.assertEqual(r["acknowledged_address_fills"], 1)
+        # Padding changed, flags not exactly SECURITY, or a user=0xFF row that
+        # is not entirely all-FF: all still refused.
+        for bad_before, bad_after in ((ff, bytes((2, 0)) + fill[2:]),
+                                      (ff, bytes((3, 0xFF)) + fill[2:]),
+                                      (bytes((0xFF, 0)) + bytes(10), bytes((2, 0)) + fill[2:])):
+            r = self.run_gate({110: bad_before}, {110: bad_after}, [110], [],
+                              acks=frozenset({(GHOST, "NEW_PEER")}))
+            self.assertFalse(r["semantic_checks_passed"], bad_after.hex())
+
     def test_acknowledgement_cannot_replace_an_occupied_row(self):
         r = self.run_gate({40: row(2, 0x1111, KNOWN)}, {40: row(2, 0x1111, GHOST)}, [], [],
                           acks=frozenset({(GHOST, "NEW_PEER"), (KNOWN, "ASSOC_GAIN")}))
