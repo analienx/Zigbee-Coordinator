@@ -12,13 +12,13 @@
 - Checks every 60 s whether Ethernet has an IP (`NETWORK.isEthConnected()`).
 - Reboots the core (`SLZB.reboot()`) only after Ethernet has been down for at least 20 minutes, and either the local time is 06:30–09:00 or the outage has lasted 12 hours.
 - Allows at most one reboot per outage. A marker file `/be/eth_watchdog.mark` is written before the reboot and deleted only once Ethernet has been seen working. A router that really stays off cannot cause a reboot loop.
-- `DRY_RUN = true` by default: it logs `DRY RUN would reboot now` and never reboots.
+- `DRY_RUN = false` in the repository since 18 Nov 2026 (armed, owner decision). With `true` it only logs `DRY RUN would reboot now`.
 
 **Effect of a real reboot.**
 - The ESP32 core is also the USB bridge to the radio, so Zigbee2MQTT sees the adapter disconnect and stops.
 - The HA automation `z2m_p7u_auto_recovery` ([`../ha/z2m_p7u_auto_recovery.yaml`](../ha/z2m_p7u_auto_recovery.yaml)) recovers it within about 2–5 minutes. It first tries a plain start, then the SLZB radio-only restart (available again because Ethernet is back) followed by a start.
 
-**Installed 1 Nov 2026 in dry run** (autostart on, running, log line `eth-watchdog: started (dry run)`). SLZB-OS needs `SLZB` and `NETWORK` imported explicitly. Without them the script fails to load with `'NETWORK' undeclared`.
+**Device state:** the copy on the SLZB is still the 1 Nov dry run until it is re-uploaded (the SLZB web UI was unreachable on 18 Nov). **Installed 1 Nov 2026 in dry run** (autostart on, running, log line `eth-watchdog: started (dry run)`). SLZB-OS needs `SLZB` and `NETWORK` imported explicitly. Without them the script fails to load with `'NETWORK' undeclared`.
 
 **Install.**
 1. On the SLZB web UI, open Scripts, create `eth_watchdog.be`, paste the file, and save. `#META {"start":1}` starts it at boot. Then start it once now. The same is possible over the web UI's HTTP API:

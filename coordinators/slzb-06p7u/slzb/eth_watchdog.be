@@ -16,7 +16,7 @@ import TIMER
 import TIME
 import FS
 
-var DRY_RUN = true                  # first night: log "would reboot" only
+var DRY_RUN = false                 # armed 18 Nov 2026 (owner); true = log "would reboot" only
 var MARK = "/be/eth_watchdog.mark"  # exists = this outage already used its reboot
 var CHECK_MS = 60000
 var MIN_DOWN_MS = 20 * 60000        # Ethernet down at least 20 min before acting
