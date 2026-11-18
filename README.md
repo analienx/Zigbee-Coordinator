@@ -9,6 +9,7 @@
 | Problem on a dense mesh | Stock / TI reference behaviour | R4 | Result in production |
 |---|---|---|---|
 | **Coordinator stops answering** (AF/ZDO/SYS SRSP timeouts, Zigbee2MQTT restarts) | The active network key is read from NV on **every secured frame**: a ~10 ms linear flash search. The Stack task saturates and starves the host link. | RAM read cache in front of NV, invalidated by every write (V53/V54) | NV time 304 s → 0.9 s per 10 min; 99.5–99.9 % cache hits; **no runtime hang since 31 Oct** |
+| **A radio reset does not bring it back** (`AF register` / `SYS ping` timeouts after restart) | The busy network service starves ZDApp's startup and the host link at boot (fixed-order scheduler, NPI below Stack priority) | Startup fairness and NPI priority floor (V46–V50) | Restarts reach the network on the first attempt |
 | **Cold start fails** (`SYS ping after 6000ms`, 10 min to come up) | MT parser waits forever after a stray `0xFE` and accepts impossible lengths | 500 ms idle resync, length bound 250 (V57) | **5 / 5 first-attempt cold starts** (before: 4 of 11 mornings failed) |
 | **Route repair refused** (`NWK_TABLE_FULL` on `extRouteDisc`) | 8-entry route-discovery table | 40 entries (V58) | **0 refusals in 65 discoveries** (before: 6 in 37.5 h) |
 | **MAC queue overflow** under bursts | Queues 5 / 8 / 5 | 50 / 80 / 50 (V55) | 0 refused MAC requests in every sample |
@@ -16,7 +17,7 @@
 | **Silent failures** | No internal visibility | Live RAM-only health pages: scheduler, heap, timers, NV cost, parser, route discovery, UART errors | Diagnosed through the running Zigbee2MQTT, no outage |
 | **Risky NV and security state** | Standard NV | Fail-closed NV with read-back verification; IEEE, PAN, keys and frame counters preserved across upgrades | Every upgrade kept the same network, no re-pairing |
 
-SMLIGHT firmware engineers: the full root-cause analysis of the hangs, with TI source references and suggested fixes, is in [**docs/SMLIGHT_HANG_ROOT_CAUSE.md**](docs/SMLIGHT_HANG_ROOT_CAUSE.md).
+SMLIGHT firmware engineers: the full root-cause analysis of the hangs (the NV storm, how it starves the host link at runtime and at startup, the other TI defects found and the five-week timeline), with TI source references and suggested fixes, is in [**docs/SMLIGHT_HANG_ROOT_CAUSE.md**](docs/SMLIGHT_HANG_ROOT_CAUSE.md).
 
 ## Live numbers (V58, 18 Nov 2026, 9 h after a cold start)
 
