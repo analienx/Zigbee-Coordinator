@@ -2,9 +2,17 @@
 
 Newest first. Being listed here is not qualification: the gates in [`README.md`](README.md) apply to every image, and a flash needs the owner's authorization of one operation id.
 
-## V58 (candidate, 15 November 2026): route-discovery table 40, B1E9 route and UART evidence
+## V58 (installed 16 November 2026, 10:37): route-discovery table 40, B1E9 route and UART evidence
 
-Base: V57 `eb59b677` (installed). Source `1e7944e16de49237beb14647660676a927e1c4b5`, branch `feat/p7u-v58`. Natively built, pinned and packaged; not flashed.
+Base: V57 `eb59b677`. Source `1e7944e16de49237beb14647660676a927e1c4b5`, branch `feat/p7u-v58`.
+
+**Installed and stable.** Operation `d24b26ed`, package run [43836468464](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43836468464) (operator `97fddf40`). Write, native boot and serving check passed; NV/CCFG untouched. **18 Nov field result:** 0 `NWK_TABLE_FULL` (65/65 route discoveries succeeded), 0 SRSP timeouts, first-attempt cold starts on 17 and 18 Nov, 1 UART overrun in 9 h with no visible effect. No coordinator hang since V57 (13 Nov). See the [18 November status](STATUS_2026-11-18.md).
+
+- **First attempt held, zero writes** (operation `19ad31a4`, 16 Nov): the vacant-fill rule in `stock20260311_security_preflight.py` accepted only `user=0` empty address slots, not the all-FF TI default row (`user=0xFF`) that the parser already treats as empty. The acknowledged RODRET sat in such a slot. Fixed in `97fddf40` (either vacant form; every other condition unchanged) with a regression test that fails without the fix. Repository tests: 990 passed, 31 skipped.
+- **Acknowledgements in the installed package** (owner, 16 Nov), all changes since V57's capture: `NEW_PEER` for `0x08fd52fffe0aa59e`, `0x08fd52fffee1ca30`, `0xa4c13810ae3bffff`, `0x583bc2fffeedf4fd`, `0x08fd52fffe0aa5a6`; `KEY_REROLL` for `0xa4c1386e4892f726`, `0x08fd52fffed5864e`, `0xa4c138adb5fa215f`; `TC_DEFAULT_EPOCH` for `0xa4c138241e3de538`; `FRESH_REJOIN` for `0xa4c13824a7005afb`.
+- **Known evidence defect:** the B1E9 occupancy figure (`live_now`, `max_live_*`) reads 39–40 of 40 even before successful discoveries; TI's unused-entry marker is not `expiryTime == 0`. The result counters are correct. Fix planned for V59.
+
+### Build history (15 November)
 
 - **Native build** [run 43708299735](https://github.com/analienx/Zigbee-Coordinator/actions/runs/43708299735) at `1e7944e1`: both ARM builds, byte-identical reproducibility, hosted B1 suite, herdsman integration and the candidate join, all passing. (Run 43706318149 at `8e2f16f3` built both replicas but its join step still expected the V57 capacity set; fixed in `1e7944e1`, workflow only.)
   - Linked from the ELF: `rtDiscTable` 40 entries / 400 B; every other table unchanged.
@@ -52,12 +60,12 @@ Neither cause is proven. V58 fixes the first with a TI-supported build setting a
 - **T6 capacity tests:** the define is added once and refused if pre-existing; the linked audit refuses 8 entries, a wrong entry ABI or a missing scalar.
 - **Host:** observer `decode_e9` with schema checks; live evidence reads B1E9 as an optional page (V57 and older reject page7).
 
-### Before any flash
+### Delivery (done)
 
-1. ~~Native build, pinning checklist, package~~: done (see above).
-2. SLZB network back, automations off, then `prepare` (fresh capture, security prediction, operation id).
-3. The owner authorizes the operation id.
-4. After the flash, read live evidence after the next automation burst on the hall bulbs: `route_uart.route_discovery.table_full` with `live_at_last_full` near 40, or no refusals at all, settles finding 1; `uart_rx.overrun_events` settles finding 2.
+1. Native build, pinning checklist, package: done (see above).
+2. SLZB network back, automations off, `prepare`: done 16 Nov (first plan held at the security gate, see top; second plan `d24b26ed`).
+3. Owner-authorized flash: done 16 Nov 10:37.
+4. Field result: finding 1 settled (no refusals in 65 discoveries); finding 2 confirmed but rare (1 overrun in 9 h, recovered by the parser resync).
 
 ### Host-side recommendations (no firmware, owner's choice)
 
