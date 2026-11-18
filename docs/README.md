@@ -13,18 +13,21 @@ Repository-level documentation is organized by **coordinator scope**, even where
 
 - **[Priority #1: SLZB-06P7U ROM/BSL-to-existing-APP recovery runbook](../coordinators/slzb-06p7u/HANG_RECOVERY_RUNBOOK.md)** — source-pinned, one-shot, no-power-cycle/no-flash procedure that **restored the production network on 27 Oct 2026**.
 - [P7U agent recovery skill](../skills/p7u-rom-bsl-recovery/SKILL.md) — how future agents choose this path, preserve counters and confirm real device traffic.
-- [Physical recovery evidence #143](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051) and [root-cause F2 follow-up #144](https://github.com/analienx/Zigbee-Coordinator/issues/144).
+- [Physical recovery evidence #143](https://github.com/analienx/Zigbee-Coordinator/issues/143#issuecomment-6438517051) and [root-cause follow-up #144](https://github.com/analienx/Zigbee-Coordinator/issues/144) (closed 18 Nov 2026: resolved).
 
 ## slzb-06p7u — PRIMARY P7U / CC2652P7 / R4
 
+- **[Status, 18 Nov 2026: V58 installed and stable, hangs resolved](../coordinators/slzb-06p7u/STATUS_2026-11-18.md)**
+- **[Hang root cause and fixes, for the SMLIGHT firmware team](SMLIGHT_HANG_ROOT_CAUSE.md)**
+- [R4 vs stock ZNP, layer by layer](R4_VS_STOCK.md)
 - [P7U identity, source map and safety gates](../coordinators/slzb-06p7u/README.md)
+- [Release notes (V58 installed, V57, V56, …)](../coordinators/slzb-06p7u/RELEASE_NOTES.md)
 - [Status, 11 Nov 2026: V56 installed, cold-start problem and the V57 candidate](../coordinators/slzb-06p7u/STATUS_2026-11-11.md)
-- [Release notes (V57 candidate, V56, V55)](../coordinators/slzb-06p7u/RELEASE_NOTES.md)
 - [Status, 31 Oct 2026: V53 installed under the official Zigbee2MQTT app](../coordinators/slzb-06p7u/STATUS_2026-10-31.md)
 - [V53 long-term reliability review](../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md)
 - [Firmware tree overview](../firmware/slzb-06p7u/r4/README.md) and the per-stage notes in [`r4/`](r4/) and [`r4/b4/`](r4/b4/)
 - [R4 master design #85](https://github.com/analienx/Zigbee-Coordinator/issues/85), [R4 provenance PR #86](https://github.com/analienx/Zigbee-Coordinator/pull/86), [diagnostics #87](https://github.com/analienx/Zigbee-Coordinator/issues/87), [native B0 #90](https://github.com/analienx/Zigbee-Coordinator/issues/90), [NV safety B1 #92](https://github.com/analienx/Zigbee-Coordinator/issues/92)
-- Implementation is under `firmware/slzb-06p7u/r4/` and `tools/r4_*.py` on `main` since 31 Oct 2026. It is installed but **not yet production-qualified**.
+- Implementation is under `firmware/slzb-06p7u/r4/` and `tools/r4_*.py` on `main` since 31 Oct 2026. V58 is installed and stable in production since 16 Nov 2026.
 
 ## mr4u-p10 — RETAINED FINALIZED REFERENCE / CC2674P10 / Z-Stack
 

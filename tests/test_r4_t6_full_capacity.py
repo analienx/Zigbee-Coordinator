@@ -24,6 +24,7 @@ def native_symbols():
         "TCLinkKeyRAMEntry": 3600, "ApsLinkKeyRAMEntry": 36,
         "AssociatedDevList": 3492, "rtgSrcTable": 1536,
         "neighborTable": 1792, "rtgTable": 1024, "BindingTable": 56,
+        "rtDiscTable": 400,
     }
     scalars = {
         "gZDSECMGR_TC_DEVICE_MAX": (2, 300),
@@ -33,6 +34,7 @@ def native_symbols():
         "gMAX_NEIGHBOR_ENTRIES": (1, 64),
         "gMAX_RTG_ENTRIES": (1, 128),
         "gNWK_MAX_BINDING_ENTRIES": (1, 4),
+        "gMAX_RREQ_ENTRIES": (1, 40),
     }
     symbols = {name: [{"size_bytes": size, "section_type": 8,
                        "section": ".bss"}] for name, size in arrays.items()}
@@ -44,14 +46,55 @@ def native_symbols():
     return symbols
 
 
+class MacQueueStageTests(unittest.TestCase):
+    """V55: TI's pinned 5/8/5 MAC queue defines are rewritten in place, once."""
+    TI_OPTS = ("-DMAC_CFG_APP_PENDING_QUEUE=TRUE\n-DMAC_CFG_TX_DATA_MAX=5\n"
+               "-DMAC_CFG_TX_MAX=8\n-DMAC_CFG_RX_MAX=5\n\n-DOSAL_NV_EXTENDED\n")
+
+    def stage(self, text):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            opts = Path(temporary) / "Stack" / "Config" / "znp_cnf.opts"
+            opts.parent.mkdir(parents=True)
+            routing = "".join(f"-D{k}={v}\n" for k, v in capacity.ROUTING.items())
+            opts.write_text(text + routing)
+            report = capacity.stage_opts(opts, capacity.full.DEFAULT_PROFILE, Path(temporary) / "r.json")
+            return opts.read_text(), report
+
+    def test_ti_defaults_become_v55_queues_exactly_once(self):
+        result, report = self.stage(self.TI_OPTS)
+        found = capacity.parse_defines(result)
+        for name, value in capacity.MAC_QUEUES.items():
+            self.assertEqual(found[name], [value])
+        self.assertEqual(report["mac_queues"], capacity.MAC_QUEUES)
+        self.assertIn("-DMAC_CFG_APP_PENDING_QUEUE=TRUE", result)
+
+    def test_v58_route_discovery_table_is_added_once(self):
+        result, report = self.stage(self.TI_OPTS)
+        self.assertEqual(capacity.parse_defines(result)["MAX_RREQ_ENTRIES"], [40])
+        self.assertEqual(report["route_discovery"], {"MAX_RREQ_ENTRIES": 40})
+        for text in ("-DMAX_RREQ_ENTRIES=8\n", "--define=MAX_RREQ_ENTRIES=40\n",
+                     "-DMAX_RREQ_ENTRIES\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(ValueError, "PREEXISTING_SECURITY_OR_CHILD_DEFINE_MAX_RREQ_ENTRIES"):
+                    self.stage(self.TI_OPTS + text)
+
+    def test_unexpected_or_duplicate_ti_queue_defines_are_refused(self):
+        for text in (self.TI_OPTS.replace("TX_DATA_MAX=5", "TX_DATA_MAX=6"),
+                     self.TI_OPTS + "-DMAC_CFG_RX_MAX=5\n",
+                     self.TI_OPTS.replace("-DMAC_CFG_TX_MAX=8\n", "")):
+            with self.assertRaisesRegex(ValueError, "TI_MAC_QUEUE_DEFINE_NOT_PINNED"):
+                self.stage(text)
+
+
 class FullCapacityAuditTests(unittest.TestCase):
-    def audit(self, symbols, *, aps_define=3):
+    def audit(self, symbols, *, aps_define=3, rreq_define=40, rreq_receipt=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             opts = root / "znp_cnf.opts"
             defines = {**capacity.ROUTING, **capacity.DEFINES,
-                       **capacity.NV_FLASH_SAFETY,
-                       "ZDSECMGR_DEVICE_MAX": aps_define}
+                       **capacity.NV_FLASH_SAFETY, **capacity.MAC_QUEUES,
+                       "ZDSECMGR_DEVICE_MAX": aps_define,
+                       "MAX_RREQ_ENTRIES": rreq_define}
             opts.write_text("".join(f"-D{name}={value}\n"
                                     for name, value in defines.items()))
             admitted = {
@@ -61,6 +104,9 @@ class FullCapacityAuditTests(unittest.TestCase):
                 "result_sha256": capacity.digest(opts.read_bytes()),
                 "new_compiler_defines": capacity.DEFINES,
                 "nvocmp_brownout_flash_guard": capacity.NV_FLASH_SAFETY,
+                "mac_queues": capacity.MAC_QUEUES,
+                "route_discovery": (capacity.ROUTE_DISCOVERY if rreq_receipt is None
+                                    else rreq_receipt),
             }
             opts_receipt = root / "opts.json"
             opts_receipt.write_text(json.dumps(admitted))
@@ -149,6 +195,27 @@ class FullCapacityAuditTests(unittest.TestCase):
         symbols["gMAX_RTG_SRC_ENTRIES"][0]["size_bytes"] = 2
         with self.assertRaisesRegex(ValueError, "MISMATCH_source_routes"):
             self.audit(symbols)
+
+    def test_v58_route_discovery_table_is_proven_from_the_linked_elf(self):
+        rreq = self.audit(native_symbols())["linked_capacity_symbols"]["route_requests"]
+        self.assertEqual((rreq["linked_count"], rreq["array_bytes"], rreq["entry_bytes"]),
+                         (40, 400, 10))
+        # V57's linked TI default, a wrong entry ABI, or a missing scalar fail.
+        for change, pattern in (
+                (lambda s: s["gMAX_RREQ_ENTRIES"][0].update(initializer=8), "MISMATCH_route_requests"),
+                (lambda s: s["rtDiscTable"][0].update(size_bytes=80), "ABI_DRIFT_route_requests"),
+                (lambda s: s["rtDiscTable"][0].update(size_bytes=480), "ABI_DRIFT_route_requests"),
+                (lambda s: s["gMAX_RREQ_ENTRIES"][0].update(size_bytes=2), "MISMATCH_route_requests"),
+                (lambda s: s.pop("gMAX_RREQ_ENTRIES"), "MISMATCH_route_requests")):
+            with self.subTest(pattern=pattern):
+                symbols = native_symbols()
+                change(symbols)
+                with self.assertRaisesRegex(ValueError, pattern):
+                    self.audit(symbols)
+        with self.assertRaisesRegex(ValueError, "EFFECTIVE_COMPILER_DEFINE_DRIFT_MAX_RREQ_ENTRIES"):
+            self.audit(native_symbols(), rreq_define=8)
+        with self.assertRaisesRegex(ValueError, "UNBOUND_NATIVE_COMPILER_OPTIONS"):
+            self.audit(native_symbols(), rreq_receipt={"MAX_RREQ_ENTRIES": 8})
 
 
 if __name__ == "__main__":

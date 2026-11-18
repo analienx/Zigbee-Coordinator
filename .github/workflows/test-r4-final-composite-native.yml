@@ -770,7 +770,7 @@ jobs:
           profile_sha=sha(profile)
           expected={'trust_center_devices':300,'aps_table_entries':3,
                     'associated_devices_slots':97,'source_routes':192,
-                    'neighbors':64,'nwk_routes':128}
+                    'neighbors':64,'nwk_routes':128,'route_requests':40}
           replicas=[]
           for index in (1,2):
               root=Path('/tmp/b1-replica-%d/b0out'%index)

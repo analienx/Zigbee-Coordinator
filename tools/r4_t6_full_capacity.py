@@ -31,11 +31,25 @@ DEFINES = {
 # conservative recommendation for low-voltage flash-write exclusion.
 # This reduces brownout corruption, not full power-cut recovery.
 NV_FLASH_SAFETY = {"NVOCMP_MIN_VDD_FLASH_MV": 2000}
+# V55: TI's ZNP opts queue only 5 MAC data frames (8 TX, 5 RX). The V54
+# B1E2 counters showed MAC_TRANSACTION_OVERFLOW (0xF1) refusals on a
+# 106-device network; the widely deployed community CC2652/CC1352P7
+# coordinator build uses 50/80/50. Buffers come from the OSAL heap on demand
+# (V54 live low water: 87 KB of 97 KB free), not from linked RAM.
+MAC_QUEUES_TI = {"MAC_CFG_TX_DATA_MAX": 5, "MAC_CFG_TX_MAX": 8, "MAC_CFG_RX_MAX": 5}
+MAC_QUEUES = {"MAC_CFG_TX_DATA_MAX": 50, "MAC_CFG_TX_MAX": 80, "MAC_CFG_RX_MAX": 50}
 ROUTING = {
     "MAX_RTG_SRC_ENTRIES": 192,
     "MAX_NEIGHBOR_ENTRIES": 64,
     "MAX_RTG_ENTRIES": 128,
 }
+# V58: B2 P1 left TI's route-discovery table at its ti_zstack_config.h default
+# (#ifndef MAX_RREQ_ENTRIES -> 8; the ZNP syscfg does not set it). V57 linked
+# rtDiscTable[8]. Every 0xC7 NWK_TABLE_FULL in the 13-15 Nov field log was a
+# ZDO extRouteDisc refusal, issued by herdsman after a unicast had already
+# failed. 40 matches the widely deployed community coordinator build; it costs
+# 32 x 10 B = 320 B of static RAM, taken from the OSAL heap span.
+ROUTE_DISCOVERY = {"MAX_RREQ_ENTRIES": 40}
 LINKED = {
     "trust_center_devices": ("TCLinkKeyRAMEntry", "gZDSECMGR_TC_DEVICE_MAX", 300),
     "aps_table_entries": ("ApsLinkKeyRAMEntry", "gZDSECMGR_ENTRY_MAX", 3),
@@ -43,6 +57,7 @@ LINKED = {
     "source_routes": ("rtgSrcTable", "gMAX_RTG_SRC_ENTRIES", 192),
     "neighbors": ("neighborTable", "gMAX_NEIGHBOR_ENTRIES", 64),
     "nwk_routes": ("rtgTable", "gMAX_RTG_ENTRIES", 128),
+    "route_requests": ("rtDiscTable", "gMAX_RREQ_ENTRIES", 40),
 }
 
 # Sizes below come from pinned TI 8.33 aps_mede.h blob
@@ -54,6 +69,9 @@ LINKED = {
 PINNED_ENTRY_BYTES = {
     "trust_center_devices": 12,
     "aps_table_entries": 12,
+    # rtg.h rtDiscEntry_t: rreqId, pad, srcAddress, previousNode,
+    # forwardCost, residualCost, expiryTime, pad (V57 linked 80 B / 8).
+    "route_requests": 10,
 }
 # TI nwk_globals.h blob 1eeb1cc88e259cb4f3fd125881f693a30d0836a0
 # selects uint8 indices for this profile's counts, all <= 255. Security
@@ -65,6 +83,7 @@ PINNED_CAPACITY_SCALAR_BYTES = {
     "source_routes": 1,
     "neighbors": 1,
     "nwk_routes": 1,
+    "route_requests": 1,  # rreqTableIndex_t is uint8 while MAX_RREQ_ENTRIES <= 255
 }
 PINNED_BINDING_ENTRY_BYTES = 14
 
@@ -161,12 +180,18 @@ def stage_opts(opts: Path, profile: Path, receipt: Path) -> dict:
     for name, value in ROUTING.items():
         if found.get(name) != [value]:
             deny("B2_P1_NOT_ACTUALLY_APPLIED_" + name)
-    for name in (*DEFINES, *NV_FLASH_SAFETY):
+    for name in (*DEFINES, *NV_FLASH_SAFETY, *ROUTE_DISCOVERY):
         if name in found or re.search(
                 rf"(?:^|\s)(?:-D|--define=){re.escape(name)}(?:=|\s|$)", text):
             deny("PREEXISTING_SECURITY_OR_CHILD_DEFINE_" + name)
+    for name, value in MAC_QUEUES_TI.items():
+        if found.get(name) != [value]:
+            deny("TI_MAC_QUEUE_DEFINE_NOT_PINNED_" + name)
+        text, count = re.subn(rf"(?m)^-D{name}={value}(?=\r?$)", f"-D{name}={MAC_QUEUES[name]}", text)
+        if count != 1:
+            deny("TI_MAC_QUEUE_DEFINE_NOT_PINNED_" + name)
     added = "".join(f"-D{name}={value}\n" for name, value in
-                    sorted({**DEFINES, **NV_FLASH_SAFETY}.items()))
+                    sorted({**DEFINES, **NV_FLASH_SAFETY, **ROUTE_DISCOVERY}.items()))
     updated = text + ("" if text.endswith("\n") else "\n") + added
     report = {
         "schema": "r4-r05-full-native-capacity-opts-v1",
@@ -174,6 +199,8 @@ def stage_opts(opts: Path, profile: Path, receipt: Path) -> dict:
         "pre_b2_routing_verified": ROUTING,
         "new_compiler_defines": DEFINES,
         "nvocmp_brownout_flash_guard": NV_FLASH_SAFETY,
+        "mac_queues": MAC_QUEUES,
+        "route_discovery": ROUTE_DISCOVERY,
         "original_sha256": digest(original),
         "result_sha256": digest(updated.encode()),
         "native_linked_capacity_verified": False,
@@ -205,6 +232,7 @@ def load_collector(path: Path):
     module.TABLES["r05_tc"] = LINKED["trust_center_devices"][:2]
     module.TABLES["r05_aps"] = LINKED["aps_table_entries"][:2]
     module.TABLES["r05_binding"] = ("BindingTable", "gNWK_MAX_BINDING_ENTRIES")
+    module.TABLES["v58_rreq"] = LINKED["route_requests"][:2]
     return module
 
 
@@ -221,10 +249,13 @@ def audit_native(artifacts: Path, opts: Path, opts_receipt: Path,
             admitted.get("profile_sha256") != digest(profile.read_bytes()) or
             admitted.get("result_sha256") != digest(raw_opts) or
             admitted.get("new_compiler_defines") != DEFINES or
-            admitted.get("nvocmp_brownout_flash_guard") != NV_FLASH_SAFETY):
+            admitted.get("nvocmp_brownout_flash_guard") != NV_FLASH_SAFETY or
+            admitted.get("mac_queues") != MAC_QUEUES or
+            admitted.get("route_discovery") != ROUTE_DISCOVERY):
         deny("UNBOUND_NATIVE_COMPILER_OPTIONS")
     found = parse_defines(raw_opts.decode("utf-8"))
-    for name, value in {**DEFINES, **NV_FLASH_SAFETY}.items():
+    for name, value in {**DEFINES, **NV_FLASH_SAFETY, **MAC_QUEUES,
+                        **ROUTE_DISCOVERY}.items():
         if found.get(name) != [value]:
             deny("EFFECTIVE_COMPILER_DEFINE_DRIFT_" + name)
     for name, value in ROUTING.items():

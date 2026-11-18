@@ -25,15 +25,25 @@ OFFICIAL_FILES = ("host/flash/p7u_paired_binding.py", "host/flash/p7u_pr154_ha.p
 
 class FirmwarePinConsistency(unittest.TestCase):
     def test_single_current_source_for_every_evidence_generation(self):
-        # The newest generation is the installed paired-host source plus at
-        # most one official-owner successor; both answer every older set.
+        # The newest generation is the installed paired-host source plus a
+        # chain of official-owner successors, each the qualified successor
+        # of the previous one; all answer every older set.
         self.assertEqual(observer.V50_SOURCES, observer.V51_SOURCES)
         self.assertEqual(observer.V51_SOURCES, observer.V52_SOURCES)
         self.assertLessEqual(observer.V53_SOURCES, observer.V52_SOURCES)
         official = observer.V53_SOURCES & binding.OFFICIAL_SOURCES
         paired = observer.V53_SOURCES - binding.OFFICIAL_SOURCES
         self.assertEqual(len(paired), 1)
-        self.assertLessEqual(len(official), 1)
+        (root,) = paired
+        chain, at = [], root
+        while True:
+            nxt = [s for s in official if binding.QUALIFIED_SUCCESSORS.get(s) == at]
+            self.assertLessEqual(len(nxt), 1)
+            if not nxt:
+                break
+            at = nxt[0]
+            chain.append(at)
+        self.assertEqual(set(chain), official)
         for current in observer.V53_SOURCES:
             self.assertRegex(current, "^[0-9a-f]{40}$")
             self.assertEqual(observer.expected_ready_npi_priority(current), 6)

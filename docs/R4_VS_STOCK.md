@@ -1,8 +1,8 @@
 # R4 on SLZB-06P7U: what changed compared with stock ZNP
 
-> **Scope:** SMLIGHT **SLZB-06P7U R1.73** with TI **CC2652P7**, not MR4U/P10 or SONOFF/MG24. R4 is a source-modified, stock-derived Z-Stack ZNP for this particular board and Zigbee2MQTT installation. This is a **technical feature comparison**, not a vendor-certified head-to-head benchmark or a promise of zero future hangs. **V57 was physically installed 13 November 2026;** first-serving proof and the first observed 14 November morning startup passed. Extended/cold-start acceptance remains open.
+> **Scope:** SMLIGHT **SLZB-06P7U R1.73** with TI **CC2652P7**, not MR4U/P10 or SONOFF/MG24. R4 is a source-modified, stock-derived Z-Stack ZNP for this particular board and Zigbee2MQTT installation. This is a **technical feature comparison**, not a vendor-certified head-to-head benchmark or a promise of zero future hangs. **V58 has been installed since 16 November 2026 and is stable:** no coordinator hang or SRSP timeout since 13 November, five first-attempt cold starts in a row, no route-discovery refusals ([18 Nov evidence](../coordinators/slzb-06p7u/STATUS_2026-11-18.md)).
 
-[Project home](../README.md) · [P7U implementation](../coordinators/slzb-06p7u/README.md) · [Release notes](../coordinators/slzb-06p7u/RELEASE_NOTES.md) · [Delivery procedure](../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md) · [14 Nov live field evidence](../coordinators/slzb-06p7u/STATUS_2026-11-14.md)
+[Project home](../README.md) · [P7U implementation](../coordinators/slzb-06p7u/README.md) · [Release notes](../coordinators/slzb-06p7u/RELEASE_NOTES.md) · [Delivery procedure](../coordinators/slzb-06p7u/OFFICIAL_OWNER_DELIVERY.md) · [18 Nov field evidence](../coordinators/slzb-06p7u/STATUS_2026-11-18.md) · [Root cause for SMLIGHT](SMLIGHT_HANG_ROOT_CAUSE.md)
 
 ## Why this fork exists
 
@@ -12,9 +12,9 @@ On a dense, roughly 100+ node network, loss of ZNP/SRSP responsiveness was a *re
 
 ```mermaid
 flowchart TB
-  HA["Home Assistant<br/>official Zigbee2MQTT owner"] -->|exclusive USB serial| MT["ZNP MT UART parser<br/>V57 bounded resync"]
+  HA["Home Assistant<br/>official Zigbee2MQTT owner"] -->|exclusive USB serial| MT["ZNP MT UART parser<br/>V57 bounded resync, V58 RX error counts"]
   MT --> SRSP["SRSP reply service<br/>V43–V50 priority + fairness"]
-  SRSP --> STACK["Z-Stack / MAC<br/>V55 queue capacity"]
+  SRSP --> STACK["Z-Stack / MAC<br/>V55 queues, V58 route discovery 40"]
   STACK --> NV["NV persistence<br/>V53 read cache + V54 guards"]
   STACK --> TIMERS["OSAL timers<br/>V52 O(1) queue"]
   NV --> B1["B1 state protection<br/>HOLD, checked writes, security/counters"]
@@ -43,7 +43,8 @@ flowchart TB
 | **V53 — NV reads** | Repeated NV reads under heavy traffic | Guarded in-memory NV read cache with per-item cost counters | **Fixes the previously observed NV read storm**, the central R4 hang investigation finding |
 | **V54 — cache safety** | No R4 cache | No cache hit/insert during HOLD; TCLK seed not cached; null/empty reads bypass | Keeps the optimization from hiding invalid state or retaining sensitive key material |
 | **V55 — MAC capacity** | TI reference queue sizes 5 / 8 / 5 | Queue sizes 50 / 80 / 50 | Adds headroom for the dense network; requires monitoring RAM and drops |
-| **V57 — MT RX parser** | Partial MT frame can wait indefinitely after stray `0xFE`; accepts oversized length field | Resync after a measured idle gap, reject lengths above 250, B1E8 discarded-byte evidence | **Targets intermittent cold-start failure** without assuming the observed cause is already proved |
+| **V57 — MT RX parser** | Partial MT frame can wait indefinitely after stray `0xFE`; accepts oversized length field | Resync after a measured idle gap, reject lengths above 250, B1E8 discarded-byte evidence | **Ended the cold-start failures:** 5 / 5 first-attempt cold starts since (before: 4 of 11 mornings failed) |
+| **V58 — route discovery** | 8-entry route-discovery table (`MAX_RREQ_ENTRIES`) | 40 entries; B1E9 route-discovery and UART error counters | **0 `NWK_TABLE_FULL` in 65 discoveries** (V57: 6 in 37.5 h); UART overruns now visible (1 in 9 h) |
 
 **Important distinction:** V55/V56 included a device-specific dimmer experiment that did not repair the device; **V57 removes those special cases** and returns that security behavior to TI's baseline. This fork does **not** bypass Zigbee trust-center security to force a device online.
 
@@ -54,6 +55,10 @@ Under heavy traffic, Z-Stack repeatedly performed expensive persistent-NV reads 
 **Physical confirmation:** V56 measured **99.92%** NV cache hits; V57 on 14 November measured **2,514,627 hits / 2,798 misses (99.89%)** across 1,177,678 MAC data indications, with 3.5% average stack busy and no sampled saturation. The new NV cache does not prove all future stalls impossible; it **directly addresses the previously identified NV storm**, which makes it the strongest evidence-backed improvement over the older firmware path in this installation. [Deep V53 review](../coordinators/slzb-06p7u/REVIEW_V53_2026-10-31.md).
 
 ## Measurement, not marketing
+
+**18 November 2026, V58** (9 h after a cold start, 106 devices): stack busy 1.5 %, 0 saturated windows, heap low water 86.2 KB of 97 KB, 99.49 % NV cache hits, 0 / 61,523 MAC refusals, 43,814 valid host frames with 0 checksum errors, 65 / 65 route discoveries. Zigbee2MQTT logs since V57's install on 13 Nov: no SRSP timeout of any kind. [Details](../coordinators/slzb-06p7u/STATUS_2026-11-18.md).
+
+Earlier samples:
 
 The 11 November 2026 V56 live evidence recorded:
 

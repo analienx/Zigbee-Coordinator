@@ -1,6 +1,8 @@
 # slzb-06p7u — SMLIGHT SLZB-06P7U (primary engineering target)
 
-**Current state (13 November 2026):** V57 firmware is installed on the production coordinator (since 13 Nov), with the official Zigbee2MQTT app as the only serial owner. V57 retains the MAC queue and NV-cache improvements, adds MT RX resynchronization and removes the unsuccessful V55/V56 device-specific dimmer workaround. See the [status summary](STATUS_2026-11-13.md) for health, the open cold-start problem and open items, the [official-owner delivery guide](OFFICIAL_OWNER_DELIVERY.md) for how to flash, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) and [V54 review](REVIEW_V54_2026-11-03.md) for findings.
+**Current state (18 November 2026): V58 installed since 16 Nov and stable.** No coordinator hang since V57 (13 Nov): no SRSP timeouts, five first-attempt cold starts in a row, and V58's larger route-discovery table removed every `NWK_TABLE_FULL` refusal (65/65 discoveries succeeded). See the [18 November status](STATUS_2026-11-18.md).
+
+**Previous state (13 November 2026):** V57 firmware is installed on the production coordinator (since 13 Nov), with the official Zigbee2MQTT app as the only serial owner. V57 retains the MAC queue and NV-cache improvements, adds MT RX resynchronization and removes the unsuccessful V55/V56 device-specific dimmer workaround. See the [status summary](STATUS_2026-11-13.md) for health, the open cold-start problem and open items, the [official-owner delivery guide](OFFICIAL_OWNER_DELIVERY.md) for how to flash, and the [V53 long-term reliability review](REVIEW_V53_2026-10-31.md) and [V54 review](REVIEW_V54_2026-11-03.md) for findings.
 
 **V57 installed (native source `eb59b677`, original branch `feat/p7u-v57`):** targets the likely cause of the intermittent cold-start `SYS_PING` failures (the MT frame parser waits without limit after a stray `0xFE`), adds the B1E8 evidence page, and removes all dimmer-specific code. See the [release notes](RELEASE_NOTES.md). It passed native CI, source pinning, protected APP/AC000 flash, native state9 and live device serving on 13 November 2026; repeated cold-boot acceptance remains open.
 
@@ -15,7 +17,7 @@
 | Composition order of the image | [`tools/r4_b0_b4_composite_stage.py`](../../tools/r4_b0_b4_composite_stage.py), applied to TI SDK `3615ad5d` (`lpf2-8.33.00.16`) |
 | V50–V54 Stack service, evidence, NV read cache and cache guard | [`tools/r4_v50_stack_service.py`](../../tools/r4_v50_stack_service.py) |
 | V52 OSAL timers | [`tools/r4_v52_osal_timers.py`](../../tools/r4_v52_osal_timers.py) |
-| V57 MT frame parser resync and B1E8 | [`tools/r4_v57_npi_rx_resync.py`](https://github.com/analienx/Zigbee-Coordinator/blob/dfa6623513327669beb5a5d5cd4d8ebebcceb2d4/tools/r4_v57_npi_rx_resync.py) |
+| V57 MT frame parser resync and B1E8 | [`tools/r4_v57_npi_rx_resync.py`](../../tools/r4_v57_npi_rx_resync.py) |
 | B1 NV/management safety | [`firmware/slzb-06p7u/r4/b1/`](../../firmware/slzb-06p7u/r4/b1/) |
 | Firmware tree overview | [`firmware/slzb-06p7u/r4/README.md`](../../firmware/slzb-06p7u/r4/README.md) |
 | Composed C, reproduced locally | [`tools/p7u_compose_source_locally.sh`](../../tools/p7u_compose_source_locally.sh) |
@@ -54,7 +56,7 @@ Host and operations around the firmware:
 | Feature | Where |
 |---|---|
 | Official-owner delivery: preflight, one-shot flash, serving check, automatic Zigbee2MQTT restore | [`tools/p7u_official_delivery.py`](../../tools/p7u_official_delivery.py), [guide](OFFICIAL_OWNER_DELIVERY.md) |
-| Zero-outage firmware evidence read (B1E1–B1E8, B1S1) through the running Zigbee2MQTT | [`tools/p7u_live_evidence.py`](https://github.com/analienx/Zigbee-Coordinator/blob/dfa6623513327669beb5a5d5cd4d8ebebcceb2d4/tools/p7u_live_evidence.py) |
+| Zero-outage firmware evidence read (B1E1–B1E8, B1S1) through the running Zigbee2MQTT | [`tools/p7u_live_evidence.py`](../../tools/p7u_live_evidence.py) |
 | ROM/BSL hang recovery and hang-evidence capture | [runbook](HANG_RECOVERY_RUNBOOK.md) |
 | HA auto-recovery (3 attempts, radio-only restart) | [`ha/z2m_p7u_auto_recovery.yaml`](ha/z2m_p7u_auto_recovery.yaml) |
 | SLZB Ethernet watchdog (dry run) | [`slzb/eth_watchdog.be`](slzb/eth_watchdog.be) |

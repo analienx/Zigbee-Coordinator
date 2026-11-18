@@ -756,6 +756,10 @@ void B4_V51_TrendSnapshot(uint8_t *out, uint8_t level)
 void B4_V52_TimerSnapshot(uint8_t *out) { memset(out, 0x52, 104u); out[38] = 2u; }
 static unsigned caches;
 void B4_V53_NvCacheSnapshot(uint8_t *out) { ++caches; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E7", 4); }
+static unsigned rxpages;
+void B4_V57_RxFrameSnapshot(uint8_t *out) { ++rxpages; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E8", 4); }
+static unsigned routepages;
+void B4_V58_RouteUartSnapshot(uint8_t *out) { ++routepages; memset(out, 0, B4_V50_EVIDENCE_SIZE); memcpy(out, "B1E9", 4); }
 void B4_V52_InflightSnapshot(uint8_t *page) { page[12] = 0x77u; page[200] = 3u; memset(page + 201, 0x61, 47u); }
 void B4_V51_OnsetSnapshot(uint8_t *out)
 {
@@ -806,8 +810,18 @@ int main(void)
     memcpy(frame, ok, 16); frame[10] = 5u; caches = 0u;
     clear(); assert(consume(frame) == 0 && caches == 1u && last_c0 == 0x61u && !memcmp(last_payload, "B1E7", 4));
     assert(!memcmp(last_payload + 8, digest, 4) && trends == 0u && snaps == 0u && onsets == 0u);
-    memcpy(frame, ok, 16); frame[10] = 6u; caches = 0u;
-    clear(); assert(consume(frame) == 0 && caches == 0u && trends == 0u && replies == 1u && last_c0 == 0x60u);
+    /* Page 6 is the V57 B1E8 RX frame resync page, with the same digest. */
+    memcpy(frame, ok, 16); frame[10] = 6u; caches = 0u; rxpages = 0u;
+    clear(); assert(consume(frame) == 0 && rxpages == 1u && caches == 0u && last_c0 == 0x61u);
+    assert(last_len == 248u && !memcmp(last_payload, "B1E8", 4) && !memcmp(last_payload + 8, digest, 4));
+    assert(trends == 0u && snaps == 0u && onsets == 0u && replies == 1u);
+    /* Page 7 is the V58 B1E9 route-discovery and UART RX error page. */
+    memcpy(frame, ok, 16); frame[10] = 7u; caches = 0u; rxpages = 0u; routepages = 0u;
+    clear(); assert(consume(frame) == 0 && routepages == 1u && rxpages == 0u && caches == 0u && last_c0 == 0x61u);
+    assert(last_len == 248u && !memcmp(last_payload, "B1E9", 4) && !memcmp(last_payload + 8, digest, 4));
+    assert(trends == 0u && snaps == 0u && onsets == 0u && replies == 1u);
+    memcpy(frame, ok, 16); frame[10] = 8u; caches = 0u; rxpages = 0u; routepages = 0u;
+    clear(); assert(consume(frame) == 0 && caches == 0u && rxpages == 0u && routepages == 0u && trends == 0u && replies == 1u && last_c0 == 0x60u);
     /* AREQ form is dropped without any reply, like B1E1. */
     memcpy(frame, ok, 16); frame[1] = 0x41u;
     clear(); assert(consume(frame) == 0 && replies == 0u && snaps == 0u && deallocs == 1u);
@@ -828,10 +842,15 @@ QUERY_MUTANTS = {
                      "pReq[2] == B1_STATUS_COMMAND && pReq[9] == 3u)"),
     "length_unchecked": ("    if (pReq[0] == B1_STATUS_QUERY_SIZE && (pReq[1] & 0x1fu) == 1u &&",
                          "    if ((pReq[1] & 0x1fu) == 1u &&"),
-    "b1e3_page_rejected": ("            pReq[10] <= 5u)", "            pReq[10] == 0u)"),
-    "trend_pages_rejected": ("            pReq[10] <= 5u)", "            pReq[10] <= 1u)"),
-    "b1e6_page_rejected": ("            pReq[10] <= 5u)", "            pReq[10] <= 3u)"),
-    "b1e7_page_rejected": ("            pReq[10] <= 5u)", "            pReq[10] <= 4u)"),
+    "b1e3_page_rejected": ("            pReq[10] <= 7u)", "            pReq[10] == 0u)"),
+    "trend_pages_rejected": ("            pReq[10] <= 7u)", "            pReq[10] <= 1u)"),
+    "b1e6_page_rejected": ("            pReq[10] <= 7u)", "            pReq[10] <= 3u)"),
+    "b1e7_page_rejected": ("            pReq[10] <= 7u)", "            pReq[10] <= 4u)"),
+    "b1e8_page_rejected": ("            pReq[10] <= 7u)", "            pReq[10] <= 5u)"),
+    "b1e9_page_rejected": ("            pReq[10] <= 7u)", "            pReq[10] <= 6u)"),
+    "page8_accepted": ("            pReq[10] <= 7u)", "            pReq[10] <= 8u)"),
+    "b1e9_routed_to_b1e8": ("            else if (pReq[10] == 7u)\n                B4_V58_RouteUartSnapshot(stackEvidence);\n",
+                            "            else if (pReq[10] == 7u)\n                B4_V57_RxFrameSnapshot(stackEvidence);\n"),
     "b1e6_progress_offset_shifted": ("    B4_V43_Snapshot(out + 16u);", "    B4_V43_Snapshot(out + 20u);"),
     "trend_level_offset": ("(uint8_t)(pReq[10] - 2u)", "(uint8_t)(pReq[10] - 1u)"),
     "pages_swapped": ("            if (pReq[10] == 0u)\n", "            if (pReq[10] == 1u)\n"),
